@@ -252,6 +252,11 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     /// </summary>
     internal static bool WindowKernels { get; set; } = Environment.GetEnvironmentVariable("IDRAK_WINDOW_KERNELS") is not ("0" or "false");
 
+    // Whether this layer's cache may hold only its window (DecodingContext.SlidingWindowSteps): a window that can mask,
+    // attended through the window kernels, which read the keys from the window's start in order (the composed path's
+    // masked products over every slot would add them in other groupings).
+    private bool SlidesIn(Backend backend) => Windowed && WindowKernels && HeadDim <= backend.Capabilities.DecodeAttentionHeadDim;
+
     /// <summary>Whether packed sequences and rows of different lengths can attend through <paramref name="backend"/>'s kernels for this layer.</summary>
     internal bool SupportsSegmented(Backend backend) => (PlainCausal || WindowKernels) && backend.SupportsSegmentedAttention(HeadDim, Variant);
 
@@ -376,7 +381,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     {
         int n = input.Shape[0], t = input.Shape[1];
         var positions = context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first.");
-        var cache = context.CacheFor(this, n * KvHeads, HeadDim);
+        var cache = context.CacheFor(this, n * KvHeads, HeadDim, SlidesIn(input.Backend) ? _window!.Value : 0);
         if (ImageBlocks.Current is { } images && images.AttendsFor(n, t))
         {
             return MergeHeads(AttendImages(input, context, cache, images), n, t);
@@ -396,18 +401,18 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             }
 
             var (rq, rk, rv) = Project(input, context.TokenPositions!, packed: true);
-            Tensor.WriteKeyValues(rk!, cache.Keys, context.Position);
-            Tensor.WriteKeyValues(rv!, cache.Values, context.Position);
-            var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.Position, t, ScoreScale, context.TokenStarts!, KvHeads, Variant)
+            Tensor.WriteKeyValues(rk!, cache.Keys, context.PositionOf(cache));
+            Tensor.WriteKeyValues(rv!, cache.Values, context.PositionOf(cache));
+            var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.PositionOf(cache), t, ScoreScale, context.TokenStarts!, KvHeads, Variant)
                        ?? throw new NotSupportedException($"Rows of different lengths need attention from per-row starts, which {input.Device} does not provide for head size {HeadDim}{(PlainCausal ? "" : " with a sliding window or soft-capped scores")} (on CUDA: bfloat16 tensor cores, head size 64 or 128, plain causal attention only).");
             return MergeHeads(rows, n, t);
         }
 
-        var (q, k, v) = Project(input, positions, cache, context.Position);   // k and v null: already in the cache
+        var (q, k, v) = Project(input, positions, cache, context.PositionOf(cache));   // k and v null: already in the cache
         float scale = ScoreScale;
         if (k is not null)
         {
-            cache.Layout.Write(k, v!, cache, context.Position);
+            cache.Layout.Write(k, v!, cache, context.PositionOf(cache));
         }
 
         // A step being recorded is replayed at later positions, so it takes the window whenever the window can mask (the
@@ -436,16 +441,16 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             }
 
             var (rq, rk, rv) = Project(input, context.TokenPositions!, packed: true);
-            Tensor.WriteKeyValues(rk!, cache.Keys, context.Position);
-            Tensor.WriteKeyValues(rv!, cache.Values, context.Position);
+            Tensor.WriteKeyValues(rk!, cache.Keys, context.PositionOf(cache));
+            Tensor.WriteKeyValues(rv!, cache.Values, context.PositionOf(cache));
             q = rq;
         }
         else
         {
-            var (pq, k, v) = Project(input, context.Positions!, cache, context.Position);   // k and v null: already in the cache
+            var (pq, k, v) = Project(input, context.Positions!, cache, context.PositionOf(cache));   // k and v null: already in the cache
             if (k is not null)
             {
-                cache.Layout.Write(k, v!, cache, context.Position);
+                cache.Layout.Write(k, v!, cache, context.PositionOf(cache));
             }
 
             q = pq;
@@ -454,10 +459,10 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         // Keys as the cache holds them, up to this step's last position: the ranges stop at each row's last key, so only
         // that prefix is read (a float32 cache in place; bfloat16 and int8 expanded for those slots only, not every slot
         // of the context window).
-        int filled = context.Length + images.Steps;
+        int filled = context.LengthOf(cache) + images.Steps;
         var keys = cache.Layout.ExpandPrefix(cache, keys: true, filled);
         var values = cache.Layout.ExpandPrefix(cache, keys: false, filled);
-        return AttendSpans(q, keys, values, images, context.Length, context.RowStarts);
+        return AttendSpans(q, keys, values, images, context.LengthOf(cache), context.RowStarts);
     }
 
     // q [n·kv, group·t, d] over keys and values [n·kv, keyRows, d], query row i of sequence b over its range of
@@ -491,13 +496,13 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             (raw, scale) = (Softcap(raw, scale, cap), 1f);
         }
 
-        var mask = context.Mask!;
+        var mask = context.MaskOf(cache)!;
         if (Windowed)
         {
             // Key j is before query i's window when j <= position + i - window: the causal mask of a cache `window` slots
             // wider, read from slot `window` on, is 0 exactly there (-1e9 elsewhere), so -1e9 - it masks those keys.
             int capacity = keys.Shape[1], window = _window!.Value;
-            var wider = Tensor.DecoderMask(context.Position, t, capacity + window);
+            var wider = Tensor.DecoderMask(context.PositionOf(cache), t, capacity + window);
             mask = mask + (wider.Narrow(1, window, capacity) * -1f + -1e9f);
         }
 

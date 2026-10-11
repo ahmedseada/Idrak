@@ -21,6 +21,7 @@ internal static partial class Tests
         ("decoder: cached decoding (float32 and int8 KV) and int8 weights match the full pass; generation", DecoderCachedAndInt8),
         ("decoder: cached decoding through int8 / int4 / bfloat16 weights (fused head layout, cache writes, split attention, gate/up + activation, projection + residual + norm) matches the full pass and the CPU", DecoderCachedPacked),
         ("decoder: a sandwich block's projection, the norm after it, the residual addition and the next norm in one pass equal the separate operations bit for bit (int8 / int4 / bfloat16, one split count)", DecoderSandwichNorms),
+        ("decoder: sliding windows' caches (SlidingWindowSteps) hold window - 1 + steps positions and give the full caches' logits bit for bit (float32, bfloat16, int8; a prefill, single steps and steps of several positions across many moves, two rows, a reset and again); steps past the limit, a truncation after a move and row starts refused", SlidingWindowCaches),
         ("decoder: LoRA by layer name trains; JSON and package round trip", DecoderLoraAndPackage),
         ("decoder: tied head shares the table (float32, and a bfloat16 head's columns read as the embedding, bit for bit, also beside int8 / int4 projections); last-position prefill; bf16 embedding tables save and load", DecoderMemory),
     ];
@@ -824,6 +825,114 @@ internal static partial class Tests
                 }
             }
         }
+    }
+
+    // A windowed layer's cache holding its window (positions moved to its front as it fills) against the full cache: the
+    // same keys in the same order, so the same logits, bit for bit. Window 5 with at most 3 positions a step: 7 slots
+    // where the full cache has 48, moved about every third position.
+    private static void SlidingWindowCaches(Device device)
+    {
+        var spec = SmallSpec with { MaxPositions = 64, SlidingWindow = 5, SlidingWindowLayers = [true, false], QkNorm = true };
+        using var model = spec.Build(new RandomWeights(91), new DecoderBuildOptions { Device = device });
+        model.Eval();
+        var random = new Random(92);
+        const int Batch = 2, Capacity = 48, Steps = 3;
+        int[] ids = [.. Enumerable.Range(0, Batch * 40).Select(_ => random.Next(spec.Vocabulary))];
+        foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.BFloat16, KeyValueFormat.Int8 })
+        {
+            // A prompt of 3, then single positions and steps of 2 and 3, twice (a reset between).
+            List<float[]> Run(int sliding, out long bytes, out int slots)
+            {
+                var logits = new List<float[]>();
+                using var context = new DecodingContext(device, Batch, Capacity, format) { SlidingWindowSteps = sliding };
+                using (Autograd.NoGrad())
+                {
+                    for (int pass = 0; pass < 2; pass++)
+                    {
+                        context.Reset();
+                        int at = 0;
+                        foreach (int n in new[] { 3, 1, 1, 2, 1, 3, 1, 1, 1, 2, 2, 1, 3, 1, 1, 1, 1, 2, 1, 3, 1, 1 })
+                        {
+                            var step = new float[Batch * n];
+                            for (int b = 0; b < Batch; b++)
+                            {
+                                for (int t = 0; t < n; t++)
+                                {
+                                    step[b * n + t] = ids[b * 40 + at + t];
+                                }
+                            }
+
+                            using var input = Tensor.From(step, [Batch, n], device);
+                            using var output = model.ForwardCached(input, context);
+                            logits.Add(output.ToArray());
+                            at += n;
+                        }
+                    }
+                }
+
+                bytes = context.CacheBytes;
+                slots = model.Descendants().OfType<CausalSelfAttention>().Min(a => context[a]!.Capacity);
+                return logits;
+            }
+
+            var full = Run(0, out long fullBytes, out int fullSlots);
+            var slid = Run(Steps, out long slidBytes, out int slots);
+            Check(fullSlots == Capacity && slots == spec.SlidingWindow - 1 + Steps && slidBytes < fullBytes,
+                $"{format}: the windowed layer's cache holds {slots} positions (full {fullSlots}), {slidBytes} bytes against {fullBytes}");
+            for (int i = 0; i < full.Count; i++)
+            {
+                int differ = full[i].Where((v, j) => BitConverter.SingleToInt32Bits(v) != BitConverter.SingleToInt32Bits(slid[i][j])).Count();
+                Check(differ == 0, $"{format}, step {i}: {differ} of {full[i].Length} logits differ from the full cache's (largest difference {full[i].Zip(slid[i], (a, b) => MathF.Abs(a - b)).Max()})");
+            }
+        }
+
+        // What a sliding window cannot do: a step past its limit, a truncation after a move, rows of different lengths.
+        using (var context = new DecodingContext(device, 1, Capacity) { SlidingWindowSteps = Steps })
+        using (Autograd.NoGrad())
+        {
+            using (var prompt = Tensor.From([1f, 2f, 3f], [1, 3], device))
+            {
+                model.ForwardCached(prompt, context).Dispose();
+            }
+
+            Expect<InvalidOperationException>(() =>
+            {
+                using var four = Tensor.From([1f, 2f, 3f, 4f], [1, 4], device);
+                model.ForwardCached(four, context).Dispose();
+            }, "SlidingWindowSteps", "a step of 4 positions with at most 3");
+            for (int t = 0; t < 6; t++)
+            {
+                using var one = Tensor.From([5f], [1, 1], device);
+                model.ForwardCached(one, context).Dispose();
+            }
+
+            Expect<InvalidOperationException>(() => context.Truncate(2), "moved", "a truncation after the window moved");
+            Expect<InvalidOperationException>(() => context.SlidingWindowSteps = 5, "before the first step", "a new limit after the caches were made");
+        }
+
+        using (var context = new DecodingContext(device, 2, Capacity) { SlidingWindowSteps = Steps })
+        using (Autograd.NoGrad())
+        {
+            using var pair = Tensor.From([1f, 2f, 3f, 4f], [2, 2], device);
+            model.ForwardCached(pair, context).Dispose();
+            Expect<InvalidOperationException>(() => context.SetRowStarts([0, 1]), "sliding", "row starts with sliding windows' caches");
+        }
+    }
+
+    // Runs `action`, which must throw T with `fragment` in its message.
+    private static void Expect<T>(Action action, string fragment, string what) where T : Exception
+    {
+        try
+        {
+            action();
+        }
+        catch (T ex)
+        {
+            Check(ex.Message.Contains(fragment, StringComparison.Ordinal), $"{what}: {ex.Message}");
+            return;
+        }
+
+        Check(false, $"{what} must be refused");
     }
 
     // One decoding step of a sandwich block (norms after attention and the feed-forward): where the device has the fused
