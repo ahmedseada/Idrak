@@ -205,7 +205,8 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     /// as <see cref="Stream"/> parses them), tagged with the request's index, then each request's final chunk (with the
     /// whole message and statistics) once all are done. The options of the first request apply to all. Requests with
     /// images are decoded together where they can be (<see cref="TextGenerator.StreamBatch(IReadOnlyList{string}, int, IReadOnlyList{IReadOnlyList{ImageFeatures}}, IImageAttentionRule, GenerationOptions, CancellationToken)"/>:
-    /// prompts of one length, such as pages read with one instruction, go through the model as one batch), every
+    /// prompts of one length, such as pages read with one instruction, go through the model as one batch, and prompts of
+    /// different lengths where the model attends from per-row starts, <see cref="TextGenerator.SupportsBatches"/>), every
     /// request's images through the encoder in one call (when their vision options are the same object), each reply
     /// parsed on its own and its done chunk given when its batch ends; requests that cannot share a batch (tools, other
     /// generation options, text beside images) run one by one, as <see cref="Stream"/>.

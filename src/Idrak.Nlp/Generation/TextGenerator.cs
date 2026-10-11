@@ -260,14 +260,14 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     }
 
     /// <summary>
-    /// Whether <see cref="GenerateBatch"/> decodes several prompts together on this model and device (attention from
-    /// per-row starts: on CUDA, bfloat16 tensor cores with head size 64 or 128 and no attention layer with a sliding window
-    /// that can mask or soft-capped scores); otherwise it runs them one by one.
+    /// Whether <see cref="GenerateBatch"/> decodes prompts of different lengths together on this model and device
+    /// (attention from per-row starts for every attention layer's head size, window and cap:
+    /// <c>Backend.SupportsAttentionRows</c>); otherwise prompts of one length still decode together and the others alone.
     /// </summary>
     public bool SupportsBatches =>
         Model.Descendants().OfType<CausalSelfAttention>().ToList() is { Count: > 0 } attention
         && !Model.Descendants().Any(m => m is MultiHeadAttention or PositionalEncoding)
-        && attention.All(a => a.SupportsSegmented(Device.Backend));
+        && attention.All(a => a.SupportsRows(Device.Backend));
 
     /// <summary>
     /// Generates the continuations of several prompts together (one batch through the model per token, so the GPU
@@ -361,7 +361,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     /// <see cref="Stream(string, int, IReadOnlyList{ImageFeatures}, IImageAttentionRule, GenerationOptions, CancellationToken)"/>
     /// takes them), decoded together: prompts of one length (pages read with one instruction) go through the model as one
     /// batch, one pass a token for all of them (the device reads each weight once for every row), and their decoding step
-    /// is recorded once; a prompt of a length of its own runs alone. Each row stops on its own (its stop sequences, or a
+    /// is recorded once; prompts of different lengths too where every attention layer attends from per-row starts
+    /// (<see cref="SupportsBatches"/>: each padded on the left, its steps not recorded), else a prompt of a length of its
+    /// own runs alone. Each row stops on its own (its stop sequences, or a
     /// loop under <see cref="GenerationOptions.RepeatStop"/>) and gets what it would get alone, within the batch's rounding.
     /// Chunks as <see cref="StreamBatch(IReadOnlyList{string}, GenerationOptions, CancellationToken)"/>. Repetition
     /// penalties are not batched: such prompts run one by one.
@@ -386,7 +388,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
         bool penalties = options.RepeatPenalty != 1f || options.PresencePenalty != 0f || options.FrequencyPenalty != 0f;
         var tokens = prompts.Select(p => Tokenizer.Encode(p).ToList()).ToList();
-        foreach (var group in penalties ? [.. Enumerable.Range(0, prompts.Count).Select(i => new[] { i })] : Groups(tokens))
+        // Pages of different lengths (another instruction, pan-and-scan crops) decode together where every attention layer
+        // attends from per-row starts (SupportsBatches); elsewhere pages of one length still do, and a length alone runs alone.
+        var groups = penalties ? [.. Enumerable.Range(0, prompts.Count).Select(i => new[] { i })]
+            : SupportsBatches ? [[.. Enumerable.Range(0, prompts.Count)]] : Groups(tokens);
+        foreach (var group in groups)
         {
             if (group.Length == 1)
             {
@@ -411,8 +417,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         [.. Enumerable.Range(0, tokens.Count).GroupBy(i => tokens[i].Count).Select(g => g.ToArray())];
 
     // Decodes the rows `tokens` together (their prompts' indices `index`): padded on the left to the longest, each row
-    // attending from its own start, when their lengths differ (SupportsBatches); with each row's images when given (rows of
-    // one length then). Yields each row's pieces as they come, then a final chunk per row.
+    // attending from its own start, when their lengths differ (SupportsBatches); with each row's images when given. Yields
+    // each row's pieces as they come, then a final chunk per row.
     private IEnumerable<BatchChunk> Batch(List<List<int>> tokens, int[] index, (int Token, IReadOnlyList<IReadOnlyList<ImageFeatures>> Features, IImageAttentionRule Attention)? imageInput,
         GenerationOptions options, CancellationToken cancellationToken)
     {
@@ -421,11 +427,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         int context = Math.Clamp(options.NumCtx, 2, ContextLength);
         int promptLength = tokens.Max(t => t.Count);
         bool padded = tokens.Any(t => t.Count != promptLength);
-        if (imageInput is not null && (padded || promptLength >= context))
+        if (imageInput is not null && promptLength >= context)
         {
-            throw new InvalidOperationException(padded
-                ? "Prompts with images decode together only when their lengths are equal."
-                : $"A prompt of {promptLength} tokens with its images does not fit the context window of {context}.");
+            throw new InvalidOperationException($"A prompt of {promptLength} tokens with its images does not fit the context window of {context}.");
         }
 
         int limit = Math.Min(options.NumPredict > 0 ? Math.Min(options.NumPredict, MaxTokens) : MaxTokens, context - promptLength);
@@ -443,9 +447,10 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
         }
 
-        // Each row's images, at their positions in its row (rows of one length: no padding moves them).
+        // Each row's images, at their positions in its padded row (its prompt starts at starts[r]).
         IReadOnlyList<PromptImage> images = imageInput is { } given
-            ? [.. Enumerable.Range(0, rows).SelectMany(r => ImagePrefill.Locate(tokens[r], given.Token, given.Features[r], sequence: r))]
+            ? [.. Enumerable.Range(0, rows).SelectMany(r => ImagePrefill.Locate(tokens[r], given.Token, given.Features[r], sequence: r)
+                .Select(i => i with { Position = i.Position + starts[r] }))]
             : [];
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
         // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).

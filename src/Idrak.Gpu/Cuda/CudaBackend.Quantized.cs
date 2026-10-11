@@ -937,8 +937,10 @@ internal sealed unsafe partial class CudaBackend
 
     // A decoding attention launch but for its split count, least chunk, partial results, counters and position: the
     // cache format (0 float32, 1 int8, 2 bfloat16) and its operands (DecodeSplit).
+    // Format 3: float32 rows of different lengths (attention_rows_f32), each from starts[(head / HeadsPerRow) · steps + step].
     private readonly record struct DecodeAttention(int Format, Storage Q, Storage Keys, Storage Values, Storage? KeyScales, Storage? ValueScales,
-        Storage Y, int RowsPerHead, int Steps, int Capacity, int Dim, float Scale, int Words, AttentionVariant Variant, int Rows);
+        Storage Y, int RowsPerHead, int Steps, int Capacity, int Dim, float Scale, int Words, AttentionVariant Variant, int Rows, Storage? Starts = null,
+        int HeadsPerRow = 1);
 
     private void RunDecode(in DecodeAttention a, Storage counters, int splits, int minChunk, ulong at)
     {
@@ -967,6 +969,11 @@ internal sealed unsafe partial class CudaBackend
                 Launch(K("attention_decode_f32"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
                     P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale), U(minChunk),
                     U(a.Variant.Window), F(a.Variant.Softcap), U(a.Rows));
+                break;
+            case 3:
+                Launch(K("attention_rows_f32"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+                    P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), P(a.Starts!), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale),
+                    U(minChunk), U(a.Variant.Window), F(a.Variant.Softcap), U(a.HeadsPerRow), U(a.Rows));
                 break;
             case 1:
                 Launch(K("attention_decode_int8"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
@@ -1189,16 +1196,29 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    // Packed sequences and rows of different lengths run on the tensor-core flash kernels, which compute plain causal
-    // attention only: a window or a cap is refused (fine-tuning then pads, batches decode one by one).
+    // Packed sequences run on the tensor-core flash kernels, which compute plain causal attention only: a window or a cap
+    // is refused (fine-tuning then pads).
     public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => variant.IsPlain && FlashTensorCore(dim) is not null;
+
+    // Rows of different lengths: the flash kernels where they serve, else the decoding kernel with per-row starts
+    // (attention_rows_f32: every head size the decoding kernels take, windows and caps).
+    public override bool SupportsAttentionRows(int dim, AttentionVariant variant = default) => SupportsSegmentedAttention(dim, variant) || dim <= PtxKernels.DecodeMaxDim;
 
     public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
-            return false;
+            if (dim > PtxKernels.DecodeMaxDim)
+            {
+                return false;
+            }
+
+            // The decoding kernel, each row also from its sequence's start (its splits measured as a kernel of its own).
+            DecodeSplit(WindowedTuning(6, variant, capacity),
+                new DecodeAttention(3, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, 0, variant, heads * rowsPerHead, starts, headsPerRow),
+                position);
+            return true;
         }
 
         Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
