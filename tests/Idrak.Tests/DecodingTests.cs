@@ -17,6 +17,7 @@ internal static partial class Tests
         ("sampler: distribution, top-k, temperature, determinism, CPU parity", SamplerBehaviour),
         ("sampler: top-p, min-p, repeat/presence/frequency penalties, history", SamplerFilters),
         ("sampler: the CPU kernel's one-pass top-k, top-p and top-5 equal the scan-per-choice reference exactly", SamplerSinglePass),
+        ("sampler: greedy rows (top-k 1) over a large vocabulary on CUDA: the candidate kernel's finish gives the sampling kernel's tokens and statistics bit for bit (one best score, ties, +∞, NaN, nothing finite, near overflow, first and last token; top-p, min-p, several steps)", SamplerGreedyRows),
         ("cuda: every kernel's declared parameter count is known (launch argument check)", KernelSignatures),
     ];
 
@@ -409,6 +410,84 @@ internal static partial class Tests
             var b = gpu.Read(0, 1)[0].Select(t => t.Id).ToArray();
             int differences = a.Zip(b).Count(p => p.First != p.Second);
             Check(differences <= Rows / 200, $"{differences} of {Rows} filtered samples differ between CPU and {device}");
+        }
+    }
+
+    // CUDA samples a greedy row with one best score in the candidate kernel's last block and leaves the other rows to the
+    // sampling kernel; the same calls with that finish turned off are the reference (two vocabularies: 20 and 293 blocks
+    // a row, so the last block also reads more partial results than it has threads). Other devices have no such path.
+    private static void SamplerGreedyRows(Device device)
+    {
+        if (device.Type != DeviceType.Cuda)
+        {
+            return;
+        }
+
+        const int Rows = 12;
+        var b = device.Backend;
+        var random = new Random(23);
+        foreach (int V in new[] { 40_000, 600_000 })
+        {
+            var logits = new float[Rows * V];
+            for (int i = 0; i < logits.Length; i++)
+            {
+                logits[i] = (float)(random.NextDouble() * 20 - 10);
+            }
+
+            Span<float> Row(int r) => logits.AsSpan(r * V, V);
+            Row(1)[777] = 50f;                                                 // two best scores
+            Row(1)[V - 3] = 50f;
+            Row(2)[1234] = float.PositiveInfinity;
+            Row(3).Fill(float.NaN);
+            Row(4).Fill(float.NegativeInfinity);
+            for (int j = 0; j < V; j += 3)
+            {
+                Row(5)[j] = float.NaN;                                         // NaN beside a best score
+            }
+
+            Row(5)[4] = 30f;
+            Row(6).Fill(-1f);
+            Row(6)[10] = 0f;                                                   // +0 and -0 tie
+            Row(6)[V / 2] = -0f;
+            Row(7).Fill(-3e38f);
+            Row(7)[99] = -2.5e38f;                                             // one best score, near overflow
+            Row(8)[V - 1] = 40f;
+            Row(9)[0] = 40f;
+            Row(10).Slice(2048 * 3, 100).Fill(60f);                           // 100 ties in one slice
+            using var x = Tensor.From(logits, [Rows, V], device);
+            foreach (var (temperature, topP, minP) in new[] { (1f, 1f, 0f), (0.7f, 0.9f, 0.05f), (1.3f, 0.5f, 0.5f) })
+            {
+                (float[] Ids, float[] Stats) Run(bool greedyRows)
+                {
+                    Idrak.Gpu.Cuda.CudaBackend.GreedyRows = greedyRows;
+                    try
+                    {
+                        using var ids = Tensor.From(new float[Rows], [Rows], device);
+                        using var stats = Tensor.From(new float[3 * Rows * 13], [3 * Rows * 13], device);
+                        for (int s = 0; s < 3; s++)
+                        {
+                            using var step = Tensor.From([(float)s], [1], device);
+                            b.SampleRows(x.Storage, ids.Storage, stats.Storage, step.Storage, Rows, V, V, 0, temperature, 1, topP, minP, 41u + (uint)s);
+                        }
+
+                        return (ids.ToArray(), stats.ToArray());
+                    }
+                    finally
+                    {
+                        Idrak.Gpu.Cuda.CudaBackend.GreedyRows = true;
+                    }
+                }
+
+                var (fastIds, fast) = Run(true);
+                var (ids, reference) = Run(false);
+                string what = $"vocabulary {V}, temperature {temperature}, top-p {topP}, min-p {minP}";
+                Check(fastIds.SequenceEqual(ids), $"{what}: tokens {string.Join(' ', fastIds)}, expected {string.Join(' ', ids)}");
+                for (int i = 0; i < fast.Length; i++)
+                {
+                    Check(BitConverter.SingleToInt32Bits(fast[i]) == BitConverter.SingleToInt32Bits(reference[i]),
+                        $"{what}: statistic {i % 13} of step {i / (13 * Rows)}, row {i / 13 % Rows} is {fast[i]}, the sampling kernel's {reference[i]}");
+                }
+            }
         }
     }
 
