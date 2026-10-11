@@ -55,10 +55,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ProfileProbes.CpuProbe, ProfileProbes.HeapProbe, ProfileProbes.KernelsProbe, ProfileProbes.MemoryProbe, ProfileProbes.OperationsProbe |  | — | Abstraction |
+| `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.HeapProbe, ProfileProbes.KernelsProbe, ProfileProbes.MemoryProbe, ProfileProbes.OperationsProbe |  | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileWriter` | interface | public | — | ProfileWriters.CsvWriter, ProfileWriters.JsonWriter, ProfileWriters.TableWriter |  | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Diagnostics.ProfileProbes` | registry | public | — |  | cpu, heap, kernels, memory, operations | — | Abstraction |
+| `Idrak.Abstraction.Diagnostics.ProfileProbes` | registry | public | Backend |  | bandwidth, cpu, heap, kernels, memory, operations | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ProfileWriters` | registry | public | — |  | csv, json, markdown, table | — | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
