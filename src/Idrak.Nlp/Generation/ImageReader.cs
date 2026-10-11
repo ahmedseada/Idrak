@@ -86,6 +86,12 @@ public sealed record ImageReadRequest(ChatImage Image, string Prompt)
     public int? Seed { get; init; }
 
     /// <summary>
+    /// Encode the prompt with the tokenizer's special tokens added, as a transformers pipeline that renders the template
+    /// to text and then calls the processor on it does (see <see cref="ChatRequest.AddSpecialTokens"/>). Off by default.
+    /// </summary>
+    public bool AddSpecialTokens { get; init; }
+
+    /// <summary>
     /// Ends the answer when it repeats one run of tokens this many times in a row (0 = off; see
     /// <see cref="GenerationOptions.RepeatStop"/>): a read caught in a loop stops instead of filling <see cref="MaxTokens"/>.
     /// </summary>
@@ -185,7 +191,7 @@ public sealed class ImageReader : IDisposable
         };
         return _chat.Stream(new ChatRequest(messages, Options: options)
         {
-            ImageTransforms = request.Transforms, VisionOptions = request.VisionOptions,
+            ImageTransforms = request.Transforms, VisionOptions = request.VisionOptions, AddSpecialTokens = request.AddSpecialTokens,
         }, cancellationToken);
     }
 

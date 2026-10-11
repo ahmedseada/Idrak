@@ -1296,6 +1296,7 @@ public sealed record Idrak.Abstraction.Generation.ChatRequest : System.IEquatabl
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools { get; init; }
+  public bool AddSpecialTokens { get; init; }
   public bool? Think { get; init; }
 
 public abstract class Idrak.Abstraction.Generation.ChatTemplate
@@ -1306,6 +1307,7 @@ public abstract class Idrak.Abstraction.Generation.ChatTemplate
   public virtual Idrak.Abstraction.Generation.IToolCallParser CreateToolCallParser(Idrak.Abstraction.Generation.ToolCallContext context)
   public virtual Idrak.Abstraction.Generation.ToolCallFormat ToolCalls { get; }
   public virtual System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
+  public virtual string AddedPrefix { get; }
   public virtual string ToolCallFormatName { get; }
 
 public static class Idrak.Abstraction.Generation.ChatTemplates

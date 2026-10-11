@@ -38,6 +38,14 @@ public sealed record ChatRequest(IReadOnlyList<ChatMessage> Messages, IReadOnlyL
     /// a fine-tune's card asks for. A text-only model ignores them.
     /// </summary>
     public ImageTransformPipeline? ImageTransforms { get; init; }
+
+    /// <summary>
+    /// Encode the rendered prompt with the tokenizer's special tokens added (<see cref="ChatTemplate.AddedPrefix"/>), as
+    /// transformers does when a pipeline renders the template to text and then calls the processor or tokenizer on it
+    /// without <c>add_special_tokens=False</c> (Gemma's prompt then starts with two &lt;bos&gt;). Off by default: the
+    /// template's tokens alone, as the model was trained on; on to match such a pipeline token for token.
+    /// </summary>
+    public bool AddSpecialTokens { get; init; }
 }
 
 /// <summary>A streamed piece of the assistant's reply; the final one carries the reason, the full message and statistics.</summary>

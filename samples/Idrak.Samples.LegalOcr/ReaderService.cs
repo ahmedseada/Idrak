@@ -80,9 +80,10 @@ public sealed record TransformersGeneration(bool Found, string? File, bool Sampl
 /// <param name="TopP">Sample among the most likely words holding this probability (1 = off); the settings' when null.</param>
 /// <param name="MinP">Drop words less than this fraction as likely as the best (0 = off); the settings' when null.</param>
 /// <param name="Seed">The sampling seed (a new one each read when null; the result reports it).</param>
+/// <param name="AddSpecialTokens">Encode the prompt with the tokenizer's special tokens added, as a transformers pipeline calling the processor on the rendered template does (Gemma's: a second &lt;bos&gt;); off when null.</param>
 public sealed record ReadRequest(string? Image = null, string? Prompt = null, string? Preprocessing = null, int? MaxTokens = null, bool? PanAndScan = null,
     float? RepeatPenalty = null, float? PresencePenalty = null, float? FrequencyPenalty = null, int? RepeatLastN = null, int? RepeatStop = null,
-    bool? Sample = null, float? Temperature = null, int? TopK = null, float? TopP = null, float? MinP = null, int? Seed = null);
+    bool? Sample = null, float? Temperature = null, int? TopK = null, float? TopP = null, float? MinP = null, int? Seed = null, bool? AddSpecialTokens = null);
 
 /// <summary>
 /// The app's readers: the models of the settings, one on the device at a time (the library's
@@ -527,7 +528,7 @@ public sealed class ReaderService : IDisposable
             MaxTokens = maxTokens, Transforms = pipeline, VisionOptions = vision,
             RepeatPenalty = Math.Clamp(request.RepeatPenalty ?? g.RepeatPenalty, 0.5f, 3f), PresencePenalty = request.PresencePenalty ?? g.PresencePenalty,
             FrequencyPenalty = request.FrequencyPenalty ?? g.FrequencyPenalty, RepeatLastN = Math.Clamp(request.RepeatLastN ?? g.RepeatLastN, 0, 4096),
-            RepeatStop = Math.Clamp(request.RepeatStop ?? g.RepeatStop, 0, 100),
+            RepeatStop = Math.Clamp(request.RepeatStop ?? g.RepeatStop, 0, 100), AddSpecialTokens = request.AddSpecialTokens ?? false,
         };
         if (request.Sample ?? g.Sample)
         {

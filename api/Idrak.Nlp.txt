@@ -228,6 +228,7 @@ public sealed record Idrak.Generation.ImageReadRequest : System.IEquatable<Idrak
   public Idrak.Abstraction.Generation.ChatImage Image { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public ImageReadRequest(Idrak.Abstraction.Generation.ChatImage Image, string Prompt)
+  public bool AddSpecialTokens { get; init; }
   public bool Sample { get; init; }
   public float FrequencyPenalty { get; init; }
   public float MinP { get; init; }
@@ -785,10 +786,12 @@ public sealed class Idrak.Nlp.JinjaChatTemplate : Idrak.Abstraction.Generation.C
   public Idrak.Abstraction.Generation.ToolCallProbe ProbeToolCalls()
   public JinjaChatTemplate(string source, System.Collections.Generic.IReadOnlyList<string> stopSequences, string bosToken = "", string eosToken = "", string? toolSource = null)
   public System.Collections.Generic.IReadOnlyDictionary<string, object?> Variables { get; init; }
+  public bool AddBosToken { get; init; }
   public override (string, string) ThinkTags { get; }
   public override Idrak.Abstraction.Generation.ToolCallFormat ToolCalls { get; }
   public override System.Collections.Generic.IReadOnlyList<string> StopSequences { get; }
   public override System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
+  public override string AddedPrefix { get; }
   public override string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think)
   public override string ToolCallFormatName { get; }
   public static Idrak.Nlp.JinjaChatTemplate? Load(string folder, Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)

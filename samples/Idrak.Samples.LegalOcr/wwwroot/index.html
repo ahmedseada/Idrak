@@ -195,6 +195,7 @@
       <div class="note">Sent as: <span class="mono" id="pipelineText"></span></div>
       <h2>Model options</h2>
       <label class="check"><input type="checkbox" id="panAndScan"> Pan and scan (a tall or wide page is also read as 2 to 4 crops, each its own image: finer detail, more prompt tokens)</label>
+      <label class="check"><input type="checkbox" id="addSpecialTokens"> Add the tokenizer's special tokens to the prompt (as a transformers pipeline that calls the processor on the rendered template: Gemma's prompt then starts with a second &lt;bos&gt;)</label>
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Generation</h2><button class="btn" id="genReset" type="button" style="padding:3px 10px">Reset to the app's values</button></div>
       <div class="step-inputs" id="generation"></div>
       <div class="note">Greedy reading takes the most likely word each time; sampling draws it from the model's probabilities, as transformers' generate() does when the model's generation_config.json says do_sample. A penalty above its "off" value makes words already used less likely; the loop stop ends an answer that repeats one phrase.</div>
@@ -571,6 +572,7 @@ $("preset").onchange = () => {
   if (p === "custom") { update(true); return; }
   setSteps(p === "model" ? current?.preprocessing ?? "" : presets[p], p);
   if (p === "docker") dockerPreset();
+  else $("addSpecialTokens").checked = false;
 };
 
 // Docker-Preset: the container's prompt, token limit and pan and scan, and generate()'s sampling from the model's
@@ -579,6 +581,7 @@ async function dockerPreset() {
   $("prompt").value = "Extract details to JSON.";
   $("maxTokens").value = 2048;
   $("panAndScan").checked = false;
+  $("addSpecialTokens").checked = true;                                     // processor(text=apply_chat_template(...)): two <bos>
   let t = null;
   try { const r = await fetch(`/api/models/${encodeURIComponent(current?.id ?? "")}/transformers-generation`); if (r.ok) t = await r.json(); } catch { }
   t ??= { found: false, sample: false, temperature: 1, topK: 50, topP: 1, minP: 0, repeatPenalty: 1, weights: "?" };
@@ -587,7 +590,7 @@ async function dockerPreset() {
   saveGeneration();
   renderGeneration();
   const how = t.sample ? `sampling (temperature ${t.temperature}, top-k ${t.topK}, top-p ${t.topP}${t.minP ? `, min-p ${t.minP}` : ""})` : "greedy (do_sample is off)";
-  $("readNote").textContent = `Docker-Preset: the container's steps, prompt and 2048 tokens; ${how}, from `
+  $("readNote").textContent = `Docker-Preset: the container's steps, prompt and 2048 tokens, its prompt's second <bos>; ${how}, from `
     + (t.found ? "the model's generation_config.json" : "transformers' defaults (the model's generation_config.json is not on disk yet: load the model, then pick the preset again)")
     + `. Weights: the container runs bf16; this app loaded ${t.weights}${/^(bf16|bfloat16)$/i.test(t.weights) ? "" : " (start the app with --LegalOcr:Weights=bf16 to match them too)"}.`;
 }
@@ -783,7 +786,7 @@ function refreshRead() {
 $("evaluate").onclick = evaluate;
 $("evaluateStop").onclick = () => evaluating && evaluating.abort();
 async function evaluate() {
-  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, ...generationBody() };
+  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
   const count = Math.max(0, Number($("evaluateCount").value) || 0);
   evaluating = new AbortController();
   $("evaluate").disabled = true; $("evaluateStop").disabled = false; refreshRead();
@@ -816,7 +819,7 @@ async function evaluate() {
 $("read").onclick = () => reading ? reading.abort() : read();
 
 async function read() {
-  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, ...generationBody() };
+  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
   if (pageIndex == null) body.image = imageData;
   const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
   reading = new AbortController();
