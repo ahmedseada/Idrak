@@ -104,6 +104,11 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Tool {e.Tool}({e.Arguments}): {(e.Succeeded ? "ok" : "failed: " + e.Error)} in {e.Duration.TotalMilliseconds:F1} ms"));
 
     /// <inheritdoc />
+    public void OnInferenceStage(in InferenceStage e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Read {e.Stage} on {e.Device}: {e.Duration.TotalMilliseconds:F2} ms ({e.Count:N0}{(e.Bytes > 0 ? $", {e.Bytes / 1048576.0:F1} MB" : "")})"));
+
+    /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _out.WriteLine(e.Kind switch
     {
         EngineEventKind.ModelLoaded => string.Create(CultureInfo.InvariantCulture, $"Engine: loaded {e.Model} in {e.Duration.TotalMilliseconds:F1} ms"),
@@ -286,6 +291,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnToolCall(in ToolCallCompleted e) => Write(e);
 
     /// <inheritdoc />
+    public void OnInferenceStage(in InferenceStage e) => Write(e);
+
+    /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => Write(e);
 
     /// <inheritdoc />
@@ -348,6 +356,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnToolCall(in ToolCallCompleted e) => _channel.OnToolCall(in e);
+
+    /// <inheritdoc />
+    public void OnInferenceStage(in InferenceStage e) => _channel.OnInferenceStage(in e);
 
     /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _channel.OnEngine(in e);
@@ -494,6 +505,14 @@ public static class TelemetryJson
                 w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
                 w.WriteBoolean("succeeded", e.Succeeded);
                 if (e.Error is { } error) w.WriteString("error", error);
+                break;
+            case InferenceStage e:
+                w.WriteString("event", "inference_stage");
+                w.WriteString("stage", e.Stage.ToString());
+                w.WriteString("device", e.Device);
+                w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
+                w.WriteNumber("count", e.Count);
+                w.WriteNumber("bytes", e.Bytes);
                 break;
             case EngineEvent e:
                 w.WriteString("event", "engine");

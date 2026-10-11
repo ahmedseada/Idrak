@@ -179,6 +179,45 @@ public enum EngineEventKind
 /// <param name="Reason">Why a request was rejected, or null.</param>
 public readonly record struct EngineEvent(EngineEventKind Kind, string Model, TimeSpan Duration, TimeSpan QueueWait, int BatchSize, string? Reason);
 
+/// <summary>A stage of reading an answer from a prompt (<see cref="InferenceStage"/>).</summary>
+public enum InferenceStageKind
+{
+    /// <summary>An image's bytes decoded to pixels: Count the pixel values, Bytes the encoded bytes.</summary>
+    ImageDecode,
+
+    /// <summary>An image's transforms (a request's or the reader's): Count the pixel values out.</summary>
+    ImageTransforms,
+
+    /// <summary>Images through the vision encoder: Count the images, Bytes their features.</summary>
+    Encoder,
+
+    /// <summary>The prompt's pass, to its first token read back: Count the prompt tokens fed.</summary>
+    Prefill,
+
+    /// <summary>Decoding steps since the last chunk, to their tokens read back: Count the tokens.</summary>
+    DecodeChunk,
+
+    /// <summary>A decoding step recorded as a device graph: Bytes the memory the graph keeps.</summary>
+    GraphCapture,
+
+    /// <summary>A layer's key/value cache allocated: Count its positions, Bytes its memory.</summary>
+    CacheAllocation,
+}
+
+/// <summary>
+/// Published at <c>TelemetryLevel.Inference</c> for each stage of reading an answer (a read of a page: its image decoded and
+/// transformed, encoded, the prompt's pass, each chunk of decoding steps, a step recorded as a graph, each cache
+/// allocated), with its sizes. Durations are host time: device work still queued at the end of a stage counts in the next
+/// one unless <c>Telemetry.SynchronizeForTiming</c> waits for it (the prefill and decode chunks end with their tokens read
+/// back, so they are complete).
+/// </summary>
+/// <param name="Stage">Which stage.</param>
+/// <param name="Device">The kind of device it ran on ("cpu", "cuda", …).</param>
+/// <param name="Duration">How long it took.</param>
+/// <param name="Count">What the stage counts (<see cref="InferenceStageKind"/> says what): images, tokens, positions, values.</param>
+/// <param name="Bytes">The bytes it made or read (<see cref="InferenceStageKind"/> says which), or 0.</param>
+public readonly record struct InferenceStage(InferenceStageKind Stage, string Device, TimeSpan Duration, long Count, long Bytes);
+
 /// <summary>
 /// Published when a device fails (<c>Devices.DeviceException</c>), to the hooks listening at
 /// <c>TelemetryLevel.Devices</c>: once when the error is raised, or once by the dispatcher when it retried the operation
