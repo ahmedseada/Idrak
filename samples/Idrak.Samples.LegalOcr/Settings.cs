@@ -199,4 +199,7 @@ public sealed record TuningDefaults
 
     /// <summary>Save the adapter every this many steps (0: at the end only).</summary>
     public int SaveEvery { get; init; }
+
+    /// <summary>The evaluation loss over the first this many evaluation pages (0: all of them; each is a forward pass, twice a run).</summary>
+    public int LossPages { get; init; }
 }

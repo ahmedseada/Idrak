@@ -35,51 +35,63 @@ internal static partial class Tests
                           + $"(quality 90, 4:2:0), grey PNG {png.Length / 1024} KiB; after the card's pipeline {seen.Width} x {seen.Height}");
         Console.WriteLine($"{"stage",-44} {"cold ms",9} {"warm ms",9} {"MB warm",9}  output SHA-256");
 
-        Stage("jpeg decode (colour page)", () => Hash(ChatImageDecoder.Decode(jpeg).Pixels));
-        Stage("png decode (grey page)", () => Hash(ChatImageDecoder.Decode(png).Pixels));
+        Stage("jpeg decode (colour page)", () => ChatImageDecoder.Decode(jpeg).Pixels);
+        Stage("png decode (grey page)", () => ChatImageDecoder.Decode(png).Pixels);
         Stage("size from the header (jpeg)", () => ChatImageDecoder.Size(jpeg) is var (w, h) ? $"{w} x {h}" : "none");
-        Stage("card: grayscale,max_width=1024,contrast=1.5", () => Hash(card.Apply(decoded).Pixels));
+        Stage("card: grayscale,max_width=1024,contrast=1.5", () => card.Apply(decoded).Pixels);
         foreach (string step in new[] { "grayscale", "max_width=1024", "contrast=1.5", "brightness=1.1", "sharpness=1.5", "autocontrast=1" })
         {
             var pipeline = ImageTransformPipeline.Parse(step);
-            Stage($"{step} (colour page)", () => Hash(pipeline.Apply(decoded).Pixels));
+            Stage($"{step} (colour page)", () => pipeline.Apply(decoded).Pixels);
         }
 
         foreach (string step in new[] { "equalize", "gamma=0.8", "blur=0.5", "unsharp=2,percent=150,threshold=3", "median=3", "min_filter=3", "max_filter=3",
                      "binarize", "invert", "pad=32,fill=255", "scale=1.5", "jpeg=95" })
         {
             var pipeline = ImageTransformPipeline.Parse(step);
-            Stage($"{step} (grey 1024)", () => Hash(pipeline.Apply(seen).Pixels));
+            Stage($"{step} (grey 1024)", () => pipeline.Apply(seen).Pixels);
         }
 
-        Stage("preprocess to 896 (grey 1024 page)", () => Hash(preprocessor.Pixels(seen)));
-        Stage("preprocess to 896 (colour page)", () => Hash(preprocessor.Pixels(decoded)));
-        Stage("png encode (the page as the model sees it)", () => Hash(ImageEncoders.Get("png").Encode(seen)));
+        Stage("preprocess to 896 (grey 1024 page)", () => preprocessor.Pixels(seen));
+        Stage("preprocess to 896 (colour page)", () => preprocessor.Pixels(decoded));
+        Stage("png encode (the page as the model sees it)", () => ImageEncoders.Get("png").Encode(seen));
         return 0;
     }
 
-    // Times one stage: a cold call, then the median of five, and the bytes allocated by those five (every thread).
-    private static void Stage(string name, Func<string> run)
+    // Times one stage: a cold call, then the median of five, and the bytes allocated by those five (every thread). Only
+    // the stage is timed; its output's hash (pixels, file bytes or text) is taken after each call and must not change.
+    private static void Stage(string name, Func<object> run)
     {
         var clock = Stopwatch.StartNew();
-        string output = run();
+        object result = run();
         double cold = clock.Elapsed.TotalMilliseconds;
+        string output = Describe(result);
         var times = new double[5];
-        long before = GC.GetTotalAllocatedBytes(precise: true);
+        long allocated = 0;
         for (int i = 0; i < times.Length; i++)
         {
+            long before = GC.GetTotalAllocatedBytes(precise: true);
             long start = Stopwatch.GetTimestamp();
-            string again = run();
+            result = run();
             times[i] = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            allocated += GC.GetTotalAllocatedBytes(precise: true) - before;
+            string again = Describe(result);
             if (again != output)
             {
                 throw new InvalidOperationException($"{name}: run {i + 2} gave {again}, the first {output}");
             }
         }
 
-        double allocated = (GC.GetTotalAllocatedBytes(precise: true) - before) / (double)times.Length / (1 << 20);
         Array.Sort(times);
-        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{name,-44} {cold,9:F1} {times[2],9:F1} {allocated,9:F1}  {output}"));
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"{name,-44} {cold,9:F1} {times[2],9:F1} {allocated / (double)times.Length / (1 << 20),9:F1}  {output}"));
+
+        static string Describe(object value) => value switch
+        {
+            float[] pixels => Hash(pixels),
+            byte[] bytes => Hash(bytes),
+            _ => value.ToString() ?? "",
+        };
     }
 
     private static string Hash(float[] values) => Hash(MemoryMarshal.AsBytes(values.AsSpan()));
