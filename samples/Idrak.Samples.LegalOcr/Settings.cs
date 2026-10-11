@@ -43,6 +43,9 @@ public sealed record LegalOcrSettings
     /// <summary>"auto" (the best device found), "cpu", "cuda", "cuda:N".</summary>
     public string Device { get; init; } = "auto";
 
+    /// <summary>The model (an id of <see cref="Models"/>) loaded before the server starts, or null to pick one on the page.</summary>
+    public string? LoadAtStart { get; init; }
+
     /// <summary>How the projections are stored: "bf16" (half of float32; exact for the bfloat16 checkpoints), "int8", "int4" or "f32".</summary>
     public string Weights { get; init; } = "bf16";
 

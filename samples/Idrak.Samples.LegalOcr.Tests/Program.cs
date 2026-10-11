@@ -80,6 +80,21 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         var loaded = service.Models().Where(m => m.Loaded).Select(m => m.Id).ToList();
         Check(loaded.SequenceEqual(["b"]), $"loaded: {string.Join(", ", loaded)}");
     }),
+    ("legal start: LoadAtStart's model is ready when the load returns, with progress lines and the memory; a model not in the switch is reported", () =>
+    {
+        using var service = Service(Settings(("a", tinyGemma)));
+        var output = new StringWriter();
+        Check(StartupLoad.RunAsync(service, "a", output, live: false).GetAwaiter().GetResult(), output.ToString());
+        Check(service.Status is { State: ReaderState.Ready, Model: "a" } && output.ToString().Contains("is ready", StringComparison.Ordinal)
+              && output.ToString().Contains("in use", StringComparison.Ordinal), output.ToString());
+        string line = StartupLoad.Line(service.Status with { Message = "Downloading o/m: model.safetensors", Download = new DownloadInfo("model.safetensors", 512L << 20, 1L << 30, 4) },
+            TimeSpan.FromSeconds(75), 128 << 20);
+        Check(line.StartsWith("Downloading o/m: model.safetensors · 512 MB of 1.00 GB at 128 MB/s, 4 s left · 1 min 15 s", StringComparison.Ordinal), line);
+
+        var missing = new StringWriter();
+        Check(!StartupLoad.RunAsync(service, "nope", missing, live: false).GetAwaiter().GetResult() && missing.ToString().StartsWith("Not loaded at start (nope)", StringComparison.Ordinal),
+            missing.ToString());
+    }),
     ("legal reader: a model that cannot be loaded says why; reading before loading is an error event", () =>
     {
         var settings = Settings(("a", tinyGemma)) with

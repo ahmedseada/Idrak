@@ -130,20 +130,39 @@ public sealed class ReaderService : IDisposable
     /// <exception cref="InvalidOperationException">Fine-tuning has the device.</exception>
     public void StartLoad(string id)
     {
+        var model = Loadable(id);
+        _loading?.Cancel();
+        var cancel = _loading = new CancellationTokenSource();
+        _ = Task.Run(() => LoadAsync(model, cancel.Token));
+    }
+
+    /// <summary>
+    /// Loads <paramref name="id"/> (downloading it first when its files are missing) and returns when it is ready (true)
+    /// or could not be loaded (false; the status says why). The status reports it as it goes.
+    /// </summary>
+    /// <exception cref="ArgumentException">No such model, or it cannot be loaded as configured.</exception>
+    /// <exception cref="InvalidOperationException">Fine-tuning has the device.</exception>
+    public Task<bool> LoadAsync(string id, CancellationToken cancellationToken = default) => LoadReadyAsync(Loadable(id), cancellationToken);
+
+    private async Task<bool> LoadReadyAsync(ReaderModel model, CancellationToken cancellationToken)
+    {
+        _loading?.Cancel();
+        var cancel = _loading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        await Task.Run(() => LoadAsync(model, cancel.Token), CancellationToken.None);
+        var status = Status;
+        return status.State == ReaderState.Ready && string.Equals(status.Model, model.Id, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // The model `id` when it can start loading now.
+    private ReaderModel Loadable(string id)
+    {
         var model = Find(id);
         if (_busy is { } busy)
         {
             throw new InvalidOperationException(busy);
         }
 
-        if (Unusable(model) is { } reason)
-        {
-            throw new ArgumentException($"{model.Name}: {reason}");
-        }
-
-        _loading?.Cancel();
-        var cancel = _loading = new CancellationTokenSource();
-        _ = Task.Run(() => LoadAsync(model, cancel.Token));
+        return Unusable(model) is { } reason ? throw new ArgumentException($"{model.Name}: {reason}") : model;
     }
 
     /// <summary>Unloads the model and gives its device memory back.</summary>

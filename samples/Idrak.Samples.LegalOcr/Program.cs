@@ -38,6 +38,25 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 LegalOcrApi.Map(app);
+
+// The model of LegalOcr:LoadAtStart is on the device before the server takes requests (Ctrl+C while it loads exits).
+if (settings.LoadAtStart is { Length: > 0 } first)
+{
+    using var stop = new CancellationTokenSource();
+    ConsoleCancelEventHandler cancel = (_, e) =>
+    {
+        e.Cancel = true;
+        stop.Cancel();
+    };
+    Console.CancelKeyPress += cancel;
+    await StartupLoad.RunAsync(app.Services.GetRequiredService<ReaderService>(), first, Console.Out, !Console.IsOutputRedirected, stop.Token);
+    Console.CancelKeyPress -= cancel;
+    if (stop.IsCancellationRequested)
+    {
+        return;
+    }
+}
+
 app.Run();
 
 /// <summary>The app's HTTP API (the page in wwwroot uses it; the tests call it in process).</summary>
