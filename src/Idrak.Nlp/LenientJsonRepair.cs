@@ -13,11 +13,16 @@ namespace Idrak.Nlp;
 /// The library's JSON repair (<see cref="JsonRepairs.Lenient"/>), as Python's json_repair repairs a model's JSON
 /// before parsing it: text or a code fence around it, strings and brackets left open by an answer cut at its token limit,
 /// trailing or missing commas, single-quoted and curly-quoted strings, unquoted keys, Python's True, False and None, and
-/// quotes inside a value (a quote ends a string only when what follows it can follow a string). JSON that parses as it is
-/// comes back unchanged and not marked repaired.
+/// quotes inside a value (a quote ends a string only when what follows it can follow a string), and a key repeated in an
+/// object (the last value kept, in the first one's place, as Python's json reads it). JSON that parses as it is comes back
+/// unchanged and not marked repaired.
 /// </summary>
 internal sealed class LenientJsonRepair : IJsonRepair
 {
+    // Repeated keys refused while parsing: a JsonObject parsed with them throws only when it is first read (an
+    // ArgumentException far from here, out of a metric's loop), so they go to the reader, which keeps the last value.
+    private static readonly JsonDocumentOptions Strict = new() { AllowDuplicateProperties = false };
+
     public string Name => JsonRepairs.Lenient;
 
     public string Summary => "the first object or array of the text, repaired as json_repair does (open strings and brackets, commas, quotes, bare keys, Python literals, code fences)";
@@ -34,7 +39,7 @@ internal sealed class LenientJsonRepair : IJsonRepair
 
         try
         {
-            return new JsonRepairResult(JsonNode.Parse(body.AsSpan(start).ToString()), Repaired: false);
+            return new JsonRepairResult(JsonNode.Parse(body.AsSpan(start).ToString(), documentOptions: Strict), Repaired: false);
         }
         catch (JsonException)
         {
