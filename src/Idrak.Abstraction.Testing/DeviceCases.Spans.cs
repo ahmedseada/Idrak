@@ -195,6 +195,53 @@ public static partial class DeviceCases
             c.ExpectClose(evv, Read(dv), 1e-3f, $"{what}: dvalues");
         }
 
+        // Read in place from a self-attention layer's packed rows [batch, rows, (heads + 2·kvHeads)·dim] (AttentionSpansStrided),
+        // written to [batch, rows, heads·dim]: the plain loops over the heads gathered from the rows.
+        foreach (string rule in new[] { "bidirectional", "random", "image blocks" })
+        {
+            int batch = c.Size(1, 3), kvHeads = c.Size(1, 2), group = c.Random.Next(1, 3), heads = kvHeads * group, rows = c.Size(1, 130);
+            int dim = c.Random.Next(2) == 0 ? 4 * c.Size(1, 20) : c.Size(1, 40), width = (heads + 2 * kvHeads) * dim;
+            int tables = c.Random.Next(2) == 0 ? 1 : batch * heads, allHeads = batch * heads, allKv = batch * kvHeads;
+            float scale = 1f / MathF.Sqrt(dim);
+            var spans = KeySpans.Concat([.. Enumerable.Range(0, tables).Select(_ => SpanRule(c, rule, rows, rows))]);
+            float[] sv = [.. spans.Starts.Select(s => (float)s)], ev = [.. spans.Ends.Select(e => (float)e)];
+            float[] packed = c.Values(batch * rows * width, 2f);
+            float[] qv = new float[allHeads * rows * dim], kv = new float[allKv * rows * dim], vv = new float[allKv * rows * dim];
+            for (int bt = 0; bt < batch; bt++)
+            {
+                for (int i = 0; i < rows; i++)
+                {
+                    int row = (bt * rows + i) * width;
+                    for (int h = 0; h < heads; h++)
+                    {
+                        Array.Copy(packed, row + h * dim, qv, ((bt * heads + h) * rows + i) * dim, dim);
+                    }
+
+                    for (int g = 0; g < kvHeads; g++)
+                    {
+                        Array.Copy(packed, row + (heads + g) * dim, kv, ((bt * kvHeads + g) * rows + i) * dim, dim);
+                        Array.Copy(packed, row + (heads + kvHeads + g) * dim, vv, ((bt * kvHeads + g) * rows + i) * dim, dim);
+                    }
+                }
+            }
+
+            var (heads3, _) = SpanAttentionReference(qv, kv, vv, sv, ev, allHeads, allKv, allHeads / tables, rows, rows, dim, scale, default);
+            var expected = new float[batch * rows * heads * dim];
+            for (int hh = 0; hh < allHeads; hh++)
+            {
+                for (int i = 0; i < rows; i++)
+                {
+                    Array.Copy(heads3, (hh * rows + i) * dim, expected, ((hh / heads * rows + i) * heads + hh % heads) * dim, dim);
+                }
+            }
+
+            Storage source = c.Storage(packed), y = Random(c, expected.Length);
+            b.AttentionSpansStrided(source, 0, source, (long)heads * dim, source, (long)(heads + kvHeads) * dim, width, width, c.Storage(sv), c.Storage(ev), y, batch,
+                heads, kvHeads, allHeads / tables, rows, dim, scale);
+            c.ExpectClose(expected, Read(y), 1e-4f,
+                $"attention over {rule} ranges read in place ({batch} × {rows} rows, {heads} heads, {kvHeads} key/value heads, {tables} tables, dim {dim})");
+        }
+
         // The rules themselves, on a small sequence whose ranges are known (inclusive last keys in the comments).
         c.Expect(KeySpans.ImageBlocks(8, [(2, 3)]).Ends.SequenceEqual([1, 2, 5, 5, 5, 6, 7, 8]), "image blocks: rows 2 to 4 see keys up to 4");
         c.Expect(KeySpans.ImageBlocks(8, [(2, 3)], window: 2).Starts.SequenceEqual([0, 0, 1, 2, 3, 4, 5, 6]), "image blocks in a window of 2 start at i - 1");

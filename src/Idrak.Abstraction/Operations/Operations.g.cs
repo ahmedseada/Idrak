@@ -149,15 +149,16 @@ internal static class OperationIndex
     public const int AttentionSegmentedBackward = 133;
     public const int AttentionTiled = 134;
     public const int AttentionSpans = 135;
-    public const int AttentionSpansBackward = 136;
-    public const int DecoderMask = 137;
-    public const int KeyValueWrite = 138;
-    public const int SampleRows = 139;
-    public const int PenalizeRows = 140;
-    public const int HistoryPush = 141;
+    public const int AttentionSpansStrided = 136;
+    public const int AttentionSpansBackward = 137;
+    public const int DecoderMask = 138;
+    public const int KeyValueWrite = 139;
+    public const int SampleRows = 140;
+    public const int PenalizeRows = 141;
+    public const int HistoryPush = 142;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 142;
+    public const int Count = 143;
 }
 
 /// <summary>
@@ -1199,6 +1200,19 @@ public static class OperationKernels
     /// scores are never stored whole: the cost in memory follows rows + keys, not rows · keys.
     /// </summary>
     public delegate void AttentionSpans(Backend backend, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionSpansStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AttentionSpans"/> of a self-attention layer read in place from rows [batch, rows, *] (its packed
+    /// projections: no copies of the heads), for inference (no log-sum-exp): query head h &lt; heads of batch b at row i is
+    /// q[qOffset + (b·rows + i)·qRow + h·dim .. + dim], its key/value head g = h / (heads / kvHeads) reads keys and values
+    /// k / v[offset + (b·rows + c)·kRow + g·dim .. + dim] for c &lt; rows, and the output is written to y[(b·rows + i)·heads·dim
+    /// + h·dim .. + dim] ([batch, rows, heads·dim]). Head b·heads + h reads the ranges of table (b·heads + h) /
+    /// headsPerTable, as AttentionSpans' heads do. Offsets and row strides in floats; q, k and v may be one storage at three
+    /// offsets. By default the heads are copied out to [batch·heads, rows, dim] (keys and values to [batch·kvHeads, rows,
+    /// dim]), AttentionSpans runs on them and its output is copied back: a device's own kernel gives those values.
+    /// </summary>
+    public delegate void AttentionSpansStrided(Backend backend, Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale);
 
     /// <summary>
     /// A kernel for <see cref="Ops.AttentionSpansBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -2297,6 +2311,19 @@ public static partial class Ops
         new("AttentionSpans", "AttentionSpansKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionSpans, typeof(OperationKernels.AttentionSpans), KernelSource.Host);
 
     /// <summary>
+    /// <see cref="Backend.AttentionSpans"/> of a self-attention layer read in place from rows [batch, rows, *] (its packed
+    /// projections: no copies of the heads), for inference (no log-sum-exp): query head h &lt; heads of batch b at row i is
+    /// q[qOffset + (b·rows + i)·qRow + h·dim .. + dim], its key/value head g = h / (heads / kvHeads) reads keys and values
+    /// k / v[offset + (b·rows + c)·kRow + g·dim .. + dim] for c &lt; rows, and the output is written to y[(b·rows + i)·heads·dim
+    /// + h·dim .. + dim] ([batch, rows, heads·dim]). Head b·heads + h reads the ranges of table (b·heads + h) /
+    /// headsPerTable, as AttentionSpans' heads do. Offsets and row strides in floats; q, k and v may be one storage at three
+    /// offsets. By default the heads are copied out to [batch·heads, rows, dim] (keys and values to [batch·kvHeads, rows,
+    /// dim]), AttentionSpans runs on them and its output is copied back: a device's own kernel gives those values.
+    /// </summary>
+    public static readonly Operation AttentionSpansStrided =
+        new("AttentionSpansStrided", "AttentionSpansStridedKernel", "Storage,Int64,Storage,Int64,Storage,Int64,Int32,Int32,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single", OperationIndex.AttentionSpansStrided, typeof(OperationKernels.AttentionSpansStrided), KernelSource.Composed);
+
+    /// <summary>
     /// The gradients of <see cref="Backend.AttentionSpans"/> given its output, each row's log-sum-exp and dOutput (output's
     /// layout): with P_c = exp(s_c - logSumExp) over the row's range and Δ = dOutput · output, adds Σ_c scale · P_c ·
     /// (dOutput · values[g, c] - Δ) · keys[g, c] (times the cap's slope with a cap) to dq [heads, rows, dim], and to dkeys
@@ -2490,6 +2517,7 @@ public static partial class Ops
         AttentionSegmentedBackward,
         AttentionTiled,
         AttentionSpans,
+        AttentionSpansStrided,
         AttentionSpansBackward,
         DecoderMask,
         KeyValueWrite,

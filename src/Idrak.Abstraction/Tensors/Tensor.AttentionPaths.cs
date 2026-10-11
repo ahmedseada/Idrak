@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 
 namespace Idrak.Abstraction;
 
@@ -97,6 +98,92 @@ public sealed partial class Tensor
         return ComposedChosen(q, keys, values, starts, ends, scale, everyKey, mask, out int tables)
             ? ComposedAttention(q, keys, values, everyKey ? null : mask, scale, tables)
             : AttentionSpans(q, keys, values, starts, ends, scale);
+    }
+
+    /// <summary>
+    /// <see cref="AttentionFastest"/> for a self-attention layer's packed projections, read in place: the heads are never
+    /// copied out (<see cref="Backend.AttentionSpansStrided"/>). <paramref name="packed"/> is [batch, rows, (heads +
+    /// 2·kvHeads)·dim] (each row's queries, then its keys, then its values, head after head); the result is [batch, rows,
+    /// heads·dim]. Null where AttentionFastest would take the composed scores (forced, measured faster, or the device has no
+    /// span kernel for the head size: the caller splits the heads for them) and while the gradient is recorded (this
+    /// records none). Otherwise the same values as splitting the heads ([batch·heads, rows, dim]), AttentionFastest and
+    /// joining them. The ranges as AttentionFastest's for the batch·heads query heads.
+    /// </summary>
+    /// <param name="packed">[batch, rows, (heads + 2·kvHeads)·dim].</param>
+    /// <param name="heads">Query heads per row.</param>
+    /// <param name="kvHeads">Key/value heads per row (a divisor of heads).</param>
+    /// <param name="dim">The head size.</param>
+    /// <param name="starts">Each row's first key, as for <see cref="AttentionSpans"/> (one table, or one per batch·heads / tables heads).</param>
+    /// <param name="ends">Each row's end (exclusive).</param>
+    /// <param name="scale">The scores' scale.</param>
+    /// <param name="everyKey">True when every row sees every key (the composed path needs no mask; without it only the key ranges run).</param>
+    /// <exception cref="ArgumentException">The shapes do not fit together.</exception>
+    public static Tensor? AttentionFastestPacked(Tensor packed, int heads, int kvHeads, int dim, Tensor starts, Tensor ends, float scale, bool everyKey)
+    {
+        ArgumentNullException.ThrowIfNull(packed);
+        ArgumentNullException.ThrowIfNull(starts);
+        ArgumentNullException.ThrowIfNull(ends);
+        if (packed.Rank != 3 || heads <= 0 || kvHeads <= 0 || dim <= 0 || heads % kvHeads != 0 || packed._shape[2] != (heads + 2 * kvHeads) * dim
+            || starts.Size != ends.Size || packed._shape[1] == 0 || starts.Size % packed._shape[1] != 0)
+        {
+            throw new ArgumentException($"AttentionFastestPacked takes [batch, rows, (heads + 2·kvHeads)·dim] = [*, *, {(heads + 2 * kvHeads) * dim}] and ranges of "
+                + $"whole tables of rows; got {FormatShape(packed._shape)} and {starts.Size} ranges.");
+        }
+
+        int batch = packed._shape[0], rows = packed._shape[1], width = packed._shape[2], tables = starts.Size / rows;
+        if (Autograd.IsEnabled && packed.RequiresGrad || tables == 0 || batch * heads % tables != 0 || starts.Device != packed.Device || ends.Device != packed.Device)
+        {
+            return null;
+        }
+
+        if (PackedComposedChosen(packed, heads, kvHeads, dim, starts, ends, scale, everyKey, tables))
+        {
+            return null;
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty([batch, rows, heads * dim], packed.Device);
+        packed.Backend.AttentionSpansStrided(packed.Storage, 0, packed.Storage, (long)heads * dim, packed.Storage, (long)(heads + kvHeads) * dim, width, width,
+            starts.Storage, ends.Storage, y.Storage, batch, heads, kvHeads, batch * heads / tables, rows, dim, scale);
+        return Traced("attention_spans_packed", y, start);
+    }
+
+    // ComposedChosen for AttentionFastestPacked's heads (batch·heads query heads over batch·kvHeads, `tables` tables).
+    // The device measures the paths on operands of the right sizes: the packed projections' storage read as q, keys and
+    // values (the timing follows the shapes; the values are the layer's own, finite).
+    private static bool PackedComposedChosen(Tensor packed, int heads, int kvHeads, int dim, Tensor starts, Tensor ends, float scale, bool everyKey, int tables)
+    {
+        var forced = AttentionPaths.Forced;
+        if (forced == AttentionPath.Spans || !everyKey)
+        {
+            return false;
+        }
+
+        int batch = packed._shape[0], rows = packed._shape[1], allHeads = batch * heads;
+        var backend = packed.Backend;
+        bool ownKernel = dim <= backend.Capabilities.SpanAttentionHeadDim;
+        bool plain = heads == kvHeads && tables == 1;
+        if (!plain && ownKernel && forced != AttentionPath.Composed)
+        {
+            return false;
+        }
+
+        var usage = backend.GetMemoryUsage();
+        long? available = backend.AvailableMemory();
+        if (available is { } free && usage.Limit is { } limit)
+        {
+            available = Math.Min(free, limit - usage.InUse);
+        }
+
+        if (!AttentionPaths.ComposedFits(available, AttentionPaths.ComposedBytes(allHeads, rows, rows, recording: false)))
+        {
+            return false;
+        }
+
+        return forced == AttentionPath.Composed
+               || !ownKernel
+               || plain && backend.PrefersComposedAttention(packed.Storage, packed.Storage, packed.Storage, starts.Storage, ends.Storage, null, allHeads, rows, rows,
+                   dim, scale);
     }
 
     // Whether AttentionFastest takes the composed path: possible (shapes, a mask or every key, the memory), then forced, the

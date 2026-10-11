@@ -191,25 +191,129 @@ internal sealed unsafe partial class CudaBackend
             return;
         }
 
-        // Keys and values as bfloat16 rows once, then the pipelined kernel over them; the copy goes back to the pool in
-        // stream order.
-        int warps = candidate - SpanPipelined, dv = PtxKernels.SpanPipelinedDim(dim), quads = dv / 4, blockRows = 16 * warps;
+        RunSpanPipelined(candidate - SpanPipelined, P(q), P(keys), P(values), starts, ends, P(y), lse, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale,
+            SpanLayout.Contiguous(rows, dim), SpanLayout.Contiguous(keyRows, dim), SpanLayout.Contiguous(rows, dim));
+    }
+
+    // Where head hh = b·PerBatch + h of a tensor's rows starts (b·Batch + h·Head floats) and how far apart its rows are (Row).
+    private readonly record struct SpanLayout(int PerBatch, int Batch, int Head, int Row)
+    {
+        // [heads, rows, dim]: every head its own batch.
+        public static SpanLayout Contiguous(int rows, int dim) => new(1, rows * dim, 0, dim);
+
+        // [batch, rows, *] rows of `row` floats holding `perBatch` heads of `dim` side by side.
+        public static SpanLayout Rows(int perBatch, int rows, int row, int dim) => new(perBatch, rows * row, dim, row);
+    }
+
+    // Keys and values as bfloat16 rows once (through their layout), then the pipelined kernel with `warps` warps over
+    // them (queries and outputs through theirs); the copy goes back to the pool in stream order. Pointers as the kernels
+    // take them (offsets added).
+    private void RunSpanPipelined(int warps, ulong q, ulong keys, ulong values, Storage starts, Storage ends, ulong y, ulong lse, int heads, int kvHeads,
+        int headsPerTable, int rows, int keyRows, int dim, float scale, SpanLayout queries, SpanLayout keyValues, SpanLayout outputs)
+    {
+        int dv = PtxKernels.SpanPipelinedDim(dim), quads = dv / 4, blockRows = 16 * warps;
         long count = (long)kvHeads * keyRows * dv;                        // bfloat16 values of each copy: both take `count` floats
         var packed = Allocate((int)count, zeroed: false);
         try
         {
             Launch(SpanPipelinedFunction(dv, 0)!.Value, (uint)((keyRows * quads + PtxKernels.SpanPackThreads - 1) / PtxKernels.SpanPackThreads), (uint)kvHeads, 2,
                 PtxKernels.SpanPackThreads, 1,
-                P(keys), P(values), P(packed), U(keyRows), U(dim), U(quads), U(1), U(keyRows * dim), U(0), U(dim));
+                keys, values, P(packed), U(keyRows), U(dim), U(quads), U(keyValues.PerBatch), U(keyValues.Batch), U(keyValues.Head), U(keyValues.Row));
             ulong packedKeys = P(packed), packedValues = packedKeys + (ulong)count * 2;
             t_sharedBytes = (uint)PtxKernels.SpanPipelinedShared(dv);
             Launch(SpanPipelinedFunction(dv, warps)!.Value, (uint)((rows + blockRows - 1) / blockRows), (uint)heads, 1, (uint)(32 * warps), 1,
-                P(q), packedKeys, packedValues, P(starts), P(ends), P(y), lse, U(rows), U(keyRows), U(dim), F(scale * Log2E), U(heads / kvHeads),
-                U(headsPerTable), U(1), U(rows * dim), U(0), U(dim), U(1), U(rows * dim), U(0), U(dim));
+                q, packedKeys, packedValues, P(starts), P(ends), y, lse, U(rows), U(keyRows), U(dim), F(scale * Log2E), U(heads / kvHeads),
+                U(headsPerTable), U(queries.PerBatch), U(queries.Batch), U(queries.Head), U(queries.Row), U(outputs.Batch),
+                U(outputs.Head), U(outputs.Row));
         }
         finally
         {
             packed.Release();
+        }
+    }
+
+    // AttentionSpans read in place from a layer's packed rows (Backend.AttentionSpansStrided), on the kernel AttentionSpans
+    // would take for the head size and precision, so the same values: under tensor cores the pipelined kernel (its layouts
+    // in place of the copies), measured against the copies and AttentionSpans (what runs until measured); in float32 the
+    // tiled kernel's strided twin (the same arithmetic). Elsewhere, and where AttentionSpans would take another kernel (the
+    // single-stage tensor-core one alone, the first float32 one, the host), the copies.
+    public override void AttentionSpansStridedKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+        Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
+        int allHeads = batch * heads, allKv = batch * kvHeads;
+        bool fits = batch > 0 && heads > 0 && kvHeads > 0 && rows > 0 && heads % kvHeads == 0 && allHeads % headsPerTable == 0
+                    && (long)batch * rows * Math.Max(qRow, Math.Max(kRow, heads * dim)) <= int.MaxValue && dim <= PtxKernels.SpanMaxDim
+                    && ((qOffset | kOffset | vOffset | (long)qRow | (long)kRow) & 3) == 0;   // the kernels read four floats at a time
+        if (!fits)
+        {
+            base.AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+            return;
+        }
+
+        var queries = SpanLayout.Rows(heads, rows, qRow, dim);
+        var keyValues = SpanLayout.Rows(kvHeads, rows, kRow, dim);
+        var outputs = SpanLayout.Rows(heads, rows, heads * dim, dim);
+        ulong qp = P(q) + (ulong)qOffset * 4, kp = P(k) + (ulong)kOffset * 4, vp = P(v) + (ulong)vOffset * 4;
+        int td = PtxKernels.SpanTensorDim(dim);
+        if (MixedPrecision.UsesTensorCores && td > 0 && SpanTensorCandidates(dim, allKv, rows, stackalloc int[2 * PtxKernels.SpanTensorWarps.Length]) > 0)
+        {
+            // Candidates: 0 = the copies and AttentionSpans (its own measured kernel), or SpanPipelined + warps.
+            Span<int> candidates = stackalloc int[1 + PtxKernels.SpanTensorWarps.Length];
+            int count = 0;
+            candidates[count++] = 0;
+            foreach (int w in PtxKernels.SpanTensorWarps)
+            {
+                if (PtxKernels.SpanPipelinedDim(dim) > 0 && (long)allKv * rows * PtxKernels.SpanPipelinedDim(dim) <= int.MaxValue && allKv <= ushort.MaxValue
+                    && SpanPipelinedFunction(PtxKernels.SpanPipelinedDim(dim), 0) is not null && SpanPipelinedFunction(PtxKernels.SpanPipelinedDim(dim), w) is not null)
+                {
+                    candidates[count++] = SpanPipelined + w;
+                }
+            }
+
+            void Run(int candidate)
+            {
+                if (candidate == 0)
+                {
+                    base.AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim,
+                        scale);
+                }
+                else
+                {
+                    RunSpanPipelined(candidate - SpanPipelined, qp, kp, vp, starts, ends, P(y), 0UL, allHeads, allKv, headsPerTable, rows, rows, dim, scale,
+                        queries, keyValues, outputs);
+                }
+            }
+
+            var key = new TuneKey(TuneOp.SpanStrided, dim, allHeads, TuneSizes.Class(rows), allKv, headsPerTable);
+            int chosen = SpanTensorForced is int forced && candidates[..count].Contains(forced) ? forced
+                : TryTuned(key, candidates[..count], 0, out int known) ? known
+                : Tune(key, candidates[..count].ToArray(), 0, Run);
+            Run(chosen);
+            return;
+        }
+
+        // Past the tensor cores AttentionSpans takes the float32 tiled kernel where its module loads: its strided twin here.
+        int fd = PtxKernels.SpanFloatDim(dim);
+        if (fd > 0 && SpanFunction(tensor: false, fd) is not null && SpanFloatStrided(fd) is { } strided)
+        {
+            t_sharedBytes = (uint)PtxKernels.SpanFloatShared(fd);
+            Launch(strided, (uint)((rows + PtxKernels.SpanFloatRows(fd) - 1) / PtxKernels.SpanFloatRows(fd)), (uint)allHeads, 1, 128, 1,
+                qp, kp, vp, P(starts), P(ends), P(y), 0UL, U(rows), U(rows), U(dim), F(scale), U(heads / kvHeads), U(headsPerTable), F(0f),
+                U(queries.PerBatch), U(queries.Batch), U(queries.Head), U(queries.Row), U(outputs.Batch), U(outputs.Head), U(outputs.Row),
+                U(keyValues.PerBatch), U(keyValues.Batch), U(keyValues.Head), U(keyValues.Row));
+            return;
+        }
+
+        base.AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+    }
+
+    // The strided twin of the float32 span kernel of padded head size `d` (its module loaded by SpanFunction).
+    private IntPtr? SpanFloatStrided(int d)
+    {
+        lock (_spanModules)
+        {
+            return _spanModules.TryGetValue($"f32 {d}", out var kernels) && kernels is not null
+                   && kernels.TryGetValue(PtxKernels.SpanFloatStridedName(d), out var function) ? function : null;
         }
     }
 

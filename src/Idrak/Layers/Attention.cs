@@ -93,23 +93,27 @@ public sealed class MultiHeadAttention : Module, ICachedModule
             .Permute(0, 2, 1, 3)
             .Reshape(n * Heads, t, dh);                                   // [N·H, T, dh]
 
-        var q = SplitHeads(0);
-        var k = SplitHeads(1);
-        var v = SplitHeads(2);
         Tensor context;
         if (!Causal && (_dropout is null || !_dropout.IsTraining))
         {
             // Every position sees every other: one attention over key ranges (all keys for each row), tiled, so the
             // [T, T] scores of each head are never stored (the gradient recomputes them); or the full scores where the
-            // device measured them faster and has the memory for them (Tensor.AttentionFastest).
+            // device measured them faster and has the memory for them (Tensor.AttentionFastest). Without a gradient the
+            // key ranges read the heads in place from the projections and write [N, T, D] (no copies of the heads).
             var (starts, ends) = AllKeys(t, input.Device);
-            context = Tensor.AttentionFastest(q, k, v, starts, ends, 1f / MathF.Sqrt(dh), everyKey: true);
+            if (Tensor.AttentionFastestPacked(qkv, Heads, Heads, dh, starts, ends, 1f / MathF.Sqrt(dh), everyKey: true) is { } attended)
+            {
+                return _output.Forward(attended);
+            }
+
+            context = Tensor.AttentionFastest(SplitHeads(0), SplitHeads(1), SplitHeads(2), starts, ends, 1f / MathF.Sqrt(dh), everyKey: true);
             return _output.Forward(context
                 .Reshape(n, Heads, t, dh)
                 .Permute(0, 2, 1, 3)
                 .Reshape(n, t, Dim));
         }
 
+        var (q, k, v) = (SplitHeads(0), SplitHeads(1), SplitHeads(2));
         var raw = q.MatMul(k, transposeB: true);                           // [N·H, T, T]
         Tensor weights;
         if (!Autograd.IsEnabled)
