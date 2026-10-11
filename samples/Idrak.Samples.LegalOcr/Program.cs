@@ -150,6 +150,19 @@ public static class LegalOcrApi
         // The Read tab's generation settings to start from.
         api.MapGet("/generation", (LegalOcrSettings settings) => settings.Generation);
 
+        // How transformers' generate() reads with a model (the Docker-Preset): its generation_config.json and the defaults.
+        api.MapGet("/models/{id}/transformers-generation", IResult (string id, ReaderService host) =>
+        {
+            try
+            {
+                return TypedResults.Ok(host.TransformersGeneration(id));
+            }
+            catch (ArgumentException ex)
+            {
+                return TypedResults.Problem(ex.Message, statusCode: StatusCodes.Status404NotFound);
+            }
+        });
+
         api.MapPost("/preview", IResult (PreviewRequest request, Preprocessing preprocessing, EvaluationPages pages) =>
         {
             ChatImage image;

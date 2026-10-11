@@ -228,12 +228,18 @@ public sealed record Idrak.Generation.ImageReadRequest : System.IEquatable<Idrak
   public Idrak.Abstraction.Generation.ChatImage Image { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public ImageReadRequest(Idrak.Abstraction.Generation.ChatImage Image, string Prompt)
+  public bool Sample { get; init; }
   public float FrequencyPenalty { get; init; }
+  public float MinP { get; init; }
   public float PresencePenalty { get; init; }
   public float RepeatPenalty { get; init; }
+  public float Temperature { get; init; }
+  public float TopP { get; init; }
   public int MaxTokens { get; init; }
   public int RepeatLastN { get; init; }
   public int RepeatStop { get; init; }
+  public int TopK { get; init; }
+  public int? Seed { get; init; }
   public string Prompt { get; init; }
   public string? System { get; init; }
 

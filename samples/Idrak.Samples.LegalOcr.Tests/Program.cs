@@ -96,6 +96,31 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         Check(!StartupLoad.RunAsync(service, "nope", missing, live: false).GetAwaiter().GetResult() && missing.ToString().StartsWith("Not loaded at start (nope)", StringComparison.Ordinal),
             missing.ToString());
     }),
+    ("legal docker preset: transformers' generation is the model's generation_config.json over transformers' defaults; a sampled read reports its seed and repeats with it", () =>
+    {
+        string folder = Path.Combine(root, "generation-config");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "generation_config.json"), """{"do_sample": true, "top_k": 64, "top_p": 0.95, "eos_token_id": [1, 106]}""");
+        var settings = Settings(("a", tinyGemma)) with
+        {
+            Models = [new ReaderModel { Id = "a", Name = "a", Folder = tinyGemma }, new ReaderModel { Id = "c", Name = "c", Folder = folder }],
+        };
+        using var service = Service(settings);
+        var configured = service.TransformersGeneration("c");
+        Check(configured is { Found: true, Sample: true, Temperature: 1f, TopK: 64, TopP: 0.95f, MinP: 0f, RepeatPenalty: 1f }, configured.ToString());
+        var defaults = service.TransformersGeneration("a");                                  // the tiny model has none
+        Check(defaults is { Found: false, Sample: false, TopK: 50, TopP: 1f }, defaults.ToString());
+
+        Load(service, "a");
+        var first = Read(service, Page(30, 50), new ReadRequest(MaxTokens: 4, Sample: true, Temperature: 1.5f, TopK: 0, TopP: 1f), null);
+        var done = first[^1].Data;
+        Check(done["sampled"]!.GetValue<bool>() && done["seed"] is not null, done.ToJsonString());
+        int seed = done["seed"]!.GetValue<int>();
+        var again = Read(service, Page(30, 50), new ReadRequest(MaxTokens: 4, Sample: true, Temperature: 1.5f, TopK: 0, TopP: 1f, Seed: seed), null)[^1].Data;
+        Check(again["text"]!.GetValue<string>() == done["text"]!.GetValue<string>() && again["seed"]!.GetValue<int>() == seed, again.ToJsonString());
+        var greedy = Read(service, Page(30, 50), new ReadRequest(MaxTokens: 4), null)[^1].Data;
+        Check(!greedy["sampled"]!.GetValue<bool>() && greedy["seed"] is null, greedy.ToJsonString());
+    }),
     ("legal reader: a model that cannot be loaded says why; reading before loading is an error event", () =>
     {
         var settings = Settings(("a", tinyGemma)) with

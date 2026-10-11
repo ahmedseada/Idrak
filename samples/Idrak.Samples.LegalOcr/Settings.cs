@@ -119,6 +119,21 @@ public sealed record GenerationDefaults
 
     /// <summary>End the answer when one phrase repeats this many times in a row (0 = off).</summary>
     public int RepeatStop { get; init; } = 4;
+
+    /// <summary>Sample the words (as transformers' generate does with the model's generation_config) instead of greedy reading.</summary>
+    public bool Sample { get; init; }
+
+    /// <summary>Sampling's temperature (1: the model's own probabilities).</summary>
+    public float Temperature { get; init; } = 1f;
+
+    /// <summary>Sample among the k most likely words (0 = all).</summary>
+    public int TopK { get; init; } = 64;
+
+    /// <summary>Sample among the most likely words holding this probability (1 = off).</summary>
+    public float TopP { get; init; } = 0.95f;
+
+    /// <summary>Drop words less than this fraction as likely as the best one (0 = off).</summary>
+    public float MinP { get; init; }
 }
 
 /// <summary>The Fine-tune tab's settings, each one the page can change for a run.</summary>
