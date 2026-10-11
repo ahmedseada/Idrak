@@ -582,11 +582,12 @@ internal static partial class PtxKernels
     // ------------------------------------------------------------------ tensor cores
 
     // Stages `rows` rows (absolute first + 0 … rows - 1; zeros at or past `limit` and past the head size in %r22) of a
-    // float32 [*, dim] tensor at `pointer` into shared memory at `shared` as bfloat16 ([rows][d + 8]); `threads` threads,
-    // a float4 each per step, along the rows. Steps in a loop of four at a time (`label` names it) and the rest after it,
-    // so a large tile does not keep every step's loads in registers at once. Uses %r11-%r19, %r53, %rd1-%rd2, %f0-%f3,
-    // %p1, %p20.
-    private static string SpanTensorStage(int rows, int d, int threads, string shared, string first, string limit, string pointer, string label)
+    // float32 [*, dim] tensor at `pointer` (rows `rowStride` floats apart: %r22, the head size, unless given) into shared
+    // memory at `shared` as bfloat16 ([rows][d + 8]); `threads` threads, a float4 each per step, along the rows. Steps in
+    // a loop of four at a time (`label` names it) and the rest after it, so a large tile does not keep every step's loads
+    // in registers at once. Uses %r11-%r19, %r53, %rd1-%rd2, %f0-%f3, %p1, %p20.
+    private static string SpanTensorStage(int rows, int d, int threads, string shared, string first, string limit, string pointer, string label,
+        string rowStride = "%r22")
     {
         const int Unroll = 4;
         int quads = d / 4, stride = FlashStride(d), elements = rows * quads, iterations = (elements + threads - 1) / threads;
@@ -606,7 +607,7 @@ internal static partial class PtxKernels
                     setp.lt.and.u32 %p1, %r15, %r22, %p1;
                     {{(guard ? string.Create(CultureInfo.InvariantCulture, $"setp.lt.and.u32 %p1, %r11, {elements}, %p1;") : "")}}
                     cvt.u64.u32 %rd2, %r15;
-                    mad.wide.u32 %rd1, %r14, %r22, %rd2;
+                    mad.wide.u32 %rd1, %r14, {{rowStride}}, %rd2;
                     shl.b64 %rd1, %rd1, 2;
                     add.u64 %rd1, %rd1, {{pointer}};
                     mov.f32 %f0, 0f00000000;
