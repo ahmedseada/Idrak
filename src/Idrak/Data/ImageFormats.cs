@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Numerics;
+using Idrak.Abstraction.Devices;
 using Idrak.Data.Abstractions;
 
 namespace Idrak.Data;
@@ -109,7 +110,7 @@ internal sealed class PngCodec : IImageCodec
         int rawLength = checked((int)total);
         byte[] raw = ArrayPool<byte>.Shared.Rent(rawLength);
         int channels = color is 2 or 3 or 6 ? 3 : 1;
-        var pixels = new float[checked(channels * h * w)];
+        var pixels = GC.AllocateUninitializedArray<float>(checked(channels * h * w));   // every pixel is written (each pass its own)
         try
         {
             compressed.Position = 0;
@@ -119,6 +120,7 @@ internal sealed class PngCodec : IImageCodec
             }
 
             float max = (1 << depth) - 1;
+            float[]? levels = depth <= 8 ? Levels(depth, max) : null;
             int offset = 0;
             foreach (var (x0, y0, dx, dy) in passes)
             {
@@ -128,51 +130,64 @@ internal sealed class PngCodec : IImageCodec
                     continue;
                 }
 
-                int stride = (pw * bitsPerPixel + 7) / 8;
-                Span<byte> previous = new byte[stride];
+                // The rows unfiltered in order (each reads the one above), then turned into samples in parallel: every row of
+                // a pass, and every pass, writes pixels of its own.
+                int stride = (pw * bitsPerPixel + 7) / 8, first = offset;
+                ReadOnlySpan<byte> previous = new byte[stride];
                 for (int py = 0; py < ph; py++)
                 {
                     var line = raw.AsSpan(offset + 1, stride);
                     Unfilter(raw[offset], line, previous, bpp);
+                    previous = line;
                     offset += 1 + stride;
-                    int y = y0 + py * dy;
-                    if (depth == 8 && color != 3 && dx == 1)
+                }
+
+                HostParallel.For(ph, Math.Max(1, (1 << 16) / (pw * channels)), (from, to) =>
+                {
+                    for (int py = from; py < to; py++)
                     {
-                        // A whole row of 8-bit samples (not interlaced): each channel's row written in order.
+                        Samples(raw.AsSpan(first + py * (1 + stride) + 1, stride), y0 + py * dy, x0, dx, pw);
+                    }
+                });
+            }
+
+            // One unfiltered row of a pass into the pixels (row y, columns x0, x0 + dx, …).
+            void Samples(ReadOnlySpan<byte> line, int y, int x0, int dx, int pw)
+            {
+                if (depth == 8 && color != 3 && dx == 1)
+                {
+                    // A whole row of 8-bit samples (not interlaced): each channel's row written in order.
+                    for (int ch = 0; ch < channels; ch++)
+                    {
+                        var target = pixels.AsSpan(ch * h * w + y * w + x0, pw);
+                        for (int px = 0, at = ch; px < target.Length; px++, at += samples)
+                        {
+                            target[px] = levels![line[at]];
+                        }
+                    }
+
+                    return;
+                }
+
+                for (int px = 0; px < pw; px++)
+                {
+                    int at = y * w + x0 + px * dx;
+                    if (color == 3)
+                    {
+                        int index = SampleAt(line, px, 0, 1, depth);
+                        for (int ch = 0; ch < 3; ch++)
+                        {
+                            pixels[ch * h * w + at] = palette![Math.Min(index * 3 + ch, palette.Length - 1)] / 255f;
+                        }
+                    }
+                    else
+                    {
                         for (int ch = 0; ch < channels; ch++)
                         {
-                            var target = pixels.AsSpan(ch * h * w + y * w + x0, pw);
-                            for (int px = 0, at = ch; px < target.Length; px++, at += samples)
-                            {
-                                target[px] = line[at] / max;
-                            }
-                        }
-
-                        previous = line;
-                        continue;
-                    }
-
-                    for (int px = 0; px < pw; px++)
-                    {
-                        int at = y * w + x0 + px * dx;
-                        if (color == 3)
-                        {
-                            int index = SampleAt(line, px, 0, 1, depth);
-                            for (int ch = 0; ch < 3; ch++)
-                            {
-                                pixels[ch * h * w + at] = palette![Math.Min(index * 3 + ch, palette.Length - 1)] / 255f;
-                            }
-                        }
-                        else
-                        {
-                            for (int ch = 0; ch < channels; ch++)
-                            {
-                                pixels[ch * h * w + at] = SampleAt(line, px, ch, samples, depth) / max;
-                            }
+                            int sample = SampleAt(line, px, ch, samples, depth);
+                            pixels[ch * h * w + at] = levels is null ? sample / max : levels[sample];
                         }
                     }
-
-                    previous = line;
                 }
             }
         }
@@ -182,6 +197,19 @@ internal sealed class PngCodec : IImageCodec
         }
 
         return new ImageData(pixels, channels, h, w);
+    }
+
+    // Each sample value of a depth as its float (the value over the depth's largest, the same division as per sample),
+    // made once: a lookup per sample instead of a division.
+    private static float[] Levels(int depth, float max)
+    {
+        var levels = new float[1 << depth];
+        for (int k = 0; k < levels.Length; k++)
+        {
+            levels[k] = k / max;
+        }
+
+        return levels;
     }
 
     // Sample s of pixel x in an unfiltered line: 16 bits big-endian, a byte, or 1, 2 or 4 bits from the high bits down.
@@ -215,35 +243,60 @@ internal sealed class PngCodec : IImageCodec
 
                 break;
             case 2:
-                for (int i = 0; i < line.Length; i++)
+                int up = 0;
+                for (; up <= line.Length - Vector<byte>.Count; up += Vector<byte>.Count)          // bytes add modulo 256, as the filter does
                 {
-                    line[i] = (byte)(line[i] + previous[i]);
+                    (new Vector<byte>(line[up..]) + new Vector<byte>(previous[up..])).CopyTo(line[up..]);
+                }
+
+                for (; up < line.Length; up++)
+                {
+                    line[up] = (byte)(line[up] + previous[up]);
                 }
 
                 break;
             case 3:
-                for (int i = 0; i < line.Length; i++)
+                int first = Math.Min(bpp, line.Length);
+                for (int i = 0; i < first; i++)
                 {
-                    int left = i >= bpp ? line[i - bpp] : 0;
-                    line[i] = (byte)(line[i] + (left + previous[i]) / 2);
+                    line[i] = (byte)(line[i] + previous[i] / 2);
+                }
+
+                for (int i = first; i < line.Length; i++)
+                {
+                    line[i] = (byte)(line[i] + (line[i - bpp] + previous[i]) / 2);
                 }
 
                 break;
             case 4:
-                for (int i = 0; i < line.Length; i++)
+                int edge = Math.Min(bpp, line.Length);
+                for (int i = 0; i < edge; i++)
                 {
-                    int left = i >= bpp ? line[i - bpp] : 0, upLeft = i >= bpp ? previous[i - bpp] : 0;
-                    line[i] = (byte)(line[i] + Paeth(left, previous[i], upLeft));
+                    line[i] = (byte)(line[i] + previous[i]);                     // no left neighbours: Paeth gives the one above
+                }
+
+                for (int i = edge; i < line.Length; i++)
+                {
+                    line[i] = (byte)(line[i] + Paeth(line[i - bpp], previous[i], previous[i - bpp]));
                 }
 
                 break;
         }
     }
 
+    // The Paeth predictor of the PNG standard (the nearest of a, b, c to a + b - c, ties to a, then b), without branches:
+    // the scanned rows' noise makes the choice unpredictable, so the comparisons become selects.
     private static int Paeth(int a, int b, int c)
     {
-        int p = a + b - c, pa = Math.Abs(p - a), pb = Math.Abs(p - b), pc = Math.Abs(p - c);
-        return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+        int pa = Abs(b - c), pb = Abs(a - c), pc = Abs(a + b - 2 * c);            // |p - a|, |p - b|, |p - c|
+        int bOrC = pb <= pc ? b : c;
+        return (pa <= pb) & (pa <= pc) ? a : bOrC;
+
+        static int Abs(int x)
+        {
+            int sign = x >> 31;
+            return (x ^ sign) - sign;
+        }
     }
 }
 
