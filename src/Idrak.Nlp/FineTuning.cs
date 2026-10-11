@@ -1056,7 +1056,8 @@ public static class FineTuner
             ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
         var evaluations = new List<float>();
         int step = 0;
-        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), custom, trace);
+        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), custom, trace,
+            Largest(epochBatches.SelectMany(b => b)));
         for (int epoch = 0; epoch < options.Epochs; epoch++)
         {
             var batches = epochBatches[epoch];
@@ -1136,8 +1137,9 @@ public static class FineTuner
     // FineTuningOptions.CudaGraphs).
     // lossRows: the most trained tokens of any batch the runner will see (the recorded loss's capacity).
     // custom: a loss of one's own (FineTuningOptions.Loss), or null for the token cross-entropy.
+    // largest: the most positions any batch of the run holds (the first step's measured bytes per position say whether it fits).
     private sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
-        int lossRows, CustomLoss? custom, Action<string>? trace) : IDisposable
+        int lossRows, CustomLoss? custom, Action<string>? trace, long largest) : IDisposable
     {
         // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update. The recorded
         // pass is the token cross-entropy's; a loss of one's own runs ordinary steps. Experts' routing is read back to the
@@ -1192,13 +1194,29 @@ public static class FineTuner
             // Out of device memory: first recompute the feed-forward activations (cheap), then hold activations as
             // bfloat16, then checkpoint every block (a third more compute); the step is run again each time and the graph,
             // recorded without them, recorded again. Which of the setting that fits and checkpointing is faster is measured.
+            // The first step also measures its bytes per position, so a run whose largest batch would not fit takes the
+            // first rung before it fails (FirstRung).
             while (true)
             {
                 try
                 {
+                    bool measure = !_firstMeasured && _automaticRecompute && _options.RecomputeFeedForward != true && !Checkpointing && _probe == 0;
+                    long held = 0;
+                    if (measure)
+                    {
+                        model.Device.Backend.ResetPeakMemoryUsage();
+                        held = model.Device.Backend.GetMemoryUsage().InUse;
+                    }
+
                     long started = Stopwatch.GetTimestamp();
                     var result = RunOnce(group, cancellationToken, label, graphs && _probe is 0 or 3);
                     Measured(Stopwatch.GetElapsedTime(started).TotalSeconds / Math.Max(1L, group.Sum(b => (long)b.Rows.Length * b.Length)));
+                    if (measure)
+                    {
+                        _firstMeasured = true;
+                        FirstRung(group, held);
+                    }
+
                     return result;
                 }
                 catch (ResourceLimitExceededException ex) when (_probe == 2)
@@ -1230,6 +1248,44 @@ public static class FineTuner
                                   + "(set Checkpointing / --checkpointing to start with it)");
                 }
             }
+        }
+
+        private bool _firstMeasured;
+
+        // After the first step: its bytes per position (the peak above what stays held after it, the optimizer's state and
+        // gradients made by that step aside, over its largest batch's positions) times the run's largest batch, against
+        // what the device can still give (its reported free memory, within the configured limit). When that batch would
+        // not fit, the ladder's first rung (recomputed feed-forward activations) is taken now, and measured against
+        // checkpointing as after a failed step, instead of first failing part-way through a large step. Nothing changes
+        // when the device reports neither, or the run's batches all fit.
+        private void FirstRung(IReadOnlyList<Batch> group, long held)
+        {
+            var backend = model.Device.Backend;
+            long positions = group.Max(b => (long)b.Rows.Length * b.Length);
+            var usage = backend.GetMemoryUsage();
+            long stepBytes = usage.Peak - Math.Max(held, usage.InUse);
+            // What the device reports free, within a configured limit (a hard cap: a device that reports its free memory
+            // without the limit, the CPU's system memory, is held to it).
+            long? reported = backend.AvailableMemory(), capped = usage.Limit is { } limit ? limit - usage.InUse : null;
+            long? available = reported is { } r && capped is { } c ? Math.Min(r, c) : reported ?? capped;
+            if (positions <= 0 || largest <= positions || stepBytes <= 0 || available is not { } room)
+            {
+                return;
+            }
+
+            double perPosition = (double)stepBytes / positions, needed = perPosition * largest;
+            if (needed <= room)
+            {
+                return;
+            }
+
+            _options = _options with { RecomputeFeedForward = true };
+            Reset();
+            StartProbe();
+            trace?.Invoke(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"the largest batch ({largest} positions) needs about {needed / (1 << 20):F0} MiB at the first step's {perPosition / 1024:F1} KiB per position, ")
+                + string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{room / (1 << 20)} MiB can be had: feed-forward activations are recomputed in the backward pass from the next step (RecomputeFeedForward / --recompute to start with it)"));
         }
 
         private void StartProbe()
@@ -1436,6 +1492,9 @@ public static class FineTuner
     private static int MostTrained(IEnumerable<Batch> batches, IReadOnlyList<TrainingSequence> train) =>
         batches.Select(b => b.Sequences.Sum(i => train[i].TrainedTokens)).DefaultIfEmpty(0).Max();
 
+    // The most positions any batch of the run holds (rows × length): the largest pass the device must hold.
+    private static long Largest(IEnumerable<Batch> batches) => batches.Select(b => (long)b.Rows.Length * b.Length).DefaultIfEmpty(0).Max();
+
     // AdamW (or FineTuningOptions.Optimizer) on the device, or on the CPU with its state in system memory
     // (FineTuningOptions.HostOptimizer).
     private static Optimizer CreateOptimizer(List<Tensor> parameters, FineTuningOptions options)
@@ -1543,7 +1602,7 @@ public static class FineTuner
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int next = 0;
-        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train), Custom(model, options, pairs: false), trace);
+        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train), Custom(model, options, pairs: false), trace, Largest(batches));
         (float Loss, long Tokens, double Seconds) Step(string phase)
         {
             var group = Enumerable.Range(0, accumulation).Select(i => batches[(next + i) % batches.Count]).ToList();

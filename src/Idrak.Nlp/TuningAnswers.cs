@@ -125,6 +125,7 @@ public sealed class TuningAnswerScorer
     /// <summary>
     /// Generates an answer to every prompt with <paramref name="model"/> (greedy, its adapters as they are now) and scores
     /// it. Prompts with images are read through <paramref name="vision"/> (made from the model for this call when null).
+    /// Afterwards the device's cached memory is returned (<see cref="ComputeResources.ReleaseCachedMemory"/>).
     /// </summary>
     /// <param name="model">The model (a chat template and a tokenizer).</param>
     /// <param name="vision">The image side the training sequences were encoded with; null: one made from the model when a prompt holds images.</param>
@@ -178,6 +179,10 @@ public sealed class TuningAnswerScorer
         finally
         {
             generator.ReleaseCache();
+
+            // The answers' caches and the encoder's activations are not training's shapes: their blocks go back to the
+            // device, so the steps after a scoring find the room (and the pool reports what training holds).
+            ComputeResources.ReleaseCachedMemory(model.Device);
             if (training)
             {
                 model.Network.Train();

@@ -215,4 +215,18 @@ public sealed record TuningDefaults
 
     /// <summary>The evaluation loss over the first this many evaluation pages (0: all of them; each is a forward pass, twice a run).</summary>
     public int LossPages { get; init; }
+
+    /// <summary>
+    /// Activation checkpointing (each block's activations recomputed in the backward pass: the least memory, about a third
+    /// more compute): null (automatic: off, turned on when a step runs out of GPU memory, then timed against the lighter
+    /// settings and the faster kept), true (from the first step) or false (never).
+    /// </summary>
+    public bool? Checkpointing { get; init; }
+
+    /// <summary>
+    /// Recompute the feed-forward activations in the backward pass instead of holding them: null (automatic: the
+    /// out-of-memory ladder's first rung, also taken before the first large batch when the first step's memory says it
+    /// will not fit), true (from the first step) or false (never).
+    /// </summary>
+    public bool? RecomputeFeedForward { get; init; }
 }
