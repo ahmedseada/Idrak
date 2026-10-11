@@ -208,6 +208,19 @@ internal static partial class Tests
             Check(keeping.Read(request).Text == first.Text && keeping.Chat.Generator.HoldsCache, "KeepCache keeps it, the same answer");
         }
 
+        // The encoder's precision: a scope around the encoder alone (the CPU computes float32 under it: the same answer).
+        var precisions = new List<MatMulPrecision>();
+        using (var bf16 = new ImageReader(model, new ImageReaderOptions
+        {
+            Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, EncoderPrecision = MatMulPrecision.BFloat16,
+            EncoderFactory = (m, o) => new PrecisionProbe(m.CreateVisionEncoder(o), precisions),
+        }))
+        {
+            var read = bf16.Read(request);
+            Check(read.Text == first.Text && precisions.Count > 0 && precisions.All(p => p == MatMulPrecision.BFloat16) && MixedPrecision.Current == MixedPrecision.Default,
+                $"EncoderPrecision: the encoder under {string.Join(", ", precisions)}, the scope ended after it; \"{read.Text}\"");
+        }
+
         Check(streamed.ToString().Trim() == first.Text, $"streamed \"{streamed}\", read \"{first.Text}\"");
         Check(first.Stats is { GeneratedTokens: > 0 and <= 6 } && first.Truncated == (first.Stats.GeneratedTokens >= 6), $"{first.Stats?.GeneratedTokens} tokens, truncated {first.Truncated}");
         Check(reader.Vision.Family.Length > 0 && model.Vision is not null, "the family");
@@ -294,5 +307,22 @@ internal static partial class Tests
         var reading = reader.Read(new ImageReadRequest(page, "Read.") { MaxTokens = 3, RepeatPenalty = 1.3f, FrequencyPenalty = 0.5f, RepeatStop = 2 });
         Check(reading.DoneReason is "length" or "stop" or "repetition" && reading.Truncated == (reading.DoneReason == "length"),
             $"done reason {reading.DoneReason}, truncated {reading.Truncated}");
+    }
+    // An encoder that records the matrix-product precision it encodes under.
+    private sealed class PrecisionProbe(IVisionEncoder inner, List<MatMulPrecision> seen) : IVisionEncoder
+    {
+        public int Width => inner.Width;
+
+        public Device Device => inner.Device;
+
+        public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => inner.Blocks(image, options);
+
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null)
+        {
+            seen.Add(MixedPrecision.Current);
+            return inner.Encode(images, options);
+        }
+
+        public void Dispose() => inner.Dispose();
     }
 }

@@ -30,6 +30,14 @@ public sealed record ImageReaderOptions
     /// </summary>
     public bool KeepCache { get; init; }
 
+    /// <summary>
+    /// The arithmetic of the vision encoder's matrix products (<see cref="ChatImages.EncoderPrecision"/>); null: the
+    /// caller's. <see cref="MatMulPrecision.BFloat16"/> runs the tower on tensor cores where the device has them (a page's
+    /// encoding several times faster), its features within bfloat16's rounding of float32: compare a model's answers
+    /// on the same pages before reading with it.
+    /// </summary>
+    public MatMulPrecision? EncoderPrecision { get; init; }
+
     /// <summary>Makes the vision encoder instead of the model's own (tests feed reference features with it).</summary>
     public Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? EncoderFactory { get; init; }
 }
@@ -120,6 +128,7 @@ public sealed record ImageReading(string Text, GenerationStats? Stats, TimeSpan 
 public sealed class ImageReader : IDisposable
 {
     private readonly ModelImages _images;
+    private readonly ChatImages _reading;                                   // the model's images with the reader's encoder precision
     private readonly ChatGenerator _chat;
     private readonly int _contextLength;
 
@@ -139,7 +148,12 @@ public sealed class ImageReader : IDisposable
             _contextLength = Math.Min(options.ContextLength ?? model.MaxPositions, model.MaxPositions);
             var chat = model.CreateChat(options.CacheFormat, _contextLength);
             chat.Generator.KeepCache = options.KeepCache;
-            _chat = new ChatGenerator(chat.Generator, chat.Template) { Images = _images.Images };
+            var images = _images.Images;
+            _reading = new ChatImages(images.Encoder, images.Format, images.Attention)
+            {
+                Decode = images.Decode, Transforms = images.Transforms, Owner = images.Owner, EncoderPrecision = options.EncoderPrecision,
+            };
+            _chat = new ChatGenerator(chat.Generator, chat.Template) { Images = _reading };
         }
         catch
         {
@@ -168,7 +182,7 @@ public sealed class ImageReader : IDisposable
     public ImageData Prepared(ImageReadRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return _images.Images.Read(request.Image, new ChatRequest([]) { ImageTransforms = request.Transforms ?? Options.Transforms });
+        return _reading.Read(request.Image, new ChatRequest([]) { ImageTransforms = request.Transforms ?? Options.Transforms });
     }
 
     /// <summary>The answer to <paramref name="request"/> as it is generated (the last chunk is done, with the figures).</summary>
