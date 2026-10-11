@@ -19,6 +19,7 @@ internal static partial class Tests
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
         ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own", ImageReaderReads),
+        ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
     ];
 
     private static JsonNode? Repaired(string text, bool expectRepaired = true)
@@ -181,5 +182,63 @@ internal static partial class Tests
         Check(streamed.ToString().Trim() == first.Text, $"streamed \"{streamed}\", read \"{first.Text}\"");
         Check(first.Stats is { GeneratedTokens: > 0 and <= 6 } && first.Truncated == (first.Stats.GeneratedTokens >= 6), $"{first.Stats?.GeneratedTokens} tokens, truncated {first.Truncated}");
         Check(reader.Vision.Family.Length > 0 && model.Vision is not null, "the family");
+    }
+
+    private static void ImageReaderStops(Device device)
+    {
+        RegisterGemma3Vision();
+        using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device });
+
+        // The layer loop: a cancelled pass throws, withdraws its step and counts nothing; the same context then runs.
+        using (var context = new DecodingContext(device, 1, 64) { LastPositionOnly = true })
+        using (var stopped = new CancellationTokenSource())
+        using (Autograd.NoGrad())
+        {
+            stopped.Cancel();
+            context.Cancellation = stopped.Token;
+            using var ids = Tensor.From([2f, 10f, 11f, 12f], [1, 4], device);
+            try
+            {
+                model.Network.ForwardCached(ids, context).Dispose();
+                Check(false, "a cancelled pass must throw");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            Check(context.Length == 0 && !context.InStep, $"the stopped step withdrawn: length {context.Length}, in step {context.InStep}");
+            context.Cancellation = default;
+            model.Network.ForwardCached(ids, context).Dispose();
+            Check(context.Length == 4, $"the context runs after: length {context.Length}");
+        }
+
+        // A read stopped before it starts gives no answer; the next read is the one an unstopped reader gives.
+        using var reader = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale"), ContextLength = 256 });
+        var pixels = new float[3 * 12 * 20];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (i % 89) / 88f;
+        }
+
+        var request = new ImageReadRequest(ChatImage.FromBytes(ImageEncoders.Get("png").Encode(new ImageData(pixels, 3, 12, 20)), "image/png"), "Read.") { MaxTokens = 5 };
+        using (var stopped = new CancellationTokenSource())
+        {
+            stopped.Cancel();
+            int pieces = 0;
+            try
+            {
+                reader.Read(request, _ => pieces++, stopped.Token);
+                Check(false, "a stopped read must throw");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            Check(pieces == 0, $"{pieces} pieces from a stopped read");
+        }
+
+        var after = reader.Read(request);
+        using var fresh = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale"), ContextLength = 256 });
+        Check(after.Text == fresh.Read(request).Text, $"after a stopped read: \"{after.Text}\"");
     }
 }

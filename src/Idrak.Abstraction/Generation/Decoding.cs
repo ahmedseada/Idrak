@@ -212,6 +212,13 @@ public sealed class DecodingContext : IDisposable
     /// </summary>
     public bool LastPositionOnly { get; set; }
 
+    /// <summary>
+    /// Stops a long pass early: a cached forward pass (<c>Sequential.ForwardCached</c>) checks it before each layer, so a
+    /// prompt's prefill (an image's hundreds of tokens) ends at the next layer rather than at the next generated token.
+    /// The step is then withdrawn (<see cref="CancelStep"/>) and <see cref="OperationCanceledException"/> thrown.
+    /// </summary>
+    public CancellationToken Cancellation { get; set; }
+
     /// <summary>The current step's position indices, [newSteps] (set by <see cref="BeginStep"/>).</summary>
     public Tensor? Positions { get; private set; }
 
@@ -283,6 +290,12 @@ public sealed class DecodingContext : IDisposable
             Positions = positions;
         }
     }
+
+    /// <summary>
+    /// Withdraws the open step without counting its positions (a pass stopped part-way): <see cref="Length"/> stays where
+    /// it was, and the next steps overwrite whatever the stopped one wrote to the caches.
+    /// </summary>
+    public void CancelStep() => ClearStep();
 
     /// <summary>Marks <paramref name="steps"/> positions as processed (device counter and host mirror).</summary>
     public void EndStep(int steps)

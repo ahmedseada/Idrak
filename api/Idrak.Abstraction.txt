@@ -1394,6 +1394,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public Idrak.Abstraction.Tensor? TokenPositions { get; }
   public Idrak.Abstraction.Tensor? TokenStarts { get; }
   public System.Collections.Generic.IReadOnlyList<int>? RowStarts { get; }
+  public System.Threading.CancellationToken Cancellation { get; set; }
   public bool InStep { get; }
   public bool LastPositionOnly { get; set; }
   public int Batch { get; }
@@ -1401,6 +1402,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public int Length { get; }
   public long CacheBytes { get; }
   public void BeginStep(int steps)
+  public void CancelStep()
   public void Dispose()
   public void EndStep(int steps)
   public void ReplayStep(Idrak.Abstraction.ComputeGraph graph, int steps = 1)
