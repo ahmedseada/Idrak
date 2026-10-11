@@ -169,6 +169,23 @@ public sealed partial class PackedSequences : IDisposable
             && attention.All(a => a.SupportsSegmented(a.Query.Device.Backend));
     }
 
+    /// <summary>
+    /// Whether <paramref name="network"/> can run packed batches in which every sequence holds images attended by a rule
+    /// that is not causal (an image's rows seeing its whole image): every attention layer then attends by key ranges, each
+    /// position's within its own sequence (<c>Tensor.AttentionSpans</c> and its gradient), whatever the device's packed
+    /// attention supports, so the head size must be one the device's span kernels take
+    /// (<see cref="BackendCapabilities.SpanAttentionHeadDim"/>), windows and caps through those kernels, and no layer with
+    /// positions of its own that ignores the packing.
+    /// </summary>
+    public static bool SupportsImages(Module network)
+    {
+        ArgumentNullException.ThrowIfNull(network);
+        var modules = network.Descendants().ToList();
+        var attention = modules.OfType<CausalSelfAttention>().ToList();
+        return attention.Count > 0 && !modules.Any(m => m is MultiHeadAttention or PositionalEncoding)
+            && attention.All(a => (a.PlainCausal || CausalSelfAttention.WindowKernels) && a.HeadDim <= a.Query.Device.Backend.Capabilities.SpanAttentionHeadDim);
+    }
+
     /// <summary>Restores the previous packing when disposed.</summary>
     public readonly struct Scope : IDisposable
     {
