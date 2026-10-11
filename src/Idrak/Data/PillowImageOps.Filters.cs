@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Numerics;
 using Idrak.Data.Abstractions;
 
 namespace Idrak.Data;
@@ -76,6 +77,12 @@ public static partial class PillowImageOps
         for (int c = 0; c < planes.Length; c++)
         {
             var plane = planes[c];
+            if (size == 3)
+            {
+                result[c] = RankOfNine(plane, h, w, rank);
+                continue;
+            }
+
             var output = new byte[h * w];
             // Rows are independent: spread over the cores. A window's values are counted (256 bins), then the rank found.
             Parallel.For(0, h, y =>
@@ -106,6 +113,89 @@ public static partial class PillowImageOps
         }
 
         return FromBytes(result, h, w);
+    }
+
+    // Knuth's 25 compare-exchanges that sort nine values (checked on every 0-1 input, so on every input): a 3 x 3 window
+    // sorted without branches, its rank then read. The rank of a window is a value, whatever the order, so this equals
+    // counting.
+    private static ReadOnlySpan<byte> NineSort =>
+    [
+        0, 1, 3, 4, 6, 7, 1, 2, 4, 5, 7, 8, 0, 1, 3, 4, 6, 7, 0, 3, 3, 6, 0, 3, 1, 4,
+        4, 7, 1, 4, 2, 5, 5, 8, 2, 5, 1, 3, 5, 7, 2, 6, 4, 6, 2, 4, 2, 3, 5, 6,
+    ];
+
+    // RankFilter of size 3: rows in parallel; inside a row, the windows of a vector of pixels at once (the nine shifted rows'
+    // vectors through the network), the first and last columns (the border repeated) and the tail one at a time.
+    private static byte[] RankOfNine(byte[] plane, int h, int w, int rank)
+    {
+        var output = GC.AllocateUninitializedArray<byte>(h * w);
+        HostParallel.For(h, Math.Max(1, (1 << 15) / w), (first, last) =>
+        {
+            Span<Vector<byte>> lanes = stackalloc Vector<byte>[9];
+            Span<byte> nine = stackalloc byte[9];
+            int n = Vector<byte>.Count;
+            for (int y = first; y < last; y++)
+            {
+                int up = Math.Max(y - 1, 0) * w, mid = y * w, down = Math.Min(y + 1, h - 1) * w;
+                RankOne(plane, output, nine, up, mid, down, w, 0, rank);
+                int x = 1;
+                if (Vector.IsHardwareAccelerated)
+                {
+                    for (; x + n < w; x += n)                                   // reads columns x - 1 to x + n
+                    {
+                        lanes[0] = new Vector<byte>(plane.AsSpan(up + x - 1));
+                        lanes[1] = new Vector<byte>(plane.AsSpan(up + x));
+                        lanes[2] = new Vector<byte>(plane.AsSpan(up + x + 1));
+                        lanes[3] = new Vector<byte>(plane.AsSpan(mid + x - 1));
+                        lanes[4] = new Vector<byte>(plane.AsSpan(mid + x));
+                        lanes[5] = new Vector<byte>(plane.AsSpan(mid + x + 1));
+                        lanes[6] = new Vector<byte>(plane.AsSpan(down + x - 1));
+                        lanes[7] = new Vector<byte>(plane.AsSpan(down + x));
+                        lanes[8] = new Vector<byte>(plane.AsSpan(down + x + 1));
+                        var net = NineSort;
+                        for (int i = 0; i < net.Length; i += 2)
+                        {
+                            var a = lanes[net[i]];
+                            var b = lanes[net[i + 1]];
+                            lanes[net[i]] = Vector.Min(a, b);
+                            lanes[net[i + 1]] = Vector.Max(a, b);
+                        }
+
+                        lanes[rank].CopyTo(output.AsSpan(mid + x));
+                    }
+                }
+
+                for (; x < w; x++)
+                {
+                    RankOne(plane, output, nine, up, mid, down, w, x, rank);
+                }
+            }
+        });
+        return output;
+    }
+
+    // One 3 x 3 window of RankOfNine (rows up, mid and down; columns clamped to the image) through the same network.
+    private static void RankOne(byte[] plane, byte[] output, Span<byte> nine, int up, int mid, int down, int w, int x, int rank)
+    {
+        int left = Math.Max(x - 1, 0), right = Math.Min(x + 1, w - 1);
+        nine[0] = plane[up + left];
+        nine[1] = plane[up + x];
+        nine[2] = plane[up + right];
+        nine[3] = plane[mid + left];
+        nine[4] = plane[mid + x];
+        nine[5] = plane[mid + right];
+        nine[6] = plane[down + left];
+        nine[7] = plane[down + x];
+        nine[8] = plane[down + right];
+        var net = NineSort;
+        for (int i = 0; i < net.Length; i += 2)
+        {
+            byte a = nine[net[i]], b = nine[net[i + 1]];
+            nine[net[i]] = Math.Min(a, b);
+            nine[net[i + 1]] = Math.Max(a, b);
+        }
+
+        output[mid + x] = nine[rank];
     }
 
     /// <summary><c>ImageFilter.MedianFilter(size)</c>: each pixel the median of its neighbourhood (specks and salt-and-pepper noise removed).</summary>
@@ -254,11 +344,14 @@ public static partial class PillowImageOps
         {
             var input = planes[c];
             var blurred = BoxBlur(input.AsSpan(0, size).ToArray(), image.Height, image.Width, box, 3);
-            for (int i = 0; i < size; i++)
+            HostParallel.For(size, 1 << 15, (first, last) =>
             {
-                int diff = input[i] - blurred[i];
-                blurred[i] = Math.Abs(diff) > threshold ? (byte)Math.Clamp(input[i] + diff * percent / 100, 0, 255) : input[i];
-            }
+                for (int i = first; i < last; i++)
+                {
+                    int diff = input[i] - blurred[i];
+                    blurred[i] = Math.Abs(diff) > threshold ? (byte)Math.Clamp(input[i] + diff * percent / 100, 0, 255) : input[i];
+                }
+            });
 
             result[c] = blurred;
         }
@@ -339,7 +432,8 @@ public static partial class PillowImageOps
         return whole + fraction;
     }
 
-    // ImagingBoxBlur on one 8-bit plane: `passes` horizontal blurs, then `passes` vertical ones (columns as rows).
+    // ImagingBoxBlur on one 8-bit plane: `passes` horizontal blurs, then `passes` vertical ones (columns as rows: the plane
+    // transposed in tiles, its rows blurred, transposed back, so each column is read in order, not a row's stride apart).
     private static byte[] BoxBlur(byte[] plane, int height, int width, float radius, int passes)
     {
         if (radius == 0)
@@ -347,7 +441,15 @@ public static partial class PillowImageOps
             return plane;
         }
 
-        Parallel.For(0, height, () => new byte[width], (y, _, line) =>
+        RowsBoxBlur(plane, height, width, radius, passes);
+        var columns = Transposed(plane, height, width);
+        RowsBoxBlur(columns, width, height, radius, passes);
+        return Transposed(columns, width, height);
+    }
+
+    // `passes` box blurs of each row of a [rows, width] plane, in place, rows in parallel.
+    private static void RowsBoxBlur(byte[] plane, int rows, int width, float radius, int passes) =>
+        Parallel.For(0, rows, () => new byte[width], (y, _, line) =>
         {
             var row = plane.AsSpan(y * width, width);
             for (int p = 0; p < passes; p++)
@@ -358,28 +460,31 @@ public static partial class PillowImageOps
 
             return line;
         }, _ => { });
-        Parallel.For(0, width, () => (new byte[height], new byte[height]), (x, _, buffers) =>
+
+    // A [rows, columns] plane as [columns, rows], in tiles that stay in the cache, tile rows in parallel.
+    private static byte[] Transposed(byte[] plane, int rows, int columns)
+    {
+        const int Tile = 64;
+        var result = GC.AllocateUninitializedArray<byte>(rows * columns);
+        HostParallel.For((rows + Tile - 1) / Tile, 1, (first, last) =>
         {
-            var (column, line) = buffers;
-            for (int y = 0; y < height; y++)
+            for (int r0 = first * Tile; r0 < Math.Min(rows, last * Tile); r0 += Tile)
             {
-                column[y] = plane[y * width + x];
+                int r1 = Math.Min(rows, r0 + Tile);
+                for (int c0 = 0; c0 < columns; c0 += Tile)
+                {
+                    int c1 = Math.Min(columns, c0 + Tile);
+                    for (int r = r0; r < r1; r++)
+                    {
+                        for (int c = c0; c < c1; c++)
+                        {
+                            result[c * rows + r] = plane[r * columns + c];
+                        }
+                    }
+                }
             }
-
-            for (int p = 0; p < passes; p++)
-            {
-                LineBoxBlur(column, line, radius);
-                line.CopyTo(column, 0);
-            }
-
-            for (int y = 0; y < height; y++)
-            {
-                plane[y * width + x] = column[y];
-            }
-
-            return buffers;
-        }, _ => { });
-        return plane;
+        });
+        return result;
     }
 
     // ImagingHorizontalBoxBlur's line (ImagingLineBoxBlur8): unsigned 32-bit sums, the fractional edge weights in 8.24
