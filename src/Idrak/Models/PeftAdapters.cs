@@ -204,6 +204,9 @@ internal sealed class AdapterMerge : IDisposable
         return PeftAdapterConfig.VisionTensors(_reader, stored, _used);
     }
 
+    /// <summary>Whether the adapter has an update for the checkpoint module <paramref name="module"/> (which <see cref="AddTo"/> would add).</summary>
+    public bool Updates(string module) => _config.Names(_reader, module) is not null;
+
     /// <summary>
     /// Adds scale · (B·A)ᵀ to <paramref name="weight"/> ([inputs, outputs], Idrak's layout) when the adapter has
     /// lora_A [r, inputs] and lora_B [outputs, r] for the checkpoint module <paramref name="module"/>; for DoRA, then scales

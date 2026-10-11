@@ -135,7 +135,17 @@ public static class StoredWeights
         var bias = Optional(store, name + ".bias", shape[0], device);
         try
         {
-            return Linear(store.ReadTransposed(name + ".weight"), shape[1], shape[0], bias, KeepsBFloat16(store, weights, name + ".weight"), device);
+            // A bfloat16 tensor kept as bfloat16 goes to the device as its stored bits, transposed as such: the weights
+            // its float32 copy would round to, without that copy (ITensorStore.ReadBFloat16).
+            string weight = name + ".weight";
+            bool bfloat16 = KeepsBFloat16(store, weights, weight);
+            if (bfloat16 && store.FormatOf(weight) == WeightFormat.BFloat16
+                && BFloat16Weight.FromBits(shape[1], shape[0], device, (Span<ushort> bits, int stride) => store.ReadBFloat16(weight, transposed: true, bits, stride)) is { } stored)
+            {
+                return Layers.Linear.FromBFloat16(stored, bias);
+            }
+
+            return Linear(store.ReadTransposed(weight), shape[1], shape[0], bias, bfloat16, device);
         }
         catch
         {

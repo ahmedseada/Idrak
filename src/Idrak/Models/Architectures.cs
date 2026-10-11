@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
@@ -463,15 +464,91 @@ public static class PretrainedFamilies
     }
 }
 
-/// <summary>Reads a model's weights from a safetensors checkpoint through an architecture's name mapping.</summary>
+/// <summary>
+/// Reads a model's weights from a safetensors checkpoint through an architecture's name mapping; bfloat16 weights of
+/// bfloat16 tensors as their stored bits (<see cref="ReadBFloat16"/>). Keeps the time spent reading and merging, for
+/// <see cref="PretrainedModel.LoadTimes"/>.
+/// </summary>
 internal sealed class CheckpointWeights(ITensorStore reader, PretrainedArchitecture architecture) : IWeightSource
 {
+    private long _readTicks, _mergeTicks, _uploadTicks;
+
     public HashSet<string> Used { get; } = [];
 
     /// <summary>A PEFT adapter whose updates are added to the weights as they are read (null for none).</summary>
     public AdapterMerge? Adapter { get; init; }
 
+    /// <summary>The time spent in the store's reads so far: its file reads and the conversion to the layer's layout.</summary>
+    public TimeSpan ReadTime => Stopwatch.GetElapsedTime(0, _readTicks);
+
+    /// <summary>The time spent adding the adapter's updates to the weights so far.</summary>
+    public TimeSpan MergeTime => Stopwatch.GetElapsedTime(0, _mergeTicks);
+
+    /// <summary>The time spent putting bfloat16 weights read as their bits on the device so far (memory and upload).</summary>
+    public TimeSpan UploadTime => Stopwatch.GetElapsedTime(0, _uploadTicks);
+
     public float[]? Read(string name, IReadOnlyList<int> shape)
+    {
+        if (Stored(name, shape) is not { } stored)
+        {
+            return null;
+        }
+
+        // Transposed while reading: one full array per tensor instead of the stored order plus its transpose.
+        bool transposed = architecture.Transposed(name);
+        long start = Stopwatch.GetTimestamp();
+        var values = transposed ? reader.ReadTransposed(stored) : reader.Read(stored);
+        long read = Stopwatch.GetTimestamp();
+        _readTicks += read - start;
+        if (transposed && Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal))
+        {
+            Adapter.AddTo(stored[..^".weight".Length], values, shape[0], shape[1]);
+            _mergeTicks += Stopwatch.GetTimestamp() - read;
+        }
+
+        return values;
+    }
+
+    public BFloat16Weight? ReadBFloat16(string name, IReadOnlyList<int> shape, Device device, bool transposed = false)
+    {
+        if (Stored(name, shape) is not { } stored)
+        {
+            return null;
+        }
+
+        // A bfloat16 tensor's bits are the weights' bits (FromValues rounds each float32 copy back to itself), so they go
+        // to the device as 16-bit values, transposed as such where the layout needs it. Not when the adapter updates the
+        // tensor: its values change, so they are merged in float32 and rounded, as Read and the interface's default do.
+        bool storedTransposed = architecture.Transposed(name);
+        bool merged = storedTransposed && Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal)
+            && Adapter.Updates(stored[..^".weight".Length]);
+        if (!merged && shape.Count == 2 && reader.FormatOf(stored) == WeightFormat.BFloat16)
+        {
+            int rows = transposed ? shape[1] : shape[0], columns = transposed ? shape[0] : shape[1];
+            long begun = Stopwatch.GetTimestamp(), reading = 0;
+            var weight = BFloat16Weight.FromBits(rows, columns, device, (Span<ushort> bits, int stride) =>
+            {
+                long start = Stopwatch.GetTimestamp();
+                bool copied = reader.ReadBFloat16(stored, storedTransposed != transposed, bits, stride);
+                reading = Stopwatch.GetTimestamp() - start;
+                return copied;
+            });
+            _readTicks += reading;
+            _uploadTicks += Stopwatch.GetTimestamp() - begun - reading;     // the weights' device memory and upload
+            if (weight is not null)
+            {
+                return weight;
+            }
+        }
+
+        var values = Read(name, shape)!;
+        return transposed
+            ? BFloat16Weight.FromValues(HostParallel.Transpose(values, shape[0], shape[1]), shape[1], shape[0], device)
+            : BFloat16Weight.FromValues(values, shape[0], shape[1], device);
+    }
+
+    // The stored name of the weight `name` [shape] (marked used), or null when the checkpoint does not have it.
+    private string? Stored(string name, IReadOnlyList<int> shape)
     {
         if (architecture.TensorName(name) is not { } stored || !reader.Contains(stored))
         {
@@ -480,21 +557,12 @@ internal sealed class CheckpointWeights(ITensorStore reader, PretrainedArchitect
 
         Used.Add(stored);
         var storedShape = reader.ShapeOf(stored);
-        bool transposed = architecture.Transposed(name);
-        int[] expected = transposed ? [.. shape.Reverse()] : [.. shape];
+        int[] expected = architecture.Transposed(name) ? [.. shape.Reverse()] : [.. shape];
         if (!storedShape.SequenceEqual(expected))
         {
             throw new InvalidDataException($"'{stored}' is [{string.Join(", ", storedShape)}]; the model expects [{string.Join(", ", expected)}] for {name}.");
         }
 
-        // Transposed while reading: one full array per tensor instead of the stored order plus its transpose.
-        var values = transposed ? reader.ReadTransposed(stored) : reader.Read(stored);
-
-        if (transposed && Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal))
-        {
-            Adapter.AddTo(stored[..^".weight".Length], values, shape[0], shape[1]);
-        }
-
-        return values;
+        return stored;
     }
 }
