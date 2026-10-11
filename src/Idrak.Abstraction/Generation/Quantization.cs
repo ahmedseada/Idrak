@@ -756,6 +756,97 @@ public sealed class BFloat16Weight : PackedWeight
     }
 
     /// <summary>
+    /// bfloat16 weights [rows, columns] whose bits <paramref name="write"/> puts in place: a checkpoint's stored bfloat16
+    /// values copied as they are (through <see cref="CopyStoredBits"/>), which are the weights
+    /// <see cref="FromValues(ReadOnlySpan{float}, int, int, Device)"/> makes from their float32 copies, bit for bit, without
+    /// those copies. On the CPU the bits are written straight into the weights' memory; on another device into one host
+    /// buffer of 16-bit values (half a float32 copy), uploaded once.
+    /// </summary>
+    /// <param name="rows">Input features (rows of the weight matrix).</param>
+    /// <param name="columns">Output features (columns).</param>
+    /// <param name="device">Where the weights are created.</param>
+    /// <param name="write">
+    /// Writes row r's <paramref name="columns"/> values at [r · stride] of the span it gets (stride, its second argument:
+    /// the columns rounded up to an even number; the padding after each row is zeroed after it) and returns true; returns
+    /// false when it wrote nothing (the source does not hold these bits), and then the memory is freed and the result is null.
+    /// </param>
+    public static BFloat16Weight? FromBits(int rows, int columns, Device device, Func<Span<ushort>, int, bool> write)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(write);
+        ArgumentOutOfRangeException.ThrowIfNegative(rows);
+        ArgumentOutOfRangeException.ThrowIfNegative(columns);
+        int stride = (columns + 1) / 2 * 2, count = checked(rows * stride);
+        var packed = Tensor.Empty([count / 2], device, track: false);   // every value is written below: not zeroed first
+        try
+        {
+            ushort[]? staged = device.Backend is Abstraction.Devices.Cpu.CpuBackend ? null : GC.AllocateUninitializedArray<ushort>(count);
+            var bits = staged is null ? MemoryMarshal.Cast<float, ushort>(packed.Storage.HostMemory) : staged.AsSpan();
+            if (!write(bits, stride))
+            {
+                packed.Dispose();
+                return null;
+            }
+
+            if (stride != columns)
+            {
+                for (int r = 0; r < rows; r++)
+                {
+                    bits[r * stride + columns] = 0;
+                }
+            }
+
+            if (staged is not null)
+            {
+                packed.Load(MemoryMarshal.Cast<ushort, float>(staged.AsSpan()));
+            }
+
+            return new BFloat16Weight(packed, rows, columns);
+        }
+        catch
+        {
+            packed.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Copies stored bfloat16 values as the bits <see cref="FromValues(ReadOnlySpan{float}, int, int, Device)"/> gives their
+    /// float32 copies: each value as it is, except that a NaN is made quiet, as rounding makes it. <paramref name="stored"/>
+    /// and <paramref name="destination"/> may be the same memory.
+    /// </summary>
+    /// <param name="stored">The stored values' bits.</param>
+    /// <param name="destination">At least as long as <paramref name="stored"/>.</param>
+    public static void CopyStoredBits(ReadOnlySpan<ushort> stored, Span<ushort> destination)
+    {
+        if (destination.Length < stored.Length)
+        {
+            throw new ArgumentException($"{destination.Length} values cannot hold {stored.Length}.", nameof(destination));
+        }
+
+        // A widened bfloat16 value rounds back to itself (its low 16 bits are zero, so the rounding adds nothing to the
+        // high half); a NaN keeps its bits with the quiet bit (0x40 of the high half) set, as BFloat16Bits.Round does.
+        int i = 0;
+        if (System.Numerics.Vector.IsHardwareAccelerated)
+        {
+            var magnitude = new System.Numerics.Vector<ushort>(0x7FFF);
+            var infinity = new System.Numerics.Vector<ushort>(0x7F80);
+            var quiet = new System.Numerics.Vector<ushort>(0x40);
+            for (; i <= stored.Length - System.Numerics.Vector<ushort>.Count; i += System.Numerics.Vector<ushort>.Count)
+            {
+                var v = new System.Numerics.Vector<ushort>(stored[i..]);
+                (v | (System.Numerics.Vector.GreaterThan(v & magnitude, infinity) & quiet)).CopyTo(destination[i..]);
+            }
+        }
+
+        for (; i < stored.Length; i++)
+        {
+            int v = stored[i];
+            destination[i] = (ushort)((v & 0x7FFF) > 0x7F80 ? v | 0x40 : v);
+        }
+    }
+
+    /// <summary>
     /// Room for bfloat16 values [rows, columns] on <paramref name="device"/>, allocated without computing anything, for
     /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>

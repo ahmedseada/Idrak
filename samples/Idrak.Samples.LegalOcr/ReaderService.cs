@@ -470,9 +470,11 @@ public sealed class ReaderService : IDisposable
                 }
 
                 double loadSeconds, warmSeconds;
+                string stages;
                 using (var lease = _host.Acquire(model.Id))
                 {
                     loadSeconds = clock.Elapsed.TotalSeconds;
+                    stages = lease.Model.Pretrained.LoadTimes.ToString();          // the library's load by stage
                     SetStatus(ReaderState.Loading, $"Warming up {model.Name}: one short read builds its encoder and measures the device…", _loaded, model.Id,
                         seconds: loadSeconds);
                     warmSeconds = WarmUp(lease.Model, cancellationToken);
@@ -481,7 +483,7 @@ public sealed class ReaderService : IDisposable
                 _loaded = model.Id;
                 SetStatus(ReaderState.Ready, $"{model.Name} is ready (loaded in {loadSeconds:F0} s, warmed up in {warmSeconds:F1} s).", model.Id,
                     seconds: clock.Elapsed.TotalSeconds);
-                _logger.LogInformation("Loaded {Model} from {Folder} in {Seconds:F1} s, warmed up in {Warm:F1} s", model.Id, folder, loadSeconds, warmSeconds);
+                _logger.LogInformation("Loaded {Model} from {Folder} in {Seconds:F1} s ({Stages}), warmed up in {Warm:F1} s", model.Id, folder, loadSeconds, stages, warmSeconds);
             }
             finally
             {

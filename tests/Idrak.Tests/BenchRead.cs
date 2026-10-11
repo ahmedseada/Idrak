@@ -84,6 +84,11 @@ internal static partial class Tests
                 MaxPositions = context,
             });
             double loadSeconds = Stopwatch.GetElapsedTime(loading).TotalSeconds;
+            long loadPeak;                                                     // the process's host memory peak so far: the load's
+            using (var process = Process.GetCurrentProcess())
+            {
+                loadPeak = process.PeakWorkingSet64;
+            }
             using var reader = new ImageReader(model, new ImageReaderOptions
             {
                 Transforms = pipeline,
@@ -132,7 +137,7 @@ internal static partial class Tests
             }, options);
             Console.WriteLine();
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"{device}: loaded in {loadSeconds:F2} s; decoder {parameters:N0} weights, {weightBytes / 1048576.0:F0} MB of weights"));
+                $"{device}: loaded in {loadSeconds:F2} s ({model.LoadTimes}), host peak {loadPeak / 1048576.0:F0} MB; decoder {parameters:N0} weights, {weightBytes / 1048576.0:F0} MB of weights"));
             report.Write();
         }
 
