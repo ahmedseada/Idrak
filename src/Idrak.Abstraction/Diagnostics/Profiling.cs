@@ -480,7 +480,8 @@ public static class Profiler
 /// <item>"operations" (intrusive): every operation called on the device ("operations", calls; "operation kinds") and every
 /// host fallback ("host fallbacks", calls), with tables of both by operation.</item>
 /// <item>"kernels" (intrusive; devices that time their kernels, such as CUDA): the device's time in kernels ("kernel time",
-/// ms), the launches ("launches"), the matrix products' rate ("matrix TFLOPS"), and a table of the kernels by time.</item>
+/// ms), the launches ("launches"), the matrix products' rate ("matrix TFLOPS"), and a table of the kernels by time; recorded
+/// graphs run step by step meanwhile (<see cref="ComputeGraph.RunStepsDirectly"/>), so a decoding step's kernels show too.</item>
 /// </list>
 /// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
 /// <see cref="Unregister"/> brings back. The registry has no guard: a probe holds what it measures through a run, so it
@@ -648,7 +649,7 @@ public static class ProfileProbes
     {
         public string Name => "kernels";
 
-        public string Summary => "each kernel's launches, time and matrix-product rate (devices that time their kernels, such as CUDA)";
+        public string Summary => "each kernel's launches, time and matrix-product rate, recorded graphs run step by step (devices that time their kernels, such as CUDA)";
 
         public bool Intrusive => true;
 
@@ -656,11 +657,13 @@ public static class ProfileProbes
 
         public Action Begin(ProfileRun run)
         {
+            var direct = ComputeGraph.RunStepsDirectly();                         // a graph's kernels are timed one by one too
             run.Device.Synchronize();
             run.Device.Backend.StartProfile();
             return () =>
             {
                 run.Device.Synchronize();
+                direct.Dispose();
                 var kernels = run.Device.Backend.StopProfile()
                     .Select(e => (e.Key, e.Value.Calls, Ms: e.Value.Ticks * 1000.0 / Stopwatch.Frequency, e.Value.Flops))
                     .OrderByDescending(k => k.Ms).ToList();

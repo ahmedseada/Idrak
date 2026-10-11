@@ -41,6 +41,33 @@ public sealed class ComputeGraph : IDisposable
     [ThreadStatic]
     private static int t_capturing;
 
+    // Open RunStepsDirectly scopes (any thread).
+    private static int s_direct;
+
+    /// <summary>
+    /// Until the returned scope is disposed, graphs recorded on any thread replay by running their steps, as on a device
+    /// without graphs: every kernel launches on its own, so a profiler (the "kernels" probe, <c>GpuProfiler</c>) times
+    /// each one, decoding steps included. Slower; for profiling and diagnostics. Graphs recorded before keep replaying.
+    /// </summary>
+    public static IDisposable RunStepsDirectly()
+    {
+        Interlocked.Increment(ref s_direct);
+        return new DirectScope();
+    }
+
+    private sealed class DirectScope : IDisposable
+    {
+        private int _ended;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _ended, 1) == 0)
+            {
+                Interlocked.Decrement(ref s_direct);
+            }
+        }
+    }
+
     /// <summary>Whether work on this thread is being recorded into a graph (its buffers must outlive the recording).</summary>
     public static bool IsCapturing => t_capturing > 0;
 
@@ -57,7 +84,7 @@ public sealed class ComputeGraph : IDisposable
     public static ComputeGraph Capture(Device device, Action step)
     {
         var backend = device.Backend;
-        if (!backend.SupportsGraphs)
+        if (!backend.SupportsGraphs || Volatile.Read(ref s_direct) > 0)
         {
             return new ComputeGraph(device, step, IntPtr.Zero, IntPtr.Zero, [], [], null);
         }
