@@ -248,7 +248,9 @@ internal static partial class Tests
                 }
 
                 var (model0, tuning0) = LoadTuningModel(family, device);
-                bool supported = PackedSequences.Supports(model0.Network);
+                // Packed where the device's packed attention serves, or (every sequence holding images) by key ranges under
+                // Gemma 3's image blocks where its span kernels take the head size; LLaVA's rule is causal.
+                bool supported = PackedSequences.Supports(model0.Network) || family == "gemma3" && PackedSequences.SupportsImages(model0.Network);
                 model0.Dispose();
                 if (!supported)
                 {

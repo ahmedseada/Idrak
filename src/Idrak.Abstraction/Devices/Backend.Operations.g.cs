@@ -1121,6 +1121,28 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// y = x · w for few rows with packed weights w (in <paramref name="format"/>), then y's own RMS normalization ·
+    /// (yGain + yOffset), sum = residual + that, and normalized = sum's RMS normalization · (gain + offset) per row: a
+    /// sandwich block's output (or down) projection, the norm after it, the residual addition and the next block's norm.
+    /// Writes y (the projection), sum and normalized. The default composes the format's product (as the packed layer runs
+    /// few rows: for int8 the device's packed product where it prefers it) with <see cref="RmsNormAffine"/> on y in place
+    /// and <see cref="AddRmsNormAffine"/>, the operations a block runs without it; a device may do it in one pass.
+    /// Returns false when the format has no product here.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulNormAddRmsNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulNormAddRmsNormKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool PackedMatMulNormAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        return _kernels is null ? PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulNormAddRmsNormRegistered(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        return Kernel(OperationIndex.PackedMatMulNormAddRmsNorm) is OperationKernels.PackedMatMulNormAddRmsNorm kernel ? kernel(this, format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+    }
+
+    /// <summary>
     /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), in <paramref name="format"/>
     /// (int8 as in <see cref="Int8MatMul"/>, 4-bit as in <see cref="Int4MatMul"/>, bfloat16 as in
     /// <see cref="BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then

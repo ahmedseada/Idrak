@@ -107,6 +107,34 @@ public sealed class KeyValueCache : IDisposable
     /// <summary>Device memory used, in bytes.</summary>
     public long Bytes => 4L * (Keys.Size + Values.Size + (KeyScales?.Size ?? 0) + (ValueScales?.Size ?? 0));
 
+    /// <summary>Positions the cache holds (its slots).</summary>
+    public int Capacity => Keys.Shape[1];
+
+    // The window this cache slides with (DecodingContext.SlidingWindowSteps), or null for a cache of the context's capacity.
+    internal SlidingWindow? Sliding { get; init; }
+
+    // Moves the positions in slots [from, from + count) to slots [0, count), keys, values and scales alike (a copy first:
+    // the ranges may overlap). Every element is copied as it is, whatever the format packs into it.
+    internal void MoveToFront(int from, int count)
+    {
+        Move(Keys, from, count);
+        Move(Values, from, count);
+        Move(KeyScales, from, count);
+        Move(ValueScales, from, count);
+
+        static void Move(Tensor? rows, int from, int count)
+        {
+            if (rows is null || count == 0 || from == 0)
+            {
+                return;
+            }
+
+            int n = rows.Shape[0], capacity = rows.Shape[1], inner = rows.Size / (n * capacity);
+            using var moved = rows.Narrow(1, from, count);
+            rows.Backend.Copy2D(moved.Storage, 0, count * inner, rows.Storage, 0, capacity * inner, n, count * inner, accumulate: false);
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -137,6 +165,10 @@ public sealed class DecodingContext : IDisposable
 {
     private readonly Dictionary<object, KeyValueCache> _caches = new(ReferenceEqualityComparer.Instance);
     private Tensor? _iota;
+
+    // The sliding windows' caches (SlidingWindowSteps), one group per window length.
+    private readonly List<SlidingWindow> _windows = [];
+    private int _slidingSteps;
 
     /// <summary>Creates an empty context.</summary>
     /// <param name="device">Where caches and counters live (the model's device).</param>
@@ -196,6 +228,91 @@ public sealed class DecodingContext : IDisposable
     public int Length { get; private set; }
 
     /// <summary>
+    /// When positive, an attention layer with a sliding window shorter than the capacity (<see cref="CacheFor(object, int, int, int)"/>
+    /// with its window) keeps window - 1 + SlidingWindowSteps positions instead of <see cref="Capacity"/>: before a step
+    /// that would not fit, the window's last window - 1 positions move to the front of its cache (a copy of those rows,
+    /// once every SlidingWindowSteps positions or so), so every key a query can see is there, in order. Memory in
+    /// proportion to the window instead of the context, and the attention reads the same keys in the same order. Each
+    /// step then feeds at most SlidingWindowSteps positions (<see cref="BeginStep"/> refuses more). Only formats that read
+    /// a cache's own position (<see cref="KeyValueLayout.SlidingWindows"/>), never with <see cref="RowStarts"/>, and
+    /// <see cref="Truncate"/> only before the first move. Default 0: every cache holds <see cref="Capacity"/> positions.
+    /// Set before the first step.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Caches were made already.</exception>
+    public int SlidingWindowSteps
+    {
+        get => _slidingSteps;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            if (_caches.Count > 0 && value != _slidingSteps)
+            {
+                throw new InvalidOperationException("SlidingWindowSteps is set before the first step (the caches are made with it).");
+            }
+
+            _slidingSteps = value;
+        }
+    }
+
+    /// <summary>
+    /// The slot the next position goes to in <paramref name="cache"/>, as a one-element device tensor: <see cref="Position"/>
+    /// for a cache of the context's capacity, its window's own for a sliding one (<see cref="SlidingWindowSteps"/>). What
+    /// a layout writes and attends from.
+    /// </summary>
+    public Tensor PositionOf(KeyValueCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        return cache.Sliding?.Position ?? Position;
+    }
+
+    /// <summary>The slots of <paramref name="cache"/> holding positions so far, as tracked on the host (<see cref="Length"/> for a cache of the context's capacity).</summary>
+    public int LengthOf(KeyValueCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        return Length - (cache.Sliding?.Base ?? 0);
+    }
+
+    /// <summary>The current step's causal mask over <paramref name="cache"/>'s slots, [newSteps, its capacity] (<see cref="Mask"/> for a cache of the context's capacity), or null outside a step.</summary>
+    public Tensor? MaskOf(KeyValueCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        return cache.Sliding is not { } window ? Mask
+            : InStep ? window.Mask ??= Tensor.DecoderMask(window.Position, _steps, window.Capacity, track: false) : null;
+    }
+
+    // Before `steps` new positions: each sliding window whose cache would overflow keeps its last window - 1 positions,
+    // moved to its front (outside a recording: a recorded step is replayed after the move, see ReplayStep).
+    private void Slide(int steps)
+    {
+        foreach (var window in _windows)
+        {
+            if (steps > _slidingSteps)
+            {
+                throw new InvalidOperationException($"A step of {steps} positions; the sliding windows take at most {_slidingSteps} (SlidingWindowSteps).");
+            }
+
+            if (Length - window.Base + steps <= window.Capacity)
+            {
+                continue;
+            }
+
+            if (ComputeGraph.IsCapturing)
+            {
+                throw new InvalidOperationException("A sliding window must move before the step is recorded (CaptureStep moves it).");
+            }
+
+            int keep = Math.Min(window.Length - 1, Length);            // the positions a query from Length on still sees
+            foreach (var cache in window.Caches)
+            {
+                cache.MoveToFront(Length - keep - window.Base, keep);
+            }
+
+            window.Base = Length - keep;
+            window.Position.FillInPlace(keep);
+        }
+    }
+
+    /// <summary>
     /// The current step's [newSteps, capacity] causal mask, or null outside a step. Built on first use (the tiled and
     /// decoding attention kernels never need it: for a long prompt it would be newSteps × capacity floats).
     /// </summary>
@@ -239,6 +356,11 @@ public sealed class DecodingContext : IDisposable
             throw new ArgumentException($"Row starts: one per row ({Batch}), each within the capacity ({Capacity}).");
         }
 
+        if (starts is not null && _windows.Count > 0)
+        {
+            throw new InvalidOperationException("Rows of different lengths do not attend from sliding windows' caches (SlidingWindowSteps): make the context without them.");
+        }
+
         RowStarts = starts?.ToArray();
     }
 
@@ -256,6 +378,7 @@ public sealed class DecodingContext : IDisposable
             throw new InvalidOperationException($"Decoding past the context capacity ({Capacity}); call Reset and re-feed a shorter window.");
         }
 
+        Slide(steps);
         _steps = steps;
         InStep = true;
         if (RowStarts is { } starts)
@@ -303,6 +426,11 @@ public sealed class DecodingContext : IDisposable
     public void EndStep(int steps)
     {
         Position.AddInPlace(steps);
+        foreach (var window in _windows)
+        {
+            window.Position.AddInPlace(steps);
+        }
+
         Length += steps;
         ClearStep();
     }
@@ -325,6 +453,7 @@ public sealed class DecodingContext : IDisposable
             throw new InvalidOperationException($"The key/value cache format '{Layout.Name}' is not recordable (KeyValueLayout.Recordable); run its steps as they are.");
         }
 
+        Slide(1);                                     // a sliding window moves now: the recording cannot
         int length = Length;
         var graph = ComputeGraph.Capture(Device, step);
         Length = length;   // recording does not execute the step
@@ -336,6 +465,12 @@ public sealed class DecodingContext : IDisposable
     {
         _mask?.Dispose();
         _mask = null;
+        foreach (var window in _windows)
+        {
+            window.Mask?.Dispose();
+            window.Mask = null;
+        }
+
         TokenPositions?.Dispose();
         TokenPositions = null;
         TokenStarts?.Dispose();
@@ -352,6 +487,7 @@ public sealed class DecodingContext : IDisposable
             throw new InvalidOperationException($"Decoding past the context capacity ({Capacity}); call Reset and re-feed a shorter window.");
         }
 
+        Slide(steps);
         int length = Length;
         graph.Replay();
         Length = length + steps;
@@ -361,6 +497,12 @@ public sealed class DecodingContext : IDisposable
     public void Reset()
     {
         Position.FillInPlace(0f);
+        foreach (var window in _windows)
+        {
+            window.Base = 0;
+            window.Position.FillInPlace(0f);
+        }
+
         Length = 0;
     }
 
@@ -368,11 +510,22 @@ public sealed class DecodingContext : IDisposable
     /// Keeps the first <paramref name="length"/> positions and forgets the rest (their cache entries are overwritten by
     /// the next steps): reuses the cached keys and values of a shared prompt prefix.
     /// </summary>
+    /// <exception cref="InvalidOperationException">A sliding window's cache has moved (its first positions are gone).</exception>
     public void Truncate(int length)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(length, Length);
+        if (_windows.Any(w => w.Base > 0))
+        {
+            throw new InvalidOperationException("A sliding window's cache has moved past the first positions (SlidingWindowSteps); Reset and feed the prompt again.");
+        }
+
         Position.FillInPlace(length);
+        foreach (var window in _windows)
+        {
+            window.Position.FillInPlace(length);
+        }
+
         Length = length;
     }
 
@@ -389,6 +542,37 @@ public sealed class DecodingContext : IDisposable
         return cache;
     }
 
+    /// <summary>
+    /// The cache for <paramref name="owner"/>, an attention layer whose queries see the last <paramref name="window"/>
+    /// positions (0: every earlier one), created on first use: a sliding window's cache of window - 1 +
+    /// <see cref="SlidingWindowSteps"/> positions when that is set and smaller than <see cref="Capacity"/> (and the format
+    /// reads a cache's own position, rows start together, and nothing is decoded yet), else one of the context's capacity.
+    /// The layer then writes and attends from <see cref="PositionOf"/>, <see cref="LengthOf"/> and <see cref="MaskOf"/>.
+    /// </summary>
+    public KeyValueCache CacheFor(object owner, int rows, int headDim, int window)
+    {
+        if (_caches.TryGetValue(owner, out var cache))
+        {
+            return cache;
+        }
+
+        int slots = window - 1 + _slidingSteps;
+        if (_slidingSteps <= 0 || window <= 0 || slots >= Capacity || Length > 0 || RowStarts is not null || !Layout.SlidingWindows)
+        {
+            return CacheFor(owner, rows, headDim);
+        }
+
+        var group = _windows.Find(w => w.Length == window);
+        if (group is null)
+        {
+            _windows.Add(group = new SlidingWindow(window, slots, Device));
+        }
+
+        _caches[owner] = cache = new KeyValueCache(rows, slots, headDim, Device, Layout) { Sliding = group };
+        group.Caches.Add(cache);
+        return cache;
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -398,7 +582,37 @@ public sealed class DecodingContext : IDisposable
         }
 
         _caches.Clear();
+        foreach (var window in _windows)
+        {
+            window.Dispose();
+        }
+
+        _windows.Clear();
         _iota?.Dispose();
+        Position.Dispose();
+    }
+}
+
+// The caches of one window length sliding together (DecodingContext.SlidingWindowSteps): their capacity, the position
+// slot 0 holds (host), the slot the next position goes to (device, advanced with the context's position), and the
+// current step's mask over their slots.
+internal sealed class SlidingWindow(int length, int capacity, Device device) : IDisposable
+{
+    public int Length { get; } = length;
+
+    public int Capacity { get; } = capacity;
+
+    public int Base { get; set; }
+
+    public Tensor Position { get; } = Tensor.Persistent([0f], [1], device, requiresGrad: false);
+
+    public Tensor? Mask { get; set; }
+
+    public List<KeyValueCache> Caches { get; } = [];
+
+    public void Dispose()
+    {
+        Mask?.Dispose();
         Position.Dispose();
     }
 }

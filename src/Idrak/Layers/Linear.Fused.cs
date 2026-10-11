@@ -280,6 +280,49 @@ public sealed partial class Linear
     }
 
     /// <summary>
+    /// residual + yNorm(x · W) for a packed layer W with few rows (no bias, no adapter), and the RMS normalization of that
+    /// sum with norm's gain, in one device pass (inference: not recorded): a block with norms after attention and the
+    /// feed-forward (a sandwich block) runs its output or down projection, the norm after it, the residual addition and
+    /// the next normalization as one launch. Null when the layers or the shapes do not fit or the device has no fused
+    /// kernels (callers then compose the same operations).
+    /// </summary>
+    internal static (Tensor Sum, Tensor Normalized)? MatMulPackedNormAddRmsNorm(Tensor x, Layers.Linear layer, Layers.RMSNorm yNorm, Tensor residual,
+        Layers.RMSNorm norm)
+    {
+        using var offload = x.Device.Backend.Offload is null ? default : Offloading.EnterMany([layer, yNorm, norm], x);   // no array without offloading
+        x.ThrowIfDisposed();
+        residual.ThrowIfDisposed();
+        int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
+        if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
+            || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || yNorm.Features != n || !x.Backend.Capabilities.FusedKernels)
+        {
+            return null;
+        }
+
+        var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
+        if (packed.Device != x.Device || residual.Device != x.Device || norm.Gain.Device != x.Device || yNorm.Gain.Device != x.Device)
+        {
+            return null;
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Tensor.Empty(residual.Shape, x.Device, track: false);
+        var sum = Tensor.Empty(residual.Shape, x.Device);
+        var normalized = Tensor.Empty(residual.Shape, x.Device);
+        bool done = x.Backend.PackedMatMulNormAddRmsNorm(format, x.Storage, packed.Storage, scales?.Storage, y.Storage, m, n, k, yNorm.Gain.Storage,
+            yNorm.Epsilon, yNorm.Offset, residual.Storage, sum.Storage, norm.Gain.Storage, normalized.Storage, norm.Epsilon, norm.Offset);
+        y.Dispose();                                                 // stream-ordered: freed after the kernel read it
+        if (!done)
+        {
+            sum.Dispose();
+            normalized.Dispose();
+            return null;
+        }
+
+        return (sum, Tensor.Traced("matmul_norm_add_rms_norm_packed", normalized, start));
+    }
+
+    /// <summary>
     /// act(input · gate) · (input · up) for packed gate and up layers of one kind with few rows (no biases or adapters),
     /// the activation applied by the product's own last blocks (inference: not recorded), or null when the layers do
     /// not fit or the device has no fused version.

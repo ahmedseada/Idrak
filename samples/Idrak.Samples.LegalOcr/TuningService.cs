@@ -100,6 +100,12 @@ public sealed record TuneRequest
     /// <summary>See <see cref="TuningDefaults"/>.</summary>
     public int? LossPages { get; init; }
 
+    /// <summary>See <see cref="TuningDefaults"/>.</summary>
+    public bool? Checkpointing { get; init; }
+
+    /// <summary>See <see cref="TuningDefaults"/>.</summary>
+    public bool? RecomputeFeedForward { get; init; }
+
     /// <summary>The defaults with this request's values over them.</summary>
     public TuningDefaults Over(TuningDefaults d) => new()
     {
@@ -108,6 +114,7 @@ public sealed record TuneRequest
         BatchTokens = BatchTokens ?? d.BatchTokens, Accumulate = Accumulate ?? d.Accumulate, TrainProjector = TrainProjector ?? d.TrainProjector, CerPages = CerPages ?? d.CerPages,
         CerEvery = CerEvery ?? d.CerEvery, CerBefore = CerBefore ?? d.CerBefore, AnswerTokens = AnswerTokens ?? d.AnswerTokens, MaxPages = MaxPages ?? d.MaxPages,
         EvaluateEvery = EvaluateEvery ?? d.EvaluateEvery, SaveEvery = SaveEvery ?? d.SaveEvery, LossPages = LossPages ?? d.LossPages,
+        Checkpointing = Checkpointing ?? d.Checkpointing, RecomputeFeedForward = RecomputeFeedForward ?? d.RecomputeFeedForward,
     };
 }
 
@@ -372,6 +379,7 @@ public sealed class TuningService : IDisposable
                 {
                     Rank = settings.Rank, Alpha = settings.Alpha, LearningRate = settings.LearningRate, Epochs = settings.Epochs, MaxLength = settings.MaxLength,
                     BatchTokens = settings.BatchTokens, GradientAccumulation = settings.Accumulate, EvaluateEvery = settings.EvaluateEvery, SaveEvery = settings.SaveEvery,
+                    Checkpointing = settings.Checkpointing, RecomputeFeedForward = settings.RecomputeFeedForward,
                 },
             }, new Relay<TuningStage>(stage => Update(s => s with { Stage = stage.Name, StageDone = stage.Done, StageTotal = stage.Total })), Add, cancellationToken);
             Update(s => s with { Stage = null });

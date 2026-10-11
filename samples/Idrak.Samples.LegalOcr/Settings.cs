@@ -75,7 +75,11 @@ public sealed record LegalOcrSettings
     /// </summary>
     public string PrefillPrecision { get; init; } = "f32";
 
-    /// <summary>The attention cache: "f32" or "bf16" (half the memory).</summary>
+    /// <summary>
+    /// The attention cache: "f32" (the default: keys and values as computed) or "bf16" (each rounded to bfloat16: half the
+    /// cache's memory, so a larger ReadBatch fits the GPU; the answers can change, so compare CER on the evaluation pages
+    /// before reading with it). Pages of different lengths read together keep a float32 cache for their batch.
+    /// </summary>
     public string KeyValueCache { get; init; } = "f32";
 
     /// <summary>The longest prompt and answer in tokens (the image's tokens included).</summary>
@@ -215,4 +219,18 @@ public sealed record TuningDefaults
 
     /// <summary>The evaluation loss over the first this many evaluation pages (0: all of them; each is a forward pass, twice a run).</summary>
     public int LossPages { get; init; }
+
+    /// <summary>
+    /// Activation checkpointing (each block's activations recomputed in the backward pass: the least memory, about a third
+    /// more compute): null (automatic: off, turned on when a step runs out of GPU memory, then timed against the lighter
+    /// settings and the faster kept), true (from the first step) or false (never).
+    /// </summary>
+    public bool? Checkpointing { get; init; }
+
+    /// <summary>
+    /// Recompute the feed-forward activations in the backward pass instead of holding them: null (automatic: the
+    /// out-of-memory ladder's first rung, also taken before the first large batch when the first step's memory says it
+    /// will not fit), true (from the first step) or false (never).
+    /// </summary>
+    public bool? RecomputeFeedForward { get; init; }
 }

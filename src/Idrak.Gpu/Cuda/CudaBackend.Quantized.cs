@@ -96,12 +96,14 @@ internal sealed unsafe partial class CudaBackend
     internal static int? GemvSplits { get; set; }
 
     // Kernel names by format (0 int8, 1 int4, 2 bfloat16) and variant, built once: the per-token path never formats a name.
-    internal const int GemvPlain = 0, GemvSilu = 1, GemvGelu = 2, GemvAddNorm = 3;
+    // The norm-add-norm kernels follow the twelve (GemvNormAddNorm + format), so the variants before keep their tuning keys.
+    internal const int GemvPlain = 0, GemvSilu = 1, GemvGelu = 2, GemvAddNorm = 3, GemvNormAddNorm = 12;
     private static readonly string[] GemvKernels =
     [
         "int8_gemv_f32", "int8_gemv_silu_f32", "int8_gemv_gelu_f32", "int8_gemv_addnorm_f32",
         "int4_gemv_f32", "int4_gemv_silu_f32", "int4_gemv_gelu_f32", "int4_gemv_addnorm_f32",
         "bf16_gemv_f32", "bf16_gemv_silu_f32", "bf16_gemv_gelu_f32", "bf16_gemv_addnorm_f32",
+        "int8_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32",
     ];
 
     private static readonly string[] GemvMultiKernels =
@@ -139,7 +141,7 @@ internal sealed unsafe partial class CudaBackend
     private static int GemvMaxSplits(int k) => Math.Max(1, Math.Min(64, k / 64));
 
     // What a few-row product's split count is kept under: the kernel (format * 4 + GemvPlain / GemvSilu / GemvGelu /
-    // GemvAddNorm) and the shape, so the fused kernels never take the plain kernel's choice.
+    // GemvAddNorm, or GemvNormAddNorm + format) and the shape, so the fused kernels never take the plain kernel's choice.
     internal static TuneKey GemvSplitsKey(int variant, int m, int n, int k) => new(TuneOp.GemvSplits, variant, m, n, k);
 
     // Split counts the few-row products are measured with: 1, 2, 3, 4, 6, 8, 12, ... up to GemvMaxSplits (the kernels
@@ -182,7 +184,7 @@ internal sealed unsafe partial class CudaBackend
     // multiprocessor busy; narrow matrices split k, and the last block of each column range adds the splits in order.
     // `align`: split boundaries fall on multiples of it (int4 splits start on a 64-row block).
     // `up`: the gated kernels' second input; `tail`: further arguments (the addnorm kernels').
-    // `variant`: format * 4 + GemvPlain / GemvSilu / GemvGelu / GemvAddNorm (an index into GemvKernels).
+    // `variant`: format * 4 + GemvPlain / GemvSilu / GemvGelu / GemvAddNorm, or GemvNormAddNorm + format (an index into GemvKernels).
     private void PackedFewRows(int variant, Storage x, Storage q, Storage scales, Storage y, int m, int n, int k, int words, int align = 1,
         Storage? up = null, ReadOnlySpan<ulong> tail = default)
     {
@@ -221,8 +223,8 @@ internal sealed unsafe partial class CudaBackend
         public int ColumnBlocks => (Words + 31) / 32;
     }
 
-    // The arguments of a few-row product: twelve, `up` and the add-and-normalize kernels' six.
-    private const int FewRowsArguments = 19;
+    // The arguments of a few-row product: twelve, then `up` or the add-and-normalize kernels' six (nine with the norm of y).
+    private const int FewRowsArguments = 21;
 
     private void RunFewRows(in FewRows rows, ulong output, ReadOnlySpan<ulong> extra, int wanted)
     {
@@ -669,6 +671,24 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
+    // The sandwich block's projection, the norm of its output, the residual addition and the next norm in one launch: the
+    // last block of the add-and-normalize kernel also normalizes y first, with the row kernels' own summation order (see
+    // Int8Gemv), so at the same split count the result equals the product followed by rms_norm_affine_f32 and
+    // add_rms_norm_affine_f32 bit for bit. Measured (its split count) as a kernel of its own.
+    public override bool PackedMatMulNormAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+        Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        if (m > PtxKernels.GemvRows || k == 0 || format is not (PackedFormat.Int8 or PackedFormat.Int4 or PackedFormat.BFloat16))
+        {
+            return base.PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+        }
+
+        int cpw = format.ValuesPerWord();
+        PackedFewRows(GemvNormAddNorm + (int)format, x, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, format.SplitAlignment(),
+            tail: [P(residual), P(sum), P(gain), P(normalized), F(eps), F(offset), P(yGain), F(yEps), F(yOffset)]);
+        return true;
+    }
+
     public override bool PackedMatMulManyKernel(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products) =>
         PackedMany(format, x, m, k, products, -1, null);
@@ -967,8 +987,10 @@ internal sealed unsafe partial class CudaBackend
 
     // A decoding attention launch but for its split count, least chunk, partial results, counters and position: the
     // cache format (0 float32, 1 int8, 2 bfloat16) and its operands (DecodeSplit).
+    // Format 3: float32 rows of different lengths (attention_rows_f32), each from starts[(head / HeadsPerRow) · steps + step].
     private readonly record struct DecodeAttention(int Format, Storage Q, Storage Keys, Storage Values, Storage? KeyScales, Storage? ValueScales,
-        Storage Y, int RowsPerHead, int Steps, int Capacity, int Dim, float Scale, int Words, AttentionVariant Variant, int Rows);
+        Storage Y, int RowsPerHead, int Steps, int Capacity, int Dim, float Scale, int Words, AttentionVariant Variant, int Rows, Storage? Starts = null,
+        int HeadsPerRow = 1);
 
     private void RunDecode(in DecodeAttention a, Storage counters, int splits, int minChunk, ulong at)
     {
@@ -997,6 +1019,11 @@ internal sealed unsafe partial class CudaBackend
                 Launch(K("attention_decode_f32"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
                     P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale), U(minChunk),
                     U(a.Variant.Window), F(a.Variant.Softcap), U(a.Rows));
+                break;
+            case 3:
+                Launch(K("attention_rows_f32"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+                    P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), P(a.Starts!), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale),
+                    U(minChunk), U(a.Variant.Window), F(a.Variant.Softcap), U(a.HeadsPerRow), U(a.Rows));
                 break;
             case 1:
                 Launch(K("attention_decode_int8"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
@@ -1219,16 +1246,29 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    // Packed sequences and rows of different lengths run on the tensor-core flash kernels, which compute plain causal
-    // attention only: a window or a cap is refused (fine-tuning then pads, batches decode one by one).
+    // Packed sequences run on the tensor-core flash kernels, which compute plain causal attention only: a window or a cap
+    // is refused (fine-tuning then pads).
     public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => variant.IsPlain && FlashTensorCore(dim) is not null;
+
+    // Rows of different lengths: the flash kernels where they serve, else the decoding kernel with per-row starts
+    // (attention_rows_f32: every head size the decoding kernels take, windows and caps).
+    public override bool SupportsAttentionRows(int dim, AttentionVariant variant = default) => SupportsSegmentedAttention(dim, variant) || dim <= PtxKernels.DecodeMaxDim;
 
     public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
-            return false;
+            if (dim > PtxKernels.DecodeMaxDim)
+            {
+                return false;
+            }
+
+            // The decoding kernel, each row also from its sequence's start (its splits measured as a kernel of its own).
+            DecodeSplit(WindowedTuning(6, variant, capacity),
+                new DecodeAttention(3, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, 0, variant, heads * rowsPerHead, starts, headsPerRow),
+                position);
+            return true;
         }
 
         Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,

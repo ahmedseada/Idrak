@@ -19,7 +19,100 @@ internal static partial class Tests
         ("generation: num_predict, stop sequences, cache/graph/recompute agree", GeneratorBehaviour),
         ("generation: chat end to end yields a final message and stats", ChatEndToEnd),
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
+        ("generation: a windowed decoder generating far past its window with sliding windows' caches gives the texts of caches holding the whole reply (one row through recorded steps, a batch of two)", SlidingWindowGeneration),
+        ("generation: ReuseDecoding keeps the decoding context, sampler and recorded step between generations (the same objects while the size and sampling match, new ones otherwise, no sampler without a seed) and every text is a fresh generator's; ReleaseCache frees them", DecodingReuse),
     ];
+
+    // A windowed decoder generating far past its window: the windowed layers' caches hold the window (moved as they fill,
+    // also between recorded steps), every text as with caches of the whole reply, one row and a batch of two.
+    private static void SlidingWindowGeneration(Device device)
+    {
+        var (_, tokenizer) = TinyLanguageModel(device);
+        var spec = new DecoderSpec
+        {
+            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 96,
+            Rope = new RopeSettings(500f, null, false, null), SlidingWindow = 6, SlidingWindowLayers = [true, false],
+        };
+        using var model = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 8 });
+        var options = new GenerationOptions { Seed = 4, NumPredict = 60, Temperature = 0.9f, TopK = 8, RepeatPenalty = 1f, ChunkSize = 7, NumCtx = 96 };
+        string[] prompts = ["once upon a time", "the river ran"];
+        int least = TextGenerator.MinSlidingSteps;
+        try
+        {
+            (string[] Single, string[] Batch) Generate(bool slide)
+            {
+                TextGenerator.SlideWindows = slide;
+                var generator = new TextGenerator(model, tokenizer, 96) { KeepCache = false };
+                var single = prompts.Select(p => generator.Generate(p, options).Text).ToArray();
+                var batch = generator.GenerateBatch(["one two three", "four five six"], options).Select(r => r.Text).ToArray();
+                return (single, batch);
+            }
+
+            TextGenerator.MinSlidingSteps = 4;
+            var (slidSingle, slidBatch) = Generate(slide: true);
+            var (single, batch) = Generate(slide: false);
+            Check(slidSingle.SequenceEqual(single), $"one row: '{string.Join("' '", slidSingle)}' with sliding windows, '{string.Join("' '", single)}' without");
+            Check(slidBatch.SequenceEqual(batch), $"a batch: '{string.Join("' '", slidBatch)}' with sliding windows, '{string.Join("' '", batch)}' without");
+        }
+        finally
+        {
+            TextGenerator.SlideWindows = true;
+            TextGenerator.MinSlidingSteps = least;
+        }
+    }
+
+    private static void DecodingReuse(Device device)
+    {
+        var (tiny, tokenizer) = TinyLanguageModel(device, context: 64);
+        var spec = new DecoderSpec
+        {
+            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
+            QkNorm = true, Rope = new RopeSettings(500f, null, false, null), SlidingWindow = 8, SlidingWindowLayers = [true, false],
+        };
+        using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
+        using var _ = tiny;
+        var greedy = new GenerationOptions { Seed = 0, NumPredict = 14, Temperature = 1f, TopK = 1, RepeatPenalty = 1f, ChunkSize = 4, NumCtx = 64 };
+        var sampled = greedy with { Seed = 5, Temperature = 0.8f, TopK = 5, RepeatPenalty = 1.1f };
+        foreach (var model in new[] { tiny, decoder })
+        {
+            var reusing = new TextGenerator(model, tokenizer, 64) { KeepCache = false, ReuseDecoding = true };
+            DecodingContext? previous = null;
+            Idrak.Generation.Abstractions.ITokenSampler? previousSampler = null;
+            // Prompts of one length (the context and sampler kept), a longer one (a new context, the sampler kept), other
+            // options, no seed (its sampler not kept), then a seed again.
+            var runs = new (string Prompt, GenerationOptions Options, bool SameContext, bool SameSampler)[]
+            {
+                ("the quick brown fox", greedy, false, false),
+                ("the lazy brown dogs", greedy, true, true),
+                ("the lazy brown dogs", greedy with { Stop = ["zz"] }, true, true),
+                ("a much longer prompt than the others", greedy, false, true),
+                ("the quick brown fox", sampled, false, false),
+                ("the quick brown cow", sampled, true, true),
+                ("the quick brown cat", sampled with { Seed = null }, true, false),
+                ("the quick brown cat", greedy, true, false),
+            };
+            foreach (var (prompt, options, sameContext, sameSampler) in runs)
+            {
+                string expected = new TextGenerator(model, tokenizer, 64) { KeepCache = false }.Generate(prompt, options).Text;
+                string actual = reusing.Generate(prompt, options).Text;
+                if (options.Seed is not null)
+                {
+                    Check(actual == expected, $"{model.Name}: '{prompt}' → '{actual}' reusing the decoding, '{expected}' fresh");
+                }
+
+                var (context, sampler, _) = reusing.HeldDecoding;
+                Check(context is not null && ReferenceEquals(context, previous) == sameContext,
+                    $"{model.Name}: '{prompt}': the context {(sameContext ? "kept" : "made anew")}");
+                Check(options.Seed is null ? sampler is null : sampler is not null && ReferenceEquals(sampler, previousSampler) == sameSampler,
+                    $"{model.Name}: '{prompt}': the sampler {(options.Seed is null ? "not kept (no seed)" : sameSampler ? "kept" : "made anew")}");
+                (previous, previousSampler) = (context, sampler);
+            }
+
+            reusing.ReleaseCache();
+            var (released, releasedSampler, step) = reusing.HeldDecoding;
+            Check(released is null && releasedSampler is null && step is null, $"{model.Name}: ReleaseCache frees them");
+        }
+    }
 
     private static void WordTokenizerBehaviour(Device device)
     {

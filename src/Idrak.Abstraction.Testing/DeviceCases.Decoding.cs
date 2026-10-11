@@ -103,6 +103,18 @@ public static partial class DeviceCases
                         cpu.AddRmsNormAffine(residual, output, sum, gain, normalized, m, n, 1e-6f, offset);
                     });
 
+                // The same with the projection's own norm first (a block with norms after attention and the feed-forward).
+                Storage yGain = Random(c, n), sum2 = c.Zeros(m * n), normalized2 = c.Zeros(m * n), output2 = c.Zeros(m * n);
+                float yOffset = c.Random.Next(2);
+                c.Composed(Ops.PackedMatMulNormAddRmsNorm,
+                    cpu => cpu.PackedMatMulNormAddRmsNorm(format, input, packed, scales, output2, m, n, k, yGain, 1e-5f, yOffset, residual, sum2, gain,
+                        normalized2, 1e-6f, offset), cpu =>
+                    {
+                        PackedProduct(cpu, weight, input, output2, m);
+                        cpu.RmsNormAffine(output2, yGain, output2, m, n, 1e-5f, yOffset);
+                        cpu.AddRmsNormAffine(residual, output2, sum2, gain, normalized2, m, n, 1e-6f, offset);
+                    });
+
                 // Several products of one input, then a gate and up pair with its activation.
                 using var second = PackedWeight.FromValues(format, c.Values(k * n, 0.5f), k, n, c.Device);
                 PackedWeight[] weights = [weight, second];

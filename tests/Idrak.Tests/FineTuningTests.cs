@@ -29,6 +29,7 @@ internal static partial class Tests
         ("fine-tuning: the gated activation reads and writes bfloat16 words as packing and unpacking around the float kernels would (SiLU, GELU, ReLU, odd sizes)", PackedGatedActivation),
         ("fine-tuning: releasing results no backward step reads, and recomputing feed-forward activations, give the same loss and gradients with less memory (RoPE, biases, q/k norms, post norms, parallel blocks, layer norms, dropout)", ReleasedActivations),
         ("fine-tuning: checkpointing is off by default and turns on (the step run again) when a step runs out of memory; a lighter setting that fits is timed against checkpointing and the faster kept", AutomaticCheckpointing),
+        ("fine-tuning: when the first step's bytes per position say the largest batch will not fit, recomputed feed-forward activations are on before any step fails; with room nothing changes", FirstRungFromMeasuredBytes),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache, loads, and works offline", ModelDownload),
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
         ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); an answer longer than the budget alone gives the end cut at once; rows encode on all cores in order", LongMessageKeepsAnswer),
@@ -579,6 +580,87 @@ internal static partial class Tests
             var lighter = Enumerable.Range(1, 15).Select(i => plain - (plain - budget!.Value) * i / 16)
                 .Select(b => Train(null, b, epochs: 3)).FirstOrDefault(t => t.Trace.Contains("measuring:"));
             Check(lighter.Done && lighter.Trace.Contains("keeping "), $"a lighter setting is measured against checkpointing, one kept: {lighter.Trace}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    // A run whose first batch is smaller than its largest: the first step's bytes per position say the largest will not
+    // fit, so the ladder's first rung (recomputed feed-forward activations) is taken before any step fails. Nine sequences
+    // of one length in batches of four rows leave a batch of one; seeds that put it first take the measured rung.
+    private static void FirstRungFromMeasuredBytes(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // the CPU memory limit makes a small full device
+        }
+
+        var spec = new DecoderSpec
+        {
+            Vocabulary = 260, Dim = 128, Layers = 4, Heads = 4, KvHeads = 2, HeadDim = 32, FfDim = 512, MaxPositions = 512,
+            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
+        };
+        string folder = WriteChatModel(spec);
+        var random = new Random(72);
+        var sequences = Enumerable.Range(0, 9).Select(_ =>
+            new TrainingSequence([.. Enumerable.Range(0, 129).Select(_ => random.Next(256))], [.. Enumerable.Range(0, 129).Select(i => i > 64)])).ToList();
+        var options = new FineTuningOptions { Rank = 4, Alpha = 8, BatchTokens = 512, Packing = false, Seed = 1 };
+        (bool Done, string Trace) Train(FineTuningOptions run, long? extra)
+        {
+            using var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+            var trace = new System.Text.StringBuilder();
+            long before = ComputeResources.GetMemoryUsage(device).InUse;
+            ComputeResources.CpuMemoryLimit = extra is { } e ? before + e : null;
+            try
+            {
+                FineTuner.Train(pretrained, sequences, null, run, trace: line => trace.AppendLine(line));
+                return (true, trace.ToString());
+            }
+            catch (ResourceLimitExceededException)
+            {
+                return (false, trace.ToString());
+            }
+            finally
+            {
+                ComputeResources.CpuMemoryLimit = null;
+            }
+        }
+
+        // The least budget (in steps of 256 KiB) a fixed setting trains under.
+        long Least(FineTuningOptions run)
+        {
+            long low = 0, high = 256L << 20;
+            while (high - low > 256 << 10)
+            {
+                long middle = (low + high) / 2;
+                (low, high) = Train(run, middle).Done ? (low, middle) : (middle, high);
+            }
+
+            return high;
+        }
+
+        try
+        {
+            long recomputed = Least(options with { RecomputeFeedForward = true, Checkpointing = false, BFloat16Activations = false });
+            long plain = Least(options with { RecomputeFeedForward = false, Checkpointing = false, BFloat16Activations = false });
+            Check(recomputed < plain, $"recomputed feed-forward activations need less ({recomputed >> 10} KiB) than plain training ({plain >> 10} KiB)");
+            long budget = (recomputed + plain) / 2;
+            int measured = 0;
+            foreach (int seed in Enumerable.Range(1, 12))
+            {
+                var run = Train(options with { Seed = seed }, budget);
+                Check(run.Done, $"seed {seed}: training finishes under {budget >> 10} KiB; trace:\n{run.Trace}");
+                if (run.Trace.Contains("the largest batch", StringComparison.Ordinal))
+                {
+                    measured++;
+                    Check(!run.Trace.Contains("out of device memory", StringComparison.Ordinal), $"seed {seed}: the rung taken from the measured bytes, no step failed first:\n{run.Trace}");
+                }
+            }
+
+            Check(measured > 0, "some seed starts with the batch of one row and takes the rung from its measured bytes");
+            Check(!Train(options, null).Trace.Contains("the largest batch", StringComparison.Ordinal), "with room, no rung is taken");
         }
         finally
         {

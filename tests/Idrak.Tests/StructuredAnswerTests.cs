@@ -284,6 +284,18 @@ internal static partial class Tests
             Check(keeping.Read(request).Text == first.Text && keeping.Chat.Generator.HoldsCache, "KeepCache keeps it, the same answer");
         }
 
+        // ReuseDecoding: the second read takes the first's context and sampler (the same answers), and disposing frees them.
+        var reusing = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, ReuseDecoding = true });
+        var reuseGenerator = reusing.Chat.Generator;
+        Check(reusing.Read(request).Text == first.Text, "ReuseDecoding: the first read's answer");
+        var (heldContext, heldSampler, _) = reuseGenerator.HeldDecoding;
+        Check(reusing.Read(request).Text == first.Text && !reuseGenerator.HoldsCache, "ReuseDecoding: the second read's answer, no attention cache kept as KeepCache keeps it");
+        Check(heldContext is not null && ReferenceEquals(reuseGenerator.HeldDecoding.Context, heldContext) && ReferenceEquals(reuseGenerator.HeldDecoding.Sampler, heldSampler),
+            "ReuseDecoding: the second read took the first's context and sampler");
+        Check(reusing.Read(sampled).Text == reader.Read(sampled).Text, "ReuseDecoding: a sampled read with a seed as a fresh reader's");
+        reusing.Dispose();
+        Check(reuseGenerator.HeldDecoding.Context is null, "disposing the reader frees the context");
+
         // The encoder's precision: a scope around the encoder alone (the CPU computes float32 under it: the same answer).
         var precisions = new List<MatMulPrecision>();
         using (var bf16 = new ImageReader(model, new ImageReaderOptions
@@ -321,8 +333,9 @@ internal static partial class Tests
               && (!byPhase.TryGetValue(-1, out var encoder) || encoder.All(p => p == MixedPrecision.Default)) && MixedPrecision.Current == MixedPrecision.Default,
             $"PrefillPrecision: {string.Join("; ", byPhase.OrderBy(g => g.Key).Select(g => $"{(g.Key < 0 ? "encoder" : g.Key == 0 ? "prompt" : "decoding")} {g.Value.Count} layer passes under {string.Join(", ", g.Value.Distinct())}"))}");
 
-        // ReadBatch: two pages with one instruction decode as one batch of two rows, a third with another instruction (another
-        // length) alone; each answer, its end and its count of tokens as the page's own read gives them.
+        // ReadBatch: two pages with one instruction decode as one batch of two rows, and a third with another instruction
+        // (another length) with them where the model attends from per-row starts (SupportsBatches), else alone; each answer,
+        // its end and its count of tokens as the page's own read gives them.
         ChatImage Page(int shift)
         {
             var values = new float[3 * 12 * 20];
@@ -366,7 +379,9 @@ internal static partial class Tests
                 + $"alone \"{alone[i].Text}\" ({alone[i].DoneReason}, {alone[i].Stats!.GeneratedTokens}); streamed \"{pieces[i]}\"");
         }
 
-        Check(rows.Order().SequenceEqual([1, 2]), $"one batch of two rows and one page alone: samplers of {string.Join(", ", rows)} rows");
+        bool together3 = reader.Chat.Generator.SupportsBatches;
+        Check(rows.Order().SequenceEqual(together3 ? [3] : [1, 2]),
+            $"{(together3 ? "one batch of three rows (row starts)" : "one batch of two rows and one page alone")}: samplers of {string.Join(", ", rows)} rows");
 
         Check(streamed.ToString().Trim() == first.Text, $"streamed \"{streamed}\", read \"{first.Text}\"");
         Check(first.Stats is { GeneratedTokens: > 0 and <= 6 } && first.Truncated == (first.Stats.GeneratedTokens >= 6), $"{first.Stats?.GeneratedTokens} tokens, truncated {first.Truncated}");

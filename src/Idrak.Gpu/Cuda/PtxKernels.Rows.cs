@@ -10,7 +10,7 @@ namespace Idrak.Gpu.Cuda;
 // such as a softmax over a 150k-token vocabulary), and matrix products with few rows (token-by-token decoding).
 internal static partial class PtxKernels
 {
-    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
+    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "attention_rows_f32", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
 
     /// <summary>Threads of a <c>gemm128_f32</c> / <c>gemm64_f32</c> block.</summary>
     public const int GemmThreads = 256;
@@ -598,6 +598,7 @@ internal static partial class PtxKernels
         AttentionDecode(sb);
         AttentionDecode(sb, int8: true);
         AttentionDecode(sb, bf16: true);
+        AttentionDecode(sb, rows: true);
         AttentionFlash(sb);
         AttentionFlash(sb, int8: true);
         AttentionFlash(sb, bf16: true);
@@ -1892,7 +1893,10 @@ internal static partial class PtxKernels
     // dimension d) with one scale per cached row in kscales/vscales; a lane reads its dimension's byte and scales it.
     // bf16: keys and values are bfloat16 pairs (dimension d is half d % 2 of word d / 2, rows of `words` words); a lane
     // shifts its half into the top of a float.
-    private static void AttentionDecode(StringBuilder sb, bool int8 = false, bool bf16 = false)
+    // rows (attention_rows_f32, a float32 cache): rows of different lengths decoded together (Backend.AttentionRows): row i
+    // of head h also starts no earlier than starts[(h / hpr) · steps + i % steps], the start of its sequence; a row left
+    // with no position (padding) writes zeros from its first block and returns before any barrier (the whole block alike).
+    private static void AttentionDecode(StringBuilder sb, bool int8 = false, bool bf16 = false, bool rows = false)
     {
         const int Stride = (2 + DecodeMaxDim) * 4;
         string stride = int8 || bf16 ? "%s_words" : "%s_dim";
@@ -1951,6 +1955,7 @@ internal static partial class PtxKernels
             min.u32 %r10, %r10, %r11;
             add.u32 %r10, %r10, 1;
             {{WindowStartPtx("%r28", "%r10", "%s_window", "%p0")}}
+            {{(rows ? RowStartPtx : "")}}
             mov.u32 %r22, %ctaid.y;
             mov.u32 %r23, %nctaid.y;
             add.u32 %r24, %r10, %r23;
@@ -2247,6 +2252,13 @@ internal static partial class PtxKernels
                 [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap")],
                 b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim), registers: registers);
         }
+        else if (rows)
+        {
+            RowBlock(sb, "attention_rows_f32", ["q", "keys", "values", "pos", "y", "part", "counters", "starts"],
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap"),
+                    ("u32", "hpr")],
+                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim), registers: registers);
+        }
         else
         {
             RowBlock(sb, "attention_decode_f32", ["q", "keys", "values", "pos", "y", "part", "counters"],
@@ -2255,6 +2267,36 @@ internal static partial class PtxKernels
 
         }
     }
+
+    // attention_rows_f32: the row's own start (%r22 from starts[(head / hpr) · steps + step]) raises its first position
+    // (%r28); with none left, block 0 of the row writes its zeros and every block returns.
+    private const string RowStartPtx = """
+        div.u32 %r22, %r7, %s_hpr;
+        mad.lo.u32 %r22, %r22, %s_steps, %r9;
+        mul.wide.u32 %rd13, %r22, 4;
+        add.u64 %rd13, %rd13, %b_starts;
+        ld.global.f32 %f1, [%rd13];
+        cvt.rzi.u32.f32 %r22, %f1;
+        max.u32 %r28, %r28, %r22;
+        setp.lt.u32 %p9, %r28, %r10;
+        @%p9 bra ROWS_KEYS;
+        mov.u32 %r22, %ctaid.y;
+        setp.ne.u32 %p9, %r22, 0;
+        @%p9 bra DONE;
+        mul.lo.u32 %r22, %row, %s_dim;
+        mul.wide.u32 %rd13, %r22, 4;
+        add.u64 %rd13, %rd13, %b_y;
+        mov.u32 %r22, %tx;
+        ROWS_ZERO:
+        setp.ge.u32 %p9, %r22, %s_dim;
+        @%p9 bra DONE;
+        mul.wide.u32 %rd12, %r22, 4;
+        add.u64 %rd12, %rd12, %rd13;
+        st.global.f32 [%rd12], 0f00000000;
+        add.u32 %r22, %r22, %nt;
+        bra ROWS_ZERO;
+        ROWS_KEYS:
+        """;
 
     /// <summary>Threads of a <c>gemv_nn_f32</c> block: 32 columns × 32 slices of k.</summary>
     public const int GemvThreads = 1024;
