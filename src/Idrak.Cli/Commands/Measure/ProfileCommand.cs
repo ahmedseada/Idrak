@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Devices;
 using Idrak.Cli.Shared;
 using Idrak.Diagnostics;
 using Idrak.Layers;
@@ -64,6 +65,7 @@ internal sealed class ProfileCommand : Command
         var random = new Random(context.Seed ?? 1);
         float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
         string kv = choice.Kv ?? "float32";
+        TensorOffloading.BeforeInference(device, network);                               // as generation does: room when offloaded
         using var decoding = new DecodingContext(device, 1, promptTokens + 5, KeyValueLayouts.Get(kv));
         using var noGrad = Autograd.NoGrad();
         using (var scope = new TensorScope())
@@ -126,7 +128,10 @@ internal sealed class ProfileCommand : Command
         bool kernelTiming = kernels.Count > 0;
         double layerTotal = layers.Sum(l => l.Ms);
         context.Write($"{choice.Model} on {device} ({device.Name}), weights {choice.Weights ?? "as stored"}, KV cache {kv}: one decoding step after {promptTokens} tokens");
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"step {stepMs:F2} ms with each layer drained ({layerTotal:F2} ms in the layers)\n"));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"step {stepMs:F2} ms with each layer drained ({layerTotal:F2} ms in the layers)"));
+        var memory = ComputeResources.GetMemoryUsage(device);
+        context.Write(string.Create(CultureInfo.InvariantCulture,
+            $"{device}: {memory.InUse / 1e9:F2} GB in use{(memory.Offloaded > 0 ? $", {memory.Offloaded / 1e9:F2} GB of tensors in system memory (offloaded)" : "")}\n"));
         context.Write("Layers of the network:");
         context.Table(["Layer", "Type", "ms", "Share"],
             layers.Select(l => (IReadOnlyList<string>)[l.Name, l.Type, l.Ms.ToString("F3", CultureInfo.InvariantCulture), Share(l.Ms, layerTotal)]));
