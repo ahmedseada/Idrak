@@ -76,7 +76,7 @@ public static partial class PillowImageOps
     {
         ArgumentNullException.ThrowIfNull(image);
         var planes = Bytes(image);
-        var grey = planes.Length == 3 ? ImagePreprocessor.ToBytes(image, grayscale: true)[0] : planes[0];
+        var grey = planes.Length == 3 ? Grey(planes) : planes[0];
         long sum = 0;
         foreach (byte v in grey)
         {
@@ -118,17 +118,15 @@ public static partial class PillowImageOps
         ArgumentNullException.ThrowIfNull(image);
         var planes = Bytes(image);
         var histograms = preserveTone
-            ? [Histogram(planes.Length == 3 ? ImagePreprocessor.ToBytes(image, grayscale: true)[0] : planes[0])]
+            ? [Histogram(planes.Length == 3 ? Grey(planes) : planes[0])]
             : planes.Select(Histogram).ToArray();
         var tables = histograms.Select(hist => Stretch(hist, cutoffLow, cutoffHigh, ignore)).ToArray();
-        var result = new byte[planes.Length][];
         for (int c = 0; c < planes.Length; c++)
         {
-            var table = tables[Math.Min(c, tables.Length - 1)];
-            result[c] = [.. planes[c].Select(v => table[v])];
+            Map(planes[c], planes[c].Length, tables[Math.Min(c, tables.Length - 1)]);   // the planes are this call's own
         }
 
-        return FromBytes(result, image.Height, image.Width);
+        return FromBytes(planes, image.Height, image.Width);
 
         static long[] Histogram(byte[] plane)
         {
@@ -186,31 +184,65 @@ public static partial class PillowImageOps
     internal static ImageData FromBytes(byte[][] planes, int height, int width)
     {
         int size = height * width;
-        var pixels = new float[planes.Length * size];
+        var pixels = GC.AllocateUninitializedArray<float>(planes.Length * size);     // every value written below
         for (int c = 0; c < planes.Length; c++)
         {
-            ImageLevels.ToUnit(planes[c].AsSpan(0, size), pixels.AsSpan(c * size, size));
+            var plane = planes[c];
+            int offset = c * size;
+            HostParallel.For(size, 1 << 16, (first, last) =>
+                ImageLevels.ToUnit(plane.AsSpan(first, last - first), pixels.AsSpan(offset + first, last - first)));
         }
 
         return new ImageData(pixels, planes.Length, height, width);
     }
 
+    // The grey of three byte planes as Pillow's convert("L") (ImagePreprocessor.ToBytes with grayscale, from the bytes
+    // already made instead of the floats again).
+    internal static byte[] Grey(byte[][] planes)
+    {
+        byte[] red = planes[0], green = planes[1], blue = planes[2];
+        var grey = new byte[red.Length];
+        HostParallel.For(grey.Length, 1 << 15, (first, last) =>
+        {
+            for (int i = first; i < last; i++)
+            {
+                grey[i] = (byte)((red[i] * 19595 + green[i] * 38470 + blue[i] * 7471 + 0x8000) >> 16);
+            }
+        });
+        return grey;
+    }
+
     // Blend.c ImagingBlend(degenerate, image, alpha): in1 + alpha * (in2 - in1) in float32, truncated to a byte (clipped
-    // when extrapolating); alpha 0 gives the degenerate image and 1 the image.
+    // when extrapolating); alpha 0 gives the degenerate image and 1 the image. A byte's result depends only on (in1, in2),
+    // so it comes from a table of that same expression: 256 entries over a flat degenerate (contrast, brightness), 65,536
+    // over an image (sharpness), then a lookup per byte in parallel chunks: the bytes Pillow gives, without a float
+    // multiply per pixel.
     private static ImageData Blend(byte[][] planes, Func<int, int>? flat, float alpha, int h, int w, byte[][]? degenerate = null)
     {
         var result = new byte[planes.Length][];
+        bool interpolate = alpha >= 0 && alpha <= 1.0;
+        byte Value(int in1, int in2)
+        {
+            float temp = in1 + alpha * (in2 - in1);
+            return interpolate ? (byte)(int)temp : temp <= 0f ? (byte)0 : temp >= 255f ? (byte)255 : (byte)(int)temp;
+        }
+
+        byte[]? pairs = null;                                              // [in1 · 256 + in2], made once for every plane
         for (int c = 0; c < planes.Length; c++)
         {
             var image = planes[c];
-            var output = result[c] = new byte[image.Length];
+            var output = result[c] = GC.AllocateUninitializedArray<byte>(image.Length);
             byte[]? other = degenerate?[c];
             int constant = flat?.Invoke(c) ?? 0;
             if (alpha == 0f)
             {
-                for (int i = 0; i < output.Length; i++)
+                if (other is null)
                 {
-                    output[i] = other is null ? (byte)constant : other[i];
+                    output.AsSpan().Fill((byte)constant);
+                }
+                else
+                {
+                    other.CopyTo(output, 0);
                 }
 
                 continue;
@@ -222,13 +254,44 @@ public static partial class PillowImageOps
                 continue;
             }
 
-            bool interpolate = alpha >= 0 && alpha <= 1.0;
-            for (int i = 0; i < output.Length; i++)
+            if (other is null)
             {
-                int in1 = other is null ? constant : other[i], in2 = image[i];
-                float temp = in1 + alpha * (in2 - in1);
-                output[i] = interpolate ? (byte)(int)temp : temp <= 0f ? (byte)0 : temp >= 255f ? (byte)255 : (byte)(int)temp;
+                var table = new byte[256];
+                for (int v = 0; v < 256; v++)
+                {
+                    table[v] = Value(constant, v);
+                }
+
+                HostParallel.For(output.Length, 1 << 15, (first, last) =>
+                {
+                    for (int i = first; i < last; i++)
+                    {
+                        output[i] = table[image[i]];
+                    }
+                });
+                continue;
             }
+
+            if (pairs is null)
+            {
+                pairs = new byte[256 * 256];
+                for (int in1 = 0; in1 < 256; in1++)
+                {
+                    for (int in2 = 0; in2 < 256; in2++)
+                    {
+                        pairs[in1 * 256 + in2] = Value(in1, in2);
+                    }
+                }
+            }
+
+            byte[] lookup = pairs, smoothed = other;
+            HostParallel.For(output.Length, 1 << 15, (first, last) =>
+            {
+                for (int i = first; i < last; i++)
+                {
+                    output[i] = lookup[smoothed[i] << 8 | image[i]];
+                }
+            });
         }
 
         return FromBytes(result, h, w);
@@ -244,20 +307,23 @@ public static partial class PillowImageOps
         }
 
         float edge = 1f / 13f, centre = 5f / 13f;
-        for (int y = 1; y < h - 1; y++)
+        HostParallel.For(h - 2, 16, (first, last) =>                       // rows apart; each pixel's sums in Pillow's order
         {
-            int up = (y - 1) * w, row = y * w, down = (y + 1) * w;
-            for (int x = 1; x < w - 1; x++)
+            for (int y = first + 1; y < last + 1; y++)
             {
-                float ss = 0.5f;
-                ss += plane[down + x - 1] * edge + plane[down + x] * edge + plane[down + x + 1] * edge;
-                ss += plane[row + x - 1] * edge + plane[row + x] * centre + plane[row + x + 1] * edge;
-                ss += plane[up + x - 1] * edge + plane[up + x] * edge + plane[up + x + 1] * edge;
-                ss = ss < 0f ? 0f : ss;
-                ss = ss > 255f ? 255f : ss;
-                output[row + x] = (byte)(int)ss;
+                int up = (y - 1) * w, row = y * w, down = (y + 1) * w;
+                for (int x = 1; x < w - 1; x++)
+                {
+                    float ss = 0.5f;
+                    ss += plane[down + x - 1] * edge + plane[down + x] * edge + plane[down + x + 1] * edge;
+                    ss += plane[row + x - 1] * edge + plane[row + x] * centre + plane[row + x + 1] * edge;
+                    ss += plane[up + x - 1] * edge + plane[up + x] * edge + plane[up + x + 1] * edge;
+                    ss = ss < 0f ? 0f : ss;
+                    ss = ss > 255f ? 255f : ss;
+                    output[row + x] = (byte)(int)ss;
+                }
             }
-        }
+        });
 
         return output;
     }
