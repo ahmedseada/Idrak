@@ -49,6 +49,25 @@ public static class TensorOffloading
         }
     }
 
+    /// <summary>Marks a model's frozen weights cold (set by Idrak: the weights its layers only read while they compute).</summary>
+    public static Action<Module>? MarkFrozen { get; set; }
+
+    /// <summary>
+    /// Before an inference pass of <paramref name="model"/> (a generation's prompt, an image encoder's images): with
+    /// offloading active, the model's frozen weights are marked cold (they are, before any layer has run), the device
+    /// rebalances as between steps, then keeps its headroom free (<see cref="IMemoryOffload.KeepFree"/>), so a model that
+    /// did not fit computes with its activations and staged weights on the device.
+    /// </summary>
+    public static void BeforeInference(Device device, Module model)
+    {
+        if (device.Backend.Offload is { } offload && Active(offload))
+        {
+            MarkFrozen?.Invoke(model);
+            offload.Rebalance();
+            offload.KeepFree();
+        }
+    }
+
     /// <summary>Between optimizer steps: cold data makes room for the next step, or offloaded tensors come back.</summary>
     public static void StepBoundary(Device device)
     {

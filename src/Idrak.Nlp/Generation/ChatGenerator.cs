@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Frozen;
+using Idrak.Abstraction.Devices;
 using Idrak.Data;
 
 namespace Idrak.Generation;
@@ -255,6 +256,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             prompt = RenderPrompt(request, layouts);
             var blocks = layouts.SelectMany(l => l).ToList();
             cancellationToken.ThrowIfCancellationRequested();                    // before the encoder, and after it below
+            TensorOffloading.BeforeInference(Generator.Device, Generator.Model);  // with offloading: the encoder's room
             features = EncodeImages(reader.Encoder, decoded, request.VisionOptions);
             try
             {
