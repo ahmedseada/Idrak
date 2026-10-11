@@ -118,6 +118,10 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             + (e.RetriedOnHost ? " (retried on the CPU)" : "") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
 
     /// <inheritdoc />
+    public void OnHostFallback(in HostFallback e) =>
+        _out.WriteLine($"Device {e.Device} {e.Operation} runs on the host: the device has no kernel of its own for it here, so each call copies its operands to the CPU and back");
+
+    /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) =>
         _out.WriteLine($"Override {e.Registry}/{e.Slot} ({e.Implementation}, {e.Origin}) threw {e.Exception.GetType().Name}: {e.Exception.Message}; "
             + (e.FellBack ? "the library default answered" : "the error reached the caller") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
@@ -288,6 +292,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnDeviceFailed(in DeviceFailed e) => Write(e);
 
     /// <inheritdoc />
+    public void OnHostFallback(in HostFallback e) => Write(e);
+
+    /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) => Write(e);
 
     /// <inheritdoc />
@@ -347,6 +354,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnDeviceFailed(in DeviceFailed e) => _channel.OnDeviceFailed(in e);
+
+    /// <inheritdoc />
+    public void OnHostFallback(in HostFallback e) => _channel.OnHostFallback(in e);
 
     /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) => _channel.OnOverrideFailed(in e);
@@ -501,6 +511,11 @@ public static class TelemetryJson
                 w.WriteString("message", e.Message);
                 w.WriteBoolean("retried_on_host", e.RetriedOnHost);
                 if (e.Hint is { } hint) w.WriteString("hint", hint);
+                break;
+            case HostFallback e:
+                w.WriteString("event", "host_fallback");
+                w.WriteString("device", e.Device);
+                w.WriteString("operation", e.Operation);
                 break;
             case OverrideFailed e:
                 w.WriteString("event", "override_failed");

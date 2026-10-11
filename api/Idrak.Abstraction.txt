@@ -915,6 +915,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
@@ -931,6 +932,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
@@ -977,11 +979,17 @@ public readonly record struct Idrak.Abstraction.Diagnostics.EpochCompleted : Sys
   public int Epoch { get; init; }
   public int Epochs { get; init; }
 
+public readonly record struct Idrak.Abstraction.Diagnostics.HostFallback : System.IEquatable<Idrak.Abstraction.Diagnostics.HostFallback>
+  public HostFallback(string Device, string Operation)
+  public string Device { get; init; }
+  public string Operation { get; init; }
+
 public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public (default) void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public (default) void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public (default) void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public (default) void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public (default) void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public (default) void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
@@ -1011,6 +1019,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)

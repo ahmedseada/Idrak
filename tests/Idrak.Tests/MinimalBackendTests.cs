@@ -1,8 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text;
+using System.Text.Json;
 using Idrak;
 using Idrak.Abstraction.Devices.Cpu;
+using Idrak.Abstraction.Operations;
 using Idrak.Generation;
 using Idrak.Layers;
 
@@ -13,6 +16,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] MinimalBackendGroup =
     [
         ("minimum backend: a device with only memory and copies (every operation through the host fallback) is listed by name, trains and decodes like the CPU", MinimalBackendMatches),
+        ("minimum backend: the first host fallback of each operation is reported to telemetry once (a console logger prints it, JSON Lines writes it), every call counted", MinimalBackendReportsHostFallbacks),
     ];
 
     // Plain arrays standing for device memory.
@@ -144,5 +148,75 @@ internal static partial class Tests
         }
 
         Check(Generate(Device.Cpu) == Generate(minimal), "greedy generation matches the CPU");
+    }
+
+    // Keeps the HostFallback events of one kind of device.
+    private sealed class HostFallbacks(string kind) : ITelemetryHook
+    {
+        private readonly List<HostFallback> _events = [];
+
+        public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+        public List<HostFallback> Events
+        {
+            get
+            {
+                lock (_events)
+                {
+                    return [.. _events];
+                }
+            }
+        }
+
+        public void OnHostFallback(in HostFallback e)
+        {
+            if (e.Device == kind)
+            {
+                lock (_events)
+                {
+                    _events.Add(e);
+                }
+            }
+        }
+    }
+
+    private static void MinimalBackendReportsHostFallbacks(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                      // a device of its own, once
+        }
+
+        var minimal = new MinimalBackend();                              // nothing reported on it yet
+        var x = minimal.Allocate(6, zeroed: false);
+        var y = minimal.Allocate(6, zeroed: true);
+        minimal.Upload([1f, 2f, 3f, -1f, 0f, 1f], x);
+        var fallbacks = new HostFallbacks("minimal");
+        var printed = new StringWriter();
+        long hostCalls = Kernels.HostCalls(minimal);
+        using (Telemetry.Subscribe(fallbacks))
+        using (Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Training, output: printed)))
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                minimal.Softmax(x, y, 2, 3, log: false);
+            }
+        }
+
+        Check(Kernels.HostCalls(minimal) - hostCalls == 3, $"every call counted: {Kernels.HostCalls(minimal) - hostCalls} of 3");
+        var events = fallbacks.Events;
+        Check(events is [{ Device: "minimal", Operation: "Softmax" }], $"one HostFallback event for three calls: {string.Join(", ", events)}");
+        Check(printed.ToString().Contains("minimal Softmax runs on the host", StringComparison.Ordinal),
+            $"a console logger subscribed for training prints the first host fallback: {printed}");
+
+        var json = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(json))
+        {
+            TelemetryJson.Write(writer, new TelemetryRecord(DateTimeOffset.UtcNow, events[0]));
+        }
+
+        string line = Encoding.UTF8.GetString(json.ToArray());
+        Check(line.Contains("\"event\":\"host_fallback\"", StringComparison.Ordinal) && line.Contains("\"operation\":\"Softmax\"", StringComparison.Ordinal)
+              && line.Contains("\"device\":\"minimal\"", StringComparison.Ordinal), $"JSON Lines: {line}");
     }
 }

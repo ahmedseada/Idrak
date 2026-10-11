@@ -89,6 +89,19 @@ internal static partial class Tests
             float stepDifference = MaxDifference(expectedSteps, [.. stepLogits]);
             AssertClose(expectedSteps, [.. stepLogits], 2e-5f, $"{folder}: the greedy steps' logits");
 
+            // A pass without autograd copies each window's key ranges (and the composed path's mask) to the device once, not
+            // once per attention layer, and frees the copies when it ends; with autograd each layer gets tensors of its own.
+            var blocks = new ImageBlocks(1, ids.Length, 24, images, rule, segments: null) { KeepOnDevice = true };
+            var (starts, ends) = blocks.Spans(0, 0, null, device);
+            var mask = blocks.Mask(0, 0, null, ids.Length, device);
+            Check(ReferenceEquals(starts, blocks.Spans(0, 0, null, device).Starts) && ReferenceEquals(ends, blocks.Spans(0, 0, null, device).Ends)
+                  && ReferenceEquals(mask, blocks.Mask(0, 0, null, ids.Length, device)), $"{folder}: the next layer reads the same device copies");
+            Check(!ReferenceEquals(starts, blocks.Spans(0, 1, null, device).Starts), $"{folder}: another offset is another table");
+            blocks.ReleaseDevice();
+            Check(starts.IsDisposed && ends.IsDisposed && mask!.IsDisposed, $"{folder}: the copies are freed with the pass");
+            blocks.KeepOnDevice = false;
+            Check(!ReferenceEquals(blocks.Spans(0, 0, null, device).Starts, blocks.Spans(0, 0, null, device).Starts), $"{folder}: kept only while asked");
+
             // One pass without the cache over the prompt and the generated tokens: the same logits.
             using var full = Ids([.. ids, .. generated[..^1]], device);
             var fullLogits = decoder.Forward(full, images, rule).ToArray();
