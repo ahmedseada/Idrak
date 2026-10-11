@@ -33,6 +33,9 @@ internal static partial class Tests
         Check(report["product"] is { Unit: "ms", Count: 3, Cold: > 0, Value: > 0, Source: null } stage && stage.Min <= stage.Value && stage.Value <= stage.Max,
             $"the stage over the warm runs: {report["product"]}");
         Check(report["items"] is { Value: 64, Unit: "rows" } && report["wall"] is { Count: 3 }, "the workload's own value and the wall time");
+        Check(report["device bandwidth"] is { Unit: "GB/s", Count: 3, Value: > 0, Source: "bandwidth" } bandwidth && bandwidth.Min == bandwidth.Max
+              && Profiler.Run("again", device, _ => { }, new ProfileOptions { WarmRuns = 1, Probes = ["bandwidth"] })["device bandwidth"]?.Value == bandwidth.Value,
+            $"the device's bandwidth beside every run, measured once per device: {report["device bandwidth"]}");
         foreach (string name in new[] { "cpu", "cores busy", "allocated", "gc0", "gc pause", "device in use", "device peak", "process peak" })
         {
             Check(report[name] is { Count: 3, Source: not null }, $"{name} measured around each warm run: {report[name]}");
@@ -163,7 +166,7 @@ internal static partial class Tests
         }
 
         Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        Check(ProfileProbes.Names.SequenceEqual(["cpu", "heap", "memory", "operations", "kernels"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "operations", "kernels"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.

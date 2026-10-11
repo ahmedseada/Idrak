@@ -472,6 +472,8 @@ public static class Profiler
 /// <summary>
 /// The probes a <see cref="Profiler"/> measures with, by name (ignoring case). The library's, in this order:
 /// <list type="bullet">
+/// <item>"bandwidth": the device's memory bandwidth ("device bandwidth", GB/s): copies through device memory, measured once
+/// per device before its first run, so a run's rate of bytes read (a decoding step's weights) has its ceiling beside it.</item>
 /// <item>"cpu": the process's processor time ("cpu", ms) and the cores it kept busy ("cores busy": processor time over wall time).</item>
 /// <item>"heap": the managed heap: bytes allocated on every thread ("allocated", MB), collections of each generation
 /// ("gc0", "gc1", "gc2") and the time paused for them ("gc pause", ms).</item>
@@ -495,7 +497,8 @@ public static class ProfileProbes
     {
         var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a probe holds what it measures from before a run to after it, so it cannot be swapped half-way");
-        foreach (var probe in new IProfileProbe[] { new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe() })
+        // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
+        foreach (var probe in new IProfileProbe[] { new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe() })
         {
             table.RegisterDefault(probe.Name, probe);
         }
@@ -534,6 +537,94 @@ public static class ProfileProbes
 
     /// <summary>Each registered probe as "name: summary", one per line.</summary>
     public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}{(p.Intrusive ? " (a run of its own)" : "")}: {p.Summary}"));
+
+    private sealed class BandwidthProbe : IProfileProbe
+    {
+        public string Name => "bandwidth";
+
+        public string Summary => "the device's memory bandwidth as copies through it measure it, once per device before its first run: the ceiling of a rate of bytes read";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            double rate = Bandwidth(run.Device.Backend);
+            return () =>
+            {
+                if (rate > 0)
+                {
+                    run.Record("device bandwidth", rate, "GB/s");
+                }
+            };
+        }
+    }
+
+    // The bandwidth measured on each device, kept with its backend.
+    private static readonly ConditionalWeakTable<Backend, StrongBox<double>> Bandwidths = [];
+
+    /// <summary>
+    /// GB/s that <see cref="Backend.Copy"/> moves on <paramref name="backend"/> (bytes read and written), measured once per
+    /// device: buffers from 16 MiB, doubled while the rate still falls by more than a tenth (the device's caches hold the
+    /// small ones, whatever their size), up to an eighth of the memory it reports available (the host's for a device that
+    /// reports none); the best of three copies at each size. 0 when not even the first size fits.
+    /// </summary>
+    internal static double Bandwidth(Backend backend)
+    {
+        var box = Bandwidths.GetValue(backend, _ => new StrongBox<double>(double.NaN));
+        lock (box)
+        {
+            if (double.IsNaN(box.Value))
+            {
+                box.Value = MeasureBandwidth(backend);
+            }
+
+            return box.Value;
+        }
+    }
+
+    private static double MeasureBandwidth(Backend backend)
+    {
+        long free = backend.AvailableMemory() ?? GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        long limit = Math.Min(free / 8, (long)int.MaxValue * sizeof(float));
+        double previous = 0, rate = 0;
+        for (long bytes = 16L << 20; 2 * bytes <= limit; bytes *= 2)
+        {
+            int n = (int)(bytes / sizeof(float));
+            var x = backend.Allocate(n, zeroed: true);
+            var y = backend.Allocate(n, zeroed: false);
+            try
+            {
+                backend.Copy(x, y, n);
+                backend.Synchronize();
+                double best = double.MaxValue;
+                for (int i = 0; i < 3; i++)
+                {
+                    long start = Stopwatch.GetTimestamp();
+                    backend.Copy(x, y, n);
+                    backend.Synchronize();
+                    best = Math.Min(best, Stopwatch.GetElapsedTime(start).TotalSeconds);
+                }
+
+                rate = 2.0 * bytes / Math.Max(best, 1e-9) / 1e9;
+            }
+            finally
+            {
+                x.Release();
+                y.Release();
+            }
+
+            if (previous > 0 && rate >= 0.9 * previous)
+            {
+                break;                                                       // past the caches: the rate holds
+            }
+
+            previous = rate;
+        }
+
+        return rate;
+    }
 
     private sealed class CpuProbe : IProfileProbe
     {
