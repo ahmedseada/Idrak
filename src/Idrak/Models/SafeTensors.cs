@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -31,7 +32,8 @@ public sealed record SafeTensorInfo(string Name, SafeTensorType Type, int[] Shap
 
 /// <summary>
 /// Reads safetensors weights: one file, or a sharded checkpoint (<c>model.safetensors.index.json</c> naming the file of
-/// each tensor). Tensors are read one at a time, straight from disk, and converted to float32.
+/// each tensor). Tensors are read one at a time, straight from disk, and converted to float32, or, for bfloat16 ones, also
+/// copied as their 16-bit values (<see cref="ReadBFloat16"/>).
 /// </summary>
 public sealed class SafeTensorsReader : IDisposable, ITensorStore
 {
@@ -49,6 +51,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
 
     private readonly Dictionary<string, SafeTensorInfo> _tensors = [];
     private readonly Dictionary<string, FileStream> _files = [];
+    private long _readTicks;                                            // Stopwatch ticks spent reading tensor bytes
 
     private SafeTensorsReader()
     {
@@ -114,7 +117,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         var values = GC.AllocateUninitializedArray<float>(count);
         if (info.Type == SafeTensorType.F32 && BitConverter.IsLittleEndian)
         {
-            ReadAt(handle, MemoryMarshal.AsBytes(values.AsSpan()), info.Offset);
+            ReadTimed(handle, MemoryMarshal.AsBytes(values.AsSpan()), info.Offset);
             return values;
         }
 
@@ -126,7 +129,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
             {
                 int n = Math.Min(ChunkValues, count - first);
                 int width = info.Type == SafeTensorType.F32 ? 4 : 2;
-                ReadAt(handle, buffer.AsSpan(0, n * width), info.Offset + (long)first * width);
+                ReadTimed(handle, buffer.AsSpan(0, n * width), info.Offset + (long)first * width);
                 DecodeInto(buffer, info.Type, values, first, n);
             }
         }
@@ -163,7 +166,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
             for (int r0 = 0; r0 < rows; r0 += chunkRows)
             {
                 int n = Math.Min(chunkRows, rows - r0), first = r0;
-                ReadAt(handle, buffer.AsSpan(0, n * columns * width), info.Offset + (long)r0 * columns * width);
+                ReadTimed(handle, buffer.AsSpan(0, n * columns * width), info.Offset + (long)r0 * columns * width);
                 var type = info.Type;
                 Idrak.Abstraction.Devices.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
                 {
@@ -213,6 +216,120 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         }
 
         return values;
+    }
+
+    /// <inheritdoc cref="ITensorStore.ReadBFloat16"/>
+    /// <exception cref="ArgumentException">The tensor is not a matrix, or the destination or stride cannot hold the result.</exception>
+    public unsafe bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride)
+    {
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}'.");
+        if (info.Type != SafeTensorType.BF16 || !BitConverter.IsLittleEndian)
+        {
+            return false;
+        }
+
+        if (info.Shape.Length != 2)
+        {
+            throw new ArgumentException($"'{name}' is [{string.Join(", ", info.Shape)}], not a matrix.", nameof(name));
+        }
+
+        int rows = info.Shape[0], columns = info.Shape[1];
+        int resultRows = transposed ? columns : rows, resultColumns = transposed ? rows : columns;
+        if (stride < resultColumns)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stride), stride, $"A row of the result holds {resultColumns} values.");
+        }
+
+        if (resultRows > 0 && destination.Length < (long)(resultRows - 1) * stride + resultColumns)
+        {
+            throw new ArgumentException($"{destination.Length} values cannot hold {resultRows} rows of {resultColumns} at a stride of {stride}.", nameof(destination));
+        }
+
+        if (rows == 0 || columns == 0)
+        {
+            return true;
+        }
+
+        // Chunks of stored rows are read through one pooled buffer and copied (or scattered, transposed) into the result
+        // as 16-bit values: the stored order is never held whole, and nothing is widened to float32 and rounded back.
+        var handle = _files[info.File].SafeFileHandle;
+        int chunkRows = Math.Max(1, (1 << 22) / columns);                              // 8 MB of 16-bit values
+        byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((int)Math.Min(info.Length, (long)chunkRows * columns * 2));
+        try
+        {
+            fixed (ushort* result = destination)
+            {
+                for (int r0 = 0; r0 < rows; r0 += chunkRows)
+                {
+                    int n = Math.Min(chunkRows, rows - r0);
+                    ReadTimed(handle, buffer.AsSpan(0, n * columns * 2), info.Offset + (long)r0 * columns * 2);
+                    PlaceBFloat16(buffer, n, columns, result, r0, stride, transposed);
+                }
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return true;
+    }
+
+    /// <summary>The time spent reading tensor bytes from the files so far (all threads together).</summary>
+    public TimeSpan ReadTime => Stopwatch.GetElapsedTime(0, Interlocked.Read(ref _readTicks));
+
+    TimeSpan? ITensorStore.ReadTime => ReadTime;
+
+    // n stored rows of `columns` bfloat16 values from the start of buffer, stored rows first.. of the tensor, into the
+    // result: as its rows first.. (each at its stride), or transposed, as columns first.. of every result row. Every value
+    // goes through CopyStoredBits (a NaN made quiet, as rounding its float32 copy does), in parallel over rows or columns.
+    private static unsafe void PlaceBFloat16(byte[] buffer, int n, int columns, ushort* result, int first, int stride, bool transposed)
+    {
+        if (!transposed)
+        {
+            Idrak.Abstraction.Devices.HostParallel.For(n, Math.Max(1, (1 << 16) / columns), (r0, r1) =>
+            {
+                var bits = MemoryMarshal.Cast<byte, ushort>(buffer.AsSpan(0, n * columns * 2));
+                for (int r = r0; r < r1; r++)
+                {
+                    BFloat16Weight.CopyStoredBits(bits.Slice(r * columns, columns), new Span<ushort>(result + (long)(first + r) * stride, columns));
+                }
+            });
+            return;
+        }
+
+        // NaNs made quiet in place, then each result row (a stored column) gets the chunk's n values, tiles of stored rows
+        // at a time so the strided reads stay in cache, as ReadTransposed scatters.
+        Idrak.Abstraction.Devices.HostParallel.For(n * columns, 1 << 16, (i0, i1) =>
+        {
+            var bits = MemoryMarshal.Cast<byte, ushort>(buffer.AsSpan(i0 * 2, (i1 - i0) * 2));
+            BFloat16Weight.CopyStoredBits(bits, bits);
+        });
+        Idrak.Abstraction.Devices.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
+        {
+            var bits = MemoryMarshal.Cast<byte, ushort>(buffer.AsSpan(0, n * columns * 2));
+            const int Tile = 64;
+            for (int t0 = 0; t0 < n; t0 += Tile)
+            {
+                int t1 = Math.Min(n, t0 + Tile);
+                for (int c = c0; c < c1; c++)
+                {
+                    ushort* row = result + (long)c * stride + first;
+                    for (int r = t0; r < t1; r++)
+                    {
+                        row[r] = bits[r * columns + c];
+                    }
+                }
+            }
+        });
+    }
+
+    // ReadAt, its time added to ReadTime (tensors may be read on several threads at once).
+    private void ReadTimed(Microsoft.Win32.SafeHandles.SafeFileHandle handle, Span<byte> destination, long offset)
+    {
+        long start = Stopwatch.GetTimestamp();
+        ReadAt(handle, destination, offset);
+        Interlocked.Add(ref _readTicks, Stopwatch.GetTimestamp() - start);
     }
 
     private static void ReadAt(Microsoft.Win32.SafeHandles.SafeFileHandle handle, Span<byte> destination, long offset)

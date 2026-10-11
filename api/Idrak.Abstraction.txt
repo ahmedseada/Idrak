@@ -1322,6 +1322,8 @@ public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstract
   public static Idrak.Abstraction.Generation.BFloat16Weight Convert(Idrak.Abstraction.Tensor weight)
   public static Idrak.Abstraction.Generation.BFloat16Weight Empty(int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.BFloat16Weight FromValues(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.BFloat16Weight? FromBits(int rows, int columns, Idrak.Abstraction.Device device, System.Func<System.Span<ushort>, int, bool> write)
+  public static void CopyStoredBits(System.ReadOnlySpan<ushort> stored, System.Span<ushort> destination)
 
 public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstraction.Generation.ITokenizer
   public CharTokenizer(string vocabulary, char? unknownCharacter = null)

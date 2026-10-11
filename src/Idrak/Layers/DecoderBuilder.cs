@@ -80,14 +80,32 @@ public static class DecoderBuilder
 
             var headFactory = headName is null ? null : PackedWeight.Factory(headName);
 
-            Linear Projection(string name, int inputs, int outputs, bool bias, float[]? transposedFrom = null, bool isHead = false)
+            // Whether weights packed as `format` (by name) are the library's bfloat16 ones: those are read through
+            // IWeightSource.ReadBFloat16, which a bfloat16 checkpoint answers with its stored bits (the same weights, with
+            // no float32 copy of the matrix). A format an app registered under that name packs float values itself.
+            static bool LibraryBFloat16(string format) =>
+                string.Equals(format, "bfloat16", StringComparison.OrdinalIgnoreCase) && PackedWeight.Origin(format) == Overrides.Library;
+            bool headBFloat16 = headName is not null ? LibraryBFloat16(headName) : packedName is not null ? LibraryBFloat16(packedName) : packed == PackedFormat.BFloat16;
+            bool projectionsBFloat16 = packedName is not null ? LibraryBFloat16(packedName) : packed == PackedFormat.BFloat16;
+
+            // A tied head's weights are the embedding table's transpose, [dim, vocabulary]: `tiedTable` gives the table's
+            // float values (read once, for a head packed from floats).
+            Linear Projection(string name, int inputs, int outputs, bool bias, Func<float[]>? tiedTable = null, bool isHead = false)
             {
                 int[] shape = [inputs, outputs];
-                float[] Values() => transposedFrom is not null ? Transpose(transposedFrom, outputs, inputs)
+                float[] Values() => tiedTable is not null ? Transpose(tiedTable(), outputs, inputs)
                     : weights?.Read($"{name}.weight", shape) ?? (weights is null
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
+                if (weights is not null && (isHead ? headBFloat16 : projectionsBFloat16))
+                {
+                    var bits = tiedTable is not null
+                        ? weights.ReadBFloat16("embed.weight", [outputs, inputs], device, transposed: true)
+                        : weights.ReadBFloat16($"{name}.weight", shape, device);
+                    return Linear.FromPacked(bits ?? throw new InvalidDataException($"The weights have no '{(tiedTable is not null ? "embed" : name)}.weight'."), b);
+                }
+
                 return isHead && headFactory is not null ? Linear.FromPacked(PackedWeight.Pack(headFactory, headName!, Values(), inputs, outputs, device), b)
                     : factory is not null ? Linear.FromPacked(PackedWeight.Pack(factory, packedName!, Values(), inputs, outputs, device), b)
                     : packed is { } format ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
@@ -102,9 +120,13 @@ public static class DecoderBuilder
                     : LayerNorm.FromWeights(gain, Tensor($"{name}.bias", [features], () => new float[features]), spec.NormEpsilon);
             }
 
+            // The table's float values: drawn now for a random build (so the draws keep their order), read when first needed
+            // from weights (a frozen build with a bfloat16 head or table may never need them).
             float[]? embeddingValues = weights is null
                 ? (options.InitStd is { } embedStd ? Normal(spec.Vocabulary * spec.Dim, embedStd) : [.. Enumerable.Range(0, spec.Vocabulary * spec.Dim).Select(_ => (float)(random.NextDouble() * 2 - 1) * 0.02f)])
-                : weights.Read("embed.weight", [spec.Vocabulary, spec.Dim]) ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}].");
+                : null;
+            float[] EmbeddingValues() => embeddingValues ??= weights!.Read("embed.weight", [spec.Vocabulary, spec.Dim])
+                ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}].");
             // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
             bool frozen = packed is not null || factory is not null;
             // A packed tied head gets its own transposed copy of the table: made now, so the table's float values are not
@@ -112,15 +134,20 @@ public static class DecoderBuilder
             // copy is bfloat16, it is the only one: the embedding reads its columns (the same bfloat16 values the table
             // would hold, so lookups are unchanged bit for bit), which saves the table's memory once more. Heads in
             // other formats (int8, int4, one's own) keep a separate bfloat16 table, since the head's values differ from it;
-            // HeadFormatName "bfloat16" keeps one table beside int8 or int4 projections.
+            // HeadFormatName "bfloat16" keeps one table beside int8 or int4 projections. A bfloat16 head and table from
+            // weights are read as bfloat16 (IWeightSource.ReadBFloat16): a bfloat16 checkpoint's table is then never held
+            // as float32, whole or transposed.
             if (spec.TieEmbeddings && frozen)
             {
-                head = Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, embeddingValues, isHead: true);
+                head = Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, EmbeddingValues, isHead: true);
             }
 
             var embedding = head is { BFloat16: not null } ? Embedding.FromHead(head)
-                : frozen ? Embedding.FromBFloat16(BFloat16Weight.FromValues(embeddingValues, spec.Vocabulary, spec.Dim, device))
-                : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(embeddingValues, [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
+                : frozen ? Embedding.FromBFloat16(embeddingValues is not null || weights is null
+                    ? BFloat16Weight.FromValues(EmbeddingValues(), spec.Vocabulary, spec.Dim, device)
+                    : weights.ReadBFloat16("embed.weight", [spec.Vocabulary, spec.Dim], device)
+                        ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}]."))
+                : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(EmbeddingValues(), [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
             embedding.Name = "embed";
             created.Add(embedding);
 

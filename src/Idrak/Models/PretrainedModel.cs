@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
 using Idrak.Layers;
@@ -49,6 +50,34 @@ public sealed record PretrainedOptions
     /// (to train it further, or export it).
     /// </summary>
     public string? MergeAdapter { get; init; }
+}
+
+/// <summary>
+/// Where the time of <see cref="PretrainedModel.Load"/> went, by stage: wall time on the loading thread (work spread over
+/// the cores counts once). Measured on every load: a few clock reads per tensor.
+/// </summary>
+/// <param name="Open">Reading config.json and the checkpoint's headers, and opening a merged adapter.</param>
+/// <param name="Read">Reading the weights' bytes from storage (zero when the store does not measure it, <c>ITensorStore.ReadTime</c>: then part of <paramref name="Convert"/>).</param>
+/// <param name="Convert">Turning the bytes read into the layers' layout: widening to float32, transposing, copying bfloat16 values.</param>
+/// <param name="Merge">Adding a merged adapter's updates to the weights (<see cref="PretrainedOptions.MergeAdapter"/>).</param>
+/// <param name="Upload">Putting the bfloat16 weights read as their stored bits on the device: their memory and the upload.</param>
+/// <param name="Build">The rest of building the network: packing from float32 values (rounding, quantizing), the other weights' memory and uploads, the layers.</param>
+/// <param name="Vision">Reading the vision part of a vision-language checkpoint (its encoder is built on first use, not here).</param>
+/// <param name="Tokenizer">Reading the tokenizer and the chat template.</param>
+/// <param name="Total">The whole load.</param>
+public sealed record PretrainedLoadTimes(TimeSpan Open, TimeSpan Read, TimeSpan Convert, TimeSpan Merge, TimeSpan Upload, TimeSpan Build,
+    TimeSpan Vision, TimeSpan Tokenizer, TimeSpan Total)
+{
+    /// <summary>
+    /// The stages in order with their names ("open", "read", "convert", "merge", "upload", "build", "vision", "tokenizer",
+    /// "total"), for a log line or a profile's stages (<see cref="ProfileRun.Stage(string, TimeSpan)"/>).
+    /// </summary>
+    public IReadOnlyList<(string Stage, TimeSpan Elapsed)> Stages =>
+        [("open", Open), ("read", Read), ("convert", Convert), ("merge", Merge), ("upload", Upload), ("build", Build), ("vision", Vision), ("tokenizer", Tokenizer), ("total", Total)];
+
+    /// <summary>"open 0.01 s, read 1.20 s, …, total 4.90 s" (invariant culture).</summary>
+    public override string ToString() =>
+        string.Join(", ", Stages.Select(s => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{s.Stage} {s.Elapsed.TotalSeconds:F2} s")));
 }
 
 /// <summary>
@@ -122,6 +151,7 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public static PretrainedModel Load(string folder, PretrainedOptions? options = null)
     {
+        long started = Stopwatch.GetTimestamp();
         options ??= new PretrainedOptions();
         var format = CheckpointFormats.For(folder);
         folder = format.Prepare(folder);                            // a .gguf file: config, tokenizer and template from its metadata
@@ -146,6 +176,8 @@ public sealed class PretrainedModel : IDisposable
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
         var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, MaxPositions = maxPositions };
+        long building = Stopwatch.GetTimestamp();
+        var fileTime = reader.ReadTime;
         var network = architecture.Build is { } build
             ? build(new PretrainedBuildContext(config, spec, weights, reader, buildOptions, notes)) switch
             {
@@ -154,7 +186,10 @@ public sealed class PretrainedModel : IDisposable
                 var layers => new Sequential(layers) { Name = "decoder" },
             }
             : spec.Build(weights, buildOptions);
+        long buildEnded = Stopwatch.GetTimestamp();
+        fileTime = reader.ReadTime - fileTime;
         var vision = visionFamily?.Read(new VisionCheckpoint(name, config, reader, folder, () => format.Open(folder), notes));
+        long visionRead = Stopwatch.GetTimestamp();
         if (vision is not null)
         {
             weights.Used.UnionWith(vision.StoredTensors);
@@ -181,9 +216,11 @@ public sealed class PretrainedModel : IDisposable
 
         notes.InsertRange(0, format.Notes(folder));                 // where the weights come from, first
 
+        long tokenizing = Stopwatch.GetTimestamp();
         var tokenizer = File.Exists(Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
         tokenizer?.PadVocabulary(spec.Vocabulary);
         var template = ChatTemplates.Load(folder, tokenizer);
+        long tokenized = Stopwatch.GetTimestamp();
         var model = new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
             options.Device ?? Idrak.Abstraction.Device.Default, vision);
         foreach (var (stored, value) in visionTensors ?? [])
@@ -191,8 +228,20 @@ public sealed class PretrainedModel : IDisposable
             model._vision[stored] = value;
         }
 
+        // The store's file time (when it measures it) apart from the rest of its reads; what the build did besides reading,
+        // merging and the bfloat16 uploads is packing and the other weights' uploads.
+        var read = fileTime ?? TimeSpan.Zero;
+        var others = Stopwatch.GetElapsedTime(building, buildEnded) - weights.ReadTime - weights.MergeTime - weights.UploadTime;
+        model.LoadTimes = new PretrainedLoadTimes(Stopwatch.GetElapsedTime(started, building), read, Max(weights.ReadTime - read), weights.MergeTime,
+            weights.UploadTime, Max(others), Stopwatch.GetElapsedTime(buildEnded, visionRead), Stopwatch.GetElapsedTime(tokenizing, tokenized),
+            Stopwatch.GetElapsedTime(started));
         return model;
+
+        static TimeSpan Max(TimeSpan time) => time > TimeSpan.Zero ? time : TimeSpan.Zero;
     }
+
+    /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
+    public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);
 
     // The trained vision tensors (a vision part's fine-tuned modules), by their checkpoint names, in the checkpoint's layout.
     private readonly Dictionary<string, (int[] Shape, float[] Values)> _vision = new(StringComparer.Ordinal);
