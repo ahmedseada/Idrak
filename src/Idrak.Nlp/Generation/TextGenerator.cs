@@ -194,6 +194,17 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
     private static readonly string[] NoStops = [];
 
+    // The positions a step may feed when sliding windows' caches hold their window (DecodingContext.SlidingWindowSteps):
+    // the prompt's, and at least 128, so a window moves its last positions to the front at most once in 128 steps (the
+    // move copies about two windows' rows, under 2% of what those steps' attention reads).
+    private static int SlidingSteps(int prompt) => SlideWindows ? Math.Max(prompt, MinSlidingSteps) : 0;
+
+    // Whether sliding windows' caches hold their window (tests compare with caches of the whole reply), and the least
+    // steps between moves (tests make a small model's windows move).
+    internal static bool SlideWindows { get; set; } = true;
+
+    internal static int MinSlidingSteps { get; set; } = 128;
+
     // Whether a KV cache is kept from the last generation (see KeepCache).
     internal bool HoldsCache
     {
@@ -439,7 +450,10 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
         // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).
         var batchLayout = !padded || Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
-        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout) { LastPositionOnly = true, Cancellation = cancellationToken };
+        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout)
+        {
+            LastPositionOnly = true, Cancellation = cancellationToken, SlidingWindowSteps = padded ? 0 : SlidingSteps(promptLength),
+        };
         if (padded)
         {
             decoding.SetRowStarts(starts);
@@ -834,16 +848,21 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             // reply that can outgrow the window re-reads its last half, at the window's size as before.
             int capacity = options.UseCache && KeepCache ? context : Math.Min(context, history.Count + limit);
 
+            // Sliding windows' caches hold their window, not the reply, when nothing re-reads the cache: no cache kept for
+            // the next turn and a reply that cannot outgrow the window.
+            int sliding = options.UseCache && !KeepCache && history.Count + limit <= context ? SlidingSteps(history.Count) : 0;
+
             // A kept context of this size is taken (reset by the prefill) with the step recorded on it; one of another size
             // goes, with its step. Both are this generation's until handed back.
-            if (held.Context is { } keptContext && (keptContext.Capacity != capacity || keptContext.Layout != Layout || keptContext.Device != Device))
+            if (held.Context is { } keptContext && (keptContext.Capacity != capacity || keptContext.Layout != Layout || keptContext.Device != Device
+                || keptContext.SlidingWindowSteps != sliding))
             {
                 held.Graph?.Dispose();
                 held.Context.Dispose();
                 (held.Graph, held.Context) = (null, null);
             }
 
-            var decoding = kept ?? held.Context ?? new DecodingContext(Device, 1, capacity, Layout);
+            var decoding = kept ?? held.Context ?? new DecodingContext(Device, 1, capacity, Layout) { SlidingWindowSteps = sliding };
             ComputeGraph? graph = options.UseGraph ? held.Graph : null;
             if (!options.UseGraph)
             {

@@ -1519,11 +1519,14 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public Idrak.Abstraction.ComputeGraph CaptureStep(System.Action step)
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Generation.KeyValueCache CacheFor(object owner, int rows, int headDim)
+  public Idrak.Abstraction.Generation.KeyValueCache CacheFor(object owner, int rows, int headDim, int window)
   public Idrak.Abstraction.Generation.KeyValueCache? this[Idrak.Abstraction.Module? layer] { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat Format { get; }
   public Idrak.Abstraction.Generation.KeyValueLayout Layout { get; }
   public Idrak.Abstraction.Tensor Position { get; }
+  public Idrak.Abstraction.Tensor PositionOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public Idrak.Abstraction.Tensor? Mask { get; }
+  public Idrak.Abstraction.Tensor? MaskOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public Idrak.Abstraction.Tensor? Positions { get; }
   public Idrak.Abstraction.Tensor? TokenPositions { get; }
   public Idrak.Abstraction.Tensor? TokenStarts { get; }
@@ -1534,6 +1537,8 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public int Batch { get; }
   public int Capacity { get; }
   public int Length { get; }
+  public int LengthOf(Idrak.Abstraction.Generation.KeyValueCache cache)
+  public int SlidingWindowSteps { get; set; }
   public long CacheBytes { get; }
   public void BeginStep(int steps)
   public void CancelStep()
@@ -1752,6 +1757,7 @@ public sealed class Idrak.Abstraction.Generation.KeyValueCache : System.IDisposa
   public Idrak.Abstraction.Tensor? KeyScales { get; }
   public Idrak.Abstraction.Tensor? ValueScales { get; }
   public KeyValueCache(int rows, int capacity, int headDim, Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.KeyValueLayout layout)
+  public int Capacity { get; }
   public int HeadDim { get; }
   public long Bytes { get; }
   public void Dispose()
@@ -1779,6 +1785,7 @@ public abstract class Idrak.Abstraction.Generation.KeyValueLayout
   public virtual bool HasScales { get; }
   public virtual bool Recordable { get; }
   public virtual bool RowStarts { get; }
+  public virtual bool SlidingWindows { get; }
 
 public static class Idrak.Abstraction.Generation.KeyValueLayouts
   public static Idrak.Abstraction.Generation.KeyValueLayout For(Idrak.Abstraction.Generation.KeyValueFormat format)
