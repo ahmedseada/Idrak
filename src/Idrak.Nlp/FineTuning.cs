@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Data;
@@ -263,13 +264,32 @@ public sealed class ChatTranscriptEncoder
     /// <exception cref="InvalidDataException">An image lies in an assistant turn (images are read, never trained on).</exception>
     public TrainingSequence? Encode(ChatTranscript transcript, int maxLength)
     {
-        var (tokens, trained, images) = Tokens(transcript);
-        if (tokens.Count > maxLength + 1 && ShortenToFit && Shortened(transcript, maxLength) is { } fitted)
+        var (tokens, trained, images, turns) = Tokens(transcript);
+        if (tokens.Count > maxLength + 1 && ShortenToFit && Shortened(transcript, tokens.Count, Answers(trained, turns, transcript), maxLength) is { } fitted)
         {
             return fitted;
         }
 
         return Sequence(tokens, trained, images, maxLength);
+    }
+
+    // The tokens of the assistant's turns (every turn trained: Tokens' default), when they are exactly the transcript's
+    // assistant messages; -1 when the rendered text holds a turn of another kind (an assistant header in the user's text).
+    // Each turn is tokenized on its own, so shortening the user's message never changes this count.
+    private static int Answers(List<bool> trained, int turns, ChatTranscript transcript)
+    {
+        if (turns != transcript.Messages.Count(m => m.Role == "assistant"))
+        {
+            return -1;
+        }
+
+        int count = 0;
+        foreach (bool train in CollectionsMarshal.AsSpan(trained))
+        {
+            count += train ? 1 : 0;
+        }
+
+        return count;
     }
 
     // The first maxLength + 1 tokens as a sequence (null when nothing trainable remains), with the image blocks that lie
@@ -314,24 +334,33 @@ public sealed class ChatTranscriptEncoder
     public ChatTranscript? Fit(ChatTranscript transcript, int maxLength)
     {
         ArgumentNullException.ThrowIfNull(transcript);
-        if (Tokens(transcript).Tokens.Count <= maxLength + 1)
+        var (tokens, trained, _, turns) = Tokens(transcript);
+        if (tokens.Count <= maxLength + 1)
         {
             return transcript;
         }
 
-        return ShortenedTranscript(transcript, maxLength).Transcript;
+        return ShortenedTranscript(transcript, tokens.Count, Answers(trained, turns, transcript), maxLength).Transcript;
     }
 
-    private TrainingSequence? Shortened(ChatTranscript transcript, int maxLength)
+    private TrainingSequence? Shortened(ChatTranscript transcript, int total, int answers, int maxLength)
     {
-        var (fitted, tokens, trained, images) = ShortenedTranscript(transcript, maxLength);
+        var (fitted, tokens, trained, images) = ShortenedTranscript(transcript, total, answers, maxLength);
         return fitted is null ? null : Sequence(tokens, trained, images, maxLength);
     }
 
     // Cuts the end of the last user message before the last assistant turn until everything fits: a first cut from the
-    // tokens over, then 10% less each time the estimate falls short (tokens do not map to characters exactly).
-    private (ChatTranscript? Transcript, List<int> Tokens, List<bool> Trained, List<TrainingImage> Images) ShortenedTranscript(ChatTranscript transcript, int maxLength)
+    // tokens over, then 10% less each time the estimate falls short (tokens do not map to characters exactly). `total` is
+    // the whole transcript's count of tokens (tokenized once, by the caller); `answers` the assistant turns' (-1: unknown):
+    // when they alone pass the budget no cut can fit, and nothing more is rendered.
+    private (ChatTranscript? Transcript, List<int> Tokens, List<bool> Trained, List<TrainingImage> Images) ShortenedTranscript(ChatTranscript transcript, int total,
+        int answers, int maxLength)
     {
+        if (answers > maxLength + 1)
+        {
+            return (null, [], [], []);
+        }
+
         var messages = transcript.Messages;
         int answer = -1;
         for (int i = messages.Count - 1; i >= 0; i--)
@@ -359,7 +388,6 @@ public sealed class ChatTranscriptEncoder
         }
 
         string content = messages[user].Content;
-        int total = Tokens(transcript).Tokens.Count;
         int contentTokens = Math.Max(1, Tokenizer.Encode(content).Count);
         int keepTokens = contentTokens - (total - (maxLength + 1)) - 2;
         int length = keepTokens <= 0 ? 0 : (int)((long)content.Length * keepTokens / contentTokens);
@@ -368,7 +396,7 @@ public sealed class ChatTranscriptEncoder
             var shorter = messages.ToArray();
             shorter[user] = shorter[user] with { Content = content[..length] };
             var candidate = transcript with { Messages = shorter };
-            var (tokens, trained, images) = Tokens(candidate);
+            var (tokens, trained, images, _) = Tokens(candidate);
             if (tokens.Count <= maxLength + 1)
             {
                 return (candidate, tokens, trained, images);
@@ -384,8 +412,9 @@ public sealed class ChatTranscriptEncoder
     }
 
     // Every token of the rendered transcript (each image's marker expanded to its blocks of image tokens), the assistant's
-    // turns marked as trained (only the last `answerTurns` of them when given), and the images with their blocks' positions.
-    private (List<int> Tokens, List<bool> Trained, List<TrainingImage> Images) Tokens(ChatTranscript transcript, int answerTurns = int.MaxValue)
+    // turns marked as trained (only the last `answerTurns` of them when given), the images with their blocks' positions,
+    // and how many assistant turns the text holds.
+    private (List<int> Tokens, List<bool> Trained, List<TrainingImage> Images, int Turns) Tokens(ChatTranscript transcript, int answerTurns = int.MaxValue)
     {
         var (text, spans) = Render(transcript);
         List<ChatImage>? images = null;
@@ -397,7 +426,7 @@ public sealed class ChatTranscriptEncoder
             var vision = Vision ?? throw new InvalidOperationException($"The transcript holds {images.Count} image(s), and the encoder reads text only: set "
                 + "ChatTranscriptEncoder.Vision (TuningVision.Create with a vision-language model) to train on images.");
             layouts = [.. images.Select(i => vision.Blocks(i))];
-            text = vision.Format.Expand(text, layouts, Tokenizer);
+            text = vision.Expand(text, layouts, Tokenizer);
             spans = Spans(text);
         }
 
@@ -432,7 +461,7 @@ public sealed class ChatTranscriptEncoder
         }
 
         Add(position, text.Length, false);
-        return (tokens, trained, images is null ? [] : Locate(tokens, trained, images, layouts!));
+        return (tokens, trained, images is null ? [] : Locate(tokens, trained, images, layouts!), spans.Count);
     }
 
     // Where each image's blocks lie in the tokens: the image tokens, in order, taken block by block by their counts (so
@@ -565,7 +594,7 @@ public sealed class ChatTranscriptEncoder
                 transcript = fitted;
             }
 
-            var (tokens, trained, images) = Tokens(transcript, turns);
+            var (tokens, trained, images, _) = Tokens(transcript, turns);
             return Sequence(tokens, trained, images, maxLength);
         }
 

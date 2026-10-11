@@ -25,7 +25,7 @@ internal static partial class Tests
         ("vision tuning graph: a forward and backward pass with images recorded as a graph through ImagePrefillInputs and replayed for another batch (features, rows and key ranges copied in) gives the ordinary pass's loss and adapter gradients, for Gemma 3 and LLaVA; a device without graphs runs the same pass from the fixed inputs", VisionTuningGraphInputs),
         ("vision tuning tower: Gemma 3's tower exports every SigLIP tensor as the checkpoint stores it (the fused q, k, v split back) and imports it again; gradients reach the tower's weights through the decoder (finite differences); checkpointed tower blocks give the stored gradients bit for bit", VisionTuningTowerGradients),
         ("vision tuning tower: FineTuner.Train trains the tower in the step (pixel values cached, the tower and projector run each step), checkpointing on and off give the same weights, and the tower saved as modules_to_save is read back by LoadAdapter into a new encoder", VisionTuningTowerTrainer),
-        ("vision tuning memory: a trained projector over a bfloat16 checkpoint keeps the tower in bfloat16 (its weight bytes are the bfloat16 tower's plus the float32 projector's), not the whole encoder in float32", VisionTuningTrainedProjectorMemory),
+        ("vision tuning memory: a trained projector over a bfloat16 checkpoint keeps the tower in bfloat16 (its weight bytes are the bfloat16 tower's plus the float32 projector's), not the whole encoder in float32; the feature cache's keys name the precision the tower computes in (bfloat16 apart from the float32 checkpoint's)", VisionTuningTrainedProjectorMemory),
         ("vision tuning speed: a batch's images through the frozen tower and the projector in one pass give each image's features alone; the time of one pass against one image at a time", VisionTuningBatchedImages),
     ];
 
@@ -673,6 +673,32 @@ internal static partial class Tests
                 t.Dispose();
             }
 
+            // The feature cache's keys name the precision the stage is computed in (was "float32" whatever the weights): the
+            // bfloat16 tower's output is another key than the float32 checkpoint's; pixel values are float32 either way; a
+            // bfloat16 product scope counts only where the device runs such products on tensor cores.
+            var page = ChatImage.FromFile(TestData("vlm/image.png"));
+            string bfloat16Tower;
+            using (var tuning = TuningVision.Create(model))
+            {
+                var key = tuning.Key(page, tuning.Images, tuning.CachedStage);
+                bfloat16Tower = key.DType;
+                Check(tuning.CachedStage == FeatureCacheKey.TowerStage && key.DType.Split('+').Contains("bfloat16")
+                      && tuning.Key(page, tuning.Images, FeatureCacheKey.PixelsStage).DType == "float32", $"the bfloat16 tower's key: {key.DType}");
+                using (MixedPrecision.BFloat16())
+                {
+                    string scoped = tuning.Key(page, tuning.Images, tuning.CachedStage).DType;
+                    Check(MixedPrecision.TensorCoresUnavailable(device) is null ? scoped == key.DType + ", bfloat16 products" : scoped == key.DType,
+                        $"under bfloat16 products on {device}: {scoped}");
+                }
+            }
+
+            using (var float32 = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device }))
+            using (var tuning = TuningVision.Create(float32, parts: [VisionTuningParts.Projector]))
+            {
+                Check(tuning.Key(page, tuning.Images, tuning.CachedStage).DType == "float32", $"the float32 checkpoint's key: {tuning.Key(page, tuning.Images, tuning.CachedStage).DType}");
+            }
+
+            Console.WriteLine($"    feature cache precision: {bfloat16Tower} for the bfloat16 tower, float32 for the float32 checkpoint");
             Console.WriteLine($"    trained projector over a bfloat16 tower: {after} bytes of weights (phase 2 built the whole encoder in float32: {wholeFloat32} bytes; "
                               + $"the tower's share {WeightBytes(half.Encoder)} against {WeightBytes(full.Encoder)} in float32)");
         }
