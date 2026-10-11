@@ -35,6 +35,12 @@ public sealed record ReaderModel
 
     /// <summary>Gemma 3's pan and scan by default (an elongated page also read as crops); off, as transformers' processor has it.</summary>
     public bool PanAndScan { get; init; }
+
+    /// <summary>
+    /// The key of the answer's JSON holding the page's whole text, shown alone in the Full text tab ("full_text_extract"
+    /// for bakrianoo's model); null: a key starting with "full_text", else the longest text in the answer.
+    /// </summary>
+    public string? FullText { get; init; }
 }
 
 /// <summary>The app's settings (the "LegalOcr" section of appsettings.json, or --LegalOcr:Key=value on the command line).</summary>

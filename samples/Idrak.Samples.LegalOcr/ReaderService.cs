@@ -53,7 +53,7 @@ public sealed record ReaderStatus(ReaderState State, string Message, string? Mod
 
 /// <summary>A model of the switch as the page shows it.</summary>
 public sealed record ModelInfo(string Id, string Name, string? About, string Source, string? Adapter, bool Usable, string? Unusable, string Preprocessing,
-    string Prompt, int MaxTokens, bool Loaded, bool PanAndScan);
+    string Prompt, int MaxTokens, bool Loaded, bool PanAndScan, string? FullText);
 
 /// <summary>A page to read: the image (a data URL or base64), and what replaces the model's own settings.</summary>
 /// <param name="Image">The scan as a data URL ("data:image/png;base64,…") or plain base64.</param>
@@ -122,7 +122,7 @@ public sealed class ReaderService : IDisposable
     {
         string? unusable = Unusable(m);
         return new ModelInfo(m.Id, m.Name, m.About, m.Folder ?? m.Repo ?? "", m.Adapter, unusable is null, unusable, m.Preprocessing, m.Prompt, m.MaxTokens,
-            string.Equals(_loaded, m.Id, StringComparison.OrdinalIgnoreCase), m.PanAndScan);
+            string.Equals(_loaded, m.Id, StringComparison.OrdinalIgnoreCase), m.PanAndScan, m.FullText);
     });
 
     /// <summary>Starts loading <paramref name="id"/> in the background (downloading it first when its files are missing); the status reports it.</summary>

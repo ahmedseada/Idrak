@@ -72,6 +72,9 @@
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
   .tabs button { border: 0; background: none; color: var(--muted); padding: 7px 10px; cursor: pointer; font: inherit; border-bottom: 2px solid transparent; }
   .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
+  .fullTextBar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .fullTextBar .btn { padding: 2px 10px; }
+  pre.fullText { font-size: 16px; line-height: 1.8; }
   pre { margin: 0; background: var(--code); border: 1px solid var(--line); border-radius: 7px; padding: 10px; white-space: pre-wrap; word-break: break-word;
         max-height: 520px; overflow: auto; font: 13px/1.6 "Cascadia Mono", Consolas, "Noto Naskh Arabic", monospace; }
   .rtl { direction: rtl; text-align: right; font-family: "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif; font-size: 15px; }
@@ -241,12 +244,17 @@
     </div>
     <div class="card">
       <div class="tabs" id="tabs">
-        <button data-tab="answer" class="on">Answer</button>
+        <button data-tab="fulltext" class="on">Full text</button>
+        <button data-tab="answer">Answer</button>
         <button data-tab="json">JSON</button>
         <button data-tab="compare" id="compareTab" class="hidden">Expected</button>
         <button data-tab="images">As the model sees it</button>
       </div>
-      <div data-pane="answer"><pre id="answer" class="rtl"></pre></div>
+      <div data-pane="fulltext">
+        <div class="fullTextBar"><span class="note" id="fullTextNote"></span><button class="btn" id="copyFullText" type="button">Copy</button></div>
+        <pre id="fullText" class="rtl fullText"></pre>
+      </div>
+      <div data-pane="answer" class="hidden"><pre id="answer" class="rtl"></pre></div>
       <div data-pane="json" class="hidden"><pre id="json" class="rtl"></pre></div>
       <div data-pane="compare" class="hidden">
         <div class="compare">
@@ -767,8 +775,9 @@ async function read() {
   $("read").textContent = "Stop reading"; $("read").classList.add("stop"); $("read").disabled = false;
   showPane("result");
   $("answer").textContent = ""; $("json").textContent = ""; $("readNote").textContent = "";
+  showFullText("");
   $("compareTab").classList.toggle("hidden", pageIndex == null);
-  showTab("answer");
+  showTab("fulltext");
   metrics([{ label: "status", value: "starting…" }]);
   const started = performance.now();
   let tokens = 0, ticker = setInterval(() => metrics([{ label: "seconds", value: ((performance.now() - started) / 1000).toFixed(1) }, { label: "pieces", value: tokens }]), 250);
@@ -782,7 +791,7 @@ async function read() {
         $("seenCaption").textContent = `After "${data.preprocessing || "no preprocessing"}": ${data.width}×${data.height}`
           + (!data.panAndScan ? "" : data.crops?.length ? ` · pan and scan: the page and ${data.crops.length} crops` : " · pan and scan: no crops (the page is not elongated enough, or a crop would be under 256 pixels)");
         $("originalCaption").textContent = `The page: ${data.originalWidth}×${data.originalHeight}`;
-      } else if (event === "token") { $("answer").textContent += data.text; tokens++; }
+      } else if (event === "token") { $("answer").textContent += data.text; tokens++; showFullText($("answer").textContent); }
       else if (event === "queued") $("readNote").textContent = data.message;
       else if (event === "error") throw new Error(data.error);
       else if (event === "done") { clearInterval(ticker); ticker = null; done(data); }
@@ -798,6 +807,7 @@ async function read() {
 
 function done(d) {
   $("answer").textContent = d.text;
+  const full = showFullText(d.text, d.json, true);
   $("json").textContent = d.json ?? "(no JSON in the answer)";
   $("compareRead").textContent = d.json ?? d.text;
   $("compareExpected").textContent = d.expected ?? "";
@@ -814,8 +824,60 @@ function done(d) {
   if (d.doneReason === "repetition") list.push({ label: "answer", value: "stopped: it was repeating", tone: "warn" });
   else if (d.truncated) list.push({ label: "answer", value: "cut at the limit", tone: "warn" });
   metrics(list);
-  showTab(pageIndex != null ? "compare" : d.json ? "json" : "answer");
+  showTab(pageIndex != null ? "compare" : full != null ? "fulltext" : d.json ? "json" : "answer");
 }
+
+// ---------------------------------------------------------------- the full text: one field of the answer's JSON, alone
+// The model's field (its FullText setting), else a key starting with "full_text", else the longest text in the JSON; while
+// the answer streams, the field's text so far. An answer without JSON is the full text itself. Returns the text shown.
+function showFullText(answer, json, finished) {
+  let text = null, note = "";
+  if (json) { try { text = fullTextField(JSON.parse(json)); } catch { } }
+  if (text == null) text = partialField(answer, finished);
+  if (text == null && finished) { text = json ? null : answer.trim() || null; if (text != null) note = "The answer has no JSON: all of it is shown."; }
+  if (text == null) note = !answer ? "" : finished ? "The answer's JSON has no full text." : "The model is writing the other fields first…";
+  else if (!note) note = `${text.length.toLocaleString()} characters · ${text.split("\n").length.toLocaleString()} lines${finished ? "" : " so far"}`;
+  $("fullText").textContent = text ?? "";
+  $("fullTextNote").textContent = note;
+  return text;
+}
+function fullTextField(o) {
+  if (!o || typeof o !== "object") return null;
+  const key = current?.fullText;
+  if (key && typeof o[key] === "string") return o[key];
+  const named = Object.keys(o).find(k => /^full_?text/i.test(k) && typeof o[k] === "string");
+  if (named) return o[named];
+  let best = null;
+  (function walk(v) {
+    if (typeof v === "string") { if (best == null || v.length > best.length) best = v; }
+    else if (v && typeof v === "object") for (const x of Object.values(v)) walk(x);
+  })(o);
+  return best;
+}
+// The text of "KEY": "…" in a JSON answer still being written, decoded up to its closing quote or the end so far.
+function partialField(answer, finished) {
+  if (!answer) return null;
+  const key = current?.fullText;
+  const pattern = key ? new RegExp(`"${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:\\s*"`) : /"full_?text[^"]*"\s*:\s*"/i;
+  const m = pattern.exec(answer);
+  if (!m) return null;
+  let out = "", i = m.index + m[0].length;
+  const escapes = { n: "\n", t: "\t", r: "", b: "", f: "", '"': '"', "\\": "\\", "/": "/" };
+  while (i < answer.length) {
+    const c = answer[i];
+    if (c === '"') break;
+    if (c !== "\\") { out += c; i++; continue; }
+    const e = answer[i + 1];
+    if (e === undefined) break;                                            // an escape cut at the end so far
+    if (e === "u") { const hex = answer.slice(i + 2, i + 6); if (!/^[0-9a-fA-F]{4}$/.test(hex)) break; out += String.fromCharCode(parseInt(hex, 16)); i += 6; continue; }
+    out += escapes[e] ?? e; i += 2;
+  }
+  return out;
+}
+$("copyFullText").onclick = async () => {
+  try { await navigator.clipboard.writeText($("fullText").textContent); $("fullTextNote").textContent = "Copied."; }
+  catch { $("fullTextNote").textContent = "Could not copy: select the text and press Ctrl+C."; }
+};
 
 function metrics(list) {
   const box = $("metrics");
