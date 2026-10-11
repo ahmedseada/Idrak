@@ -184,6 +184,35 @@ public sealed class TuningVision : IDisposable
         return _blocks.GetOrAdd((image.Hash, prepared), _ => Encoder.Blocks(Read(image, prepared), Options(prepared)));
     }
 
+    // Blocks of every distinct image in `images` under the reader's preparation, worked out on worker threads (each image
+    // decoded and transformed once, rule 75), so tokenizing finds them all kept instead of decoding page after page.
+    // `done` counts the images finished; a failing image fails the call with its own exception.
+    internal void PrepareBlocks(IReadOnlyList<ChatImage> images, Action<int>? done, CancellationToken cancellationToken)
+    {
+        var distinct = images.DistinctBy(i => i.Hash).Where(i => !_blocks.ContainsKey((i.Hash, Images))).ToList();
+        int finished = 0;
+        try
+        {
+            var family = new Lock();
+            Parallel.ForEach(distinct, new ParallelOptions { CancellationToken = cancellationToken }, image =>
+            {
+                var pixels = Read(image, Images);                          // the heavy part, in parallel
+                IReadOnlyList<ImageTokenLayout> layout;
+                lock (family)
+                {
+                    layout = Encoder.Blocks(pixels, Options(Images));       // the family's call one at a time (no promise it is thread-safe)
+                }
+
+                _blocks.TryAdd((image.Hash, Images), layout);
+                done?.Invoke(Interlocked.Increment(ref finished));
+            });
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+        }
+    }
+
     /// <summary>The cache key of <paramref name="image"/>'s output at <paramref name="stage"/> under <paramref name="preparation"/>, for this encoder.</summary>
     public FeatureCacheKey Key(ChatImage image, TuningImages preparation, string stage) =>
         FeatureCacheKey.For(image, preparation, Vision.Family, Checkpoint, "float32", stage);

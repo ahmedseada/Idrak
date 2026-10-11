@@ -385,6 +385,27 @@ public sealed class ConversationTuning : IDisposable
         CancellationToken cancellationToken)
     {
         var watch = Stopwatch.StartNew();
+        if (Encoder.Vision is { } vision)
+        {
+            // The images' blocks first, on worker threads (each page decoded and transformed once), then the tokenizing below
+            // finds them kept.
+            var images = transcripts.SelectMany(t => t.Messages).SelectMany(m => m.Parts).OfType<ChatImage>().ToList();
+            if (images.Count > 0)
+            {
+                string reading = $"reading {what} images";
+                int total = images.DistinctBy(i => i.Hash).Count();
+                var lockObject = new Lock();
+                vision.PrepareBlocks(images, done =>
+                {
+                    lock (lockObject)
+                    {
+                        progress?.Report(new TuningStage(reading, done, total, watch.Elapsed));
+                    }
+                }, cancellationToken);
+                log?.Invoke($"{what}: {total:N0} images read ({watch.Elapsed.TotalSeconds:F1} s, {Environment.ProcessorCount} threads)");
+            }
+        }
+
         var sequences = new List<TrainingSequence>(transcripts.Count);
         string stage = $"tokenizing {what}";                                    // made once, not per conversation
         for (int i = 0; i < transcripts.Count; i++)
