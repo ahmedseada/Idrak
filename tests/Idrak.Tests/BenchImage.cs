@@ -37,6 +37,12 @@ internal static partial class Tests
 
         Stage("jpeg decode (colour page)", () => ChatImageDecoder.Decode(jpeg).Pixels);
         Stage("png decode (grey page)", () => ChatImageDecoder.Decode(png).Pixels);
+        foreach (var (filter, name) in new[] { ((byte)2, "Up"), ((byte)4, "Paeth") })
+        {
+            byte[] filtered = FilteredPng(grey, filter);
+            Stage($"png decode (grey page, {name} rows)", () => ChatImageDecoder.Decode(filtered).Pixels);
+        }
+
         Stage("size from the header (jpeg)", () => ChatImageDecoder.Size(jpeg) is var (w, h) ? $"{w} x {h}" : "none");
         Stage("card: grayscale,max_width=1024,contrast=1.5", () => card.Apply(decoded).Pixels);
         foreach (string step in new[] { "grayscale", "max_width=1024", "contrast=1.5", "brightness=1.1", "sharpness=1.5", "autocontrast=1" })
@@ -97,6 +103,58 @@ internal static partial class Tests
     private static string Hash(float[] values) => Hash(MemoryMarshal.AsBytes(values.AsSpan()));
 
     private static string Hash(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes))[..16];
+
+    // The grey page as a PNG whose rows all use one filter (other encoders filter their rows; ours writes them as they are),
+    // so the decoder's filters are timed: the same pixels as the unfiltered file.
+    private static byte[] FilteredPng(ImageData grey, byte filter)
+    {
+        int w = grey.Width, h = grey.Height;
+        var bytes = new byte[w * h];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            bytes[i] = (byte)MathF.Round(grey.Pixels[i] * 255f);
+        }
+
+        var rows = new byte[h * (w + 1)];
+        for (int y = 0; y < h; y++)
+        {
+            rows[y * (w + 1)] = filter;
+            for (int x = 0; x < w; x++)
+            {
+                int a = x > 0 ? bytes[y * w + x - 1] : 0, b = y > 0 ? bytes[(y - 1) * w + x] : 0, c = x > 0 && y > 0 ? bytes[(y - 1) * w + x - 1] : 0;
+                int p = a + b - c, pa = Math.Abs(p - a), pb = Math.Abs(p - b), pc = Math.Abs(p - c);
+                int predictor = filter == 2 ? b : pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+                rows[y * (w + 1) + 1 + x] = (byte)(bytes[y * w + x] - predictor);
+            }
+        }
+
+        var data = new MemoryStream();
+        using (var zlib = new System.IO.Compression.ZLibStream(data, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        {
+            zlib.Write(rows);
+        }
+
+        var file = new MemoryStream();
+        file.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        var header = new byte[13];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header, w);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4), h);
+        header[8] = 8;                                                    // 8 bits, grey, no interlace
+        Chunk("IHDR"u8, header);
+        Chunk("IDAT"u8, data.ToArray());
+        Chunk("IEND"u8, []);
+        return file.ToArray();
+
+        void Chunk(ReadOnlySpan<byte> type, ReadOnlySpan<byte> body)
+        {
+            Span<byte> length = stackalloc byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(length, body.Length);
+            file.Write(length);
+            file.Write(type);
+            file.Write(body);
+            file.Write([0, 0, 0, 0]);                                     // the CRC (the decoder does not read it)
+        }
+    }
 
     // A light page with grain and dark strokes of text-like size, in colour (a slightly warm paper), from the seed.
     private static ImageData ScanPage(int width, int height, Random random)

@@ -500,6 +500,16 @@ internal static partial class Tests
             }
         }
 
+        // Rows wider than a vector of bytes and not a multiple of it (the Up filter's vector part and its tail), each filter in turn.
+        foreach (bool interlace in new[] { false, true })
+        {
+            const int Wide = 101, Rows = 9;
+            CheckImage(TestPng(Wide, Rows, 0, 8, interlace, (x, y, s) => Value(x, y, s, 255)), ".png", 1, Wide, Rows,
+                (c, y, x) => Value(x, y, 0, 255) / 255f, $"PNG grey 8 bits, {Wide} wide{(interlace ? ", interlaced" : "")}");
+            CheckImage(TestPng(Wide, Rows, 2, 8, interlace, (x, y, s) => Value(x, y, s, 255)), ".png", 3, Wide, Rows,
+                (c, y, x) => Value(x, y, c, 255) / 255f, $"PNG RGB 8 bits, {Wide} wide{(interlace ? ", interlaced" : "")}");
+        }
+
         (int, int, int) Colour(int x, int y) => ((x * 19 + y) % 256, (y * 23 + 3) % 256, (x * y + 7) % 256);
         foreach (bool topDown in new[] { false, true })
         {
