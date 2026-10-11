@@ -807,8 +807,12 @@ public sealed record FineTuningOptions
     /// family's encoder, the preparation, the vision parts that train beside the adapters and the feature cache
     /// (<see cref="TuningVision.Create"/>; the one the sequences were encoded with). Null: made from the model when the
     /// sequences hold images (the language model trains alone, a memory cache), and disposed after training. Not disposed by
-    /// training when given. Steps with images run padded (each sequence with images its own row; text-only sequences still
-    /// pack among themselves) and are never recorded as graphs; the out-of-memory ladder covers them as any step. The
+    /// training when given. Steps with images pack like the others where the device's packed attention serves, and also
+    /// where every sequence holds images attended by a rule that is not causal and the device's span kernels take the head
+    /// size (<c>PackedSequences.SupportsImages</c>: every position then attends by its key ranges); else they run padded.
+    /// While no vision part trains they are recorded as graphs, their features copied in (one graph per rows and length,
+    /// recorded for the most image tokens of any batch, so it serves them all); the out-of-memory ladder covers them as any
+    /// step. The
     /// trained vision parts are saved with the adapters (PEFT's <c>modules_to_save</c>) and the preparation beside them
     /// (<see cref="TuningImages.FileName"/>).
     /// </summary>
@@ -1057,7 +1061,7 @@ public static class FineTuner
         var evaluations = new List<float>();
         int step = 0;
         using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), custom, trace,
-            Largest(epochBatches.SelectMany(b => b)));
+            Largest(epochBatches.SelectMany(b => b)), MostImageTokens(epochBatches.SelectMany(b => b), train));
         for (int epoch = 0; epoch < options.Epochs; epoch++)
         {
             var batches = epochBatches[epoch];
@@ -1138,8 +1142,9 @@ public static class FineTuner
     // lossRows: the most trained tokens of any batch the runner will see (the recorded loss's capacity).
     // custom: a loss of one's own (FineTuningOptions.Loss), or null for the token cross-entropy.
     // largest: the most positions any batch of the run holds (the first step's measured bytes per position say whether it fits).
+    // imageTokens: the most image tokens any batch holds (a recorded step with images is made for them).
     private sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
-        int lossRows, CustomLoss? custom, Action<string>? trace, long largest) : IDisposable
+        int lossRows, CustomLoss? custom, Action<string>? trace, long largest, int imageTokens) : IDisposable
     {
         // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update. The recorded
         // pass is the token cross-entropy's; a loss of one's own runs ordinary steps. Experts' routing is read back to the
@@ -1159,9 +1164,10 @@ public static class FineTuner
         private readonly bool _automatic = options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
         private FineTuningOptions _options = options with { Checkpointing = options.Checkpointing ?? ComputeResources.OffloadToHostMemory };
 
-        // The recorded steps: one graph per batch shape (rows, positions, and image tokens: a graph holds the features of up
-        // to its batch's count), each recorded once its shape ran twice as an ordinary step; another only while the device's
-        // measured free memory leaves room for one more of the largest so far.
+        // The recorded steps: one graph per batch shape (rows and positions, and whether it holds images: a graph with images
+        // holds the features of up to the run's most image tokens, so one serves every batch of its rows and positions), each
+        // recorded once its shape ran twice as an ordinary step; another only while the device's measured free memory
+        // leaves room for one more of the largest so far.
         private readonly List<TrainingGraph> _recorded = [];
         private readonly Dictionary<(int Rows, int Length, int ImageTokens), int> _seen = [];
         private bool? _graphs;
@@ -1359,7 +1365,7 @@ public static class FineTuner
             var options = _options;
             _graphs ??= _graphsAllowed;
             var batch = group[0];
-            var shape = (batch.Rows.Length, batch.Length, batch.ImageTokens(train));
+            var shape = (batch.Rows.Length, batch.Length, batch.HasImages(train) ? Math.Max(imageTokens, batch.ImageTokens(train)) : 0);
 
             // A batch with images replays only when its features are values (no vision part trains): they are copied in.
             if (graphs && _graphs == true && group.Count == 1 && batch.Packed && (shape.Item3 == 0 || options.Vision is { Parameters.Count: 0 }))
@@ -1374,7 +1380,7 @@ public static class FineTuner
                         return Ordinary(group, shape, cancellationToken, label);
                     }
 
-                    graph = TrainingGraph.Record(model, train, optimizer, options, batch, (Math.Max(1, lossRows) + 63) / 64 * 64, trace);
+                    graph = TrainingGraph.Record(model, train, optimizer, options, batch, (Math.Max(1, lossRows) + 63) / 64 * 64, shape.Item3, trace);
                     if (graph is null)
                     {
                         _graphs = _recorded.Count > 0;                       // the first failed: none; a later one: not this shape
@@ -1495,6 +1501,10 @@ public static class FineTuner
     // The most positions any batch of the run holds (rows × length): the largest pass the device must hold.
     private static long Largest(IEnumerable<Batch> batches) => batches.Select(b => (long)b.Rows.Length * b.Length).DefaultIfEmpty(0).Max();
 
+    // The most image tokens any batch of the run holds: what a recorded step with images is made for, so it serves every batch.
+    private static int MostImageTokens(IEnumerable<Batch> batches, IReadOnlyList<TrainingSequence> train) =>
+        batches.Select(b => b.ImageTokens(train)).DefaultIfEmpty(0).Max();
+
     // AdamW (or FineTuningOptions.Optimizer) on the device, or on the CPU with its state in system memory
     // (FineTuningOptions.HostOptimizer).
     private static Optimizer CreateOptimizer(List<Tensor> parameters, FineTuningOptions options)
@@ -1602,7 +1612,8 @@ public static class FineTuner
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int next = 0;
-        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train), Custom(model, options, pairs: false), trace, Largest(batches));
+        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train), Custom(model, options, pairs: false), trace, Largest(batches),
+            MostImageTokens(batches, train));
         (float Loss, long Tokens, double Seconds) Step(string phase)
         {
             var group = Enumerable.Range(0, accumulation).Select(i => batches[(next + i) % batches.Count]).ToList();
@@ -1899,10 +1910,13 @@ public static class FineTuner
     }
 
     // The training batches: packed when asked and supported, else padded. Sequences with images pack like the others (each
-    // keeps its images at its own positions and attends within itself by the family's rule).
+    // keeps its images at its own positions and attends within itself by the family's rule); when every sequence holds
+    // images under a rule that is not causal, every position attends by key ranges, so the span kernels decide.
     private static List<Batch> MakeBatches(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Random random)
     {
-        if (options.Packing && PackedSequences.Supports(model.Network))
+        bool spans = options.Vision is { Attention.Causal: false } && train.Count > 0 && train.All(s => s.Images.Count > 0)
+                     && PackedSequences.SupportsImages(model.Network);
+        if (options.Packing && (PackedSequences.Supports(model.Network) || spans))
         {
             int longest = train.Max(s => s.Tokens.Length - 1);
             int context = model.Network.Descendants().OfType<CausalSelfAttention>().Min(a => a.MaxPositions);
@@ -2269,8 +2283,9 @@ public static class FineTuner
             [.. batch.Rows.Select(r => r.Select(i => train[i].Tokens.Length - 1).ToArray())];
 
         // Records the pass (nothing runs yet); null, with the reason traced, when the device cannot.
+        // imageTokens: the image tokens the recorded step holds features for (at least the batch's; a later batch with no more replays it).
         public static TrainingGraph? Record(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options, Batch batch,
-            int lossRows, Action<string>? trace)
+            int lossRows, int imageTokens, Action<string>? trace)
         {
             var graph = new TrainingGraph(model, batch, train, lossRows);
             var backend = model.Device.Backend;
@@ -2283,7 +2298,8 @@ public static class FineTuner
                 {
                     var vision = options.Vision!;
                     graph._vision = vision;
-                    graph._images = ImagePrefillInputs.Create(model.Network, batch.Rows.Length, batch.Length, batch.ImageTokens(train), vision.Attention);
+                    graph._images = ImagePrefillInputs.Create(model.Network, batch.Rows.Length, batch.Length, Math.Max(imageTokens, batch.ImageTokens(train)),
+                        vision.Attention);
                     using var scope = new TensorScope();
                     using (Autograd.NoGrad())
                     {
