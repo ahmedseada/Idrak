@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using Idrak;
 using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing;
@@ -22,7 +23,7 @@ internal static partial class Tests
         ("attention spans: float32 and bfloat16 tensor cores (head sizes up to 128, rows past blocks of 64 and 128, every rule, grouped heads, tables, a soft-cap) match the CPU", SpanAttentionPrecisions),
         ("attention spans: the CUDA span modules (float32, tensor-core and pipelined, every padded head size) declare their kernels and parameters, and are judged by the shared memory a device reports", SpanModules),
         ("attention spans: the CPU's key panels (Kᵀ transposed once per call for blocks that see every key) give the transposing products' output and log-sum-exp bit for bit (bidirectional, two tables, grouped heads, a last block of few rows, keys past several tiles)", CpuKeyPanels),
-        ("attention spans: the pipelined tensor-core kernel (keys and values copied to bfloat16 once, two tiles in flight) gives the single-stage kernel's output and log-sum-exp bit for bit, 4 and 8 warps (head sizes 8 to 128, rows past blocks, every rule, grouped heads, tables, empty ranges)", SpanPipelinedKernel),
+        ("attention spans: every tensor-core span kernel of the measured choice (single-stage and pipelined: keys and values copied to bfloat16 once, two tiles in flight; 4 and 8 warps) gives the 4-warp single-stage kernel's output and log-sum-exp bit for bit (head sizes 8 to 128, rows past blocks, every rule, grouped heads, tables, empty ranges)", SpanPipelinedKernel),
         ("attention spans backward: the conformance kit's key-range cases (forward and gradient; random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, head sizes 1 to 256, a soft-cap) replay on the device call by call", SpanGradientCases),
         ("attention spans backward: float32 and bfloat16 (MixedPrecision): the forward pass (float32) and the gradient on the device match the CPU (head sizes 4 to 256: on CUDA the wide kernels over 128, rows and keys past several tiles, every rule, grouped heads, tables, a soft-cap), on the device's own kernels", SpanGradientPrecisions),
         ("attention spans backward: training through the fastest path (forced key ranges, forced composed, measured with the gradient) gives the same gradients; the key-range path runs AttentionSpansBackward", SpanTrainingPaths),
@@ -466,6 +467,7 @@ internal static partial class Tests
                 Check(tensor.Kernels.SequenceEqual(Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps.Select(w => Idrak.Gpu.Cuda.PtxKernels.SpanTensorName(d, w)))
                       && tensor.Kernels.All(k => tensorCounts[k] == 13), $"tc d{d}: a kernel per warp count, 13 parameters each");
                 Check(Idrak.Gpu.Cuda.PtxKernels.Fits(tensor.Source, old) is null, $"tc d{d}: within 48 KiB");
+                Check(SpanTilesFixed(tensor.Source, tensor.Kernels.Length), $"tc d{d}: every kernel's tiles on the fixed grid, a warp only its own (the same bits at 4 and 8 warps)");
             }
         }
 
@@ -501,6 +503,7 @@ internal static partial class Tests
                   && counts[Idrak.Gpu.Cuda.PtxKernels.SpanPackName] == 10 && kernels.Skip(1).All(k => counts[k] == 20),
                 $"tcp d{v}: the packing kernel (10 parameters) and a span kernel per warp count (20 parameters): {string.Join(", ", counts.Select(c => $"{c.Key} {c.Value}"))}");
             Check(source.ReplaceLineEndings("\n").StartsWith(".version 7.0\n.target sm_80", StringComparison.Ordinal), $"tcp d{v}: PTX 7.0 for sm_80");
+            Check(SpanTilesFixed(source, kernels.Length - 1), $"tcp d{v}: every span kernel's tiles on the fixed grid, a warp only its own (the same bits at 4 and 8 warps)");
             int shared = Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedShared(v);
             Check(kernels.Skip(1).All(k => staticBytes[k] <= old.SharedPerBlock && staticBytes[k] + shared <= documented.SharedPerBlockOptin)
                   && source.Contains($".maxntid {32 * Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps[^1]}, 1, 1", StringComparison.Ordinal),
@@ -511,6 +514,24 @@ internal static partial class Tests
               && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(4) == 8 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(6) == 0 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(132) == 0,
             "pipelined head sizes: multiples of 4 up to 128, padded to 8 (the outputs' tiles)");
         Check(Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedShared(72) == 4 * 64 * (80 + 8) * 2, "tcp d72: two stages of 64 keys and values of 80 + 8 bfloat16 values a row");
+    }
+
+    // Whether each of a tensor-core span module's `kernels` span kernels starts its tiles on the grid of 64 keys (not at the
+    // block's first key) and skips the tiles that hold none of a warp's keys: what makes the warps per block change no bit
+    // (the owner's CUDA run on a compute 12.0 GPU: 8 warps differed from 4 at dim 68, 70 rows, 200 keys, random ranges,
+    // 2 key/value heads, 4 tables, row 64, where the blocks' first keys differed).
+    private static bool SpanTilesFixed(string source, int kernels) =>
+        CountOf(source, "and.b32 %r36, %r36, 0xFFFFFFC0;") == kernels && CountOf(source, "@!%p22 bra SKIP;") == kernels;
+
+    private static int CountOf(string text, string part)
+    {
+        int count = 0;
+        for (int at = text.IndexOf(part, StringComparison.Ordinal); at >= 0; at = text.IndexOf(part, at + part.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     // The CPU's AttentionSpans with Kᵀ's panels against the same call with every product transposing its tile: bit for bit.
@@ -556,9 +577,12 @@ internal static partial class Tests
         }
     }
 
-    // The pipelined tensor-core span kernel against the single-stage one on CUDA, each forced: the same bfloat16 operands,
-    // products and softmax, so the same output and log-sum-exp bit for bit, at 4 and 8 warps a block; on any other device
-    // (or a GPU without bfloat16 tensor cores) there is nothing to compare.
+    // Every tensor-core span kernel the measured choice may pick (single-stage and pipelined, 4 and 8 warps a block) against
+    // the 4-warp single-stage one on CUDA, each forced: the same bfloat16 operands, products, softmax and tiles, so the same
+    // output and log-sum-exp bit for bit, whatever a device measures (rule 71). Every shape runs and every difference is
+    // named (head, row, column) before the test fails. dim 68, 70 rows, 200 keys, random, 2 key/value heads, 4 tables is
+    // the owner's failing case (compute 12.0: 8 warps differed at row 64 while the blocks' tiles started at their own first
+    // key). On any other device (or a GPU without bfloat16 tensor cores) there is nothing to compare.
     private static void SpanPipelinedKernel(Device device)
     {
         if (device.Backend is not Idrak.Gpu.Cuda.CudaBackend cuda || MixedPrecision.TensorCoresUnavailable(device) is not null)
@@ -567,13 +591,14 @@ internal static partial class Tests
         }
 
         var random = new Random(77);
+        var failures = new List<string>();
         var previous = Idrak.Gpu.Cuda.CudaBackend.SpanTensorForced;
         try
         {
             foreach (var (dim, rows, keyRows, rule, kvHeads, tables) in new[]
                      {
                          (72, 150, 150, "bidirectional", 2, 1), (68, 70, 200, "random", 2, 4), (128, 129, 129, "causal", 2, 4), (16, 65, 300, "image blocks", 1, 1),
-                         (8, 40, 40, "empty", 1, 1), (100, 200, 133, "window", 4, 1),
+                         (8, 40, 40, "empty", 1, 1), (100, 200, 133, "window", 4, 1), (72, 200, 260, "random", 2, 1),
                      })
             {
                 const int Heads = 4;
@@ -612,17 +637,29 @@ internal static partial class Tests
                 string what = $"dim {dim}, {rows} rows, {keyRows} keys, {rule}, {kvHeads} key/value heads, {tables} tables";
                 var single = Run(Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps[0]);
                 Check(!single.Y.Any(float.IsNaN), $"{what}: the single-stage kernel writes every output");
-                foreach (int warps in Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps)
+                foreach (int candidate in Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps.Skip(1)
+                             .Concat(Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps.Select(w => Idrak.Gpu.Cuda.CudaBackend.SpanPipelined + w)))
                 {
-                    var pipelined = Run(Idrak.Gpu.Cuda.CudaBackend.SpanPipelined + warps);
-                    int differs = Enumerable.Range(0, single.Y.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(single.Y[i]) != BitConverter.SingleToInt32Bits(pipelined.Y[i]), -1);
-                    Check(differs < 0, $"{what}, pipelined with {warps} warps: output {differs} is {(differs < 0 ? 0 : pipelined.Y[differs])}, the single-stage kernel's "
-                        + $"{(differs < 0 ? 0 : single.Y[differs])}");
-                    int lse = Enumerable.Range(0, single.Lse.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(single.Lse[i]) != BitConverter.SingleToInt32Bits(pipelined.Lse[i]), -1);
-                    Check(lse < 0, $"{what}, pipelined with {warps} warps: log-sum-exp {lse} differs from the single-stage kernel's");
+                    string name = candidate < Idrak.Gpu.Cuda.CudaBackend.SpanPipelined ? $"single-stage with {candidate} warps"
+                        : $"pipelined with {candidate - Idrak.Gpu.Cuda.CudaBackend.SpanPipelined} warps";
+                    var other = Run(candidate);
+                    int differs = Enumerable.Range(0, single.Y.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(single.Y[i]) != BitConverter.SingleToInt32Bits(other.Y[i]), -1);
+                    if (differs >= 0)
+                    {
+                        failures.Add($"{what}, {name}: output {differs} (head {differs / (rows * dim)}, row {differs / dim % rows}, column {differs % dim}) is "
+                            + $"{other.Y[differs].ToString("R", CultureInfo.InvariantCulture)}, the 4-warp single-stage kernel's {single.Y[differs].ToString("R", CultureInfo.InvariantCulture)}");
+                    }
+
+                    int lse = Enumerable.Range(0, single.Lse.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(single.Lse[i]) != BitConverter.SingleToInt32Bits(other.Lse[i]), -1);
+                    if (lse >= 0)
+                    {
+                        failures.Add($"{what}, {name}: log-sum-exp {lse} (head {lse / rows}, row {lse % rows}) is {other.Lse[lse].ToString("R", CultureInfo.InvariantCulture)}, "
+                            + $"the 4-warp single-stage kernel's {single.Lse[lse].ToString("R", CultureInfo.InvariantCulture)}");
+                    }
                 }
             }
 
+            Check(failures.Count == 0, string.Join("; ", failures));
             Check(!cuda.SpanModuleErrors.Keys.Any(key => key.StartsWith("tcp", StringComparison.Ordinal)),
                 $"the pipelined modules load: {string.Join("; ", cuda.SpanModuleErrors.Select(e => $"{e.Key}: {e.Value}"))}");
         }
