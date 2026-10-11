@@ -22,6 +22,7 @@ internal static class Offloading
         TensorOffloading.TrainableChanged = TrainableChanged;
         TensorOffloading.ForBackward = ForBackward;
         TensorOffloading.EnterForward = EnterForward;
+        TensorOffloading.MarkFrozen = MarkFrozen;
     }
 
     // Module.Forward's hook: a scope only when the layer was entered (boxed then; nothing is allocated otherwise).
@@ -199,6 +200,19 @@ internal static class Offloading
         }
 
         return storages;
+    }
+
+    // Marks the frozen weights of every layer of `root` cold, as staging a layer does when it first computes (before any
+    // pass, so the first one can already make room).
+    private static void MarkFrozen(Module root)
+    {
+        foreach (var module in root.Descendants().Prepend(root))
+        {
+            if (module is Linear || !module.Children().Any())
+            {
+                ReadOnlyStorages(module, mark: true);
+            }
+        }
     }
 
     /// <summary>Marks <paramref name="storage"/> as moving to system memory before hotter data (never lowers a priority).</summary>

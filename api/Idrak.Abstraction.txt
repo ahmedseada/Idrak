@@ -810,6 +810,7 @@ public interface Idrak.Abstraction.Devices.IHostStaging : System.IDisposable
   public void Wait(int slot)
 
 public interface Idrak.Abstraction.Devices.IMemoryOffload
+  public (default) int KeepFree()
   public System.IDisposable? Stage(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Devices.Storage> storages)
   public bool IsOffloaded(Idrak.Abstraction.Devices.Storage storage)
   public bool MoveToDevice(Idrak.Abstraction.Devices.Storage storage)
@@ -865,11 +866,13 @@ public abstract class Idrak.Abstraction.Devices.Storage
   public void Release()
 
 public static class Idrak.Abstraction.Devices.TensorOffloading
+  public static System.Action<Idrak.Abstraction.Module>? MarkFrozen { get; set; }
   public static System.Action<Idrak.Abstraction.Tensor, bool>? TrainableChanged { get; set; }
   public static System.Func<Idrak.Abstraction.Device, System.Collections.Generic.IReadOnlyList<object?>, Idrak.Abstraction.Devices.IBackwardStaging?>? ForBackward { get; set; }
   public static System.Func<Idrak.Abstraction.Module, Idrak.Abstraction.Tensor, System.IDisposable?>? EnterForward { get; set; }
   public static bool Active(Idrak.Abstraction.Devices.IMemoryOffload offload)
   public static object? CurrentLayer { get; set; }
+  public static void BeforeInference(Idrak.Abstraction.Device device, Idrak.Abstraction.Module model)
   public static void MarkCold(Idrak.Abstraction.Devices.Storage storage, Idrak.Abstraction.Devices.OffloadPriority priority)
   public static void StepBoundary(Idrak.Abstraction.Device device)
 

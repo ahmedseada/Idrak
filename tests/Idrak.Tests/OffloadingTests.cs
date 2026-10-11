@@ -18,6 +18,7 @@ internal static partial class Tests
         ("offloading: layers whose weights live in system memory give the same outputs and gradients, their weights staged on the GPU (forward and backward, the next layer prefetched) and back home after", OffloadStaging),
         ("offloading: a decoder whose base weights (float32 and int8) live in system memory gives the same outputs and LoRA gradients through its fused products (q/k/v, gate/up, down), staged as groups", OffloadDecoder),
         ("offloading: training with a full GPU moves optimizer state out first (then frozen weights), gives the weights of an ordinary run, and brings tensors back when memory frees up", OffloadColdFirst),
+        ("offloading: before inference, a model that did not fit has its frozen weights marked cold before any pass and moved out, largest first, until the headroom is free; its outputs are unchanged", OffloadBeforeInference),
     ];
 
     private static Sequential OffloadModel(Device device, int seed) => new(
@@ -336,6 +337,61 @@ internal static partial class Tests
         {
             ComputeResources.GpuMemoryLimit = limit;
             ComputeResources.OffloadToHostMemory = offloading;
+            ComputeResources.ReleaseCachedMemory(device);
+        }
+    }
+
+    private static void OffloadBeforeInference(Device device)
+    {
+        if (OffloadOf(device) is not { } offload || device.Backend is not CudaBackend cuda)
+        {
+            return;
+        }
+
+        using var input = Tensor.From(Enumerable.Range(0, 8 * 16).Select(i => MathF.Sin(i * 0.37f)).ToArray(), [8, 16], device);
+        float[] expected;
+        using (var ordinary = OffloadModel(device, 5))
+        using (Autograd.NoGrad())
+        {
+            expected = ordinary.Forward(input).ToArray();
+        }
+
+        long? limit = ComputeResources.GpuMemoryLimit;
+        bool offloading = ComputeResources.OffloadToHostMemory;
+        var headroom = ComputeResources.OffloadReturnHeadroom;
+        ComputeResources.ReleaseCachedMemory(device);
+        try
+        {
+            ComputeResources.OffloadToHostMemory = true;
+            using var model = OffloadModel(device, 5);
+            model.Parameters().ToList().ForEach(p => p.RequiresGrad = false);
+            Check(offload.MoveToHost(model.Parameters().Last().Storage, keep: false), "a weight in system memory: the model did not fit");
+
+            // A full GPU (16 KiB of room under the limit) and 32 KiB of headroom asked for: the largest frozen weight
+            // (96 x 96) leaves, never having run.
+            ComputeResources.GpuMemoryLimit = ComputeResources.GetMemoryUsage(device).InUse + (16L << 10);
+            ComputeResources.OffloadReturnHeadroom = 32L << 10;
+            long movedOut = cuda.MovedToHost;
+            TensorOffloading.BeforeInference(device, model);
+            var usage = ComputeResources.GetMemoryUsage(device);
+            Check(cuda.MovedToHost > movedOut && offload.IsOffloaded(model.Parameters().ElementAt(2).Storage),
+                $"the largest frozen weight moved out ({cuda.MovedToHost - movedOut} moved)");
+            Check(usage.Limit - usage.InUse >= 32L << 10, $"{usage.Limit - usage.InUse} bytes free under the limit, 32 KiB asked");
+            using (Autograd.NoGrad())
+            {
+                AssertClose(expected, model.Forward(input).ToArray(), 1e-5f, "outputs with the weights in system memory");
+            }
+
+            // Room to spare: nothing more moves.
+            ComputeResources.OffloadReturnHeadroom = 0;
+            long before = cuda.MovedToHost;
+            Check(offload.KeepFree() == 0 && cuda.MovedToHost == before, "no move when the headroom is free");
+        }
+        finally
+        {
+            ComputeResources.GpuMemoryLimit = limit;
+            ComputeResources.OffloadToHostMemory = offloading;
+            ComputeResources.OffloadReturnHeadroom = headroom;
             ComputeResources.ReleaseCachedMemory(device);
         }
     }

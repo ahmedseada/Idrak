@@ -55,6 +55,15 @@ public interface IMemoryOffload
     /// </summary>
     int Rebalance(bool makeRoom = true);
 
+    /// <summary>
+    /// Before an inference pass while part of a model lives in system memory (the device is as full as it gets): moves
+    /// cold storages (frozen weights, largest first) out until the device has its headroom
+    /// (<see cref="ComputeResources.OffloadReturnHeadroom"/>) free, so the pass's activations and the staged copies of
+    /// offloaded weights fit on the device instead of landing in system memory, where the device would compute over PCIe.
+    /// Returns how many moved; by default none.
+    /// </summary>
+    int KeepFree() => 0;
+
     /// <summary>Starts copying the offloaded ones among <paramref name="storages"/> to the device in the background.</summary>
     void Prefetch(IReadOnlyList<Storage> storages);
 

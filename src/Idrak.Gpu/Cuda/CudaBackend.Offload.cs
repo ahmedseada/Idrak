@@ -272,6 +272,61 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
         return moved;
     }
 
+    public int KeepFree()
+    {
+        if (OffloadedCount == 0)
+        {
+            return 0;                                                      // the model fits: nothing to make room for
+        }
+
+        MakeCurrent();
+        using var use = UseStream();
+        long need = ReturnHeadroom - DeviceRoom();
+        if (need <= 0)
+        {
+            return 0;
+        }
+
+        CudaStorage[] cold;
+        lock (_pool)
+        {
+            if (!Movable)
+            {
+                return 0;
+            }
+
+            cold = [.. _cold.OrderByDescending(c => c.OffloadPriority).ThenByDescending(c => c.Length)];
+        }
+
+        DropPrefetches(all: true);
+        int moved = 0;
+        long freed = 0;
+        foreach (var c in cold)
+        {
+            if (freed >= need)
+            {
+                break;
+            }
+
+            if (MoveOut(c))
+            {
+                freed += BlockBytes(c.Length);
+                moved++;
+            }
+        }
+
+        return moved;
+    }
+
+    // What a pass can still allocate on the GPU: the driver's free memory and the cache (released when an allocation needs
+    // it) past the reserve, within the memory limit.
+    private long DeviceRoom()
+    {
+        var usage = _memory.Usage;
+        long room = cuMemGetInfo(out nuint free, out _) == 0 ? (long)free + usage.Cached - MemoryReserve : long.MaxValue;
+        return usage.Limit is { } max ? Math.Min(room, max - usage.InUse) : room;
+    }
+
     public void Prefetch(IReadOnlyList<Storage> storages)
     {
         if (OffloadedCount == 0 || !ComputeResources.PrefetchOffloadedWeights || storages.Count == 0)
