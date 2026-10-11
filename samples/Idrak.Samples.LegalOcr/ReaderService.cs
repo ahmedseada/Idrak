@@ -539,6 +539,9 @@ public sealed class ReaderService : IDisposable
         int maxTokens = read.MaxTokens;
         bool? pan = PanAndScan(model, request);
         var vision = read.VisionOptions;
+        // The page's preview (a PNG of the page as the model sees it) is encoded on a worker while the read runs; it goes out
+        // before the answer's first text, so the page shows it first as before.
+        Task? preview = null;
         if (output is not null)
         {
             SetStatus(ReaderState.Reading, $"{model.Name} is reading a page…", model.Id);
@@ -550,18 +553,23 @@ public sealed class ReaderService : IDisposable
             var crops = pan == true && loaded.Reader.Vision.Family == Gemma3VisionFamily.Architecture
                 ? Gemma3PanAndScan.Default.With(vision).Crops(seen.Height, seen.Width).Select(c => new { top = c.Top, left = c.Left, height = c.Height, width = c.Width }).ToList()
                 : null;
-            output.TryWrite(new SseItem<object>(new
+            preview = Task.Run(() => output.TryWrite(new SseItem<object>(new
             {
                 image = "data:image/png;base64," + Convert.ToBase64String(ImageEncoders.Get("png").Encode(seen)),
                 width = seen.Width, height = seen.Height, originalWidth = original.Width, originalHeight = original.Height,
                 preprocessing = pipeline.ToString(), prompt, maxTokens, panAndScan = pan == true, crops,
-            }, "image"));
+            }, "image")), CancellationToken.None);
         }
 
         ImageReading reading;
         try
         {
-            reading = loaded.Reader.Read(read, output is null ? null : text => output.TryWrite(new SseItem<object>(new { text }, "token")), cancellationToken);
+            reading = loaded.Reader.Read(read, output is null ? null : text =>
+            {
+                Interlocked.Exchange(ref preview, null)?.GetAwaiter().GetResult();   // the preview first
+                output.TryWrite(new SseItem<object>(new { text }, "token"));
+            }, cancellationToken);
+            preview?.GetAwaiter().GetResult();                                  // an answer without text: the preview still before the result
         }
         catch
         {
