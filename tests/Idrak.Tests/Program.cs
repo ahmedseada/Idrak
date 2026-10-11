@@ -119,6 +119,11 @@ if (args is ["--dump-ptx", var ptxPath])
         {
             File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_tc_d{d}.ptx"), PtxKernels.SpanTensorModule(d).Source);
         }
+
+        if (d <= PtxKernels.FlashMaxDim)
+        {
+            File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_tcp_d{d}.ptx"), PtxKernels.SpanPipelinedModule(d).Source);
+        }
     }
 
     File.WriteAllText(Path.ChangeExtension(ptxPath, ".spans_bwd_wide.ptx"), PtxKernels.SpanBackwardWideModule().Source);
