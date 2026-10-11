@@ -97,6 +97,9 @@ public sealed record TuneRequest
     /// <summary>See <see cref="TuningDefaults"/>.</summary>
     public int? SaveEvery { get; init; }
 
+    /// <summary>See <see cref="TuningDefaults"/>.</summary>
+    public int? LossPages { get; init; }
+
     /// <summary>The defaults with this request's values over them.</summary>
     public TuningDefaults Over(TuningDefaults d) => new()
     {
@@ -104,7 +107,7 @@ public sealed record TuneRequest
         Epochs = Epochs ?? d.Epochs, LearningRate = LearningRate ?? d.LearningRate, Rank = Rank ?? d.Rank, Alpha = Alpha ?? d.Alpha, MaxLength = MaxLength ?? d.MaxLength,
         BatchTokens = BatchTokens ?? d.BatchTokens, Accumulate = Accumulate ?? d.Accumulate, TrainProjector = TrainProjector ?? d.TrainProjector, CerPages = CerPages ?? d.CerPages,
         CerEvery = CerEvery ?? d.CerEvery, CerBefore = CerBefore ?? d.CerBefore, AnswerTokens = AnswerTokens ?? d.AnswerTokens, MaxPages = MaxPages ?? d.MaxPages,
-        EvaluateEvery = EvaluateEvery ?? d.EvaluateEvery, SaveEvery = SaveEvery ?? d.SaveEvery,
+        EvaluateEvery = EvaluateEvery ?? d.EvaluateEvery, SaveEvery = SaveEvery ?? d.SaveEvery, LossPages = LossPages ?? d.LossPages,
     };
 }
 
@@ -362,6 +365,8 @@ public sealed class TuningService : IDisposable
                 MetricSamples = settings.CerPages,
                 MetricEvery = settings.CerEvery,
                 MaxNewTokens = settings.AnswerTokens,
+                MetricRepeatStop = _settings.Generation.RepeatStop,              // a looping answer stops as on the Read tab
+                EvaluationSamples = settings.LossPages,
                 MaxConversations = settings.MaxPages,
                 Tuning = new FineTuningOptions
                 {

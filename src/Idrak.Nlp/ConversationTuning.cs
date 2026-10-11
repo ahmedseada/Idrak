@@ -59,6 +59,19 @@ public sealed record ConversationTuningOptions
     /// <summary>The most tokens an answer scored by <see cref="Metric"/> may take.</summary>
     public int MaxNewTokens { get; init; } = 512;
 
+    /// <summary>
+    /// End a scored answer when one phrase repeats this many times in a row (<see cref="GenerationOptions.RepeatStop"/>;
+    /// 0, the default: off). A model that loops then costs a few repeats, not <see cref="MaxNewTokens"/>; the answer up to
+    /// the stop is scored.
+    /// </summary>
+    public int MetricRepeatStop { get; init; }
+
+    /// <summary>
+    /// The evaluation loss over the first this many evaluation conversations (0, the default: all of them); the metric's
+    /// own <see cref="MetricSamples"/> are counted apart. Each evaluation of the loss is a forward pass per conversation.
+    /// </summary>
+    public int EvaluationSamples { get; init; }
+
     /// <summary>The reasoning mode of scored answers (null: the template's default).</summary>
     public bool? Think { get; init; }
 
@@ -314,7 +327,9 @@ public sealed class ConversationTuning : IDisposable
         TrainingConversations = train;
         EvaluationConversations = evaluation;
         TrainingSequences = Encode(train, tuning.MaxLength, "training", progress, log, cancellationToken);
-        EvaluationSequences = evaluation is null ? null : Encode(evaluation, tuning.MaxLength, "evaluation", progress, log, cancellationToken);
+        EvaluationSequences = evaluation is null ? null
+            : Encode(Options.EvaluationSamples > 0 && evaluation.Count > Options.EvaluationSamples ? evaluation[..Options.EvaluationSamples] : evaluation,
+                tuning.MaxLength, "evaluation", progress, log, cancellationToken);
         if (TrainingSequences.Count == 0)
         {
             throw new InvalidOperationException("Nothing to train on: no conversation with an assistant turn.");
@@ -330,7 +345,7 @@ public sealed class ConversationTuning : IDisposable
             Scorer = new TuningAnswerScorer(evaluation, metric, Options.MetricSamples)
             {
                 Every = Options.MetricEvery, MaxNewTokens = Options.MaxNewTokens, ContextLength = Math.Min(Model.MaxPositions, tuning.MaxLength + Options.MaxNewTokens),
-                Think = Options.Think,
+                Think = Options.Think, RepeatStop = Options.MetricRepeatStop,
             };
         }
 

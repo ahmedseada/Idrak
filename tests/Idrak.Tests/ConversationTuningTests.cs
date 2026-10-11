@@ -54,6 +54,16 @@ internal static partial class Tests
                 Check(limited.TrainingSequences.Count == 1 && limited.EvaluationSequences is null && limited.Scorer is null, $"{limited.TrainingSequences.Count} sequences");
             }
 
+            // The loss over the first N evaluation conversations; the scorer's own samples apart; a looping answer stops.
+            using (var capped = ConversationTuning.Prepare(model, [train], TinyConversationOptions(zip) with
+                   {
+                       EvaluationFraction = 0.67, Seed = 3, Metric = TuningMetrics.CharacterErrorRate, EvaluationSamples = 1, MetricRepeatStop = 4,
+                   }))
+            {
+                Check(capped.EvaluationConversations!.Count == 2 && capped.EvaluationSequences!.Count == 1 && capped.Scorer!.Count == 2 && capped.Scorer.RepeatStop == 4,
+                    $"{capped.EvaluationConversations.Count} held out, {capped.EvaluationSequences?.Count} for the loss, {capped.Scorer?.Count} scored, stop {capped.Scorer?.RepeatStop}");
+            }
+
             try
             {
                 ConversationTuning.Prepare(model, [train], TinyConversationOptions(zip) with { Metric = TuningMetrics.CharacterErrorRate }).Dispose();

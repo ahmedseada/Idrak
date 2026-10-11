@@ -633,9 +633,11 @@ public sealed record Idrak.Nlp.ConversationTuningOptions : System.IEquatable<Idr
   public System.Collections.Generic.IReadOnlyList<string> VisionParts { get; init; }
   public bool? Think { get; init; }
   public double EvaluationFraction { get; init; }
+  public int EvaluationSamples { get; init; }
   public int MaxConversations { get; init; }
   public int MaxNewTokens { get; init; }
   public int MetricEvery { get; init; }
+  public int MetricRepeatStop { get; init; }
   public int MetricSamples { get; init; }
   public int Seed { get; init; }
   public string FeatureCache { get; init; }
@@ -891,6 +893,7 @@ public sealed class Idrak.Nlp.TuningAnswerScorer
   public int Count { get; }
   public int Every { get; init; }
   public int MaxNewTokens { get; init; }
+  public int RepeatStop { get; init; }
   public string Metric { get; }
 
 public sealed record Idrak.Nlp.TuningImages : System.IEquatable<Idrak.Nlp.TuningImages>

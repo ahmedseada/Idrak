@@ -95,6 +95,12 @@ public sealed class TuningAnswerScorer
     /// <summary>The most tokens generated per answer.</summary>
     public int MaxNewTokens { get; init; } = 512;
 
+    /// <summary>
+    /// End an answer when one phrase repeats this many times in a row (<see cref="GenerationOptions.RepeatStop"/>; 0, the
+    /// default: off, the answer runs to <see cref="MaxNewTokens"/>).
+    /// </summary>
+    public int RepeatStop { get; init; }
+
     /// <summary>The context window of each generation (prompt, image tokens and answer; at most the model's), which sizes its key/value cache.</summary>
     public int ContextLength { get; init; } = 4096;
 
@@ -150,7 +156,10 @@ public sealed class TuningAnswerScorer
             {
                 Images = images ? new ChatImages(vision!.Encoder, vision.Format, vision.Attention) { Transforms = vision.Images.Pipeline } : null,
             };
-            var options = new GenerationOptions { Temperature = 0f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, NumPredict = MaxNewTokens, NumCtx = context };
+            var options = new GenerationOptions
+            {
+                Temperature = 0f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, NumPredict = MaxNewTokens, NumCtx = context, RepeatStop = RepeatStop,
+            };
             var visionOptions = vision is { Images.VisionOptions.Count: > 0 } ? vision.Images.VisionOptions : null;
             using (Autograd.NoGrad())
             {
