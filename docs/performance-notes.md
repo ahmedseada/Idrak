@@ -138,7 +138,9 @@ Before claiming a speed-up: the tests, the check against transformers, and for t
   on 67 MB tensors and no gain elsewhere, so it was removed.
 - FP8 relative precision does not suffer from a 2× larger scale (e4m3 is floating point); the drift test in
   `--bench-fp8` gives the same error with and without the headroom.
-- Split-K weight gradients make bfloat16 training sums order-dependent (atomic additions): runs are no longer
-  bit-for-bit reproducible.
+- Split-K tensor-core products (weight gradients, prompt-sized products) once added their partial sums atomically, so
+  bfloat16 sums depended on which block finished first: runs were not bit-for-bit reproducible, and 8 identical rows of
+  one batch drifted apart over 2,048 greedy tokens. The last block of each output tile now adds the splits in split
+  order (PtxKernels.TensorCore.cs, SplitSum): the same bits on every run and for every row.
 - The event-timed profile tables overstate kernels of a few microseconds; `--bench-gemv` replays graphs and gives the
   real per-call times.

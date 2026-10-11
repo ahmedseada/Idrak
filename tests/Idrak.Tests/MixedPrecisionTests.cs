@@ -13,6 +13,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] MixedPrecisionGroup =
     [
         ("mixed precision: bfloat16 tensor-core products (every transpose, edges, batches, beta, split k) match bfloat16-rounded references", TensorCoreProducts),
+        ("mixed precision: tensor-core split k adds the splits in split order (no atomic float additions): a split product repeated, and identical rows of one product, give the same bits; beta, bias and residual added once", TensorCoreSplitOrder),
         ("mixed precision: tensor-core flash attention (forward, log-sum-exp, dq, dk, dv; head sizes 64 and 128) matches float32", TensorCoreAttention),
         ("layer norm: the fused training kernels match the composed operations (output, input, gamma and beta gradients)", LayerNormTraining),
         ("mixed precision: strided products and GELU epilogues match references (slices, activation, its gradient)", StridedProducts),
@@ -1383,7 +1384,10 @@ internal static partial class Tests
 
     private static void TensorCoreProducts(Device device)
     {
-        Check(PtxKernels.TensorCoreNames.Where(k => k.StartsWith("gemm_tc")).All(k => PtxKernels.TensorCoreParameterCounts.TryGetValue(k, out int n) && n == (k.Contains("_multi") ? 23 : 15) + (k.Contains("_lr_") ? (k.Contains("_multi") ? 7 : 3) : 0))
+        // 15 parameters (23 with three products), the low-rank term's 3 (7), and the split-k sum's workspace and counters
+        // on every product that splits k (all but the GELU ones).
+        Check(PtxKernels.TensorCoreNames.Where(k => k.StartsWith("gemm_tc")).All(k => PtxKernels.TensorCoreParameterCounts.TryGetValue(k, out int n)
+                  && n == (k.Contains("_multi") ? 23 : 15) + (k.Contains("_lr_") ? (k.Contains("_multi") ? 7 : 3) : 0) + (k.Contains("_gelu") ? 0 : 2))
               && PtxKernels.TensorCoreNames.All(PtxKernels.TensorCoreParameterCounts.ContainsKey), "tensor-core kernel signatures");
         var random = new Random(3);
         // A GPU that has tensor cores must load the module: a JIT error would otherwise fall back to float32 silently.
@@ -1491,6 +1495,189 @@ internal static partial class Tests
         else if (device.Type == DeviceType.Cuda)
         {
             Console.WriteLine($"    (no tensor cores: {((CudaBackend)device.Backend).TensorCoreUnavailableReason}; float32 checked)");
+        }
+    }
+
+    // Split k on the tensor cores (PtxKernels.TensorCore.cs, SplitSum). The PTX, on every device: each product kernel that
+    // splits k takes the workspace and counters last, counts its blocks per tile and reads the partial tiles back in
+    // order, and adds no float atomically; the GELU ones never split. On a GPU with tensor cores, products forced to split
+    // k (plain floats, bfloat16 weights, with the bias and residual, three layers in one launch): run twice they give the
+    // same bits, two equal rows in different row tiles give the same row (greedy decoding of a batch of equal prompts
+    // must not drift apart, as atomic sums made it at 2,048 answer tokens), and against one split they differ by rounding
+    // only (beta·c, the bias and the residual added once).
+    private static void TensorCoreSplitOrder(Device device)
+    {
+        var wrong = new List<string>();
+        int splitting = 0, fixedOnes = 0;
+        foreach (var (_, _, source) in PtxKernels.TensorCoreModules)
+        {
+            var entries = PtxKernels.Entries(source);
+            for (int i = 0; i < entries.Count; i++)
+            {
+                string name = entries[i].Name;
+                if (!name.StartsWith("gemm_tc", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string body = source[entries[i].Start..(i + 1 < entries.Count ? entries[i + 1].Start : source.Length)];
+                string[] parameters = [.. source[entries[i].Parameters!.Value].Split(',').Select(p => p.Trim())];
+                bool splits = !name.Contains("_gelu", StringComparison.Ordinal);
+                bool takes = parameters is [.., var workspace, var counters]
+                             && workspace.EndsWith("p_ws", StringComparison.Ordinal) && counters.EndsWith("p_cnt", StringComparison.Ordinal);
+                bool ordered = body.Contains("atom.global.add.u32", StringComparison.Ordinal) && body.Contains("ld.global.cg.v4.f32", StringComparison.Ordinal);
+                bool atomicFloats = body.Contains("red.global.add.f32", StringComparison.Ordinal) || body.Contains("atom.global.add.f32", StringComparison.Ordinal);
+                if (atomicFloats || takes != splits || ordered != splits)
+                {
+                    wrong.Add($"{name}: {(atomicFloats ? "atomic float additions, " : "")}workspace and counters {(takes ? "taken" : "not taken")}, "
+                              + $"ordered sum {(ordered ? "present" : "absent")} (it {(splits ? "splits" : "never splits")} k)");
+                }
+
+                splitting += splits ? 1 : 0;
+                fixedOnes += splits ? 0 : 1;
+            }
+        }
+
+        Check(wrong.Count == 0 && splitting > 0 && fixedOnes > 0,
+            $"tensor-core products: {splitting} splitting k in order, {fixedOnes} never split; wrong: {string.Join("; ", wrong.Take(5))}");
+
+        if (device.Type != DeviceType.Cuda || MixedPrecision.TensorCoresUnavailable(device) is not null)
+        {
+            if (device.Type == DeviceType.Cuda)
+            {
+                Console.WriteLine($"    (no tensor cores: {((CudaBackend)device.Backend).TensorCoreUnavailableReason}; the PTX checked)");
+            }
+
+            return;                                                                     // the split order is the CUDA kernels'
+        }
+
+        var random = new Random(86);
+        float[] Values(int n, float scale = 1f) => [.. Enumerable.Range(0, n).Select(_ => (random.NextSingle() * 2 - 1) * scale)];
+        static bool Same(ReadOnlySpan<float> a, ReadOnlySpan<float> b) =>
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(a).SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(b));
+        static int Differing(float[] a, float[] b) => a.Zip(b).Count(p => BitConverter.SingleToInt32Bits(p.First) != BitConverter.SingleToInt32Bits(p.Second));
+
+        // A product's output split `splits` ways and once, and again split: the same bits, the equal rows `row` and `twin`
+        // equal, and the single split within rounding.
+        void Compare(string what, Func<int, float[]> run, int width, int row, int twin)
+        {
+            float[] once = run(1), split = run(4), again = run(4);
+            Check(Same(split, again), $"{what}: split k run twice differs in {Differing(split, again)} of {split.Length} values");
+            Check(Same(split.AsSpan(row * width, width), split.AsSpan(twin * width, width)),
+                $"{what}: equal rows {row} and {twin} differ in {Differing(split[(row * width)..((row + 1) * width)], split[(twin * width)..((twin + 1) * width)])} of {width} values");
+            double error = Relative(once, split);
+            Check(error < 1e-5, $"{what}: split k differs from one split by {error:G3} (more than rounding: something added more than once?)");
+        }
+
+        var tensorSplits = CudaBackend.TensorSplitsOverride;
+        var packedSplits = CudaBackend.PackedSplits;
+        try
+        {
+            // Plain floats: 130 × 150 × 4200 (four output tiles, an uneven last chunk), row 129 (the second row tile) a copy
+            // of row 3, as stored and with B transposed, beta 0 and 1 (c's rows copied alike).
+            const int M = 130, N = 150, K = 4200;
+            float[] a = Values(M * K), b = Values(K * N), c = Values(M * N);
+            Array.Copy(a, 3 * K, a, 129 * K, K);
+            Array.Copy(c, 3 * N, c, 129 * N, N);
+            long launches = ((CudaBackend)device.Backend).TensorCoreLaunches;
+            foreach (bool tb in new[] { false, true })
+            {
+                foreach (float beta in new[] { 0f, 1f })
+                {
+                    float[] Product(int splits)
+                    {
+                        CudaBackend.TensorSplitsOverride = splits;
+                        using var ta_ = Tensor.From(a, [a.Length], device);
+                        using var tb_ = Tensor.From(b, [b.Length], device);
+                        using var tc_ = Tensor.From(c, [c.Length], device);
+                        using (MixedPrecision.BFloat16())
+                        {
+                            device.Backend.BatchedMatMul(ta_.Storage, tb_.Storage, tc_.Storage, 1, M, N, K, false, tb, beta);
+                        }
+
+                        return tc_.ToArray();
+                    }
+
+                    Compare($"{M}×{N}×{K} n{(tb ? "t" : "n")}, beta {beta}", Product, N, 3, 129);
+                }
+            }
+
+            Check(((CudaBackend)device.Backend).TensorCoreLaunches > launches, "the plain products ran on the tensor cores");
+
+            // bfloat16 weights, as the prompt pass runs them: 150 rows (64-row tiles), k 1056, row 140 (the third row tile) a
+            // copy of row 5; the product, with the bias and the residual in its epilogue, and three layers in one launch.
+            const int Rows = 150, Inner = 1056, Width = 256;
+            float[] x = Values(Rows * Inner), r = Values(Rows * Width);
+            Array.Copy(x, 5 * Inner, x, 140 * Inner, Inner);
+            Array.Copy(r, 5 * Width, r, 140 * Width, Width);
+            using var input = Tensor.From(x, [Rows, Inner], device);
+            using var residual = Tensor.From(r, [Rows, Width], device);
+            using var bias = Tensor.From(Values(Width), [Width], device);
+            using var weights = Tensor.From(Values(Inner * Width, 0.1f), [Inner, Width], device);
+            using var bf16 = BFloat16Weight.Convert(weights);
+            int[] widths = [128, 256, 128];
+            var layers = widths.Select(n =>
+            {
+                using var w = Tensor.From(Values(Inner * n, 0.1f), [Inner, n], device);
+                return Linear.FromBFloat16(BFloat16Weight.Convert(w));
+            }).ToArray();
+            try
+            {
+                foreach (var (what, run, width) in new (string, Func<float[]>, int)[]
+                {
+                    ("bfloat16 weights", () => input.MatMulBFloat16(bf16).ToArray(), Width),
+                    ("bfloat16 weights + bias + residual", () => Tensor.MatMulPackedEpilogue(input, bf16, bias, residual: residual).ToArray(), Width),
+                    ("three bfloat16 layers in one launch", () =>
+                    {
+                        var outputs = Linear.MatMulPackedMany(input, layers[0].PackedWeight!.Format!.Value, layers);
+                        Check(outputs is not null, "three bfloat16 layers: one launch");
+                        return [.. outputs!.SelectMany(y => y.ToArray())];
+                    }, widths.Sum()),
+                })
+                {
+                    float[] Product(int splits)
+                    {
+                        CudaBackend.PackedSplits = splits;
+                        using (MixedPrecision.BFloat16())
+                        using (Autograd.NoGrad())
+                        using (new TensorScope())
+                        {
+                            return run();
+                        }
+                    }
+
+                    if (width == Width)
+                    {
+                        Compare($"{Rows}×{Inner}×{Width}, {what}", Product, Width, 5, 140);
+                        continue;
+                    }
+
+                    // The outputs one after another: each layer's rows 5 and 140 compared within its own output.
+                    float[] once = Product(1), split = Product(4), again = Product(4);
+                    Check(Same(split, again), $"{what}: split k run twice differs in {Differing(split, again)} of {split.Length} values");
+                    int at = 0;
+                    foreach (int n in widths)
+                    {
+                        Check(Same(split.AsSpan(at + 5 * n, n), split.AsSpan(at + 140 * n, n)), $"{what}: equal rows 5 and 140 of the {n}-wide layer differ");
+                        at += Rows * n;
+                    }
+
+                    double error = Relative(once, split);
+                    Check(error < 1e-5, $"{what}: split k differs from one split by {error:G3}");
+                }
+            }
+            finally
+            {
+                foreach (var layer in layers)
+                {
+                    layer.Dispose();
+                }
+            }
+        }
+        finally
+        {
+            CudaBackend.TensorSplitsOverride = tensorSplits;
+            CudaBackend.PackedSplits = packedSplits;
         }
     }
 }
