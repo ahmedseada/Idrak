@@ -75,7 +75,11 @@ public sealed record LegalOcrSettings
     /// </summary>
     public string PrefillPrecision { get; init; } = "f32";
 
-    /// <summary>The attention cache: "f32" or "bf16" (half the memory).</summary>
+    /// <summary>
+    /// The attention cache: "f32" (the default: keys and values as computed) or "bf16" (each rounded to bfloat16: half the
+    /// cache's memory, so a larger ReadBatch fits the GPU; the answers can change, so compare CER on the evaluation pages
+    /// before reading with it). Pages of different lengths read together keep a float32 cache for their batch.
+    /// </summary>
     public string KeyValueCache { get; init; } = "f32";
 
     /// <summary>The longest prompt and answer in tokens (the image's tokens included).</summary>
