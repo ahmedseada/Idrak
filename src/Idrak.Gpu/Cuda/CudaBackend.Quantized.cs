@@ -332,17 +332,17 @@ internal sealed unsafe partial class CudaBackend
         PromptTileRowsOverride ?? (m < 1024 && m % PtxKernels.TensorTile is > 0 and <= 64 ? 64 : PtxKernels.TensorTile);
 
     // k splits of a prompt-sized packed product before measuring (see PromptSplitsTuned): up to four blocks per SM, chunks
-    // of 256 k or more; none when the tiles already fill about one wave of the SMs (splitting then only adds the zeroing
-    // and atomic additions).
+    // of 256 k or more; none when the tiles already fill about one wave of the SMs (splitting then only adds the partial
+    // tiles' writes and their ordered sum).
     private int PromptSplits(int tiles, int k)
     {
         int sms = Math.Max(1, _multiprocessors);
         return tiles * 100 >= sms * 85 && tiles <= sms ? 1 : Math.Clamp(Math.Min(k / 256, 4 * sms / tiles), 1, 8);
     }
 
-    // The k splits of a prompt-sized packed product, measured once per shape on this card: `run(splits)` zeroes the outputs
-    // when it splits and launches, writing outputs the final run writes again. With four or more waves of tiles there is
-    // nothing to gain from splitting, so nothing is measured.
+    // The k splits of a prompt-sized packed product, measured once per shape on this card: `run(splits)` launches, writing
+    // outputs the final run writes again. With four or more waves of tiles there is nothing to gain from splitting, so
+    // nothing is measured. Candidates stop at MaxSplits (the ordered sum's workspace: one partial tile per block).
     private int PromptSplitsTuned(TuneKey key, int tiles, int k, Action<int> run)
     {
         int formula = PromptSplits(tiles, k);
@@ -352,8 +352,12 @@ internal sealed unsafe partial class CudaBackend
         }
 
         Span<int> candidates = stackalloc int[SplitCountsLength];
-        return Tune(key, candidates[..SplitCounts(Math.Min(16, k / 128), candidates)], formula, run);
+        return Tune(key, candidates[..SplitCounts(Math.Min(Math.Min(16, k / 128), MaxSplits(tiles)), candidates)], formula, run);
     }
+
+    // PackedSplits' count (benchmarks) for a product of `tiles` output tiles: at least 1, chunks of 32 k or more, at most
+    // MaxSplits.
+    private int ForcedSplits(int forced, int k, int tiles) => Math.Clamp(forced, 1, Math.Max(1, Math.Min(k / 32, MaxSplits(tiles))));
 
     public override bool PackedMatMulLargeKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
@@ -379,21 +383,13 @@ internal sealed unsafe partial class CudaBackend
             }
 
             // Split k when the output tiles leave SMs idle (prompt-sized m): up to two blocks per SM, chunks of 256 k or
-            // more, partial sums added into the zeroed output.
+            // more, partial sums added in split order (LaunchTensor).
             int rowTiles = (m + tileRows - 1) / tileRows, columnTiles = (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-            void Run(int splits)
-            {
-                if (splits > 1)
-                {
-                    Check(cuMemsetD32Async(P(y), 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
-                }
-
-                Launch(tensor, (uint)columnTiles, (uint)rowTiles,
-                    (uint)splits, PtxKernels.TensorThreads, 1, P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
+            void Run(int splits) =>
+                LaunchTensor(tensor, columnTiles, rowTiles, tileRows, splits, (uint)splits, P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
                     U(k), U((n + perWord - 1) / perWord), U(n), scales is null ? 0UL : P(scales));
-            }
 
-            Run(PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32))
+            Run(PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles)
                 : PromptSplitsTuned(new TuneKey(TuneOp.PackedSplits, packedVariant, m, n, k), rowTiles * columnTiles, k, Run));
             return true;
         }
@@ -442,19 +438,22 @@ internal sealed unsafe partial class CudaBackend
                 _profileFlops = 2.0 * m * n * k;
             }
 
-            if (splits > 1)
+            ReadOnlySpan<ulong> args = [P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL,
+                0UL, bias is null ? 0UL : P(bias), U(k), U((n + 1) / 2), U(n), residual is null ? 0UL : P(residual)];
+            if (gelu)
             {
-                Check(cuMemsetD32Async(P(y), 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
+                Launch(tensor, (uint)columnTiles, (uint)rowTiles, 1, PtxKernels.TensorThreads, 1, args);
             }
-
-            Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1, P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL,
-                0UL, bias is null ? 0UL : P(bias), U(k), U((n + 1) / 2), U(n), residual is null ? 0UL : P(residual));
+            else
+            {
+                LaunchTensor(tensor, columnTiles, rowTiles, tileRows, splits, (uint)splits, args);
+            }
         }
 
-        // GELU is not linear: never split over k. The bias (and the residual) are added by the first split alone.
+        // GELU is not linear: never split over k. The bias (and the residual) are added once, to the splits' ordered sum.
         int packedVariant = (int)format * 2 + tile + (residual is null ? 0 : 16);
         Run(gelu ? 1
-            : PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32))
+            : PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles)
             : PromptSplitsTuned(new TuneKey(TuneOp.PackedSplits, packedVariant, m, n, k), rowTiles * columnTiles, k, Run));
     }
 
@@ -505,18 +504,10 @@ internal sealed unsafe partial class CudaBackend
         var list = products.ToArray();                                     // prompt-sized: one small copy per call
         void Run(int splits)
         {
-            if (splits > 1)
-            {
-                foreach (var product in list)
-                {
-                    Check(cuMemsetD32Async(P(product.Output), 0, (nuint)((long)m * product.Columns), _stream), nameof(cuMemsetD32Async));
-                }
-            }
-
             var p1 = list[1];
             var p2 = list.Length == 3 ? list[2] : list[1];
             int n2 = list.Length == 3 ? list[2].Columns : 0;
-            Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
+            LaunchTensor(tensor, columnTiles, rowTiles, tileRows, splits, (uint)splits,
                 P(x), P(list[0].Packed), P(list[0].Output), U(m), U(list[0].Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
                 U(k), U(list[0].Columns / perWord), U(list[0].Columns), Scales(list[0].Scales),
                 P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
@@ -524,7 +515,7 @@ internal sealed unsafe partial class CudaBackend
         }
 
         var key = new TuneKey(TuneOp.PackedMultiSplits, multiVariant, m, k, list[0].Columns, list[1].Columns, list.Length == 3 ? list[2].Columns : 0);
-        Run(PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32)) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
+        Run(PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
         return true;
     }
 
@@ -572,18 +563,10 @@ internal sealed unsafe partial class CudaBackend
         var list = products.ToArray();                                     // prompt-sized: one small copy per call
         void Run(int splits)
         {
-            if (splits > 1)
-            {
-                foreach (var product in list)
-                {
-                    Check(cuMemsetD32Async(P(product.Output), 0, (nuint)((long)m * product.Columns), _stream), nameof(cuMemsetD32Async));
-                }
-            }
-
             var p0 = list[0];
             if (!multi)
             {
-                Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
+                LaunchTensor(tensor, columnTiles, rowTiles, PtxKernels.TensorTile, splits, (uint)splits,
                     P(x), P(p0.Packed), P(p0.Output), U(m), U(p0.Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
                     U(k), U((p0.Columns + perWord - 1) / perWord), U(p0.Columns), Scales(p0.Scales), P(p0.U), P(p0.V), U(rank));
                 return;
@@ -592,7 +575,7 @@ internal sealed unsafe partial class CudaBackend
             var p1 = list[1];
             var p2 = list.Length == 3 ? list[2] : list[1];
             int n2 = list.Length == 3 ? list[2].Columns : 0;
-            Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
+            LaunchTensor(tensor, columnTiles, rowTiles, PtxKernels.TensorTile, splits, (uint)splits,
                 P(x), P(p0.Packed), P(p0.Output), U(m), U(p0.Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
                 U(k), U(p0.Columns / perWord), U(p0.Columns), Scales(p0.Scales),
                 P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
@@ -602,7 +585,7 @@ internal sealed unsafe partial class CudaBackend
 
         var key = new TuneKey(TuneOp.PackedLowRankSplits, lowRankVariant, m, k, list[0].Columns,
             list.Length > 1 ? list[1].Columns : 0, list.Length > 2 ? list[2].Columns : 0, rank);
-        Run(PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32)) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
+        Run(PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
         return true;
     }
 

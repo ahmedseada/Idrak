@@ -162,7 +162,10 @@ internal static partial class PtxKernels
     // skips the term. With split k only block z = 0 adds it.
     //
     // residual (mode 0, plain or bfloat16 weights, …_res_f32): the epilogue adds p_aux (c's layout) after the bias,
-    // c = beta·c + (acc + bias) + aux; with split k only block z = 0 adds it, as the bias.
+    // c = beta·c + (acc + bias) + aux; with split k once, after the splits' ordered sum, as the bias.
+    //
+    // Split k (mode 0; see EmitTensorEpilogue): p_ws, a workspace of one partial tile per block (gridDim.z × the grid's
+    // tiles × tileM × 128 floats), and p_cnt, one zeroed counter per output tile (left zero again); both 0 without a split.
     //
     // bf16B (B transposed, …_nt_bf16w_lr_f32): B is a bfloat16 weight W [n][k] stored as BFloat16Weight packs it (two
     // values per 32-bit word along k; ldb = words per row): dx = g · Wᵀ reads the weight as stored, with no float copy. Each
@@ -210,6 +213,9 @@ internal static partial class PtxKernels
                 """ : "")}}{{(lowRank && multi ? """
                 ,
                                 .param .u64 p_u1, .param .u64 p_v1, .param .u64 p_u2, .param .u64 p_v2
+                """ : "")}}{{(mode == 0 ? """
+                ,
+                                .param .u64 p_ws, .param .u64 p_cnt
                 """ : "")}}
             )
             {
@@ -337,8 +343,8 @@ internal static partial class PtxKernels
         if (mode == 0)
         {
             // Split k (gridDim.z > 1 on packed weights, or with p_sc = 0 on plain ones, whose z otherwise indexes a
-            // batch): block z sums k [%r62, %r3) of chunks rounded to 32 (the int4 scale groups), added into c
-            // atomically by the epilogue.
+            // batch): block z sums k [%r62, %r3) of chunks rounded to 32 (the int4 scale groups); the epilogue adds the
+            // splits in split order.
             s.AppendLine($"""
                     mov.u32 %r49, %nctaid.z;
                     setp.gt.u32 %psplit, %r49, 1;
@@ -788,12 +794,19 @@ internal static partial class PtxKernels
     // %rd14 = its address, %rd15 = a row in bytes. Expects %r1 = m, %r2 = n, %r5 = lane, %r7 / %r8 = the warp's tile row /
     // column, %r9 / %r10 = the block's first row / column, %r60 = ldc, %rd3 = c, %beta / %pbeta, float accumulators %c0-63,
     // and the parameters p_bias and p_aux. `scale` may rescale the accumulators once %r42 / %r43 are set. With `splitK`
-    // (mode 0), %psplit (set by the caller) marks a split k: each block adds its partial sums into c atomically (beta
-    // must be 0, c zeroed first, or 1) and only block z = 0 adds the bias.
+    // (mode 0), %psplit (set by the caller) marks a split k: each block writes its partial sums to its slot of p_ws, and
+    // the last block of each output tile to finish (counted in p_cnt, which it leaves zero) adds the slots in split order
+    // 0, 1, 2, … and runs the epilogue once, as one block without a split would: the scales, beta·c, the bias and the
+    // residual applied once to the ordered sum, so a result never depends on which block finished first (rule 86).
     // mts: the m16 slices of each warp (4: 64 rows, the 128-row tiles; 2: 32 rows, the 64-row tiles).
-    // residual (mode 0): aux (c's layout) added after the bias, by block z = 0 only under split k.
+    // residual (mode 0): aux (c's layout) added after the bias.
     private static void EmitTensorEpilogue(StringBuilder s, int mode, Action<StringBuilder>? scale, bool splitK = false, int mts = 4, bool residual = false)
     {
+        if (splitK)
+        {
+            SplitSum(s, mts);
+        }
+
         // Epilogue: c[row, col] = acc + beta · c (rows (lane >> 2) and +8 of each m16 tile, columns 2 (lane & 3) and +1
         // of each n8 tile). %r42 = first row, %r43 = first column, %rd14 = its address, %rd15 = a row in bytes.
         s.AppendLine(CultureInfo.InvariantCulture, $"""
@@ -837,17 +850,6 @@ internal static partial class PtxKernels
                 setp.ne.u64 %pbias, %rd18, 0;
                 cvta.to.global.u64 %rd18, %rd18;
             """);
-        if (splitK)
-        {
-            s.AppendLine("""
-                    @%psplit mov.f32 %beta, 0f00000000;
-                    @%psplit setp.ne.u32 %pbeta, %r49, %r49;
-                    mov.u32 %r49, %ctaid.z;
-                    setp.eq.u32 %pz0, %r49, 0;
-                    and.pred %pbias, %pbias, %pz0;
-                """);
-        }
-
         for (int nt = 0; nt < 4; nt++)
         {
             for (int j = 0; j < 2; j++)
@@ -936,7 +938,6 @@ internal static partial class PtxKernels
                 if (residual)
                 {
                     // The residual's 8 values of this row group (c's layout at c + %rd22), read together, then added.
-                    s.AppendLine(CultureInfo.InvariantCulture, $"@!%pz0 bra EPI_RES_{group};");
                     for (int nt = 0; nt < 4; nt++)
                     {
                         s.AppendLine(CultureInfo.InvariantCulture, $$"""
@@ -955,8 +956,6 @@ internal static partial class PtxKernels
                                 add.f32 %e{2 * nt + 1}, %e{2 * nt + 1}, %h{2 * nt + 1};
                             """);
                     }
-
-                    s.AppendLine(CultureInfo.InvariantCulture, $"EPI_RES_{group}:");
                 }
 
                 // Mode 1: pre = acc + bias (stored when aux is given), c = beta·c + gelu(pre).
@@ -1010,23 +1009,6 @@ internal static partial class PtxKernels
                     }
                 }
 
-                if (splitK)
-                {
-                    s.AppendLine(CultureInfo.InvariantCulture, $"@!%psplit bra EPI_STORE_{group};");
-                    for (int nt = 0; nt < 4; nt++)
-                    {
-                        s.AppendLine(CultureInfo.InvariantCulture, $"""
-                                or.pred %p12, %q{3 * nt}, %q{3 * nt + 1};
-                                or.pred %p13, %q{3 * nt}, %q{3 * nt + 2};
-                                @%p12 red.global.add.f32 [%rd17+{nt * 32}], %e{2 * nt};
-                                @%p13 red.global.add.f32 [%rd17+{nt * 32 + 4}], %e{2 * nt + 1};
-                            """);
-                    }
-
-                    s.AppendLine(CultureInfo.InvariantCulture, $"bra EPI_DONE_{group};");
-                    s.AppendLine(CultureInfo.InvariantCulture, $"EPI_STORE_{group}:");
-                }
-
                 for (int nt = 0; nt < 4; nt++)
                 {
                     s.AppendLine(CultureInfo.InvariantCulture, $$"""
@@ -1035,13 +1017,106 @@ internal static partial class PtxKernels
                             @%q{{3 * nt + 2}} st.global.f32 [%rd17+{{nt * 32 + 4}}], %e{{2 * nt + 1}};
                         """);
                 }
+            }
+        }
+    }
 
-                if (splitK)
+    // Split k's ordered sum (EmitTensorEpilogue), before the epilogue: under %psplit each block stores its accumulators
+    // %c to its slot of p_ws (slot tile · gridDim.z + z; tile = ctaid.y · gridDim.x + ctaid.x), as float4s in thread order
+    // (vector j of thread t at (j · 256 + t) · 16 bytes: a warp writes 512 contiguous bytes), then counts itself in p_cnt
+    // [tile] (membar, then one atomic, as the few-row products' splits). The other blocks of the tile are done; the last
+    // one resets the counter, reads slot 0 into %c and adds slots 1, 2, … in order (8 float4 loads in flight, from L2),
+    // then clears %psplit: the epilogue after it is the one of a product without a split. Uses %r22-%r29 and %rd27-%rd31
+    // (free after the k loop), %p7 and %p15, %ga / %gb as load registers, and %r11 (the A tiles' shared memory, no
+    // longer read) for the block's verdict.
+    private static void SplitSum(StringBuilder s, int mts)
+    {
+        int vectors = 4 * mts, slotBytes = vectors * 16 * TensorThreads, rowBytes = 16 * TensorThreads;
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
+                @!%psplit bra SPLIT_SUMMED;
+                ld.param.u64 %rd27, [p_ws];
+                cvta.to.global.u64 %rd27, %rd27;
+                ld.param.u64 %rd28, [p_cnt];
+                cvta.to.global.u64 %rd28, %rd28;
+                mov.u32 %r22, %ctaid.x;
+                mov.u32 %r23, %ctaid.y;
+                mov.u32 %r24, %nctaid.x;
+                mad.lo.u32 %r22, %r23, %r24, %r22;
+                mov.u32 %r25, %nctaid.z;
+                mov.u32 %r26, %ctaid.z;
+                mul.wide.u32 %rd29, %r22, 4;
+                add.u64 %rd28, %rd28, %rd29;
+                mul.wide.u32 %rd29, %r22, %r25;
+                mul.lo.u64 %rd29, %rd29, {slotBytes};
+                mul.wide.u32 %rd30, %r4, 16;
+                add.u64 %rd30, %rd30, %rd27;
+                add.u64 %rd29, %rd29, %rd30;
+                mul.wide.u32 %rd31, %r26, {slotBytes};
+                add.u64 %rd31, %rd31, %rd29;
+            """);
+        for (int j = 0; j < vectors; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""    st.global.v4.f32 [%rd31+{{j * rowBytes}}], {%c{{4 * j}}, %c{{4 * j + 1}}, %c{{4 * j + 2}}, %c{{4 * j + 3}}};""");
+        }
+
+        s.AppendLine("""
+                membar.gl;
+                bar.sync 0;
+                setp.eq.u32 %p15, %r4, 0;
+                mov.u32 %r27, 0;
+                @%p15 atom.global.add.u32 %r27, [%rd28], 1;
+                sub.u32 %r28, %r25, 1;
+                setp.eq.u32 %p7, %r27, %r28;
+                selp.u32 %r29, 1, 0, %p7;
+                @%p15 st.shared.u32 [%r11], %r29;
+                bar.sync 0;
+                ld.shared.u32 %r29, [%r11];
+                setp.eq.u32 %p7, %r29, 0;
+                @%p7 ret;
+                membar.gl;
+                @%p15 st.global.u32 [%rd28], 0;
+            """);
+        for (int j = 0; j < vectors; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""    ld.global.cg.v4.f32 {%c{{4 * j}}, %c{{4 * j + 1}}, %c{{4 * j + 2}}, %c{{4 * j + 3}}}, [%rd29+{{j * rowBytes}}];""");
+        }
+
+        // Slots 1, 2, …: 8 vectors loaded into %ga / %gb, then added (each element's sum in slot order).
+        static string Part(int q, int e) => q < 4
+            ? string.Create(CultureInfo.InvariantCulture, $"%ga{4 * q + e}")
+            : string.Create(CultureInfo.InvariantCulture, $"%gb{4 * q - 16 + e}");
+        static string Load(int q) => string.Join(", ", Part(q, 0), Part(q, 1), Part(q, 2), Part(q, 3));
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
+                mov.u32 %r26, 1;
+            SPLIT_NEXT:
+                setp.ge.u32 %p7, %r26, %r25;
+                @%p7 bra SPLIT_DONE;
+                add.u64 %rd29, %rd29, {slotBytes};
+            """);
+        for (int first = 0; first < vectors; first += 8)
+        {
+            for (int q = 0; q < 8; q++)
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $$"""    ld.global.cg.v4.f32 {{{Load(q)}}}, [%rd29+{{(first + q) * rowBytes}}];""");
+            }
+
+            for (int q = 0; q < 8; q++)
+            {
+                for (int e = 0; e < 4; e++)
                 {
-                    s.AppendLine(CultureInfo.InvariantCulture, $"EPI_DONE_{group}:");
+                    int c = 4 * (first + q) + e;
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    add.f32 %c{c}, %c{c}, {Part(q, e)};");
                 }
             }
         }
+
+        s.AppendLine("""
+                add.u32 %r26, %r26, 1;
+                bra SPLIT_NEXT;
+            SPLIT_DONE:
+                setp.ne.u32 %psplit, %r25, %r25;
+            SPLIT_SUMMED:
+            """);
     }
 
     // Int8 weights: acc · scale[column] (the per-column scales in p_aux).
