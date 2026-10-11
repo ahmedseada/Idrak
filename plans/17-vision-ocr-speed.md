@@ -37,6 +37,8 @@ in 14 s; one 896 x 896 image through the encoder 0.43 s in float32, 0.11 s with 
 | Stale checks | Fixed: three tests used `blur` as an unknown transform, registered since d2ad9fc; they use `emboss` now | `aspnetcore: images`, `cli serve: images`, `vision tuning contracts` |
 | Everything else in sections 2 and 6 | Not started | — |
 
+**The owner's CUDA run (2026-10-11, RTX 5070 Ti, compute 12.0, driver CUDA 13.3), after wave 1 to F1:** `attention spans|image prefill|image reader|generation:|pretrained:|conversation tuning`, 35 of 35 pass: transformers' logits within 6.2e-6 and its 20 greedy tokens through the image prefill (float32 cache; bfloat16 0.0358 and int8 0.255 from float32, as before), the grouped-heads composed test, the encoder-precision probe, the cache sized to the reply, the scorer's stop and the loss cap. Not covered by these tests: the composed path at head size 256 (the tiny models' heads are small); the real model's read in the app covers it.
+
 The cloud environment builds now: the .NET 10 SDK came from conda-forge (`dotnet-sdk` 10.0.401, `dotnet-runtime` and
 `dotnet-aspnetcore` 10.0.12, unpacked into `~/.dotnet`), since the SDK's own hosts are refused by the network policy.
 
