@@ -282,10 +282,11 @@
     </div>
     <div class="card stack" id="evaluateCard">
       <h2>Evaluate the model</h2>
-      <div class="note">Reads the first evaluation pages in a row with the settings on the left and scores each by CER, to compare the models and the steps.</div>
+      <div class="note">Reads the first evaluation pages in a row with the settings on the left and scores each by CER, to compare the models and the steps. Each page is read with its data file's prompt (as the model was tuned) unless you untick it; then the prompt box is used for every page.</div>
       <div class="row">
         <label for="evaluateCount" style="margin:0">Pages</label>
         <input type="number" id="evaluateCount" min="0" value="20" style="width:90px"> <span class="note">0: all</span>
+        <label class="check" style="margin:0"><input type="checkbox" id="evaluatePagePrompts" checked> Each page's own prompt</label>
         <button class="btn primary" id="evaluate" disabled>Evaluate</button>
         <button class="btn" id="evaluateStop" disabled>Stop</button>
       </div>
@@ -786,7 +787,7 @@ function refreshRead() {
 $("evaluate").onclick = evaluate;
 $("evaluateStop").onclick = () => evaluating && evaluating.abort();
 async function evaluate() {
-  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
+  const body = { prompt: $("evaluatePagePrompts").checked ? null : $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
   const count = Math.max(0, Number($("evaluateCount").value) || 0);
   evaluating = new AbortController();
   $("evaluate").disabled = true; $("evaluateStop").disabled = false; refreshRead();
@@ -819,7 +820,7 @@ async function evaluate() {
 $("read").onclick = () => reading ? reading.abort() : read();
 
 async function read() {
-  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
+  const body = { prompt: $("evaluatePagePrompts").checked ? null : $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
   if (pageIndex == null) body.image = imageData;
   const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
   reading = new AbortController();

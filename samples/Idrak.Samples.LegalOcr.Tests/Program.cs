@@ -146,7 +146,7 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         Check(events.Count == 1 && events[0].Event == "error" && events[0].Data["error"]!.GetValue<string>().Contains("No model is loaded", StringComparison.Ordinal),
             string.Join(" ", events.Select(e => $"{e.Event} {e.Data.ToJsonString()}")));
     }),
-    ("legal pages: a ShareGPT file with a zip of images gives the pages with their prompts and expected answers; a page read scores CER", () =>
+    ("legal pages: a ShareGPT file with a zip of images gives the pages with their prompts and expected answers; a page is read with its own prompt unless the request gives one; a page read scores CER", () =>
     {
         string data = EvaluationData(3);
         var settings = Settings(("a", tinyGemma)) with { EvaluationData = data, EvaluationImages = Path.Combine(root, "images.zip") };
@@ -155,6 +155,13 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         var first = pages.Get(0)!;
         Check(first.Prompt == "Extract details to JSON." && first.Expected.Contains("محكمة", StringComparison.Ordinal), $"{first.Prompt}: {first.Expected}");
         Check(pages.List().First().Preview.StartsWith("محكمة", StringComparison.Ordinal), pages.List().First().Preview);
+
+        // Evaluate and a page's read take the page's own prompt unless the request gives one (the model's prompt only
+        // when the page has none): with the model's short prompt the owner's pages scored CER 2.58, with their own 0.64.
+        Check(ReaderService.ForPage(new ReadRequest(), first.Prompt).Prompt == first.Prompt, "a request without a prompt takes the page's");
+        Check(ReaderService.ForPage(new ReadRequest(Prompt: " "), "page").Prompt == "page", "a blank prompt takes the page's");
+        Check(ReaderService.ForPage(new ReadRequest(Prompt: "mine"), "page").Prompt == "mine", "the request's own prompt stays");
+        Check(ReaderService.ForPage(new ReadRequest(), null).Prompt is null, "a page without a prompt leaves the model's");
 
         // A data file naming an image the zip lacks: no pages and the reason, not a failed request.
         string broken = Path.Combine(root, "broken.json");
