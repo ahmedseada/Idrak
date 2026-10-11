@@ -58,6 +58,9 @@ internal static partial class Tests
             Stage($"{step} (grey 1024)", () => pipeline.Apply(seen).Pixels);
         }
 
+        Stage("jpeg encode (grey 1024, quality 95, optimized)", () => JpegEncoder.Encode(seen, quality: 95, optimize: true));
+        byte[] seenJpeg = JpegEncoder.Encode(seen, quality: 95, optimize: true);
+        Stage("jpeg decode (grey 1024, quality 95)", () => ChatImageDecoder.Decode(seenJpeg).Pixels);
         Stage("preprocess to 896 (grey 1024 page)", () => preprocessor.Pixels(seen));
         Stage("preprocess to 896 (colour page)", () => preprocessor.Pixels(decoded));
         Stage("png encode (the page as the model sees it)", () => ImageEncoders.Get("png").Encode(seen));

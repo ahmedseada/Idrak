@@ -5,7 +5,6 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Numerics;
-using Idrak.Abstraction.Devices;
 using Idrak.Data.Abstractions;
 
 namespace Idrak.Data;
