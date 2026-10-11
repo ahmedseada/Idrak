@@ -1446,6 +1446,8 @@ public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEq
   public int NumCtx { get; init; }
   public int NumPredict { get; init; }
   public int RepeatLastN { get; init; }
+  public int RepeatStop { get; init; }
+  public int RepeatStopMinTokens { get; init; }
   public int TopK { get; init; }
   public int? Seed { get; init; }
 

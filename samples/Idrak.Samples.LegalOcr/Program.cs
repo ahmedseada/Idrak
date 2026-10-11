@@ -98,6 +98,9 @@ public static class LegalOcrApi
         // The preprocessing editor: the transforms with their inputs and the app's suggested values; a preview without a model.
         api.MapGet("/transforms", (Preprocessing preprocessing) => preprocessing.Transforms());
 
+        // The Read tab's generation settings to start from.
+        api.MapGet("/generation", (LegalOcrSettings settings) => settings.Generation);
+
         api.MapPost("/preview", IResult (PreviewRequest request, Preprocessing preprocessing, EvaluationPages pages) =>
         {
             ChatImage image;

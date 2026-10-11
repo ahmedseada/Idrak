@@ -474,6 +474,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 }
 
                 read = produced;
+                if (options.RepeatStop >= 2 && doneReason is null && Looping(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated), options.RepeatStop,
+                        options.RepeatStopMinTokens))
+                {
+                    doneReason = "repetition";
+                }
             }
 
             // The text is the decoding of the tokens from `decodedFrom` on, of which the first `taken` characters are in
@@ -710,6 +715,39 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         var stats = new GenerationStats(promptTokens, promptDuration, generated.Count, total.Elapsed - promptDuration,
             total.Elapsed, resets);
         yield return new GenerationChunk("", Done: true, DoneReason: doneReason, Stats: stats);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="tokens"/> end with one run of <paramref name="minimum"/> to 64 tokens repeated
+    /// <paramref name="times"/> times in a row (<see cref="GenerationOptions.RepeatStop"/>).
+    /// </summary>
+    internal static bool Looping(ReadOnlySpan<int> tokens, int times, int minimum)
+    {
+        int longest = Math.Min(64, tokens.Length / Math.Max(2, times));
+        for (int period = Math.Max(1, minimum); period <= longest; period++)
+        {
+            var tail = tokens[^(period * times)..];
+            if (tail[period..].SequenceEqual(tail[..^period]) && !ShortRun(tail[..period], minimum))   // each token equals the one a period before
+            {
+                return true;
+            }
+        }
+
+        return false;
+
+        // A run that is itself a shorter run repeated (a row of dots, a two-token rule) is text, not a phrase.
+        static bool ShortRun(ReadOnlySpan<int> run, int minimum)
+        {
+            for (int q = 1; q < minimum && q < run.Length; q++)
+            {
+                if (run.Length % q == 0 && run[q..].SequenceEqual(run[..^q]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 }
 
