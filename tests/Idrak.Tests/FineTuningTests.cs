@@ -31,7 +31,7 @@ internal static partial class Tests
         ("fine-tuning: checkpointing is off by default and turns on (the step run again) when a step runs out of memory; a lighter setting that fits is timed against checkpointing and the faster kept", AutomaticCheckpointing),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache, loads, and works offline", ModelDownload),
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
-        ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); rows encode on all cores in order", LongMessageKeepsAnswer),
+        ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); an answer longer than the budget alone gives the end cut at once; rows encode on all cores in order", LongMessageKeepsAnswer),
         ("fine-tuning: an adapter folder's manifest round-trips, names a local base model by its full path, and loads the model with the adapter merged", ManifestRoundTrip),
         ("fine-tuning options: AdamW and cosine given explicitly match the default; another optimizer's recorded steps match its ordinary ones; an optimizer that cannot be recorded runs ordinary steps; the built-in schedules", OptimizerAndSchedule),
         ("fine-tuning options: the token cross-entropy as a loss delegate trains as the fused default does (with gradient accumulation)", LossHook),
@@ -794,6 +794,15 @@ internal static partial class Tests
                   && shortened.Messages[0] == transcript.Messages[0] && shortened.Messages[2] == transcript.Messages[2],
                 $"the message's start is kept ({kept.Length} of {message.Length} characters), the rest unchanged");
             Check(ReferenceEquals(encoder.Fit(transcript, 2000), transcript), "a transcript that fits is left as it is");
+
+            // An answer longer than the budget on its own: no shortening can fit, so none is tried; the sequence is the
+            // end cut, exactly as without shortening.
+            string answer = string.Concat(Enumerable.Repeat("the answer goes on and on ", 30));
+            var longAnswer = new ChatTranscript([new ChatMessage("user", "Read the whole report aloud."), new ChatMessage("assistant", answer)], []);
+            var givenUp = encoder.Encode(longAnswer, 60);
+            var endCut = new ChatTranscriptEncoder(model.JinjaTemplate!, tokenizer) { ShortenToFit = false }.Encode(longAnswer, 60);
+            Check(encoder.Fit(longAnswer, 60) is null && givenUp is not null && endCut is not null && givenUp.Tokens.SequenceEqual(endCut.Tokens)
+                  && givenUp.Trained.SequenceEqual(endCut.Trained), $"an answer over the budget: {givenUp?.Tokens.Length} tokens, the end cut {endCut?.Tokens.Length}");
 
             // Many rows on all cores: the same sequences, in the same order, as one by one.
             var rows = Enumerable.Range(0, 400).Select(i => (JsonObject)JsonNode.Parse(i % 5 == 0

@@ -49,9 +49,16 @@ internal static partial class Tests
                 Check(run.EvaluationLoss() is > 0, "an evaluation loss");
             }
 
-            using (var limited = ConversationTuning.Prepare(model, [train], TinyConversationOptions(zip) with { MaxConversations = 1 }))
+            // The conversations left out never have their images read: every record is read and checked, the first one's
+            // images alone are read (the same first conversation as reading them all).
+            var limitedLines = new List<string>();
+            using (var limited = ConversationTuning.Prepare(model, [train], TinyConversationOptions(zip) with { MaxConversations = 1 }, null, limitedLines.Add))
             {
                 Check(limited.TrainingSequences.Count == 1 && limited.EvaluationSequences is null && limited.Scorer is null, $"{limited.TrainingSequences.Count} sequences");
+                var first = TuningDataFormats.Read(train, options: new TuningDataOptions { Images = zip }).First();
+                Check(limited.TrainingConversations[0].Messages.SequenceEqual(first.Messages), "the first conversation, as read whole");
+                Check(limitedLines.Any(l => l.StartsWith("training: 3 conversations (sharegpt)", StringComparison.Ordinal))
+                      && limitedLines.Any(l => l.StartsWith("training: the images of 1 conversations read", StringComparison.Ordinal)), string.Join(" | ", limitedLines));
             }
 
             // The loss over the first N evaluation conversations; the scorer's own samples apart; a looping answer stops.

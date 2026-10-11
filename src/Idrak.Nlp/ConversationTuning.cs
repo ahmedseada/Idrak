@@ -304,26 +304,35 @@ public sealed class ConversationTuning : IDisposable
     // The conversations read, the held-out share taken, the sequences tokenized, the scorer made.
     private void Load(IReadOnlyList<string> data, FineTuningOptions tuning, IProgress<TuningStage>? progress, Action<string>? log, CancellationToken cancellationToken)
     {
-        var train = Read(data, Options.Images, "training", log, cancellationToken);
-        var evaluation = Options.Evaluation is { } file ? Read([file], Options.EvaluationImages ?? Options.Images, "evaluation", log, cancellationToken) : null;
-        if (evaluation is null && Options.EvaluationFraction > 0 && train.Count > 1)
+        // Every record read and checked first, its images left unread; the held-out share and the first N chosen by the
+        // conversations' places; then only the chosen conversations' images read and hashed (rule 75: a page left out is
+        // never inflated). The choice is the one made over the conversations themselves before.
+        using var trainingData = Read(data, Options.Images, "training", log, cancellationToken);
+        using var evaluationData = Options.Evaluation is { } file ? Read([file], Options.EvaluationImages ?? Options.Images, "evaluation", log, cancellationToken) : null;
+        var trainAt = Enumerable.Range(0, trainingData.Count).ToList();
+        List<int>? heldAt = null;
+        if (evaluationData is null && Options.EvaluationFraction > 0 && trainAt.Count > 1)
         {
             // A seeded share of the conversations held out (at least one, never all).
-            int held = Math.Clamp((int)Math.Round(train.Count * Options.EvaluationFraction), 1, train.Count - 1);
-            var order = Enumerable.Range(0, train.Count).ToArray();
+            int held = Math.Clamp((int)Math.Round(trainAt.Count * Options.EvaluationFraction), 1, trainAt.Count - 1);
+            var order = Enumerable.Range(0, trainAt.Count).ToArray();
             new Random(Options.Seed).Shuffle(order);
             var heldOut = order.Take(held).ToHashSet();
-            evaluation = [.. heldOut.Order().Select(i => train[i])];
-            train = [.. train.Where((_, i) => !heldOut.Contains(i))];
+            heldAt = [.. heldOut.Order()];
+            trainAt = [.. trainAt.Where(i => !heldOut.Contains(i))];
             log?.Invoke($"evaluation: {held:N0} conversations held out ({Options.EvaluationFraction:P1})");
         }
 
-        if (Options.MaxConversations > 0 && train.Count > Options.MaxConversations)
+        if (Options.MaxConversations > 0 && trainAt.Count > Options.MaxConversations)
         {
-            log?.Invoke($"training on the first {Options.MaxConversations:N0} of {train.Count:N0} conversations");
-            train = train[..Options.MaxConversations];
+            log?.Invoke($"training on the first {Options.MaxConversations:N0} of {trainAt.Count:N0} conversations");
+            trainAt = trainAt[..Options.MaxConversations];
         }
 
+        var train = trainingData.Take(trainAt, Options.System, "training", log, cancellationToken);
+        var evaluation = evaluationData is not null ? evaluationData.Take(Enumerable.Range(0, evaluationData.Count), Options.System, "evaluation", log, cancellationToken)
+            : heldAt is not null ? trainingData.Take(heldAt, Options.System, "evaluation", log, cancellationToken)
+            : null;
         TrainingConversations = train;
         EvaluationConversations = evaluation;
         TrainingSequences = Encode(train, tuning.MaxLength, "training", progress, log, cancellationToken);
@@ -352,32 +361,95 @@ public sealed class ConversationTuning : IDisposable
         Tuning = tuning with { Vision = Vision, Answers = Scorer };
     }
 
-    // Conversations from data files through their format (images as image parts; the system prompt added to those without one).
-    private List<ChatTranscript> Read(IEnumerable<string> files, string? images, string what, Action<string>? log, CancellationToken cancellationToken)
+    // Conversations from data files through their format, their images not read yet (ITuningDataFormat.ReadPending).
+    private PendingData Read(IEnumerable<string> files, string? images, string what, Action<string>? log, CancellationToken cancellationToken)
     {
         var watch = Stopwatch.StartNew();
-        var transcripts = new List<ChatTranscript>();
+        var read = new PendingData();
         var options = new TuningDataOptions { Images = images };
-        foreach (string file in files)
+        try
         {
-            var format = Options.DataFormat is { } name && !name.Equals("auto", StringComparison.OrdinalIgnoreCase) ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
-            int before = transcripts.Count, pictures = 0;
-            foreach (var transcript in format.Read(file, options))
+            foreach (string file in files)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                transcripts.Add(Options.System is { } system && !transcript.Messages.Any(m => m.Role == "system")
-                    ? transcript with { Messages = [new ChatMessage("system", system), .. transcript.Messages] }
-                    : transcript);
-                foreach (var message in transcript.Messages)
-                {
-                    pictures += message.Parts.Count(p => p is ChatImage);
-                }
+                var format = Options.DataFormat is { } name && !name.Equals("auto", StringComparison.OrdinalIgnoreCase) ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
+                var pending = format.ReadPending(file, options);
+                read.Add(pending);
+                log?.Invoke($"{what}: {pending.Count:N0} conversations ({format.Name}) from {file}, {pending.Images:N0} images ({watch.Elapsed.TotalSeconds:F1} s)");
             }
 
-            log?.Invoke($"{what}: {transcripts.Count - before:N0} conversations ({format.Name}) from {file}, {pictures:N0} images ({watch.Elapsed.TotalSeconds:F1} s)");
+            return read;
+        }
+        catch
+        {
+            read.Dispose();
+            throw;
+        }
+    }
+
+    // The conversations of several data files as one list, by their place in it, each taken with its images read.
+    private sealed class PendingData : IDisposable
+    {
+        private readonly List<PendingConversations> _files = [];
+        private readonly List<int> _starts = [];                              // each file's first place
+
+        public int Count { get; private set; }
+
+        public void Add(PendingConversations file)
+        {
+            _files.Add(file);
+            _starts.Add(Count);
+            Count += file.Count;
         }
 
-        return transcripts;
+        // The conversations at `places`, in that order, their images read now (the system prompt added to those without one).
+        public List<ChatTranscript> Take(IEnumerable<int> places, string? system, string what, Action<string>? log, CancellationToken cancellationToken)
+        {
+            var watch = Stopwatch.StartNew();
+            var taken = new List<ChatTranscript>();
+            int images = 0;
+            foreach (int place in places)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int file = _starts.BinarySearch(place);
+                file = file >= 0 ? LastStartingAt(file) : ~file - 1;
+                var transcript = _files[file].Read(place - _starts[file]);
+                foreach (var message in transcript.Messages)
+                {
+                    images += message.Parts.Count(p => p is ChatImage);
+                }
+
+                taken.Add(system is not null && !transcript.Messages.Any(m => m.Role == "system")
+                    ? transcript with { Messages = [new ChatMessage("system", system), .. transcript.Messages] }
+                    : transcript);
+            }
+
+            if (images > 0)
+            {
+                log?.Invoke($"{what}: the images of {taken.Count:N0} conversations read, {images:N0} ({watch.Elapsed.TotalSeconds:F1} s)");
+            }
+
+            return taken;
+        }
+
+        public void Dispose()
+        {
+            foreach (var file in _files)
+            {
+                file.Dispose();
+            }
+        }
+
+        // The last of the files starting at the place of file `at` (empty files start where the next one does).
+        private int LastStartingAt(int at)
+        {
+            while (at + 1 < _starts.Count && _starts[at + 1] == _starts[at])
+            {
+                at++;
+            }
+
+            return at;
+        }
     }
 
     // Conversations tokenized into training sequences (their images' blocks of tokens from the family's encoder).
@@ -406,17 +478,42 @@ public sealed class ConversationTuning : IDisposable
             }
         }
 
-        var sequences = new List<TrainingSequence>(transcripts.Count);
+        // Each conversation rendered and tokenized on worker threads (independent of the others; the template and the
+        // tokenizer serve several threads, the image side calls the family one call at a time), kept in the conversations'
+        // order; the first failing conversation's error is the one thrown, as when they were encoded one after another.
         string stage = $"tokenizing {what}";                                    // made once, not per conversation
-        for (int i = 0; i < transcripts.Count; i++)
+        var encoded = new TrainingSequence?[transcripts.Count];
+        var errors = new Exception?[transcripts.Count];
+        var gate = new Lock();
+        int finished = 0;
+        Parallel.For(0, transcripts.Count, new ParallelOptions { CancellationToken = cancellationToken }, i =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (Encoder.Encode(transcripts[i], maxLength) is { } sequence)
+            try
+            {
+                encoded[i] = Encoder.Encode(transcripts[i], maxLength);
+            }
+            catch (Exception ex)
+            {
+                errors[i] = ex;
+            }
+
+            lock (gate)
+            {
+                progress?.Report(new TuningStage(stage, ++finished, transcripts.Count, watch.Elapsed));
+            }
+        });
+        if (Array.FindIndex(errors, e => e is not null) is >= 0 and var failed)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(errors[failed]!).Throw();
+        }
+
+        var sequences = new List<TrainingSequence>(transcripts.Count);
+        foreach (var sequence in encoded)
+        {
+            if (sequence is not null)
             {
                 sequences.Add(sequence);
             }
-
-            progress?.Report(new TuningStage(stage, i + 1, transcripts.Count, watch.Elapsed));
         }
 
         long tokens = 0, trained = 0;
