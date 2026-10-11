@@ -118,6 +118,7 @@ public sealed class Idrak.Generation.ChatImages
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
   public Idrak.Abstraction.Generation.IVisionEncoder Encoder { get; }
+  public Idrak.Abstraction.MatMulPrecision? EncoderPrecision { get; init; }
   public System.Func<Idrak.Abstraction.Generation.ChatImage, Idrak.Abstraction.Data.ImageData> Decode { get; init; }
   public System.IDisposable? Owner { get; init; }
 
@@ -258,6 +259,7 @@ public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idr
   public Idrak.Abstraction.Data.ImageTransformPipeline Transforms { get; init; }
   public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
+  public Idrak.Abstraction.MatMulPrecision? EncoderPrecision { get; init; }
   public ImageReaderOptions()
   public System.Func<Idrak.Models.PretrainedModel, Idrak.Abstraction.Generation.VisionEncoderOptions, Idrak.Abstraction.Generation.IVisionEncoder>? EncoderFactory { get; init; }
   public bool KeepCache { get; init; }

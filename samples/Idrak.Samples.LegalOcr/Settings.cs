@@ -62,6 +62,13 @@ public sealed record LegalOcrSettings
     /// </summary>
     public string HeadWeights { get; init; } = "bf16";
 
+    /// <summary>
+    /// The vision encoder's products: "f32" (the checkpoint's own features) or "bf16" (tensor cores: a page's encoding
+    /// several times faster on GPUs that have them, features within bfloat16's rounding; compare CER on the evaluation
+    /// pages before reading with it).
+    /// </summary>
+    public string EncoderPrecision { get; init; } = "f32";
+
     /// <summary>The attention cache: "f32" or "bf16" (half the memory).</summary>
     public string KeyValueCache { get; init; } = "f32";
 
