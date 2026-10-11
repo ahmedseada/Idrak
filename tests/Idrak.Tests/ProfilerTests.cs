@@ -68,6 +68,22 @@ internal static partial class Tests
 
         Check(refused.Contains("'nope' is not registered", StringComparison.Ordinal) && refused.Contains("cpu", StringComparison.Ordinal), $"an unknown probe: {refused}");
         Check(Profiler.Run("none", device, _ => { }, new ProfileOptions { Probes = [], WarmRuns = 1 }).Summary.Select(s => s.Name).SequenceEqual(["wall"]), "no probes: the wall time alone");
+
+        // Graphs recorded while steps run directly (the kernels probe's pass) replay by running their step; after, as the device does.
+        int ran = 0;
+        using (ComputeGraph.RunStepsDirectly())
+        using (var graph = ComputeGraph.Capture(device, () => ran++))
+        {
+            graph.Replay();
+            graph.Replay();
+            Check(!graph.IsRecorded && ran == 2, $"while steps run directly: recorded {graph.IsRecorded}, the step ran {ran} times in 2 replays");
+        }
+
+        using var filled = Tensor.Zeros([256], device);
+        using (var after = ComputeGraph.Capture(device, () => device.Backend.Fill(filled.Storage, 256, 1f)))
+        {
+            Check(after.IsRecorded == device.Backend.SupportsGraphs, $"after the scope a graph is recorded where the device records them: {after.IsRecorded}");
+        }
     }
 
     // A probe of the app's: a counter of runs.
