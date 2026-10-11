@@ -909,13 +909,15 @@ public sealed class DecoderBlock : Module, ICachedModule
         Tensor x, fed;
         if (!Parallel && inference && FeedForwardNorm is RMSNorm norm)
         {
-            var (sum, fedInput) = context is not null && PostAttentionNorm is null
-                ? AddProjected(Attention.HeadsCached(normalized, context), Attention.Output, input, norm)
+            // A norm after attention (a sandwich block) joins the pass: the projection, that norm, the residual addition and
+            // the next norm as one launch where the device can.
+            var (sum, fedInput) = context is not null && PostAttentionNorm is null or RMSNorm
+                ? AddProjected(Attention.HeadsCached(normalized, context), Attention.Output, input, norm, PostAttentionNorm as RMSNorm)
                 : Tensor.AddRmsNormAffine(input, Attend(normalized, context), norm.Gain, norm.Epsilon, norm.Offset);   // one pass
             x = sum;
-            if (PostFeedForwardNorm is null && NextNorm is { } following && FeedForward is Layers.FeedForward { DownFusable: true } dense)
+            if (PostFeedForwardNorm is null or RMSNorm && NextNorm is { } following && FeedForward is Layers.FeedForward { DownFusable: true } dense)
             {
-                var (output, nextInput) = AddProjected(dense.DownInput(fedInput), dense.Down, x, following);
+                var (output, nextInput) = AddProjected(dense.DownInput(fedInput), dense.Down, x, following, PostFeedForwardNorm as RMSNorm);
                 RMSNorm.HandOff(following, output, nextInput);
                 return output;
             }
@@ -983,10 +985,14 @@ public sealed class DecoderBlock : Module, ICachedModule
     }
 
     // residual + projection(h) and its normalization: one pass for packed weights and few rows, else the projection
-    // followed by the fused addition and normalization.
-    private static (Tensor Sum, Tensor Normalized) AddProjected(Tensor h, Linear projection, Tensor residual, RMSNorm norm) =>
-        Linear.MatMulPackedAddRmsNorm(h, projection, residual, norm)
-        ?? Tensor.AddRmsNormAffine(residual, projection.Forward(h), norm.Gain, norm.Epsilon, norm.Offset);
+    // followed by the fused addition and normalization. With `after` (the norm after the projection in a sandwich block),
+    // residual + after(projection(h)): one pass too, else the projection, that norm, then the addition and normalization.
+    private static (Tensor Sum, Tensor Normalized) AddProjected(Tensor h, Linear projection, Tensor residual, RMSNorm norm, RMSNorm? after = null) =>
+        after is null
+            ? Linear.MatMulPackedAddRmsNorm(h, projection, residual, norm)
+              ?? Tensor.AddRmsNormAffine(residual, projection.Forward(h), norm.Gain, norm.Epsilon, norm.Offset)
+            : Linear.MatMulPackedNormAddRmsNorm(h, projection, after, residual, norm)
+              ?? Tensor.AddRmsNormAffine(residual, after.Forward(projection.Forward(h)), norm.Gain, norm.Epsilon, norm.Offset);
 
     /// <inheritdoc />
     public override string ToString() => $"DecoderBlock({(Parallel ? "parallel" : "sequential")})";

@@ -96,12 +96,14 @@ internal sealed unsafe partial class CudaBackend
     internal static int? GemvSplits { get; set; }
 
     // Kernel names by format (0 int8, 1 int4, 2 bfloat16) and variant, built once: the per-token path never formats a name.
-    internal const int GemvPlain = 0, GemvSilu = 1, GemvGelu = 2, GemvAddNorm = 3;
+    // The norm-add-norm kernels follow the twelve (GemvNormAddNorm + format), so the variants before keep their tuning keys.
+    internal const int GemvPlain = 0, GemvSilu = 1, GemvGelu = 2, GemvAddNorm = 3, GemvNormAddNorm = 12;
     private static readonly string[] GemvKernels =
     [
         "int8_gemv_f32", "int8_gemv_silu_f32", "int8_gemv_gelu_f32", "int8_gemv_addnorm_f32",
         "int4_gemv_f32", "int4_gemv_silu_f32", "int4_gemv_gelu_f32", "int4_gemv_addnorm_f32",
         "bf16_gemv_f32", "bf16_gemv_silu_f32", "bf16_gemv_gelu_f32", "bf16_gemv_addnorm_f32",
+        "int8_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32",
     ];
 
     private static readonly string[] GemvMultiKernels =
@@ -139,7 +141,7 @@ internal sealed unsafe partial class CudaBackend
     private static int GemvMaxSplits(int k) => Math.Max(1, Math.Min(64, k / 64));
 
     // What a few-row product's split count is kept under: the kernel (format * 4 + GemvPlain / GemvSilu / GemvGelu /
-    // GemvAddNorm) and the shape, so the fused kernels never take the plain kernel's choice.
+    // GemvAddNorm, or GemvNormAddNorm + format) and the shape, so the fused kernels never take the plain kernel's choice.
     internal static TuneKey GemvSplitsKey(int variant, int m, int n, int k) => new(TuneOp.GemvSplits, variant, m, n, k);
 
     // Split counts the few-row products are measured with: 1, 2, 3, 4, 6, 8, 12, ... up to GemvMaxSplits (the kernels
@@ -182,7 +184,7 @@ internal sealed unsafe partial class CudaBackend
     // multiprocessor busy; narrow matrices split k, and the last block of each column range adds the splits in order.
     // `align`: split boundaries fall on multiples of it (int4 splits start on a 64-row block).
     // `up`: the gated kernels' second input; `tail`: further arguments (the addnorm kernels').
-    // `variant`: format * 4 + GemvPlain / GemvSilu / GemvGelu / GemvAddNorm (an index into GemvKernels).
+    // `variant`: format * 4 + GemvPlain / GemvSilu / GemvGelu / GemvAddNorm, or GemvNormAddNorm + format (an index into GemvKernels).
     private void PackedFewRows(int variant, Storage x, Storage q, Storage scales, Storage y, int m, int n, int k, int words, int align = 1,
         Storage? up = null, ReadOnlySpan<ulong> tail = default)
     {
@@ -221,8 +223,8 @@ internal sealed unsafe partial class CudaBackend
         public int ColumnBlocks => (Words + 31) / 32;
     }
 
-    // The arguments of a few-row product: twelve, `up` and the add-and-normalize kernels' six.
-    private const int FewRowsArguments = 19;
+    // The arguments of a few-row product: twelve, then `up` or the add-and-normalize kernels' six (nine with the norm of y).
+    private const int FewRowsArguments = 21;
 
     private void RunFewRows(in FewRows rows, ulong output, ReadOnlySpan<ulong> extra, int wanted)
     {
@@ -616,6 +618,24 @@ internal sealed unsafe partial class CudaBackend
         int cpw = format.ValuesPerWord();
         PackedFewRows((int)format * 4 + GemvAddNorm, x, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, format.SplitAlignment(),
             tail: [P(residual), P(sum), P(gain), P(normalized), F(eps), F(offset)]);
+        return true;
+    }
+
+    // The sandwich block's projection, the norm of its output, the residual addition and the next norm in one launch: the
+    // last block of the add-and-normalize kernel also normalizes y first, with the row kernels' own summation order (see
+    // Int8Gemv), so at the same split count the result equals the product followed by rms_norm_affine_f32 and
+    // add_rms_norm_affine_f32 bit for bit. Measured (its split count) as a kernel of its own.
+    public override bool PackedMatMulNormAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+        Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        if (m > PtxKernels.GemvRows || k == 0 || format is not (PackedFormat.Int8 or PackedFormat.Int4 or PackedFormat.BFloat16))
+        {
+            return base.PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+        }
+
+        int cpw = format.ValuesPerWord();
+        PackedFewRows(GemvNormAddNorm + (int)format, x, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, format.SplitAlignment(),
+            tail: [P(residual), P(sum), P(gain), P(normalized), F(eps), F(offset), P(yGain), F(yEps), F(yOffset)]);
         return true;
     }
 
