@@ -1358,6 +1358,8 @@ public interface Idrak.Models.Abstractions.IPreTokenizer
 
 public interface Idrak.Models.Abstractions.ITensorStore : System.IDisposable
   public (default) Idrak.Models.Abstractions.WeightFormat? FormatOf(string name)
+  public (default) System.TimeSpan? ReadTime { get; }
+  public (default) bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
   public (default) float[] ReadTransposed(string name)
   public System.Collections.Generic.IEnumerable<string> Names { get; }
   public bool Contains(string name)
@@ -1375,6 +1377,7 @@ public interface Idrak.Models.Abstractions.IVisionFamily
   public string Name { get; }
 
 public interface Idrak.Models.Abstractions.IWeightSource
+  public (default) Idrak.Abstraction.Generation.BFloat16Weight? ReadBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool transposed = false)
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
 
 public sealed record Idrak.Models.Abstractions.ImageCheckpoint : System.IEquatable<Idrak.Models.Abstractions.ImageCheckpoint>
@@ -1565,6 +1568,20 @@ public static class Idrak.Models.PretrainedFamilies
   public static string? MixtralTensorName(string name)
   public static string? QwenMoeTensorName(string name)
 
+public sealed record Idrak.Models.PretrainedLoadTimes : System.IEquatable<Idrak.Models.PretrainedLoadTimes>
+  public PretrainedLoadTimes(System.TimeSpan Open, System.TimeSpan Read, System.TimeSpan Convert, System.TimeSpan Merge, System.TimeSpan Upload, System.TimeSpan Build, System.TimeSpan Vision, System.TimeSpan Tokenizer, System.TimeSpan Total)
+  public System.Collections.Generic.IReadOnlyList<(string, System.TimeSpan)> Stages { get; }
+  public System.TimeSpan Build { get; init; }
+  public System.TimeSpan Convert { get; init; }
+  public System.TimeSpan Merge { get; init; }
+  public System.TimeSpan Open { get; init; }
+  public System.TimeSpan Read { get; init; }
+  public System.TimeSpan Tokenizer { get; init; }
+  public System.TimeSpan Total { get; init; }
+  public System.TimeSpan Upload { get; init; }
+  public System.TimeSpan Vision { get; init; }
+  public override string ToString()
+
 public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Generation.ChatTemplate? ChatTemplate { get; }
@@ -1574,6 +1591,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.PretrainedVision? Vision { get; }
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.PretrainedArchitecture Architecture { get; }
+  public Idrak.Models.PretrainedLoadTimes LoadTimes { get; }
   public System.Collections.Generic.IEnumerable<(string, Idrak.Abstraction.Module)> NamedModules()
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedVisionTensors { get; }
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
@@ -1618,7 +1636,9 @@ public enum Idrak.Models.SafeTensorType : int
 public sealed class Idrak.Models.SafeTensorsReader : Idrak.Models.Abstractions.ITensorStore, System.IDisposable
   public System.Collections.Generic.Dictionary<string, string> Metadata { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.SafeTensorInfo> Tensors { get; }
+  public System.TimeSpan ReadTime { get; }
   public bool Contains(string name)
+  public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
   public float[] Read(string name)
   public float[] ReadTransposed(string name)
   public static Idrak.Models.SafeTensorsReader Open(string path)
