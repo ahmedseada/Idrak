@@ -297,6 +297,95 @@ $m = "google/gemma-3-4b-it"
 idrak tune -P samples\Gemma3Vision\Idrak.Gemma3Vision\bin\Release\net10.0\Idrak.Gemma3Vision.dll -b $m --data D:\Data\arabic-legal-ocr\data\train.json --images D:\Data\arabic-legal-ocr\data\downloaded_images.zip --image-transform "grayscale,max_width=1024,contrast=1.5" --max-rows 32 --profile -v
 ```
 
+### Pending: the round-3 run (planned for after the demo, 2026-10-11)
+
+What it proves, none of it run on a GPU yet:
+- The decoding lane: D11, B8, B3, E1 (on by default), F3, F6 and F7.
+- The D12 kernel fix: every tensor-core span variant gives the same bits.
+- The six CER runs, now that every evaluation page is read with its own prompt (bc85777). They decide:
+  - the bf16 encoder and prefill defaults (B, C against A);
+  - that batched reads are unchanged (E against C);
+  - E1, which is on in every run;
+  - E3, the bf16 cache (F);
+  - E4, int8 weights (D).
+
+Everything goes into one transcript to upload, `D:\Data\plan17-run.txt`. It takes about 15-20 minutes, plus 30-50 for the CER runs.
+
+```powershell
+cd D:\Projects\Idrak; git pull origin abstraction
+Get-Process Idrak.Samples.LegalOcr -ErrorAction SilentlyContinue | Stop-Process -Force
+New-Item -ItemType Directory -Force D:\Data\cer | Out-Null
+Start-Transcript D:\Data\plan17-run.txt
+
+# 1. Build both test projects and the app once
+dotnet build -c Release tests\Idrak.Tests
+dotnet build -c Release samples\Idrak.Samples.LegalOcr.Tests
+dotnet build -c Release samples\Idrak.Samples.LegalOcr
+
+# 2. CUDA tests for everything changed in this round
+$env:IDRAK_DEVICES="cuda"
+$env:IDRAK_FILTER="attention spans|packed|mixed precision|vision kernels|SigLIP|vision encoder|kernel shapes|profiler|decoder:|sampler|window kernels|generation:|image reader|image prefill|decoding|chat parts|batch|cuda: every kernel|conformance kit: every operation|vision tuning|fine-tuning|conversation tuning|json repair|answer texts"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_FILTER="legal"
+dotnet run -c Release --no-build --project samples\Idrak.Samples.LegalOcr.Tests
+Remove-Item Env:IDRAK_FILTER
+
+# 3. Benchmarks
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-gemv
+$env:IDRAK_MATMUL="bf16"; dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-spans; Remove-Item Env:IDRAK_MATMUL
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-vision bf16
+$env:IDRAK_BENCH_MODEL="bakrianoo/arabic-legal-documents-ocr-1.0"; $env:IDRAK_BENCH_WEIGHTS="bf16"; $env:IDRAK_BENCH_ENCODER="bf16"; $env:IDRAK_BENCH_PREFILL="bf16"
+$env:IDRAK_PROFILE_PROBES="bandwidth,cpu,heap,memory,operations,kernels,stages"
+$env:IDRAK_BENCH_TOKENS="512"; $env:IDRAK_BENCH_BATCH="1"; $env:IDRAK_PROFILE_OUT="D:\Data\profile-512-b1.md"
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-read
+$env:IDRAK_PROFILE_PROBES="bandwidth,cpu,heap,memory,stages"
+$env:IDRAK_BENCH_BATCH="8"; $env:IDRAK_PROFILE_OUT="D:\Data\profile-512-b8.md"
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-read
+$env:IDRAK_BENCH_TOKENS="2048"; $env:IDRAK_PROFILE_OUT="D:\Data\profile-2048-b8.md"
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-read
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_BENCH_MODEL, Env:IDRAK_BENCH_WEIGHTS, Env:IDRAK_BENCH_ENCODER, Env:IDRAK_BENCH_PREFILL, Env:IDRAK_PROFILE_PROBES, Env:IDRAK_BENCH_TOKENS, Env:IDRAK_BENCH_BATCH, Env:IDRAK_PROFILE_OUT
+Get-Content D:\Data\profile-512-b1.md, D:\Data\profile-512-b8.md, D:\Data\profile-2048-b8.md
+
+# 4. The six CER runs (each page with its own prompt)
+function Test-Ready {
+  try { $null = Invoke-RestMethod http://localhost:5090/api/status -TimeoutSec 2; return $true } catch { return $false }
+}
+
+function Measure-Cer([string]$Name, [string[]]$Settings) {
+  $arguments = @("--urls=http://localhost:5090") + $Settings
+  $app = Start-Process -FilePath "samples\Idrak.Samples.LegalOcr\bin\Release\net10.0\Idrak.Samples.LegalOcr.exe" `
+    -WorkingDirectory "samples\Idrak.Samples.LegalOcr" -ArgumentList $arguments -PassThru -NoNewWindow `
+    -RedirectStandardOutput "D:\Data\cer\$Name.log" -RedirectStandardError "D:\Data\cer\$Name.err"
+  try {
+    do { Start-Sleep 3 } until ((Test-Ready) -or $app.HasExited)
+    if ($app.HasExited) { Write-Host "$Name : the app exited, see D:\Data\cer\$Name.log"; return }
+    $r = Invoke-WebRequest -Method Post -Uri "http://localhost:5090/api/pages/evaluate?count=20" -ContentType "application/json" -Body "{}" -TimeoutSec 0 -UseBasicParsing
+    $text = [Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray())
+    [IO.File]::WriteAllText("D:\Data\cer\$Name.sse", $text, [Text.Encoding]::UTF8)
+    $failure = [regex]::Match($text, 'event: error\r?\ndata: (.+)').Groups[1].Value
+    $doneText = [regex]::Match($text, 'event: done\r?\ndata: (.+)').Groups[1].Value
+    if (-not $doneText) { Write-Host "$Name : no result. Error: $failure"; return }
+    $done = $doneText | ConvertFrom-Json
+    $row = [pscustomobject]@{ run = $Name; meanCer = [math]::Round($done.meanCer, 4); medianCer = [math]::Round($done.medianCer, 4); seconds = $done.seconds }
+    $row | Format-Table -AutoSize
+    $row | Export-Csv D:\Data\cer\summary.csv -Append -NoTypeInformation
+  } finally {
+    if ($app) { Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue; Start-Sleep 3 }
+  }
+}
+
+Remove-Item D:\Data\cer\summary.csv -ErrorAction SilentlyContinue
+Measure-Cer "A-baseline"      @()
+Measure-Cer "B-enc-bf16"      @("--LegalOcr:EncoderPrecision=bf16")
+Measure-Cer "C-enc-pre-bf16"  @("--LegalOcr:EncoderPrecision=bf16", "--LegalOcr:PrefillPrecision=bf16")
+Measure-Cer "D-int8-weights"  @("--LegalOcr:EncoderPrecision=bf16", "--LegalOcr:PrefillPrecision=bf16", "--LegalOcr:Weights=int8", "--LegalOcr:HeadWeights=bf16")
+Measure-Cer "E-batch8"        @("--LegalOcr:EncoderPrecision=bf16", "--LegalOcr:PrefillPrecision=bf16", "--LegalOcr:ReadBatch=8")
+Measure-Cer "F-kv-bf16"       @("--LegalOcr:EncoderPrecision=bf16", "--LegalOcr:PrefillPrecision=bf16", "--LegalOcr:KeyValueCache=bf16")
+Import-Csv D:\Data\cer\summary.csv | Format-Table -AutoSize
+
+Stop-Transcript
+```
+
 ## 5. Demo day without code (settings and order; each gated choice measured first)
 
 1. `LoadAtStart` on; one full read before the demo so the tuning cache and the PTX modules are warm (B5 does this
