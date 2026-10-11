@@ -253,6 +253,7 @@ public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idr
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public ImageReaderOptions()
   public System.Func<Idrak.Models.PretrainedModel, Idrak.Abstraction.Generation.VisionEncoderOptions, Idrak.Abstraction.Generation.IVisionEncoder>? EncoderFactory { get; init; }
+  public bool KeepCache { get; init; }
   public int? ContextLength { get; init; }
 
 public sealed record Idrak.Generation.ImageReading : System.IEquatable<Idrak.Generation.ImageReading>

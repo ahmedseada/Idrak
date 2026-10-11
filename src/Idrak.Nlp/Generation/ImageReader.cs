@@ -23,6 +23,13 @@ public sealed record ImageReaderOptions
     /// <summary>The longest prompt and answer in tokens, the image's included (the model's maximum when null).</summary>
     public int? ContextLength { get; init; }
 
+    /// <summary>
+    /// Keep the attention cache after each read for the next one (see <see cref="TextGenerator.KeepCache"/>). Off by default:
+    /// a cache is reused only up to a prompt's first image, a few template tokens when every read is a new page, so keeping
+    /// it would hold the whole context's cache on the device between reads for almost nothing.
+    /// </summary>
+    public bool KeepCache { get; init; }
+
     /// <summary>Makes the vision encoder instead of the model's own (tests feed reference features with it).</summary>
     public Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? EncoderFactory { get; init; }
 }
@@ -103,6 +110,7 @@ public sealed class ImageReader : IDisposable
         {
             _contextLength = Math.Min(options.ContextLength ?? model.MaxPositions, model.MaxPositions);
             var chat = model.CreateChat(options.CacheFormat, _contextLength);
+            chat.Generator.KeepCache = options.KeepCache;
             _chat = new ChatGenerator(chat.Generator, chat.Template) { Images = _images.Images };
         }
         catch
@@ -111,6 +119,9 @@ public sealed class ImageReader : IDisposable
             throw;
         }
     }
+
+    // The chat the pages are read with (the tests look at its generator).
+    internal ChatGenerator Chat => _chat;
 
     /// <summary>The model read with.</summary>
     public PretrainedModel Model { get; }

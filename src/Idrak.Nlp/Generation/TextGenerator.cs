@@ -98,6 +98,18 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
     }
 
+    // Whether a KV cache is kept from the last generation (see KeepCache).
+    internal bool HoldsCache
+    {
+        get
+        {
+            lock (_keptLock)
+            {
+                return _kept is not null;
+            }
+        }
+    }
+
     // Takes the kept cache when it fits this generation (same capacity and format), with the ids it holds.
     private (DecodingContext? Context, List<int> Ids) TakeCache(int capacity)
     {

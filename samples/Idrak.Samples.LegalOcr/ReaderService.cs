@@ -513,7 +513,18 @@ public sealed class ReaderService : IDisposable
             }, "image"));
         }
 
-        var reading = loaded.Reader.Read(read, output is null ? null : text => output.TryWrite(new SseItem<object>(new { text }, "token")), cancellationToken);
+        ImageReading reading;
+        try
+        {
+            reading = loaded.Reader.Read(read, output is null ? null : text => output.TryWrite(new SseItem<object>(new { text }, "token")), cancellationToken);
+        }
+        finally
+        {
+            // Nothing of the read stays on the device but the model: the reader keeps no attention cache, and the memory
+            // pool's freed blocks go back to the driver (for the next read and other programs alike), even after a failure.
+            ComputeResources.ReleaseCachedMemory(Device);
+        }
+
         var (json, repaired) = AnswerJson.Show(reading.Text);
         double? cer = expected is null ? null
             : TuningMetrics.Get(TuningMetrics.CharacterErrorRate).Score(AnswerTexts.Of(reading.Text, AnswerTexts.Values), AnswerTexts.Of(expected, AnswerTexts.Values)).Value;

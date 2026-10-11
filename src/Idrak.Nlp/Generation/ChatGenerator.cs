@@ -211,6 +211,22 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     public IAsyncEnumerable<(int Index, ChatChunk Chunk)> StreamBatchAsync(IReadOnlyList<ChatRequest> requests, CancellationToken cancellationToken = default) =>
         BackgroundStream.Run(token => StreamBatch(requests, token), cancellationToken);
 
+    // The images' features. The KV cache kept from the last reply (reusable up to a prompt's first image only) holds device
+    // memory while the encoder runs: when the encoder finds no room beside it, the cache is freed and the images encoded
+    // once more, so a full device never leaves every later prompt with images failing the same way.
+    private IReadOnlyList<ImageFeatures> EncodeImages(IVisionEncoder encoder, IReadOnlyList<ImageData> images, VisionOptions? options)
+    {
+        try
+        {
+            return encoder.Encode(images, options);
+        }
+        catch (ResourceLimitExceededException) when (Generator.HoldsCache)
+        {
+            Generator.ReleaseCache();
+            return encoder.Encode(images, options);
+        }
+    }
+
     /// <summary>Streams the reply.</summary>
     public IEnumerable<ChatChunk> Stream(ChatRequest request, CancellationToken cancellationToken = default)
     {
@@ -238,7 +254,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             prompt = RenderPrompt(request, layouts);
             var blocks = layouts.SelectMany(l => l).ToList();
             cancellationToken.ThrowIfCancellationRequested();                    // before the encoder, and after it below
-            features = reader.Encoder.Encode(decoded, request.VisionOptions);
+            features = EncodeImages(reader.Encoder, decoded, request.VisionOptions);
             try
             {
                 if (features.Count != blocks.Count)
