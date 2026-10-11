@@ -501,7 +501,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
         if (pointer == 0)
         {
-            if (releaseCache)
+            if (releaseCache && _captureFree is null)
             {
                 ReleaseCachedMemory();
             }
@@ -568,6 +568,14 @@ internal sealed unsafe partial class CudaBackend : Backend
         {
             if (attempt == 1)
             {
+                // While a graph is recorded nothing may wait for the stream or free a block (the driver ends the capture
+                // with CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED): the recording fails as out of memory and its step runs
+                // as an ordinary one.
+                if (_captureFree is not null)
+                {
+                    break;
+                }
+
                 // Give back cached blocks and anything held only by unreachable tensors, then retry once.
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
@@ -647,6 +655,11 @@ internal sealed unsafe partial class CudaBackend : Backend
     /// <summary>Frees every cached (currently unused) device block back to the driver.</summary>
     public override void ReleaseCachedMemory()
     {
+        if (_captureFree is not null)
+        {
+            return;                                                        // recording a graph: no wait and no free until it ends
+        }
+
         MakeCurrent();
 
         // A cached block was released by the host, but kernels queued earlier may still read or write it: wait for
