@@ -160,7 +160,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         FewRows = PtxKernels.GemvRows,
         DecodeAttentionHeadDim = PtxKernels.DecodeMaxDim,
         TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
-        SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // CudaBackend.Spans.cs: larger heads take the host fallback
+        SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // set from the device's limits (SpanHeadDim) once they are read
         MatrixUnits = true,
         MatrixUnitAttentionHeadDim = PtxKernels.FlashTensorDim,
         FusedKernels = true,
@@ -275,6 +275,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         Check(cuDeviceGetAttribute(out _computeMinor, AttributeComputeCapabilityMinor, device), nameof(cuDeviceGetAttribute));
         // Kernel shapes from what the device reports (KernelShapes); the main module is generated for them.
         _limits = CudaDeviceLimits.Read(device, (long)memory);
+        Capabilities = Capabilities with { SpanAttentionHeadDim = SpanHeadDim(_limits) };   // the span kernels this device holds
         _shapes = KernelShapes.Derive(_limits, out string? unsupported)
                   ?? throw new CudaException($"{Marshal.PtrToStringAnsi((IntPtr)name)} cannot run the Idrak kernels: {unsupported}.");
         // The CUDA version the installed driver supports (13000 = 13.0), not the driver's own release number.

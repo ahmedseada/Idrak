@@ -21,7 +21,7 @@ internal static partial class Tests
         ("attention spans: float32 and bfloat16 tensor cores (head sizes up to 128, rows past blocks of 64 and 128, every rule, grouped heads, tables, a soft-cap) match the CPU", SpanAttentionPrecisions),
         ("attention spans: the CUDA span modules (float32 and tensor-core, every padded head size) declare their kernels and parameters, and are judged by the shared memory a device reports", SpanModules),
         ("attention spans backward: the conformance kit's key-range cases (forward and gradient; random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, head sizes 1 to 256, a soft-cap) replay on the device call by call", SpanGradientCases),
-        ("attention spans backward: float32 and bfloat16 (MixedPrecision): the gradient on the device matches the CPU (head sizes 4 to 256, rows and keys past several tiles, every rule, grouped heads, tables, a soft-cap), on the device's own kernels", SpanGradientPrecisions),
+        ("attention spans backward: float32 and bfloat16 (MixedPrecision): the forward pass (float32) and the gradient on the device match the CPU (head sizes 4 to 256: on CUDA the wide kernels over 128, rows and keys past several tiles, every rule, grouped heads, tables, a soft-cap), on the device's own kernels", SpanGradientPrecisions),
         ("attention spans backward: training through the fastest path (forced key ranges, forced composed, measured with the gradient) gives the same gradients; the key-range path runs AttentionSpansBackward", SpanTrainingPaths),
     ];
 
@@ -377,7 +377,7 @@ internal static partial class Tests
 
         var documented = Idrak.Gpu.Cuda.CudaDeviceLimits.Documented(8, 6, 30);
         var old = documented with { SharedPerBlockOptin = 48 << 10 };
-        for (int d = 8; d <= Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim; d += 8)
+        for (int d = 8; d <= Idrak.Gpu.Cuda.PtxKernels.SpanMaxDim; d += d < Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim ? 8 : 16)
         {
             var (_, kernels, source) = Idrak.Gpu.Cuda.PtxKernels.SpanFloatModule(d);
             var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCountsOf(source);
@@ -385,8 +385,9 @@ internal static partial class Tests
             // The PTX is written from raw string literals, so its line endings are the checkout's (CRLF on Windows with autocrlf).
             Check(source.ReplaceLineEndings("\n").StartsWith(".version 6.0\n.target sm_50", StringComparison.Ordinal), $"f32 d{d}: PTX 6.0 for sm_50, as the main module");
             int shared = Idrak.Gpu.Cuda.PtxKernels.SpanFloatShared(d);
-            Check(shared <= documented.SharedPerBlockOptin && (shared <= old.SharedPerBlockOptin) == (d < 104), $"f32 d{d}: {shared} bytes of shared memory");
-            if (d % 16 == 0)
+            Check(shared <= documented.SharedPerBlockOptin && (d > Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim || (shared <= old.SharedPerBlockOptin) == (d < 104))
+                  && Idrak.Gpu.Cuda.PtxKernels.SpanFloatRows(d) == (d > Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim ? 32 : 64), $"f32 d{d}: {shared} bytes of shared memory");
+            if (d % 16 == 0 && d <= Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim)
             {
                 var tensor = Idrak.Gpu.Cuda.PtxKernels.SpanTensorModule(d);
                 var tensorCounts = Idrak.Gpu.Cuda.PtxKernels.ParameterCountsOf(tensor.Source);
@@ -397,7 +398,22 @@ internal static partial class Tests
         }
 
         Check(Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(72) == 72 && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(68) == 72 && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(13) == 0
-              && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(132) == 0, "float32 head sizes: multiples of 4 up to 128, padded to 8");
+              && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(132) == 144 && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(256) == 256 && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(260) == 0,
+            "float32 head sizes: multiples of 4 up to 256, padded to 8 (to 16 over 128)");
+
+        // The wide gradient (head sizes over 128): two kernels of the gradient's 18 parameters, no static shared memory, their
+        // tiles within what the documented device opts in to; the head sizes a device runs on its own kernels follow from
+        // the shared memory it reports.
+        var wide = Idrak.Gpu.Cuda.PtxKernels.SpanBackwardWideModule();
+        var wideCounts = Idrak.Gpu.Cuda.PtxKernels.ParameterCountsOf(wide.Source);
+        var wideStatic = Idrak.Gpu.Cuda.PtxKernels.StaticSharedBytes(wide.Source);
+        Check(wide.Kernels.SequenceEqual([Idrak.Gpu.Cuda.PtxKernels.SpanBackwardWideKeysName, Idrak.Gpu.Cuda.PtxKernels.SpanBackwardWideQueriesName])
+              && wide.Kernels.All(k => wideCounts[k] == 18 && wideStatic[k] == 0 && Idrak.Gpu.Cuda.PtxKernels.SpanBackwardWideShared(k) <= documented.SharedPerBlockOptin),
+            $"wide gradient: {string.Join(", ", wide.Kernels.Select(k => $"{k} {wideCounts.GetValueOrDefault(k)} parameters, {Idrak.Gpu.Cuda.PtxKernels.SpanBackwardWideShared(k)} bytes"))}");
+        Check(Idrak.Gpu.Cuda.CudaBackend.SpanHeadDim(documented) == Idrak.Gpu.Cuda.PtxKernels.SpanMaxDim
+              && Idrak.Gpu.Cuda.CudaBackend.SpanHeadDim(old) == Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim,
+            $"span head sizes from the reported shared memory: {Idrak.Gpu.Cuda.CudaBackend.SpanHeadDim(documented)} at {documented.SharedPerBlockOptin} bytes, "
+            + $"{Idrak.Gpu.Cuda.CudaBackend.SpanHeadDim(old)} at {old.SharedPerBlockOptin}");
         Check(Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(72) == 80 && Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(64) == 64 && Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(6) == 0,
             "tensor-core head sizes: multiples of 4 up to 128, padded to 16");
     }
@@ -489,6 +505,30 @@ internal static partial class Tests
                     }
                 }
 
+                // CUDA's own kernels take the head sizes its reported limits hold (BackendCapabilities.SpanAttentionHeadDim:
+                // up to 256 where the wide kernels fit), the forward pass over 128 for multiples of 4.
+                int cudaHeads = device.Backend.Capabilities.SpanAttentionHeadDim;
+                if (precision == MatMulPrecision.Float32)
+                {
+                    // The forward pass on the device, float32: the CPU's output, on its own kernels where it has them.
+                    using var q = Tensor.From(qv, [Heads, rows, dim], device);
+                    using var k = Tensor.From(kv, [kvHeads, keyRows, dim], device);
+                    using var v = Tensor.From(vv, [kvHeads, keyRows, dim], device);
+                    using var y = Tensor.Zeros([Heads * rows * dim], device);
+                    var (starts, ends) = spans.ToTensors(device);
+                    using var trace = Kernels.Trace(device.Backend);
+                    device.Backend.AttentionSpans(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, y.Storage, null, Heads, kvHeads, Heads / tables, rows,
+                        keyRows, dim, scale, variant);
+                    device.Synchronize();
+                    Check(RelativeError(yv, y.ToArray()) < 1e-4, $"{what}: forward error {RelativeError(yv, y.ToArray()):G3}");
+                    bool ownForward = device.Backend.Kind switch
+                    {
+                        "cuda" => dim <= cudaHeads && (dim <= Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim || dim % 4 == 0),
+                        _ => device.Type == DeviceType.Cpu,
+                    };
+                    Check(!ownForward || !trace.HostCallsByOperation.ContainsKey("AttentionSpans"), $"{what}: the forward pass ran on the device's own kernels");
+                }
+
                 var expected = Gradient(Device.Cpu);
                 var got = Gradient(device);
                 Check(RelativeError(expected.Dq, got.Dq) < 1e-4, $"{what}: dq error {RelativeError(expected.Dq, got.Dq):G3}");
@@ -496,7 +536,7 @@ internal static partial class Tests
                 Check(RelativeError(expected.Dv, got.Dv) < 1e-4, $"{what}: dvalues error {RelativeError(expected.Dv, got.Dv):G3}");
                 bool ownKernels = device.Backend.Kind switch
                 {
-                    "cuda" => dim <= Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim,
+                    "cuda" => dim <= cudaHeads,
                     "vulkan" => device.Backend is Idrak.Gpu.Vulkan.VulkanBackend vulkan && vulkan.SpanGradientOnDevice,
                     _ => device.Type == DeviceType.Cpu,
                 };

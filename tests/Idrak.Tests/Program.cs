@@ -112,15 +112,16 @@ if (args is ["--dump-ptx", var ptxPath])
 {
     File.WriteAllText(ptxPath, PtxKernels.Source);
     File.WriteAllText(Path.ChangeExtension(ptxPath, ".tensorcore.ptx"), PtxKernels.TensorCoreSource);
-    for (int d = 8; d <= PtxKernels.FlashMaxDim; d += 8)                // the span modules, one per padded head size
+    for (int d = 8; d <= PtxKernels.SpanMaxDim; d += d < PtxKernels.FlashMaxDim ? 8 : 16)   // the span modules, one per padded head size
     {
         File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_f32_d{d}.ptx"), PtxKernels.SpanFloatModule(d).Source);
-        if (d % 16 == 0)
+        if (d % 16 == 0 && d <= PtxKernels.FlashMaxDim)
         {
             File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_tc_d{d}.ptx"), PtxKernels.SpanTensorModule(d).Source);
         }
     }
 
+    File.WriteAllText(Path.ChangeExtension(ptxPath, ".spans_bwd_wide.ptx"), PtxKernels.SpanBackwardWideModule().Source);
     Console.WriteLine($"Wrote {PtxKernels.Source.Length} characters of PTX to {ptxPath}");
     return 0;
 }
