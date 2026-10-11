@@ -505,6 +505,27 @@ public sealed class ImagePreprocessor
     internal static byte[][] ToBytes(ImageData image, bool grayscale)
     {
         int size = image.Height * image.Width, c = image.Channels;
+        if (image.TryGetPlanes(out var held, out _))
+        {
+            // An 8-bit image: its planes are the bytes the floats would round to (copied: steps may change them in place).
+            if (grayscale && c == 3)
+            {
+                var (red, green, blue) = (held[0], held[1], held[2]);
+                var grey = GC.AllocateUninitializedArray<byte>(size);
+                HostParallel.For(size, 1 << 15, (first, last) =>
+                {
+                    ReadOnlySpan<byte> r = red.Span, g = green.Span, b = blue.Span;
+                    for (int i = first; i < last; i++)
+                    {
+                        grey[i] = (byte)((r[i] * 19595 + g[i] * 38470 + b[i] * 7471 + 0x8000) >> 16);
+                    }
+                });
+                return [grey];
+            }
+
+            return [.. held.Select(p => p.ToArray())];
+        }
+
         var pixels = image.Pixels;
         if (grayscale && c == 3)
         {

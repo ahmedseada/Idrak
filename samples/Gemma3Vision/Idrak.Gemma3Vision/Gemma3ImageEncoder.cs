@@ -228,9 +228,25 @@ public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderS
     /// <inheritdoc />
     public override string ToString() => $"Gemma3ImageEncoder({Encoder}, {Projector})";
 
-    // A rectangle of an image's decoded pixels (every channel).
+    // A rectangle of an image's decoded pixels (every channel): from its 8-bit planes when it holds them (an 8-bit crop
+    // with the same values), else from its floats.
     private static ImageData Crop(ImageData image, int top, int left, int height, int width)
     {
+        if (image.TryGetPlanes(out var planes, out var levels))
+        {
+            var cut = new byte[planes.Length][];
+            for (int c = 0; c < planes.Length; c++)
+            {
+                var plane = cut[c] = GC.AllocateUninitializedArray<byte>(height * width);
+                for (int y = 0; y < height; y++)
+                {
+                    planes[c].Span.Slice((top + y) * image.Width + left, width).CopyTo(plane.AsSpan(y * width, width));
+                }
+            }
+
+            return new ImageData(cut, height, width, levels.ToArray());
+        }
+
         var pixels = new float[image.Channels * height * width];
         for (int c = 0; c < image.Channels; c++)
         {

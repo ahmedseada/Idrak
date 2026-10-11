@@ -181,20 +181,9 @@ public static partial class PillowImageOps
 
     internal static byte[][] Bytes(ImageData image) => ImagePreprocessor.ToBytes(image, grayscale: false);
 
-    internal static ImageData FromBytes(byte[][] planes, int height, int width)
-    {
-        int size = height * width;
-        var pixels = GC.AllocateUninitializedArray<float>(planes.Length * size);     // every value written below
-        for (int c = 0; c < planes.Length; c++)
-        {
-            var plane = planes[c];
-            int offset = c * size;
-            HostParallel.For(size, 1 << 16, (first, last) =>
-                ImageLevels.ToUnit(plane.AsSpan(first, last - first), pixels.AsSpan(offset + first, last - first)));
-        }
-
-        return new ImageData(pixels, planes.Length, height, width);
-    }
+    // An 8-bit result as an 8-bit image (its float values, the bytes times 1/255, made only if someone reads them): the
+    // next 8-bit step reads the planes as they are.
+    internal static ImageData FromBytes(byte[][] planes, int height, int width) => new(planes, height, width, ImageLevels.UnitLevels);
 
     // The grey of three byte planes as Pillow's convert("L") (ImagePreprocessor.ToBytes with grayscale, from the bytes
     // already made instead of the floats again).

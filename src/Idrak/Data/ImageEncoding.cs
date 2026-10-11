@@ -15,6 +15,12 @@ internal static class ImageLevels
 {
     public static byte Level(float value) => (byte)Math.Clamp((int)MathF.Round(value * 255f), 0, 255);
 
+    /// <summary>Each byte's value as the decoders give it, k x (1/255) in float32 (ToUnit's values), for 8-bit images.</summary>
+    public static float[] UnitLevels { get; } = [.. Enumerable.Range(0, 256).Select(k => k * (1f / 255f))];
+
+    /// <summary>Each byte's value as k / 255 in float32 (the PNG decoder's 8-bit values), for 8-bit images.</summary>
+    public static float[] DividedLevels { get; } = [.. Enumerable.Range(0, 256).Select(k => k / 255f)];
+
     // Bytes as values in [0, 1]: each byte times 1/255 in float32, as the decoders give them; a vector loop (bytes widened
     // to whole numbers, which convert exactly) and a scalar tail.
     public static void ToUnit(ReadOnlySpan<byte> bytes, Span<float> values)
@@ -52,6 +58,29 @@ internal static class ImageLevels
 
         int plane = image.Width * image.Height, channels = image.Channels;
         var bytes = GC.AllocateUninitializedArray<byte>(plane * channels);  // every byte written below
+        if (image.TryGetPlanes(out var planes, out _))
+        {
+            // An 8-bit image: its bytes (Level of their values gives them back), interleaved; nothing made in floats.
+            if (channels == 1)
+            {
+                planes[0].Span.CopyTo(bytes);
+                return bytes;
+            }
+
+            HostParallel.For(plane, 1 << 15, (first, last) =>
+            {
+                for (int c = 0; c < channels; c++)
+                {
+                    var source = planes[c].Span;
+                    for (int i = first; i < last; i++)
+                    {
+                        bytes[i * channels + c] = source[i];
+                    }
+                }
+            });
+            return bytes;
+        }
+
         var pixels = image.Pixels;
         HostParallel.For(plane, 1 << 15, (first, last) =>
         {

@@ -109,7 +109,10 @@ internal sealed class PngCodec : IImageCodec
         int rawLength = checked((int)total);
         byte[] raw = ArrayPool<byte>.Shared.Rent(rawLength);
         int channels = color is 2 or 3 or 6 ? 3 : 1;
-        var pixels = GC.AllocateUninitializedArray<float>(checked(channels * h * w));   // every pixel is written (each pass its own)
+        // 8-bit files (palette ones too) as 8-bit planes with their values k / 255 (made in floats only if someone reads them);
+        // other depths as floats. Every pixel is written below (each pass its own).
+        byte[][]? bytePlanes = depth == 8 ? [.. Enumerable.Range(0, channels).Select(_ => GC.AllocateUninitializedArray<byte>(checked(h * w)))] : null;
+        float[]? pixels = bytePlanes is null ? GC.AllocateUninitializedArray<float>(checked(channels * h * w)) : null;
         try
         {
             compressed.Position = 0;
@@ -153,15 +156,15 @@ internal sealed class PngCodec : IImageCodec
             // One unfiltered row of a pass into the pixels (row y, columns x0, x0 + dx, …).
             void Samples(ReadOnlySpan<byte> line, int y, int x0, int dx, int pw)
             {
-                if (depth == 8 && color != 3 && dx == 1)
+                if (bytePlanes is not null && color != 3 && dx == 1)
                 {
-                    // A whole row of 8-bit samples (not interlaced): each channel's row written in order.
+                    // A whole row of 8-bit samples (not interlaced): each channel's row copied in order.
                     for (int ch = 0; ch < channels; ch++)
                     {
-                        var target = pixels.AsSpan(ch * h * w + y * w + x0, pw);
+                        var target = bytePlanes[ch].AsSpan(y * w + x0, pw);
                         for (int px = 0, at = ch; px < target.Length; px++, at += samples)
                         {
-                            target[px] = levels![line[at]];
+                            target[px] = line[at];
                         }
                     }
 
@@ -176,7 +179,22 @@ internal sealed class PngCodec : IImageCodec
                         int index = SampleAt(line, px, 0, 1, depth);
                         for (int ch = 0; ch < 3; ch++)
                         {
-                            pixels[ch * h * w + at] = palette![Math.Min(index * 3 + ch, palette.Length - 1)] / 255f;
+                            byte entry = palette![Math.Min(index * 3 + ch, palette.Length - 1)];
+                            if (bytePlanes is not null)
+                            {
+                                bytePlanes[ch][at] = entry;
+                            }
+                            else
+                            {
+                                pixels![ch * h * w + at] = entry / 255f;
+                            }
+                        }
+                    }
+                    else if (bytePlanes is not null)
+                    {
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            bytePlanes[ch][at] = (byte)SampleAt(line, px, ch, samples, depth);
                         }
                     }
                     else
@@ -184,7 +202,7 @@ internal sealed class PngCodec : IImageCodec
                         for (int ch = 0; ch < channels; ch++)
                         {
                             int sample = SampleAt(line, px, ch, samples, depth);
-                            pixels[ch * h * w + at] = levels is null ? sample / max : levels[sample];
+                            pixels![ch * h * w + at] = levels is null ? sample / max : levels[sample];
                         }
                     }
                 }
@@ -195,7 +213,7 @@ internal sealed class PngCodec : IImageCodec
             ArrayPool<byte>.Shared.Return(raw);
         }
 
-        return new ImageData(pixels, channels, h, w);
+        return bytePlanes is not null ? new ImageData(bytePlanes, h, w, ImageLevels.DividedLevels) : new ImageData(pixels!, channels, h, w);
     }
 
     // Each sample value of a depth as its float (the value over the depth's largest, the same division as per sample),

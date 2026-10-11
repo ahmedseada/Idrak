@@ -7,10 +7,19 @@ using System.Numerics;
 namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// Decoded pixels: [Channels, Height, Width] values in [0, 1], grey (1 channel) or red, green and blue (3 channels).
+/// Decoded pixels: [Channels, Height, Width] values in [0, 1], grey (1 channel) or red, green and blue (3 channels). An
+/// image may be held as 8-bit planes with the value each byte stands for (the codecs and the 8-bit transforms make them):
+/// its float values are made from the planes on the first read of <see cref="Pixels"/>, with that table, so they are the
+/// values a float image would hold, and an 8-bit step reads the planes (<see cref="TryGetPlanes"/>) without converting
+/// floats back to bytes. Reading <see cref="Pixels"/> ends the 8-bit view (the array is the caller's to change).
 /// </summary>
 public sealed class ImageData
 {
+    private float[]? _pixels;
+    private byte[][]? _planes;
+    private readonly float[]? _levels;
+    private readonly Lock? _gate;
+
     /// <summary>Wraps decoded pixels (used directly, not copied).</summary>
     public ImageData(float[] pixels, int channels, int height, int width)
     {
@@ -23,14 +32,102 @@ public sealed class ImageData
             throw new ArgumentException($"{pixels.Length} values are not {channels} x {height} x {width}.", nameof(pixels));
         }
 
-        Pixels = pixels;
+        _pixels = pixels;
         Channels = channels;
         Height = height;
         Width = width;
     }
 
-    /// <summary>[Channels, Height, Width] values in [0, 1].</summary>
-    public float[] Pixels { get; }
+    /// <summary>
+    /// Wraps 8-bit planes (used directly, not copied; one per channel, each <paramref name="height"/> x
+    /// <paramref name="width"/>) and the value each byte stands for: <paramref name="levels"/>[k] is byte k's value in
+    /// [0, 1] (256 entries; a codec's own conversion, such as k x (1/255) in float32).
+    /// </summary>
+    public ImageData(byte[][] planes, int height, int width, float[] levels)
+    {
+        ArgumentNullException.ThrowIfNull(planes);
+        ArgumentNullException.ThrowIfNull(levels);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(planes.Length, nameof(planes));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        if (levels.Length != 256)
+        {
+            throw new ArgumentException($"A byte's values are 256, not {levels.Length}.", nameof(levels));
+        }
+
+        foreach (var plane in planes)
+        {
+            if (plane is null || plane.Length != (long)height * width)
+            {
+                throw new ArgumentException($"Each plane holds {height} x {width} bytes.", nameof(planes));
+            }
+        }
+
+        (_planes, _levels, _gate) = (planes, levels, new Lock());
+        Channels = planes.Length;
+        Height = height;
+        Width = width;
+    }
+
+    /// <summary>
+    /// [Channels, Height, Width] values in [0, 1]: made from the 8-bit planes on the first read when the image holds them
+    /// (then the 8-bit view ends: the array is the caller's to change).
+    /// </summary>
+    public float[] Pixels
+    {
+        get
+        {
+            if (Volatile.Read(ref _pixels) is { } pixels)
+            {
+                return pixels;
+            }
+
+            lock (_gate!)
+            {
+                if (_pixels is null)
+                {
+                    var planes = _planes!;
+                    var levels = _levels!;
+                    int size = Height * Width;
+                    var values = GC.AllocateUninitializedArray<float>(planes.Length * size);   // every value written below
+                    for (int c = 0; c < planes.Length; c++)
+                    {
+                        var plane = planes[c];
+                        int offset = c * size;
+                        Devices.HostParallel.For(size, 1 << 16, (first, last) =>
+                        {
+                            for (int i = first; i < last; i++)
+                            {
+                                values[offset + i] = levels[plane[i]];
+                            }
+                        });
+                    }
+
+                    Volatile.Write(ref _pixels, values);
+                    Volatile.Write(ref _planes, null);
+                }
+
+                return _pixels;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The 8-bit planes when the image still holds them (made 8-bit and <see cref="Pixels"/> not read yet): one per
+    /// channel, read-only (copy one to change it), with the value each byte stands for.
+    /// </summary>
+    public bool TryGetPlanes(out ReadOnlyMemory<byte>[] planes, out ReadOnlyMemory<float> levels)
+    {
+        if (Volatile.Read(ref _planes) is { } held)
+        {
+            planes = [.. held.Select(p => (ReadOnlyMemory<byte>)p)];
+            levels = _levels;
+            return true;
+        }
+
+        (planes, levels) = ([], default);
+        return false;
+    }
 
     /// <summary>1 (grey) or 3 (red, green, blue).</summary>
     public int Channels { get; }
