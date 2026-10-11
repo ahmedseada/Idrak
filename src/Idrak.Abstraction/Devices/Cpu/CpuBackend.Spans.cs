@@ -49,6 +49,79 @@ internal sealed partial class CpuBackend
         float[] qv = D(q), kv = D(keys), vv = D(values), sv = D(starts), ev = D(ends), yv = D(y);
         float[]? lv = logSumExp is null ? null : D(logSumExp);
         int group = heads / kvHeads, blocks = (rows + SpanRows - 1) / SpanRows;
+        float[]? panels = KeyPanels(kv, sv, ev, kvHeads, heads / headsPerTable, rows, keyRows, dim);
+        try
+        {
+            SpanForward(qv, kv, vv, sv, ev, yv, lv, panels, heads, group, headsPerTable, blocks, rows, keyRows, dim, scale, variant);
+        }
+        finally
+        {
+            if (panels is not null)
+            {
+                ArrayPool<float>.Shared.Return(panels);
+            }
+        }
+    }
+
+    // Kᵀ in panels of SpanKeys keys, made once per call where a block of rows will read them: the panel of key/value head
+    // g and keys c0 .. c0 + width - 1 is that tile transposed ([dim, width], in the tile's own place), what the transposing
+    // product (CpuMatMul.Multiply with transB) makes of the tile on every call: 64 times a head at 4,096 keys. Null when no
+    // block reads them: a block reads them when its tiles are the panels (its keys from 0, or a multiple of SpanKeys, to the
+    // last: every row seeing every key, an encoder's) and it has more rows than a product reads B in place for.
+    private static float[]? KeyPanels(float[] kv, float[] sv, float[] ev, int kvHeads, int tables, int rows, int keyRows, int dim)
+    {
+        if (!UseKeyPanels || keyRows <= SpanKeys || kvHeads <= 0 || dim <= 0)
+        {
+            return null;
+        }
+
+        bool used = false;
+        for (int t = 0; t < tables && !used; t++)
+        {
+            for (int r0 = 0; r0 < rows && !used; r0 += SpanRows)
+            {
+                int count = Math.Min(SpanRows, rows - r0);
+                used = PanelsServe(BlockSpan(sv, ev, t * rows + r0, count, keyRows), count, keyRows);
+            }
+        }
+
+        if (!used)
+        {
+            return null;
+        }
+
+        var panels = ArrayPool<float>.Shared.Rent(kvHeads * keyRows * dim);
+        int tiles = (keyRows + SpanKeys - 1) / SpanKeys;
+        For(kvHeads * tiles, (long)kvHeads * keyRows * dim, (first, last) =>
+        {
+            for (int item = first; item < last; item++)
+            {
+                int c0 = item % tiles * SpanKeys, width = Math.Min(SpanKeys, keyRows - c0), at = (item / tiles * keyRows + c0) * dim;
+                for (int c = 0; c < width; c++)
+                {
+                    for (int d = 0; d < dim; d++)
+                    {
+                        panels[at + d * width + c] = kv[at + c * dim + d];
+                    }
+                }
+            }
+        });
+        return panels;
+    }
+
+    /// <summary>Tests only: off, every block transposes its key tiles in its products (the panels' reference).</summary>
+    internal static bool UseKeyPanels { get; set; } = true;
+
+    // Whether a block of `count` rows seeing keys [from, to) reads the key panels: its tiles start at a multiple of
+    // SpanKeys and the last ends at the last key, and the transposing product would transpose (more rows than it reads B
+    // in place for), so the panels give it the same B.
+    private static bool PanelsServe((int Start, int End) span, int count, int keyRows) =>
+        span.End > span.Start && span.Start % SpanKeys == 0 && span.End == keyRows && count > CpuTuning.TransposedInPlace;
+
+    // The forward pass over the blocks of rows (AttentionSpansKernel), with Kᵀ's panels where a block reads them.
+    private void SpanForward(float[] qv, float[] kv, float[] vv, float[] sv, float[] ev, float[] yv, float[]? lv, float[]? panels, int heads, int group,
+        int headsPerTable, int blocks, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
         For(heads * blocks, (long)heads * rows * Math.Max(1, keyRows) * dim, (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
@@ -61,13 +134,22 @@ internal sealed partial class CpuBackend
                     int h = item / blocks, r0 = item % blocks * SpanRows, count = Math.Min(SpanRows, rows - r0);
                     int table = h / headsPerTable * rows, keyBase = h / group * keyRows;
                     var (from, to) = BlockSpan(sv, ev, table + r0, count, keyRows);
+                    bool fromPanels = panels is not null && PanelsServe((from, to), count, keyRows);
                     max.Fill(float.NegativeInfinity);
                     total.Clear();
                     Array.Clear(outputs, 0, count * dim);
                     for (int c0 = from; c0 < to; c0 += SpanKeys)
                     {
                         int width = Math.Min(SpanKeys, to - c0);
-                        SpanProduct(qv, (h * rows + r0) * dim, kv, (keyBase + c0) * dim, scores, 0, count, width, dim, false, true, 0f);
+                        if (fromPanels)
+                        {
+                            SpanProduct(qv, (h * rows + r0) * dim, panels!, (keyBase + c0) * dim, scores, 0, count, width, dim, false, false, 0f);
+                        }
+                        else
+                        {
+                            SpanProduct(qv, (h * rows + r0) * dim, kv, (keyBase + c0) * dim, scores, 0, count, width, dim, false, true, 0f);
+                        }
+
                         for (int i = 0; i < count; i++)
                         {
                             var (s, e) = SpanOf(sv, ev, table + r0 + i, keyRows);

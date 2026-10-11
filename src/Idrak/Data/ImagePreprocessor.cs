@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Numerics;
 using System.Text.Json;
 using Idrak.Abstraction.Devices;
@@ -251,72 +252,220 @@ public sealed class ImagePreprocessor
     }
 
     /// <summary>
+    /// The pixel values of several images (the views of a page, pages read together) as one [images, channels, height,
+    /// width] tensor on <paramref name="device"/>, as <see cref="Process(ImageData, Device?)"/> makes each, so the same
+    /// values bit for bit: on a GPU (<see cref="ResizeOnDevice"/>, no center crop) each image's 8-bit planes are uploaded
+    /// (a byte a value, not four) and resized, rescaled and normalized there, one device operation for the images of a
+    /// size; on the CPU, and otherwise, the host path writes them into one pooled buffer, uploaded once.
+    /// </summary>
+    /// <exception cref="ArgumentException">No images, or images whose values differ in shape.</exception>
+    public Tensor ProcessBatch(IReadOnlyList<ImageData> images, Device? device = null)
+    {
+        ArgumentNullException.ThrowIfNull(images);
+        if (images.Count == 0)
+        {
+            throw new ArgumentException("No images to process.", nameof(images));
+        }
+
+        var target = device ?? Device.Default;
+        if (ResizeOnDevice && !CenterCrop && target.Type != DeviceType.Cpu)
+        {
+            return ProcessBatchOnDevice(images, target);
+        }
+
+        var (first, channels, height, width) = Planes(images[0]);
+        int each = checked(channels * height * width);
+        float[] values = ArrayPool<float>.Shared.Rent(checked(images.Count * each));   // written, copied into the tensor, given back
+        try
+        {
+            Fill(first, channels, height * width, values.AsSpan(0, each));
+            for (int i = 1; i < images.Count; i++)
+            {
+                var (planes, c, h, w) = Planes(images[i]);
+                if (c != channels || h != height || w != width)
+                {
+                    throw new ArgumentException($"Image {i}'s values are {c} x {h} x {w}, the first's {channels} x {height} x {width}.", nameof(images));
+                }
+
+                Fill(planes, c, h * w, values.AsSpan(i * each, each));
+            }
+
+            return Tensor.From(values.AsSpan(0, images.Count * each), [images.Count, channels, height, width], target);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(values);
+        }
+    }
+
+    /// <summary>
     /// <see cref="Process(ImageData, Device?)"/> through the device operation (Backend.ResizeNormalize, 8-bit passes) on any
     /// device, the CPU included (tests compare it with the host path); no center crop.
     /// </summary>
     internal Tensor ProcessOnDevice(ImageData image, Device device)
     {
         ArgumentNullException.ThrowIfNull(image);
+        using var batch = ProcessBatchOnDevice([image], device);
+        return batch.Reshape(batch.Shape[1], batch.Shape[2], batch.Shape[3]);
+    }
+
+    /// <summary>
+    /// <see cref="ProcessBatch"/> through the device operation on any device, the CPU included (tests compare it with the
+    /// host path): the images of one input size in one ResizeNormalize over all their planes (plane p is channel p % C),
+    /// into the batch or, for the sizes after the first, into a buffer copied into their places.
+    /// </summary>
+    internal Tensor ProcessBatchOnDevice(IReadOnlyList<ImageData> images, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(images);
         if (CenterCrop)
         {
             throw new InvalidOperationException("A center crop runs on the host (Pixels).");
         }
 
-        int h = image.Height, w = image.Width;
-        var planes = ToBytes(image, Grayscale);
-        var (toHeight, toWidth) = ResizedSize(h, w);
-        int channels = planes.Length == 1 && (ConvertRgb || Grayscale) ? 3 : planes.Length;
-        var table = Table(channels);
-
-        // Each output channel's bytes (a grey plane repeated), four to a float word, the first in the low byte.
-        int area = h * w;
-        var words = new uint[(channels * area + 3) / 4];
-        for (int c = 0; c < channels; c++)
+        var prepared = new (byte[][] Planes, int Channels, int Height, int Width)[images.Count];
+        for (int i = 0; i < images.Count; i++)
         {
-            var plane = planes[Math.Min(c, planes.Length - 1)];
-            for (int i = 0, at = c * area; i < area; i++, at++)
+            ArgumentNullException.ThrowIfNull(images[i], nameof(images));
+            var planes = ToBytes(images[i], Grayscale);
+            prepared[i] = (planes, planes.Length == 1 && (ConvertRgb || Grayscale) ? 3 : planes.Length, images[i].Height, images[i].Width);
+        }
+
+        int channels = prepared[0].Channels;
+        var (toHeight, toWidth) = ResizedSize(prepared[0].Height, prepared[0].Width);
+        for (int i = 1; i < prepared.Length; i++)
+        {
+            if (prepared[i].Channels != channels || ResizedSize(prepared[i].Height, prepared[i].Width) != (toHeight, toWidth))
             {
-                words[at >> 2] |= (uint)plane[i] << (8 * (at & 3));
+                throw new ArgumentException($"Image {i}'s values are {prepared[i].Channels} channels of {ResizedSize(prepared[i].Height, prepared[i].Width)}, "
+                    + $"the first's {channels} of {(toHeight, toWidth)}.", nameof(images));
             }
         }
 
-        // Per output column (then row): its first input pixel, its tap count and its weights, as int bits; none for a size kept.
-        var coefficients = new List<float>();
-        int Pass(int inSize, int outSize)
+        int outImage = channels * toHeight * toWidth;
+        var y = Tensor.Empty([images.Count, channels, toHeight, toWidth], device);
+        try
         {
-            if (!Resize || inSize == outSize)
+            using var values = Tensor.From(Table(channels), [256 * channels], device);
+            var done = new bool[prepared.Length];
+            for (int i = 0; i < prepared.Length; i++)
             {
-                return 0;
-            }
-
-            var (bounds, weights, taps) = Coefficients(inSize, outSize, Resampling);
-            for (int o = 0; o < outSize; o++)
-            {
-                coefficients.Add(BitConverter.Int32BitsToSingle(bounds[2 * o]));
-                coefficients.Add(BitConverter.Int32BitsToSingle(bounds[2 * o + 1]));
-                for (int t = 0; t < taps; t++)
+                if (done[i])
                 {
-                    coefficients.Add(BitConverter.Int32BitsToSingle(weights[o * taps + t]));
+                    continue;
+                }
+
+                // The images of this input size, in order.
+                var (h, w) = (prepared[i].Height, prepared[i].Width);
+                var group = new List<int>();
+                for (int j = i; j < prepared.Length; j++)
+                {
+                    if (!done[j] && prepared[j].Height == h && prepared[j].Width == w)
+                    {
+                        group.Add(j);
+                        done[j] = true;
+                    }
+                }
+
+                bool inPlace = group.Count == prepared.Length;               // one size: straight into the batch
+                using var x = Tensor.From(PackedBytes(prepared, group, channels, h * w), [Math.Max(1, (group.Count * channels * h * w + 3) / 4)], device);
+                var (coefficients, xTaps, yTaps) = ResizeCoefficients(h, w, toHeight, toWidth);
+                using var taps = Tensor.From(coefficients, [coefficients.Length], device);
+                using var output = inPlace ? null : Tensor.Empty([group.Count * outImage], device);
+                device.Backend.ResizeNormalize(x.Storage, taps.Storage, values.Storage, (output ?? y).Storage, group.Count * channels, channels, h, w, toHeight, toWidth,
+                    xTaps, yTaps, bytes: true);
+                for (int g = 0; output is not null && g < group.Count; g++)
+                {
+                    device.Backend.Copy2D(output.Storage, g * outImage, 0, y.Storage, group[g] * outImage, 0, 1, outImage, false);
                 }
             }
 
-            return taps;
+            return y;
         }
-
-        int xTaps = Pass(w, toWidth), yTaps = Pass(h, toHeight);
-        if (coefficients.Count == 0)
+        catch
         {
-            coefficients.Add(0f);
+            y.Dispose();
+            throw;
+        }
+    }
+
+    // The 8-bit values of the images `group` names (each output channel's plane, a grey plane repeated), one after another,
+    // four to a float word with the first in the low byte (the device operation's layout).
+    private static float[] PackedBytes((byte[][] Planes, int Channels, int Height, int Width)[] images, List<int> group, int channels, int area)
+    {
+        int count = group.Count * channels * area;
+        var words = new float[Math.Max(1, (count + 3) / 4)];
+        if (BitConverter.IsLittleEndian)
+        {
+            var bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan());
+            for (int g = 0; g < group.Count; g++)
+            {
+                var planes = images[group[g]].Planes;
+                for (int c = 0; c < channels; c++)
+                {
+                    planes[Math.Min(c, planes.Length - 1)].AsSpan(0, area).CopyTo(bytes.Slice((g * channels + c) * area, area));
+                }
+            }
+
+            return words;
         }
 
-        var packed = new float[words.Length];
-        System.Runtime.InteropServices.MemoryMarshal.Cast<uint, float>(words).CopyTo(packed);
-        using var x = Tensor.From(packed, [Math.Max(1, packed.Length)], device);
-        using var coefficientTensor = Tensor.From(coefficients.ToArray(), [coefficients.Count], device);
-        using var values = Tensor.From(table, [table.Length], device);
-        var y = Tensor.Empty([channels, toHeight, toWidth], device);
-        device.Backend.ResizeNormalize(x.Storage, coefficientTensor.Storage, values.Storage, y.Storage, channels, channels, h, w, toHeight, toWidth, xTaps, yTaps, bytes: true);
-        return y;
+        // A big-endian host: the same bytes placed word by word.
+        var packed = new uint[words.Length];
+        for (int g = 0; g < group.Count; g++)
+        {
+            var planes = images[group[g]].Planes;
+            for (int c = 0; c < channels; c++)
+            {
+                var plane = planes[Math.Min(c, planes.Length - 1)];
+                for (int i = 0, at = (g * channels + c) * area; i < area; i++, at++)
+                {
+                    packed[at >> 2] |= (uint)plane[i] << (8 * (at & 3));
+                }
+            }
+        }
+
+        for (int i = 0; i < packed.Length; i++)
+        {
+            words[i] = BitConverter.UInt32BitsToSingle(packed[i]);
+        }
+
+        return words;
+    }
+
+    // Per output column (then row): its first input pixel, its tap count and its weights, as int bits; none for a size kept
+    // (one zero when both are kept). Written straight into the array the device reads.
+    private (float[] Coefficients, int XTaps, int YTaps) ResizeCoefficients(int h, int w, int toHeight, int toWidth)
+    {
+        var columns = Resize && w != toWidth ? Coefficients(w, toWidth, Resampling) : default;
+        var rows = Resize && h != toHeight ? Coefficients(h, toHeight, Resampling) : default;
+        int xTaps = columns.Weights is null ? 0 : columns.Taps, yTaps = rows.Weights is null ? 0 : rows.Taps;
+        int length = (xTaps == 0 ? 0 : toWidth * (2 + xTaps)) + (yTaps == 0 ? 0 : toHeight * (2 + yTaps));
+        var result = new float[Math.Max(1, length)];
+        int at = 0;
+        void Write((int[] Bounds, int[] Weights, int Taps) pass, int outSize)
+        {
+            for (int o = 0; o < outSize; o++)
+            {
+                result[at++] = BitConverter.Int32BitsToSingle(pass.Bounds[2 * o]);
+                result[at++] = BitConverter.Int32BitsToSingle(pass.Bounds[2 * o + 1]);
+                for (int t = 0; t < pass.Taps; t++)
+                {
+                    result[at++] = BitConverter.Int32BitsToSingle(pass.Weights[o * pass.Taps + t]);
+                }
+            }
+        }
+
+        if (xTaps > 0)
+        {
+            Write(columns, toWidth);
+        }
+
+        if (yTaps > 0)
+        {
+            Write(rows, toHeight);
+        }
+
+        return (result, xTaps, yTaps);
     }
 
     // Each channel's value of each byte (256 per channel): rescaled as transformers does (the byte times the factor in

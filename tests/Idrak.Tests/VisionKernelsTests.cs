@@ -106,6 +106,26 @@ internal static partial class Tests
                 }
             }
         }
+
+        // A batch (ProcessBatch, and its device operation on this device): images of two input sizes (one operation per
+        // size, the second through a buffer into its places), colour and grey (repeated to three channels), against each
+        // image's host values one after another, bit for bit.
+        foreach (bool grey in new[] { false, true })
+        {
+            ImageData Image(int h, int w, int channels) => new([.. Enumerable.Range(0, channels * h * w).Select(_ => random.Next(256) / 255f)], channels, h, w);
+            var images = grey ? new[] { Image(37, 53, 1), Image(25, 18, 1), Image(37, 53, 1) } : [Image(37, 53, 3), Image(25, 18, 3), Image(37, 53, 3)];
+            var pre = new ImagePreprocessor { Height = 16, Width = 24, Resampling = ImageResampling.Bicubic, Mean = [0.48f, 0.45f, 0.40f], Std = [0.27f, 0.26f, 0.28f] };
+            var expected = images.SelectMany(i => pre.Pixels(i)).ToArray();
+            using var batch = pre.ProcessBatchOnDevice(images, device);
+            using var processed = pre.ProcessBatch(images, device);
+            foreach (var (name, actual) in new[] { ("the device operation", batch), ("ProcessBatch", processed) })
+            {
+                var values = actual.ToArray();
+                Check(actual.Shape.SequenceEqual([3, 3, 16, 24]) && values.Length == expected.Length, $"{name}: {Tensor.FormatShape(actual.Shape)}");
+                int at = Enumerable.Range(0, expected.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(expected[i]) != BitConverter.SingleToInt32Bits(values[i]), -1);
+                Check(at < 0, $"{name}, {(grey ? "grey" : "colour")} images of two sizes: value {at} differs from the host path's");
+            }
+        }
     }
 
     private static void TransposedConvolutionMatches(Device device)

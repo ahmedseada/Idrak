@@ -472,6 +472,8 @@ public static class Profiler
 /// <summary>
 /// The probes a <see cref="Profiler"/> measures with, by name (ignoring case). The library's, in this order:
 /// <list type="bullet">
+/// <item>"bandwidth": the device's memory bandwidth ("device bandwidth", GB/s): copies through device memory, measured once
+/// per device before its first run, so a run's rate of bytes read (a decoding step's weights) has its ceiling beside it.</item>
 /// <item>"cpu": the process's processor time ("cpu", ms) and the cores it kept busy ("cores busy": processor time over wall time).</item>
 /// <item>"heap": the managed heap: bytes allocated on every thread ("allocated", MB), collections of each generation
 /// ("gc0", "gc1", "gc2") and the time paused for them ("gc pause", ms).</item>
@@ -482,6 +484,10 @@ public static class Profiler
 /// <item>"kernels" (intrusive; devices that time their kernels, such as CUDA): the device's time in kernels ("kernel time",
 /// ms), the launches ("launches"), the matrix products' rate ("matrix TFLOPS"), and a table of the kernels by time; recorded
 /// graphs run step by step meanwhile (<see cref="ComputeGraph.RunStepsDirectly"/>), so a decoding step's kernels show too.</item>
+/// <item>"stages" (intrusive: listening at <see cref="TelemetryLevel.Inference"/> makes <c>Module.Predict</c> wait for the
+/// device): the stages of reading an answer (<see cref="InferenceStage"/>) in the run: "{stage} time" (ms), "{stage} count"
+/// and "{stage} size" (MB) for each stage seen (the caches allocated, the encoder's output, a recorded graph's memory), and
+/// the device's peak above the run's start when the encoder ends ("encoder peak above start", MB: its activations and output).</item>
 /// </list>
 /// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
 /// <see cref="Unregister"/> brings back. The registry has no guard: a probe holds what it measures through a run, so it
@@ -495,7 +501,8 @@ public static class ProfileProbes
     {
         var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a probe holds what it measures from before a run to after it, so it cannot be swapped half-way");
-        foreach (var probe in new IProfileProbe[] { new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe() })
+        // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
+        foreach (var probe in new IProfileProbe[] { new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe(), new StagesProbe() })
         {
             table.RegisterDefault(probe.Name, probe);
         }
@@ -534,6 +541,160 @@ public static class ProfileProbes
 
     /// <summary>Each registered probe as "name: summary", one per line.</summary>
     public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}{(p.Intrusive ? " (a run of its own)" : "")}: {p.Summary}"));
+
+    private sealed class BandwidthProbe : IProfileProbe
+    {
+        public string Name => "bandwidth";
+
+        public string Summary => "the device's memory bandwidth as copies through it measure it, once per device before its first run: the ceiling of a rate of bytes read";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            double rate = Bandwidth(run.Device.Backend);
+            return () =>
+            {
+                if (rate > 0)
+                {
+                    run.Record("device bandwidth", rate, "GB/s");
+                }
+            };
+        }
+    }
+
+    // The bandwidth measured on each device, kept with its backend.
+    private static readonly ConditionalWeakTable<Backend, StrongBox<double>> Bandwidths = [];
+
+    /// <summary>
+    /// GB/s that <see cref="Backend.Copy"/> moves on <paramref name="backend"/> (bytes read and written), measured once per
+    /// device: buffers from 16 MiB, doubled while the rate still falls by more than a tenth (the device's caches hold the
+    /// small ones, whatever their size), up to an eighth of the memory it reports available (the host's for a device that
+    /// reports none); the best of three copies at each size. 0 when not even the first size fits.
+    /// </summary>
+    internal static double Bandwidth(Backend backend)
+    {
+        var box = Bandwidths.GetValue(backend, _ => new StrongBox<double>(double.NaN));
+        lock (box)
+        {
+            if (double.IsNaN(box.Value))
+            {
+                box.Value = MeasureBandwidth(backend);
+            }
+
+            return box.Value;
+        }
+    }
+
+    private static double MeasureBandwidth(Backend backend)
+    {
+        long free = backend.AvailableMemory() ?? GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        long limit = Math.Min(free / 8, (long)int.MaxValue * sizeof(float));
+        double previous = 0, rate = 0;
+        for (long bytes = 16L << 20; 2 * bytes <= limit; bytes *= 2)
+        {
+            int n = (int)(bytes / sizeof(float));
+            var x = backend.Allocate(n, zeroed: true);
+            var y = backend.Allocate(n, zeroed: false);
+            try
+            {
+                backend.Copy(x, y, n);
+                backend.Synchronize();
+                double best = double.MaxValue;
+                for (int i = 0; i < 3; i++)
+                {
+                    long start = Stopwatch.GetTimestamp();
+                    backend.Copy(x, y, n);
+                    backend.Synchronize();
+                    best = Math.Min(best, Stopwatch.GetElapsedTime(start).TotalSeconds);
+                }
+
+                rate = 2.0 * bytes / Math.Max(best, 1e-9) / 1e9;
+            }
+            finally
+            {
+                x.Release();
+                y.Release();
+            }
+
+            if (previous > 0 && rate >= 0.9 * previous)
+            {
+                break;                                                       // past the caches: the rate holds
+            }
+
+            previous = rate;
+        }
+
+        return rate;
+    }
+
+    // The stages of reading an answer (InferenceStage events) in a run: each stage's time, count and bytes summed, and the
+    // device's peak above the run's start when the encoder ends (its activations and output). Intrusive: listening at the
+    // Inference level makes Module.Predict wait for the device.
+    private sealed class StagesProbe : IProfileProbe
+    {
+        public string Name => "stages";
+
+        public string Summary => "the stages of reading an answer (image decode and transforms, encoder, cache allocations, prefill, decoding chunks, graph "
+                                 + "captures): time, counts and MB each, and the device's peak above the run's start when the encoder ends";
+
+        public bool Intrusive => true;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var backend = run.Device.Backend;
+            backend.ResetPeakMemoryUsage();
+            var hook = new StageSums(backend, backend.GetMemoryUsage().InUse);
+            var subscription = Telemetry.Subscribe(hook);
+            return () =>
+            {
+                subscription.Dispose();
+                lock (hook)
+                {
+                    foreach (var (stage, (ms, count, bytes)) in hook.Sums)
+                    {
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} time"), ms, "ms");
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} count"), count);
+                        if (bytes > 0)
+                        {
+                            run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} size"), bytes / 1048576.0, "MB");
+                        }
+                    }
+
+                    if (hook.EncoderPeak is { } peak)
+                    {
+                        run.Record("encoder peak above start", peak / 1048576.0, "MB");
+                    }
+                }
+            };
+        }
+
+        private sealed class StageSums(Backend backend, long startInUse) : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Inference;
+
+            public SortedDictionary<InferenceStageKind, (double Ms, long Count, long Bytes)> Sums { get; } = [];
+
+            public long? EncoderPeak { get; private set; }
+
+            public void OnInferenceStage(in InferenceStage e)
+            {
+                lock (this)
+                {
+                    var (ms, count, bytes) = Sums.GetValueOrDefault(e.Stage);
+                    Sums[e.Stage] = (ms + e.Duration.TotalMilliseconds, count + e.Count, bytes + e.Bytes);
+                    if (e.Stage == InferenceStageKind.Encoder)
+                    {
+                        EncoderPeak = Math.Max(EncoderPeak ?? 0, backend.GetMemoryUsage().Peak - startInUse);
+                    }
+                }
+            }
+        }
+    }
 
     private sealed class CpuProbe : IProfileProbe
     {

@@ -1050,6 +1050,42 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// y [m, n] = x [m, k] · w (packed in <paramref name="format"/>, with <paramref name="scales"/> for int8 and 4-bit) +
+    /// <paramref name="bias"/> [n] on every row (when given), then gelu (the tanh approximation, as <see cref="BiasGelu"/>;
+    /// <paramref name="gelu"/> needs the bias) or + <paramref name="residual"/> [m, n] (when given; not with gelu): a
+    /// layer's product and what follows it in one pass where the device's product has the epilogue. By default the product
+    /// (<see cref="BFloat16MatMul"/>, <see cref="Int8MatMul"/> or <see cref="Int4MatMul"/>), then <see cref="BiasGelu"/> or
+    /// <see cref="AddRowVector"/>, then the residual's <see cref="Binary"/> add, in y: a device's own epilogue adds in the
+    /// same order (residual + (product + bias)).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulEpilogue"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulEpilogueKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void PackedMatMulEpilogue(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
+    {
+        if (_kernels is null)
+        {
+            PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+        else
+        {
+            PackedMatMulEpilogueRegistered(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackedMatMulEpilogueRegistered(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
+    {
+        if (Kernel(OperationIndex.PackedMatMulEpilogue) is OperationKernels.PackedMatMulEpilogue kernel)
+        {
+            kernel(this, format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+        else
+        {
+            PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+    }
+
+    /// <summary>
     /// y = (act(gate) · up) · w for few rows with packed weights w (in <paramref name="format"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
     /// without a separate activation pass. Returns false when the device has no fused version.
     /// </summary>
@@ -6317,6 +6353,43 @@ public abstract partial class Backend
         using var h = new HostCall(this, "AttentionSpans");
         CpuBackend.Instance.AttentionSpans(h[q], h[keys], h[values], h[starts], h[ends], h[y], h.Maybe(logSumExp), heads, kvHeads, headsPerTable, rows,
             keyRows, dim, scale, variant);
+    }
+
+    /// <summary>
+    /// <see cref="AttentionSpans"/> of a self-attention layer read in place from rows [batch, rows, *] (its packed
+    /// projections: no copies of the heads), for inference (no log-sum-exp): query head h &lt; heads of batch b at row i is
+    /// q[qOffset + (b·rows + i)·qRow + h·dim .. + dim], its key/value head g = h / (heads / kvHeads) reads keys and values
+    /// k / v[offset + (b·rows + c)·kRow + g·dim .. + dim] for c &lt; rows, and the output is written to y[(b·rows + i)·heads·dim
+    /// + h·dim .. + dim] ([batch, rows, heads·dim]). Head b·heads + h reads the ranges of table (b·heads + h) /
+    /// headsPerTable, as AttentionSpans' heads do. Offsets and row strides in floats; q, k and v may be one storage at three
+    /// offsets. By default the heads are copied out to [batch·heads, rows, dim] (keys and values to [batch·kvHeads, rows,
+    /// dim]), AttentionSpans runs on them and its output is copied back: a device's own kernel gives those values.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionSpansStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSpansStridedKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AttentionSpansStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
+        if (_kernels is null)
+        {
+            AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
+        else
+        {
+            AttentionSpansStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansStridedRegistered(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
+        if (Kernel(OperationIndex.AttentionSpansStrided) is OperationKernels.AttentionSpansStrided kernel)
+        {
+            kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
+        else
+        {
+            AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
     }
 
     /// <summary>

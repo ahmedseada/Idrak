@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
+using Idrak.Abstraction.Operations;
 using Idrak.Data;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -22,6 +23,7 @@ internal static partial class Tests
         ("bf16: rounding, direct and expanded products, gradient, model conversion, save/load, decoder build", BFloat16Weights),
         ("int4: group scales, direct and expanded products, gradient, model conversion, save/load", Int4Weights),
         ("packed projections sharing an input (int8, int4, bf16; biases; splits) and gated down projections match separate layers", PackedMany),
+        ("packed epilogues: the bias, gelu and the residual in a bf16 or 4-bit product's epilogue (MatMulPackedEpilogue, the Linear helpers) equal the separate passes bit for bit, float32 and bfloat16 (1, 70 and 300 rows), with no pass after the product on CUDA's tensor cores; a transformer encoder layer's fused inference pass equals its layers run one by one", PackedEpilogues),
         ("weights: Float16 and BFloat16 files are half the size and round as expected", HalfPrecisionFiles),
         ("matmul: few rows (column-parallel path) match the reference, with beta and transposes", FewRowMatMul),
         ("int8 KV cache: write, scores and context kernels match a dequantized cache", Int8CacheKernels),
@@ -166,6 +168,102 @@ internal static partial class Tests
 
         Check(model.ToFloat32() > 0 && model.Descendants().OfType<Linear>().All(l => !l.Packed), "back to float32");
         AssertClose(nibbles, model.Predict(ids).ToArray(), 1e-4f, "float32 keeps the rounded weights");
+    }
+
+    // Tensor.MatMulPackedEpilogue against the separate passes it replaces (the product and the bias as Linear runs them,
+    // BiasGelu, residual + y), bit for bit; on CUDA under bfloat16 the products run one k split (CudaBackend.PackedSplits),
+    // so the separate product sums in the fused one's order. Then a TransformerEncoderLayer of bfloat16 layers: its fused
+    // inference pass against its layers' Forward and the sums written out.
+    private static void PackedEpilogues(Device device)
+    {
+        static int FirstDifference(float[] expected, float[] actual) =>
+            expected.Length != actual.Length ? 0
+            : Enumerable.Range(0, expected.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(expected[i]) != BitConverter.SingleToInt32Bits(actual[i]), -1);
+
+        var r = new Random(79);
+        bool tensorCores = MixedPrecision.TensorCoresUnavailable(device) is null;
+        var previous = Idrak.Gpu.Cuda.CudaBackend.PackedSplits;
+        try
+        {
+            Idrak.Gpu.Cuda.CudaBackend.PackedSplits = 1;
+            foreach (var precision in new[] { MatMulPrecision.Float32, MatMulPrecision.BFloat16 })
+            {
+                foreach (var (format, convert) in new (string, Action<Linear>)[] { ("bf16", l => l.ToBFloat16()), ("int4", l => l.QuantizeInt4()) })
+                {
+                    foreach (int m in new[] { 1, 70, 300 })
+                    {
+                        const int K = 192, N = 320;
+                        using var layer = new Linear(K, N, bias: true, device, r);
+                        layer.Bias!.Load([.. Enumerable.Range(0, N).Select(i => MathF.Sin(i))]);
+                        convert(layer);
+                        using var noGrad = Autograd.NoGrad();
+                        using var scope = new TensorScope();
+                        using var mixed = MixedPrecision.Use(precision);
+                        var x = Tensor.From([.. Enumerable.Range(0, m * K).Select(_ => (float)(r.NextDouble() * 4 - 2))], [1, m, K], device);
+                        var residual = Tensor.From([.. Enumerable.Range(0, m * N).Select(_ => (float)(r.NextDouble() * 2 - 1))], [1, m, N], device);
+                        var expected = new[] { layer.Forward(x), layer.ProjectWithoutBias(x).BiasGelu(layer.Bias), residual + layer.Forward(x) };
+                        string what = $"{format}, {precision}, {m} rows on {device}";
+                        using var trace = Kernels.Trace(device.Backend);
+                        var fused = new[]
+                        {
+                            Tensor.MatMulPackedEpilogue(x, layer.PackedWeight!, layer.Bias), Tensor.MatMulPackedEpilogue(x, layer.PackedWeight!, layer.Bias, gelu: true),
+                            Tensor.MatMulPackedEpilogue(x, layer.PackedWeight!, layer.Bias, residual: residual),
+                        };
+                        var helpers = new[] { layer.ProjectBiased(x), layer.ProjectGelu(x), layer.ProjectAdding(x, residual) };
+                        string[] names = ["+ bias", "gelu", "+ residual"];
+                        for (int i = 0; i < 3; i++)
+                        {
+                            var e = expected[i].ToArray();
+                            int at = FirstDifference(e, fused[i].ToArray());
+                            Check(at < 0, $"{what}, {names[i]}: element {at} differs from the separate passes'");
+                            Check(FirstDifference(e, helpers[i].ToArray()) < 0, $"{what}, {names[i]}: the Linear helper differs from the separate passes");
+                        }
+
+                        if (device.Type == DeviceType.Cuda && tensorCores && precision != MatMulPrecision.Float32 && format == "bf16" && m > 8)
+                        {
+                            Check(trace.Calls(Ops.AddRowVector) == 0 && trace.Calls(Ops.BiasGelu) == 0 && trace.Calls(Ops.Binary) == 0,
+                                $"{what}: the bias, gelu and residual in the product's epilogue (AddRowVector {trace.Calls(Ops.AddRowVector)}, BiasGelu "
+                                + $"{trace.Calls(Ops.BiasGelu)}, Binary {trace.Calls(Ops.Binary)})");
+                        }
+                    }
+                }
+
+                // A pre-norm encoder layer of bfloat16 layers: the fused pass (biases, residuals and gelu in the epilogues) against
+                // its parts run one by one, as the unfused pass runs them.
+                using (var encoder = new TransformerEncoderLayer(64, 4, 128, dropout: 0f, device: device, random: r))
+                {
+                    var parts = encoder.Children().ToArray();                          // norm1, attention, norm2, fc1, fc2
+                    var (norm1, attention, norm2, fc1, fc2) = ((LayerNorm)parts[0], (MultiHeadAttention)parts[1], (LayerNorm)parts[2], (Linear)parts[3], (Linear)parts[4]);
+                    foreach (var linear in attention.Children().OfType<Linear>().Concat([fc1, fc2]))
+                    {
+                        linear.Bias!.Load([.. Enumerable.Range(0, linear.OutFeatures).Select(i => 0.1f * MathF.Cos(i))]);
+                        linear.ToBFloat16();
+                    }
+
+                    using var noGrad = Autograd.NoGrad();
+                    using var scope = new TensorScope();
+                    using var mixed = MixedPrecision.Use(precision);
+                    var x = Tensor.From([.. Enumerable.Range(0, 2 * 70 * 64).Select(_ => (float)(r.NextDouble() * 2 - 1))], [2, 70, 64], device);
+                    var sum = x + attention.Forward(norm1.Forward(x));
+                    var expected = (sum + fc2.Forward(fc1.ProjectWithoutBias(norm2.Forward(sum)).BiasGelu(fc1.Bias!))).ToArray();
+                    int at = FirstDifference(expected, encoder.Forward(x).ToArray());
+                    Check(at < 0, $"encoder layer, {precision} on {device}: element {at} of the fused pass differs from its layers run one by one");
+                }
+            }
+
+            using var w = new Linear(16, 64, bias: true, device, r);
+            w.ToBFloat16();
+            var input = Tensor.From(new float[3 * 16], [3, 16], device);
+            Check(Failure<ArgumentException>(() => Tensor.MatMulPackedEpilogue(input, w.PackedWeight!, null, gelu: true)) is not null, "gelu needs the bias");
+            Check(Failure<ArgumentException>(() => Tensor.MatMulPackedEpilogue(input, w.PackedWeight!, w.Bias, gelu: true, residual: Tensor.Zeros([3, 64], device))) is not null,
+                "gelu takes no residual");
+            var recorded = Tensor.From(new float[3 * 16], [3, 16], device, requiresGrad: true);
+            Check(Failure<InvalidOperationException>(() => Tensor.MatMulPackedEpilogue(recorded, w.PackedWeight!, w.Bias)) is not null, "no gradient recorded");
+        }
+        finally
+        {
+            Idrak.Gpu.Cuda.CudaBackend.PackedSplits = previous;
+        }
     }
 
     private static void PackedMany(Device device)

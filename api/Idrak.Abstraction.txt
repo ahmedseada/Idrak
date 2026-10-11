@@ -493,6 +493,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void AttentionScoresInt8Kernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int rows, int steps, int capacity, int dim)
   public virtual void AttentionSpansBackwardKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual void AttentionSpansKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
+  public virtual void AttentionSpansStridedKernel(Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
   public virtual void AttentionTiledBackwardKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual void AttentionTiledKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual void AvgPoolBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
@@ -560,6 +561,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void NormStatsKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage mean, Idrak.Abstraction.Devices.Storage variance, Idrak.Abstraction.Devices.Storage invStd, int outer, int groups, int inner, float eps)
   public virtual void OneHotKernel(Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int classes)
   public virtual void PackBFloat16Kernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, int n)
+  public virtual void PackedMatMulEpilogueKernel(Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage? residual, bool gelu)
   public virtual void PenalizeRowsKernel(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage work, Idrak.Abstraction.Devices.Storage history, Idrak.Abstraction.Devices.Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
   public virtual void PermuteKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, System.ReadOnlySpan<int> outShape, System.ReadOnlySpan<int> inStrides, bool accumulate)
   public virtual void PowBackwardKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float exponent)
@@ -611,6 +613,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void AttentionScoresInt8(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int rows, int steps, int capacity, int dim)
   public void AttentionSpans(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public void AttentionSpansBackward(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
+  public void AttentionSpansStrided(Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
   public void AttentionTiled(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public void AttentionTiledBackward(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public void AvgPool(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
@@ -676,6 +679,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void NormStats(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage mean, Idrak.Abstraction.Devices.Storage variance, Idrak.Abstraction.Devices.Storage invStd, int outer, int groups, int inner, float eps)
   public void OneHot(Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int classes)
   public void PackBFloat16(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, int n)
+  public void PackedMatMulEpilogue(Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage? residual, bool gelu)
   public void PenalizeRows(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage work, Idrak.Abstraction.Devices.Storage history, Idrak.Abstraction.Devices.Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
   public void Permute(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, System.ReadOnlySpan<int> outShape, System.ReadOnlySpan<int> inStrides, bool accumulate)
   public void Pow(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float exponent)
@@ -920,6 +924,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -937,6 +942,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -1006,6 +1012,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public (default) void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public (default) void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public (default) void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public (default) void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public (default) void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -1025,6 +1032,23 @@ public readonly record struct Idrak.Abstraction.Diagnostics.InferenceCompleted :
   public int[] OutputShape { get; init; }
   public string Model { get; init; }
 
+public readonly record struct Idrak.Abstraction.Diagnostics.InferenceStage : System.IEquatable<Idrak.Abstraction.Diagnostics.InferenceStage>
+  public Idrak.Abstraction.Diagnostics.InferenceStageKind Stage { get; init; }
+  public InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind Stage, string Device, System.TimeSpan Duration, long Count, long Bytes)
+  public System.TimeSpan Duration { get; init; }
+  public long Bytes { get; init; }
+  public long Count { get; init; }
+  public string Device { get; init; }
+
+public enum Idrak.Abstraction.Diagnostics.InferenceStageKind : int
+  CacheAllocation = 6
+  DecodeChunk = 4
+  Encoder = 2
+  GraphCapture = 5
+  ImageDecode = 0
+  ImageTransforms = 1
+  Prefill = 3
+
 public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstraction.Diagnostics.ITelemetryHook, System.IAsyncDisposable, System.IDisposable
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
   public JsonLinesLogger(string path, Idrak.Abstraction.Diagnostics.TelemetryLevel levels = (Idrak.Abstraction.Diagnostics.TelemetryLevel)35)
@@ -1036,6 +1060,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -1206,6 +1231,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void DeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public static void Engine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public static void EpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0)
   public static void ToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public static void TrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public static void TrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
@@ -2198,6 +2224,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionSegmentedBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionSpans (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionSpansBackward (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AttentionSpansStrided (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionStrided (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionStridedBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionTiled (below)
@@ -2284,6 +2311,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.OneHot (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackBFloat16 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulAddRmsNorm (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulEpilogue (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGated (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGatedPair (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulLarge (below)
@@ -2362,6 +2390,8 @@ public delegate bool Idrak.Abstraction.Operations.OperationKernels.AttentionSegm
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionSpans(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionSpansBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionSpansStrided(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.AttentionStrided(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
 
@@ -2535,6 +2565,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.PackBFloat16(
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.PackedMatMulAddRmsNorm(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage residual, Idrak.Abstraction.Devices.Storage sum, Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage normalized, float eps, float offset)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.PackedMatMulEpilogue(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage? residual, bool gelu)
+
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGated(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, int activation, Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGatedPair(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, int activation, Idrak.Abstraction.Devices.Storage x, int m, int k, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, int)> products, Idrak.Abstraction.Devices.Storage hidden)
@@ -2628,6 +2660,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation AttentionSegmentedBackward
   public static readonly Idrak.Abstraction.Operations.Operation AttentionSpans
   public static readonly Idrak.Abstraction.Operations.Operation AttentionSpansBackward
+  public static readonly Idrak.Abstraction.Operations.Operation AttentionSpansStrided
   public static readonly Idrak.Abstraction.Operations.Operation AttentionStrided
   public static readonly Idrak.Abstraction.Operations.Operation AttentionStridedBackward
   public static readonly Idrak.Abstraction.Operations.Operation AttentionTiled
@@ -2714,6 +2747,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation OneHot
   public static readonly Idrak.Abstraction.Operations.Operation PackBFloat16
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulAddRmsNorm
+  public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulEpilogue
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulGated
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulGatedPair
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulLarge
@@ -3012,6 +3046,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor GatherRows(Idrak.Abstraction.Tensor x, int[] rows)
   public static Idrak.Abstraction.Tensor MatMulBias(Idrak.Abstraction.Tensor x, Idrak.Abstraction.Tensor w, Idrak.Abstraction.Tensor bias)
   public static Idrak.Abstraction.Tensor MatMulFrozenTransposed(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Generation.BFloat16Weight transposed)
+  public static Idrak.Abstraction.Tensor MatMulPackedEpilogue(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.PackedWeight weight, Idrak.Abstraction.Tensor? bias, bool gelu = false, Idrak.Abstraction.Tensor? residual = null)
   public static Idrak.Abstraction.Tensor MatchRate(Idrak.Abstraction.Tensor predictions, Idrak.Abstraction.Tensor targets, float threshold)
   public static Idrak.Abstraction.Tensor Normal(System.ReadOnlySpan<int> shape, float mean = 0f, float std = 1f, System.Random? random = null, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor OneHot(Idrak.Abstraction.Tensor indices, int classes)
@@ -3039,6 +3074,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor op_Subtraction(Idrak.Abstraction.Tensor a, float b)
   public static Idrak.Abstraction.Tensor op_Subtraction(float a, Idrak.Abstraction.Tensor b)
   public static Idrak.Abstraction.Tensor op_UnaryNegation(Idrak.Abstraction.Tensor a)
+  public static Idrak.Abstraction.Tensor? AttentionFastestPacked(Idrak.Abstraction.Tensor packed, int heads, int kvHeads, int dim, Idrak.Abstraction.Tensor starts, Idrak.Abstraction.Tensor ends, float scale, bool everyKey)
   public static Idrak.Abstraction.Tensor? AttentionRows(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values, Idrak.Abstraction.Tensor position, int steps, float scale, Idrak.Abstraction.Tensor starts, int headsPerRow, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public static Idrak.Abstraction.Tensor? CausalAttentionPacked(Idrak.Abstraction.Tensor packed, int heads, int kvHeads, int dim, float scale)
   public static Idrak.Abstraction.Tensor? GatedActivationCompressed(Idrak.Abstraction.Tensor gate, Idrak.Abstraction.Tensor up, Idrak.Abstraction.Generation.FeedForwardActivation activation, bool packOutput, out Idrak.Abstraction.Devices.Storage? packedOutput)

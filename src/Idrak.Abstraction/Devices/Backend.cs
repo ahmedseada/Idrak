@@ -729,6 +729,67 @@ public abstract partial class Backend
     public virtual bool PackedMatMulLargeKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
+    /// y [m, n] = x [m, k] · w (packed in <paramref name="format"/>, with <paramref name="scales"/> for int8 and 4-bit) +
+    /// <paramref name="bias"/> [n] on every row (when given), then gelu (the tanh approximation, as <see cref="BiasGelu"/>;
+    /// <paramref name="gelu"/> needs the bias) or + <paramref name="residual"/> [m, n] (when given; not with gelu): a
+    /// layer's product and what follows it in one pass where the device's product has the epilogue. By default the product
+    /// (<see cref="BFloat16MatMul"/>, <see cref="Int8MatMul"/> or <see cref="Int4MatMul"/>), then <see cref="BiasGelu"/> or
+    /// <see cref="AddRowVector"/>, then the residual's <see cref="Binary"/> add, in y: a device's own epilogue adds in the
+    /// same order (residual + (product + bias)).
+    /// </summary>
+    public virtual void PackedMatMulEpilogueKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias,
+        Storage? residual, bool gelu)
+    {
+        if (gelu && (bias is null || residual is not null))
+        {
+            throw new ArgumentException("PackedMatMulEpilogue: gelu takes the bias and no residual.");
+        }
+
+        // Each pass writes a buffer of its own (no pass reads and writes one storage), as the separate tensors did.
+        Storage? product = bias is not null || residual is not null ? Allocate(m * n, zeroed: false) : null;
+        Storage? biased = bias is not null && residual is not null ? Allocate(m * n, zeroed: false) : null;
+        try
+        {
+            var current = product ?? y;
+            switch (format)
+            {
+                case PackedFormat.BFloat16:
+                    BFloat16MatMul(x, packed, current, m, n, k);
+                    break;
+                case PackedFormat.Int8:
+                    Int8MatMul(x, packed, scales ?? throw new ArgumentNullException(nameof(scales)), current, m, n, k);
+                    break;
+                case PackedFormat.Int4:
+                    Int4MatMul(x, packed, scales ?? throw new ArgumentNullException(nameof(scales)), current, m, n, k);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(format), format, "Not a built-in packed format.");
+            }
+
+            if (gelu)
+            {
+                BiasGelu(current, bias!, y, m * n, n);
+            }
+            else if (bias is not null)
+            {
+                var target = biased ?? y;
+                AddRowVector(current, bias, target, m, n);
+                current = target;
+            }
+
+            if (residual is not null)
+            {
+                Binary(BinaryOp.Add, residual, current, y, m * n);
+            }
+        }
+        finally
+        {
+            product?.Release();
+            biased?.Release();
+        }
+    }
+
+    /// <summary>
     /// True when <see cref="PackedMatMulLarge"/> is faster than the few-rows kernels for this shape although the rows are
     /// few enough for them (callers still fall back to those kernels when the packed product returns false). Given the
     /// real operands, so a device can measure both on itself; it may write <paramref name="y"/>, which the caller's product
@@ -1888,6 +1949,66 @@ public abstract partial class Backend
         using var h = new HostCall(this);
         CpuBackend.Instance.AttentionSpans(h[q], h[keys], h[values], h[starts], h[ends], h[y], h.Maybe(logSumExp), heads, kvHeads, headsPerTable, rows,
             keyRows, dim, scale, variant);
+    }
+
+    /// <summary>
+    /// <see cref="AttentionSpans"/> of a self-attention layer read in place from rows [batch, rows, *] (its packed
+    /// projections: no copies of the heads), for inference (no log-sum-exp): query head h &lt; heads of batch b at row i is
+    /// q[qOffset + (b·rows + i)·qRow + h·dim .. + dim], its key/value head g = h / (heads / kvHeads) reads keys and values
+    /// k / v[offset + (b·rows + c)·kRow + g·dim .. + dim] for c &lt; rows, and the output is written to y[(b·rows + i)·heads·dim
+    /// + h·dim .. + dim] ([batch, rows, heads·dim]). Head b·heads + h reads the ranges of table (b·heads + h) /
+    /// headsPerTable, as AttentionSpans' heads do. Offsets and row strides in floats; q, k and v may be one storage at three
+    /// offsets. By default the heads are copied out to [batch·heads, rows, dim] (keys and values to [batch·kvHeads, rows,
+    /// dim]), AttentionSpans runs on them and its output is copied back: a device's own kernel gives those values.
+    /// </summary>
+    public virtual void AttentionSpansStridedKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+        Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
+        if (batch <= 0 || heads <= 0 || rows <= 0 || dim <= 0)
+        {
+            return;
+        }
+
+        long queries = (long)batch * heads * rows * dim, keyValues = (long)batch * kvHeads * rows * dim;
+        if (queries > int.MaxValue || keyValues > int.MaxValue || Math.Max(qOffset, Math.Max(kOffset, vOffset)) + (long)batch * rows * Math.Max(qRow, kRow) > int.MaxValue)
+        {
+            throw new ArgumentException($"AttentionSpansStrided: {batch} × {rows} rows of {heads} heads of {dim} do not fit one storage's offsets.");
+        }
+
+        var (qc, kc, vc, yc) = (Allocate((int)queries, zeroed: false), Allocate((int)keyValues, zeroed: false), Allocate((int)keyValues, zeroed: false),
+            Allocate((int)queries, zeroed: false));
+        try
+        {
+            for (int b = 0; b < batch; b++)
+            {
+                for (int h = 0; h < heads; h++)
+                {
+                    Copy2D(q, (int)(qOffset + (long)b * rows * qRow + h * dim), qRow, qc, (b * heads + h) * rows * dim, dim, rows, dim, accumulate: false);
+                }
+
+                for (int g = 0; g < kvHeads; g++)
+                {
+                    Copy2D(k, (int)(kOffset + (long)b * rows * kRow + g * dim), kRow, kc, (b * kvHeads + g) * rows * dim, dim, rows, dim, accumulate: false);
+                    Copy2D(v, (int)(vOffset + (long)b * rows * kRow + g * dim), kRow, vc, (b * kvHeads + g) * rows * dim, dim, rows, dim, accumulate: false);
+                }
+            }
+
+            AttentionSpans(qc, kc, vc, starts, ends, yc, null, batch * heads, batch * kvHeads, headsPerTable, rows, rows, dim, scale);
+            for (int b = 0; b < batch; b++)
+            {
+                for (int h = 0; h < heads; h++)
+                {
+                    Copy2D(yc, (b * heads + h) * rows * dim, dim, y, b * rows * heads * dim + h * dim, heads * dim, rows, dim, accumulate: false);
+                }
+            }
+        }
+        finally
+        {
+            qc.Release();
+            kc.Release();
+            vc.Release();
+            yc.Release();
+        }
     }
 
     /// <summary>

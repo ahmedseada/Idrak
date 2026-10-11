@@ -35,9 +35,11 @@ internal enum TuneOp : byte
     FloatTile,
     DecodeSplits,
     DecodeMinChunk,
-    SpanWarps,
+    SpanWarps,                // no longer measured (SpanKernel took its place); kept so the values after it keep their numbers
     AttentionPath,
     Convolution,
+    SpanKernel,
+    SpanStrided,
 }
 
 /// <summary>
