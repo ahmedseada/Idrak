@@ -28,6 +28,41 @@ public static class ModelMemory
     }
 
     /// <summary>
+    /// The weights of <paramref name="module"/>: the elements of its parameters and buffers, a packed weight (bfloat16, int8,
+    /// int4) by its rows x columns whatever its storage holds, each storage once (a tied head and its table count once).
+    /// What a model's size in parameters means, frozen or trainable (<see cref="Module.ParameterCount"/> counts the
+    /// trainable ones only).
+    /// </summary>
+    public static long WeightCount(Module module)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        var counted = new HashSet<Storage>(ReferenceEqualityComparer.Instance);
+        var packed = new HashSet<PackedWeight>(ReferenceEqualityComparer.Instance);
+        long total = 0;
+        foreach (var linear in module.Descendants().Prepend(module).OfType<Linear>())
+        {
+            if (linear.PackedWeight is { } weight && packed.Add(weight))
+            {
+                total += (long)weight.Rows * weight.Columns;
+                foreach (var buffer in linear.Buffers())
+                {
+                    counted.Add(buffer.Storage);                                 // the packed values and their scales
+                }
+            }
+        }
+
+        foreach (var tensor in module.Parameters().Concat(module.Buffers()))
+        {
+            if (counted.Add(tensor.Storage))
+            {
+                total += tensor.Size;
+            }
+        }
+
+        return total;
+    }
+
+    /// <summary>
     /// A decoder's weights by part: the token embedding (named <c>embed</c> by <see cref="DecoderBuilder"/>), the output
     /// head (<c>head</c>) and everything else (the layers and norms). A tied head reading the embedding's table, or an
     /// embedding reading the head's columns, counts 0 bytes with a note saying whose table it reads.

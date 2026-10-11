@@ -381,6 +381,7 @@ public static class Idrak.Diagnostics.ModelMemory
   public static System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.MemoryPart> Generation(Idrak.Abstraction.Module decoder, Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout, Idrak.Abstraction.Generation.IVisionEncoder? encoder = null, int batch = 1)
   public static long KeyValueCacheBytes(Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout, int batch = 1)
   public static long TensorBytes(Idrak.Abstraction.Module module)
+  public static long WeightCount(Idrak.Abstraction.Module module)
 
 public sealed record Idrak.Inference.Abstractions.CtcDecodeOptions : System.IEquatable<Idrak.Inference.Abstractions.CtcDecodeOptions>
   public CtcDecodeOptions()

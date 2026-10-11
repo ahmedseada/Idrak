@@ -63,6 +63,9 @@ internal static partial class Tests
         Check(ReferenceEquals(halfEmbedding.Head, halfHead) && ReferenceEquals(halfHead.SharedTable, halfEmbedding) && halfEmbedding.BFloat16 is null
               && !halfEmbedding.Buffers().Any() && halfHead.BFloat16 is not null, "a tied bf16 head holds the only table");
         long sharedBytes = half.Buffers().Sum(b => 4L * b.Size);
+        long weights = Idrak.Diagnostics.ModelMemory.WeightCount(model);
+        Check(weights > 0 && Idrak.Diagnostics.ModelMemory.WeightCount(half) == weights && half.ParameterCount < weights,
+            $"the weights counted alike float32 and packed bfloat16 (tied table once): {weights} and {Idrak.Diagnostics.ModelMemory.WeightCount(half)}; trainable {half.ParameterCount}");
 
         // The memory breakdown: the embedding counts nothing (it reads the head), the parts add up to the model's tensors,
         // and the KV cache formula is what a decoding context allocates.

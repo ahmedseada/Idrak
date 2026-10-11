@@ -86,7 +86,7 @@ internal static partial class Tests
                 EncoderPrecision = Bf16("IDRAK_BENCH_ENCODER") ? MatMulPrecision.BFloat16 : null,
                 ContextLength = context,
             });
-            long parameters = model.Network.ParameterCount, weightBytes = ModelMemory.TensorBytes(model.Network);
+            long parameters = ModelMemory.WeightCount(model.Network), weightBytes = ModelMemory.TensorBytes(model.Network);
             var request = new ImageReadRequest(page, prompt) { MaxTokens = tokens };
             var report = Profiler.Run($"read: {setup}", device, run =>
             {
@@ -114,7 +114,7 @@ internal static partial class Tests
             }, options);
             Console.WriteLine();
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"{device}: loaded in {loadSeconds:F2} s; decoder {parameters:N0} parameters, {weightBytes / 1048576.0:F0} MB of weights"));
+                $"{device}: loaded in {loadSeconds:F2} s; decoder {parameters:N0} weights, {weightBytes / 1048576.0:F0} MB of weights"));
             report.Write();
         }
 
