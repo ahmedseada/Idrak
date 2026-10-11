@@ -1891,6 +1891,66 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// <see cref="AttentionSpans"/> of a self-attention layer read in place from rows [batch, rows, *] (its packed
+    /// projections: no copies of the heads), for inference (no log-sum-exp): query head h &lt; heads of batch b at row i is
+    /// q[qOffset + (b·rows + i)·qRow + h·dim .. + dim], its key/value head g = h / (heads / kvHeads) reads keys and values
+    /// k / v[offset + (b·rows + c)·kRow + g·dim .. + dim] for c &lt; rows, and the output is written to y[(b·rows + i)·heads·dim
+    /// + h·dim .. + dim] ([batch, rows, heads·dim]). Head b·heads + h reads the ranges of table (b·heads + h) /
+    /// headsPerTable, as AttentionSpans' heads do. Offsets and row strides in floats; q, k and v may be one storage at three
+    /// offsets. By default the heads are copied out to [batch·heads, rows, dim] (keys and values to [batch·kvHeads, rows,
+    /// dim]), AttentionSpans runs on them and its output is copied back: a device's own kernel gives those values.
+    /// </summary>
+    public virtual void AttentionSpansStridedKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+        Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
+        if (batch <= 0 || heads <= 0 || rows <= 0 || dim <= 0)
+        {
+            return;
+        }
+
+        long queries = (long)batch * heads * rows * dim, keyValues = (long)batch * kvHeads * rows * dim;
+        if (queries > int.MaxValue || keyValues > int.MaxValue || Math.Max(qOffset, Math.Max(kOffset, vOffset)) + (long)batch * rows * Math.Max(qRow, kRow) > int.MaxValue)
+        {
+            throw new ArgumentException($"AttentionSpansStrided: {batch} × {rows} rows of {heads} heads of {dim} do not fit one storage's offsets.");
+        }
+
+        var (qc, kc, vc, yc) = (Allocate((int)queries, zeroed: false), Allocate((int)keyValues, zeroed: false), Allocate((int)keyValues, zeroed: false),
+            Allocate((int)queries, zeroed: false));
+        try
+        {
+            for (int b = 0; b < batch; b++)
+            {
+                for (int h = 0; h < heads; h++)
+                {
+                    Copy2D(q, (int)(qOffset + (long)b * rows * qRow + h * dim), qRow, qc, (b * heads + h) * rows * dim, dim, rows, dim, accumulate: false);
+                }
+
+                for (int g = 0; g < kvHeads; g++)
+                {
+                    Copy2D(k, (int)(kOffset + (long)b * rows * kRow + g * dim), kRow, kc, (b * kvHeads + g) * rows * dim, dim, rows, dim, accumulate: false);
+                    Copy2D(v, (int)(vOffset + (long)b * rows * kRow + g * dim), kRow, vc, (b * kvHeads + g) * rows * dim, dim, rows, dim, accumulate: false);
+                }
+            }
+
+            AttentionSpans(qc, kc, vc, starts, ends, yc, null, batch * heads, batch * kvHeads, headsPerTable, rows, rows, dim, scale);
+            for (int b = 0; b < batch; b++)
+            {
+                for (int h = 0; h < heads; h++)
+                {
+                    Copy2D(yc, (b * heads + h) * rows * dim, dim, y, b * rows * heads * dim + h * dim, heads * dim, rows, dim, accumulate: false);
+                }
+            }
+        }
+        finally
+        {
+            qc.Release();
+            kc.Release();
+            vc.Release();
+            yc.Release();
+        }
+    }
+
+    /// <summary>
     /// The gradients of <see cref="AttentionSpans"/> given its output, each row's log-sum-exp and dOutput (output's
     /// layout): with P_c = exp(s_c - logSumExp) over the row's range and Δ = dOutput · output, adds Σ_c scale · P_c ·
     /// (dOutput · values[g, c] - Δ) · keys[g, c] (times the cap's slope with a cap) to dq [heads, rows, dim], and to dkeys

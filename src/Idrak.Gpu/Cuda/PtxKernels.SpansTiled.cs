@@ -79,7 +79,18 @@ internal static partial class PtxKernels
 
     /// <summary>The float32 span module for padded head size <paramref name="d"/> (PTX 6.0, sm_50, as the main module).</summary>
     public static (string Name, string[] Kernels, string Source) SpanFloatModule(int d) =>
-        Module(string.Create(CultureInfo.InvariantCulture, $"attention spans f32 d{d}"), sb => SpanFloat(sb, d), version: "6.0", target: "sm_50");
+        Module(string.Create(CultureInfo.InvariantCulture, $"attention spans f32 d{d}"), sb =>
+        {
+            SpanFloat(sb, d, strided: false);
+            SpanFloat(sb, d, strided: true);
+        }, version: "6.0", target: "sm_50");
+
+    /// <summary>The float32 span kernel's name for padded head size <paramref name="d"/> reading rows through a layout (AttentionSpansStrided).</summary>
+    public static string SpanFloatStridedName(int d) => string.Create(CultureInfo.InvariantCulture, $"attention_spans_f32s_d{d}");
+
+    // The row layout of keys and values of the strided float32 kernel (after SpanLayoutParameters): key/value head
+    // g = b·p_hk + h, key c at k (or v) + b·p_kb + h·p_kh + c·p_kr (floats).
+    private const string SpanKeyLayoutParameters = ".param .u32 p_hk, .param .u32 p_kb, .param .u32 p_kh, .param .u32 p_kr";
 
     /// <summary>The tensor-core span module for padded head size <paramref name="d"/> (PTX 7.0, sm_80; every warp count).</summary>
     public static (string Name, string[] Kernels, string Source) SpanTensorModule(int d) =>
@@ -163,9 +174,69 @@ internal static partial class PtxKernels
 
     // ------------------------------------------------------------------ float32
 
-    private static void SpanFloat(StringBuilder sb, int d)
+    // The contiguous kernel's offsets of head %r10 (in the floats of q / y: %r11·dim; of k / v: (%r10 / group)·keys·dim)
+    // and the strided kernel's (through the layouts: b = hh / p_hq, h = hh - b·p_hq; g = hh / group, then b, h of g by
+    // p_hk), each continuing the line before it; the strided kernel's layout parameters likewise.
+    private const string ContiguousOffsets = """
+
+                    mul.wide.u32 %rd8, %r11, %r3;
+                    shl.b64 %rd8, %rd8, 2;
+                    add.u64 %rd1, %rd1, %rd8;
+                    add.u64 %rd6, %rd6, %rd8;
+                    div.u32 %r12, %r10, %r4;
+                    mul.lo.u32 %r12, %r12, %r2;
+                    mul.wide.u32 %rd8, %r12, %r3;
+                    shl.b64 %rd8, %rd8, 2;
+                    add.u64 %rd2, %rd2, %rd8;
+                    add.u64 %rd3, %rd3, %rd8;
+                """;
+
+    private const string StridedOffsets = """
+
+                    div.u32 %r61, %r10, %r50;
+                    mul.lo.u32 %r62, %r61, %r50;
+                    sub.u32 %r62, %r10, %r62;
+                    mul.wide.u32 %rd8, %r61, %r51;
+                    mad.wide.u32 %rd8, %r62, %r52, %rd8;
+                    shl.b64 %rd8, %rd8, 2;
+                    add.u64 %rd1, %rd1, %rd8;
+                    mul.wide.u32 %rd8, %r61, %r54;
+                    mad.wide.u32 %rd8, %r62, %r55, %rd8;
+                    shl.b64 %rd8, %rd8, 2;
+                    add.u64 %rd6, %rd6, %rd8;
+                    div.u32 %r12, %r10, %r4;
+                    div.u32 %r61, %r12, %r57;
+                    mul.lo.u32 %r62, %r61, %r57;
+                    sub.u32 %r62, %r12, %r62;
+                    mul.wide.u32 %rd8, %r61, %r58;
+                    mad.wide.u32 %rd8, %r62, %r59, %rd8;
+                    shl.b64 %rd8, %rd8, 2;
+                    add.u64 %rd2, %rd2, %rd8;
+                    add.u64 %rd3, %rd3, %rd8;
+                """;
+
+    private const string StridedLoads = """
+
+                    ld.param.u32 %r50, [p_hq];
+                    ld.param.u32 %r51, [p_qb];
+                    ld.param.u32 %r52, [p_qh];
+                    ld.param.u32 %r53, [p_qr];
+                    ld.param.u32 %r54, [p_yb];
+                    ld.param.u32 %r55, [p_yh];
+                    ld.param.u32 %r56, [p_yr];
+                    ld.param.u32 %r57, [p_hk];
+                    ld.param.u32 %r58, [p_kb];
+                    ld.param.u32 %r59, [p_kh];
+                    ld.param.u32 %r60, [p_kr];
+                """;
+
+    // strided: the kernel attention_spans_f32s_d{D}, reading queries, keys and values and writing the output through row
+    // layouts (SpanLayoutParameters, SpanKeyLayoutParameters; the log-sum-exp stays [heads, rows]): the same arithmetic in
+    // the same order as the contiguous kernel, only the addresses differ.
+    private static void SpanFloat(StringBuilder sb, int d, bool strided)
     {
-        string name = SpanFloatName(d);
+        string name = strided ? SpanFloatStridedName(d) : SpanFloatName(d);
+        string qRow = strided ? "%r53" : "%r3", kRow = strided ? "%r60" : "%r3", yRow = strided ? "%r56" : "%r3";
         int j = d / 8;                                 // output columns per thread: tc + 8·jj
         int rt = SpanRowsPerThread(d), rows = 16 * rt; // query rows per thread and per block
         int rtShift = rt == 4 ? 2 : 1, rowShift = rows == 64 ? 6 : 5;
@@ -175,7 +246,7 @@ internal static partial class PtxKernels
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .extern .shared .align 16 .b8 {{name}}_smem[];
             .visible .entry {{name}}(
-                {{SpanParameters}}, .param .f32 p_softcap
+                {{SpanParameters}}, .param .f32 p_softcap{{(strided ? ",\n    " + SpanLayoutParameters + ",\n    " + SpanKeyLayoutParameters : "")}}
             )
             {
                 .reg .pred %p<16>;
@@ -213,7 +284,7 @@ internal static partial class PtxKernels
                 ld.param.f32 %f1, [p_scale];
                 ld.param.u32 %r4, [p_group];
                 ld.param.u32 %r5, [p_hpt];
-                ld.param.f32 %softcap, [p_softcap];
+                ld.param.f32 %softcap, [p_softcap];{{(strided ? StridedLoads : "")}}
                 setp.gt.f32 %capped, %softcap, 0f00000000;
                 mov.u32 %r6, %tid.x;
                 and.b32 %r7, %r6, 7;
@@ -221,17 +292,7 @@ internal static partial class PtxKernels
                 mov.u32 %r9, %ctaid.x;
                 shl.b32 %r9, %r9, {{rowShift}};
                 mov.u32 %r10, %ctaid.y;
-                mul.lo.u32 %r11, %r10, %r1;
-                mul.wide.u32 %rd8, %r11, %r3;
-                shl.b64 %rd8, %rd8, 2;
-                add.u64 %rd1, %rd1, %rd8;
-                add.u64 %rd6, %rd6, %rd8;
-                div.u32 %r12, %r10, %r4;
-                mul.lo.u32 %r12, %r12, %r2;
-                mul.wide.u32 %rd8, %r12, %r3;
-                shl.b64 %rd8, %rd8, 2;
-                add.u64 %rd2, %rd2, %rd8;
-                add.u64 %rd3, %rd3, %rd8;
+                mul.lo.u32 %r11, %r10, %r1;{{(strided ? StridedOffsets : ContiguousOffsets)}}
                 div.u32 %r13, %r10, %r5;
                 mul.lo.u32 %r13, %r13, %r1;
                 mov.u32 %r14, {{name}}_smem;
@@ -280,7 +341,7 @@ internal static partial class PtxKernels
                     setp.lt.u32 %p1, %r29, %r1;
                     setp.lt.and.u32 %p1, %r28, %r3, %p1;
                     cvt.u64.u32 %rd9, %r28;
-                    mad.wide.u32 %rd9, %r29, %r3, %rd9;
+                    mad.wide.u32 %rd9, %r29, {{qRow}}, %rd9;
                     shl.b64 %rd9, %rd9, 2;
                     add.u64 %rd9, %rd9, %rd1;
                     mov.f32 %f4, 0f00000000;
@@ -325,7 +386,7 @@ internal static partial class PtxKernels
                     setp.lt.and.u32 %p1, %r29, %r21, %p4;
                     setp.lt.and.u32 %p1, %r28, %r3, %p1;
                     cvt.u64.u32 %rd9, %r28;
-                    mad.wide.u32 %rd9, %r29, %r3, %rd9;
+                    mad.wide.u32 %rd9, %r29, {{kRow}}, %rd9;
                     shl.b64 %rd9, %rd9, 2;
                     add.u64 %rd9, %rd9, %rd2;
                     mov.f32 %f4, 0f00000000;
@@ -404,7 +465,7 @@ internal static partial class PtxKernels
                     setp.lt.and.u32 %p1, %r29, %r21, %p4;
                     setp.lt.and.u32 %p1, %r28, %r3, %p1;
                     cvt.u64.u32 %rd9, %r28;
-                    mad.wide.u32 %rd9, %r29, %r3, %rd9;
+                    mad.wide.u32 %rd9, %r29, {{kRow}}, %rd9;
                     shl.b64 %rd9, %rd9, 2;
                     add.u64 %rd9, %rd9, %rd3;
                     mov.f32 %f4, 0f00000000;
@@ -542,7 +603,7 @@ internal static partial class PtxKernels
                     setp.gt.f32 %p11, %l{i}, 0f00000000;
                     rcp.rn.f32 %f14, %l{i};
                     selp.f32 %f14, %f14, 0f00000000, %p11;
-                    mad.lo.u32 %r41, %r40, %r3, %r7;
+                    mad.lo.u32 %r41, %r40, {yRow}, %r7;
                     mul.wide.u32 %rd11, %r41, 4;
                     add.u64 %rd11, %rd11, %rd6;
                 """);
