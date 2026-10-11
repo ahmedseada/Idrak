@@ -292,20 +292,31 @@ public sealed class ReaderService : IDisposable
                 var chosen = count > 0 ? pages.Take(count).ToList() : pages;
                 var clock = Stopwatch.StartNew();
                 var scores = new List<double>(chosen.Count);
-                foreach (var page in chosen)
+                int batch = Math.Max(1, _settings.ReadBatch);
+                for (int at = 0; at < chosen.Count; at += batch)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    SetStatus(ReaderState.Reading, $"{lease.Model.Model.Name} is evaluating: page {scores.Count + 1} of {chosen.Count}…", id);
-                    var result = ReadPage(lease.Model, page.Image, request, page.Expected, null, cancellationToken);
-                    scores.Add(result.Cer ?? 1);
-                    double left = clock.Elapsed.TotalSeconds / scores.Count * (chosen.Count - scores.Count);
-                    channel.Writer.TryWrite(new SseItem<object>(new
+                    var group = chosen.Skip(at).Take(batch).ToList();
+                    SetStatus(ReaderState.Reading, group.Count == 1
+                        ? $"{lease.Model.Model.Name} is evaluating: page {at + 1} of {chosen.Count}…"
+                        : $"{lease.Model.Model.Name} is evaluating: pages {at + 1} to {at + group.Count} of {chosen.Count} together…", id);
+                    var results = group.Count == 1
+                        ? [ReadPage(lease.Model, group[0].Image, request, group[0].Expected, null, cancellationToken)]
+                        : ReadPages(lease.Model, [.. group.Select(p => (p.Image, (string?)p.Expected))], request, cancellationToken);
+                    for (int i = 0; i < group.Count; i++)
                     {
-                        index = page.Index, name = page.Name, cer = result.Cer, seconds = Math.Round(result.Reading.Elapsed.TotalSeconds, 2),
-                        tokens = result.Reading.Stats?.GeneratedTokens ?? 0, truncated = result.Reading.Truncated,
-                        looped = result.Reading.DoneReason == "repetition", json = result.Json is not null, repaired = result.Repaired, seed = result.Seed,
-                        done = scores.Count, total = chosen.Count, meanCer = scores.Average(), secondsLeft = Math.Round(left),
-                    }, "page"));
+                        var (page, result) = (group[i], results[i]);
+                        scores.Add(result.Cer ?? 1);
+                        double left = clock.Elapsed.TotalSeconds / scores.Count * (chosen.Count - scores.Count);
+                        channel.Writer.TryWrite(new SseItem<object>(new
+                        {
+                            // A batch's pages share its time: each page's share of it.
+                            index = page.Index, name = page.Name, cer = result.Cer, seconds = Math.Round(result.Reading.Elapsed.TotalSeconds / group.Count, 2),
+                            tokens = result.Reading.Stats?.GeneratedTokens ?? 0, truncated = result.Reading.Truncated,
+                            looped = result.Reading.DoneReason == "repetition", json = result.Json is not null, repaired = result.Repaired, seed = result.Seed,
+                            done = scores.Count, total = chosen.Count, meanCer = scores.Average(), secondsLeft = Math.Round(left), batch = group.Count,
+                        }, "page"));
+                    }
                 }
 
                 var sorted = scores.Order().ToList();
@@ -522,30 +533,12 @@ public sealed class ReaderService : IDisposable
         CancellationToken cancellationToken)
     {
         var model = loaded.Model;
-        var pipeline = ImageTransformPipeline.Parse(request.Preprocessing ?? model.Preprocessing);
-        string prompt = string.IsNullOrWhiteSpace(request.Prompt) ? model.Prompt : request.Prompt;
-        int maxTokens = Math.Clamp(request.MaxTokens ?? model.MaxTokens, 1, Math.Max(1, _settings.Context - 256));
-        // Pan and scan as the read asks (else the model's setting; an adapter's tuned vision options otherwise stand).
-        bool? pan = request.PanAndScan ?? (model.PanAndScan ? true : null);
-        var vision = pan is { } on ? VisionOptions.Parse([$"{Gemma3PanAndScan.EnableKey}={(on ? "true" : "false")}"]) : null;
-        var g = _settings.Generation;
-        var read = new ImageReadRequest(image, prompt)
-        {
-            MaxTokens = maxTokens, Transforms = pipeline, VisionOptions = vision,
-            RepeatPenalty = Math.Clamp(request.RepeatPenalty ?? g.RepeatPenalty, 0.5f, 3f), PresencePenalty = request.PresencePenalty ?? g.PresencePenalty,
-            FrequencyPenalty = request.FrequencyPenalty ?? g.FrequencyPenalty, RepeatLastN = Math.Clamp(request.RepeatLastN ?? g.RepeatLastN, 0, 4096),
-            RepeatStop = Math.Clamp(request.RepeatStop ?? g.RepeatStop, 0, 100), AddSpecialTokens = request.AddSpecialTokens ?? false,
-        };
-        if (request.Sample ?? g.Sample)
-        {
-            // A seed for every sampled read (the page's, else a new one), shown with the result so a read can be repeated.
-            read = read with
-            {
-                Sample = true, Temperature = request.Temperature ?? g.Temperature, TopK = request.TopK ?? g.TopK, TopP = request.TopP ?? g.TopP,
-                MinP = request.MinP ?? g.MinP, Seed = request.Seed ?? Random.Shared.Next(),
-            };
-        }
-
+        var read = PageRequest(loaded, image, request);
+        var pipeline = read.Transforms!;
+        string prompt = read.Prompt;
+        int maxTokens = read.MaxTokens;
+        bool? pan = PanAndScan(model, request);
+        var vision = read.VisionOptions;
         if (output is not null)
         {
             SetStatus(ReaderState.Reading, $"{model.Name} is reading a page…", model.Id);
@@ -579,10 +572,79 @@ public sealed class ReaderService : IDisposable
             throw;
         }
 
+        return Scored(reading, read, expected);
+    }
+
+    // Pages read together (ImageReader.ReadBatch), each scored as ReadPage scores it; when the device has no room for the
+    // batch, the pages are read one by one.
+    private IReadOnlyList<PageResult> ReadPages(LoadedReader loaded, IReadOnlyList<(ChatImage Image, string? Expected)> pages, ReadRequest request,
+        CancellationToken cancellationToken)
+    {
+        var reads = pages.Select(p => PageRequest(loaded, p.Image, request)).ToList();
+        IReadOnlyList<ImageReading> readings;
+        try
+        {
+            readings = loaded.Reader.ReadBatch(reads, null, cancellationToken);
+        }
+        catch (ResourceLimitExceededException)
+        {
+            ComputeResources.ReleaseCachedMemory(Device);
+            _logger.LogWarning("No room on the device to read {Pages} pages together; reading them one by one", pages.Count);
+            return [.. pages.Select(p => ReadPage(loaded, p.Image, request, p.Expected, null, cancellationToken))];
+        }
+        catch
+        {
+            ComputeResources.ReleaseCachedMemory(Device);                  // as ReadPage: nothing of a failed read stays on the device
+            throw;
+        }
+
+        return [.. readings.Select((reading, i) => Scored(reading, reads[i], pages[i].Expected))];
+    }
+
+    // A read's JSON and, given the expected answer, its CER (the library's metric over the JSON's values).
+    private static PageResult Scored(ImageReading reading, ImageReadRequest read, string? expected)
+    {
         var (json, repaired) = AnswerJson.Show(reading.Text);
         double? cer = expected is null ? null
             : TuningMetrics.Get(TuningMetrics.CharacterErrorRate).Score(AnswerTexts.Of(reading.Text, AnswerTexts.Values), AnswerTexts.Of(expected, AnswerTexts.Values)).Value;
         return new PageResult(reading, json, repaired, cer, read.Sample ? read.Seed : null);
+    }
+
+    // Pan and scan as the read asks, else the model's setting (null: an adapter's tuned vision options stand).
+    private static bool? PanAndScan(ReaderModel model, ReadRequest request) => request.PanAndScan ?? (model.PanAndScan ? true : null);
+
+    // The vision options of pan and scan on and off, made once (pages read together share them, so their images go
+    // through the encoder in one call).
+    private static readonly VisionOptions PanOn = VisionOptions.Parse([$"{Gemma3PanAndScan.EnableKey}=true"]);
+    private static readonly VisionOptions PanOff = VisionOptions.Parse([$"{Gemma3PanAndScan.EnableKey}=false"]);
+
+    // The read of a page with the request's settings (the model's own where it gives none); a sampled read gets a seed.
+    private ImageReadRequest PageRequest(LoadedReader loaded, ChatImage image, ReadRequest request)
+    {
+        var model = loaded.Model;
+        var pipeline = ImageTransformPipeline.Parse(request.Preprocessing ?? model.Preprocessing);
+        string prompt = string.IsNullOrWhiteSpace(request.Prompt) ? model.Prompt : request.Prompt;
+        int maxTokens = Math.Clamp(request.MaxTokens ?? model.MaxTokens, 1, Math.Max(1, _settings.Context - 256));
+        var vision = PanAndScan(model, request) is { } on ? on ? PanOn : PanOff : null;
+        var g = _settings.Generation;
+        var read = new ImageReadRequest(image, prompt)
+        {
+            MaxTokens = maxTokens, Transforms = pipeline, VisionOptions = vision,
+            RepeatPenalty = Math.Clamp(request.RepeatPenalty ?? g.RepeatPenalty, 0.5f, 3f), PresencePenalty = request.PresencePenalty ?? g.PresencePenalty,
+            FrequencyPenalty = request.FrequencyPenalty ?? g.FrequencyPenalty, RepeatLastN = Math.Clamp(request.RepeatLastN ?? g.RepeatLastN, 0, 4096),
+            RepeatStop = Math.Clamp(request.RepeatStop ?? g.RepeatStop, 0, 100), AddSpecialTokens = request.AddSpecialTokens ?? false,
+        };
+        if (request.Sample ?? g.Sample)
+        {
+            // A seed for every sampled read (the page's, else a new one), shown with the result so a read can be repeated.
+            read = read with
+            {
+                Sample = true, Temperature = request.Temperature ?? g.Temperature, TopK = request.TopK ?? g.TopK, TopP = request.TopP ?? g.TopP,
+                MinP = request.MinP ?? g.MinP, Seed = request.Seed ?? Random.Shared.Next(),
+            };
+        }
+
+        return read;
     }
 
     // The size of an image whose header gives none: decoded.

@@ -19,7 +19,7 @@ internal static partial class Tests
         ("json repair: the registry has the library's lenient repair; an app's repair shadows it and is removed again; an unknown name is not registered", JsonRepairRegistry),
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
-        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache; a sampled read with a seed repeats", ImageReaderReads),
+        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache; a sampled read with a seed repeats; pages with one instruction read as one batch, each answer its own read's", ImageReaderReads),
         ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
         ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
     ];
@@ -245,6 +245,53 @@ internal static partial class Tests
               && byPhase.TryGetValue(1, out var steps) && steps.All(p => p == MixedPrecision.Default)
               && (!byPhase.TryGetValue(-1, out var encoder) || encoder.All(p => p == MixedPrecision.Default)) && MixedPrecision.Current == MixedPrecision.Default,
             $"PrefillPrecision: {string.Join("; ", byPhase.OrderBy(g => g.Key).Select(g => $"{(g.Key < 0 ? "encoder" : g.Key == 0 ? "prompt" : "decoding")} {g.Value.Count} layer passes under {string.Join(", ", g.Value.Distinct())}"))}");
+
+        // ReadBatch: two pages with one instruction decode as one batch of two rows, a third with another instruction (another
+        // length) alone; each answer, its end and its count of tokens as the page's own read gives them.
+        ChatImage Page(int shift)
+        {
+            var values = new float[3 * 12 * 20];
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = ((i * (shift + 1) + shift * 31) % 97) / 96f;
+            }
+
+            return ChatImage.FromBytes(ImageEncoders.Get("png").Encode(new ImageData(values, 3, 12, 20)), "image/png");
+        }
+
+        ImageReadRequest[] pages =
+        [
+            new(Page(1), "Extract details to JSON.") { MaxTokens = 12 }, new(Page(2), "Extract details to JSON.") { MaxTokens = 12 },
+            new(Page(3), "Read every line of this page.") { MaxTokens = 12 },
+        ];
+        var alone = pages.Select(p => reader.Read(p)).ToList();
+        var rows = new List<int>();
+        var made = reader.Chat.Generator.CreateSampler;
+        reader.Chat.Generator.CreateSampler = request =>
+        {
+            rows.Add(request.Rows);
+            return made(request);
+        };
+        var pieces = new System.Text.StringBuilder[pages.Length].Select(_ => new System.Text.StringBuilder()).ToArray();
+        IReadOnlyList<ImageReading> together;
+        try
+        {
+            together = reader.ReadBatch(pages, (index, text) => pieces[index].Append(text));
+        }
+        finally
+        {
+            reader.Chat.Generator.CreateSampler = made;
+        }
+
+        for (int i = 0; i < pages.Length; i++)
+        {
+            Check(together[i].Text == alone[i].Text && together[i].DoneReason == alone[i].DoneReason && together[i].Stats!.GeneratedTokens == alone[i].Stats!.GeneratedTokens
+                  && together[i].Stats!.PromptTokens == alone[i].Stats!.PromptTokens && pieces[i].ToString().Trim() == together[i].Text,
+                $"page {i}: batched \"{together[i].Text}\" ({together[i].DoneReason}, {together[i].Stats!.GeneratedTokens} tokens), "
+                + $"alone \"{alone[i].Text}\" ({alone[i].DoneReason}, {alone[i].Stats!.GeneratedTokens}); streamed \"{pieces[i]}\"");
+        }
+
+        Check(rows.Order().SequenceEqual([1, 2]), $"one batch of two rows and one page alone: samplers of {string.Join(", ", rows)} rows");
 
         Check(streamed.ToString().Trim() == first.Text, $"streamed \"{streamed}\", read \"{first.Text}\"");
         Check(first.Stats is { GeneratedTokens: > 0 and <= 6 } && first.Truncated == (first.Stats.GeneratedTokens >= 6), $"{first.Stats?.GeneratedTokens} tokens, truncated {first.Truncated}");

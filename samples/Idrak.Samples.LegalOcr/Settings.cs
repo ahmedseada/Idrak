@@ -81,6 +81,13 @@ public sealed record LegalOcrSettings
     /// <summary>The longest prompt and answer in tokens (the image's tokens included).</summary>
     public int Context { get; init; } = 8192;
 
+    /// <summary>
+    /// Pages the Evaluate tab reads together (ImageReader.ReadBatch: one pass a token for all of them, each answer the
+    /// page's own): 1 reads them one by one. Each page in a batch holds its own attention cache; when the device has no
+    /// room for a batch, its pages are read one by one.
+    /// </summary>
+    public int ReadBatch { get; init; } = 1;
+
     /// <summary>The models of the switch.</summary>
     public List<ReaderModel> Models { get; init; } = [];
 

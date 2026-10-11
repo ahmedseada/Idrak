@@ -104,7 +104,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
     /// <summary>
     /// How it reads images (a vision-language model); null (the default): text only. Each request's images are encoded
-    /// when it is answered (a later turn encodes the conversation's images again); chat batches take text only.
+    /// when it is answered (a later turn encodes the conversation's images again); ChatBatch takes text only (StreamBatch decodes requests with images together).
     /// </summary>
     public ChatImages? Images { get; init; }
 
@@ -150,7 +150,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
         if (requests.Any(r => r.Messages.Any(m => m.Parts.Any(p => p is ChatImage))))
         {
-            throw new NotSupportedException("Chat batches take text only; answer a request with images on its own (Chat or Stream).");
+            throw new NotSupportedException("ChatBatch takes text only; answer requests with images with StreamBatch, or each on its own (Chat or Stream).");
         }
     }
 
@@ -203,13 +203,28 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     /// <summary>
     /// <see cref="ChatBatch"/> streamed: each request's reply as it is generated (content, thinking and tool calls parsed
     /// as <see cref="Stream"/> parses them), tagged with the request's index, then each request's final chunk (with the
-    /// whole message and statistics) once all are done. The options of the first request apply to all.
+    /// whole message and statistics) once all are done. The options of the first request apply to all. Requests with
+    /// images are decoded together where they can be (<see cref="TextGenerator.StreamBatch(IReadOnlyList{string}, int, IReadOnlyList{IReadOnlyList{ImageFeatures}}, IImageAttentionRule, GenerationOptions, CancellationToken)"/>:
+    /// prompts of one length, such as pages read with one instruction, go through the model as one batch), every
+    /// request's images through the encoder in one call (when their vision options are the same object), each reply
+    /// parsed on its own and its done chunk given when its batch ends; requests that cannot share a batch (tools, other
+    /// generation options, text beside images) run one by one, as <see cref="Stream"/>.
     /// </summary>
     public IEnumerable<(int Index, ChatChunk Chunk)> StreamBatch(IReadOnlyList<ChatRequest> requests, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requests);
         if (requests.Count == 0)
         {
+            yield break;
+        }
+
+        if (Images is not null && requests.Any(r => ImagesOf(r).Count > 0))
+        {
+            foreach (var item in StreamBatchWithImages(requests, cancellationToken))
+            {
+                yield return item;
+            }
+
             yield break;
         }
 
@@ -261,6 +276,138 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             Generator.ReleaseCache();
             return encoder.Encode(images, options);
         }
+    }
+
+    // StreamBatch of requests with images (see there).
+    private IEnumerable<(int Index, ChatChunk Chunk)> StreamBatchWithImages(IReadOnlyList<ChatRequest> requests, CancellationToken cancellationToken)
+    {
+        var options = requests[0].Options ?? new GenerationOptions();
+        bool batched = requests.Count > 1 && Images is not null
+            && requests.All(r => r.Tools is not { Count: > 0 } && ImagesOf(r).Count > 0 && SameOptions(r.Options ?? new GenerationOptions(), options));
+        if (!batched)
+        {
+            for (int i = 0; i < requests.Count; i++)
+            {
+                foreach (var chunk in Stream(requests[i], cancellationToken))
+                {
+                    yield return (i, chunk);
+                }
+            }
+
+            yield break;
+        }
+
+        options = options with { Stop = [.. options.Stop, .. Template.StopSequences] };
+        var reader = Images!;
+        var prompts = new List<string>(requests.Count);
+        var decoded = new List<List<ImageData>>(requests.Count);
+        var blocks = new List<List<ImageTokenLayout>>(requests.Count);
+        foreach (var request in requests)
+        {
+            ChatParts.ThrowIfUnsupported(this, request);
+            var images = ImagesOf(request).Select(i => reader.Read(i, request)).ToList();
+            var layouts = images.Select(d => reader.Encoder.Blocks(d, request.VisionOptions)).ToList();
+            prompts.Add(RenderPrompt(request, layouts));
+            decoded.Add(images);
+            blocks.Add([.. layouts.SelectMany(l => l)]);
+        }
+
+        // Every request's images through the encoder at once when they share vision options (one batch of views), else a
+        // request at a time; then each request's own features, checked against its blocks.
+        cancellationToken.ThrowIfCancellationRequested();
+        TensorOffloading.BeforeInference(Generator.Device, Generator.Model);
+        var features = new List<IReadOnlyList<ImageFeatures>>(requests.Count);
+        try
+        {
+            using (reader.EncoderPrecision is { } precision ? MixedPrecision.Use(precision) : default(MixedPrecision.Scope?))
+            {
+                if (requests.All(r => ReferenceEquals(r.VisionOptions, requests[0].VisionOptions)))
+                {
+                    var all = EncodeImages(reader.Encoder, [.. decoded.SelectMany(d => d)], requests[0].VisionOptions);
+                    int at = 0;
+                    foreach (var own in blocks)
+                    {
+                        features.Add([.. all.Skip(at).Take(own.Count)]);
+                        at += own.Count;
+                    }
+
+                    if (at != all.Count)
+                    {
+                        features.Add([.. all.Skip(at)]);                       // disposed below with the rest
+                        throw new InvalidOperationException($"The image encoder gave {all.Count} blocks' features for {at} blocks.");
+                    }
+                }
+                else
+                {
+                    for (int r = 0; r < requests.Count; r++)
+                    {
+                        features.Add(EncodeImages(reader.Encoder, decoded[r], requests[r].VisionOptions));
+                    }
+                }
+            }
+
+            for (int r = 0; r < requests.Count; r++)
+            {
+                if (features[r].Count != blocks[r].Count)
+                {
+                    throw new InvalidOperationException($"Request {r}: the image encoder gave {features[r].Count} blocks' features for {blocks[r].Count} blocks.");
+                }
+
+                for (int i = 0; i < features[r].Count; i++)
+                {
+                    if (!features[r][i].Layout.Equals(blocks[r][i]) || features[r][i].Features.Shape[^1] != reader.Encoder.Width)
+                    {
+                        throw new InvalidOperationException($"Request {r}, image block {i}: the encoder gave {Tensor.FormatShape(features[r][i].Features.Shape)} "
+                            + $"({features[r][i].Layout}); its layout says {blocks[r][i]} of width {reader.Encoder.Width}.");
+                    }
+                }
+            }
+        }
+        catch
+        {
+            foreach (var f in features.SelectMany(f => f))
+            {
+                f.Dispose();
+            }
+
+            throw;
+        }
+
+        try
+        {
+            var parsers = requests.Select(r => new ChatOutputParser(Template, r.Tools, separateThinking: r.Think != false)).ToArray();
+            var content = requests.Select(_ => new System.Text.StringBuilder()).ToArray();
+            var thinking = requests.Select(_ => new System.Text.StringBuilder()).ToArray();
+            var calls = requests.Select(_ => new List<ToolCall>()).ToArray();
+            foreach (var chunk in Generator.StreamBatch(prompts, reader.Format.ImageToken, features, reader.Attention, options, cancellationToken))
+            {
+                int r = chunk.Index;
+                var delta = chunk.Done ? parsers[r].Finish() : parsers[r].Feed(chunk.Text);
+                content[r].Append(delta.Content);
+                thinking[r].Append(delta.Thinking);
+                calls[r].AddRange(delta.ToolCalls);
+                if (chunk.Done)
+                {
+                    yield return (r, new ChatChunk(delta, true, chunk.DoneReason, Reply(parsers[r], content[r].ToString(), thinking[r].ToString(), calls[r]),
+                        chunk.Stats));
+                }
+                else if (!delta.IsEmpty)
+                {
+                    yield return (r, new ChatChunk(delta));
+                }
+            }
+        }
+        finally
+        {
+            foreach (var f in features.SelectMany(f => f))
+            {
+                f.Dispose();
+            }
+        }
+
+        // Whether two requests generate alike (their stop sequences compared by value).
+        static bool SameOptions(GenerationOptions a, GenerationOptions b) =>
+            a with { Stop = [] } == b with { Stop = [] } && a.Stop.SequenceEqual(b.Stop);
     }
 
     /// <summary>Streams the reply.</summary>

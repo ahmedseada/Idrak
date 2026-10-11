@@ -195,7 +195,48 @@ public sealed class ImageReader : IDisposable
     }
 
     /// <summary>The answer to <paramref name="request"/> as it is generated (the last chunk is done, with the figures).</summary>
-    public IEnumerable<ChatChunk> Stream(ImageReadRequest request, CancellationToken cancellationToken = default)
+    public IEnumerable<ChatChunk> Stream(ImageReadRequest request, CancellationToken cancellationToken = default) =>
+        _chat.Stream(ChatRequestFor(request), cancellationToken);
+
+    /// <summary>
+    /// Reads several pages together (<see cref="ChatGenerator.StreamBatch"/>): pages read with one instruction and the same
+    /// settings go through the encoder in one call and through the language model as one batch, one pass a token for all
+    /// of them, so a device that is bound by reading its weights reads several pages in about the time of one. Each answer
+    /// is the page's own (stopped by its end, its stop sequences or a loop), within the batch's rounding;
+    /// <paramref name="onText"/> gets each page's pieces with its index. Pages that cannot share a batch are read one by
+    /// one. Each reading's <see cref="ImageReading.Elapsed"/> is the time until its answer was done.
+    /// </summary>
+    public IReadOnlyList<ImageReading> ReadBatch(IReadOnlyList<ImageReadRequest> requests, Action<int, string>? onText = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        var clock = Stopwatch.StartNew();
+        var results = new ImageReading?[requests.Count];
+        var firsts = new TimeSpan?[requests.Count];
+        foreach (var (index, chunk) in _chat.StreamBatch([.. requests.Select(ChatRequestFor)], cancellationToken))
+        {
+            if (chunk.Delta.Content.Length > 0)
+            {
+                firsts[index] ??= clock.Elapsed;
+                onText?.Invoke(index, chunk.Delta.Content);
+            }
+
+            if (chunk.Done)
+            {
+                var stats = chunk.Stats;
+                results[index] = new ImageReading((chunk.Message?.Content ?? "").Trim(), stats, clock.Elapsed)
+                {
+                    FirstText = firsts[index],
+                    Truncated = chunk.DoneReason == "length" || chunk.DoneReason is null && stats?.GeneratedTokens >= requests[index].MaxTokens,
+                    DoneReason = chunk.DoneReason,
+                };
+            }
+        }
+
+        return [.. results.Select((r, i) => r ?? throw new InvalidOperationException($"Page {i} ended without an answer."))];
+    }
+
+    // The chat request of a page read: the system text, the page and its instruction in one user turn, greedy unless sampled.
+    private ChatRequest ChatRequestFor(ImageReadRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
         var messages = new List<ChatMessage>();
@@ -219,10 +260,10 @@ public sealed class ImageReader : IDisposable
             RepeatLastN = request.RepeatLastN, RepeatStop = request.RepeatStop,
             NumCtx = _contextLength, NumPredict = Math.Max(1, request.MaxTokens),
         };
-        return _chat.Stream(new ChatRequest(messages, Options: options)
+        return new ChatRequest(messages, Options: options)
         {
             ImageTransforms = request.Transforms, VisionOptions = request.VisionOptions, AddSpecialTokens = request.AddSpecialTokens,
-        }, cancellationToken);
+        };
     }
 
     /// <summary>

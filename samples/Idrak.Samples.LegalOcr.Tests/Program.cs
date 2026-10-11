@@ -274,12 +274,12 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
             Check(ex.Message.Contains("exists", StringComparison.Ordinal), ex.Message);
         }
     }),
-    ("legal api: status, models, pages, a page's image, a read, an evaluation and the tuning endpoints over HTTP, with the JSON the page reads", () =>
+    ("legal api: status, models, pages, a page's image, a read, an evaluation (two pages read together) and the tuning endpoints over HTTP, with the JSON the page reads", () =>
     {
         string data = EvaluationData(2);
         var settings = Settings(("a", tinyGemma)) with
         {
-            EvaluationData = data, EvaluationImages = Path.Combine(root, "images.zip"), AdaptersFolder = Path.Combine(root, "api-adapters"),
+            EvaluationData = data, EvaluationImages = Path.Combine(root, "images.zip"), AdaptersFolder = Path.Combine(root, "api-adapters"), ReadBatch = 2,
             PreprocessingDefaults = new(StringComparer.OrdinalIgnoreCase) { ["unsharp"] = "unsharp=2,percent=150,threshold=3", ["contrast"] = "contrast=x" },
         };
         var builder = WebApplication.CreateSlimBuilder();
@@ -345,8 +345,9 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
 
             using var evaluated = http.PostAsJsonAsync("/api/pages/evaluate?count=2", new { maxTokens = 2 }).GetAwaiter().GetResult();
             string evaluation = evaluated.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            Check(evaluation.Split("event: page").Length == 3 && evaluation.Contains("event: done", StringComparison.Ordinal) && evaluation.Contains("\"meanCer\"", StringComparison.Ordinal),
-                evaluation.Length > 600 ? evaluation[..600] : evaluation);
+            Check(evaluation.Split("event: page").Length == 3 && evaluation.Contains("event: done", StringComparison.Ordinal) && evaluation.Contains("\"meanCer\"", StringComparison.Ordinal)
+                  && evaluation.Split("\"batch\":2").Length == 3,
+                $"two pages read together (ReadBatch 2): {(evaluation.Length > 600 ? evaluation[..600] : evaluation)}");
 
             var generation = http.GetFromJsonAsync<JsonObject>("/api/generation").GetAwaiter().GetResult()!;
             Check(generation["repeatStop"]!.GetValue<int>() == 4 && generation["repeatPenalty"]!.GetValue<float>() == 1f, generation.ToJsonString());

@@ -21,6 +21,8 @@ using Idrak.Models;
 //   IDRAK_BENCH_WEIGHTS     f32, bf16, int8 or int4 (default f32);  IDRAK_BENCH_CACHE f32 or bf16;  IDRAK_BENCH_ENCODER f32 or bf16;
 //                           IDRAK_BENCH_PREFILL f32 or bf16 (the prompt's pass)
 //   IDRAK_BENCH_CONTEXT     the context window (default the model's)
+//   IDRAK_BENCH_BATCH       pages read together (ImageReader.ReadBatch; default 1: the page alone): the page this many times,
+//                           with the time a page and the tokens a second of the whole batch
 // How it is measured and written (ProfileOptions.FromEnvironment): IDRAK_PROFILE_WARM (3), IDRAK_PROFILE_COLD (1),
 // IDRAK_PROFILE_PROBES (all: cpu, heap, memory, operations, kernels), IDRAK_PROFILE_STATISTIC (median),
 // IDRAK_PROFILE_FORMAT (table, markdown, csv, json), IDRAK_PROFILE_OUT (a file, appended).
@@ -44,6 +46,7 @@ internal static partial class Tests
         string weights = Setting("IDRAK_BENCH_WEIGHTS", "f32").ToLowerInvariant();
         bool Bf16(string name) => Setting(name, "f32").ToLowerInvariant() is "bf16" or "bfloat16";
         int tokens = int.Parse(Setting("IDRAK_BENCH_TOKENS", "64"), CultureInfo.InvariantCulture);
+        int batch = Math.Max(1, int.Parse(Setting("IDRAK_BENCH_BATCH", "1"), CultureInfo.InvariantCulture));
         int? context = Environment.GetEnvironmentVariable("IDRAK_BENCH_CONTEXT") is { Length: > 0 } c ? int.Parse(c, CultureInfo.InvariantCulture) : null;
         string transforms = Setting("IDRAK_BENCH_TRANSFORMS", "grayscale,max_width=1024,contrast=1.5");
         string prompt = Setting("IDRAK_BENCH_PROMPT", "Extract details to JSON.");
@@ -56,7 +59,8 @@ internal static partial class Tests
         var options = ProfileOptions.FromEnvironment();
         string pageText = string.Create(CultureInfo.InvariantCulture, $"{page.MediaType} {page.Data.Length / 1024} KiB, \"{transforms}\"");
         string setup = $"{Path.GetFileName(folder.TrimEnd('/', '\\'))}, weights {weights}, cache {(Bf16("IDRAK_BENCH_CACHE") ? "bf16" : "f32")}, "
-                       + string.Create(CultureInfo.InvariantCulture, $"encoder {(Bf16("IDRAK_BENCH_ENCODER") ? "bf16" : "f32")}, prefill {(Bf16("IDRAK_BENCH_PREFILL") ? "bf16" : "f32")}, {pageText}, up to {tokens} tokens");
+                       + string.Create(CultureInfo.InvariantCulture, $"encoder {(Bf16("IDRAK_BENCH_ENCODER") ? "bf16" : "f32")}, prefill {(Bf16("IDRAK_BENCH_PREFILL") ? "bf16" : "f32")}, {pageText}, up to {tokens} tokens")
+                       + (batch > 1 ? string.Create(CultureInfo.InvariantCulture, $", {batch} pages together") : "");
 
         // The page alone, before any model is loaded: what preparing it costs with nothing else in the process (no trace
         // or kernel timing: it runs on the CPU's own code).
@@ -90,7 +94,19 @@ internal static partial class Tests
             });
             long parameters = ModelMemory.WeightCount(model.Network), weightBytes = ModelMemory.TensorBytes(model.Network);
             var request = new ImageReadRequest(page, prompt) { MaxTokens = tokens };
-            var report = Profiler.Run($"read: {setup}", device, run =>
+            var report = batch > 1 ? Profiler.Run($"read: {setup}", device, run =>
+            {
+                // The page `batch` times, read together: the batch's time, a page's share of it, and the tokens of all.
+                var readings = run.Stage("read", () => reader.ReadBatch([.. Enumerable.Repeat(request, batch)]));
+                int answered = readings.Sum(r => r.Stats?.GeneratedTokens ?? 0);
+                double decode = readings.Max(r => r.Stats?.GenerationDuration.TotalMilliseconds ?? 0);
+                run.Record("page", run.Value("read")!.Value / batch, "ms");
+                run.Record("prefill", readings.Max(r => r.Stats?.PromptDuration.TotalMilliseconds ?? 0), "ms");
+                run.Record("decode", decode, "ms");
+                run.Record("answer tokens", answered, "tok");
+                run.Record("decode speed", Rate(answered, decode), "tok/s");
+                run.Record("same answers", readings.Select(r => r.Text).Distinct().Count() == 1 ? 1 : 0);
+            }, options) : Profiler.Run($"read: {setup}", device, run =>
             {
                 run.Stage("prepare", () => reader.Prepared(request));
                 var reading = reader.Read(request);
