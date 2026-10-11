@@ -20,7 +20,7 @@ internal static partial class Tests
         ("decoder: cached decoding (float32 and int8 KV) and int8 weights match the full pass; generation", DecoderCachedAndInt8),
         ("decoder: cached decoding through int8 / int4 / bfloat16 weights (fused head layout, cache writes, split attention, gate/up + activation, projection + residual + norm) matches the full pass and the CPU", DecoderCachedPacked),
         ("decoder: LoRA by layer name trains; JSON and package round trip", DecoderLoraAndPackage),
-        ("decoder: tied head shares the table (float32, and a bfloat16 head's columns read as the embedding, bit for bit); last-position prefill; bf16 embedding tables save and load", DecoderMemory),
+        ("decoder: tied head shares the table (float32, and a bfloat16 head's columns read as the embedding, bit for bit, also beside int8 / int4 projections); last-position prefill; bf16 embedding tables save and load", DecoderMemory),
     ];
 
     private static void DecoderMemory(Device device)
@@ -145,6 +145,46 @@ internal static partial class Tests
         }
 
         Check(half.ToFloat32() > 0 && half.Descendants().OfType<Embedding>().Single().BFloat16 is null, "ToFloat32 restores the table");
+
+        // A bfloat16 head beside int8 or int4 projections (HeadFormatName): the head is the only table, its lookups and
+        // scores equal the bfloat16 build's bit for bit, and the model holds less than with a packed head beside a separate
+        // table.
+        float[] bfloat16Lookup, bfloat16Scores;
+        using var hiddenRow = Tensor.From(Enumerable.Range(0, spec.Dim).Select(i => MathF.Cos(i)).ToArray(), [1, spec.Dim], device);
+        using (var reference = spec.Build(new RandomWeights(64), new DecoderBuildOptions { Device = device, BFloat16 = true }))
+        using (Autograd.NoGrad())
+        {
+            bfloat16Lookup = reference.Descendants().OfType<Embedding>().Single().Forward(sequence).ToArray();
+            bfloat16Scores = reference.Descendants().OfType<Linear>().Last().Forward(hiddenRow).ToArray();
+        }
+
+        foreach (var packed in new[] { new DecoderBuildOptions { Device = device, Int8 = true }, new DecoderBuildOptions { Device = device, Int4 = true } })
+        {
+            using var plain = spec.Build(new RandomWeights(64), packed);
+            using var exactHead = spec.Build(new RandomWeights(64), packed with { HeadFormatName = "bfloat16" });
+            var exactEmbedding = exactHead.Descendants().OfType<Embedding>().Single();
+            var exactHeadLayer = exactHead.Descendants().OfType<Linear>().Last();
+            Check(exactHeadLayer.BFloat16 is not null && ReferenceEquals(exactEmbedding.Head, exactHeadLayer)
+                  && exactHead.Descendants().OfType<Linear>().SkipLast(1).All(l => l.Packed && l.BFloat16 is null),
+                $"{(packed.Int8 ? "int8" : "int4")} projections with a bf16 head holding the only table");
+            long plainBytes = plain.Buffers().Sum(b => 4L * b.Size), exactBytes = exactHead.Buffers().Sum(b => 4L * b.Size);
+            Check(exactBytes < plainBytes, $"{(packed.Int8 ? "int8" : "int4")}: {exactBytes} bytes with a bf16 head, {plainBytes} with a packed head and a separate table");
+            using (Autograd.NoGrad())
+            {
+                Check(exactEmbedding.Forward(sequence).ToArray().SequenceEqual(bfloat16Lookup), "lookups equal the bf16 build's, bit for bit");
+                Check(exactHeadLayer.Forward(hiddenRow).ToArray().SequenceEqual(bfloat16Scores), "the head's scores equal the bf16 build's, bit for bit");
+            }
+        }
+
+        try
+        {
+            spec.Build(new RandomWeights(64), new DecoderBuildOptions { Device = device, HeadFormatName = "bfloat16" }).Dispose();
+            Check(false, "a head format in a float32 build must be refused");
+        }
+        catch (ArgumentException ex)
+        {
+            Check(ex.Message.Contains("HeadFormatName", StringComparison.Ordinal), ex.Message);
+        }
     }
 
     private static void DecoderGradients(Device device)

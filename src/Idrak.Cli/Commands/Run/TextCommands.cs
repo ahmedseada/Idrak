@@ -217,6 +217,8 @@ internal sealed class CompleteCommand : Command
           -i, --input FILE      read (more of) the text from FILE (repeatable)
               --stop TEXT       end at this text (repeatable)
           -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: as stored)
+          --head-weights F      the output head's format beside -w (bf16: the checkpoint's own scores and one
+                                vocabulary table for tied models, less memory than int8/int4 heads, slower)
           -k, --kv FORMAT       KV cache format: float32, int8, bfloat16 or a registered one (default float32)
               --context N       context window in tokens (default 4096, at most the model's)
               --adapter DIR     merge a LoRA adapter into the weights as they are read

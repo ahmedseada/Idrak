@@ -1291,6 +1291,7 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
   public float? InitStd { get; init; }
   public int Seed { get; init; }
   public int? MaxPositions { get; init; }
+  public string? HeadFormatName { get; init; }
   public string? PackedFormatName { get; init; }
 
 public sealed class Idrak.Models.Abstractions.GgufArchitecture
@@ -1592,6 +1593,7 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public bool Int8 { get; init; }
   public int? MaxPositions { get; init; }
   public string? Architecture { get; init; }
+  public string? HeadFormatName { get; init; }
   public string? MergeAdapter { get; init; }
   public string? PackedFormatName { get; init; }
 

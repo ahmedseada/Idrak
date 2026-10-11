@@ -137,6 +137,16 @@ public sealed record DecoderBuildOptions
     public string? PackedFormatName { get; init; }
 
     /// <summary>
+    /// Store the output head in the packed format registered under this name ("bfloat16", "int8", "int4", or one's own)
+    /// instead of the projections' format; null packs it as the projections. Only for builds whose projections are packed.
+    /// A tied head packed as bfloat16 is the model's only vocabulary table (the embedding reads its columns): with int8 or
+    /// int4 projections that keeps the checkpoint's own next-token scores and lookups (exact for a bfloat16 checkpoint) in
+    /// less memory than a packed head beside a separate bfloat16 table, at the cost of reading twice (int8) or about three
+    /// times (int4) the head's bytes per generated token.
+    /// </summary>
+    public string? HeadFormatName { get; init; }
+
+    /// <summary>
     /// Standard deviation of a normal initialization of every weight matrix and embedding table (biases zero, norm gains
     /// one), as GPT-2 and nanoGPT use (0.02). Null keeps the default (uniform Xavier weights, ±0.02 embeddings).
     /// Ignored when building from weights.

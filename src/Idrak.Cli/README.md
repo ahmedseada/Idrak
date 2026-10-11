@@ -54,7 +54,9 @@ Model arguments are the same everywhere: a Hugging Face id (`owner/name`), a mod
 GGUF file (`owner/name:TAG`, `owner/name/FILE.gguf`), a `.ikm` package where the command reads one, or an alias from
 the config. A model in the cache is used without asking the network (and its last use shows in `idrak list`); one
 that is not is downloaded into the cache with a progress line, or, with `--offline`, is an error that names
-`idrak pull`. `-w, --weights` picks the weight format (int8, int4, bf16 or any registered packed format) and `-k,
+`idrak pull`. `-w, --weights` picks the weight format (int8, int4, bf16 or any registered packed format),
+`--head-weights` the output head's own format (bf16 beside int8 or int4 keeps the checkpoint's next-token scores and,
+for tied embeddings, one vocabulary table: less memory than an int8 or int4 head, a little slower per token) and `-k,
 --kv` the KV cache format.
 
 Common options (every command):

@@ -400,7 +400,7 @@ public sealed class ReaderService : IDisposable
                 }
 
                 _folders[model.Id] = folder;
-                SetStatus(ReaderState.Loading, $"Loading {model.Name} ({_settings.Weights} weights) onto {Device}…", _loaded, model.Id, seconds: clock.Elapsed.TotalSeconds);
+                SetStatus(ReaderState.Loading, $"Loading {model.Name} ({_settings.Weights} weights{(LoadedReader.HeadFormat(_settings) is null ? "" : ", bf16 head")}) onto {Device}…", _loaded, model.Id, seconds: clock.Elapsed.TotalSeconds);
                 if (_loaded is { } before && !string.Equals(before, model.Id, StringComparison.OrdinalIgnoreCase))
                 {
                     _host.Unload(before);                                       // its memory back before the next loads
@@ -555,6 +555,10 @@ public sealed class LoadedReader : IDisposable
     /// <summary>The reader with the model's preprocessing.</summary>
     public ImageReader Reader { get; }
 
+    /// <summary>The head's own format: bfloat16 beside int8 or int4 projections when the settings ask for it, else null (as the projections).</summary>
+    public static string? HeadFormat(LegalOcrSettings settings) =>
+        settings.Weights.ToLowerInvariant() is "int8" or "int4" && settings.HeadWeights.ToLowerInvariant() is "bf16" or "bfloat16" ? "bfloat16" : null;
+
     /// <summary>Loads <paramref name="model"/> from <paramref name="folder"/> (its adapter merged as the weights are read).</summary>
     public static LoadedReader Create(ReaderModel model, string folder, LegalOcrSettings settings, Device device)
     {
@@ -565,6 +569,7 @@ public sealed class LoadedReader : IDisposable
             BFloat16 = weights is "bf16" or "bfloat16",
             Int8 = weights == "int8",
             Int4 = weights == "int4",
+            HeadFormatName = HeadFormat(settings),
             MaxPositions = settings.Context,
             MergeAdapter = model.Adapter,
         });
