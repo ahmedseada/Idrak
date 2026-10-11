@@ -182,6 +182,14 @@ internal static partial class Tests
         Check(first.Text == second.Text, $"greedy: \"{first.Text}\" then \"{second.Text}\"");
         Check(!reader.Chat.Generator.HoldsCache, "no attention cache held between reads");
 
+        // The tokenizer's special tokens added (a transformers pipeline calling the processor on the rendered template):
+        // Gemma's second <bos>, one prompt token more.
+        Check(reader.Chat.Template.AddedPrefix == "<bos>", $"added prefix '{reader.Chat.Template.AddedPrefix}'");
+        var withSpecial = reader.Read(request with { AddSpecialTokens = true });
+        Check(withSpecial.Stats!.PromptTokens == first.Stats!.PromptTokens + 1, $"{withSpecial.Stats.PromptTokens} prompt tokens, {first.Stats.PromptTokens} without");
+        var rendered = reader.Chat.RenderPrompt(new ChatRequest([new ChatMessage("user", "hi")]) { AddSpecialTokens = true });
+        Check(rendered.StartsWith("<bos><bos>", StringComparison.Ordinal), rendered);
+
         // Sampling: a seed repeats a read exactly; impossible settings are refused.
         var sampled = request with { Sample = true, Temperature = 1.5f, TopK = 0, TopP = 0.95f, Seed = 11 };
         Check(reader.Read(sampled).Text == reader.Read(sampled).Text, "a sampled read with a seed repeats");

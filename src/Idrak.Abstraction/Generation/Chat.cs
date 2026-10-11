@@ -125,6 +125,14 @@ public abstract class ChatTemplate
     public abstract IReadOnlyList<string> StopSequences { get; }
 
     /// <summary>
+    /// The text a model's tokenizer adds in front when it encodes with its special tokens (transformers'
+    /// <c>add_special_tokens</c>: the <c>bos_token</c> when tokenizer_config.json says <c>add_bos_token</c>), which
+    /// calling a processor or tokenizer on an already rendered prompt adds once more (Gemma's: a second &lt;bos&gt;); ""
+    /// when it adds none. Used by <see cref="ChatRequest.AddSpecialTokens"/>.
+    /// </summary>
+    public virtual string AddedPrefix => "";
+
+    /// <summary>
     /// The kinds of message parts (<see cref="ChatPart.Kind"/>) the template renders: text only by default. A template
     /// given a part of another kind throws (<see cref="ChatParts.ThrowIfUnsupported(IReadOnlyList{ChatMessage}, IReadOnlySet{string}, string)"/>
     /// at the start of <see cref="Render"/>); it never drops one.

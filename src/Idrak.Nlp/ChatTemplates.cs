@@ -46,6 +46,12 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// <summary>The value of <c>eos_token</c> in the template.</summary>
     public string EosToken { get; }
 
+    /// <summary>Whether the tokenizer adds <see cref="BosToken"/> when it encodes with its special tokens (tokenizer_config.json's <c>add_bos_token</c>).</summary>
+    public bool AddBosToken { get; init; }
+
+    /// <inheritdoc />
+    public override string AddedPrefix => AddBosToken ? BosToken : "";
+
     /// <inheritdoc />
     public override IReadOnlyList<string> StopSequences { get; }
 
@@ -344,7 +350,10 @@ public sealed class JinjaChatTemplate : ChatTemplate
             }
         }
 
-        return new JinjaChatTemplate(source, stops, bos, eos, toolSource);
+        return new JinjaChatTemplate(source, stops, bos, eos, toolSource)
+        {
+            AddBosToken = config?["add_bos_token"] is JsonValue add && add.TryGetValue(out bool adds) && adds,
+        };
     }
 
     private static (string? Default, string? Tools) Choose(JsonNode node)

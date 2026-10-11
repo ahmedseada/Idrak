@@ -98,7 +98,8 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     {
         ChatParts.ThrowIfUnsupported(this, request);
         string prompt = Template.Render(request.Messages, request.Tools ?? [], request.Think);
-        return Images is { } images && layouts.Count > 0 ? images.Format.Expand(prompt, layouts, Generator.Tokenizer) : prompt;
+        prompt = Images is { } images && layouts.Count > 0 ? images.Format.Expand(prompt, layouts, Generator.Tokenizer) : prompt;
+        return request.AddSpecialTokens ? Template.AddedPrefix + prompt : prompt;
     }
 
     // The image parts of a request, in the order the template renders them.

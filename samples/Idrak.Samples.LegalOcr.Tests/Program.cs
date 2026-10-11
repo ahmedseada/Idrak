@@ -120,6 +120,8 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         Check(again["text"]!.GetValue<string>() == done["text"]!.GetValue<string>() && again["seed"]!.GetValue<int>() == seed, again.ToJsonString());
         var greedy = Read(service, Page(30, 50), new ReadRequest(MaxTokens: 4), null)[^1].Data;
         Check(!greedy["sampled"]!.GetValue<bool>() && greedy["seed"] is null, greedy.ToJsonString());
+        var special = Read(service, Page(30, 50), new ReadRequest(MaxTokens: 4, AddSpecialTokens: true), null)[^1].Data;
+        Check(special["promptTokens"]!.GetValue<int>() == greedy["promptTokens"]!.GetValue<int>() + 1, $"{special["promptTokens"]} prompt tokens with the special tokens, {greedy["promptTokens"]} without");
     }),
     ("legal reader: a model that cannot be loaded says why; reading before loading is an error event", () =>
     {
