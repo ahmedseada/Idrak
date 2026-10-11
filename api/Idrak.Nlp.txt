@@ -265,6 +265,7 @@ public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idr
   public ImageReaderOptions()
   public System.Func<Idrak.Models.PretrainedModel, Idrak.Abstraction.Generation.VisionEncoderOptions, Idrak.Abstraction.Generation.IVisionEncoder>? EncoderFactory { get; init; }
   public bool KeepCache { get; init; }
+  public bool ReuseDecoding { get; init; }
   public int? ContextLength { get; init; }
 
 public sealed record Idrak.Generation.ImageReading : System.IEquatable<Idrak.Generation.ImageReading>
@@ -325,6 +326,7 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public System.Threading.Tasks.Task<(string, string, Idrak.Abstraction.Generation.GenerationStats)> GenerateAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public TextGenerator(Idrak.Layers.Sequential model, Idrak.Abstraction.Generation.ITokenizer tokenizer, int contextLength)
   public bool KeepCache { get; set; }
+  public bool ReuseDecoding { get; set; }
   public bool SupportsBatches { get; }
   public const int MaxTokens = 4096
   public int ContextLength { get; }

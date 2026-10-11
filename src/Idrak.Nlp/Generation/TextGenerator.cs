@@ -96,11 +96,23 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
     private bool? _stepsRecordable;
 
+    /// <summary>
+    /// Keep the decoding context, the sampler and the recorded decoding step between generations that keep no attention
+    /// cache (<see cref="KeepCache"/> false): the next generation of the same size (cache capacity and layout) takes the
+    /// context, and with the same sampling options and a set seed (<see cref="GenerationOptions.Seed"/>; greedy image reads
+    /// set one) the sampler and the recorded step too, each reset first, instead of allocating and clearing a cache, making
+    /// a sampler and recording the step again. Nothing of the earlier prompt is reused (every generation starts at
+    /// position 0, unlike <see cref="KeepCache"/>): the old keys and values left in the cache lie past every position a
+    /// step reads, so the tokens are a fresh generation's. Default false; <see cref="ReleaseCache"/> frees them.
+    /// </summary>
+    public bool ReuseDecoding { get; set; }
+
     private readonly Lock _keptLock = new();
     private DecodingContext? _kept;
     private List<int> _keptIds = [];
+    private Reusable? _reusable;
 
-    /// <summary>Frees the KV cache kept between generations (see <see cref="KeepCache"/>).</summary>
+    /// <summary>Frees the KV cache kept between generations (see <see cref="KeepCache"/>) and what <see cref="ReuseDecoding"/> keeps.</summary>
     public void ReleaseCache()
     {
         lock (_keptLock)
@@ -108,8 +120,91 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             _kept?.Dispose();
             _kept = null;
             _keptIds = [];
+            _reusable?.Dispose();
+            _reusable = null;
         }
     }
+
+    // What ReuseDecoding keeps between generations: the context, the sampler with the request it was made for (null: none
+    // kept, a generation without a seed), and the decoding step recorded with both.
+    private sealed class Reusable : IDisposable
+    {
+        public DecodingContext? Context;
+        public ITokenSampler? Sampler;
+        public SamplerRequest? Request;
+        public ComputeGraph? Graph;
+
+        // Frees the sampler and the step recorded with it (the context stays).
+        public void DropSampler()
+        {
+            Graph?.Dispose();
+            Sampler?.Dispose();
+            (Graph, Sampler, Request) = (null, null, null);
+        }
+
+        public void Dispose()
+        {
+            DropSampler();
+            Context?.Dispose();
+            Context = null;
+        }
+    }
+
+    // What ReuseDecoding holds between generations (the tests compare them across generations).
+    internal (DecodingContext? Context, ITokenSampler? Sampler, ComputeGraph? Step) HeldDecoding
+    {
+        get
+        {
+            lock (_keptLock)
+            {
+                return (_reusable?.Context, _reusable?.Sampler, _reusable?.Graph);
+            }
+        }
+    }
+
+    // Takes what ReuseDecoding kept (a generation at a time holds it), or a new empty holder.
+    private Reusable TakeReusable()
+    {
+        lock (_keptLock)
+        {
+            var held = _reusable ?? new Reusable();
+            _reusable = null;
+            return held;
+        }
+    }
+
+    // Keeps what `held` holds for the next generation (moved out of it, so disposing `held` frees nothing; what another
+    // generation kept meanwhile is freed).
+    private void KeepReusable(Reusable held)
+    {
+        var moved = new Reusable { Context = held.Context, Sampler = held.Sampler, Request = held.Request, Graph = held.Graph };
+        (held.Context, held.Sampler, held.Request, held.Graph) = (null, null, null, null);
+        lock (_keptLock)
+        {
+            _reusable?.Dispose();
+            _reusable = moved;
+        }
+    }
+
+    // Whether a sampler made for `kept` samples as one made for `request` would: the same shape and options (the stop
+    // sequences, read by the generation only, aside), with a seed (one drawn at random per generation is not repeated).
+    private static bool SameSampling(SamplerRequest kept, SamplerRequest request) =>
+        request.Options.Seed is not null && kept.Device == request.Device && kept.Rows == request.Rows && kept.Vocabulary == request.Vocabulary
+        && kept.MaxSteps == request.MaxSteps && kept.HistoryCapacity == request.HistoryCapacity
+        && kept.Options with { Stop = NoStops } == request.Options with { Stop = NoStops };
+
+    private static readonly string[] NoStops = [];
+
+    // The positions a step may feed when sliding windows' caches hold their window (DecodingContext.SlidingWindowSteps):
+    // the prompt's, and at least 128, so a window moves its last positions to the front at most once in 128 steps (the
+    // move copies about two windows' rows, under 2% of what those steps' attention reads).
+    private static int SlidingSteps(int prompt) => SlideWindows ? Math.Max(prompt, MinSlidingSteps) : 0;
+
+    // Whether sliding windows' caches hold their window (tests compare with caches of the whole reply), and the least
+    // steps between moves (tests make a small model's windows move).
+    internal static bool SlideWindows { get; set; } = true;
+
+    internal static int MinSlidingSteps { get; set; } = 128;
 
     // Whether a KV cache is kept from the last generation (see KeepCache).
     internal bool HoldsCache
@@ -166,14 +261,14 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     }
 
     /// <summary>
-    /// Whether <see cref="GenerateBatch"/> decodes several prompts together on this model and device (attention from
-    /// per-row starts: on CUDA, bfloat16 tensor cores with head size 64 or 128 and no attention layer with a sliding window
-    /// that can mask or soft-capped scores); otherwise it runs them one by one.
+    /// Whether <see cref="GenerateBatch"/> decodes prompts of different lengths together on this model and device
+    /// (attention from per-row starts for every attention layer's head size, window and cap:
+    /// <c>Backend.SupportsAttentionRows</c>); otherwise prompts of one length still decode together and the others alone.
     /// </summary>
     public bool SupportsBatches =>
         Model.Descendants().OfType<CausalSelfAttention>().ToList() is { Count: > 0 } attention
         && !Model.Descendants().Any(m => m is MultiHeadAttention or PositionalEncoding)
-        && attention.All(a => a.SupportsSegmented(Device.Backend));
+        && attention.All(a => a.SupportsRows(Device.Backend));
 
     /// <summary>
     /// Generates the continuations of several prompts together (one batch through the model per token, so the GPU
@@ -267,7 +362,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     /// <see cref="Stream(string, int, IReadOnlyList{ImageFeatures}, IImageAttentionRule, GenerationOptions, CancellationToken)"/>
     /// takes them), decoded together: prompts of one length (pages read with one instruction) go through the model as one
     /// batch, one pass a token for all of them (the device reads each weight once for every row), and their decoding step
-    /// is recorded once; a prompt of a length of its own runs alone. Each row stops on its own (its stop sequences, or a
+    /// is recorded once; prompts of different lengths too where every attention layer attends from per-row starts
+    /// (<see cref="SupportsBatches"/>: each padded on the left, its steps not recorded), else a prompt of a length of its
+    /// own runs alone. Each row stops on its own (its stop sequences, or a
     /// loop under <see cref="GenerationOptions.RepeatStop"/>) and gets what it would get alone, within the batch's rounding.
     /// Chunks as <see cref="StreamBatch(IReadOnlyList{string}, GenerationOptions, CancellationToken)"/>. Repetition
     /// penalties are not batched: such prompts run one by one.
@@ -292,7 +389,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
         bool penalties = options.RepeatPenalty != 1f || options.PresencePenalty != 0f || options.FrequencyPenalty != 0f;
         var tokens = prompts.Select(p => Tokenizer.Encode(p).ToList()).ToList();
-        foreach (var group in penalties ? [.. Enumerable.Range(0, prompts.Count).Select(i => new[] { i })] : Groups(tokens))
+        // Pages of different lengths (another instruction, pan-and-scan crops) decode together where every attention layer
+        // attends from per-row starts (SupportsBatches); elsewhere pages of one length still do, and a length alone runs alone.
+        var groups = penalties ? [.. Enumerable.Range(0, prompts.Count).Select(i => new[] { i })]
+            : SupportsBatches ? [[.. Enumerable.Range(0, prompts.Count)]] : Groups(tokens);
+        foreach (var group in groups)
         {
             if (group.Length == 1)
             {
@@ -317,8 +418,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         [.. Enumerable.Range(0, tokens.Count).GroupBy(i => tokens[i].Count).Select(g => g.ToArray())];
 
     // Decodes the rows `tokens` together (their prompts' indices `index`): padded on the left to the longest, each row
-    // attending from its own start, when their lengths differ (SupportsBatches); with each row's images when given (rows of
-    // one length then). Yields each row's pieces as they come, then a final chunk per row.
+    // attending from its own start, when their lengths differ (SupportsBatches); with each row's images when given. Yields
+    // each row's pieces as they come, then a final chunk per row.
     private IEnumerable<BatchChunk> Batch(List<List<int>> tokens, int[] index, (int Token, IReadOnlyList<IReadOnlyList<ImageFeatures>> Features, IImageAttentionRule Attention)? imageInput,
         GenerationOptions options, CancellationToken cancellationToken)
     {
@@ -327,11 +428,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         int context = Math.Clamp(options.NumCtx, 2, ContextLength);
         int promptLength = tokens.Max(t => t.Count);
         bool padded = tokens.Any(t => t.Count != promptLength);
-        if (imageInput is not null && (padded || promptLength >= context))
+        if (imageInput is not null && promptLength >= context)
         {
-            throw new InvalidOperationException(padded
-                ? "Prompts with images decode together only when their lengths are equal."
-                : $"A prompt of {promptLength} tokens with its images does not fit the context window of {context}.");
+            throw new InvalidOperationException($"A prompt of {promptLength} tokens with its images does not fit the context window of {context}.");
         }
 
         int limit = Math.Min(options.NumPredict > 0 ? Math.Min(options.NumPredict, MaxTokens) : MaxTokens, context - promptLength);
@@ -349,14 +448,18 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
         }
 
-        // Each row's images, at their positions in its row (rows of one length: no padding moves them).
+        // Each row's images, at their positions in its padded row (its prompt starts at starts[r]).
         IReadOnlyList<PromptImage> images = imageInput is { } given
-            ? [.. Enumerable.Range(0, rows).SelectMany(r => ImagePrefill.Locate(tokens[r], given.Token, given.Features[r], sequence: r))]
+            ? [.. Enumerable.Range(0, rows).SelectMany(r => ImagePrefill.Locate(tokens[r], given.Token, given.Features[r], sequence: r)
+                .Select(i => i with { Position = i.Position + starts[r] }))]
             : [];
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
         // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).
         var batchLayout = !padded || Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
-        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout) { LastPositionOnly = true, Cancellation = cancellationToken };
+        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout)
+        {
+            LastPositionOnly = true, Cancellation = cancellationToken, SlidingWindowSteps = padded ? 0 : SlidingSteps(promptLength),
+        };
         if (padded)
         {
             decoding.SetRowStarts(starts);
@@ -624,7 +727,29 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         int holdBack = stops.Length == 0 ? 0 : stops.Max(s => s.Length) - 1;
         var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
 
-        using var sampler = CreateSampler(new SamplerRequest(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN), options));
+        // ReuseDecoding: the context, sampler and recorded step the last generation left (one generation at a time holds
+        // them); `held` frees whatever this generation does not hand back. A sampler made for other options is dropped
+        // with the step recorded with it.
+        bool reusing = ReuseDecoding && !KeepCache && options.UseCache;
+        using var held = reusing ? TakeReusable() : new Reusable();
+        var request = new SamplerRequest(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN), options);
+        if (held.Request is { } keptRequest && !SameSampling(keptRequest, request))
+        {
+            held.DropSampler();
+        }
+
+        ITokenSampler sampler;
+        if (held.Sampler is { } keptSampler)
+        {
+            keptSampler.Reset();
+            sampler = keptSampler;
+        }
+        else
+        {
+            sampler = CreateSampler(request);
+            (held.Sampler, held.Request) = (sampler, request);
+        }
+
         sampler.SetHistory(history);
 
         var generated = new List<int>();
@@ -728,11 +853,32 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             // prompt and its most tokens, as the batched path), less memory to hold and to clear on every call. Only a
             // reply that can outgrow the window re-reads its last half, at the window's size as before.
             int capacity = options.UseCache && KeepCache ? context : Math.Min(context, history.Count + limit);
-            var decoding = kept ?? new DecodingContext(Device, 1, capacity, Layout);
+
+            // Sliding windows' caches hold their window, not the reply, when nothing re-reads the cache: no cache kept for
+            // the next turn and a reply that cannot outgrow the window.
+            int sliding = options.UseCache && !KeepCache && history.Count + limit <= context ? SlidingSteps(history.Count) : 0;
+
+            // A kept context of this size is taken (reset by the prefill) with the step recorded on it; one of another size
+            // goes, with its step. Both are this generation's until handed back.
+            if (held.Context is { } keptContext && (keptContext.Capacity != capacity || keptContext.Layout != Layout || keptContext.Device != Device
+                || keptContext.SlidingWindowSteps != sliding))
+            {
+                held.Graph?.Dispose();
+                held.Context.Dispose();
+                (held.Graph, held.Context) = (null, null);
+            }
+
+            var decoding = kept ?? held.Context ?? new DecodingContext(Device, 1, capacity, Layout) { SlidingWindowSteps = sliding };
+            ComputeGraph? graph = options.UseGraph ? held.Graph : null;
+            if (!options.UseGraph)
+            {
+                held.Graph?.Dispose();
+            }
+
+            (held.Context, held.Graph) = (null, null);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
             decoding.Cancellation = cancellationToken;                          // the prompt's pass stops between layers
             bool keep = false, steppedOnce = false;
-            ComputeGraph? graph = null;
             try
             {
                 Tensor Window(int keep)
@@ -878,6 +1024,19 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 {
                     KeepCacheFor(decoding, history.GetRange(0, decoding.Length));
                     keep = true;
+                }
+                else if (reusing)
+                {
+                    // Handed back: the context, and the sampler with the step recorded with it while they sample alike (a
+                    // seed drawn at random is not repeated, so without one the sampler and the step go).
+                    (held.Context, held.Graph) = (decoding, graph);
+                    (keep, graph) = (true, null);
+                    if (options.Seed is null)
+                    {
+                        held.DropSampler();
+                    }
+
+                    KeepReusable(held);
                 }
             }
             finally

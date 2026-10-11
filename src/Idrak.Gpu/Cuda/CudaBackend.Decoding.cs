@@ -62,11 +62,27 @@ internal sealed unsafe partial class CudaBackend
         // Top-k over a large vocabulary: many blocks each keep their slice's candidates, then one block per row samples
         // among them (every token top-k keeps is a candidate; see PtxKernels.TopKCandidates).
         int blocks = (vocabulary + PtxKernels.CandidateSlice - 1) / PtxKernels.CandidateSlice, slots = blocks * PtxKernels.CandidateSlots;
+        // Greedy rows (top-k 1; min-p at most 0.5, which can never raise the cut-off past the best score): the candidate
+        // kernel's last block per row also writes the token and statistics of a row with one best score, exactly those the
+        // sampling kernel writes for it, so that kernel's dozen passes over the row's candidates run only for rows with ties,
+        // +∞ or nothing finite (PtxKernels.GreedyFinish). Still two launches.
+        bool greedy = GreedyRows && topK == 1 && minP <= 0.5f;
         var candidates = Allocate(rows * slots, zeroed: false);
         var indices = Allocate(rows * slots, zeroed: false);
         var flags = Allocate(rows, zeroed: true);
+        var parts = greedy ? Allocate(rows * blocks * 3, zeroed: false) : null;
+        var pending = greedy ? Allocate(rows, zeroed: false) : null;
         try
         {
+            if (parts is not null && pending is not null)
+            {
+                LaunchRows(K("topk_greedy_f32"), rows * blocks, P(logits), P(candidates), P(indices), P(flags), P(ids), P(stats), P(step), P(parts),
+                    P(SplitCounters(rows)), P(pending), U(vocabulary), U(rowStride), U(rowOffset), F(invT), U(topK), U(blocks), U(rows), U(rows * blocks));
+                LaunchRows(K("sample_candidates_greedy_f32"), rows, P(logits), P(ids), P(stats), P(step), P(candidates), P(indices), P(flags), P(pending),
+                    U(vocabulary), U(rowStride), U(rowOffset), F(invT), U(topK), F(topP), F(minP), seed, U(rows), U(slots), U(rows));
+                return;
+            }
+
             LaunchRows(K("topk_candidates_f32"), rows * blocks, P(logits), P(candidates), P(indices), P(flags),
                 U(vocabulary), U(rowStride), U(rowOffset), F(invT), U(topK), U(blocks), U(rows * blocks));
             LaunchRows(K("sample_candidates_f32"), rows, P(logits), P(ids), P(stats), P(step), P(candidates), P(indices), P(flags),
@@ -77,8 +93,13 @@ internal sealed unsafe partial class CudaBackend
             candidates.Release();
             indices.Release();
             flags.Release();
+            parts?.Release();
+            pending?.Release();
         }
     }
+
+    /// <summary>Tests and benchmarks: false samples greedy rows through the two candidate kernels alone, as before.</summary>
+    internal static bool GreedyRows { get; set; } = true;
 
     public override void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency) =>

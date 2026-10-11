@@ -31,6 +31,15 @@ public sealed record ImageReaderOptions
     public bool KeepCache { get; init; }
 
     /// <summary>
+    /// Keep the decoding context, the sampler and the recorded decoding step from one read to the next (see
+    /// <see cref="TextGenerator.ReuseDecoding"/>): a read of the same size and sampling takes them, reset, instead of
+    /// allocating and clearing the attention cache, making a sampler and recording the step again; every read still starts
+    /// from its own first token, so its answer is the same. Off by default: the context stays allocated on the device
+    /// between reads (until the reader is disposed).
+    /// </summary>
+    public bool ReuseDecoding { get; init; }
+
+    /// <summary>
     /// The arithmetic of the vision encoder's matrix products (<see cref="ChatImages.EncoderPrecision"/>); null: the
     /// caller's. <see cref="MatMulPrecision.BFloat16"/> runs the tower on tensor cores where the device has them (a page's
     /// encoding several times faster), its features within bfloat16's rounding of float32: compare a model's answers
@@ -156,6 +165,7 @@ public sealed class ImageReader : IDisposable
             _contextLength = Math.Min(options.ContextLength ?? model.MaxPositions, model.MaxPositions);
             var chat = model.CreateChat(options.CacheFormat, _contextLength);
             chat.Generator.KeepCache = options.KeepCache;
+            chat.Generator.ReuseDecoding = options.ReuseDecoding;
             chat.Generator.PrefillPrecision = options.PrefillPrecision;
             var images = _images.Images;
             _reading = new ChatImages(images.Encoder, images.Format, images.Attention)
@@ -299,6 +309,10 @@ public sealed class ImageReader : IDisposable
         };
     }
 
-    /// <summary>Disposes the vision encoder (not the model).</summary>
-    public void Dispose() => _images.Dispose();
+    /// <summary>Disposes the vision encoder and what the reads kept on the device (attention cache, decoding context; not the model).</summary>
+    public void Dispose()
+    {
+        _chat.Generator.ReleaseCache();
+        _images.Dispose();
+    }
 }

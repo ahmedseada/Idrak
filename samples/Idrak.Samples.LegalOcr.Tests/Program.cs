@@ -210,8 +210,8 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         var done = Read(readers, Page(24, 32), new ReadRequest(MaxTokens: 3), null)[^1];
         Check(done.Event == "done" && done.Data["model"]!.GetValue<string>() == "adapter:first", done.Data.ToJsonString());
 
-        // Continue tuning the adapter: its base checkpoint, the adapter trained on.
-        tuning.Start(new TuneRequest { Name = "second", Base = "adapter:first", Epochs = 1, CerPages = 0 });
+        // Continue tuning the adapter: its base checkpoint, the adapter trained on (with checkpointing from the first step).
+        tuning.Start(new TuneRequest { Name = "second", Base = "adapter:first", Epochs = 1, CerPages = 0, Checkpointing = true });
         tuning.WaitAsync().GetAwaiter().GetResult();
         Check(tuning.Status.State == TuningState.Finished && tuning.Log().Any(l => l.Contains("continuing the adapter", StringComparison.Ordinal))
               && AdapterStore.Read(Path.Combine(root, "tune-a", "second")) is { Base: "adapter:first" } second && second.Steps == status.TotalSteps / 2,
@@ -222,6 +222,9 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         var settings = TuningSettings("tune-b") with { Tuning = TuningSettings("tune-b").Tuning with { Epochs = 200, CerPages = 0, CerBefore = false } };
         using var readers = Service(settings);
         using var tuning = new TuningService(settings, readers, Adapters(settings), NullLogger<TuningService>.Instance);
+        var memory = new TuneRequest { Checkpointing = true }.Over(settings.Tuning with { RecomputeFeedForward = false });
+        Check(memory is { Checkpointing: true, RecomputeFeedForward: false } && settings.Tuning is { Checkpointing: null, RecomputeFeedForward: null },
+            "a request's memory settings over the defaults (automatic unless set)");
         foreach (var bad in new[] { new TuneRequest { LearningRate = -1, Base = "a" }, new TuneRequest { Name = "a/b", Base = "a" }, new TuneRequest { Base = "nope" },
                      new TuneRequest { Weights = "fp7", Base = "a" } })
         {

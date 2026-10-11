@@ -93,7 +93,7 @@ public abstract class KeyValueLayout
     {
         var keys = Expand(cache, keys: true);
         var values = Expand(cache, keys: false);
-        var weights = q.MatMul(keys, transposeB: true).ScaleMaskSoftmax(scale, context.Mask);
+        var weights = q.MatMul(keys, transposeB: true).ScaleMaskSoftmax(scale, context.MaskOf(cache));
         return weights.MatMul(values);
     }
 
@@ -131,6 +131,14 @@ public abstract class KeyValueLayout
 
     /// <summary>Whether rows of different lengths (per-row starts, batched prompts) can attend from this cache.</summary>
     public virtual bool RowStarts => false;
+
+    /// <summary>
+    /// Whether a sliding window's cache may hold only its window (<see cref="DecodingContext.SlidingWindowSteps"/>): the
+    /// format writes and attends from the cache's own position and mask (<see cref="DecodingContext.PositionOf"/>,
+    /// <see cref="DecodingContext.MaskOf"/>), which differ from the context's once the window's positions have moved to
+    /// its front. Default false (every cache holds the context's capacity); the built-in formats do.
+    /// </summary>
+    public virtual bool SlidingWindows => false;
 
     /// <summary>
     /// <see cref="Attend"/> for a decoder layer with a sliding window or soft-capped scores (<paramref name="variant"/>),
@@ -213,6 +221,8 @@ public static class KeyValueLayouts
 
         public override bool Recordable => true;
 
+        public override bool SlidingWindows => true;
+
         public override bool FusedWrite => true;
 
         public override bool RowStarts => true;
@@ -233,7 +243,7 @@ public static class KeyValueLayouts
             }
 
             // Every slot of the cache, the unwritten ones masked out.
-            var weights = q.MatMul(cache.Keys, transposeB: true).ScaleMaskSoftmax(scale, context.Mask);
+            var weights = q.MatMul(cache.Keys, transposeB: true).ScaleMaskSoftmax(scale, context.MaskOf(cache));
             return weights.MatMul(cache.Values);
         }
 
@@ -245,11 +255,11 @@ public static class KeyValueLayouts
             var capabilities = q.Backend.Capabilities;
             if (steps >= 8 && cache.HeadDim <= capabilities.TiledAttentionHeadDim)
             {
-                return Tensor.AttentionTiled(q, cache.Keys, cache.Values, context.Position, steps, scale, variant);   // a prompt: tiled
+                return Tensor.AttentionTiled(q, cache.Keys, cache.Values, context.PositionOf(cache), steps, scale, variant);   // a prompt: tiled
             }
 
             return cache.HeadDim <= capabilities.DecodeAttentionHeadDim
-                ? Tensor.AttentionDecode(q, cache, context.Position, steps, scale, variant)                        // only the filled positions
+                ? Tensor.AttentionDecode(q, cache, context.PositionOf(cache), steps, scale, variant)                        // only the filled positions
                 : null;
         }
     }
@@ -265,6 +275,8 @@ public static class KeyValueLayouts
         public override bool HasScales => true;
 
         public override bool Recordable => true;
+
+        public override bool SlidingWindows => true;
 
         public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
         {
@@ -306,16 +318,16 @@ public static class KeyValueLayouts
         {
             if (cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
             {
-                return Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8);   // only the filled positions
+                return Tensor.AttentionInt8(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8);   // only the filled positions
             }
 
-            var weights = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.Mask);
+            var weights = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.MaskOf(cache));
             return Tensor.AttentionContextInt8(weights, cache);
         }
 
         public override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim
-                ? Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant)
+                ? Tensor.AttentionInt8(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant)
                 : null;
     }
 
@@ -328,6 +340,8 @@ public static class KeyValueLayouts
         public override int RowWidth(int headDim) => (headDim + 1) / 2;
 
         public override bool Recordable => true;
+
+        public override bool SlidingWindows => true;
 
         public override bool FusedWrite => true;
 
@@ -369,11 +383,11 @@ public static class KeyValueLayouts
         // Decoder models read the halves directly; the multi-head attention layer attends through the expanded values.
         public override Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels) =>
             decoderKernels
-                ? Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8)   // only the filled positions
+                ? Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8)   // only the filled positions
                 : base.Attend(q, cache, context, steps, scale, decoderKernels);
 
         public override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
-            Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant);
+            Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant);
     }
 
 }

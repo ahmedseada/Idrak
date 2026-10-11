@@ -1149,6 +1149,7 @@ public sealed class Idrak.Layers.PackedSequences : System.IDisposable
   public static Idrak.Layers.PackedSequences Create(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<int>> lengths, int length, Idrak.Abstraction.Device device)
   public static Idrak.Layers.PackedSequences? Current { get; }
   public static bool Supports(Idrak.Abstraction.Module network)
+  public static bool SupportsImages(Idrak.Abstraction.Module network)
   public void Dispose()
   public void Update(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<int>> lengths)
 
