@@ -260,6 +260,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     /// <summary>Whether packed sequences and rows of different lengths can attend through <paramref name="backend"/>'s kernels for this layer.</summary>
     internal bool SupportsSegmented(Backend backend) => (PlainCausal || WindowKernels) && backend.SupportsSegmentedAttention(HeadDim, Variant);
 
+    /// <summary>Whether rows of different lengths decoded together (per-row starts) can attend through <paramref name="backend"/>'s kernels for this layer.</summary>
+    internal bool SupportsRows(Backend backend) => (PlainCausal || WindowKernels) && backend.SupportsAttentionRows(HeadDim, Variant);
+
     // Whether attention over keys at positions [0, keys) for queries ending at keys - 1 needs more than plain causal
     // attention (the kernels with Variant, or the composed path): soft-capped scores, or a window some query reaches past.
     private bool Composed(int keys) => _softcap is not null || Windowed && keys > _window!.Value;
@@ -404,7 +407,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             Tensor.WriteKeyValues(rk!, cache.Keys, context.PositionOf(cache));
             Tensor.WriteKeyValues(rv!, cache.Values, context.PositionOf(cache));
             var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.PositionOf(cache), t, ScoreScale, context.TokenStarts!, KvHeads, Variant)
-                       ?? throw new NotSupportedException($"Rows of different lengths need attention from per-row starts, which {input.Device} does not provide for head size {HeadDim}{(PlainCausal ? "" : " with a sliding window or soft-capped scores")} (on CUDA: bfloat16 tensor cores, head size 64 or 128, plain causal attention only).");
+                       ?? throw new NotSupportedException($"Rows of different lengths need attention from per-row starts, which {input.Device} does not provide for head size {HeadDim}{(PlainCausal ? "" : " with a sliding window or soft-capped scores")} (Backend.SupportsAttentionRows).");
             return MergeHeads(rows, n, t);
         }
 

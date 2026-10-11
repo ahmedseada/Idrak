@@ -1877,6 +1877,14 @@ public abstract partial class Backend
     /// <summary>Whether <see cref="AttentionSegmented"/> and its gradient run for this head size (with the current <c>MixedPrecision</c>).</summary>
     public virtual bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => CpuBackend.Instance.SupportsSegmentedAttention(dim, variant);
 
+    /// <summary>
+    /// Whether <see cref="AttentionRows"/> runs on this device for head size <paramref name="dim"/> and
+    /// <paramref name="variant"/> (rows of different lengths decoded together), so callers batch such rows instead of
+    /// running them apart. Default: as <see cref="SupportsSegmentedAttention"/> (one pass serves both where a device has
+    /// one); a device whose decoding kernels take per-row starts says so for more.
+    /// </summary>
+    public virtual bool SupportsAttentionRows(int dim, AttentionVariant variant = default) => SupportsSegmentedAttention(dim, variant);
+
     /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>
     public virtual bool AttentionSegmentedBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,

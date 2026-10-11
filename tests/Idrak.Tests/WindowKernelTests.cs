@@ -141,32 +141,34 @@ internal static partial class Tests
                 $"int8, capacity {capacity}: a window beyond the keys changes no bit");
         }
 
-        // Rows of different lengths (per-row starts) and packed sequences: where the device has these passes for a window.
+        // Rows of different lengths (per-row starts) and packed sequences: where the device has these passes for a window
+        // (head sizes 16 and 256; the rows that start after a query, padding, get zeros).
+        foreach (int dim in new[] { 16, 256 })
         {
-            const int Rows = 3, Kv = 2, Group = 2, Steps = 7, Capacity = 24, Dim = 16, Offset = 9;
+            const int Rows = 3, Kv = 2, Group = 2, Steps = 7, Capacity = 24, Offset = 9;
             int heads = Rows * Kv, rowsPerHead = Group * Steps;
             float scale = 0.25f;
-            float[] q = R(heads * rowsPerHead * Dim), k = R(heads * Capacity * Dim), v = R(heads * Capacity * Dim);
+            float[] q = R(heads * rowsPerHead * dim), k = R(heads * Capacity * dim), v = R(heads * Capacity * dim);
             int[] rowStarts = [0, 5, 13];
             float[] starts = [.. Enumerable.Range(0, Rows * Steps).Select(i => (float)rowStarts[i / Steps])];
-            using var tq = Tensor.From(q, [heads, rowsPerHead, Dim], device);
-            using var tk = Tensor.From(k, [heads, Capacity, Dim], device);
-            using var tv = Tensor.From(v, [heads, Capacity, Dim], device);
+            using var tq = Tensor.From(q, [heads, rowsPerHead, dim], device);
+            using var tk = Tensor.From(k, [heads, Capacity, dim], device);
+            using var tv = Tensor.From(v, [heads, Capacity, dim], device);
             using var position = Tensor.From([(float)Offset], [1], device);
             using var tStarts = Tensor.From(starts, [Rows * Steps], device);
             foreach (var variant in WindowVariants.Prepend(default))
             {
                 var y = Tensor.AttentionRows(tq, tk, tv, position, Steps, scale, tStarts, Kv, variant);
-                bool supported = device.Backend.SupportsSegmentedAttention(Dim, variant);
+                bool supported = device.Backend.SupportsAttentionRows(dim, variant);
                 if (y is null)
                 {
-                    Check(!supported, $"per-row attention, window {variant.Window}, cap {variant.Softcap}: refused although supported");
+                    Check(!supported, $"per-row attention, dim {dim}, window {variant.Window}, cap {variant.Softcap}: refused although supported");
                     continue;
                 }
 
-                var expected = DirectAttention(q, k, v, heads, rowsPerHead, Capacity, Dim, scale, variant,
+                var expected = DirectAttention(q, k, v, heads, rowsPerHead, Capacity, dim, scale, variant,
                     (h, i) => (rowStarts[h / Kv], Math.Min(Offset + i % Steps, Capacity - 1) + 1));
-                AssertClose(expected, y.ToArray(), 2e-4f, $"per-row attention, window {variant.Window}, cap {variant.Softcap}");
+                AssertClose(expected, y.ToArray(), 2e-4f, $"per-row attention, dim {dim}, window {variant.Window}, cap {variant.Softcap}");
                 y.Dispose();
             }
 
@@ -175,23 +177,23 @@ internal static partial class Tests
             using var packing = PackedSequences.Create(lengths, Length, device);
             var packedStarts = packing.Starts.ToArray();
             int packedRows = Kv * Group * Length;
-            float[] pq = R(heads * packedRows * Dim), pk = R(heads * Length * Dim), pv = R(heads * Length * Dim);
-            using var tpq = Tensor.From(pq, [heads, packedRows, Dim], device);
-            using var tpk = Tensor.From(pk, [heads, Length, Dim], device);
-            using var tpv = Tensor.From(pv, [heads, Length, Dim], device);
+            float[] pq = R(heads * packedRows * dim), pk = R(heads * Length * dim), pv = R(heads * Length * dim);
+            using var tpq = Tensor.From(pq, [heads, packedRows, dim], device);
+            using var tpk = Tensor.From(pk, [heads, Length, dim], device);
+            using var tpv = Tensor.From(pv, [heads, Length, dim], device);
             foreach (var variant in WindowVariants.Prepend(default))
             {
                 using (Autograd.NoGrad())
                 {
                     var y = PackedSequences.CausalAttentionSegmented(tpq, tpk, tpv, packing, Kv, scale, variant);
-                    bool supported = device.Backend.SupportsSegmentedAttention(Dim, variant);
+                    bool supported = device.Backend.SupportsSegmentedAttention(dim, variant);
                     if (y is null)
                     {
                         Check(!supported, $"packed attention, window {variant.Window}, cap {variant.Softcap}: refused although supported");
                         continue;
                     }
 
-                    var expected = DirectAttention(pq, pk, pv, heads, packedRows, Length, Dim, scale, variant,
+                    var expected = DirectAttention(pq, pk, pv, heads, packedRows, Length, dim, scale, variant,
                         (h, i) => ((int)packedStarts[h / Kv * Length + i % Length], i % Length + 1));
                     AssertClose(expected, y.ToArray(), 2e-4f, $"packed attention, window {variant.Window}, cap {variant.Softcap}");
                     y.Dispose();
