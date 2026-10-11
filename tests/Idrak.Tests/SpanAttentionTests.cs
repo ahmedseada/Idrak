@@ -21,6 +21,7 @@ internal static partial class Tests
         ("attention spans: grouped heads and several tables compose on the device (a table at a time, the ranges as a mask) and match AttentionSpans, forward and gradients; a device without its own kernel for the head size composes them unforced, one with it keeps its kernel", SpanAttentionComposedGroups),
         ("attention spans: float32 and bfloat16 tensor cores (head sizes up to 128, rows past blocks of 64 and 128, every rule, grouped heads, tables, a soft-cap) match the CPU", SpanAttentionPrecisions),
         ("attention spans: the CUDA span modules (float32, tensor-core and pipelined, every padded head size) declare their kernels and parameters, and are judged by the shared memory a device reports", SpanModules),
+        ("attention spans: the CPU's key panels (Kᵀ transposed once per call for blocks that see every key) give the transposing products' output and log-sum-exp bit for bit (bidirectional, two tables, grouped heads, a last block of few rows, keys past several tiles)", CpuKeyPanels),
         ("attention spans: the pipelined tensor-core kernel (keys and values copied to bfloat16 once, two tiles in flight) gives the single-stage kernel's output and log-sum-exp bit for bit, 4 and 8 warps (head sizes 8 to 128, rows past blocks, every rule, grouped heads, tables, empty ranges)", SpanPipelinedKernel),
         ("attention spans backward: the conformance kit's key-range cases (forward and gradient; random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, head sizes 1 to 256, a soft-cap) replay on the device call by call", SpanGradientCases),
         ("attention spans backward: float32 and bfloat16 (MixedPrecision): the forward pass (float32) and the gradient on the device match the CPU (head sizes 4 to 256: on CUDA the wide kernels over 128, rows and keys past several tiles, every rule, grouped heads, tables, a soft-cap), on the device's own kernels", SpanGradientPrecisions),
@@ -510,6 +511,49 @@ internal static partial class Tests
               && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(4) == 8 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(6) == 0 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(132) == 0,
             "pipelined head sizes: multiples of 4 up to 128, padded to 8 (the outputs' tiles)");
         Check(Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedShared(72) == 4 * 64 * (80 + 8) * 2, "tcp d72: two stages of 64 keys and values of 80 + 8 bfloat16 values a row");
+    }
+
+    // The CPU's AttentionSpans with Kᵀ's panels against the same call with every product transposing its tile: bit for bit.
+    private static void CpuKeyPanels(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        var random = new Random(80);
+        var previous = Idrak.Abstraction.Devices.Cpu.CpuBackend.UseKeyPanels;
+        try
+        {
+            foreach (var (heads, kvHeads, rows, keyRows, dim, tables) in new[] { (2, 2, 300, 300, 72, 1), (4, 2, 130, 520, 64, 2), (2, 1, 66, 129, 13, 1) })
+            {
+                var spans = KeySpans.Concat([.. Enumerable.Range(0, tables).Select(t => t == 0 ? KeySpans.Bidirectional(rows, keyRows)
+                    : KeySpans.ImageBlocks(rows, [(3, 40)], window: 50))]);
+                float[] qv = RandomArray(random, heads * rows * dim), kv = RandomArray(random, kvHeads * keyRows * dim), vv = RandomArray(random, kvHeads * keyRows * dim);
+                (float[] Y, float[] Lse) Run(bool panels)
+                {
+                    Idrak.Abstraction.Devices.Cpu.CpuBackend.UseKeyPanels = panels;
+                    using var q = Tensor.From(qv, [heads, rows, dim], device);
+                    using var k = Tensor.From(kv, [kvHeads, keyRows, dim], device);
+                    using var v = Tensor.From(vv, [kvHeads, keyRows, dim], device);
+                    var (starts, ends) = spans.ToTensors(device);
+                    using var y = Tensor.Zeros([heads * rows * dim], device);
+                    using var lse = Tensor.Zeros([heads * rows], device);
+                    device.Backend.AttentionSpans(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, y.Storage, lse.Storage, heads, kvHeads,
+                        heads / tables, rows, keyRows, dim, 1f / MathF.Sqrt(dim));
+                    return (y.ToArray(), lse.ToArray());
+                }
+
+                var (transposing, panels) = (Run(false), Run(true));
+                string what = $"{heads} heads, {kvHeads} key/value heads, {rows} rows, {keyRows} keys, dim {dim}, {tables} tables";
+                Check(transposing.Y.AsSpan().SequenceEqual(panels.Y) && transposing.Lse.AsSpan().SequenceEqual(panels.Lse),
+                    $"{what}: the key panels change the output (largest difference {transposing.Y.Zip(panels.Y).Max(p => MathF.Abs(p.First - p.Second)):G3})");
+            }
+        }
+        finally
+        {
+            Idrak.Abstraction.Devices.Cpu.CpuBackend.UseKeyPanels = previous;
+        }
     }
 
     // The pipelined tensor-core span kernel against the single-stage one on CUDA, each forced: the same bfloat16 operands,
