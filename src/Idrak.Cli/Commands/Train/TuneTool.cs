@@ -718,8 +718,9 @@ internal sealed class TuneTool(ToolConsole console)
     }
 
     // Conversations from data files through their format (images as image parts; the system prompt added to those
-    // without one).
-    private List<ChatTranscript> ReadTranscripts(IEnumerable<string> files, string what)
+    // without one); the first `limit` of them when it is positive, every record still read and checked, but only the
+    // images of the conversations taken read.
+    private List<ChatTranscript> ReadTranscripts(IEnumerable<string> files, string what, int limit = 0)
     {
         var watch = Stopwatch.StartNew();
         var transcripts = new List<ChatTranscript>();
@@ -727,16 +728,17 @@ internal sealed class TuneTool(ToolConsole console)
         foreach (string file in files)
         {
             var format = DataFormat is { } name ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
-            int before = transcripts.Count;
-            foreach (var transcript in format.Read(file, options))
+            using var pending = format.ReadPending(file, options);
+            int taking = limit > 0 ? Math.Clamp(limit - transcripts.Count, 0, pending.Count) : pending.Count;
+            for (int i = 0; i < taking; i++)
             {
+                var transcript = pending.Read(i);
                 transcripts.Add(systemPrompt is not null && !transcript.Messages.Any(m => m.Role == "system")
                     ? transcript with { Messages = [new ChatMessage("system", systemPrompt), .. transcript.Messages] }
                     : transcript);
             }
 
-            int images = transcripts.Skip(before).Sum(t => t.Messages.Sum(m => m.Parts.Count(p => p is ChatImage)));
-            _out.WriteLine($"{what}: {transcripts.Count - before:N0} conversations ({format.Name}) from {file}, {images:N0} images ({watch.Elapsed.TotalSeconds:F1} s)");
+            _out.WriteLine($"{what}: {pending.Count:N0} conversations ({format.Name}) from {file}, {pending.Images:N0} images ({watch.Elapsed.TotalSeconds:F1} s)");
         }
 
         return transcripts;
@@ -898,8 +900,7 @@ internal sealed class TuneTool(ToolConsole console)
             return 1;
         }
 
-        var transcripts = ReadTranscripts(files, "evaluation");
-        var scored = samples > 0 ? transcripts.Take(samples).ToList() : transcripts;
+        var scored = ReadTranscripts(files, "evaluation", samples);              // the samples' images alone read
 
         // The adapter's preparation for both runs (the base model then reads the images as the adapter was tuned on them).
         var images = !preparation.IsEmpty || adapterFolder is null ? preparation : TuningImages.Read(adapterFolder) ?? preparation;

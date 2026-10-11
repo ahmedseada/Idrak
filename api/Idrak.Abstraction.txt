@@ -1360,6 +1360,7 @@ public sealed record Idrak.Abstraction.Generation.ChatImage : Idrak.Abstraction.
   public static Idrak.Abstraction.Generation.ChatImage FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
   public static Idrak.Abstraction.Generation.ChatImage FromDataUrl(string url)
   public static Idrak.Abstraction.Generation.ChatImage FromFile(string path, string? mediaType = null)
+  public static Idrak.Abstraction.Generation.ChatImage FromStream(System.IO.Stream stream, int length, string? mediaType = null)
   public string Hash { get; }
   public string ToDataUrl()
   public string? MediaType { get; }

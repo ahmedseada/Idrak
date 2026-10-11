@@ -415,18 +415,14 @@ internal sealed class TuningImageSource : IDisposable
             throw new InvalidDataException($"{where}: the entry {entry.FullName} of {_zipPath} is {entry.Length:N0} bytes, too large for one image.");
         }
 
-        var bytes = new byte[entry.Length];
-        using (var stream = entry.Open())
-        {
-            stream.ReadExactly(bytes);
-        }
-
-        if (bytes.Length == 0)
+        if (entry.Length == 0)
         {
             throw new InvalidDataException($"{where}: the image {entry.FullName} in {_zipPath} is empty.");
         }
 
-        return ChatImage.FromBytes(bytes);
+        // Inflated straight into the image's own array (a page is a large-object allocation: one, not a buffer and a copy).
+        using var stream = entry.Open();
+        return ChatImage.FromStream(stream, (int)entry.Length);
     }
 
     // The entry a relative path names: exactly; under the zip's one top folder; without a first folder named as the zip
@@ -475,17 +471,59 @@ internal sealed class TuningImageSource : IDisposable
     }
 }
 
-// An image part not read yet: the index of the record's image it stands for (the formats read a record's text first, check
-// the count of its images, then read them).
-internal sealed record PendingImage(int Index) : ChatPart
+// An image part not read yet: the index of the record's "images" entry it stands for, or the reference a part gave
+// itself (a path or data URL in the part: Index unused). The formats read a record's text first, check the count of its
+// images, then read them when the record is taken.
+internal sealed record PendingImage(int Index, string? Reference = null) : ChatPart
 {
     public override string Kind => ChatParts.Image;
 }
 
+// A record read and checked, its images not read yet: the transcript with a PendingImage for each image part (but those
+// that carry their bytes), the "images" entries they take, how many image parts it has and where the record is.
+internal sealed record PendingRecord(ChatTranscript Transcript, IReadOnlyList<string> References, int Images, string Where);
+
 // What the two library formats share: placeholders found while a record's messages are read, checked against its
-// "images" list, then filled in place.
+// "images" list, then filled in place. Each format reads a record into a transcript whose images are placeholders
+// (`pending`); Read fills each record's images as the record is read (streamed), ReadPending keeps every record and reads
+// a record's images only when it is taken.
 internal static class TuningRecordImages
 {
+    public static IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options, Func<JsonObject, string, PendingRecord> pending)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        var records = TuningRecords.Read(path);
+        TuningImageSource.CheckRoot(options?.Images);
+        return Iterate();
+
+        IEnumerable<ChatTranscript> Iterate()
+        {
+            using var source = new TuningImageSource(path, options?.Images);
+            foreach (var (record, where) in records)
+            {
+                yield return Fill(pending(record, where), source);
+            }
+        }
+    }
+
+    public static PendingConversations ReadPending(string path, TuningDataOptions? options, Func<JsonObject, string, PendingRecord> pending)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        var records = TuningRecords.Read(path);
+        TuningImageSource.CheckRoot(options?.Images);
+        var read = new List<PendingRecord>();
+        int images = 0;
+        foreach (var (record, where) in records)
+        {
+            var one = pending(record, where);
+            read.Add(one);
+            images += one.Images;
+        }
+
+        var source = new TuningImageSource(path, options?.Images);             // opened once every record has read
+        return new PendingConversations(read.Count, images, i => Fill(read[i], source), source);
+    }
+
     public const string Marker = "<image>";
 
     // Whether a failure while reading the record at `where` is rethrown as an InvalidDataException naming it (one that
@@ -550,8 +588,9 @@ internal static class TuningRecordImages
         return references;
     }
 
-    // The transcript with each pending image read from `references`, after checking there is one entry per placeholder.
-    public static ChatTranscript Fill(ChatTranscript transcript, int placeholders, IReadOnlyList<string> references, string what, string where, TuningImageSource source)
+    // The record, after checking there is one entry of `references` per placeholder (`placeholders` of them: bare parts
+    // and markers; parts that name their own image are pending too, and counted apart).
+    public static PendingRecord Check(ChatTranscript transcript, int placeholders, IReadOnlyList<string> references, string what, string where)
     {
         if (placeholders != references.Count)
         {
@@ -559,16 +598,41 @@ internal static class TuningRecordImages
                 + "each image needs its own placeholder, in the order of the list.");
         }
 
-        if (placeholders == 0)
+        int images = 0;
+        foreach (var message in transcript.Messages)
         {
-            return transcript;
+            images += message.Parts.Count(p => p is PendingImage or ChatImage);     // the parts that carry their bytes are read already
         }
 
-        var images = new ChatImage?[references.Count];
-        var messages = transcript.Messages.Select(m => m.Parts.Any(p => p is PendingImage)
-            ? m with { Parts = [.. m.Parts.Select(p => p is PendingImage pending ? (ChatPart)(images[pending.Index] ??= source.Load(references[pending.Index], where)) : p)] }
-            : m).ToList();
-        return transcript with { Messages = messages };
+        return new PendingRecord(transcript, references, images, where);
+    }
+
+    // The record's transcript with each pending image read (an "images" entry once, however many placeholders take it).
+    public static ChatTranscript Fill(PendingRecord record, TuningImageSource source)
+    {
+        if (record.Images == 0)
+        {
+            return record.Transcript;
+        }
+
+        string where = record.Where;
+        try
+        {
+            var images = new ChatImage?[record.References.Count];
+            var messages = record.Transcript.Messages.Select(m => m.Parts.Any(p => p is PendingImage)
+                ? m with
+                {
+                    Parts = [.. m.Parts.Select(p => p is not PendingImage pending ? p
+                        : pending.Reference is { } own ? source.Load(own, where)
+                        : images[pending.Index] ??= source.Load(record.References[pending.Index], where))],
+                }
+                : m).ToList();
+            return record.Transcript with { Messages = messages };
+        }
+        catch (Exception ex) when (Rewrap(ex, where))
+        {
+            throw new InvalidDataException($"{where}: {ex.Message}", ex);
+        }
     }
 }
 
@@ -582,33 +646,22 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
 
     public bool Recognizes(JsonObject record) => record["messages"] is JsonArray;
 
-    public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        var records = TuningRecords.Read(path);
-        TuningImageSource.CheckRoot(options?.Images);
-        return Iterate();
+    public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null) => TuningRecordImages.Read(path, options, Pending);
 
-        IEnumerable<ChatTranscript> Iterate()
-        {
-            using var source = new TuningImageSource(path, options?.Images);
-            foreach (var (record, where) in records)
-            {
-                yield return Transcript(record, where, source);
-            }
-        }
-    }
+    public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, Pending);
 
-    private static ChatTranscript Transcript(JsonObject record, string where, TuningImageSource source)
+    // The record at `where` with its images as placeholders, their count checked against its "images".
+    private static PendingRecord Pending(JsonObject record, string where)
     {
         try
         {
             var references = TuningRecordImages.References(record, where);
             int pending = 0;
-            var transcript = ChatTranscript.Parse(record, content => Content(content, references is not null, ref pending, where, source));
+            var transcript = ChatTranscript.Parse(record, content => Content(content, references is not null, ref pending));
             return references is null
-                ? (pending == 0 ? transcript : throw new InvalidDataException($"{where}: {pending} image part{(pending == 1 ? "" : "s")} without data or a path, and no \"images\" list to take them from."))
-                : TuningRecordImages.Fill(transcript, pending, references, "image placeholders (bare image parts and <image> markers)", where, source);
+                ? (pending == 0 ? TuningRecordImages.Check(transcript, 0, [], "", where)
+                    : throw new InvalidDataException($"{where}: {pending} image part{(pending == 1 ? "" : "s")} without data or a path, and no \"images\" list to take them from."))
+                : TuningRecordImages.Check(transcript, pending, references, "image placeholders (bare image parts and <image> markers)", where);
         }
         catch (Exception ex) when (TuningRecordImages.Rewrap(ex, where))
         {
@@ -616,7 +669,7 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
         }
     }
 
-    private static IReadOnlyList<ChatPart> Content(JsonNode? content, bool markers, ref int pending, string where, TuningImageSource source)
+    private static IReadOnlyList<ChatPart> Content(JsonNode? content, bool markers, ref int pending)
     {
         switch (content)
         {
@@ -638,7 +691,7 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
                         }
                         else if (reference is not null)
                         {
-                            parts.Add(source.Load(reference, where));
+                            parts.Add(new PendingImage(-1, reference));               // read when the record is taken
                         }
                         else
                         {
@@ -702,24 +755,12 @@ internal sealed class ShareGptDataFormat : ITuningDataFormat
 
     public bool Recognizes(JsonObject record) => record["conversations"] is JsonArray;
 
-    public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        var records = TuningRecords.Read(path);
-        TuningImageSource.CheckRoot(options?.Images);
-        return Iterate();
+    public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null) => TuningRecordImages.Read(path, options, Pending);
 
-        IEnumerable<ChatTranscript> Iterate()
-        {
-            using var source = new TuningImageSource(path, options?.Images);
-            foreach (var (record, where) in records)
-            {
-                yield return Transcript(record, where, source);
-            }
-        }
-    }
+    public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, Pending);
 
-    private static ChatTranscript Transcript(JsonObject record, string where, TuningImageSource source)
+    // The record at `where` with its images as placeholders, their count checked against its "images".
+    private static PendingRecord Pending(JsonObject record, string where)
     {
         try
         {
@@ -748,7 +789,7 @@ internal sealed class ShareGptDataFormat : ITuningDataFormat
                 transcript = transcript with { Messages = [new ChatMessage("system", system), .. transcript.Messages] };
             }
 
-            return TuningRecordImages.Fill(transcript, pending, TuningRecordImages.References(record, where) ?? [], $"{TuningRecordImages.Marker} markers", where, source);
+            return TuningRecordImages.Check(transcript, pending, TuningRecordImages.References(record, where) ?? [], $"{TuningRecordImages.Marker} markers", where);
         }
         catch (Exception ex) when (TuningRecordImages.Rewrap(ex, where))
         {

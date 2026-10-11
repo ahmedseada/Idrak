@@ -149,10 +149,26 @@ public static class TuningMetrics
 
     /// <summary>
     /// The edit distance (Levenshtein: insertions, deletions and substitutions, each 1) between <paramref name="a"/> and
-    /// <paramref name="b"/>, in time proportional to the product of their lengths and memory proportional to the shorter.
+    /// <paramref name="b"/>, exact, in memory proportional to the shorter: what they share at the start and the end is
+    /// trimmed first, then the rest is compared 64 elements of the shorter at a time (Myers' bit-vector algorithm in
+    /// Hyyrö's form, in blocks), in time proportional to the product of their lengths over 64; a shorter side of more than
+    /// 512 distinct elements and over 64 long is compared an element at a time.
     /// </summary>
     public static int EditDistance<T>(ReadOnlySpan<T> a, ReadOnlySpan<T> b) where T : IEquatable<T>
     {
+        // What the two share at the start and the end costs nothing (a vector compare for numbers).
+        int prefix = a.CommonPrefixLength(b);
+        a = a[prefix..];
+        b = b[prefix..];
+        int suffix = 0;
+        var equal = EqualityComparer<T>.Default;
+        while (suffix < a.Length && suffix < b.Length && equal.Equals(a[a.Length - 1 - suffix], b[b.Length - 1 - suffix]))
+        {
+            suffix++;
+        }
+
+        a = a[..^suffix];
+        b = b[..^suffix];
         if (a.Length < b.Length)
         {
             var swap = a;
@@ -160,6 +176,102 @@ public static class TuningMetrics
             b = swap;
         }
 
+        return b.Length == 0 ? a.Length : BitVectors(a, b) ?? Rows(a, b);
+    }
+
+    // Myers' bit-vector edit distance in Hyyrö's form, in blocks of 64 (Hyyrö 2003, as rapidfuzz writes it): the table's
+    // column over `pattern` (the shorter) is kept as vertical +1 and -1 bit vectors, VP and VN, one bit per row; each
+    // element of `text` advances every row at once, block after block, the horizontal +1/-1 at a block's last row carried
+    // into the next block's first; the score follows the last row. The match masks are one bit per row for each distinct
+    // element of the pattern. Null when the pattern holds more than 512 distinct elements and more than one block (the
+    // masks would outgrow the one-row table of Rows: 16 times its bytes at 512).
+    private static int? BitVectors<T>(ReadOnlySpan<T> text, ReadOnlySpan<T> pattern) where T : IEquatable<T>
+    {
+        const int MostSymbols = 512;
+        int m = pattern.Length, words = (m + 63) >> 6;
+        var symbols = new Dictionary<Symbol<T>, int>();
+        for (int i = 0; i < m; i++)
+        {
+            if (symbols.TryAdd(new Symbol<T>(pattern[i]), symbols.Count) && symbols.Count > MostSymbols && words > 1)
+            {
+                return null;
+            }
+        }
+
+        int masksLength = symbols.Count * words;
+        ulong[] rented = ArrayPool<ulong>.Shared.Rent(masksLength + 2 * words);
+        try
+        {
+            var masks = rented.AsSpan(0, masksLength);
+            var vp = rented.AsSpan(masksLength, words);
+            var vn = rented.AsSpan(masksLength + words, words);
+            masks.Clear();
+            for (int i = 0; i < m; i++)
+            {
+                masks[symbols[new Symbol<T>(pattern[i])] * words + (i >> 6)] |= 1UL << (i & 63);
+            }
+
+            vp.Fill(ulong.MaxValue);                                                 // the first column: 0, 1, 2, ..., m
+            vn.Clear();
+            ulong last = 1UL << ((m - 1) & 63);
+            int score = m;
+            foreach (var element in text)
+            {
+                int at = symbols.TryGetValue(new Symbol<T>(element), out int symbol) ? symbol * words : -1;
+                ulong hpCarry = 1, hnCarry = 0;                                       // the first row: one more each step
+                for (int w = 0; w < words; w++)
+                {
+                    ulong match = at < 0 ? 0 : masks[at + w];
+                    ulong p = vp[w], n = vn[w];
+                    ulong x = match | hnCarry;
+                    ulong d0 = (((x & p) + p) ^ p) | x | n;
+                    ulong hp = n | ~(d0 | p);
+                    ulong hn = d0 & p;
+                    ulong hpOut, hnOut;
+                    if (w < words - 1)
+                    {
+                        hpOut = hp >> 63;
+                        hnOut = hn >> 63;
+                    }
+                    else
+                    {
+                        hpOut = (hp & last) != 0 ? 1UL : 0UL;
+                        hnOut = (hn & last) != 0 ? 1UL : 0UL;
+                        score += (int)hpOut - (int)hnOut;
+                    }
+
+                    hp = (hp << 1) | hpCarry;
+                    hn = (hn << 1) | hnCarry;
+                    vp[w] = hn | ~(d0 | hp);
+                    vn[w] = hp & d0;
+                    hpCarry = hpOut;
+                    hnCarry = hnOut;
+                }
+            }
+
+            return score;
+        }
+        finally
+        {
+            ArrayPool<ulong>.Shared.Return(rented);
+        }
+    }
+
+    // An element of a sequence as a dictionary key (a null one too), equal as the sequence's elements are.
+    private readonly struct Symbol<T>(T value) : IEquatable<Symbol<T>> where T : IEquatable<T>
+    {
+        private readonly T _value = value;
+
+        public bool Equals(Symbol<T> other) => EqualityComparer<T>.Default.Equals(_value, other._value);
+
+        public override bool Equals(object? obj) => obj is Symbol<T> other && Equals(other);
+
+        public override int GetHashCode() => _value?.GetHashCode() ?? 0;
+    }
+
+    // The table a row at a time over the shorter sequence `b`.
+    private static int Rows<T>(ReadOnlySpan<T> a, ReadOnlySpan<T> b) where T : IEquatable<T>
+    {
         // One row over the shorter sequence (pooled: a metric scores every record): row[j] is the distance between a[..i]
         // and b[..j].
         int[] rented = ArrayPool<int>.Shared.Rent(b.Length + 1);

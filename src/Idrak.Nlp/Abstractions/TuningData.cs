@@ -45,6 +45,75 @@ public interface ITuningDataFormat
     /// <exception cref="FileNotFoundException">The file, or an image it names, is not there.</exception>
     /// <exception cref="InvalidDataException">A record is not valid, or its images do not match its placeholders; the message names the file and the record.</exception>
     IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null);
+
+    /// <summary>
+    /// The data file's conversations read and checked as <see cref="Read"/> reads them (every record, the count of its
+    /// images against its placeholders), each one's images read only when it is taken (<see cref="PendingConversations.Read"/>):
+    /// a tuner that holds some conversations out or trains on the first N reads, inflates and hashes the images of the
+    /// conversations it takes, and no others. The default reads every conversation with <see cref="Read"/>, images and all;
+    /// the library's formats leave the images for later.
+    /// </summary>
+    /// <param name="path">The data file.</param>
+    /// <param name="options">Where its images are (next to the file when null).</param>
+    /// <exception cref="FileNotFoundException">The file is not there (an image that is not there fails when its conversation is taken).</exception>
+    /// <exception cref="InvalidDataException">A record is not valid, or its images do not match its placeholders; the message names the file and the record.</exception>
+    PendingConversations ReadPending(string path, TuningDataOptions? options = null) => new([.. Read(path, options)]);
+}
+
+/// <summary>
+/// A data file's conversations, read and checked, whose images are read when each conversation is taken
+/// (<see cref="ITuningDataFormat.ReadPending"/>). It keeps what the images come from (an images zip) open until disposed.
+/// Conversations are taken on one thread at a time.
+/// </summary>
+public sealed class PendingConversations : IDisposable
+{
+    private readonly Func<int, ChatTranscript> _read;
+    private readonly IDisposable? _source;
+
+    /// <summary>Conversations read already, their images with them.</summary>
+    public PendingConversations(IReadOnlyList<ChatTranscript> transcripts)
+    {
+        ArgumentNullException.ThrowIfNull(transcripts);
+        (Count, _read) = (transcripts.Count, i => transcripts[i]);
+        foreach (var transcript in transcripts)
+        {
+            foreach (var message in transcript.Messages)
+            {
+                Images += message.Parts.Count(p => p is ChatImage);
+            }
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="count"/> conversations holding <paramref name="images"/> image parts in all, each taken by
+    /// <paramref name="read"/> (its index in, the conversation with its images read out); <paramref name="source"/>, when
+    /// given, is disposed with this.
+    /// </summary>
+    public PendingConversations(int count, int images, Func<int, ChatTranscript> read, IDisposable? source = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        ArgumentOutOfRangeException.ThrowIfNegative(images);
+        (Count, Images, _read, _source) = (count, images, read ?? throw new ArgumentNullException(nameof(read)), source);
+    }
+
+    /// <summary>The conversations, one per record, in the file's order.</summary>
+    public int Count { get; }
+
+    /// <summary>The image parts of every conversation together, read or not.</summary>
+    public int Images { get; }
+
+    /// <summary>The conversation at <paramref name="index"/> (in the file's order), its images read now (again on each call).</summary>
+    /// <exception cref="FileNotFoundException">An image it names is not there.</exception>
+    /// <exception cref="InvalidDataException">An image it names cannot be read; the message names the file and the record.</exception>
+    public ChatTranscript Read(int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Count);
+        return _read(index);
+    }
+
+    /// <summary>Closes what the images come from.</summary>
+    public void Dispose() => _source?.Dispose();
 }
 
 /// <summary>
