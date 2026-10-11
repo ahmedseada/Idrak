@@ -2263,6 +2263,7 @@ public static class FineTuner
         private readonly PackedSequences _packing;
         private ImagePrefillInputs? _images;
         private TuningVision? _vision;
+        private Batch? _imagesOf;                                         // the batch whose features _images holds
         private IntPtr _executable, _graph;
         private List<Idrak.Abstraction.Devices.Storage> _owned = [];
 
@@ -2313,6 +2314,7 @@ public static class FineTuner
                     {
                         var step = StepImages.Of(train, batch, vision)!;
                         graph._images.Load(step.Images, graph._packing);
+                        graph._imagesOf = batch;
                         images = step with { Inputs = graph._images };
                     }
                 }
@@ -2393,13 +2395,17 @@ public static class FineTuner
             _targets.Load(targets);
             _weights.Load(weights);
             _packing.Update(Lengths(batch, train));
-            if (_images is not null)
+            // The features again only for another batch: the step right after recording, and a batch replayed again before
+            // any other, find theirs in place (no part of the image side trains in a recorded step, so they are the same).
+            if (_images is not null && !ReferenceEquals(_imagesOf, batch))
             {
                 using var scope = new TensorScope();
                 using (Autograd.NoGrad())
                 {
                     _images.Load(StepImages.Of(train, batch, _vision)!.Images, _packing);
                 }
+
+                _imagesOf = batch;
             }
 
             _model.Device.Backend.ReplayGraph(_executable);

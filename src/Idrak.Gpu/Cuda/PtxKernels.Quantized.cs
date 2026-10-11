@@ -1191,7 +1191,8 @@ internal static partial class PtxKernels
         s.AppendLine(Tail("NA_Y"));
         s.AppendLine(Reduce(ye));
 
-        // Pass 2: sum = res + y · inv · (ygain + yoffset), written, and Σ sum².
+        // Pass 2: y = y · inv · (ygain + yoffset) and sum = res + y, both written (as rms_norm_affine_f32 in place, then
+        // add_rms_norm_affine_f32), and Σ sum².
         s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %f{acc}, {Zero};");
         s.AppendLine(Head("NA_S"));
         s.AppendLine("""
@@ -1213,6 +1214,7 @@ internal static partial class PtxKernels
                     {On(j)}add.f32 %f{g + j}, %f{g + j}, %f{yo};
                     {On(j)}mul.rn.f32 %f{v + j}, %f{v + j}, %f{inv};
                     {On(j)}mul.rn.f32 %f{v + j}, %f{v + j}, %f{g + j};
+                    {On(j)}st.global.f32 [%rd25+{j * Stride}], %f{v + j};
                     {On(j)}add.rn.f32 %f{v + j}, %f{w + j}, %f{v + j};
                     {On(j)}st.global.f32 [%rd28+{j * Stride}], %f{v + j};
                 """);
