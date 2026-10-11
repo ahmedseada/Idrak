@@ -12,7 +12,7 @@ internal static partial class PtxKernels
     public static readonly string[] DecodingNames =
     [
         "scale_mask_softmax_f32", "layernorm_fused_f32", "layernorm_train_f32", "layernorm_bwd_f32", "layernorm_bwd_params_f32", "bias_gelu_f32", "decoder_mask_f32", "kv_write_f32", "kv_write_bf16", "sample_rows_f32",
-        "penalize_rows_f32", "history_push_f32", "sample_candidates_f32", "topk_candidates_f32",
+        "penalize_rows_f32", "history_push_f32", "sample_candidates_f32", "topk_candidates_f32", "topk_greedy_f32", "sample_candidates_greedy_f32",
     ];
 
     private const string PosInf = "0f7F800000";
@@ -720,6 +720,16 @@ internal static partial class PtxKernels
         RowBlock(sb, "sample_candidates_f32", ["logits", "ids", "stats", "step", "candv", "candi", "flags"],
             [("u32", "vocab"), ("u32", "rowstride"), ("u32", "rowoffset"), ("f32", "invt"), ("u32", "topk"), ("f32", "topp"), ("f32", "minp"), ("u32", "seed"), ("u32", "rows"), ("u32", "slots")],
             SamplerBody(candidates: true), sharedFloats: SamplerThreads);
+
+        // The same for the rows topk_greedy_f32 left pending (pending[row] ≠ 0); the others return at once.
+        RowBlock(sb, "sample_candidates_greedy_f32", ["logits", "ids", "stats", "step", "candv", "candi", "flags", "pending"],
+            [("u32", "vocab"), ("u32", "rowstride"), ("u32", "rowoffset"), ("f32", "invt"), ("u32", "topk"), ("f32", "topp"), ("f32", "minp"), ("u32", "seed"), ("u32", "rows"), ("u32", "slots")],
+            """
+            add.u64 %rd1, %b_pending, %off;
+            ld.global.u32 %r28, [%rd1];
+            setp.eq.u32 %p1, %r28, 0;
+            @%p1 bra DONE;
+            """ + "\n" + SamplerBody(candidates: true), sharedFloats: SamplerThreads);
         TopKCandidates(sb);
         PenaltyKernels(sb);
     }
@@ -886,6 +896,151 @@ internal static partial class PtxKernels
         RowBlock(sb, "topk_candidates_f32", ["logits", "candv", "candi", "flags"],
             [("u32", "vocab"), ("u32", "rowstride"), ("u32", "rowoffset"), ("f32", "invt"), ("u32", "topk"), ("u32", "bpr")],
             b.ToString(), sharedFloats: RowThreads);
+        RowBlock(sb, "topk_greedy_f32", ["logits", "candv", "candi", "flags", "ids", "stats", "step", "parts", "counters", "pending"],
+            [("u32", "vocab"), ("u32", "rowstride"), ("u32", "rowoffset"), ("f32", "invt"), ("u32", "topk"), ("u32", "bpr"), ("u32", "nrows")],
+            b.ToString() + GreedyFinish(), sharedFloats: RowThreads);
+    }
+
+    // topk_greedy_f32 (top-k 1): topk_candidates_f32's candidates and flags, then each block leaves its best scaled score
+    // (+∞ included, NaN never), how many of its scores equal it and the first of them (token ids as floats, exact) in
+    // parts[block · 3 …]; the last block of the row (counted in counters[row], reset afterwards) takes the row's best
+    // score, the ties at it and the first. A row with one best score, finite and far from overflowing (|s| ≤ 1e38, so
+    // top-p's bisection cannot leave it), gets its token and statistics here, those sample_candidates_f32 writes when
+    // one token is kept: weight e = ex2((s - s) · log2 e), probability e / e, entropy 0 - lg2(p) · p, the token as the
+    // first alternative with that probability and four of id -1 and probability 0. Every other row (ties, +∞, nothing
+    // finite) is marked pending for sample_candidates_greedy_f32, which samples it from the candidates as before.
+    private static string GreedyFinish()
+    {
+        var g = new StringBuilder();
+        g.AppendLine($"""
+            mov.f32 %f20, {NegInf};
+            """);
+        for (int i = 0; i < 8; i++)
+        {
+            g.AppendLine(CultureInfo.InvariantCulture, $"max.f32 %f20, %f20, %f{10 + i};");
+        }
+
+        g.AppendLine(BlockReduce("GMAX", "%f20", "max", NegInf));
+        g.AppendLine($"""
+            mov.f32 %f21, {Zero};
+            mov.f32 %f22, {PosInf};
+            """);
+        for (int i = 0; i < 8; i++)
+        {
+            g.AppendLine(CultureInfo.InvariantCulture, $"""
+                setp.eq.f32 %p10, %f{10 + i}, %f20;
+                selp.f32 %f23, {One}, {Zero}, %p10;
+                add.f32 %f21, %f21, %f23;
+                add.u32 %r11, %r10, {i};
+                cvt.rn.f32.u32 %f24, %r11;
+                @%p10 min.f32 %f22, %f22, %f24;
+                """);
+        }
+
+        g.AppendLine(BlockReduce("GCNT", "%f21", "add", Zero));
+        g.AppendLine(BlockReduce("GIDX", "%f22", "min", PosInf));
+        g.AppendLine("""
+            setp.ne.u32 %p10, %tx, 0;
+            @%p10 bra GW_DONE;
+            mul.wide.u32 %rd10, %row, 12;
+            add.u64 %rd10, %rd10, %b_parts;
+            st.global.f32 [%rd10], %f20;
+            st.global.f32 [%rd10+4], %f21;
+            st.global.f32 [%rd10+8], %f22;
+            membar.gl;
+            mul.wide.u32 %rd11, %r7, 4;
+            add.u64 %rd11, %rd11, %b_counters;
+            atom.global.add.u32 %r27, [%rd11], 1;
+            sub.u32 %r28, %s_bpr, 1;
+            setp.eq.u32 %p11, %r27, %r28;
+            selp.u32 %r27, 1, 0, %p11;
+            st.shared.u32 [%spart], %r27;
+            GW_DONE:
+            bar.sync 0;
+            ld.shared.u32 %r27, [%spart];
+            bar.sync 0;
+            setp.eq.u32 %p11, %r27, 0;
+            @%p11 bra DONE;
+            membar.gl;
+            @!%p10 st.global.u32 [%rd11], 0;
+            mul.lo.u32 %r29, %r7, %s_bpr;
+            """);
+
+        // The row's best score over its blocks, then the ties at it and the first of them.
+        string Parts(string label, string body) => $"""
+            mov.u32 %r30, %tx;
+            {label}:
+            setp.ge.u32 %p11, %r30, %s_bpr;
+            @%p11 bra {label}_END;
+            add.u32 %r31, %r29, %r30;
+            mul.wide.u32 %rd12, %r31, 12;
+            add.u64 %rd12, %rd12, %b_parts;
+            {body}
+            add.u32 %r30, %r30, %nt;
+            bra {label};
+            {label}_END:
+            """;
+        g.AppendLine($"mov.f32 %f25, {NegInf};");
+        g.AppendLine(Parts("GA", """
+            ld.global.cg.f32 %f26, [%rd12];
+            max.f32 %f25, %f25, %f26;
+            """));
+        g.AppendLine(BlockReduce("GAM", "%f25", "max", NegInf));
+        g.AppendLine($"""
+            mov.f32 %f21, {Zero};
+            mov.f32 %f22, {PosInf};
+            """);
+        g.AppendLine(Parts("GB", """
+            ld.global.cg.f32 %f26, [%rd12];
+            ld.global.cg.f32 %f27, [%rd12+4];
+            ld.global.cg.f32 %f28, [%rd12+8];
+            setp.eq.f32 %p12, %f26, %f25;
+            @%p12 add.f32 %f21, %f21, %f27;
+            @%p12 min.f32 %f22, %f22, %f28;
+            """));
+        g.AppendLine(BlockReduce("GBC", "%f21", "add", Zero));
+        g.AppendLine(BlockReduce("GBI", "%f22", "min", PosInf));
+        g.AppendLine(CultureInfo.InvariantCulture, $"""
+            @%p10 bra DONE;
+            abs.f32 %f26, %f25;
+            setp.le.f32 %p11, %f26, {F(1e38f)};
+            setp.eq.and.f32 %p11, %f21, {One}, %p11;
+            mul.wide.u32 %rd13, %r7, 4;
+            add.u64 %rd14, %rd13, %b_pending;
+            selp.u32 %r30, 0, 1, %p11;
+            st.global.u32 [%rd14], %r30;
+            @!%p11 bra DONE;
+            sub.f32 %f26, %f25, %f25;
+            mul.f32 %f26, %f26, {Log2E};
+            ex2.approx.ftz.f32 %f26, %f26;
+            div.rn.f32 %f27, %f26, %f26;
+            lg2.approx.ftz.f32 %f28, %f27;
+            mul.f32 %f28, %f28, %f27;
+            mov.f32 %f29, {Zero};
+            sub.f32 %f29, %f29, %f28;
+            add.u64 %rd14, %rd13, %b_ids;
+            st.global.f32 [%rd14], %f22;
+            ld.global.f32 %f23, [%b_step];
+            cvt.rzi.u32.f32 %r31, %f23;
+            mad.lo.u32 %r31, %r31, %s_nrows, %r7;
+            mul.lo.u32 %r31, %r31, 13;
+            mul.wide.u32 %rd15, %r31, 4;
+            add.u64 %rd15, %rd15, %b_stats;
+            st.global.f32 [%rd15], %f22;
+            st.global.f32 [%rd15+4], %f27;
+            st.global.f32 [%rd15+8], %f29;
+            st.global.f32 [%rd15+12], %f22;
+            st.global.f32 [%rd15+16], %f27;
+            """);
+        for (int a = 1; a < 5; a++)
+        {
+            g.AppendLine(CultureInfo.InvariantCulture, $"""
+                st.global.f32 [%rd15+{12 + 8 * a}], {F(-1f)};
+                st.global.f32 [%rd15+{16 + 8 * a}], {Zero};
+                """);
+        }
+
+        return g.ToString();
     }
 
     private static void PenaltyKernels(StringBuilder sb)
