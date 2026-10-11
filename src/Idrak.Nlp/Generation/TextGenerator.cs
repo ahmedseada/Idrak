@@ -235,7 +235,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
         // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).
         var batchLayout = Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
-        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout) { LastPositionOnly = true };
+        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout) { LastPositionOnly = true, Cancellation = cancellationToken };
         decoding.SetRowStarts(starts);
         var generated = Enumerable.Range(0, rows).Select(_ => new List<int>()).ToList();
         var ends = new int?[rows];                                            // text length where a stop sequence begins
@@ -550,6 +550,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             var (kept, keptIds) = options.UseCache && KeepCache ? TakeCache(context) : (null, []);
             var decoding = kept ?? new DecodingContext(Device, 1, context, Layout);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
+            decoding.Cancellation = cancellationToken;                          // the prompt's pass stops between layers
             bool keep = false, steppedOnce = false;
             ComputeGraph? graph = null;
             try

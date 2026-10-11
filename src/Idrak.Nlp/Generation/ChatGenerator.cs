@@ -237,6 +237,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             var layouts = decoded.Select(d => reader.Encoder.Blocks(d, request.VisionOptions)).ToList();
             prompt = RenderPrompt(request, layouts);
             var blocks = layouts.SelectMany(l => l).ToList();
+            cancellationToken.ThrowIfCancellationRequested();                    // before the encoder, and after it below
             features = reader.Encoder.Encode(decoded, request.VisionOptions);
             try
             {
@@ -245,6 +246,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
                     throw new InvalidOperationException($"The image encoder gave {features.Count} blocks' features for {images.Count} images of {blocks.Count} blocks.");
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int i = 0; i < features.Count; i++)
                 {
                     if (!features[i].Layout.Equals(blocks[i]) || features[i].Features.Shape[^1] != reader.Encoder.Width)

@@ -184,6 +184,10 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
         int lastCached = outermost && context.LastPositionOnly && steps > 1 ? _modules.FindLastIndex(m => m is ICachedModule) : -1;
         Tensor Layer(int i, Tensor x)
         {
+            if (!ComputeGraph.IsCapturing)
+            {
+                context.Cancellation.ThrowIfCancellationRequested();          // a long prefill stops at the next layer
+            }
             var module = _modules[i];
             if (before is not null)
             {
@@ -194,7 +198,16 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
             return i == lastCached && x.Rank == 3 ? x.Narrow(1, x.Shape[1] - 1, 1) : x;
         }
 
-        var x = Autograd.IsEnabled || ComputeGraph.IsCapturing ? RunLayers(input, layers, Layer) : RunFreeing(input, layers, Layer);
+        Tensor x;
+        try
+        {
+            x = Autograd.IsEnabled || ComputeGraph.IsCapturing ? RunLayers(input, layers, Layer) : RunFreeing(input, layers, Layer);
+        }
+        catch (OperationCanceledException) when (outermost)
+        {
+            context.CancelStep();                                              // the stopped step's positions are not counted
+            throw;
+        }
 
         if (outermost)
         {
