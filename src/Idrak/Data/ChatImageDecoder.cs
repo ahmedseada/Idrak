@@ -28,6 +28,16 @@ public static class ChatImageDecoder
     public static ImageData Decode(ReadOnlySpan<byte> file) => Orient(ImageCodecs.Decode(file), Orientation(file));
 
     /// <summary>
+    /// The width and height of an image file held in memory as <see cref="Decode(ReadOnlySpan{byte})"/> gives it (turned
+    /// upright: swapped for the EXIF orientations 5 to 8), read from its header without decoding it; null when no
+    /// registered codec knows its format or its header gives no size.
+    /// </summary>
+    public static (int Width, int Height)? Size(ReadOnlySpan<byte> file) =>
+        ImageCodecs.ReadInfo(file) is { Width: > 0, Height: > 0 } info
+            ? Orientation(file) >= 5 ? (info.Height, info.Width) : (info.Width, info.Height)
+            : null;
+
+    /// <summary>
     /// The name of the registered codec that reads the image's bytes (for example "png" or "jpeg"), or null when none
     /// does (a GIF or WebP file, or bytes that are no image): a check of the header, before anything is decoded.
     /// </summary>

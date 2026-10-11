@@ -212,6 +212,7 @@ public static class Idrak.Abstraction.Data.ImageCodecs
   public static Idrak.Abstraction.Data.IImageCodec? Default(string name)
   public static Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
   public static Idrak.Abstraction.Data.ImageData Decode(string path)
+  public static Idrak.Abstraction.Data.ImageInfo? ReadInfo(System.ReadOnlySpan<byte> file)
   public static Idrak.Abstraction.Data.ImageInfo? ReadInfo(string path)
   public static System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
@@ -704,6 +705,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
 
 public sealed record Idrak.Abstraction.Devices.BackendCapabilities : System.IEquatable<Idrak.Abstraction.Devices.BackendCapabilities>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public BackendCapabilities()
+  public int SpanAttentionHeadDim { get; init; }
   public required System.Func<int, bool> MatrixUnitAttentionHeadDim { get; init; }
   public required bool FusedKernels { get; init; }
   public required bool MatrixUnits { get; init; }

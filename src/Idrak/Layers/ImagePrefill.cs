@@ -442,6 +442,7 @@ internal sealed class ImageBlocks
     // The key ranges last computed for each window (with the offset and row starts they were for): every attention layer of
     // a pass with that window asks for the same ones, so the host computes them once per pass, not once per layer.
     private readonly Dictionary<int, (int Offset, int[]? RowStarts, float[] Starts, float[] Ends)> _spanValues = [];
+    private readonly Dictionary<int, (int Offset, int[]? RowStarts, int KeyRows, float[] Mask)> _maskValues = [];
 
     public ImageBlocks(int batch, int steps, int dim, IReadOnlyList<PromptImage> images, IImageAttentionRule rule, IReadOnlyList<IReadOnlyList<int>>? segments,
         Buffers? buffers = null)
@@ -522,6 +523,7 @@ internal sealed class ImageBlocks
 
         (_images, _blocks, _segments) = (list, blocks, segments);
         _spanValues.Clear();
+        _maskValues.Clear();
     }
 
     // The packed sequence of a row (its first position and length) holding `position`; length 0 in the padding.
@@ -567,6 +569,46 @@ internal sealed class ImageBlocks
             return spans;
         }
 
+        var (hostStarts, hostEnds) = HostSpans(window, offset, rowStarts);
+        return (Tensor.From(hostStarts, device), Tensor.From(hostEnds, device));          // copied to the device: the arrays stay as computed
+    }
+
+    /// <summary>
+    /// The ranges of <see cref="Spans"/> as an additive mask [batch · steps, keyRows] (0 where a row sees the key, -1e30
+    /// where it does not), for attention composed on a device without its own kernel for the head size
+    /// (<see cref="Idrak.Abstraction.Devices.BackendCapabilities.SpanAttentionHeadDim"/>, <see cref="Tensor.AttentionFastest"/>). Built on the host once
+    /// per window, offset and row starts from the same tables; null with the recorded inputs (a recorded pass holds only
+    /// its ranges).
+    /// </summary>
+    public Tensor? Mask(int window, int offset, IReadOnlyList<int>? rowStarts, int keyRows, Device device)
+    {
+        if (Fixed is not null)
+        {
+            return null;
+        }
+
+        if (!_maskValues.TryGetValue(window, out var cached) || cached.Offset != offset || cached.KeyRows != keyRows || !SameStarts(cached.RowStarts, rowStarts))
+        {
+            var (starts, ends) = HostSpans(window, offset, rowStarts);
+            var mask = new float[(long)starts.Length * keyRows];
+            for (int r = 0; r < starts.Length; r++)
+            {
+                int from = Math.Clamp((int)starts[r], 0, keyRows), to = Math.Clamp((int)ends[r], 0, keyRows);
+                var row = mask.AsSpan(r * keyRows, keyRows);
+                row[..from].Fill(-1e30f);
+                row[Math.Max(from, to)..].Fill(-1e30f);                    // [from, to) stays 0
+            }
+
+            cached = (offset, rowStarts is null ? null : [.. rowStarts], keyRows, mask);
+            _maskValues[window] = cached;
+        }
+
+        return Tensor.From(cached.Mask, [cached.Mask.Length / keyRows, keyRows], device);
+    }
+
+    // The host tables of Spans, computed once per window, offset and row starts.
+    private (float[] Starts, float[] Ends) HostSpans(int window, int offset, IReadOnlyList<int>? rowStarts)
+    {
         if (!_spanValues.TryGetValue(window, out var cached) || cached.Offset != offset || !SameStarts(cached.RowStarts, rowStarts))
         {
             var (starts, ends) = SpanValues(window, offset, rowStarts);
@@ -574,7 +616,7 @@ internal sealed class ImageBlocks
             _spanValues[window] = cached;
         }
 
-        return (Tensor.From(cached.Starts, device), Tensor.From(cached.Ends, device));    // copied to the device: the arrays stay as computed
+        return (cached.Starts, cached.Ends);
     }
 
     private static bool SameStarts(int[]? cached, IReadOnlyList<int>? rowStarts)

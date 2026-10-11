@@ -65,10 +65,14 @@ public sealed partial class Tensor
     /// choice with its other measured choices (per device and driver; <see cref="Backend.PrefersComposedAttention"/>; while
     /// the gradient is recorded, each path timed with its gradient).
     /// The composed path is taken only when the device reports the memory for its scores with margin
-    /// (<see cref="Backend.AvailableMemory"/>), as many key/value heads as query heads, one table of ranges and no
-    /// soft-cap; until measured, and on devices that measure nothing (the CPU), AttentionSpans runs.
+    /// (<see cref="Backend.AvailableMemory"/>); until measured, and on devices that measure nothing (the CPU), AttentionSpans
+    /// runs. Grouped heads (fewer key/value heads than query heads) and several tables of ranges compose as well (a table
+    /// at a time, each table's query heads a whole number of groups); where the device has its own kernel for the head
+    /// size they take AttentionSpans unless forced, and where it has none (<see cref="BackendCapabilities.SpanAttentionHeadDim"/>:
+    /// AttentionSpans would run on the host) they compose whenever the scores fit, without measuring.
     /// <see cref="AttentionPaths.Forced"/> (<c>IDRAK_ATTENTION_PATH</c>) forces either. The two give the same result
-    /// within rounding.
+    /// within rounding for rows that see at least one key (a row whose range is empty gets zeros from AttentionSpans and
+    /// the mean of the values from the composed path).
     /// </summary>
     /// <param name="q">[heads, rows, dim].</param>
     /// <param name="keys">[kvHeads, keyRows, dim].</param>
@@ -78,8 +82,9 @@ public sealed partial class Tensor
     /// <param name="scale">The scores' scale.</param>
     /// <param name="everyKey">True when every row sees every key (a bidirectional pass): the composed path needs no mask.</param>
     /// <param name="mask">
-    /// The same ranges as an additive mask [rows, keyRows] (0 where a row sees the key, a large negative number where it
-    /// does not), for the composed path; with neither this nor <paramref name="everyKey"/>, AttentionSpans always runs.
+    /// The same ranges as an additive mask [tables · rows, keyRows] (0 where a row sees the key, a large negative number
+    /// where it does not; one table's rows after another's, as <paramref name="starts"/>), for the composed path; with
+    /// neither this nor <paramref name="everyKey"/>, AttentionSpans always runs.
     /// </param>
     /// <exception cref="ArgumentException">The shapes do not fit together.</exception>
     public static Tensor AttentionFastest(Tensor q, Tensor keys, Tensor values, Tensor starts, Tensor ends, float scale, bool everyKey, Tensor? mask = null)
@@ -89,15 +94,17 @@ public sealed partial class Tensor
         ArgumentNullException.ThrowIfNull(values);
         ArgumentNullException.ThrowIfNull(starts);
         ArgumentNullException.ThrowIfNull(ends);
-        return ComposedChosen(q, keys, values, starts, ends, scale, everyKey, mask)
-            ? ComposedAttention(q, keys, values, everyKey ? null : mask, scale)
+        return ComposedChosen(q, keys, values, starts, ends, scale, everyKey, mask, out int tables)
+            ? ComposedAttention(q, keys, values, everyKey ? null : mask, scale, tables)
             : AttentionSpans(q, keys, values, starts, ends, scale);
     }
 
-    // Whether AttentionFastest takes the composed path: possible (shapes, a mask or every key, the memory), then forced or
-    // measured.
-    private static bool ComposedChosen(Tensor q, Tensor keys, Tensor values, Tensor starts, Tensor ends, float scale, bool everyKey, Tensor? mask)
+    // Whether AttentionFastest takes the composed path: possible (shapes, a mask or every key, the memory), then forced, the
+    // device without its own kernel for the head size, or measured.
+    private static bool ComposedChosen(Tensor q, Tensor keys, Tensor values, Tensor starts, Tensor ends, float scale, bool everyKey, Tensor? mask,
+        out int tables)
     {
+        tables = 1;
         var forced = AttentionPaths.Forced;
         if (forced == AttentionPath.Spans || q.Rank != 3 || keys.Rank != 3 || !keys._shape.AsSpan().SequenceEqual(values._shape)
             || keys._shape[2] != q._shape[2] || keys.Device != q.Device || values.Device != q.Device)
@@ -105,19 +112,34 @@ public sealed partial class Tensor
             return false;
         }
 
-        int heads = q._shape[0], rows = q._shape[1], dim = q._shape[2], keyRows = keys._shape[1];
-        if (heads == 0 || rows == 0 || keyRows == 0 || dim == 0 || keys._shape[0] != heads || starts.Size != rows || ends.Size != rows)
+        int heads = q._shape[0], rows = q._shape[1], dim = q._shape[2], kvHeads = keys._shape[0], keyRows = keys._shape[1];
+        if (heads == 0 || rows == 0 || keyRows == 0 || dim == 0 || kvHeads == 0 || heads % kvHeads != 0 || starts.Size != ends.Size
+            || starts.Size % rows != 0)
         {
-            return false;                                                  // grouped heads or several tables: AttentionSpans
+            return false;
         }
 
-        if (!everyKey && (mask is null || mask.Size != (long)rows * keyRows || mask.Device != q.Device))
+        tables = starts.Size / rows;
+        int group = heads / kvHeads;
+        if (tables == 0 || heads % tables != 0 || heads / tables % group != 0)
+        {
+            return false;                                                  // a table's query heads not whole groups: AttentionSpans
+        }
+
+        var backend = q.Backend;
+        bool ownKernel = dim <= backend.Capabilities.SpanAttentionHeadDim;
+        bool plain = group == 1 && tables == 1;                            // what the device measures
+        if (!plain && ownKernel && forced != AttentionPath.Composed)
+        {
+            return false;                                                  // grouped heads or several tables: the device's own kernel
+        }
+
+        if (!everyKey && (mask is null || mask.Size != (long)tables * rows * keyRows || mask.Device != q.Device))
         {
             return false;
         }
 
         bool recording = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
-        var backend = q.Backend;
         var usage = backend.GetMemoryUsage();
         long? available = backend.AvailableMemory();
         if (available is { } free && usage.Limit is { } limit)
@@ -131,27 +153,80 @@ public sealed partial class Tensor
         }
 
         return forced == AttentionPath.Composed
-               || backend.PrefersComposedAttention(q.Storage, keys.Storage, values.Storage, starts.Storage, ends.Storage, everyKey ? null : mask?.Storage,
-                   heads, rows, keyRows, dim, scale, recording);
+               || !ownKernel                                               // the alternative runs on the host
+               || plain && backend.PrefersComposedAttention(q.Storage, keys.Storage, values.Storage, starts.Storage, ends.Storage,
+                   everyKey ? null : mask?.Storage, heads, rows, keyRows, dim, scale, recording);
     }
 
-    // softmax(scale · q · keysᵀ + mask) · values over the full scores: one fused softmax for inference, the differentiable
-    // operations when the gradient is recorded.
-    private static Tensor ComposedAttention(Tensor q, Tensor keys, Tensor values, Tensor? mask, float scale)
+    // softmax(scale · q · keysᵀ + mask) · values over the full scores, a table of ranges at a time (its query heads and their
+    // key/value heads, its rows of the mask): one fused softmax for inference, the differentiable operations when the
+    // gradient is recorded.
+    private static Tensor ComposedAttention(Tensor q, Tensor keys, Tensor values, Tensor? mask, float scale, int tables)
     {
+        int heads = q._shape[0], rows = q._shape[1], keyRows = keys._shape[1], kvHeads = keys._shape[0];
+        if (tables == 1)
+        {
+            return ComposedTable(q, keys, values, mask?.Reshape(rows, keyRows), scale);
+        }
+
+        bool recording = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
+        int perTable = heads / tables, kvPerTable = kvHeads / tables;
+        var parts = new Tensor[tables];
+        for (int b = 0; b < tables; b++)
+        {
+            var qb = q.Narrow(0, b * perTable, perTable);
+            var kb = keys.Narrow(0, b * kvPerTable, kvPerTable);
+            var vb = values.Narrow(0, b * kvPerTable, kvPerTable);
+            var mb = mask?.Reshape(tables * rows, keyRows).Narrow(0, b * rows, rows);
+            parts[b] = ComposedTable(qb, kb, vb, mb, scale);
+            if (!recording)
+            {
+                qb.Dispose();
+                kb.Dispose();
+                vb.Dispose();
+                mb?.Dispose();
+            }
+        }
+
+        var y = Concat(parts, 0);
+        if (!recording)
+        {
+            foreach (var part in parts)
+            {
+                part.Dispose();
+            }
+        }
+
+        return y;
+    }
+
+    // One table: q [heads, rows, dim] over keys and values [kvHeads, keyRows, dim] (each key/value head read by
+    // heads / kvHeads query heads, as one product of [group · rows] rows), mask [rows, keyRows] or none.
+    private static Tensor ComposedTable(Tensor q, Tensor keys, Tensor values, Tensor? mask, float scale)
+    {
+        int heads = q._shape[0], rows = q._shape[1], dim = q._shape[2], kvHeads = keys._shape[0], keyRows = keys._shape[1];
+        int group = heads / kvHeads;
         if (!Autograd.IsEnabled || !(q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad))
         {
-            using var scores = q.MatMul(keys, transposeB: true);
-            using var weights = scores.ScaleMaskSoftmax(scale, mask);
-            return weights.MatMul(values);
+            using var grouped = group == 1 ? null : q.Reshape(kvHeads, group * rows, dim);
+            using var scores = (grouped ?? q).MatMul(keys, transposeB: true);
+            using var weights = scores.ScaleMaskSoftmax(scale, mask);      // the mask's rows repeat over every head's rows
+            if (group == 1)
+            {
+                return weights.MatMul(values);
+            }
+
+            using var attended = weights.MatMul(values);
+            return attended.Reshape(heads, rows, dim);
         }
 
-        var scaled = q.MatMul(keys, transposeB: true) * scale;
+        var scaled = (group == 1 ? q : q.Reshape(kvHeads, group * rows, dim)).MatMul(keys, transposeB: true) * scale;
         if (mask is not null)
         {
-            scaled = scaled + mask.Reshape(q._shape[1], keys._shape[1]);
+            scaled = (scaled.Reshape(heads, rows, keyRows) + mask).Reshape(kvHeads, group * rows, keyRows);   // the mask over each head's rows
         }
 
-        return scaled.Softmax().MatMul(values);
+        var y = scaled.Softmax().MatMul(values);
+        return group == 1 ? y : y.Reshape(heads, rows, dim);
     }
 }

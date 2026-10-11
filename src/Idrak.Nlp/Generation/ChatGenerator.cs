@@ -40,13 +40,39 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
     /// </summary>
     public ImageTransformPipeline Transforms { get; init; } = ImageTransformPipeline.Empty;
 
-    /// <summary>A chat image's pixels as the encoder reads them for <paramref name="request"/>: decoded, then transformed (the request's transforms, else <see cref="Transforms"/>).</summary>
+    /// <summary>
+    /// A chat image's pixels as the encoder reads them for <paramref name="request"/>: decoded, then transformed (the
+    /// request's transforms, else <see cref="Transforms"/>). The last image read is kept with its content's hash and the
+    /// transforms until the same image is read again with them (a page shown as the model sees it, then answered), which
+    /// takes it: decoded and transformed once, and at most one image held. The pixels returned are shared with that
+    /// earlier caller and must not be changed.
+    /// </summary>
     public ImageData Read(ChatImage image, ChatRequest? request = null)
     {
+        ArgumentNullException.ThrowIfNull(image);
         var pipeline = request?.ImageTransforms ?? Transforms;
+        string transforms = pipeline.ToString();
+        lock (_lastLock)
+        {
+            if (_last is { } last && last.Hash == image.Hash && last.Transforms == transforms)
+            {
+                _last = null;                                              // taken: nothing held past the read that used it
+                return last.Pixels;
+            }
+        }
+
         var decoded = Decode(image);
-        return pipeline.IsEmpty ? decoded : pipeline.Apply(decoded);
+        var pixels = pipeline.IsEmpty ? decoded : pipeline.Apply(decoded);
+        lock (_lastLock)
+        {
+            _last = (image.Hash, transforms, pixels);
+        }
+
+        return pixels;
     }
+
+    private readonly Lock _lastLock = new();
+    private (string Hash, string Transforms, ImageData Pixels)? _last;
 
     /// <summary>
     /// What the encoder holds (its module, built on first use for example), or null: the inference engine disposes it

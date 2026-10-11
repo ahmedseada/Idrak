@@ -160,6 +160,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         FewRows = PtxKernels.GemvRows,
         DecodeAttentionHeadDim = PtxKernels.DecodeMaxDim,
         TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
+        SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // CudaBackend.Spans.cs: larger heads take the host fallback
         MatrixUnits = true,
         MatrixUnitAttentionHeadDim = PtxKernels.FlashTensorDim,
         FusedKernels = true,

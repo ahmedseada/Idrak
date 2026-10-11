@@ -22,6 +22,15 @@ public sealed record BackendCapabilities
     public required int TiledAttentionHeadDim { get; init; }
 
     /// <summary>
+    /// Largest head size the device's own attention over key ranges takes (<c>Backend.AttentionSpansKernel</c> and its
+    /// gradient); a larger head runs the base <c>Backend</c>'s fallback, on the host. Above it,
+    /// <c>Tensor.AttentionFastest</c> composes the attention on the device (the full scores, a softmax with the ranges as
+    /// a mask, the values) whenever the device reports the memory for the scores, and layers that know their ranges pass
+    /// that mask. Default: every head size (a device that does not say keeps its own kernel, or its fallback, for all).
+    /// </summary>
+    public int SpanAttentionHeadDim { get; init; } = int.MaxValue;
+
+    /// <summary>
     /// Matrix units the <c>MixedPrecision</c> modes run on (tensor cores): the fused training products, the LoRA
     /// products and the bfloat16 copies of tied heads are worth it only where these exist.
     /// </summary>
