@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 
 namespace Idrak.Abstraction;
 
@@ -89,6 +90,7 @@ public sealed class ComputeGraph : IDisposable
             return new ComputeGraph(device, step, IntPtr.Zero, IntPtr.Zero, [], [], null);
         }
 
+        long started = Telemetry.Start(TelemetryLevel.Inference);
         var scope = new TensorScope();
         backend.BeginCapture();
         try
@@ -107,7 +109,16 @@ public sealed class ComputeGraph : IDisposable
             }
 
             var (executable, graph, owned) = backend.EndCapture();
-            return new ComputeGraph(device, null, executable, graph, scope.Detach(), owned, null);
+            var kept = scope.Detach();
+            if (started != 0)
+            {
+                long bytes = 0;
+                owned.ForEach(s => bytes += 4L * s.Length);
+                kept.ForEach(t => bytes += 4L * t.Size);
+                Telemetry.InferenceStage(InferenceStageKind.GraphCapture, device, started, 1, bytes);
+            }
+
+            return new ComputeGraph(device, null, executable, graph, kept, owned, null);
         }
         catch (Exception ex)
         {

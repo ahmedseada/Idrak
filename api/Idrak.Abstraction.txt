@@ -924,6 +924,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -941,6 +942,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -1010,6 +1012,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public (default) void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public (default) void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public (default) void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public (default) void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public (default) void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -1029,6 +1032,23 @@ public readonly record struct Idrak.Abstraction.Diagnostics.InferenceCompleted :
   public int[] OutputShape { get; init; }
   public string Model { get; init; }
 
+public readonly record struct Idrak.Abstraction.Diagnostics.InferenceStage : System.IEquatable<Idrak.Abstraction.Diagnostics.InferenceStage>
+  public Idrak.Abstraction.Diagnostics.InferenceStageKind Stage { get; init; }
+  public InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind Stage, string Device, System.TimeSpan Duration, long Count, long Bytes)
+  public System.TimeSpan Duration { get; init; }
+  public long Bytes { get; init; }
+  public long Count { get; init; }
+  public string Device { get; init; }
+
+public enum Idrak.Abstraction.Diagnostics.InferenceStageKind : int
+  CacheAllocation = 6
+  DecodeChunk = 4
+  Encoder = 2
+  GraphCapture = 5
+  ImageDecode = 0
+  ImageTransforms = 1
+  Prefill = 3
+
 public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstraction.Diagnostics.ITelemetryHook, System.IAsyncDisposable, System.IDisposable
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
   public JsonLinesLogger(string path, Idrak.Abstraction.Diagnostics.TelemetryLevel levels = (Idrak.Abstraction.Diagnostics.TelemetryLevel)35)
@@ -1040,6 +1060,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
+  public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
@@ -1210,6 +1231,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void DeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public static void Engine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public static void EpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0)
   public static void ToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public static void TrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public static void TrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)

@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Generation.Abstractions;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
@@ -773,6 +774,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 }
 
                 // Reuse the kept cache for the prompt's shared prefix (at least one token is fed, for the next logits).
+                long prefillStart = Telemetry.Start(TelemetryLevel.Inference);
                 int shared = 0;
                 while (shared < keptIds.Count && shared < history.Count && keptIds[shared] == history[shared])
                 {
@@ -795,13 +797,17 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
                 sampler.Read(0, 1);
                 promptDuration = total.Elapsed;
-                int produced = 1;
+                Telemetry.InferenceStage(InferenceStageKind.Prefill, Device, prefillStart, history.Count);
+                int produced = 1, chunkFrom = 1;
+                long chunkStart = Telemetry.Start(TelemetryLevel.Inference);
                 while (doneReason is null && !cancellationToken.IsCancellationRequested)
                 {
                     bool flush = produced % Math.Max(1, options.ChunkSize) == 0 || produced >= limit;
                     if (flush)
                     {
                         string piece = Collect(produced, final: false);
+                        Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device, chunkStart, produced - chunkFrom);
+                        (chunkFrom, chunkStart) = (produced, Telemetry.Start(TelemetryLevel.Inference));
                         if (piece.Length > 0)
                         {
                             yield return new GenerationChunk(piece);
