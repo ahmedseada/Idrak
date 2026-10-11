@@ -16,7 +16,54 @@ internal static partial class Tests
         ("image preprocessing: every colour format of the codecs to RGB, Pillow's resize (bilinear, bicubic, Lanczos; up and down), rescale and normalize as transformers, to 1e-5", PreprocessingMatchesTransformers),
         ("image preprocessing: preprocessor_config.json keys, a family's own keys left, grey to three channels, tensors, the pixel values into a caller's buffer", PreprocessingConfig),
         ("image preprocessing: phase 0's reference (tests/data/vlm): JPEGs decode as Pillow, pixel_values as transformers (PNG, JPEG, RGBA, palette, grey)", PreprocessingMatchesVlmReference),
+        ("image data: 8-bit images (the JPEG and PNG decoders', the card's transforms', pan and scan's crops) keep their planes until their floats are read; the floats are the planes through their table and the results equal those from floats", EightBitImages),
     ];
+
+    private static void EightBitImages(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // host only: once
+        }
+
+        const int W = 37, H = 23;
+        var random = new Random(41);
+        var page = new ImageData([.. Enumerable.Range(0, 3 * W * H).Select(_ => random.Next(256) / 255f)], 3, H, W);
+        var pipeline = ImageTransformPipeline.Parse("grayscale,max_width=16,contrast=1.5");
+        var preprocessor = new ImagePreprocessor { Height = 8, Width = 8, Resampling = ImageResampling.Bilinear, Mean = [0.5f, 0.5f, 0.5f], Std = [0.5f, 0.5f, 0.5f] };
+        foreach (var (name, file) in new[] { ("jpeg", JpegEncoder.Encode(page, quality: 90)), ("png", ImageEncoders.Get("png").Encode(page)) })
+        {
+            var decoded = ChatImageDecoder.Decode(file);
+            Check(decoded.TryGetPlanes(out var planes, out var levels) && planes.Length == 3 && levels.Length == 256, $"{name}: decoded as 8-bit planes");
+            var seen = pipeline.Apply(decoded);
+            Check(seen.TryGetPlanes(out var seenPlanes, out _) && seenPlanes.Length == 1 && decoded.TryGetPlanes(out _, out _), $"{name}: the card's steps keep 8 bits");
+            var crop = ImagePreprocessor.ToBytes(decoded, grayscale: false);
+            Check(crop.Length == 3 && crop[0].AsSpan().SequenceEqual(planes[0].Span), $"{name}: the bytes of an 8-bit image are its planes");
+
+            // The same results as an image of the same floats, through the transforms, the preprocessor and the encoders.
+            var bytes = planes.Select(p => p.ToArray()).ToArray();
+            var floats = new ImageData([.. Enumerable.Range(0, 3 * W * H).Select(i => levels.Span[bytes[i / (W * H)][i % (W * H)]])], 3, H, W);
+            Check(pipeline.Apply(floats).Pixels.SequenceEqual(pipeline.Apply(ChatImageDecoder.Decode(file)).Pixels), $"{name}: the transforms give what they give from floats");
+            Check(preprocessor.Pixels(floats).SequenceEqual(preprocessor.Pixels(ChatImageDecoder.Decode(file))), $"{name}: the preprocessor's values as from floats");
+            Check(ImageEncoders.Get("png").Encode(floats).SequenceEqual(ImageEncoders.Get("png").Encode(ChatImageDecoder.Decode(file))), $"{name}: the same PNG as from floats");
+
+            // The floats: the planes through their table; reading them ends the 8-bit view (the array is the caller's).
+            var values = decoded.Pixels;
+            Check(values.SequenceEqual(floats.Pixels) && !decoded.TryGetPlanes(out _, out _), $"{name}: the floats from the planes, then no 8-bit view");
+        }
+
+        bool refused = false;
+        try
+        {
+            _ = new ImageData([new byte[6]], 2, 4, new float[255]);
+        }
+        catch (ArgumentException)
+        {
+            refused = true;
+        }
+
+        Check(refused, "planes of the wrong size or a table of other than 256 values are refused");
+    }
 
     // The data of a little-endian .npy file (version 1 to 3), as raw bytes.
     private static byte[] NpyData(string path)

@@ -12,7 +12,8 @@ using Idrak.Data.Abstractions;
 // The CPU side of reading a page (plan 17, lane C): a scan-sized page (1,654 x 2,339, an A4 page at 200 dpi, made here from
 // a seeded generator: a light background with grain and dark strokes) through every stage a read runs: the JPEG and PNG
 // decoders, the size from the header, the model card's pipeline and each transform on its own, the preprocessor's resize
-// to the encoder's 896 x 896, and the PNG of the page as the model sees it. Each stage: the first call (cold) apart from
+// to the encoder's 896 x 896, and the PNG of the page as the model sees it (an image stage times its own work: 8-bit images
+// make their floats only when read, after the timing). Each stage: the first call (cold) apart from
 // the median of five (warm), the bytes allocated on every thread, and the SHA-256 of its output (an optimization must
 // leave it as it is: rule 71).
 internal static partial class Tests
@@ -35,32 +36,32 @@ internal static partial class Tests
                           + $"(quality 90, 4:2:0), grey PNG {png.Length / 1024} KiB; after the card's pipeline {seen.Width} x {seen.Height}");
         Console.WriteLine($"{"stage",-44} {"cold ms",9} {"warm ms",9} {"MB warm",9}  output SHA-256");
 
-        Stage("jpeg decode (colour page)", () => ChatImageDecoder.Decode(jpeg).Pixels);
-        Stage("png decode (grey page)", () => ChatImageDecoder.Decode(png).Pixels);
+        Stage("jpeg decode (colour page)", () => ChatImageDecoder.Decode(jpeg));
+        Stage("png decode (grey page)", () => ChatImageDecoder.Decode(png));
         foreach (var (filter, name) in new[] { ((byte)2, "Up"), ((byte)4, "Paeth") })
         {
             byte[] filtered = FilteredPng(grey, filter);
-            Stage($"png decode (grey page, {name} rows)", () => ChatImageDecoder.Decode(filtered).Pixels);
+            Stage($"png decode (grey page, {name} rows)", () => ChatImageDecoder.Decode(filtered));
         }
 
         Stage("size from the header (jpeg)", () => ChatImageDecoder.Size(jpeg) is var (w, h) ? $"{w} x {h}" : "none");
-        Stage("card: grayscale,max_width=1024,contrast=1.5", () => card.Apply(decoded).Pixels);
+        Stage("card: grayscale,max_width=1024,contrast=1.5", () => card.Apply(decoded));
         foreach (string step in new[] { "grayscale", "max_width=1024", "contrast=1.5", "brightness=1.1", "sharpness=1.5", "autocontrast=1" })
         {
             var pipeline = ImageTransformPipeline.Parse(step);
-            Stage($"{step} (colour page)", () => pipeline.Apply(decoded).Pixels);
+            Stage($"{step} (colour page)", () => pipeline.Apply(decoded));
         }
 
         foreach (string step in new[] { "equalize", "gamma=0.8", "blur=0.5", "unsharp=2,percent=150,threshold=3", "median=3", "min_filter=3", "max_filter=3",
                      "binarize", "invert", "pad=32,fill=255", "scale=1.5", "jpeg=95" })
         {
             var pipeline = ImageTransformPipeline.Parse(step);
-            Stage($"{step} (grey 1024)", () => pipeline.Apply(seen).Pixels);
+            Stage($"{step} (grey 1024)", () => pipeline.Apply(seen));
         }
 
         Stage("jpeg encode (grey 1024, quality 95, optimized)", () => JpegEncoder.Encode(seen, quality: 95, optimize: true));
         byte[] seenJpeg = JpegEncoder.Encode(seen, quality: 95, optimize: true);
-        Stage("jpeg decode (grey 1024, quality 95)", () => ChatImageDecoder.Decode(seenJpeg).Pixels);
+        Stage("jpeg decode (grey 1024, quality 95)", () => ChatImageDecoder.Decode(seenJpeg));
         Stage("preprocess to 896 (grey 1024 page)", () => preprocessor.Pixels(seen));
         Stage("preprocess to 896 (colour page)", () => preprocessor.Pixels(decoded));
         Stage("png encode (the page as the model sees it)", () => ImageEncoders.Get("png").Encode(seen));
@@ -95,8 +96,10 @@ internal static partial class Tests
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"{name,-44} {cold,9:F1} {times[2],9:F1} {allocated / (double)times.Length / (1 << 20),9:F1}  {output}"));
 
+        // An image's values hashed after the timing (an 8-bit image makes its floats only then, as a read never does).
         static string Describe(object value) => value switch
         {
+            ImageData image => Hash(image.Pixels),
             float[] pixels => Hash(pixels),
             byte[] bytes => Hash(bytes),
             _ => value.ToString() ?? "",

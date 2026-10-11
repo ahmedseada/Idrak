@@ -225,7 +225,9 @@ public static class Idrak.Abstraction.Data.ImageCodecs
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed class Idrak.Abstraction.Data.ImageData
+  public ImageData(byte[][] planes, int height, int width, float[] levels)
   public ImageData(float[] pixels, int channels, int height, int width)
+  public bool TryGetPlanes(out System.ReadOnlyMemory<byte>[] planes, out System.ReadOnlyMemory<float> levels)
   public float[] Pixels { get; }
   public float[] Resize(int channels, int height, int width)
   public int Channels { get; }

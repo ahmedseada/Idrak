@@ -83,16 +83,25 @@ internal sealed class JpegCodec : IImageCodec
 
     public ImageData Decode(ReadOnlySpan<byte> file)
     {
+        // An 8-bit image of the decoded planes (each cut to the image when it holds whole blocks), its values the bytes
+        // times 1/255 as before, made only if someone reads them as floats.
         var (planes, h, w) = JpegDecoder.Decode(file);
-        var pixels = new float[checked(planes.Length * h * w)];
-        HostParallel.For(planes.Length * h, 64, (first, last) =>
+        for (int c = 0; c < planes.Length; c++)
         {
-            for (int row = first; row < last; row++)
+            if (planes[c].Length != h * w)
             {
-                ImageLevels.ToUnit(planes[row / h].AsSpan(row % h * w, w), pixels.AsSpan(row * w, w));
+                var cut = GC.AllocateUninitializedArray<byte>(h * w);
+                int stride = planes[c].Length / h;
+                for (int y = 0; y < h; y++)
+                {
+                    planes[c].AsSpan(y * stride, w).CopyTo(cut.AsSpan(y * w, w));
+                }
+
+                planes[c] = cut;
             }
-        });
-        return new ImageData(pixels, planes.Length, h, w);
+        }
+
+        return new ImageData(planes, h, w, ImageLevels.UnitLevels);
     }
 }
 
