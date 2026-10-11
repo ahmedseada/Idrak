@@ -95,11 +95,23 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
     private bool? _stepsRecordable;
 
+    /// <summary>
+    /// Keep the decoding context, the sampler and the recorded decoding step between generations that keep no attention
+    /// cache (<see cref="KeepCache"/> false): the next generation of the same size (cache capacity and layout) takes the
+    /// context, and with the same sampling options and a set seed (<see cref="GenerationOptions.Seed"/>; greedy image reads
+    /// set one) the sampler and the recorded step too, each reset first, instead of allocating and clearing a cache, making
+    /// a sampler and recording the step again. Nothing of the earlier prompt is reused (every generation starts at
+    /// position 0, unlike <see cref="KeepCache"/>): the old keys and values left in the cache lie past every position a
+    /// step reads, so the tokens are a fresh generation's. Default false; <see cref="ReleaseCache"/> frees them.
+    /// </summary>
+    public bool ReuseDecoding { get; set; }
+
     private readonly Lock _keptLock = new();
     private DecodingContext? _kept;
     private List<int> _keptIds = [];
+    private Reusable? _reusable;
 
-    /// <summary>Frees the KV cache kept between generations (see <see cref="KeepCache"/>).</summary>
+    /// <summary>Frees the KV cache kept between generations (see <see cref="KeepCache"/>) and what <see cref="ReuseDecoding"/> keeps.</summary>
     public void ReleaseCache()
     {
         lock (_keptLock)
@@ -107,8 +119,80 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             _kept?.Dispose();
             _kept = null;
             _keptIds = [];
+            _reusable?.Dispose();
+            _reusable = null;
         }
     }
+
+    // What ReuseDecoding keeps between generations: the context, the sampler with the request it was made for (null: none
+    // kept, a generation without a seed), and the decoding step recorded with both.
+    private sealed class Reusable : IDisposable
+    {
+        public DecodingContext? Context;
+        public ITokenSampler? Sampler;
+        public SamplerRequest? Request;
+        public ComputeGraph? Graph;
+
+        // Frees the sampler and the step recorded with it (the context stays).
+        public void DropSampler()
+        {
+            Graph?.Dispose();
+            Sampler?.Dispose();
+            (Graph, Sampler, Request) = (null, null, null);
+        }
+
+        public void Dispose()
+        {
+            DropSampler();
+            Context?.Dispose();
+            Context = null;
+        }
+    }
+
+    // What ReuseDecoding holds between generations (the tests compare them across generations).
+    internal (DecodingContext? Context, ITokenSampler? Sampler, ComputeGraph? Step) HeldDecoding
+    {
+        get
+        {
+            lock (_keptLock)
+            {
+                return (_reusable?.Context, _reusable?.Sampler, _reusable?.Graph);
+            }
+        }
+    }
+
+    // Takes what ReuseDecoding kept (a generation at a time holds it), or a new empty holder.
+    private Reusable TakeReusable()
+    {
+        lock (_keptLock)
+        {
+            var held = _reusable ?? new Reusable();
+            _reusable = null;
+            return held;
+        }
+    }
+
+    // Keeps what `held` holds for the next generation (moved out of it, so disposing `held` frees nothing; what another
+    // generation kept meanwhile is freed).
+    private void KeepReusable(Reusable held)
+    {
+        var moved = new Reusable { Context = held.Context, Sampler = held.Sampler, Request = held.Request, Graph = held.Graph };
+        (held.Context, held.Sampler, held.Request, held.Graph) = (null, null, null, null);
+        lock (_keptLock)
+        {
+            _reusable?.Dispose();
+            _reusable = moved;
+        }
+    }
+
+    // Whether a sampler made for `kept` samples as one made for `request` would: the same shape and options (the stop
+    // sequences, read by the generation only, aside), with a seed (one drawn at random per generation is not repeated).
+    private static bool SameSampling(SamplerRequest kept, SamplerRequest request) =>
+        request.Options.Seed is not null && kept.Device == request.Device && kept.Rows == request.Rows && kept.Vocabulary == request.Vocabulary
+        && kept.MaxSteps == request.MaxSteps && kept.HistoryCapacity == request.HistoryCapacity
+        && kept.Options with { Stop = NoStops } == request.Options with { Stop = NoStops };
+
+    private static readonly string[] NoStops = [];
 
     // Whether a KV cache is kept from the last generation (see KeepCache).
     internal bool HoldsCache
@@ -623,7 +707,29 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         int holdBack = stops.Length == 0 ? 0 : stops.Max(s => s.Length) - 1;
         var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
 
-        using var sampler = CreateSampler(new SamplerRequest(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN), options));
+        // ReuseDecoding: the context, sampler and recorded step the last generation left (one generation at a time holds
+        // them); `held` frees whatever this generation does not hand back. A sampler made for other options is dropped
+        // with the step recorded with it.
+        bool reusing = ReuseDecoding && !KeepCache && options.UseCache;
+        using var held = reusing ? TakeReusable() : new Reusable();
+        var request = new SamplerRequest(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN), options);
+        if (held.Request is { } keptRequest && !SameSampling(keptRequest, request))
+        {
+            held.DropSampler();
+        }
+
+        ITokenSampler sampler;
+        if (held.Sampler is { } keptSampler)
+        {
+            keptSampler.Reset();
+            sampler = keptSampler;
+        }
+        else
+        {
+            sampler = CreateSampler(request);
+            (held.Sampler, held.Request) = (sampler, request);
+        }
+
         sampler.SetHistory(history);
 
         var generated = new List<int>();
@@ -727,11 +833,27 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             // prompt and its most tokens, as the batched path), less memory to hold and to clear on every call. Only a
             // reply that can outgrow the window re-reads its last half, at the window's size as before.
             int capacity = options.UseCache && KeepCache ? context : Math.Min(context, history.Count + limit);
-            var decoding = kept ?? new DecodingContext(Device, 1, capacity, Layout);
+
+            // A kept context of this size is taken (reset by the prefill) with the step recorded on it; one of another size
+            // goes, with its step. Both are this generation's until handed back.
+            if (held.Context is { } keptContext && (keptContext.Capacity != capacity || keptContext.Layout != Layout || keptContext.Device != Device))
+            {
+                held.Graph?.Dispose();
+                held.Context.Dispose();
+                (held.Graph, held.Context) = (null, null);
+            }
+
+            var decoding = kept ?? held.Context ?? new DecodingContext(Device, 1, capacity, Layout);
+            ComputeGraph? graph = options.UseGraph ? held.Graph : null;
+            if (!options.UseGraph)
+            {
+                held.Graph?.Dispose();
+            }
+
+            (held.Context, held.Graph) = (null, null);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
             decoding.Cancellation = cancellationToken;                          // the prompt's pass stops between layers
             bool keep = false, steppedOnce = false;
-            ComputeGraph? graph = null;
             try
             {
                 Tensor Window(int keep)
@@ -872,6 +994,19 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 {
                     KeepCacheFor(decoding, history.GetRange(0, decoding.Length));
                     keep = true;
+                }
+                else if (reusing)
+                {
+                    // Handed back: the context, and the sampler with the step recorded with it while they sample alike (a
+                    // seed drawn at random is not repeated, so without one the sampler and the step go).
+                    (held.Context, held.Graph) = (decoding, graph);
+                    (keep, graph) = (true, null);
+                    if (options.Seed is null)
+                    {
+                        held.DropSampler();
+                    }
+
+                    KeepReusable(held);
                 }
             }
             finally
