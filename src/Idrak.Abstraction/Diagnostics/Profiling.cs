@@ -1,0 +1,679 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using Idrak.Abstraction.Devices;
+
+namespace Idrak.Abstraction.Diagnostics;
+
+/// <summary>One measured value of a <see cref="ProfileRun"/>.</summary>
+/// <param name="Name">What it is ("prefill", "allocated", "operations").</param>
+/// <param name="Value">The value, in <paramref name="Unit"/>.</param>
+/// <param name="Unit">"ms", "MB", "tok/s", "calls", … (empty for a plain number).</param>
+/// <param name="Source">The probe that measured it (<see cref="IProfileProbe.Name"/>), or null for the workload and the runner.</param>
+public readonly record struct ProfileValue(string Name, double Value, string Unit, string? Source);
+
+/// <summary>A table a probe or a workload adds to a run (the kernels of a pass, the operations by count), its cells as text.</summary>
+/// <param name="Name">The table's title.</param>
+/// <param name="Columns">The column headings.</param>
+/// <param name="Rows">The rows, each as many cells as there are columns.</param>
+public sealed record ProfileTable(string Name, IReadOnlyList<string> Columns, IReadOnlyList<IReadOnlyList<string>> Rows);
+
+/// <summary>What a <see cref="ProfileRun"/> was for.</summary>
+public enum ProfileRunKind
+{
+    /// <summary>The first run, reported apart (one-time work: building, loading kernels, measuring choices).</summary>
+    Cold,
+
+    /// <summary>A timed run after the first; the summary's statistic is over these.</summary>
+    Warm,
+
+    /// <summary>A run for one intrusive probe (<see cref="IProfileProbe.Intrusive"/>), not timed: only that probe's values count.</summary>
+    Probe,
+}
+
+/// <summary>How the warm runs of a profile are summed up into one value.</summary>
+public enum ProfileStatistic
+{
+    /// <summary>The middle value (the lower of the two middle ones for an even count).</summary>
+    Median,
+
+    /// <summary>The mean.</summary>
+    Mean,
+
+    /// <summary>The smallest.</summary>
+    Min,
+
+    /// <summary>The largest.</summary>
+    Max,
+}
+
+/// <summary>
+/// One run of a profiled workload: the workload marks its stages and records what it knows (tokens, items), the probes add
+/// what they measured around it. Not thread-safe: record from the thread running the workload.
+/// </summary>
+public sealed class ProfileRun
+{
+    private readonly List<ProfileValue> _values = [];
+    private readonly List<ProfileTable> _tables = [];
+
+    internal ProfileRun(int index, ProfileRunKind kind, Device device, string? probe) => (Index, Kind, Device, Probe) = (index, kind, device, probe);
+
+    /// <summary>The run's place in the profile, from 0.</summary>
+    public int Index { get; }
+
+    /// <summary>Cold, warm, or the pass of one intrusive probe.</summary>
+    public ProfileRunKind Kind { get; }
+
+    /// <summary>The device profiled.</summary>
+    public Device Device { get; }
+
+    /// <summary>The intrusive probe this run was for (<see cref="ProfileRunKind.Probe"/>), else null.</summary>
+    public string? Probe { get; }
+
+    /// <summary>The values recorded so far, in order.</summary>
+    public IReadOnlyList<ProfileValue> Values => _values;
+
+    /// <summary>The tables added so far, in order.</summary>
+    public IReadOnlyList<ProfileTable> Tables => _tables;
+
+    // The probe whose end is recording (its values carry it as their Source), or null.
+    internal string? Source { get; set; }
+
+    /// <summary>The value named <paramref name="name"/>, or null.</summary>
+    public double? Value(string name)
+    {
+        foreach (var value in _values)
+        {
+            if (value.Name == name)
+            {
+                return value.Value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Records <paramref name="value"/> as <paramref name="name"/> (replacing an earlier value of that name).</summary>
+    public void Record(string name, double value, string unit = "")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(unit);
+        int at = _values.FindIndex(v => v.Name == name);
+        var entry = new ProfileValue(name, value, unit, Source);
+        if (at >= 0)
+        {
+            _values[at] = entry;
+        }
+        else
+        {
+            _values.Add(entry);
+        }
+    }
+
+    /// <summary>Records a stage's time as <paramref name="name"/>, in ms (a stage the workload timed itself, or one a library reports).</summary>
+    public void Stage(string name, TimeSpan elapsed) => Record(name, elapsed.TotalMilliseconds, "ms");
+
+    /// <summary>Runs <paramref name="body"/> as the stage <paramref name="name"/>: its time, the device's queued work included, in ms.</summary>
+    public T Stage<T>(string name, Func<T> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        long start = Stopwatch.GetTimestamp();
+        var result = body();
+        Device.Synchronize();
+        Stage(name, Stopwatch.GetElapsedTime(start));
+        return result;
+    }
+
+    /// <summary>Runs <paramref name="body"/> as the stage <paramref name="name"/>: its time, the device's queued work included, in ms.</summary>
+    public void Stage(string name, Action body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        Stage(name, () =>
+        {
+            body();
+            return 0;
+        });
+    }
+
+    /// <summary>Adds <paramref name="table"/> to the run.</summary>
+    public void Add(ProfileTable table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        _tables.Add(table);
+    }
+}
+
+/// <summary>A value of a profile summed up: the cold run's, the statistic over the warm runs, their least and most.</summary>
+/// <param name="Name">The value's name.</param>
+/// <param name="Unit">Its unit.</param>
+/// <param name="Source">The probe that measured it, or null for the workload and the runner.</param>
+/// <param name="Cold">The cold run's value, or null (no cold run, or not measured in it).</param>
+/// <param name="Value">The statistic over the warm runs; for an intrusive probe's value, its pass's value.</param>
+/// <param name="Min">The least of the warm runs (the pass's value for an intrusive probe).</param>
+/// <param name="Max">The most of the warm runs (the pass's value for an intrusive probe).</param>
+/// <param name="Count">The warm runs that measured it (1 for an intrusive probe's pass).</param>
+public sealed record ProfileSummary(string Name, string Unit, string? Source, double? Cold, double? Value, double? Min, double? Max, int Count);
+
+/// <summary>
+/// What to profile and how: the runs, the probes, the statistic, and how the report is written. Every field can come from
+/// the environment (<see cref="FromEnvironment"/>), so whoever runs a profile picks the criteria without code.
+/// </summary>
+public sealed record ProfileOptions
+{
+    /// <summary>Whether a first run is made and reported apart (true by default).</summary>
+    public bool Cold { get; init; } = true;
+
+    /// <summary>The timed runs after the cold one (3 by default; at least 1).</summary>
+    public int WarmRuns { get; init; } = 3;
+
+    /// <summary>
+    /// The probes to measure with, by name (<see cref="ProfileProbes"/>); null for every registered probe the device
+    /// supports. A named probe the device does not support is skipped and listed in <see cref="ProfileReport.Skipped"/>.
+    /// </summary>
+    public IReadOnlyList<string>? Probes { get; init; }
+
+    /// <summary>How the warm runs are summed up (the median by default).</summary>
+    public ProfileStatistic Statistic { get; init; } = ProfileStatistic.Median;
+
+    /// <summary>The writer <see cref="ProfileReport.Write()"/> uses, by name (<see cref="ProfileWriters"/>; "table" by default).</summary>
+    public string Format { get; init; } = ProfileWriters.Table;
+
+    /// <summary>A file <see cref="ProfileReport.Write()"/> appends to, or null for the console.</summary>
+    public string? Output { get; init; }
+
+    /// <summary>
+    /// <paramref name="defaults"/> (or the defaults) with what the environment sets: <c>IDRAK_PROFILE_COLD</c> (1 or 0),
+    /// <c>IDRAK_PROFILE_WARM</c> (the warm runs), <c>IDRAK_PROFILE_PROBES</c> (names separated by commas, "all" for every
+    /// probe, "none" for none), <c>IDRAK_PROFILE_STATISTIC</c> (median, mean, min or max), <c>IDRAK_PROFILE_FORMAT</c>
+    /// (a writer's name) and <c>IDRAK_PROFILE_OUT</c> (a file).
+    /// </summary>
+    /// <exception cref="ArgumentException">A value that does not parse.</exception>
+    public static ProfileOptions FromEnvironment(ProfileOptions? defaults = null) => From(Environment.GetEnvironmentVariable, defaults);
+
+    internal static ProfileOptions From(Func<string, string?> variable, ProfileOptions? defaults)
+    {
+        var options = defaults ?? new ProfileOptions();
+        if (variable("IDRAK_PROFILE_COLD") is { Length: > 0 } cold)
+        {
+            options = options with { Cold = cold.Trim() is "1" or "true" or "True" ? true : cold.Trim() is "0" or "false" or "False" ? false : throw Bad("IDRAK_PROFILE_COLD", cold, "1 or 0") };
+        }
+
+        if (variable("IDRAK_PROFILE_WARM") is { Length: > 0 } warm)
+        {
+            options = options with { WarmRuns = int.TryParse(warm, NumberStyles.Integer, CultureInfo.InvariantCulture, out int runs) && runs >= 1 ? runs : throw Bad("IDRAK_PROFILE_WARM", warm, "a count of 1 or more") };
+        }
+
+        if (variable("IDRAK_PROFILE_PROBES") is { Length: > 0 } probes)
+        {
+            options = options with
+            {
+                Probes = probes.Trim().ToLowerInvariant() switch
+                {
+                    "all" => null,
+                    "none" => [],
+                    _ => [.. probes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
+                },
+            };
+        }
+
+        if (variable("IDRAK_PROFILE_STATISTIC") is { Length: > 0 } statistic)
+        {
+            options = options with { Statistic = Enum.TryParse<ProfileStatistic>(statistic.Trim(), ignoreCase: true, out var s) && Enum.IsDefined(s) ? s : throw Bad("IDRAK_PROFILE_STATISTIC", statistic, "median, mean, min or max") };
+        }
+
+        if (variable("IDRAK_PROFILE_FORMAT") is { Length: > 0 } format)
+        {
+            options = options with { Format = format.Trim() };
+        }
+
+        if (variable("IDRAK_PROFILE_OUT") is { Length: > 0 } output)
+        {
+            options = options with { Output = output.Trim() };
+        }
+
+        return options;
+
+        static ArgumentException Bad(string name, string value, string expected) => new($"{name}={value} is not {expected}.");
+    }
+}
+
+/// <summary>
+/// A profile: the workload's runs (cold, warm, and one pass for each intrusive probe) with what was measured, summed up by
+/// <see cref="ProfileOptions.Statistic"/>. Written by any registered writer (<see cref="Write(TextWriter, string?)"/>).
+/// </summary>
+public sealed class ProfileReport
+{
+    internal ProfileReport(string name, Device device, ProfileOptions options, IReadOnlyList<ProfileRun> runs, IReadOnlyList<string> probes, IReadOnlyList<string> skipped)
+    {
+        (Name, Device, Options, Runs, Probes, Skipped) = (name, device, options, runs, probes, skipped);
+        Summary = Summarize();
+    }
+
+    /// <summary>What was profiled.</summary>
+    public string Name { get; }
+
+    /// <summary>The device it ran on.</summary>
+    public Device Device { get; }
+
+    /// <summary>The criteria it ran with.</summary>
+    public ProfileOptions Options { get; }
+
+    /// <summary>Every run in order: the cold one, the warm ones, then the intrusive probes' passes.</summary>
+    public IReadOnlyList<ProfileRun> Runs { get; }
+
+    /// <summary>The probes measured with.</summary>
+    public IReadOnlyList<string> Probes { get; }
+
+    /// <summary>The probes asked for that the device does not support.</summary>
+    public IReadOnlyList<string> Skipped { get; }
+
+    /// <summary>Every value summed up: the timed runs' values first (in the order first recorded), then the intrusive probes' own.</summary>
+    public IReadOnlyList<ProfileSummary> Summary { get; }
+
+    /// <summary>The summary of the value <paramref name="name"/>, or null.</summary>
+    public ProfileSummary? this[string name] => Summary.FirstOrDefault(s => s.Name == name);
+
+    /// <summary>Writes the report with the writer <paramref name="format"/> (<see cref="ProfileOptions.Format"/> when null).</summary>
+    /// <exception cref="NotSupportedException">No writer has that name.</exception>
+    public void Write(TextWriter output, string? format = null)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ProfileWriters.Get(format ?? Options.Format).Write(this, output);
+    }
+
+    /// <summary>Writes the report with <see cref="ProfileOptions.Format"/> to <see cref="ProfileOptions.Output"/> (appended), or to the console.</summary>
+    public void Write()
+    {
+        if (Options.Output is { } path)
+        {
+            using var file = new StreamWriter(path, append: true);
+            Write(file);
+        }
+        else
+        {
+            Write(Console.Out);
+        }
+    }
+
+    // Each value of the timed runs over the warm ones (and the cold one's apart); each intrusive probe's own values from its pass.
+    private List<ProfileSummary> Summarize()
+    {
+        var cold = Runs.FirstOrDefault(r => r.Kind == ProfileRunKind.Cold);
+        var warm = Runs.Where(r => r.Kind == ProfileRunKind.Warm).ToList();
+        var summary = new List<ProfileSummary>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in Runs.Where(r => r.Kind != ProfileRunKind.Probe).SelectMany(r => r.Values))
+        {
+            if (!seen.Add(value.Name))
+            {
+                continue;
+            }
+
+            var values = warm.Select(r => r.Value(value.Name)).OfType<double>().Order().ToArray();
+            double? statistic = values.Length == 0 ? null : Options.Statistic switch
+            {
+                ProfileStatistic.Mean => values.Average(),
+                ProfileStatistic.Min => values[0],
+                ProfileStatistic.Max => values[^1],
+                _ => values[(values.Length - 1) / 2],
+            };
+            summary.Add(new ProfileSummary(value.Name, value.Unit, value.Source, cold?.Value(value.Name), statistic,
+                values.Length == 0 ? null : values[0], values.Length == 0 ? null : values[^1], values.Length));
+        }
+
+        foreach (var pass in Runs.Where(r => r.Kind == ProfileRunKind.Probe))
+        {
+            foreach (var value in pass.Values.Where(v => v.Source == pass.Probe && seen.Add(v.Name)))
+            {
+                summary.Add(new ProfileSummary(value.Name, value.Unit, value.Source, null, value.Value, value.Value, value.Value, 1));
+            }
+        }
+
+        return summary;
+    }
+}
+
+/// <summary>
+/// Measures something around each run of a profiled workload: time on the processor, the managed heap, device memory, the
+/// operations run, the device's kernels, or anything of one's own. Registered in <see cref="ProfileProbes"/> under
+/// <see cref="Name"/>.
+/// </summary>
+public interface IProfileProbe
+{
+    /// <summary>The probe's name in <see cref="ProfileProbes"/> ("cpu", "heap").</summary>
+    string Name { get; }
+
+    /// <summary>One line for help and listings.</summary>
+    string Summary { get; }
+
+    /// <summary>
+    /// Whether measuring changes the run's time (a trace of every call, kernels waited for one by one): such a probe gets a
+    /// run of its own, kept out of the timed runs.
+    /// </summary>
+    bool Intrusive { get; }
+
+    /// <summary>Whether the probe can measure on <paramref name="device"/> (kernel timing only where the device has it).</summary>
+    bool Supports(Device device);
+
+    /// <summary>
+    /// Starts measuring before the workload runs; returns what ends it after the run, recording into
+    /// <paramref name="run"/> (<see cref="ProfileRun.Record"/>, <see cref="ProfileRun.Add"/>). Ended even when the
+    /// workload throws.
+    /// </summary>
+    Action Begin(ProfileRun run);
+}
+
+/// <summary>
+/// Writes a <see cref="ProfileReport"/>: a table for people, JSON, CSV or Markdown for tools and documents, or a format
+/// of one's own. Registered in <see cref="ProfileWriters"/> under <see cref="Name"/>.
+/// </summary>
+public interface IProfileWriter
+{
+    /// <summary>The writer's name in <see cref="ProfileWriters"/> ("table", "json").</summary>
+    string Name { get; }
+
+    /// <summary>One line for help and listings.</summary>
+    string Summary { get; }
+
+    /// <summary>Writes <paramref name="report"/> to <paramref name="output"/>.</summary>
+    void Write(ProfileReport report, TextWriter output);
+}
+
+/// <summary>
+/// Profiles a workload: runs it cold once (unless <see cref="ProfileOptions.Cold"/> is off), then
+/// <see cref="ProfileOptions.WarmRuns"/> times, each between the device's queued work finished, with every non-intrusive
+/// probe around it and its wall time ("wall", ms); then once more for each intrusive probe alone. Whatever the workload
+/// is (a page read, a training step, a transform), whoever runs it chooses what is measured and how it is written.
+/// </summary>
+/// <example>
+/// <code>
+/// var report = Profiler.Run("read a page", device, run =>
+/// {
+///     var image = run.Stage("prepare", () => reader.Prepared(request));
+///     var reading = run.Stage("read", () => reader.Read(request));
+///     run.Record("answer tokens", reading.Stats!.GeneratedTokens, "tok");
+/// }, ProfileOptions.FromEnvironment());
+/// report.Write();
+/// </code>
+/// </example>
+public static class Profiler
+{
+    /// <summary>Profiles <paramref name="workload"/> on <paramref name="device"/> by <paramref name="options"/>.</summary>
+    /// <exception cref="NotSupportedException">A probe named in the options is not registered (the message names the registered ones).</exception>
+    public static ProfileReport Run(string name, Device device, Action<ProfileRun> workload, ProfileOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(workload);
+        options ??= new ProfileOptions();
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.WarmRuns, 1, nameof(options));
+        var named = options.Probes is { } names ? names.Select(ProfileProbes.Get).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Get)];
+        var probes = named.Where(p => p.Supports(device)).ToList();
+        var skipped = named.Where(p => !p.Supports(device)).Select(p => p.Name).ToList();
+        var runs = new List<ProfileRun>();
+        if (options.Cold)
+        {
+            runs.Add(Once(runs.Count, ProfileRunKind.Cold, null, probes.Where(p => !p.Intrusive)));
+        }
+
+        for (int i = 0; i < options.WarmRuns; i++)
+        {
+            runs.Add(Once(runs.Count, ProfileRunKind.Warm, null, probes.Where(p => !p.Intrusive)));
+        }
+
+        foreach (var probe in probes.Where(p => p.Intrusive))
+        {
+            runs.Add(Once(runs.Count, ProfileRunKind.Probe, probe.Name, [probe]));
+        }
+
+        return new ProfileReport(name, device, options, runs, [.. probes.Select(p => p.Name)], skipped);
+
+        ProfileRun Once(int index, ProfileRunKind kind, string? pass, IEnumerable<IProfileProbe> around)
+        {
+            var run = new ProfileRun(index, kind, device, pass);
+            device.Synchronize();
+            var ends = new List<(string Name, Action End)>();
+            try
+            {
+                foreach (var probe in around)
+                {
+                    ends.Add((probe.Name, probe.Begin(run)));
+                }
+
+                long start = Stopwatch.GetTimestamp();
+                workload(run);
+                device.Synchronize();
+                run.Stage("wall", Stopwatch.GetElapsedTime(start));
+            }
+            finally
+            {
+                for (int i = ends.Count - 1; i >= 0; i--)
+                {
+                    run.Source = ends[i].Name;
+                    try
+                    {
+                        ends[i].End();
+                    }
+                    finally
+                    {
+                        run.Source = null;
+                    }
+                }
+            }
+
+            return run;
+        }
+    }
+}
+
+/// <summary>
+/// The probes a <see cref="Profiler"/> measures with, by name (ignoring case). The library's, in this order:
+/// <list type="bullet">
+/// <item>"cpu": the process's processor time ("cpu", ms) and the cores it kept busy ("cores busy": processor time over wall time).</item>
+/// <item>"heap": the managed heap: bytes allocated on every thread ("allocated", MB), collections of each generation
+/// ("gc0", "gc1", "gc2") and the time paused for them ("gc pause", ms).</item>
+/// <item>"memory": the device's memory after the run ("device in use", "device cached", MB), its peak during the run
+/// ("device peak", MB), and the process's working set ("process", MB) and peak since it started ("process peak", MB).</item>
+/// <item>"operations" (intrusive): every operation called on the device ("operations", calls; "operation kinds") and every
+/// host fallback ("host fallbacks", calls), with tables of both by operation.</item>
+/// <item>"kernels" (intrusive; devices that time their kernels, such as CUDA): the device's time in kernels ("kernel time",
+/// ms), the launches ("launches"), the matrix products' rate ("matrix TFLOPS"), and a table of the kernels by time.</item>
+/// </list>
+/// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
+/// <see cref="Unregister"/> brings back. The registry has no guard: a probe holds what it measures through a run, so it
+/// cannot be swapped half-way.
+/// </summary>
+public static class ProfileProbes
+{
+    private static readonly SlotTable<string, IProfileProbe> Table = BuiltIn();
+
+    private static SlotTable<string, IProfileProbe> BuiltIn()
+    {
+        var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
+            unguarded: "a probe holds what it measures from before a run to after it, so it cannot be swapped half-way");
+        foreach (var probe in new IProfileProbe[] { new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe() })
+        {
+            table.RegisterDefault(probe.Name, probe);
+        }
+
+        return table;
+    }
+
+    /// <summary>Registers <paramref name="probe"/> under its <see cref="IProfileProbe.Name"/> (over the library's of that name, which stays behind it).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(IProfileProbe probe)
+    {
+        ArgumentNullException.ThrowIfNull(probe);
+        ArgumentException.ThrowIfNullOrWhiteSpace(probe.Name);
+        Table.Register(probe.Name, probe, System.Reflection.Assembly.GetCallingAssembly());
+    }
+
+    /// <summary>Removes the app's probe <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Table.Unregister(name);
+
+    /// <summary>The registered names, in the order they were registered.</summary>
+    public static IReadOnlyCollection<string> Names => Table.Keys;
+
+    /// <summary>The probe registered as <paramref name="name"/>, or null.</summary>
+    public static IProfileProbe? Find(string name) => Table.Find(name);
+
+    /// <summary>The probe registered as <paramref name="name"/>.</summary>
+    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
+    public static IProfileProbe Get(string name) => Table.Find(name)
+        ?? throw new NotSupportedException($"Profile probe '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with ProfileProbes.Register.");
+
+    /// <summary>The library's probe <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IProfileProbe? Default(string name) => Table.Default(name);
+
+    /// <summary>Who registered the probe <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Table.Origin(name);
+
+    /// <summary>Each registered probe as "name: summary", one per line.</summary>
+    public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}{(p.Intrusive ? " (a run of its own)" : "")}: {p.Summary}"));
+
+    private sealed class CpuProbe : IProfileProbe
+    {
+        public string Name => "cpu";
+
+        public string Summary => "the process's processor time and the cores it kept busy";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var process = Process.GetCurrentProcess();
+            var before = process.TotalProcessorTime;
+            long start = Stopwatch.GetTimestamp();
+            return () =>
+            {
+                double wall = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                process.Refresh();
+                double cpu = (process.TotalProcessorTime - before).TotalMilliseconds;
+                run.Record("cpu", cpu, "ms");
+                run.Record("cores busy", wall > 0 ? cpu / wall : 0, "cores");
+                process.Dispose();
+            };
+        }
+    }
+
+    private sealed class HeapProbe : IProfileProbe
+    {
+        public string Name => "heap";
+
+        public string Summary => "the managed heap: bytes allocated, collections of each generation, time paused";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            int gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2);
+            var paused = GC.GetTotalPauseDuration();
+            long allocated = GC.GetTotalAllocatedBytes(precise: true);
+            return () =>
+            {
+                run.Record("allocated", (GC.GetTotalAllocatedBytes(precise: true) - allocated) / 1048576.0, "MB");
+                run.Record("gc0", GC.CollectionCount(0) - gen0);
+                run.Record("gc1", GC.CollectionCount(1) - gen1);
+                run.Record("gc2", GC.CollectionCount(2) - gen2);
+                run.Record("gc pause", (GC.GetTotalPauseDuration() - paused).TotalMilliseconds, "ms");
+            };
+        }
+    }
+
+    private sealed class MemoryProbe : IProfileProbe
+    {
+        public string Name => "memory";
+
+        public string Summary => "the device's memory in use, cached and at its peak, and the process's working set and peak";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            run.Device.Backend.ResetPeakMemoryUsage();
+            return () =>
+            {
+                var usage = run.Device.Backend.GetMemoryUsage();
+                run.Record("device in use", usage.InUse / 1048576.0, "MB");
+                run.Record("device cached", usage.Cached / 1048576.0, "MB");
+                run.Record("device peak", usage.Peak / 1048576.0, "MB");
+                using var process = Process.GetCurrentProcess();
+                run.Record("process", process.WorkingSet64 / 1048576.0, "MB");
+                run.Record("process peak", process.PeakWorkingSet64 / 1048576.0, "MB");
+            };
+        }
+    }
+
+    private sealed class OperationsProbe : IProfileProbe
+    {
+        public string Name => "operations";
+
+        public string Summary => "every operation called on the device and every host fallback, by operation";
+
+        public bool Intrusive => true;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var trace = Operations.Kernels.Trace(run.Device.Backend);
+            return () =>
+            {
+                trace.Dispose();
+                var calls = Operations.Ops.All.Concat(Operations.PluginOperations.All).Select(op => (op.Name, Calls: trace.Calls(op)))
+                    .Where(c => c.Calls > 0).OrderByDescending(c => c.Calls).ToList();
+                var fallbacks = trace.HostCallsByOperation.OrderByDescending(f => f.Value).ToList();
+                run.Record("operations", calls.Sum(c => c.Calls), "calls");
+                run.Record("operation kinds", calls.Count);
+                run.Record("host fallbacks", trace.HostCalls, "calls");
+                run.Add(new ProfileTable("operations", ["operation", "calls"], [.. calls.Select(c => (IReadOnlyList<string>)[c.Name, Text(c.Calls)])]));
+                if (fallbacks.Count > 0)
+                {
+                    run.Add(new ProfileTable("host fallbacks", ["operation", "calls"], [.. fallbacks.Select(f => (IReadOnlyList<string>)[f.Key, Text(f.Value)])]));
+                }
+            };
+        }
+    }
+
+    private sealed class KernelsProbe : IProfileProbe
+    {
+        public string Name => "kernels";
+
+        public string Summary => "each kernel's launches, time and matrix-product rate (devices that time their kernels, such as CUDA)";
+
+        public bool Intrusive => true;
+
+        public bool Supports(Device device) => device.Backend.Capabilities.Profiling;
+
+        public Action Begin(ProfileRun run)
+        {
+            run.Device.Synchronize();
+            run.Device.Backend.StartProfile();
+            return () =>
+            {
+                run.Device.Synchronize();
+                var kernels = run.Device.Backend.StopProfile()
+                    .Select(e => (e.Key, e.Value.Calls, Ms: e.Value.Ticks * 1000.0 / Stopwatch.Frequency, e.Value.Flops))
+                    .OrderByDescending(k => k.Ms).ToList();
+                double total = kernels.Sum(k => k.Ms), productMs = kernels.Where(k => k.Flops > 0).Sum(k => k.Ms), flops = kernels.Sum(k => k.Flops);
+                run.Record("kernel time", total, "ms");
+                run.Record("launches", kernels.Sum(k => k.Calls));
+                run.Record("matrix TFLOPS", productMs > 0 ? flops / (productMs * 1e9) : 0, "TFLOPS");
+                run.Add(new ProfileTable("kernels", ["kernel", "calls", "ms", "share", "TFLOPS"],
+                    [.. kernels.Select(k => (IReadOnlyList<string>)[k.Key, Text(k.Calls), Text(k.Ms), Text(total > 0 ? 100 * k.Ms / total : 0) + "%", k.Flops > 0 && k.Ms > 0 ? Text(k.Flops / (k.Ms * 1e9)) : ""])]));
+            };
+        }
+    }
+
+    // A number as the tables show it, the same on every machine.
+    internal static string Text(double value) => value.ToString(Math.Abs(value) >= 100 ? "0" : "0.###", CultureInfo.InvariantCulture);
+}
