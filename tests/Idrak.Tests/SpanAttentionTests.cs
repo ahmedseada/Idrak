@@ -17,6 +17,7 @@ internal static partial class Tests
         ("attention spans: the rules' ranges are Gemma 3's masks (a key seen when not after the row or in the row's image block, within the window on sliding layers), and transformers' for the tiny model's image prompt", SpanRulesAreGemmaMasks),
         ("attention spans: bidirectional multi-head attention runs on the key-range kernel or the full scores as measured or forced, and matches the composed path, forward and gradients", BidirectionalAttentionLayer),
         ("attention spans: the fastest path (forced key ranges, forced composed, measured) gives AttentionSpans' result with every key and with a dense mask; the memory guard; IDRAK_ATTENTION_PATH", FastestAttention),
+        ("attention spans: grouped heads and several tables compose on the device (a table at a time, the ranges as a mask) and match AttentionSpans, forward and gradients; a device without its own kernel for the head size composes them unforced, one with it keeps its kernel", SpanAttentionComposedGroups),
         ("attention spans: float32 and bfloat16 tensor cores (head sizes up to 128, rows past blocks of 64 and 128, every rule, grouped heads, tables, a soft-cap) match the CPU", SpanAttentionPrecisions),
         ("attention spans: the CUDA span modules (float32 and tensor-core, every padded head size) declare their kernels and parameters, and are judged by the shared memory a device reports", SpanModules),
         ("attention spans backward: the conformance kit's key-range cases (forward and gradient; random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, head sizes 1 to 256, a soft-cap) replay on the device call by call", SpanGradientCases),
@@ -579,5 +580,88 @@ internal static partial class Tests
         {
             AttentionPaths.Forced = previous;
         }
+    }
+
+    // Grouped-query attention with a table of ranges per sequence, as the decoder's image prefill calls it: the composed
+    // path (each table's query heads over its key/value heads, the ranges as an additive mask) gives AttentionSpans' output
+    // and gradients. Unforced, it composes where the device has no kernel of its own for the head size
+    // (BackendCapabilities.SpanAttentionHeadDim: there AttentionSpans would run on the host) and keeps the kernel elsewhere.
+    private static void SpanAttentionComposedGroups(Device device)
+    {
+        var random = new Random(78);
+        const int Tables = 2, KvPerTable = 2, Group = 3, Rows = 9, KeyRows = 13, Dim = 8;
+        const int KvHeads = Tables * KvPerTable, Heads = KvHeads * Group;
+        float scale = 1f / MathF.Sqrt(Dim);
+
+        // Every row sees at least one key (an empty range gives zeros on one path and the values' mean on the other).
+        var starts = new float[Tables * Rows];
+        var ends = new float[Tables * Rows];
+        var dense = new float[Tables * Rows * KeyRows];
+        for (int r = 0; r < starts.Length; r++)
+        {
+            int from = random.Next(0, KeyRows), to = random.Next(from + 1, KeyRows + 1);
+            (starts[r], ends[r]) = (from, to);
+            for (int c = 0; c < KeyRows; c++)
+            {
+                dense[r * KeyRows + c] = c >= from && c < to ? 0f : -1e30f;
+            }
+        }
+
+        float[] qv = RandomArray(random, Heads * Rows * Dim), kv = RandomArray(random, KvHeads * KeyRows * Dim), vv = RandomArray(random, KvHeads * KeyRows * Dim);
+        float[] wv = RandomArray(random, Heads * Rows * Dim);
+        bool composes = device.Backend.AvailableMemory() is not null;
+        bool ownKernel = Dim <= device.Backend.Capabilities.SpanAttentionHeadDim;
+
+        (float[] Y, float[][] Gradients, long Spans, long Softmaxes) Run(AttentionPath path)
+        {
+            AttentionPaths.Forced = path;
+            using var q = Tensor.From(qv, [Heads, Rows, Dim], device, requiresGrad: true);
+            using var k = Tensor.From(kv, [KvHeads, KeyRows, Dim], device, requiresGrad: true);
+            using var v = Tensor.From(vv, [KvHeads, KeyRows, Dim], device, requiresGrad: true);
+            using var w = Tensor.From(wv, [Heads, Rows, Dim], device);
+            using var st = Tensor.From(starts, [Tables * Rows], device);
+            using var en = Tensor.From(ends, [Tables * Rows], device);
+            using var mask = Tensor.From(dense, [Tables * Rows, KeyRows], device);
+            float[] y;
+            long spans, softmaxes;
+            using (Autograd.NoGrad())
+            using (var trace = Kernels.Trace(device.Backend))
+            using (var inference = Tensor.AttentionFastest(q, k, v, st, en, scale, everyKey: false, mask))
+            {
+                y = inference.ToArray();
+                (spans, softmaxes) = (trace.Calls(Ops.AttentionSpans), trace.Calls(Ops.ScaleMaskSoftmax));
+            }
+
+            (Tensor.AttentionFastest(q, k, v, st, en, scale, everyKey: false, mask) * w).Sum().Backward();
+            return (y, [q.Grad!.ToArray(), k.Grad!.ToArray(), v.Grad!.ToArray()], spans, softmaxes);
+        }
+
+        var previous = AttentionPaths.Forced;
+        try
+        {
+            var spansRun = Run(AttentionPath.Spans);
+            Check(spansRun.Spans == 1 && spansRun.Softmaxes == 0, $"forced key ranges: AttentionSpans once on {device}");
+            foreach (var path in new[] { AttentionPath.Composed, AttentionPath.Measured })
+            {
+                var run = Run(path);
+                AssertClose(spansRun.Y, run.Y, 1e-4f, $"{path}: output on {device}");
+                for (int t = 0; t < 3; t++)
+                {
+                    AssertClose(spansRun.Gradients[t], run.Gradients[t], 1e-3f, $"{path}: gradient {t} on {device}");
+                }
+
+                bool composed = composes && (path == AttentionPath.Composed || !ownKernel);
+                Check(composed ? run.Spans == 0 && run.Softmaxes == Tables : run.Spans == 1 && run.Softmaxes == 0,
+                    $"{path} on {device} (its own kernel up to head size {device.Backend.Capabilities.SpanAttentionHeadDim}): "
+                    + $"{(composed ? "composed, a softmax per table" : "the key ranges")}; ran {run.Spans} AttentionSpans, {run.Softmaxes} softmaxes");
+            }
+        }
+        finally
+        {
+            AttentionPaths.Forced = previous;
+        }
+
+        Check(Device.Cpu.Backend.Capabilities.SpanAttentionHeadDim == int.MaxValue, "the CPU's own kernel takes every head size");
+        Check(Device.Get("minimal").Backend.Capabilities.SpanAttentionHeadDim == 0, "the minimal backend has no kernel of its own");
     }
 }

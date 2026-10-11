@@ -28,7 +28,7 @@ public interface IImageCodec
     /// <summary>
     /// The size and channels from the start of a file (its first 64 KiB, or all of a smaller file), or null when the
     /// bytes are not this format. A file of the format whose size lies further in (a JPEG with long EXIF and ICC
-    /// segments before its frame header) answers a width and height of 0; <see cref="ImageCodecs.ReadInfo"/> then asks
+    /// segments before its frame header) answers a width and height of 0; <see cref="ImageCodecs.ReadInfo(string)"/> (and its in-memory sibling) then asks
     /// again with the whole file.
     /// </summary>
     ImageInfo? ReadInfo(ReadOnlySpan<byte> header);
@@ -127,6 +127,25 @@ public static class ImageCodecs
         {
             ArrayPool<byte>.Shared.Return(head);
         }
+    }
+
+    /// <summary>
+    /// The size and channels of an image file held in memory, or null when no registered codec knows its format: from its
+    /// first bytes, or all of them when the size lies further on (a JPEG's frame header after long EXIF and ICC
+    /// segments). Nothing is decoded.
+    /// </summary>
+    public static ImageInfo? ReadInfo(ReadOnlySpan<byte> file)
+    {
+        var header = file[..Math.Min(file.Length, HeaderBytes)];
+        foreach (var codec in Codecs())
+        {
+            if (codec.ReadInfo(header) is { } info)
+            {
+                return info.Width == 0 && file.Length > header.Length ? codec.ReadInfo(file) : info;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Decodes an image file with the codec that knows its format.</summary>

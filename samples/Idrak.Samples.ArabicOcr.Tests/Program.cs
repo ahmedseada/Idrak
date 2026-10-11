@@ -285,7 +285,12 @@ var timings = new List<string>();
 ];
 
 int failed = 0, ran = 0;
-foreach (var (name, run) in tests.Where(t => Environment.GetEnvironmentVariable("IDRAK_FILTER") is not { } f || t.Name.Contains(f, StringComparison.OrdinalIgnoreCase)))
+// IDRAK_FILTER: one text, or several separated by "|" (a test runs when its name contains any of them, ignoring case), so
+// every group a change touches runs in one invocation.
+string[]? filters = Environment.GetEnvironmentVariable("IDRAK_FILTER") is { Length: > 0 } filter
+    ? filter.Split('|', StringSplitOptions.RemoveEmptyEntries)
+    : null;
+foreach (var (name, run) in tests.Where(t => filters is null || filters.Any(f => t.Name.Contains(f, StringComparison.OrdinalIgnoreCase))))
 {
     ran++;
     var clock = Stopwatch.StartNew();

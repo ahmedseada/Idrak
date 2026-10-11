@@ -26,9 +26,14 @@ internal static partial class Tests
         public static readonly MinimalBackend Instance = new();
         private readonly MemoryAccountant _memory = new(() => ComputeResources.GpuMemoryLimit, "minimal:0");
 
-        public override BackendCapabilities Capabilities => CpuBackend.Instance.Capabilities;
+        // The CPU's limits, and no attention over key ranges of its own (every head size takes the host fallback): attention
+        // that knows its ranges composes on this device where the memory it reports holds the scores.
+        public override BackendCapabilities Capabilities { get; } = CpuBackend.Instance.Capabilities with { SpanAttentionHeadDim = 0 };
 
         public override string Kind => "minimal";
+
+        // Its memory is the process's: what the CPU reports available.
+        public override long? AvailableMemory() => CpuBackend.Instance.AvailableMemory();
 
         public override string Name => "minimal (memory and copies only)";
 

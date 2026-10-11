@@ -261,9 +261,10 @@ internal static partial class Tests
                  "stream":false,"image_transforms":"{{{Card}}}","options":{"temperature":0,"num_predict":20,"repeat_penalty":1}}
                 """));
             Check(transformChat.StatusCode == HttpStatusCode.OK && sampled.SequenceEqual(transformedTokens), $"/api/chat with image_transforms: {Text(transformChat)}");
-            var unknownTransform = Post("/v1/chat/completions", TransformBody(",\"image_transforms\":\"grayscale,blur=2\""));
+            // "emboss" is not a registered transform ("blur" is, since the Read tab's step editor).
+            var unknownTransform = Post("/v1/chat/completions", TransformBody(",\"image_transforms\":\"grayscale,emboss=2\""));
             Check(unknownTransform.StatusCode == HttpStatusCode.BadRequest && Text(unknownTransform).Contains("image_transforms") && Text(unknownTransform).Contains("max_width")
-                  && Text(unknownTransform).Contains("blur"), $"an unknown transform names the registered ones: {Text(unknownTransform)}");
+                  && Text(unknownTransform).Contains("emboss"), $"an unknown transform names the registered ones: {Text(unknownTransform)}");
             var badTransformValue = Post("/api/chat", """{"messages":[{"role":"user","content":"x"}],"image_transforms":"contrast=high"}""");
             Check(badTransformValue.StatusCode == HttpStatusCode.BadRequest && Text(badTransformValue).Contains("contrast takes a number"), $"/api/chat: a bad value: {Text(badTransformValue)}");
 
@@ -375,7 +376,7 @@ internal static partial class Tests
         Check(code == 0 && recorded.SequenceEqual(transformedTokens), $"an alias's image_transforms: {text}");
         (code, text, _) = WithConfig(["run", "card", "--image", jpg, "--image-transform", "none", .. plainGreedy]);
         Check(code == 0 && (string?)JsonOf(text, "--image-transform none")["image_transforms"] == "", $"--image-transform none over the alias: {text}");
-        (code, _, transformError) = RunIdrakOn(device, null, "run", VlmModel, "--image", jpg, "--image-transform", "grayscale,blur=2", "hi");
+        (code, _, transformError) = RunIdrakOn(device, null, "run", VlmModel, "--image", jpg, "--image-transform", "grayscale,emboss=2", "hi");
         Check(code == 2 && transformError.Contains("--image-transform", StringComparison.Ordinal) && transformError.Contains("registered: grayscale, max_width", StringComparison.Ordinal),
             $"an unknown transform: {code} {transformError}");
 

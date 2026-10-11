@@ -283,6 +283,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
     {
         DecodeAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.DecodeAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         TiledAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
+        SpanAttentionHeadDim = VulkanKernels.AttentionMaxDim,              // VulkanBackend.Spans.cs: larger heads take the host fallback
         MatrixUnits = false,
         MatrixUnitAttentionHeadDim = static _ => false,
         FusedKernels = true,                                             // VulkanBackend.Fused.cs

@@ -12,6 +12,23 @@ tensor shapes and need measuring first (section 3 says how). Baseline on the own
 float32 encoder (`plans/11-vision-language.md:412,466`): prompt with the image 1.0 s, 80 tokens/s, a 1,032-token answer
 in 14 s; one 896 x 896 image through the encoder 0.43 s in float32, 0.11 s with bfloat16 tensor cores (`:769-770,906`).
 
+## Progress (updated as lanes land)
+
+| Item | State | Proof |
+|---|---|---|
+| **A3** image attention composed on the device where the device has no span kernel for the head size | **Done** (2026-10-11): `BackendCapabilities.SpanAttentionHeadDim` (CUDA 128, Vulkan 256, CPU every size; default every size, so outside backends are unchanged); `Tensor.AttentionFastest` composes grouped heads and several tables (a table at a time) and, where the device has no kernel, whenever the scores fit, without measuring; the decoder's image path passes its ranges as a mask (`ImageBlocks.Mask`, built once per window and pass from the cached host tables). Gemma 3 4B's head size 256 on CUDA no longer copies q, k, v to the host per layer for a read's image prefill. HIP keeps the CPU's limits (its own rule) | CPU and the minimal device (no span kernel of its own): `attention spans` (new: grouped heads and two tables, forward and gradients, composed forced and unforced), `image prefill` (transformers' logits and 20 tokens through the composed path on the minimal device), `image reader`, `chat parts`, `cli images`, `minimum backend`; CUDA: the owner's commands below |
+| **A1, A2** span kernels for head size 256 on CUDA | Not started: needs a GPU to verify (at 256 the float32 tiled kernel needs about 105 KB of shared memory and the tensor-core kernel declares its tiles statically, so lifting the cap alone would be refused on most cards); A3 covers reads until then | — |
+| **B1** a page decoded and transformed once per read | **Done**: `ChatImages.Read` keeps the last prepared image (content hash + transforms) until the same read takes it (at most one image held); `ImageReader.Prepared` goes through it; `ImageCodecs.ReadInfo(bytes)` and `ChatImageDecoder.Size(bytes)` (EXIF-upright) give the original size from the header; the app decodes a page once (was three decodes and two transform runs) | `image reader`, `chat parts`, `cli images`, the app's `legal` tests |
+| **B2** the device pool kept between reads | **Done** in the app: freed blocks go back to the driver only after a failed or stopped read, on unload and when tuning takes the device; the status shows `Cached` | `legal` tests |
+| **B4** stop at the end-of-turn id at once | **Dropped**: reading each sampled token as it is made is a host sync per step, which costs more over a long answer than the up to 7 steps after the end it saves | — |
+| **B5** warm-up at load | **Done** in the app: one short read of a blank page with the model's preprocessing and prompt after loading (encoder built, kernels loaded, shapes measured); "loaded in X s, warmed up in Y s" | `legal start` |
+| **H1** `IDRAK_FILTER` with `a\|b\|c` | **Done** in `tests/Idrak.Tests`, `Idrak.Samples.LegalOcr.Tests`, `Idrak.Samples.ArabicOcr.Tests` | the runs above used it |
+| Stale checks | Fixed: three tests used `blur` as an unknown transform, registered since d2ad9fc; they use `emboss` now | `aspnetcore: images`, `cli serve: images`, `vision tuning contracts` |
+| Everything else in sections 2 and 6 | Not started | — |
+
+The cloud environment builds now: the .NET 10 SDK came from conda-forge (`dotnet-sdk` 10.0.401, `dotnet-runtime` and
+`dotnet-aspnetcore` 10.0.12, unpacked into `~/.dotnet`), since the SDK's own hosts are refused by the network policy.
+
 ## 0. Rules every lane keeps
 
 - **Abstraction and plug-ability, at no cost in speed.** The library provides the contract and, where one exists, a

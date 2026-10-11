@@ -237,7 +237,7 @@ internal static partial class Tests
             images.ThrowIfUnknown("Gemma3ForConditionalGeneration", Gemma3PanAndScan.Keys);
             var unknown = Failure<ArgumentException>(() => TuningImages.Parse(null, ["crops=4"]).ThrowIfUnknown("Gemma3ForConditionalGeneration", Gemma3PanAndScan.Keys));
             Check(unknown.Message.Contains("'crops'", StringComparison.Ordinal) && unknown.Message.Contains("do_pan_and_scan", StringComparison.Ordinal), $"an unknown option names the family's keys: {unknown.Message}");
-            Check(Failure<ArgumentException>(() => TuningImages.Parse("blur=2")).Message.Contains("registered", StringComparison.Ordinal), "an unknown transform names the registered ones");
+            Check(Failure<ArgumentException>(() => TuningImages.Parse("emboss=2")).Message.Contains("registered", StringComparison.Ordinal), "an unknown transform names the registered ones");
 
             Check(TuningImages.Read(folder) is null && !TuningImages.Exists(folder), "no file, no preparation");
             images.Save(folder);
@@ -257,8 +257,8 @@ internal static partial class Tests
             File.WriteAllText(Path.Combine(folder, "tuning_images.json"), """{"format": "idrak-tuning-images/9"}""");
             var bad = Failure<InvalidDataException>(() => TuningImages.Read(folder));
             Check(bad.Message.Contains("tuning_images.json", StringComparison.Ordinal) && bad.Message.Contains("idrak-tuning-images/1", StringComparison.Ordinal), $"another format is refused: {bad.Message}");
-            File.WriteAllText(Path.Combine(folder, "tuning_images.json"), """{"image_transforms": "blur=2"}""");
-            Check(Failure<InvalidDataException>(() => TuningImages.Read(folder)).Message.Contains("blur", StringComparison.Ordinal), "an unknown transform in the file is refused");
+            File.WriteAllText(Path.Combine(folder, "tuning_images.json"), """{"image_transforms": "emboss=2"}""");
+            Check(Failure<InvalidDataException>(() => TuningImages.Read(folder)).Message.Contains("emboss", StringComparison.Ordinal), "an unknown transform in the file is refused");
 
             // The feature cache's key follows the preparation.
             var chat = ChatImage.FromFile(TestData("vlm/image.png"));

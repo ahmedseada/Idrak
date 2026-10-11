@@ -44,8 +44,8 @@ public enum ReaderState
 /// <summary>A download in progress: the file being fetched and the bytes so far.</summary>
 public sealed record DownloadInfo(string File, long Received, long? Total, double Seconds);
 
-/// <summary>The device's memory as the library measures it.</summary>
-public sealed record MemoryInfo(long InUse, long Peak, long? Limit);
+/// <summary>The device's memory as the library measures it: in use by tensors, at its peak, the limit, and freed blocks the pool keeps for reuse.</summary>
+public sealed record MemoryInfo(long InUse, long Peak, long? Limit, long Cached = 0);
 
 /// <summary>The service's state for the page (polled while a model downloads or loads).</summary>
 public sealed record ReaderStatus(ReaderState State, string Message, string? Model, string? Loading, DownloadInfo? Download, double? Seconds, string Device,
@@ -128,7 +128,7 @@ public sealed class ReaderService : IDisposable
             var usage = ComputeResources.GetMemoryUsage(Device);
             lock (_statusLock)
             {
-                return _status with { Memory = new MemoryInfo(usage.InUse, usage.Peak, usage.Limit) };
+                return _status with { Memory = new MemoryInfo(usage.InUse, usage.Peak, usage.Limit, usage.Cached) };
             }
         }
     }
@@ -458,13 +458,19 @@ public sealed class ReaderService : IDisposable
                     _loaded = null;
                 }
 
-                using (_host.Acquire(model.Id))
+                double loadSeconds, warmSeconds;
+                using (var lease = _host.Acquire(model.Id))
                 {
+                    loadSeconds = clock.Elapsed.TotalSeconds;
+                    SetStatus(ReaderState.Loading, $"Warming up {model.Name}: one short read builds its encoder and measures the device…", _loaded, model.Id,
+                        seconds: loadSeconds);
+                    warmSeconds = WarmUp(lease.Model, cancellationToken);
                 }
 
                 _loaded = model.Id;
-                SetStatus(ReaderState.Ready, $"{model.Name} is ready (loaded in {clock.Elapsed.TotalSeconds:F0} s).", model.Id, seconds: clock.Elapsed.TotalSeconds);
-                _logger.LogInformation("Loaded {Model} from {Folder} in {Seconds:F1} s", model.Id, folder, clock.Elapsed.TotalSeconds);
+                SetStatus(ReaderState.Ready, $"{model.Name} is ready (loaded in {loadSeconds:F0} s, warmed up in {warmSeconds:F1} s).", model.Id,
+                    seconds: clock.Elapsed.TotalSeconds);
+                _logger.LogInformation("Loaded {Model} from {Folder} in {Seconds:F1} s, warmed up in {Warm:F1} s", model.Id, folder, loadSeconds, warmSeconds);
             }
             finally
             {
@@ -543,7 +549,9 @@ public sealed class ReaderService : IDisposable
         if (output is not null)
         {
             SetStatus(ReaderState.Reading, $"{model.Name} is reading a page…", model.Id);
-            var original = ChatImageDecoder.Decode(image);
+            // The original size from the file's header (nothing decoded); the page as the model sees it, decoded and
+            // transformed once: the read below takes the same pixels (ChatImages.Read).
+            var original = ChatImageDecoder.Size(image.Data.Span) ?? DecodedSize(image);
             var seen = loaded.Reader.Prepared(read);
             // The crops Gemma 3's pan and scan reads beside the whole page (as rectangles of the page the model sees).
             var crops = pan == true && loaded.Reader.Vision.Family == Gemma3VisionFamily.Architecture
@@ -562,11 +570,13 @@ public sealed class ReaderService : IDisposable
         {
             reading = loaded.Reader.Read(read, output is null ? null : text => output.TryWrite(new SseItem<object>(new { text }, "token")), cancellationToken);
         }
-        finally
+        catch
         {
-            // Nothing of the read stays on the device but the model: the reader keeps no attention cache, and the memory
-            // pool's freed blocks go back to the driver (for the next read and other programs alike), even after a failure.
+            // Nothing of a failed or stopped read stays on the device: the memory pool's freed blocks go back to the driver.
+            // After a read that finished they stay in the pool, which the next read reuses (the reader keeps no attention
+            // cache; unloading the model, and fine-tuning taking the device, give everything back).
             ComputeResources.ReleaseCachedMemory(Device);
+            throw;
         }
 
         var (json, repaired) = AnswerJson.Show(reading.Text);
@@ -574,6 +584,42 @@ public sealed class ReaderService : IDisposable
             : TuningMetrics.Get(TuningMetrics.CharacterErrorRate).Score(AnswerTexts.Of(reading.Text, AnswerTexts.Values), AnswerTexts.Of(expected, AnswerTexts.Values)).Value;
         return new PageResult(reading, json, repaired, cer, read.Sample ? read.Seed : null);
     }
+
+    // The size of an image whose header gives none: decoded.
+    private static (int Width, int Height) DecodedSize(ChatImage image)
+    {
+        var decoded = ChatImageDecoder.Decode(image);
+        return (decoded.Width, decoded.Height);
+    }
+
+    // A loaded model's first read pays for what is built on first use (the vision encoder, the device's kernels, the
+    // measured choices for these shapes): one short read of a blank page with the model's own preprocessing and prompt,
+    // so the first real page is a warm one (rule 76: cold and warm apart). A failure is logged and leaves the model ready.
+    private double WarmUp(LoadedReader loaded, CancellationToken cancellationToken)
+    {
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            const int Side = 64;
+            var blank = new ImageData(Enumerable.Repeat(1f, Side * Side).ToArray(), 1, Side, Side);
+            var page = ChatImage.FromBytes(ImageEncoders.Get("png").Encode(blank));
+            var model = loaded.Model;
+            loaded.Reader.Read(new ImageReadRequest(page, model.Prompt)
+            {
+                MaxTokens = WarmUpTokens, Transforms = ImageTransformPipeline.Parse(model.Preprocessing), RepeatStop = 0,
+            }, null, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Warming up {Model} failed (its first page reads cold): {Message}", loaded.Model.Id, ex.Message);
+            ComputeResources.ReleaseCachedMemory(Device);
+        }
+
+        return clock.Elapsed.TotalSeconds;
+    }
+
+    // Tokens of the warm-up read: past the first decoding steps (the decoding graph is recorded from the second).
+    private const int WarmUpTokens = 4;
 
     // One page's reading, with its seed when it was sampled.
     private sealed record PageResult(ImageReading Reading, string? Json, bool Repaired, double? Cer, int? Seed);

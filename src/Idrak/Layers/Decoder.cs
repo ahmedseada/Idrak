@@ -466,7 +466,15 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     {
         int n = images.Batch, t = images.Steps;
         var (starts, ends) = images.Spans(SpanWindow, offset, rowStarts, q.Device);
-        var attended = Tensor.AttentionSpans(q.Reshape(n * KvHeads * Group, t, HeadDim), keys, values, starts, ends, ScoreScale, new AttentionVariant(0, _softcap ?? 0f));
+        var heads = q.Reshape(n * KvHeads * Group, t, HeadDim);
+
+        // A device without its own kernel for this head size would attend on the host: there the same ranges go as a mask
+        // to the attention composed on the device, when its scores fit (Tensor.AttentionFastest; soft-capped scores keep
+        // the kernel's path).
+        var attended = HeadDim > q.Backend.Capabilities.SpanAttentionHeadDim && _softcap is null
+                       && images.Mask(SpanWindow, offset, rowStarts, keys.Shape[1], q.Device) is { } mask
+            ? Tensor.AttentionFastest(heads, keys, values, starts, ends, ScoreScale, everyKey: false, mask)
+            : Tensor.AttentionSpans(heads, keys, values, starts, ends, ScoreScale, new AttentionVariant(0, _softcap ?? 0f));
         return attended.Reshape(n * KvHeads, Group * t, HeadDim);
     }
 

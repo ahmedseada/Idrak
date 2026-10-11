@@ -46,6 +46,7 @@ public static class Idrak.Data.Abstractions.SampleSources
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public static class Idrak.Data.ChatImageDecoder
+  public static (int, int)? Size(System.ReadOnlySpan<byte> file)
   public static Idrak.Abstraction.Data.ImageData Decode(Idrak.Abstraction.Generation.ChatImage image)
   public static Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
   public static Idrak.Abstraction.Data.ImageData Grayscale(Idrak.Abstraction.Data.ImageData image)

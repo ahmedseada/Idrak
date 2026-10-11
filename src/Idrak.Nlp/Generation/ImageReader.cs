@@ -160,9 +160,16 @@ public sealed class ImageReader : IDisposable
     /// <summary>The model's vision family.</summary>
     public PretrainedVision Vision => Model.Vision!;
 
-    /// <summary>The image as the family's encoder reads it for <paramref name="request"/>: decoded, then the read's transforms (or the reader's).</summary>
-    public ImageData Prepared(ImageReadRequest request) =>
-        (request.Transforms ?? Options.Transforms).Apply(ChatImageDecoder.Decode(request.Image));
+    /// <summary>
+    /// The image as the family's encoder reads it for <paramref name="request"/>: decoded, then the read's transforms (or
+    /// the reader's). Kept for the read that follows (<see cref="ChatImages.Read"/>), so showing a page and reading it
+    /// decodes and transforms it once; the pixels are shared and must not be changed.
+    /// </summary>
+    public ImageData Prepared(ImageReadRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return _images.Images.Read(request.Image, new ChatRequest([]) { ImageTransforms = request.Transforms ?? Options.Transforms });
+    }
 
     /// <summary>The answer to <paramref name="request"/> as it is generated (the last chunk is done, with the figures).</summary>
     public IEnumerable<ChatChunk> Stream(ImageReadRequest request, CancellationToken cancellationToken = default)

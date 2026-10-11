@@ -16,7 +16,7 @@
 //   … -- --bench-vision                                                          time Gemma 3 4B's image encoder and projector (random weights, one 896 x 896 image; IDRAK_DEVICES, default the CPU)
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
-//   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text
+//   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text ("a|b": any of several)
 //   IDRAK_TIMEOUT=60 …    a test still running after this many seconds (default 300) is reported as HANG and the run stops
 
 using System.Diagnostics;
@@ -153,11 +153,16 @@ var watchdog = new Thread(() =>
     }
 }) { IsBackground = true };
 watchdog.Start();
+// IDRAK_FILTER: one text, or several separated by "|" (a test runs when its name contains any of them, ignoring case), so
+// every group a change touches runs in one invocation.
+string[]? filters = Environment.GetEnvironmentVariable("IDRAK_FILTER") is { Length: > 0 } filter
+? filter.Split('|', StringSplitOptions.RemoveEmptyEntries)
+: null;
 foreach (var device in devices)
 {
     Console.WriteLine($"== {device}: {device.Name}");
     string? lostIn = null;
-    foreach (var (name, test) in Tests.All.Where(t => Environment.GetEnvironmentVariable("IDRAK_FILTER") is not { } f || t.Name.Contains(f, StringComparison.OrdinalIgnoreCase)))
+    foreach (var (name, test) in Tests.All.Where(t => filters is null || filters.Any(f => t.Name.Contains(f, StringComparison.OrdinalIgnoreCase))))
     {
         if (lostIn is not null)
         {
