@@ -484,6 +484,10 @@ public static class Profiler
 /// <item>"kernels" (intrusive; devices that time their kernels, such as CUDA): the device's time in kernels ("kernel time",
 /// ms), the launches ("launches"), the matrix products' rate ("matrix TFLOPS"), and a table of the kernels by time; recorded
 /// graphs run step by step meanwhile (<see cref="ComputeGraph.RunStepsDirectly"/>), so a decoding step's kernels show too.</item>
+/// <item>"stages" (intrusive: listening at <see cref="TelemetryLevel.Inference"/> makes <c>Module.Predict</c> wait for the
+/// device): the stages of reading an answer (<see cref="InferenceStage"/>) in the run: "{stage} time" (ms), "{stage} count"
+/// and "{stage} size" (MB) for each stage seen (the caches allocated, the encoder's output, a recorded graph's memory), and
+/// the device's peak above the run's start when the encoder ends ("encoder peak above start", MB: its activations and output).</item>
 /// </list>
 /// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
 /// <see cref="Unregister"/> brings back. The registry has no guard: a probe holds what it measures through a run, so it
@@ -498,7 +502,7 @@ public static class ProfileProbes
         var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a probe holds what it measures from before a run to after it, so it cannot be swapped half-way");
         // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
-        foreach (var probe in new IProfileProbe[] { new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe() })
+        foreach (var probe in new IProfileProbe[] { new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe(), new StagesProbe() })
         {
             table.RegisterDefault(probe.Name, probe);
         }
@@ -624,6 +628,72 @@ public static class ProfileProbes
         }
 
         return rate;
+    }
+
+    // The stages of reading an answer (InferenceStage events) in a run: each stage's time, count and bytes summed, and the
+    // device's peak above the run's start when the encoder ends (its activations and output). Intrusive: listening at the
+    // Inference level makes Module.Predict wait for the device.
+    private sealed class StagesProbe : IProfileProbe
+    {
+        public string Name => "stages";
+
+        public string Summary => "the stages of reading an answer (image decode and transforms, encoder, cache allocations, prefill, decoding chunks, graph "
+                                 + "captures): time, counts and MB each, and the device's peak above the run's start when the encoder ends";
+
+        public bool Intrusive => true;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var backend = run.Device.Backend;
+            backend.ResetPeakMemoryUsage();
+            var hook = new StageSums(backend, backend.GetMemoryUsage().InUse);
+            var subscription = Telemetry.Subscribe(hook);
+            return () =>
+            {
+                subscription.Dispose();
+                lock (hook)
+                {
+                    foreach (var (stage, (ms, count, bytes)) in hook.Sums)
+                    {
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} time"), ms, "ms");
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} count"), count);
+                        if (bytes > 0)
+                        {
+                            run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} size"), bytes / 1048576.0, "MB");
+                        }
+                    }
+
+                    if (hook.EncoderPeak is { } peak)
+                    {
+                        run.Record("encoder peak above start", peak / 1048576.0, "MB");
+                    }
+                }
+            };
+        }
+
+        private sealed class StageSums(Backend backend, long startInUse) : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Inference;
+
+            public SortedDictionary<InferenceStageKind, (double Ms, long Count, long Bytes)> Sums { get; } = [];
+
+            public long? EncoderPeak { get; private set; }
+
+            public void OnInferenceStage(in InferenceStage e)
+            {
+                lock (this)
+                {
+                    var (ms, count, bytes) = Sums.GetValueOrDefault(e.Stage);
+                    Sums[e.Stage] = (ms + e.Duration.TotalMilliseconds, count + e.Count, bytes + e.Bytes);
+                    if (e.Stage == InferenceStageKind.Encoder)
+                    {
+                        EncoderPeak = Math.Max(EncoderPeak ?? 0, backend.GetMemoryUsage().Peak - startInUse);
+                    }
+                }
+            }
+        }
     }
 
     private sealed class CpuProbe : IProfileProbe
