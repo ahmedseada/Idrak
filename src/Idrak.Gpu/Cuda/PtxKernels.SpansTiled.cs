@@ -26,11 +26,17 @@ namespace Idrak.Gpu.Cuda;
 //   of W warps takes 16·W query rows (16 per warp, their Q fragments kept in registers), the keys in tiles of 64 staged in
 //   shared memory as bfloat16, S = Q·Kᵀ and O += P·V on mma.m16n8k16 with float32 sums, online softmax in the log2
 //   domain. Head sizes padded to a multiple of 16 (zeros past the real size). W = 4 or 8: measured per device and shape
-//   (CudaBackend.Tuning.cs), 4 before measuring.
+//   (CudaBackend.Tuning.cs), 4 before measuring. The same bits at either W: the tiles sit on a fixed grid (keys 64j …
+//   64j + 63, zeros only past keyRows), and a warp computes exactly the grid's tiles that meet its own 16 rows' ranges
+//   (the others it skips, keeping only the block's barriers). A tile's start or its zeros taken from the block's rows
+//   moved a row's tile boundaries with W, so the probabilities were rounded to bfloat16 against other running maxima and
+//   summed in other groups of 16: 8 warps differed from 4 in the last bits (the owner's run on a compute 12.0 GPU: dim
+//   68, 70 rows, 200 keys, random ranges, 2 key/value heads, 4 tables, row 64).
 //
 // Both: query row i of head h sees keys st[t·rows + i] ≤ c < en[t·rows + i] (clamped to [0, keyRows]; floats holding
 // integers), t = h / headsPerTable, key/value head h / group. The block walks the keys from the smallest start of its
-// rows (those that see any key) to their largest end; a key outside a row's range scores -∞ for it, and a row whose range
+// rows (those that see any key; the tensor-core kernels from the tile holding it) to their largest end; a key outside a
+// row's range scores -∞ for it, and a row whose range
 // is empty keeps a sum of 0: zeros, and a log-sum-exp of -∞. Head sizes that are multiples of 4 (rows read as float4):
 // up to 256 for the float32 kernel, 128 for the tensor-core one. Grid: x = ⌈rows / rows per block⌉, y = heads.
 internal static partial class PtxKernels
@@ -171,6 +177,38 @@ internal static partial class PtxKernels
 
         return s.ToString();
     }
+
+    // The tensor-core span kernels' tiles, the same at any warps per block (so every candidate of the measured choice gives
+    // the same bits): the block's first key (%r36) down to a multiple of the tile, so tiles start on a fixed grid; and the
+    // keys of this warp's 16 rows, %r60 = the smallest start of their non-empty ranges (keyRows when none), %r61 = the
+    // largest end (0), from this thread's rows' ranges (%r32-%r35) over the warp. Uses %r62, %p22.
+    private static readonly string SpanTensorTiles = string.Create(CultureInfo.InvariantCulture, $"""
+            and.b32 %r36, %r36, 0x{unchecked((uint)-SpanTensorKeys):X8};
+            setp.gt.s32 %p22, %r33, %r32;
+            selp.b32 %r60, %r32, %r21, %p22;
+            selp.b32 %r61, %r33, 0, %p22;
+            setp.gt.s32 %p22, %r35, %r34;
+            selp.b32 %r62, %r34, %r21, %p22;
+            min.u32 %r60, %r60, %r62;
+            selp.b32 %r62, %r35, 0, %p22;
+            max.u32 %r61, %r61, %r62;
+        {string.Concat(new[] { 16, 8, 4, 2, 1 }.Select(offset => string.Create(CultureInfo.InvariantCulture, $"""
+                shfl.sync.bfly.b32 %r62, %r60, {offset}, 31, 0xffffffff;
+                min.u32 %r60, %r60, %r62;
+                shfl.sync.bfly.b32 %r62, %r61, {offset}, 31, 0xffffffff;
+                max.u32 %r61, %r61, %r62;
+
+            """)))}
+        """);
+
+    // Branches to `label` when tile %r43 (keys %r43 … %r43 + 63) holds none of this warp's keys (warp-uniform): the warp
+    // computes exactly the grid's tiles that meet its rows' ranges, whatever the block's other warps see. Uses %r62, %p22.
+    private static string SpanTensorSkip(string label) => string.Create(CultureInfo.InvariantCulture, $"""
+            setp.lt.u32 %p22, %r43, %r61;
+            add.u32 %r62, %r43, {SpanTensorKeys};
+            setp.gt.and.u32 %p22, %r62, %r60, %p22;
+            @!%p22 bra {label};
+        """);
 
     // ------------------------------------------------------------------ float32
 
@@ -786,6 +824,7 @@ internal static partial class PtxKernels
         // Q tile → shared → fragments (the range reduction's barrier also orders the staging).
         s.AppendLine(SpanTensorStage(rowsPerBlock, d, threads, "%r26", "%r25", "%r20", "%rd10", "QS"));
         s.AppendLine(SpanBlockRange("%r46", "%r47", "%r21", "%r2", "%r3", warps, "%r48", "%r36", "%r37", "%r44", "%r45", "%p3"));
+        s.AppendLine(SpanTensorTiles);
         s.AppendLine(CultureInfo.InvariantCulture, $"""
                 shl.b32 %r29, %r3, 4;
                 mul.lo.u32 %r29, %r29, {stride};
@@ -812,9 +851,12 @@ internal static partial class PtxKernels
                 setp.ge.u32 %p3, %r43, %r37;
                 @%p3 bra TILE_END;
             """);
-        s.AppendLine(SpanTensorStage(SpanTensorKeys, d, threads, "%r26", "%r43", "%r37", "%rd11", "KS"));
-        s.AppendLine(SpanTensorStage(SpanTensorKeys, d, threads, "%r27", "%r43", "%r37", "%rd12", "VS"));
+        // The tile's keys and values, zeros only past keyRows (the same tile whatever the block's rows); then this warp's
+        // products only where the tile holds some of its keys.
+        s.AppendLine(SpanTensorStage(SpanTensorKeys, d, threads, "%r26", "%r43", "%r21", "%rd11", "KS"));
+        s.AppendLine(SpanTensorStage(SpanTensorKeys, d, threads, "%r27", "%r43", "%r21", "%rd12", "VS"));
         s.AppendLine("bar.sync 0;");
+        s.AppendLine(SpanTensorSkip("SKIP"));
         s.AppendLine(Zeros("%s", 32));
         for (int ks = 0; ks < kSteps; ks++)
         {
@@ -923,6 +965,7 @@ internal static partial class PtxKernels
         }
 
         s.AppendLine(CultureInfo.InvariantCulture, $"""
+            SKIP:
                 bar.sync 0;
                 add.u32 %r43, %r43, {SpanTensorKeys};
                 bra TILE;

@@ -9,7 +9,8 @@ namespace Idrak.Gpu.Cuda;
 // Attention over one range of keys per query row (PtxKernels.SpansTiled.cs): the tensor-core kernel when MixedPrecision
 // asks for tensor cores and the GPU has them (no soft-cap): the single-stage one or the pipelined one (keys and values
 // copied to bfloat16 once, then two tiles in flight: PtxKernels.SpansPipelined.cs; the same outputs bit for bit), and its
-// warps per block, measured per shape (the single-stage kernel until measured), else the float32
+// warps per block (the same bits too: tiles on a fixed grid, each warp only its own; PtxKernels.SpansTiled.cs), measured
+// per shape (the single-stage kernel until measured), else the float32
 // tiled kernel (head sizes up to 256: 32 query rows a block over 128), else (a head size it does not take, or a GPU whose
 // shared memory per block cannot hold its tiles) the first kernel, attention_spans_f32, up to 128; the host fallback
 // beyond. Each head size's module is built and loaded the first time it is needed, and judged by what the device reports

@@ -20,7 +20,8 @@ namespace Idrak.Gpu.Cuda;
 //   the single-stage kernel stages them), the keys in tiles of 64: S = Q·Kᵀ over D = V rounded up to 16 (the copies fill
 //   the columns past V with zeros), O += P·V over V / 8 tiles of 8 columns (9 at head size 72, where the single-stage
 //   kernel computes 10), online softmax in the log2 domain. The same bfloat16 operands, products in the same order and the
-//   same softmax as the single-stage kernel: the same outputs bit for bit. Dynamic shared memory: two stages of a key tile
+//   same softmax as the single-stage kernel, on the same tiles (a fixed grid of 64 keys, each warp only those meeting its
+//   rows' ranges: PtxKernels.SpansTiled.cs): the same outputs bit for bit, at 4 and 8 warps alike. Dynamic shared memory: two stages of a key tile
 //   and a value tile (64 rows of D + 8 bfloat16 each); the block's queries are staged in the second stage before the loop.
 //   Queries and outputs go through a row layout: head hh = b·p_hq + h, row i of q at q + b·p_qb + h·p_qh + i·p_qr
 //   (floats), of the output at y + b·p_yb + h·p_yh + i·p_yr; the log-sum-exp stays [heads, rows]. Contiguous
@@ -146,8 +147,9 @@ internal static partial class PtxKernels
         """);
 
     // Issues the copies of key tile `tile` (absolute row) into the stage at shared address `stage` (keys, then values a
-    // tile further): 16 bytes each, the row's V·2 bytes and then zeros up to D (and zeros at or past the block's last key,
-    // %r37), every thread `chunks / threads` copies apart. Expects %rd11 / %rd12 = the head's packed keys / values.
+    // tile further): 16 bytes each, the row's V·2 bytes and then zeros up to D (and zeros at or past keyRows, %r21, so a
+    // tile is the same whatever the block's rows), every thread `chunks / threads` copies apart. Expects %rd11 / %rd12 =
+    // the head's packed keys / values.
     // Uses %r11-%r19, %rd1-%rd3, %p1, %p21.
     private static string SpanPipelinedIssue(int v, int d, int threads, string tile, string stage)
     {
@@ -163,7 +165,7 @@ internal static partial class PtxKernels
                     div.u32 %r12, %r11, {chunks};
                     rem.u32 %r13, %r11, {chunks};
                     add.u32 %r14, %r12, {tile};
-                    setp.lt.u32 %p1, %r14, %r37;
+                    setp.lt.u32 %p1, %r14, %r21;
                     setp.lt.and.u32 %p1, %r13, {packedChunks}, %p1;
                     selp.u32 %r15, 16, 0, %p1;
                     selp.u32 %r14, %r14, 0, %p1;
@@ -269,6 +271,7 @@ internal static partial class PtxKernels
             {SpanRange("%r45", "%r46", "%r47", "%r20", "%r21", "%r28", "%rd13", "%rd16", "%r44", "%rd44", "%rd45", "%f61", "%f62", "%p2")}
             """);
         s.AppendLine(SpanBlockRange("%r46", "%r47", "%r21", "%r2", "%r3", warps, "%r48", "%r36", "%r37", "%r44", "%r45", "%p3"));
+        s.AppendLine(SpanTensorTiles);
 
         // The first tile into stage 0, then the queries through stage 1 into their fragments.
         s.AppendLine("""
@@ -319,6 +322,7 @@ internal static partial class PtxKernels
                 cp.async.commit_group;
                 cp.async.wait_group 1;
                 bar.sync 0;
+            {SpanTensorSkip("SKIP")}
                 add.u32 %r59, %r26, %r56;
                 add.u32 %r41, %r59, %r7;
                 add.u32 %r40, %r59, {tileBytes};
@@ -439,6 +443,7 @@ internal static partial class PtxKernels
         }
 
         s.AppendLine(CultureInfo.InvariantCulture, $"""
+            SKIP:
                 bar.sync 0;
                 xor.b32 %r56, %r56, {stageBytes};
                 add.u32 %r43, %r43, {SpanTensorKeys};
