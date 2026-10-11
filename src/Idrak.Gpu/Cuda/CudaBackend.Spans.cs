@@ -8,11 +8,13 @@ namespace Idrak.Gpu.Cuda;
 
 // Attention over one range of keys per query row (PtxKernels.SpansTiled.cs): the tensor-core kernel when MixedPrecision
 // asks for tensor cores and the GPU has them (no soft-cap; its warps per block measured per shape), else the float32
-// tiled kernel, else (a head size it does not take, or a GPU whose shared memory per block cannot hold its tiles) the
-// first kernel, attention_spans_f32; head sizes over 128 take the host fallback. Each head size's module is built and
-// loaded the first time it is needed, and judged by what the device reports (shared memory per block) before it is
-// loaded. The gradient runs on attn_spans_bwd_kv_f32 and attn_spans_bwd_q_f32 (PtxKernels.SpansBackward.cs; float32,
-// head sizes up to 128, the host fallback beyond). And the measured choice between this operation and the composed
+// tiled kernel (head sizes up to 256: 32 query rows a block over 128), else (a head size it does not take, or a GPU whose
+// shared memory per block cannot hold its tiles) the first kernel, attention_spans_f32, up to 128; the host fallback
+// beyond. Each head size's module is built and loaded the first time it is needed, and judged by what the device reports
+// (shared memory per block) before it is loaded. The gradient runs on attn_spans_bwd_kv_f32 and attn_spans_bwd_q_f32
+// (PtxKernels.SpansBackward.cs; float32, head sizes up to 128), and over 128 on their wide versions (8 dimensions a lane,
+// dynamic shared memory) when the device holds them; the host fallback beyond. SpanHeadDim says which head sizes this
+// device runs on its own kernels, from its reported limits (BackendCapabilities.SpanAttentionHeadDim). And the measured choice between this operation and the composed
 // scores (Backend.PrefersComposedAttention, for Tensor.AttentionFastest; with its gradient when training), kept with
 // the other measured choices.
 internal sealed unsafe partial class CudaBackend
@@ -37,7 +39,7 @@ internal sealed unsafe partial class CudaBackend
     public override void AttentionSpansKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
         int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
     {
-        if (dim <= 0 || dim > PtxKernels.FlashMaxDim || kvHeads <= 0 || headsPerTable <= 0)
+        if (dim <= 0 || dim > PtxKernels.SpanMaxDim || kvHeads <= 0 || headsPerTable <= 0)
         {
             base.AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
             return;
@@ -76,10 +78,17 @@ internal sealed unsafe partial class CudaBackend
         int fd = PtxKernels.SpanFloatDim(dim);
         if (fd > 0 && SpanFunction(tensor: false, fd) is { } tiled)
         {
+            int blockRows = PtxKernels.SpanFloatRows(fd);
             t_sharedBytes = (uint)PtxKernels.SpanFloatShared(fd);
-            Launch(tiled, (uint)((rows + PtxKernels.SpanFloatRows - 1) / PtxKernels.SpanFloatRows), (uint)heads, 1, 128, 1,
+            Launch(tiled, (uint)((rows + blockRows - 1) / blockRows), (uint)heads, 1, 128, 1,
                 P(q), P(keys), P(values), P(starts), P(ends), P(y), lse, U(rows), U(keyRows), U(dim), F(scale), U(heads / kvHeads), U(headsPerTable),
                 F(variant.Softcap));
+            return;
+        }
+
+        if (dim > PtxKernels.FlashMaxDim)
+        {
+            base.AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
             return;
         }
 
@@ -95,7 +104,9 @@ internal sealed unsafe partial class CudaBackend
         Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale,
         AttentionVariant variant = default)
     {
-        if (dim <= 0 || dim > PtxKernels.FlashMaxDim || kvHeads <= 0 || headsPerTable <= 0 || (long)heads * rows > int.MaxValue)
+        bool wide = dim > PtxKernels.FlashMaxDim;
+        if (dim <= 0 || dim > PtxKernels.SpanMaxDim || kvHeads <= 0 || headsPerTable <= 0 || (long)heads * rows > int.MaxValue
+            || wide && SpanBackwardWide() is null)
         {
             base.AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows,
                 keyRows, dim, scale, variant);
@@ -114,10 +125,19 @@ internal sealed unsafe partial class CudaBackend
             Launch1D(K("attn_bwd_d_f32"), total, P(output), P(dOutput), P(delta), U(dim), U(total));
             ReadOnlySpan<ulong> args = [P(q), P(keys), P(values), P(starts), P(ends), P(dOutput), P(logSumExp), P(delta), P(dq), P(dkeys), P(dvalues),
                 U(rows), U(keyRows), U(dim), F(scale), U(heads / kvHeads), U(headsPerTable), F(variant.Softcap)];
-            Launch(K(PtxKernels.SpanBackwardKeysName), (uint)((keyRows + PtxKernels.SpanBackwardKeys - 1) / PtxKernels.SpanBackwardKeys), (uint)kvHeads, 1,
-                128, 1, args);
-            Launch(K(PtxKernels.SpanBackwardQueriesName), (uint)((rows + PtxKernels.SpanBackwardRows - 1) / PtxKernels.SpanBackwardRows), (uint)heads, 1,
-                128, 1, args);
+            var (keysKernel, queriesKernel) = wide ? SpanBackwardWide()!.Value : (K(PtxKernels.SpanBackwardKeysName), K(PtxKernels.SpanBackwardQueriesName));
+            if (wide)
+            {
+                t_sharedBytes = (uint)PtxKernels.SpanBackwardWideShared(PtxKernels.SpanBackwardWideKeysName);
+            }
+
+            Launch(keysKernel, (uint)((keyRows + PtxKernels.SpanBackwardKeys - 1) / PtxKernels.SpanBackwardKeys), (uint)kvHeads, 1, 128, 1, args);
+            if (wide)
+            {
+                t_sharedBytes = (uint)PtxKernels.SpanBackwardWideShared(PtxKernels.SpanBackwardWideQueriesName);
+            }
+
+            Launch(queriesKernel, (uint)((rows + PtxKernels.SpanBackwardRows - 1) / PtxKernels.SpanBackwardRows), (uint)heads, 1, 128, 1, args);
         }
         finally
         {
@@ -184,11 +204,64 @@ internal sealed unsafe partial class CudaBackend
 
         var (moduleName, names, source) = tensor ? PtxKernels.SpanTensorModule(d) : PtxKernels.SpanFloatModule(d);
         int dynamicBytes = tensor ? 0 : PtxKernels.SpanFloatShared(d);
+        return LoadDynamicModule(moduleName, names, source, _ => dynamicBytes, out reason);
+    }
 
-        // Judged by the device's reported limits: static shared memory within what a block may declare, static and
-        // dynamic within what a block may opt in to.
+    // The wide span gradient's kernels (head sizes over 128), loaded on first use; null when the device cannot hold them
+    // (the reason in SpanModuleErrors under "bwd wide").
+    private (IntPtr Keys, IntPtr Queries)? SpanBackwardWide()
+    {
+        lock (_spanModules)
+        {
+            if (!_spanModules.TryGetValue("bwd wide", out var kernels))
+            {
+                var (moduleName, names, source) = PtxKernels.SpanBackwardWideModule();
+                kernels = LoadDynamicModule(moduleName, names, source, PtxKernels.SpanBackwardWideShared, out string? reason);
+                _spanModules["bwd wide"] = kernels;
+                if (reason is not null)
+                {
+                    _spanModuleErrors["bwd wide"] = reason;
+                }
+            }
+
+            return kernels is not null ? (kernels[PtxKernels.SpanBackwardWideKeysName], kernels[PtxKernels.SpanBackwardWideQueriesName]) : null;
+        }
+    }
+
+    /// <summary>
+    /// The largest head size whose attention over key ranges runs on this device's own kernels, forward and gradient:
+    /// 128, or up to <see cref="PtxKernels.SpanMaxDim"/> (in steps of 16) where the shared memory the device reports per
+    /// block holds the float32 kernel's tiles and the wide gradient's.
+    /// </summary>
+    internal static int SpanHeadDim(CudaDeviceLimits limits)
+    {
+        int gradient = Math.Max(PtxKernels.SpanBackwardWideShared(PtxKernels.SpanBackwardWideKeysName),
+            PtxKernels.SpanBackwardWideShared(PtxKernels.SpanBackwardWideQueriesName));
+        if (gradient > limits.SharedPerBlockOptin)
+        {
+            return PtxKernels.FlashMaxDim;
+        }
+
+        for (int d = PtxKernels.SpanMaxDim; d > PtxKernels.FlashMaxDim; d -= 16)
+        {
+            if (PtxKernels.SpanFloatShared(d) <= limits.SharedPerBlockOptin)
+            {
+                return d;
+            }
+        }
+
+        return PtxKernels.FlashMaxDim;
+    }
+
+    // Loads a module whose kernels take `dynamicBytes(kernel)` of dynamic shared memory, judged first by the device's
+    // reported limits: static shared memory within what a block may declare, static and dynamic within what it may opt in to.
+    private Dictionary<string, IntPtr>? LoadDynamicModule(string moduleName, string[] names, string source, Func<string, int> dynamicBytesOf, out string? reason)
+    {
+        reason = null;
+
         foreach (var (kernel, staticBytes) in PtxKernels.StaticSharedBytes(source))
         {
+            int dynamicBytes = dynamicBytesOf(kernel);
             if (staticBytes > _limits.SharedPerBlock || staticBytes + dynamicBytes > _limits.SharedPerBlockOptin)
             {
                 reason = $"{kernel} needs {staticBytes + dynamicBytes} bytes of shared memory per block ({staticBytes} static); the GPU allows "
@@ -210,7 +283,7 @@ internal sealed unsafe partial class CudaBackend
                 fixed (byte* p = bytes)
                 {
                     Check(cuModuleGetFunction(out IntPtr function, module, p), $"cuModuleGetFunction({kernel})");
-                    if (dynamicBytes > 0)
+                    if (dynamicBytesOf(kernel) is > 0 and var dynamicBytes)
                     {
                         Check(cuFuncSetAttribute(function, FunctionAttributeMaxDynamicSharedSizeBytes, dynamicBytes), $"cuFuncSetAttribute({kernel})");
                     }

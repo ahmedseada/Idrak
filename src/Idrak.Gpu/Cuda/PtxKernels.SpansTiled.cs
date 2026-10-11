@@ -11,11 +11,12 @@ namespace Idrak.Gpu.Cuda;
 // runs. Two kinds:
 //
 // - attention_spans_f32_d{D} (float32, PTX 6.0 for sm_50 and newer): a block of 128 threads takes 64 query rows of one
-//   head and walks the keys in tiles of 32. The products are tiled in registers (FlashAttention's outer-product form):
-//   thread (tr, tc) = (tid / 8, tid % 8) holds the scores of rows 4tr .. 4tr + 3 and keys 4tc .. 4tc + 3 (16 sums: two
-//   vector reads of shared memory per 16 multiply-adds), then the outputs of the same 4 rows and the columns tc + 8j.
-//   Shared memory (dynamic): Qᵀ [D][64] (scaled by `scale` as it is staged), Kᵀ [D][32] (the same space then holds V
-//   [32][D]), P [64][36] and the block's key range. The old attention_spans_f32 (one warp per 8 rows, a shared-memory
+//   head (32 for head sizes over 128, so its tiles fit a block: about 69 KB at 256) and walks the keys in tiles of 32.
+//   The products are tiled in registers (FlashAttention's outer-product form): thread (tr, tc) = (tid / 8, tid % 8)
+//   holds the scores of rows rt·tr .. rt·tr + rt - 1 (rt = 4, or 2 over 128) and keys 4tc .. 4tc + 3 (vector reads of
+//   shared memory for every 4·rt multiply-adds), then the outputs of the same rows and the columns tc + 8j.
+//   Shared memory (dynamic): Qᵀ [D][rows] (scaled by `scale` as it is staged), Kᵀ [D][32] (the same space then holds V
+//   [32][D]), P [rows][36] and the block's key range. The old attention_spans_f32 (one warp per 8 rows, a shared-memory
 //   read per multiply-add: four times slower than the composed path where it was measured, plans/11-vision-language.md)
 //   stays for head sizes this one does not take (not a multiple of 4) and devices whose shared memory per block cannot
 //   hold this one's.
@@ -30,12 +31,21 @@ namespace Idrak.Gpu.Cuda;
 // Both: query row i of head h sees keys st[t·rows + i] ≤ c < en[t·rows + i] (clamped to [0, keyRows]; floats holding
 // integers), t = h / headsPerTable, key/value head h / group. The block walks the keys from the smallest start of its
 // rows (those that see any key) to their largest end; a key outside a row's range scores -∞ for it, and a row whose range
-// is empty keeps a sum of 0: zeros, and a log-sum-exp of -∞. Head sizes up to 128 that are multiples of 4 (rows read as
-// float4). Grid: x = ⌈rows / rows per block⌉, y = heads.
+// is empty keeps a sum of 0: zeros, and a log-sum-exp of -∞. Head sizes that are multiples of 4 (rows read as float4):
+// up to 256 for the float32 kernel, 128 for the tensor-core one. Grid: x = ⌈rows / rows per block⌉, y = heads.
 internal static partial class PtxKernels
 {
-    /// <summary>Query rows per block of the float32 span kernel.</summary>
-    public const int SpanFloatRows = 64;
+    /// <summary>The largest head size of the float32 span kernel (A1: 129 to 256 in blocks of 32 rows, 2 a thread).</summary>
+    public const int SpanMaxDim = 256;
+
+    /// <summary>
+    /// Query rows per block of the float32 span kernel for padded head size <paramref name="d"/>: 64 (4 a thread) up to
+    /// 128; 32 (2 a thread) above, so Qᵀ, Kᵀ and P stay within what a block may hold (about 69 KB at 256).
+    /// </summary>
+    public static int SpanFloatRows(int d) => 16 * SpanRowsPerThread(d);
+
+    // Query rows each thread of the float32 span kernel holds (its 4 key columns each).
+    private static int SpanRowsPerThread(int d) => d <= FlashMaxDim ? 4 : 2;
 
     /// <summary>Key positions per tile of the float32 span kernel.</summary>
     public const int SpanFloatKeys = 32;
@@ -49,8 +59,11 @@ internal static partial class PtxKernels
     /// <summary>Warps per block the tensor-core span kernel is built for (16 query rows each); the first is the default.</summary>
     public static readonly int[] SpanTensorWarps = [4, 8];
 
-    /// <summary>The padded head size of the float32 span kernel for <paramref name="dim"/> (a multiple of 8), or 0 when it does not take it.</summary>
-    public static int SpanFloatDim(int dim) => dim > 0 && dim % 4 == 0 && dim <= FlashMaxDim ? (dim + 7) / 8 * 8 : 0;
+    /// <summary>
+    /// The padded head size of the float32 span kernel for <paramref name="dim"/> (a multiple of 8 up to 128, of 16 above, up to
+    /// <see cref="SpanMaxDim"/>), or 0 when it does not take it.
+    /// </summary>
+    public static int SpanFloatDim(int dim) => dim > 0 && dim % 4 == 0 && dim <= SpanMaxDim ? dim <= FlashMaxDim ? (dim + 7) / 8 * 8 : (dim + 15) / 16 * 16 : 0;
 
     /// <summary>The padded head size of the tensor-core span kernel for <paramref name="dim"/> (a multiple of 16), or 0 when it does not take it.</summary>
     public static int SpanTensorDim(int dim) => dim > 0 && dim % 4 == 0 && dim <= FlashMaxDim ? (dim + 15) / 16 * 16 : 0;
@@ -62,7 +75,7 @@ internal static partial class PtxKernels
     public static string SpanTensorName(int d, int warps) => string.Create(CultureInfo.InvariantCulture, $"attention_spans_tc_d{d}_w{warps}");
 
     /// <summary>Dynamic shared memory of the float32 span kernel (bytes): Qᵀ, Kᵀ (then V), P and the block's range.</summary>
-    public static int SpanFloatShared(int d) => 4 * (SpanFloatRows * d + SpanFloatKeys * d + SpanFloatRows * SpanPStride + 8);
+    public static int SpanFloatShared(int d) => 4 * (SpanFloatRows(d) * d + SpanFloatKeys * d + SpanFloatRows(d) * SpanPStride + 8);
 
     /// <summary>The float32 span module for padded head size <paramref name="d"/> (PTX 6.0, sm_50, as the main module).</summary>
     public static (string Name, string[] Kernels, string Source) SpanFloatModule(int d) =>
@@ -154,7 +167,9 @@ internal static partial class PtxKernels
     {
         string name = SpanFloatName(d);
         int j = d / 8;                                 // output columns per thread: tc + 8·jj
-        int qBytes = 4 * SpanFloatRows * d, kBytes = 4 * SpanFloatKeys * d, pBytes = 4 * SpanFloatRows * SpanPStride;
+        int rt = SpanRowsPerThread(d), rows = 16 * rt; // query rows per thread and per block
+        int rtShift = rt == 4 ? 2 : 1, rowShift = rows == 64 ? 6 : 5;
+        int qBytes = 4 * rows * d, kBytes = 4 * SpanFloatKeys * d, pBytes = 4 * rows * SpanPStride;
         int quads = d / 4;
         var s = new StringBuilder();
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
@@ -167,13 +182,13 @@ internal static partial class PtxKernels
                 .reg .b32 %r<64>;
                 .reg .b64 %rd<24>;
                 .reg .f32 %f<24>;
-                .reg .f32 %s<16>;
-                .reg .f32 %o<{{4 * j}}>;
-                .reg .f32 %m<4>;
-                .reg .f32 %l<4>;
-                .reg .b32 %lo<4>;
-                .reg .b32 %hi<4>;
-                .reg .f32 %qv<4>;
+                .reg .f32 %s<{{4 * rt}}>;
+                .reg .f32 %o<{{rt * j}}>;
+                .reg .f32 %m<{{rt}}>;
+                .reg .f32 %l<{{rt}}>;
+                .reg .b32 %lo<{{rt}}>;
+                .reg .b32 %hi<{{rt}}>;
+                .reg .f32 %qv<{{rt}}>;
                 .reg .f32 %kv<4>;
                 .reg .f32 %softcap, %captmp;
                 .reg .pred %capped;
@@ -204,7 +219,7 @@ internal static partial class PtxKernels
                 and.b32 %r7, %r6, 7;
                 shr.u32 %r8, %r6, 3;
                 mov.u32 %r9, %ctaid.x;
-                shl.b32 %r9, %r9, 6;
+                shl.b32 %r9, %r9, {{rowShift}};
                 mov.u32 %r10, %ctaid.y;
                 mul.lo.u32 %r11, %r10, %r1;
                 mul.wide.u32 %rd8, %r11, %r3;
@@ -225,11 +240,11 @@ internal static partial class PtxKernels
                 add.u32 %r17, %r16, {{pBytes}};
             """);
 
-        // Each thread's rows 4tr + i: their ranges, running maxima and sums.
-        for (int i = 0; i < 4; i++)
+        // Each thread's rows rt·tr + i: their ranges, running maxima and sums.
+        for (int i = 0; i < rt; i++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"""
-                    shl.b32 %r19, %r8, 2;
+                    shl.b32 %r19, %r8, {rtShift};
                     add.u32 %r19, %r19, %r9;
                     add.u32 %r19, %r19, {i};
                 {SpanRange("%r19", string.Create(CultureInfo.InvariantCulture, $"%lo{i}"), string.Create(CultureInfo.InvariantCulture, $"%hi{i}"), "%r1", "%r2", "%r13", "%rd4", "%rd5", "%r18", "%rd9", "%rd10", "%f2", "%f3", "%p1")}
@@ -238,28 +253,28 @@ internal static partial class PtxKernels
                 """);
         }
 
-        for (int i = 0; i < 4 * j; i++)
+        for (int i = 0; i < rt * j; i++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %o{i}, 0f00000000;");
         }
 
-        // The block's keys (thread t reads row t % 64's range).
-        s.AppendLine($"""
-                and.b32 %r19, %r6, 63;
+        // The block's keys (thread t reads row t % rows' range).
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
+                and.b32 %r19, %r6, {rows - 1};
                 add.u32 %r19, %r19, %r9;
             {SpanRange("%r19", "%r22", "%r23", "%r1", "%r2", "%r13", "%rd4", "%rd5", "%r18", "%rd9", "%rd10", "%f2", "%f3", "%p1")}
                 and.b32 %r24, %r6, 31;
                 shr.u32 %r25, %r6, 5;
             """);
 
-        // Qᵀ[d][r] = scale · q[row0 + r, d], zeros past the rows and the head size: thread t takes row t % 64 of the quads
-        // t / 64, +2, ... (a warp writes 32 consecutive floats of a Qᵀ row).
-        for (int it = 0; it < d / 8; it++)
+        // Qᵀ[d][r] = scale · q[row0 + r, d], zeros past the rows and the head size: thread t takes row t % rows of the
+        // quads t / rows, + 128 / rows, ... (a warp writes 32 consecutive floats of a Qᵀ row).
+        for (int it = 0; it < rows * d / 512; it++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u32 %r26, %r6, {{it * 128}};
-                    and.b32 %r27, %r26, 63;
-                    shr.u32 %r28, %r26, 6;
+                    and.b32 %r27, %r26, {{rows - 1}};
+                    shr.u32 %r28, %r26, {{rowShift}};
                     shl.b32 %r28, %r28, 2;
                     add.u32 %r29, %r9, %r27;
                     setp.lt.u32 %p1, %r29, %r1;
@@ -277,13 +292,13 @@ internal static partial class PtxKernels
                     mul.f32 %f5, %f5, %f1;
                     mul.f32 %f6, %f6, %f1;
                     mul.f32 %f7, %f7, %f1;
-                    mad.lo.u32 %r30, %r28, {{SpanFloatRows}}, %r27;
+                    mad.lo.u32 %r30, %r28, {{rows}}, %r27;
                     shl.b32 %r30, %r30, 2;
                     add.u32 %r30, %r30, %r14;
                     st.shared.f32 [%r30], %f4;
-                    st.shared.f32 [%r30+{{4 * SpanFloatRows}}], %f5;
-                    st.shared.f32 [%r30+{{8 * SpanFloatRows}}], %f6;
-                    st.shared.f32 [%r30+{{12 * SpanFloatRows}}], %f7;
+                    st.shared.f32 [%r30+{{4 * rows}}], %f5;
+                    st.shared.f32 [%r30+{{8 * rows}}], %f6;
+                    st.shared.f32 [%r30+{{12 * rows}}], %f7;
                 """);
         }
 
@@ -329,14 +344,14 @@ internal static partial class PtxKernels
         }
 
         s.AppendLine("bar.sync 0;");
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 4 * rt; i++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %s{i}, 0f00000000;");
         }
 
-        // S[4tr + i, 4tc + jj] = Σ_d Qᵀ[d][4tr + i] · Kᵀ[d][4tc + jj], eight d per loop step.
+        // S[rt·tr + i, 4tc + jj] = Σ_d Qᵀ[d][rt·tr + i] · Kᵀ[d][4tc + jj], eight d per loop step.
         s.AppendLine(CultureInfo.InvariantCulture, $"""
-                shl.b32 %r32, %r8, 4;
+                shl.b32 %r32, %r8, {rtShift + 2};
                 add.u32 %r32, %r32, %r14;
                 shl.b32 %r33, %r7, 4;
                 add.u32 %r33, %r33, %r15;
@@ -347,9 +362,17 @@ internal static partial class PtxKernels
             """);
         for (int u = 0; u < 8; u++)
         {
-            s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v4.f32 {{%qv0, %qv1, %qv2, %qv3}}, [%r32+{u * 4 * SpanFloatRows}];");
+            if (rt == 4)
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v4.f32 {{%qv0, %qv1, %qv2, %qv3}}, [%r32+{u * 4 * rows}];");
+            }
+            else
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v2.f32 {{%qv0, %qv1}}, [%r32+{u * 4 * rows}];");
+            }
+
             s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v4.f32 {{%kv0, %kv1, %kv2, %kv3}}, [%r33+{u * 4 * SpanFloatKeys}];");
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < rt; i++)
             {
                 for (int c = 0; c < 4; c++)
                 {
@@ -359,7 +382,7 @@ internal static partial class PtxKernels
         }
 
         s.AppendLine(CultureInfo.InvariantCulture, $"""
-                add.u32 %r32, %r32, {8 * 4 * SpanFloatRows};
+                add.u32 %r32, %r32, {8 * 4 * rows};
                 add.u32 %r33, %r33, {8 * 4 * SpanFloatKeys};
                 add.u32 %r34, %r34, 1;
                 bra DOT;
@@ -401,7 +424,7 @@ internal static partial class PtxKernels
                 shl.b32 %r35, %r7, 2;
                 add.u32 %r35, %r35, %r31;
             """);
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < rt; i++)
         {
             s.AppendLine("    mov.f32 %f8, 0fFF800000;");
             for (int c = 0; c < 4; c++)
@@ -446,9 +469,9 @@ internal static partial class PtxKernels
                 s.AppendLine(CultureInfo.InvariantCulture, $"    mul.f32 %o{i * j + c}, %o{i * j + c}, %f11;");
             }
 
-            // P[4tr + i][4tc .. 4tc + 3]
+            // P[rt·tr + i][4tc .. 4tc + 3]
             s.AppendLine(CultureInfo.InvariantCulture, $$"""
-                    shl.b32 %r37, %r8, 2;
+                    shl.b32 %r37, %r8, {{rtShift}};
                     add.u32 %r37, %r37, {{i}};
                     mul.lo.u32 %r37, %r37, {{SpanPStride}};
                     add.u32 %r37, %r37, %r35;
@@ -459,10 +482,10 @@ internal static partial class PtxKernels
                 """);
         }
 
-        // O[4tr + i, tc + 8c] += Σ_key P[4tr + i, key] · V[key, tc + 8c], four keys per loop step (P read as float4).
+        // O[rt·tr + i, tc + 8c] += Σ_key P[rt·tr + i, key] · V[key, tc + 8c], four keys per loop step (P read as float4).
         s.AppendLine(CultureInfo.InvariantCulture, $"""
                 bar.sync 0;
-                shl.b32 %r38, %r8, 2;
+                shl.b32 %r38, %r8, {rtShift};
                 mul.lo.u32 %r38, %r38, {4 * SpanPStride};
                 add.u32 %r38, %r38, %r16;
                 shl.b32 %r39, %r7, 2;
@@ -472,7 +495,7 @@ internal static partial class PtxKernels
                 setp.ge.u32 %p5, %r34, {SpanFloatKeys / 4};
                 @%p5 bra PV_END;
             """);
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < rt; i++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v4.f32 {{%s{4 * i}, %s{4 * i + 1}, %s{4 * i + 2}, %s{4 * i + 3}}}, [%r38+{i * 4 * SpanPStride}];");
         }
@@ -482,7 +505,7 @@ internal static partial class PtxKernels
             for (int c = 0; c < j; c++)
             {
                 s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.f32 %f12, [%r39+{u * 4 * d + c * 32}];");
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < rt; i++)
                 {
                     s.AppendLine(CultureInfo.InvariantCulture, $"    fma.rn.f32 %o{i * j + c}, %s{4 * i + u}, %f12, %o{i * j + c};");
                 }
@@ -502,7 +525,7 @@ internal static partial class PtxKernels
             """);
 
         // o /= l (the row's sum over its 8 threads; zeros when it saw nothing), lse = (m + log2 l) · ln 2 (-∞ then).
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < rt; i++)
         {
             foreach (int offset in new[] { 1, 2, 4 })
             {
@@ -511,7 +534,7 @@ internal static partial class PtxKernels
             }
 
             s.AppendLine(CultureInfo.InvariantCulture, $"""
-                    shl.b32 %r40, %r8, 2;
+                    shl.b32 %r40, %r8, {rtShift};
                     add.u32 %r40, %r40, %r9;
                     add.u32 %r40, %r40, {i};
                     setp.ge.u32 %p9, %r40, %r1;

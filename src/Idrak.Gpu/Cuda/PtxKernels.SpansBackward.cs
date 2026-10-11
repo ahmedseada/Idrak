@@ -19,7 +19,9 @@ namespace Idrak.Gpu.Cuda;
 //   attn_spans_bwd_q_f32   a block owns 32 query rows (8 per warp) of one head and walks the keys from the smallest
 //                          start of its rows to their largest end in tiles of 32 held transposed in shared memory
 //                          (padded to 33); grid x = ⌈rows / 32⌉, y = heads.
-// Head sizes up to FlashMaxDim (4 dimensions per lane). Rows whose range is empty add nothing.
+// Head sizes up to FlashMaxDim in the main module (4 dimensions per lane); 129 to SpanMaxDim in the wide module (8 per
+// lane, its tiles in dynamic shared memory, loaded when a head size needs it and the device's shared memory per block
+// holds them). Rows whose range is empty add nothing.
 internal static partial class PtxKernels
 {
     /// <summary>The span attention gradient's kernels: dK and dV, then dQ (the per-row Δ is attn_bwd_d_f32's).</summary>
@@ -128,31 +130,84 @@ internal static partial class PtxKernels
 
     private static void AttentionSpansBackward(StringBuilder sb)
     {
-        AttentionSpansBackwardKeys(sb);
-        AttentionSpansBackwardQueries(sb);
+        AttentionSpansBackwardKeys(sb, SpanBackwardKeysName, slots: 4);
+        AttentionSpansBackwardQueries(sb, SpanBackwardQueriesName, slots: 4);
     }
 
-    private static void AttentionSpansBackwardKeys(StringBuilder sb)
+    /// <summary>The wide span gradient's kernels (head sizes 129 to <see cref="SpanMaxDim"/>, A2).</summary>
+    public const string SpanBackwardWideKeysName = "attn_spans_bwd_kv_f32_wide", SpanBackwardWideQueriesName = "attn_spans_bwd_q_f32_wide";
+
+    // Dimensions per lane of the wide gradient kernels (32 lanes x 8 = SpanMaxDim).
+    private const int SpanWideSlots = SpanMaxDim / 32;
+
+    /// <summary>
+    /// The wide span gradient module (PTX 6.0, sm_50, as the main module): attn_spans_bwd_kv_f32 and attn_spans_bwd_q_f32 with
+    /// 8 dimensions per lane, their tiles in dynamic shared memory (<see cref="SpanBackwardWideShared"/>): loaded the first
+    /// time a head size over 128 needs them, when the device's reported shared memory per block holds them.
+    /// </summary>
+    public static (string Name, string[] Kernels, string Source) SpanBackwardWideModule() =>
+        Module("attention spans backward f32 wide", sb =>
+        {
+            AttentionSpansBackwardKeys(sb, SpanBackwardWideKeysName, SpanWideSlots);
+            AttentionSpansBackwardQueries(sb, SpanBackwardWideQueriesName, SpanWideSlots);
+        }, version: "6.0", target: "sm_50");
+
+    /// <summary>Dynamic shared memory of a wide span gradient kernel (bytes): the kv kernel's Q and dO tiles, the q kernel's Kᵀ and Vᵀ.</summary>
+    public static int SpanBackwardWideShared(string kernel) => kernel == SpanBackwardWideKeysName
+        ? 2 * 4 * 32 * (32 * SpanWideSlots + 1)
+        : 2 * 4 * 32 * SpanWideSlots * 33;
+
+    // A kernel's two shared tiles of `floats` each: static arrays (the main module's kernels, as they always were), or
+    // the dynamic block at the kernel's own symbol (the wide ones), into %r16 and %r17.
+    private static (string Declare, string Bases) SpanBackwardTiles(string name, int slots, string first, string second, int floats) => slots == 4
+        ? (string.Create(CultureInfo.InvariantCulture, $"    .shared .align 4 .f32 {first}[{floats}];\n    .shared .align 4 .f32 {second}[{floats}];"),
+            $"    mov.u32 %r16, {first};\n    mov.u32 %r17, {second};")
+        : ($".extern .shared .align 16 .b8 {name}_smem[];",
+            string.Create(CultureInfo.InvariantCulture, $"    mov.u32 %r16, {name}_smem;\n    add.u32 %r17, %r16, {4 * floats};"));
+
+    // dK and dV of 16 keys a block, `slots` dimensions per lane (4: the main module's kernel, head sizes up to 128; 8: the
+    // wide one, its tiles in dynamic shared memory).
+    private static void AttentionSpansBackwardKeys(StringBuilder sb, string name, int slots)
     {
-        const int Keys = 4, Stride = 129, QT = 32;
+        const int Keys = 4, QT = 32;
+        int Stride = 32 * slots + 1;
+        var (declare, bases) = SpanBackwardTiles(name, slots, "skv_q", "skv_do", QT * Stride);
+        // The lane's dimension slots of a Q row and a dO row (the main module's registers, kept as they were).
+        string QSlot(int j) => slots == 4 ? string.Create(CultureInfo.InvariantCulture, $"%f{13 + j}") : string.Create(CultureInfo.InvariantCulture, $"%xq{j}");
+        string OSlot(int j) => slots == 4 ? string.Create(CultureInfo.InvariantCulture, $"%f{17 + j}") : string.Create(CultureInfo.InvariantCulture, $"%xo{j}");
         var s = new StringBuilder();
+        if (slots != 4)
+        {
+            s.AppendLine(declare);
+        }
+
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
-            .visible .entry {{SpanBackwardKeysName}}(
+            .visible .entry {{name}}(
             {{SpanBackwardParameters}}
             )
             {
                 .reg .pred %p<16>;
-                .reg .pred %dv<4>;
-                .reg .f32 %gk<{{Keys * 4}}>;
-                .reg .f32 %gv<{{Keys * 4}}>;
+                .reg .pred %dv<{{slots}}>;
+                .reg .f32 %gk<{{Keys * slots}}>;
+                .reg .f32 %gv<{{Keys * slots}}>;
                 .reg .f32 %sp<{{Keys}}>;
                 .reg .f32 %sd<{{Keys}}>;
                 .reg .f32 %f<32>;
                 .reg .b32 %r<64>;
                 .reg .b64 %rd<40>;
                 .reg .b32 %lo, %hi, %h, %hend, %tb, %ke;
-                .shared .align 4 .f32 skv_q[{{QT * Stride}}];
-                .shared .align 4 .f32 skv_do[{{QT * Stride}}];
+            """);
+        if (slots == 4)
+        {
+            s.AppendLine(declare);
+        }
+        else
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"    .reg .f32 %xq<{slots}>;");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    .reg .f32 %xo<{slots}>;");
+        }
+
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
             {{SpanBackwardPrologue}}
                 mov.u32 %r13, %ctaid.x;
                 shl.b32 %r13, %r13, 4;
@@ -161,20 +216,19 @@ internal static partial class PtxKernels
                 add.u32 %ke, %r13, {{SpanBackwardKeys}};
                 min.u32 %ke, %ke, %r3;
                 mul.lo.u32 %r15, %r4, {{QT}};
-                mov.u32 %r16, skv_q;
-                mov.u32 %r17, skv_do;
+            {{bases}}
                 mov.u32 %r55, %ctaid.y;
             {{SpanKvPointers("%r55")}}
                 mul.lo.u32 %h, %r55, %r50;
                 add.u32 %hend, %h, %r50;
             """);
-        for (int j = 0; j < 4; j++)
+        for (int j = 0; j < slots; j++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %r18, %r7, {32 * j};");
             s.AppendLine(CultureInfo.InvariantCulture, $"    setp.lt.u32 %dv{j}, %r18, %r4;");
         }
 
-        for (int i = 0; i < Keys * 4; i++)
+        for (int i = 0; i < Keys * slots; i++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %gk{i}, 0f00000000;");
             s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %gv{i}, 0f00000000;");
@@ -299,20 +353,20 @@ internal static partial class PtxKernels
                 add.u32 %r46, %r45, %r16;
                 add.u32 %r47, %r45, %r17;
             """);
-        for (int j = 0; j < 4; j++)
+        for (int j = 0; j < slots; j++)
         {
-            s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} ld.shared.f32 %f{13 + j}, [%r46+{128 * j}];");
-            s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} ld.shared.f32 %f{17 + j}, [%r47+{128 * j}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} ld.shared.f32 {QSlot(j)}, [%r46+{128 * j}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} ld.shared.f32 {OSlot(j)}, [%r47+{128 * j}];");
         }
 
         for (int kk = 0; kk < Keys; kk++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    shfl.sync.idx.b32 %f21, %sp{kk}, %r44, 31, 0xffffffff;");
             s.AppendLine(CultureInfo.InvariantCulture, $"    shfl.sync.idx.b32 %f22, %sd{kk}, %r44, 31, 0xffffffff;");
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < slots; j++)
             {
-                s.AppendLine(CultureInfo.InvariantCulture, $"    fma.rn.f32 %gv{kk * 4 + j}, %f21, %f{17 + j}, %gv{kk * 4 + j};");
-                s.AppendLine(CultureInfo.InvariantCulture, $"    fma.rn.f32 %gk{kk * 4 + j}, %f22, %f{13 + j}, %gk{kk * 4 + j};");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    fma.rn.f32 %gv{kk * slots + j}, %f21, {OSlot(j)}, %gv{kk * slots + j};");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    fma.rn.f32 %gk{kk * slots + j}, %f22, {QSlot(j)}, %gk{kk * slots + j};");
             }
         }
 
@@ -339,14 +393,14 @@ internal static partial class PtxKernels
                     add.u64 %rd19, %rd18, %rd8;
                     add.u64 %rd20, %rd18, %rd9;
                 """);
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < slots; j++)
             {
                 s.AppendLine(CultureInfo.InvariantCulture, $$"""
                         @%dv{{j}} ld.global.f32 %f23, [%rd19+{{128 * j}}];
-                        @%dv{{j}} fma.rn.f32 %f23, %gk{{kk * 4 + j}}, %f31, %f23;
+                        @%dv{{j}} fma.rn.f32 %f23, %gk{{kk * slots + j}}, %f31, %f23;
                         @%dv{{j}} st.global.f32 [%rd19+{{128 * j}}], %f23;
                         @%dv{{j}} ld.global.f32 %f24, [%rd20+{{128 * j}}];
-                        @%dv{{j}} add.f32 %f24, %f24, %gv{{kk * 4 + j}};
+                        @%dv{{j}} add.f32 %f24, %f24, %gv{{kk * slots + j}};
                         @%dv{{j}} st.global.f32 [%rd20+{{128 * j}}], %f24;
                     """);
             }
@@ -361,27 +415,40 @@ internal static partial class PtxKernels
         sb.AppendLine(s.ToString());
     }
 
-    private static void AttentionSpansBackwardQueries(StringBuilder sb)
+    // dQ of 32 rows a block, `slots` dimensions per lane (4: the main module's kernel; 8: the wide one).
+    private static void AttentionSpansBackwardQueries(StringBuilder sb, string name, int slots)
     {
-        const int Rows = 8, KT = 32, Stride = 33, D = FlashMaxDim;
+        const int Rows = 8, KT = 32, Stride = 33;
+        int D = 32 * slots;
+        var (declare, bases) = SpanBackwardTiles(name, slots, "sbq_k", "sbq_v", D * Stride);
         var s = new StringBuilder();
+        if (slots != 4)
+        {
+            s.AppendLine(declare);
+        }
+
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
-            .visible .entry {{SpanBackwardQueriesName}}(
+            .visible .entry {{name}}(
             {{SpanBackwardParameters}}
             )
             {
                 .reg .pred %p<16>;
-                .reg .pred %dv<4>;
-                .reg .f32 %gq<{{Rows * 4}}>;
+                .reg .pred %dv<{{slots}}>;
+                .reg .f32 %gq<{{Rows * slots}}>;
                 .reg .f32 %f<32>;
-                .reg .f32 %pq<4>;
+                .reg .f32 %pq<{{slots}}>;
                 .reg .b32 %r<64>;
                 .reg .b64 %rd<40>;
                 .reg .b32 %lo<{{Rows}}>;
                 .reg .b32 %hi<{{Rows}}>;
                 .reg .b32 %mylo, %myhi, %from, %to, %tb;
-                .shared .align 4 .f32 sbq_k[{{D * Stride}}];
-                .shared .align 4 .f32 sbq_v[{{D * Stride}}];
+            """);
+        if (slots == 4)
+        {
+            s.AppendLine(declare);
+        }
+
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
             {{SpanBackwardPrologue}}
                 mov.u32 %r13, %ctaid.x;
                 shl.b32 %r13, %r13, 5;
@@ -390,8 +457,7 @@ internal static partial class PtxKernels
                 div.u32 %r56, %r55, %r50;
             {{SpanKvPointers("%r56")}}
                 mul.lo.u32 %r15, %r4, {{KT}};
-                mov.u32 %r16, sbq_k;
-                mov.u32 %r17, sbq_v;
+            {{bases}}
                 add.u32 %r57, %r13, %r7;
             {{SpanRowRange("%r57", "%mylo", "%myhi", "%p5")}}
             """);
@@ -418,13 +484,13 @@ internal static partial class PtxKernels
             s.AppendLine("    max.u32 %to, %to, %r59;");
         }
 
-        for (int j = 0; j < 4; j++)
+        for (int j = 0; j < slots; j++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %r18, %r7, {32 * j};");
             s.AppendLine(CultureInfo.InvariantCulture, $"    setp.lt.u32 %dv{j}, %r18, %r4;");
         }
 
-        for (int i = 0; i < Rows * 4; i++)
+        for (int i = 0; i < Rows * slots; i++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %gq{i}, 0f00000000;");
         }
@@ -528,14 +594,14 @@ internal static partial class PtxKernels
                     shfl.sync.idx.b32 %f13, %f12, %r44, 31, 0xffffffff;
                 """);
             // A register per dimension slot, all four loaded before any is used (see attention_flash_f32's PV loop).
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < slots; j++)
             {
                 s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} ld.shared.f32 %pq{j}, [%r46+{32 * Stride * 4 * j}];");
             }
 
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < slots; j++)
             {
-                s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} fma.rn.f32 %gq{i * 4 + j}, %f13, %pq{j}, %gq{i * 4 + j};");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} fma.rn.f32 %gq{i * slots + j}, %f13, %pq{j}, %gq{i * slots + j};");
             }
 
             s.AppendLine(CultureInfo.InvariantCulture, $$"""
@@ -562,11 +628,11 @@ internal static partial class PtxKernels
                     mul.wide.u32 %rd18, %r38, 4;
                     add.u64 %rd19, %rd18, %rd7;
                 """);
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < slots; j++)
             {
                 s.AppendLine(CultureInfo.InvariantCulture, $$"""
                         @%dv{{j}} ld.global.f32 %f23, [%rd19+{{128 * j}}];
-                        @%dv{{j}} fma.rn.f32 %f23, %gq{{i * 4 + j}}, %f31, %f23;
+                        @%dv{{j}} fma.rn.f32 %f23, %gq{{i * slots + j}}, %f31, %f23;
                         @%dv{{j}} st.global.f32 [%rd19+{{128 * j}}], %f23;
                     """);
             }
