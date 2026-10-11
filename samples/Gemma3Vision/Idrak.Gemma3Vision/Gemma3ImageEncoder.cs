@@ -112,13 +112,20 @@ public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderS
         var views = Views(image, options);
         var config = Vision.Encoder;
         int each = config.Channels * config.ImageSize * config.ImageSize;
-        var values = new float[views.Count * each];
-        for (int i = 0; i < views.Count; i++)
+        float[] values = System.Buffers.ArrayPool<float>.Shared.Rent(views.Count * each);   // written, copied into the tensor, given back
+        try
         {
-            Preprocessor.Pixels(views[i]).CopyTo(values, i * each);
-        }
+            for (int i = 0; i < views.Count; i++)
+            {
+                Preprocessor.Pixels(views[i], values.AsSpan(i * each, each));
+            }
 
-        return Tensor.From(values, [views.Count, config.Channels, config.ImageSize, config.ImageSize], Device.Cpu);
+            return Tensor.From(values.AsSpan(0, views.Count * each), [views.Count, config.Channels, config.ImageSize, config.ImageSize], Device.Cpu);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(values);
+        }
     }
 
     /// <inheritdoc />
@@ -154,20 +161,38 @@ public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderS
 
         var config = Vision.Encoder;
         int each = config.Channels * config.ImageSize * config.ImageSize;
-        var values = new float[images.Count * each];
-        for (int i = 0; i < images.Count; i++)
+
+        // Every view's pixel values written into one pooled buffer, uploaded, and the buffer given back: a page leaves no
+        // 9.6 MB arrays on the managed heap (each one a large-object allocation that brings full collections nearer).
+        float[] values = System.Buffers.ArrayPool<float>.Shared.Rent(images.Count * each);
+        try
         {
-            var pixels = Preprocessor.Pixels(images[i]);
-            if (pixels.Length != each)
+            for (int i = 0; i < images.Count; i++)
             {
-                throw new InvalidOperationException($"The preprocessor gives {pixels.Length} pixel values per image; the encoder takes {config.Channels} x {config.ImageSize} x {config.ImageSize}.");
+                int written;
+                try
+                {
+                    written = Preprocessor.Pixels(images[i], values.AsSpan(i * each));
+                }
+                catch (ArgumentException)
+                {
+                    written = -1;
+                }
+
+                if (written != each)
+                {
+                    var (h, w) = Preprocessor.OutputSize(images[i].Height, images[i].Width);
+                    throw new InvalidOperationException($"The preprocessor gives {h} x {w} pixel values per channel; the encoder takes {config.Channels} x {config.ImageSize} x {config.ImageSize}.");
+                }
             }
 
-            pixels.CopyTo(values, i * each);
+            using var input = Tensor.From(values.AsSpan(0, images.Count * each), [images.Count, config.Channels, config.ImageSize, config.ImageSize], WeightsDevice);
+            return Predict(input);
         }
-
-        using var input = Tensor.From(values, [images.Count, config.Channels, config.ImageSize, config.ImageSize], WeightsDevice);
-        return Predict(input);
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(values);
+        }
     }
 
     /// <summary>The soft-token embeddings of one decoded image, [1, tokens per image, text width].</summary>

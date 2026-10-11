@@ -14,7 +14,7 @@ internal static partial class Tests
         ("jpeg: baseline, progressive, grey, RGB, CMYK, YCCK, restart intervals and every sampling decode to Pillow's RGB exactly", JpegMatchesPillow),
         ("jpeg: 12-bit, arithmetic, lossless and hierarchical files are refused by name; damaged and cut files", JpegRefusals),
         ("image preprocessing: every colour format of the codecs to RGB, Pillow's resize (bilinear, bicubic, Lanczos; up and down), rescale and normalize as transformers, to 1e-5", PreprocessingMatchesTransformers),
-        ("image preprocessing: preprocessor_config.json keys, a family's own keys left, grey to three channels, tensors", PreprocessingConfig),
+        ("image preprocessing: preprocessor_config.json keys, a family's own keys left, grey to three channels, tensors, the pixel values into a caller's buffer", PreprocessingConfig),
         ("image preprocessing: phase 0's reference (tests/data/vlm): JPEGs decode as Pillow, pixel_values as transformers (PNG, JPEG, RGBA, palette, grey)", PreprocessingMatchesVlmReference),
     ];
 
@@ -275,6 +275,22 @@ internal static partial class Tests
             {
                 Check(Math.Abs(values[i] - values[24 + i] * 2) < 1e-6 && Math.Abs(values[i] - values[48 + i] * 4) < 1e-6, "the same grey in every channel, each normalized by its std");
             }
+
+            // Into a caller's buffer (an encoder's pooled one): the same values from its start, the count returned; a short one refused.
+            var into = new float[values.Length + 5];
+            Check(small.Pixels(grey, into) == values.Length && into.AsSpan(0, values.Length).SequenceEqual(values) && into[^1] == 0f,
+                "the pixel values written into a buffer are Pixels' own");
+            bool refused = false;
+            try
+            {
+                small.Pixels(grey, new float[values.Length - 1]);
+            }
+            catch (ArgumentException)
+            {
+                refused = true;
+            }
+
+            Check(refused, "a buffer too short for the pixel values is refused");
 
             var kept = new ImagePreprocessor { Resize = false, ConvertRgb = false, Normalize = false }.Pixels(grey);
             Check(kept.Length == 12 && Math.Abs(kept[11] - 220 / 255f) < 1e-6, "no resize, rescale only, grey kept grey");

@@ -350,7 +350,37 @@ public sealed class ImagePreprocessor
     /// <summary>The pixel values of an image file (any registered codec) as a tensor, as <see cref="Process(ImageData, Device?)"/>.</summary>
     public Tensor Process(string path, Device? device = null) => Process(ImageCodecs.Decode(path), device);
 
+    /// <summary>
+    /// The pixel values of <paramref name="image"/> as <see cref="Pixels(ImageData)"/> gives them, written into
+    /// <paramref name="destination"/> ([channels, height, width] from its start) instead of a new array: an encoder fills a
+    /// pooled buffer of every view and uploads it, with nothing left on the managed heap. Returns the count written.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="destination"/> is shorter than the image's pixel values.</exception>
+    public int Pixels(ImageData image, Span<float> destination)
+    {
+        var (planes, channels, h, w) = Planes(image);
+        int count = checked(channels * h * w);
+        if (destination.Length < count)
+        {
+            throw new ArgumentException($"The image's {channels} x {h} x {w} pixel values do not fit {destination.Length} floats.", nameof(destination));
+        }
+
+        Fill(planes, channels, h * w, destination);
+        return count;
+    }
+
     private float[] Pixels(ImageData image, out int channels, out int height, out int width)
+    {
+        var (planes, c, h, w) = Planes(image);
+        (channels, height, width) = (c, h, w);
+        var result = new float[checked(c * h * w)];
+        Fill(planes, c, h * w, result);
+        return result;
+    }
+
+    // The image's 8-bit planes after the resize and the crop, with the channels its values take (a grey plane read as
+    // three when the model takes RGB).
+    private (byte[][] Planes, int Channels, int Height, int Width) Planes(ImageData image)
     {
         ArgumentNullException.ThrowIfNull(image);
         int h = image.Height, w = image.Width;
@@ -376,23 +406,23 @@ public sealed class ImagePreprocessor
             (h, w) = (CropHeight, CropWidth);
         }
 
-        channels = planes.Length == 1 && (ConvertRgb || Grayscale) ? 3 : planes.Length;
-        height = h;
-        width = w;
+        return (planes, planes.Length == 1 && (ConvertRgb || Grayscale) ? 3 : planes.Length, h, w);
+    }
+
+    // Each channel's plane through its rescale-and-normalize table into `destination` ([channels, size]).
+    private void Fill(byte[][] planes, int channels, int size, Span<float> destination)
+    {
         var table = Table(channels);
-        var result = new float[checked(channels * h * w)];
         for (int c = 0; c < channels; c++)
         {
             var plane = planes[Math.Min(c, planes.Length - 1)];
-            var target = result.AsSpan(c * h * w, h * w);
+            var target = destination.Slice(c * size, size);
             var values = table.AsSpan(256 * c, 256);
             for (int i = 0; i < plane.Length; i++)
             {
                 target[i] = values[plane[i]];
             }
         }
-
-        return result;
     }
 
     /// <summary>The [height, width] of the pixel values of an image of <paramref name="height"/> x <paramref name="width"/> (after the resize and the crop).</summary>
