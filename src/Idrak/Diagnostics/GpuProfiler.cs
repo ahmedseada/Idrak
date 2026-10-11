@@ -50,15 +50,16 @@ public static class GpuProfiler
     {
         double total = entries.Sum(e => e.Milliseconds);
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"{"kernel",-52} {"calls",7} {"ms",10} {"share",7} {"TFLOPS",7}");
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;               // the same report on every machine
+        sb.AppendLine(invariant, $"{"kernel",-52} {"calls",7} {"ms",10} {"share",7} {"TFLOPS",7}");
         foreach (var e in entries.Take(rows))
         {
-            sb.AppendLine($"{e.Name,-52} {e.Calls,7} {e.Milliseconds,10:F2} {e.Milliseconds / total,7:P1} {(e.Tflops is { } t ? t.ToString("F1") : ""),7}");
+            sb.AppendLine(invariant, $"{e.Name,-52} {e.Calls,7} {e.Milliseconds,10:F2} {e.Milliseconds / total,7:P1} {(e.Tflops is { } t ? t.ToString("F1", invariant) : ""),7}");
         }
 
         var products = entries.Where(e => e.Tflops is not null).ToList();
         double productMs = products.Sum(e => e.Milliseconds), flops = products.Sum(e => e.Tflops!.Value * e.Milliseconds * 1e9);
-        sb.AppendLine($"total {total:F1} ms in {entries.Sum(e => e.Calls)} launches; matrix products {productMs:F1} ms "
+        sb.AppendLine(invariant, $"total {total:F1} ms in {entries.Sum(e => e.Calls)} launches; matrix products {productMs:F1} ms "
                       + $"({(productMs > 0 ? flops / (productMs * 1e9) : 0):F1} TFLOPS), everything else {total - productMs:F1} ms");
         return sb.ToString();
     }

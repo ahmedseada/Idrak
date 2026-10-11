@@ -88,6 +88,11 @@ if (args is ["--bench-image"])
     return Tests.BenchImage();
 }
 
+if (args is ["--bench-read"])
+{
+    return Tests.BenchRead();
+}
+
 if (args is ["--bench-offload"])
 {
     return Tests.BenchOffload();
