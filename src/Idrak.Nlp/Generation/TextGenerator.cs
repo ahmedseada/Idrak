@@ -10,7 +10,7 @@ using Idrak.Layers.Abstractions;
 
 namespace Idrak.Generation;
 
-/// <summary>A piece of one prompt's continuation in <see cref="TextGenerator.StreamBatch"/>.</summary>
+/// <summary>A piece of one prompt's continuation in <c>TextGenerator.StreamBatch</c> (text or images).</summary>
 /// <param name="Index">The prompt's index in the batch.</param>
 /// <param name="Text">Newly generated text (empty on the final chunk).</param>
 /// <param name="Done">True for the prompt's final chunk.</param>
@@ -214,7 +214,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         bool penalties = options.RepeatPenalty != 1f || options.PresencePenalty != 0f || options.FrequencyPenalty != 0f;
-        if (prompts.Count == 1 || penalties || !SupportsBatches)
+        if (prompts.Count == 1 || penalties)
         {
             for (int p = 0; p < prompts.Count; p++)
             {
@@ -227,8 +227,6 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             yield break;
         }
 
-        var total = Stopwatch.StartNew();
-        int rows = prompts.Count;
         int context = Math.Clamp(options.NumCtx, 2, ContextLength);
         var tokens = prompts.Select(p =>
         {
@@ -240,13 +238,107 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
             return ids.Count > context - 1 ? ids.GetRange(ids.Count - (context - 1), context - 1) : ids;
         }).ToList();
+
+        // Rows of different lengths attend from their own starts where the model can (SupportsBatches); elsewhere rows of
+        // one length still decode together (no starts needed), and a length alone runs alone.
+        var groups = SupportsBatches ? [[.. Enumerable.Range(0, prompts.Count)]] : Groups(tokens);
+        foreach (var group in groups)
+        {
+            if (group.Length == 1)
+            {
+                foreach (var chunk in Stream(prompts[group[0]], options, cancellationToken))
+                {
+                    yield return new BatchChunk(group[0], chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats);
+                }
+
+                continue;
+            }
+
+            foreach (var chunk in Batch([.. group.Select(i => tokens[i])], group, null, options, cancellationToken))
+            {
+                yield return chunk;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The replies to several prompts with images (each prompt's image tokens taken by its own images, in order, as
+    /// <see cref="Stream(string, int, IReadOnlyList{ImageFeatures}, IImageAttentionRule, GenerationOptions, CancellationToken)"/>
+    /// takes them), decoded together: prompts of one length (pages read with one instruction) go through the model as one
+    /// batch, one pass a token for all of them (the device reads each weight once for every row), and their decoding step
+    /// is recorded once; a prompt of a length of its own runs alone. Each row stops on its own (its stop sequences, or a
+    /// loop under <see cref="GenerationOptions.RepeatStop"/>) and gets what it would get alone, within the batch's rounding.
+    /// Chunks as <see cref="StreamBatch(IReadOnlyList{string}, GenerationOptions, CancellationToken)"/>. Repetition
+    /// penalties are not batched: such prompts run one by one.
+    /// </summary>
+    /// <exception cref="ArgumentException">The prompts and the image lists differ in number.</exception>
+    /// <exception cref="InvalidOperationException">A prompt with its images does not fit the context window.</exception>
+    public IEnumerable<BatchChunk> StreamBatch(IReadOnlyList<string> prompts, int imageToken, IReadOnlyList<IReadOnlyList<ImageFeatures>> images,
+        IImageAttentionRule attention, GenerationOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(prompts);
+        ArgumentNullException.ThrowIfNull(images);
+        ArgumentNullException.ThrowIfNull(attention);
+        if (images.Count != prompts.Count)
+        {
+            throw new ArgumentException($"{prompts.Count} prompts and {images.Count} lists of images.", nameof(images));
+        }
+
+        if (prompts.Count == 0)
+        {
+            yield break;
+        }
+
+        bool penalties = options.RepeatPenalty != 1f || options.PresencePenalty != 0f || options.FrequencyPenalty != 0f;
+        var tokens = prompts.Select(p => Tokenizer.Encode(p).ToList()).ToList();
+        foreach (var group in penalties ? [.. Enumerable.Range(0, prompts.Count).Select(i => new[] { i })] : Groups(tokens))
+        {
+            if (group.Length == 1)
+            {
+                int r = group[0];
+                foreach (var chunk in Stream(prompts[r], (imageToken, images[r], attention), options, cancellationToken))
+                {
+                    yield return new BatchChunk(r, chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats);
+                }
+
+                continue;
+            }
+
+            foreach (var chunk in Batch([.. group.Select(i => tokens[i])], group, (imageToken, [.. group.Select(i => images[i])], attention), options, cancellationToken))
+            {
+                yield return chunk;
+            }
+        }
+    }
+
+    // The prompts' indices grouped by token count, in the order each count first appears.
+    private static List<int[]> Groups(List<List<int>> tokens) =>
+        [.. Enumerable.Range(0, tokens.Count).GroupBy(i => tokens[i].Count).Select(g => g.ToArray())];
+
+    // Decodes the rows `tokens` together (their prompts' indices `index`): padded on the left to the longest, each row
+    // attending from its own start, when their lengths differ (SupportsBatches); with each row's images when given (rows of
+    // one length then). Yields each row's pieces as they come, then a final chunk per row.
+    private IEnumerable<BatchChunk> Batch(List<List<int>> tokens, int[] index, (int Token, IReadOnlyList<IReadOnlyList<ImageFeatures>> Features, IImageAttentionRule Attention)? imageInput,
+        GenerationOptions options, CancellationToken cancellationToken)
+    {
+        var total = Stopwatch.StartNew();
+        int rows = tokens.Count;
+        int context = Math.Clamp(options.NumCtx, 2, ContextLength);
         int promptLength = tokens.Max(t => t.Count);
+        bool padded = tokens.Any(t => t.Count != promptLength);
+        if (imageInput is not null && (padded || promptLength >= context))
+        {
+            throw new InvalidOperationException(padded
+                ? "Prompts with images decode together only when their lengths are equal."
+                : $"A prompt of {promptLength} tokens with its images does not fit the context window of {context}.");
+        }
+
         int limit = Math.Min(options.NumPredict > 0 ? Math.Min(options.NumPredict, MaxTokens) : MaxTokens, context - promptLength);
         limit = Math.Max(1, limit);
         var stops = options.Stop.Where(x => x.Length > 0).ToArray();
         int holdBack = stops.Length == 0 ? 0 : stops.Max(x => x.Length) - 1;
         var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
-        var starts =tokens.Select(t => promptLength - t.Count).ToArray();
+        var starts = tokens.Select(t => promptLength - t.Count).ToArray();
         var input = new float[rows * promptLength];
         for (int r = 0; r < rows; r++)
         {
@@ -256,13 +348,22 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
         }
 
+        // Each row's images, at their positions in its row (rows of one length: no padding moves them).
+        IReadOnlyList<PromptImage> images = imageInput is { } given
+            ? [.. Enumerable.Range(0, rows).SelectMany(r => ImagePrefill.Locate(tokens[r], given.Token, given.Features[r], sequence: r))]
+            : [];
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
         // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).
-        var batchLayout = Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
+        var batchLayout = !padded || Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
         using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout) { LastPositionOnly = true, Cancellation = cancellationToken };
-        decoding.SetRowStarts(starts);
+        if (padded)
+        {
+            decoding.SetRowStarts(starts);
+        }
+
         var generated = Enumerable.Range(0, rows).Select(_ => new List<int>()).ToList();
         var ends = new int?[rows];                                            // text length where a stop sequence begins
+        var reasons = new string?[rows];                                      // why a row ended ("stop", "repetition")
         var emitted = new int[rows];                                          // characters handed out so far
         var searched = Enumerable.Repeat("", rows).ToArray();                // the last text searched for stop sequences
         Model.Eval();
@@ -274,7 +375,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             Tensor logits;
             using (PrefillScope())
             {
-                logits = Model.ForwardCached(Tensor.From(input, [rows, promptLength], Device), decoding);
+                using var ids = Tensor.From(input, [rows, promptLength], Device);
+                logits = images.Count == 0 ? Model.ForwardCached(ids, decoding) : Model.ForwardCached(ids, images, imageInput!.Value.Attention, decoding);
             }
 
             sampler.Sample(logits);
@@ -284,8 +386,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         int produced = 1, read = 0;
         var pieces = new List<BatchChunk>();
 
-        // Reads the new tokens, finds stop sequences and collects each row's new text (the tail that could still become
-        // a stop sequence, or ends in an incomplete character, is held back while the row goes on).
+        // Reads the new tokens, finds stop sequences and loops, and collects each row's new text (the tail that could still
+        // become a stop sequence, or ends in an incomplete character, is held back while the row goes on).
         bool Finished(bool final)
         {
             foreach (var step in sampler.Read(read, produced))
@@ -307,7 +409,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     continue;                                                  // stopped and handed out: nothing more to add
                 }
 
-                string text = Tokenizer.Decode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated[r]));
+                var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated[r]);
+                string text = Tokenizer.Decode(ids);
                 if (ends[r] is null && stopValues is not null)
                 {
                     // The previous text held no stop, so a first match must end past the part it shares with this one
@@ -316,10 +419,15 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     int at = text.AsSpan(from).IndexOfAny(stopValues);
                     if (at >= 0)
                     {
-                        ends[r] = from + at;
+                        (ends[r], reasons[r]) = (from + at, "stop");
                     }
 
                     searched[r] = text;
+                }
+
+                if (ends[r] is null && options.RepeatStop >= 2 && Looping(ids, options.RepeatStop, options.RepeatStopMinTokens))
+                {
+                    (ends[r], reasons[r]) = (text.Length, "repetition");      // the loop is kept, as the single path keeps it
                 }
 
                 int until = ends[r] ?? (final ? text.Length : Math.Max(0, text.Length - holdBack));
@@ -335,7 +443,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
                 if (until > emitted[r])
                 {
-                    pieces.Add(new BatchChunk(r, text[emitted[r]..until]));
+                    pieces.Add(new BatchChunk(index[r], text[emitted[r]..until]));
                     emitted[r] = until;
                 }
             }
@@ -343,30 +451,55 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             return ends.All(e => e is not null);
         }
 
-        while (produced < limit && !cancellationToken.IsCancellationRequested)
+        // The decoding step: run as it is first (the device measures its choices for these shapes, which it cannot while
+        // recording), then recorded once and replayed, for rows of one length (rows with starts upload positions each step).
+        void Step() => sampler.Sample(Model.ForwardCached(sampler.Ids.Reshape(rows, 1), decoding));
+        ComputeGraph? graph = null;
+        bool steppedOnce = false;
+        try
         {
-            if (produced % Math.Max(1, options.ChunkSize) == 0)
+            while (produced < limit && !cancellationToken.IsCancellationRequested)
             {
-                bool done = Finished(final: false);
-                foreach (var piece in pieces)
+                if (produced % Math.Max(1, options.ChunkSize) == 0)
                 {
-                    yield return piece;
+                    bool done = Finished(final: false);
+                    foreach (var piece in pieces)
+                    {
+                        yield return piece;
+                    }
+
+                    pieces.Clear();
+                    if (done)
+                    {
+                        break;
+                    }
                 }
 
-                pieces.Clear();
-                if (done)
+                if (graph is null && !padded && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Layout.Recordable && StepsRecordable)
                 {
-                    break;
+                    graph = decoding.CaptureStep(Step);
                 }
-            }
 
-            using (Autograd.NoGrad())
-            using (var scope = new TensorScope())
-            {
-                sampler.Sample(Model.ForwardCached(sampler.Ids.Reshape(rows, 1), decoding));
-            }
+                steppedOnce = true;
+                if (graph is not null)
+                {
+                    decoding.ReplayStep(graph);
+                }
+                else
+                {
+                    using (Autograd.NoGrad())
+                    using (var scope = new TensorScope())
+                    {
+                        Step();
+                    }
+                }
 
-            produced++;
+                produced++;
+            }
+        }
+        finally
+        {
+            graph?.Dispose();
         }
 
         Finished(final: true);
@@ -375,12 +508,13 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             yield return piece;
         }
 
+        Device.Synchronize();
         var elapsed = total.Elapsed;
         for (int r = 0; r < rows; r++)
         {
             var ids = generated[r];
             int count = ids.Count;
-            if (ends[r] is int end)
+            if (ends[r] is int end && reasons[r] == "stop")
             {
                 // The tokens up to the one that completes the stop sequence.
                 count = 1;
@@ -390,7 +524,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 }
             }
 
-            yield return new BatchChunk(r, "", true, ends[r] is null ? "length" : "stop",
+            yield return new BatchChunk(index[r], "", true, reasons[r] ?? "length",
                 new GenerationStats(tokens[r].Count, promptDuration, count, elapsed - promptDuration, elapsed, 0));
         }
     }

@@ -253,6 +253,7 @@ public sealed class Idrak.Generation.ImageReader : System.IDisposable
   public Idrak.Models.PretrainedModel Model { get; }
   public ImageReader(Idrak.Models.PretrainedModel model, Idrak.Generation.ImageReaderOptions? options = null)
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ChatChunk> Stream(Idrak.Generation.ImageReadRequest request, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Generation.ImageReading> ReadBatch(System.Collections.Generic.IReadOnlyList<Idrak.Generation.ImageReadRequest> requests, System.Action<int, string>? onText = null, System.Threading.CancellationToken cancellationToken = default)
   public void Dispose()
 
 public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idrak.Generation.ImageReaderOptions>
@@ -318,6 +319,7 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.GenerationChunk> Stream(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.GenerationChunk> Stream(string prompt, int imageToken, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> images, Idrak.Abstraction.Generation.IImageAttentionRule attention, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Generation.BatchChunk> StreamBatch(System.Collections.Generic.IReadOnlyList<string> prompts, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IEnumerable<Idrak.Generation.BatchChunk> StreamBatch(System.Collections.Generic.IReadOnlyList<string> prompts, int imageToken, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures>> images, Idrak.Abstraction.Generation.IImageAttentionRule attention, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyList<(string, string, Idrak.Abstraction.Generation.GenerationStats)> GenerateBatch(System.Collections.Generic.IReadOnlyList<string> prompts, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Func<Idrak.Generation.Abstractions.SamplerRequest, Idrak.Generation.Abstractions.ITokenSampler> CreateSampler { get; set; }
   public System.Threading.Tasks.Task<(string, string, Idrak.Abstraction.Generation.GenerationStats)> GenerateAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
