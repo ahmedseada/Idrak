@@ -30,6 +30,9 @@ built, CPU-checked): [13-vision.md](13-vision.md).
 GPU runs left for the owner after plans 12 and 13 (one PowerShell list): [gpu-checks.md](gpu-checks.md).
 Everything left unfinished (correctness, speed and memory items not fixed, audit areas not covered, checks never
 run), in one list for the refactor: [14-refactor-backlog.md](14-refactor-backlog.md).
+Speed and memory for vision and OCR (the library first, the legal OCR app as the measuring ground: image attention at
+head size 256 on CUDA, a read that does each thing once, bytes through the image pipeline, the encoder's launches, a cache
+that fits the page, tuning once per image; the test process every lane follows): [17-vision-ocr-speed.md](17-vision-ocr-speed.md).
 
 ## Not supported yet
 
