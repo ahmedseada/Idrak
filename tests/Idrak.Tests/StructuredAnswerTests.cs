@@ -15,7 +15,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] StructuredAnswerGroup =
     [
         ("json repair: valid JSON reads unchanged and is not marked repaired; text and a code fence around it are dropped; text without JSON has none", JsonRepairValid),
-        ("json repair: an answer cut at its token limit, trailing and missing commas, single and curly quotes, bare keys, Python literals and quotes inside values read as json_repair reads them", JsonRepairBroken),
+        ("json repair: an answer cut at its token limit, trailing and missing commas, single and curly quotes, bare keys, Python literals, quotes inside values and repeated keys read as json_repair reads them", JsonRepairBroken),
         ("json repair: the registry has the library's lenient repair; an app's repair shadows it and is removed again; an unknown name is not registered", JsonRepairRegistry),
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
@@ -73,6 +73,7 @@ internal static partial class Tests
         Same("""{"a": "he said "yes" today", "b": 1}""", """{"a": "he said \"yes\" today", "b": 1}""");   // quotes inside a value
         Same("{\"a\": \"line one\nline two\"}", """{"a": "line one\nline two"}""");                // a raw line break
         Same("""{"a": }""", """{"a": ""}""");                                                  // a key without its value
+        Same("""{"output": "a", "rules": [{"k": 1, "k": 2}], "output": "c"}""", """{"output": "c", "rules": [{"k": 2}]}""");   // repeated keys: the last value, in the first one's place
     }
 
     private sealed class EmptyRepair : IJsonRepair
@@ -127,6 +128,7 @@ internal static partial class Tests
         Check(AnswerTexts.Get(AnswerTexts.Values).Text(answer) == "محكمة النقض\n2021\nأحمد", AnswerTexts.Get(AnswerTexts.Values).Text(answer));
         Check(AnswerTexts.Of("{\"a\": \"x\", \"b\": \"y", AnswerTexts.Values) == "x y", "repaired JSON's values, normalized");
         Check(AnswerTexts.Of("  plain\n\ttext ", AnswerTexts.Values) == "plain text", "an answer without JSON as it is, normalized");
+        Check(AnswerTexts.Of("""{"output": "a", "rules": "b", "output": "c"}""", AnswerTexts.Values) == "c b", "a repeated key's last value (was an ArgumentException out of the metric)");
         Check(AnswerTexts.Normalize("á﻿  b\n") == "á b", "composed, the mark dropped, whitespace folded");
         Check(AnswerTexts.Names.Contains(AnswerTexts.Raw) && AnswerTexts.Names.Contains(AnswerTexts.Values), "both registered");
     }
