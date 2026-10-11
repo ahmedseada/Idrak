@@ -46,6 +46,10 @@ public sealed class TuningVision : IDisposable
     private readonly ConcurrentDictionary<(string Image, TuningImages Preparation), IReadOnlyList<ImageTokenLayout>> _blocks = new();
     private readonly bool _ownsCache;
     private readonly IVisionTuningPart? _projector;              // runs each step on the cached tower output, when set
+    private readonly Lock _family = new();                       // the family's Blocks and Expand, one call at a time
+    private readonly string _weights;                            // the encoder's weight formats, for the cache's keys
+    private readonly Lazy<bool> _tensorCores;                    // whether the device runs reduced-precision products on tensor cores
+    private readonly string?[] _withProducts = new string?[Enum.GetValues<MatMulPrecision>().Length];
     private long _hits, _encoded;
 
     private TuningVision(PretrainedModel model, IVisionEncoder encoder, TuningImages images, IReadOnlyList<string> parts, IVisionTuningPart? tuning,
@@ -54,6 +58,8 @@ public sealed class TuningVision : IDisposable
         (Model, Vision, Encoder, Images, Parts, Tuning, Parameters, Cache, _ownsCache, Checkpoint) =
             (model, model.Vision!, encoder, images, parts, tuning, parameters, cache, ownsCache, checkpoint);
         _projector = tuning ?? (model.TrainedVisionTensors.Count > 0 ? Vision as IVisionTuningPart : null);
+        _weights = WeightFormats(encoder);
+        _tensorCores = new Lazy<bool>(() => MixedPrecision.TensorCoresUnavailable(encoder.Device) is null);
     }
 
     /// <summary>
@@ -181,7 +187,24 @@ public sealed class TuningVision : IDisposable
     {
         ArgumentNullException.ThrowIfNull(image);
         var prepared = preparation ?? Images;
-        return _blocks.GetOrAdd((image.Hash, prepared), _ => Encoder.Blocks(Read(image, prepared), Options(prepared)));
+        return _blocks.GetOrAdd((image.Hash, prepared), _ =>
+        {
+            var pixels = Read(image, prepared);
+            lock (_family)
+            {
+                return Encoder.Blocks(pixels, Options(prepared));             // the family's call one at a time
+            }
+        });
+    }
+
+    // The rendered prompt with each image's marker expanded by the family's prompt format, one call at a time (the
+    // contract does not promise it is thread-safe, and transcripts are encoded on several threads).
+    internal string Expand(string prompt, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> images, ITokenizer tokenizer)
+    {
+        lock (_family)
+        {
+            return Format.Expand(prompt, images, tokenizer);
+        }
     }
 
     // Blocks of every distinct image in `images` under the reader's preparation, worked out on worker threads (each image
@@ -193,12 +216,11 @@ public sealed class TuningVision : IDisposable
         int finished = 0;
         try
         {
-            var family = new Lock();
             Parallel.ForEach(distinct, new ParallelOptions { CancellationToken = cancellationToken }, image =>
             {
                 var pixels = Read(image, Images);                          // the heavy part, in parallel
                 IReadOnlyList<ImageTokenLayout> layout;
-                lock (family)
+                lock (_family)
                 {
                     layout = Encoder.Blocks(pixels, Options(Images));       // the family's call one at a time (no promise it is thread-safe)
                 }
@@ -213,9 +235,56 @@ public sealed class TuningVision : IDisposable
         }
     }
 
-    /// <summary>The cache key of <paramref name="image"/>'s output at <paramref name="stage"/> under <paramref name="preparation"/>, for this encoder.</summary>
+    /// <summary>
+    /// The cache key of <paramref name="image"/>'s output at <paramref name="stage"/> under <paramref name="preparation"/>,
+    /// for this encoder. Its precision is what the stage is computed in: the formats the encoder's matrix weights are kept
+    /// in ("float32"; "bfloat16" for a frozen tower over a bfloat16 checkpoint; several joined by '+', "bfloat16+float32"
+    /// under a float32 projector), with the precision of matrix products where the device runs them on tensor cores
+    /// (<see cref="MixedPrecision.Current"/>: "bfloat16+float32, bfloat16 products"); pixel values are "float32" (no
+    /// weights make them). Features computed in another precision are another key: a hit is what this encoder computes.
+    /// </summary>
     public FeatureCacheKey Key(ChatImage image, TuningImages preparation, string stage) =>
-        FeatureCacheKey.For(image, preparation, Vision.Family, Checkpoint, "float32", stage);
+        FeatureCacheKey.For(image, preparation, Vision.Family, Checkpoint, stage == FeatureCacheKey.PixelsStage ? "float32" : Precision(), stage);
+
+    // The precision of the encoder's outputs for the cache's keys (Key): the weights' formats, made once, and the products'
+    // precision read per call (one thread-static read; the device asked once, and only when products leave float32).
+    private string Precision()
+    {
+        var products = MixedPrecision.Current;
+        if (products == MatMulPrecision.Float32 || !_tensorCores.Value)
+        {
+            return _weights;
+        }
+
+        ref string? text = ref _withProducts[(int)products];
+        return text ??= $"{_weights}, {products.ToString().ToLowerInvariant()} products";
+    }
+
+    // The formats the encoder's matrix weights are kept in, distinct and in order of name; "float32" for an encoder that is
+    // not a module (its weights cannot be looked at: as before).
+    private static string WeightFormats(IVisionEncoder encoder)
+    {
+        if (encoder is not Module module)
+        {
+            return "float32";
+        }
+
+        var formats = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var layer in Idrak.Layers.ModuleExtensions.Descendants(module))
+        {
+            switch (layer)
+            {
+                case Idrak.Layers.Linear linear:
+                    formats.Add(linear.PackedWeight?.Name ?? "float32");
+                    break;
+                case Idrak.Layers.Embedding embedding:
+                    formats.Add(embedding.BFloat16 is not null ? "bfloat16" : "float32");
+                    break;
+            }
+        }
+
+        return formats.Count == 0 ? "float32" : string.Join('+', formats);
+    }
 
     /// <summary>Whether the vision tower trains (<see cref="VisionTuningParts.Tower"/> among <see cref="Parts"/>): it then runs in every step.</summary>
     public bool TrainsTower => Parts.Contains(VisionTuningParts.Tower);

@@ -462,6 +462,7 @@ public interface Idrak.Nlp.Abstractions.IJsonRepair
   public string Summary { get; }
 
 public interface Idrak.Nlp.Abstractions.ITuningDataFormat
+  public (default) Idrak.Nlp.Abstractions.PendingConversations ReadPending(string path, Idrak.Nlp.Abstractions.TuningDataOptions? options = null)
   public System.Collections.Generic.IEnumerable<Idrak.Nlp.ChatTranscript> Read(string path, Idrak.Nlp.Abstractions.TuningDataOptions? options = null)
   public bool Recognizes(System.Text.Json.Nodes.JsonObject record)
   public string Name { get; }
@@ -491,6 +492,14 @@ public static class Idrak.Nlp.Abstractions.JsonRepairs
   public static string? Origin(string name)
   public static void Register(Idrak.Nlp.Abstractions.IJsonRepair repair)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed class Idrak.Nlp.Abstractions.PendingConversations : System.IDisposable
+  public Idrak.Nlp.ChatTranscript Read(int index)
+  public PendingConversations(System.Collections.Generic.IReadOnlyList<Idrak.Nlp.ChatTranscript> transcripts)
+  public PendingConversations(int count, int images, System.Func<int, Idrak.Nlp.ChatTranscript> read, System.IDisposable? source = null)
+  public int Count { get; }
+  public int Images { get; }
+  public void Dispose()
 
 public abstract class Idrak.Nlp.Abstractions.TeacherDistributions : System.IDisposable
   protected TeacherDistributions()

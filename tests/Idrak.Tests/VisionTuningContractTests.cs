@@ -20,7 +20,7 @@ internal static partial class Tests
         ("vision tuning contracts: sharegpt reads LlamaFactory's JSON array and JSON Lines, each <image> the next image in place, paths from the data file's folder, an images folder or a zip read in place (images only, nothing unpacked); a marker count that disagrees names the record; the kit's data-format suite passes", ShareGptWithImages),
         ("vision tuning contracts: messages reads chat JSON Lines with image parts (a path, a data URL, base64, bare parts and <image> markers taking the record's images; text-only records as before); formats are detected, an unknown one names the registry; the kit's data-format suite passes", MessagesWithImages),
         ("vision tuning contracts: TuningImages parses the command line's transforms, options and grayscale, checks options against a family's keys, saves tuning_images.json and reads it back equal; a bad file is refused naming it", TuningImagesRoundTrip),
-        ("vision tuning contracts: cer and wer on known strings (English, Arabic with and without its marks, NFC, a character outside the basic plane, case), corpus sums, options checked; the edit distance takes memory of the shorter text only; an app's metric registers and an unknown one names the registry", TuningMetricValues),
+        ("vision tuning contracts: cer and wer on known strings (English, Arabic with and without its marks, NFC, a character outside the basic plane, case), corpus sums, options checked; the edit distance takes memory of the shorter text only and equals the row-by-row table (random sequences across 64-element blocks and past 512 symbols, edge cases, characters outside the basic plane); an app's metric registers and an unknown one names the registry", TuningMetricValues),
         ("vision tuning contracts: the memory and disk feature caches pass the kit's suite; the memory budget is measured and the least recently used goes first; disk entries are safetensors files that outlive the cache, a file under another key is a miss; an unknown cache names the registry", FeatureCacheRoundTrips),
         ("vision tuning contracts: the tiny Gemma 3 (plug-in) offers its projector and tower: features from the tower's output equal the encoder's, gradients reach the projector (finite differences), the tower and the pixels; bfloat16 weights and another family's encoder are refused", VisionTuningPartGemma3),
         ("vision tuning contracts: the tiny LLaVA (outside plug-in) offers its projector only (features equal the encoder's, gradients by finite differences); asking for its tower fails naming the parts offered; a family without IVisionTuningPart trains the language model only", VisionTuningPartLlava),
@@ -158,7 +158,44 @@ internal static partial class Tests
                 new TuningDataSample(mismatch, Error: "markers"),
                 new TuningDataSample(zipped.Replace("zipped", "pickled", StringComparison.Ordinal), Error: "not found"),
             ]).ThrowIfFailed();
-            Console.WriteLine($"    sharegpt: {records.Length} records as a JSON array and JSON Lines, 2 images from a zip, mismatches named");
+
+            // Read pending: every record read and checked, a record's images read only when it is taken; the same
+            // conversations as Read (the kit's suite through it), from a zip too.
+            Conformance.CheckTuningDataFormat(path => Pending(format, path, options),
+            [
+                new TuningDataSample(array, expected),
+                new TuningDataSample(lines, expected),
+                new TuningDataSample(mismatch, Error: "markers"),
+                new TuningDataSample(zipped.Replace("zipped", "pickled", StringComparison.Ordinal), Error: "not found"),
+            ]).ThrowIfFailed();
+            using (var pending = format.ReadPending(zipped, new TuningDataOptions { Images = zip }))
+            {
+                Check(pending.Count == 1 && pending.Images == 2 && pending.Read(0).Messages.SequenceEqual(fromZip.Messages), "pending from the zip: the same images");
+            }
+
+            string halfMissing = Path.Combine(data, "half-missing.jsonl");
+            File.WriteAllLines(halfMissing, [Record("<image>", "x", ["a.png"]).ToJsonString(), Record("<image>", "y", ["nowhere.png"]).ToJsonString()]);
+            using (var pending = format.ReadPending(halfMissing, new TuningDataOptions { Images = images }))
+            {
+                Check(pending.Count == 2 && pending.Images == 2 && pending.Read(0).Messages[0].Parts[0] is ChatImage taken && taken.Equals(a),
+                    "a record left untaken never has its images read: the missing one does not fail the reading");
+                var untaken = Failure<FileNotFoundException>(() => pending.Read(1));
+                Check(untaken.Message.Contains("line 2", StringComparison.Ordinal) && untaken.Message.Contains("nowhere.png", StringComparison.Ordinal),
+                    $"taking it names the record: {untaken.Message}");
+            }
+
+            Check(Failure<InvalidDataException>(() => format.ReadPending(mismatch).Dispose()).Message.Contains("record 2", StringComparison.Ordinal), "a count that disagrees fails the pending read");
+
+            // A stream read straight into the image's own array: the same image as its bytes; a short stream refused.
+            byte[] bytes = a.Data.ToArray();
+            using (var stream = new MemoryStream(bytes))
+            {
+                Check(ChatImage.FromStream(stream, bytes.Length).Equals(a) && ChatImage.FromStream(new MemoryStream(bytes), bytes.Length, "image/png").MediaType == "image/png",
+                    "FromStream: the same image");
+            }
+
+            Failure<EndOfStreamException>(() => ChatImage.FromStream(new MemoryStream(bytes, 0, 10), bytes.Length));
+            Console.WriteLine($"    sharegpt: {records.Length} records as a JSON array and JSON Lines, 2 images from a zip, mismatches named; read pending alike");
         }
         finally
         {
@@ -215,6 +252,12 @@ internal static partial class Tests
 
             Conformance.CheckTuningDataFormat(path => format.Read(path).Select(t => t.Messages),
                 [new TuningDataSample(file, expected), new TuningDataSample(bare, Error: "\"images\"")]).ThrowIfFailed();
+            Conformance.CheckTuningDataFormat(path => Pending(format, path, null),
+                [new TuningDataSample(file, expected), new TuningDataSample(bare, Error: "\"images\"")]).ThrowIfFailed();
+            using (var pending = format.ReadPending(file))
+            {
+                Check(pending.Count == 4 && pending.Images == 5, $"{pending.Count} conversations, {pending.Images} images pending (paths, bare parts, markers and data counted)");
+            }
         }
         finally
         {
@@ -316,6 +359,46 @@ internal static partial class Tests
         Check(distance == 2 && TuningMetrics.EditDistance<int>(x, x) == 0 && TuningMetrics.EditDistance<int>(x, []) == 4000, $"edit distance {distance}");
         Check(allocated < 100_000, $"the edit distance allocated {allocated:N0} bytes for 4,000 x 4,000");
 
+        // Exact: the same distance as the table filled row by row (the loop it replaced), on random sequences across the
+        // 64-element blocks (lengths 0-300, alphabets of 2 to 2,000: past 512 distinct elements the row loop runs), with
+        // the arguments either way round; edge cases; and through the metric, characters outside the basic plane.
+        for (int trial = 0; trial < 3000; trial++)
+        {
+            int symbols = new[] { 2, 4, 30, 700, 2000 }[trial % 5];
+            int[] p = [.. Enumerable.Range(0, random.Next(301)).Select(_ => random.Next(symbols))];
+            int[] q = trial % 3 == 0 && p.Length > 0 ? [.. p] : [.. Enumerable.Range(0, trial % 7 == 0 ? p.Length : random.Next(301)).Select(_ => random.Next(symbols))];
+            if (trial % 3 == 0 && q.Length > 0)
+            {
+                q[random.Next(q.Length)] = random.Next(symbols);                    // a few changes inside a long shared run
+                q[random.Next(q.Length)] = random.Next(symbols);
+            }
+
+            int expected = TableDistance(p, q), got = TuningMetrics.EditDistance<int>(p, q), back = TuningMetrics.EditDistance<int>(q, p);
+            if (expected != got || expected != back)
+            {
+                Check(false, $"trial {trial}: {p.Length} x {q.Length} over {symbols} symbols: {got} and {back}, the table {expected}");
+                break;
+            }
+        }
+
+        string[] edges = ["", "a", "abc", "kitten", "sitting", new string('a', 200), new string('b', 200), string.Concat(Enumerable.Repeat("ab", 100)),
+            string.Concat(Enumerable.Range(0, 130).Select(i => (char)('A' + (i % 50))))];
+        foreach (string p in edges)
+        {
+            foreach (string q in edges)
+            {
+                int[] pc = [.. p.Select(c => (int)c)], qc = [.. q.Select(c => (int)c)];
+                Check(TuningMetrics.EditDistance<int>(pc, qc) == TableDistance(pc, qc), $"'{p}' against '{q}'");
+            }
+        }
+
+        Check(TuningMetrics.EditDistance<int>([], []) == 0 && TuningMetrics.EditDistance<int>([1, 2, 3], [4, 5, 6]) == 3 && TuningMetrics.EditDistance<int>([1, 2, 3], [1, 2, 3]) == 0,
+            "empty, all different, equal");
+        string emoji = string.Concat(Enumerable.Range(0, 90).Select(i => char.ConvertFromUtf32(0x1F600 + (i % 40)))) + "نص عربي";
+        string misread = emoji.Remove(4, 2).Insert(30, "x") + "😀";
+        Is(cer.Score(misread, emoji), TableDistance([.. misread.EnumerateRunes().Select(r => r.Value)], [.. emoji.EnumerateRunes().Select(r => r.Value)]),
+            emoji.EnumerateRunes().Count(), "cer over characters outside the basic plane, as the table counts them");
+
         // An app's metric, and an unknown name.
         var mine = new ExactMetric();
         TuningMetrics.Register(mine);
@@ -330,6 +413,32 @@ internal static partial class Tests
 
         var notRegistered = Failure<NotSupportedException>(() => TuningMetrics.Get("bleu"));
         Check(notRegistered.Message.Contains("'bleu' is not registered", StringComparison.Ordinal) && notRegistered.Message.Contains("cer, wer", StringComparison.Ordinal), notRegistered.Message);
+    }
+
+    // A format's conversations through ReadPending, every one taken in order (the kit's reading delegate).
+    private static IEnumerable<IReadOnlyList<ChatMessage>> Pending(ITuningDataFormat format, string path, TuningDataOptions? options)
+    {
+        using var pending = format.ReadPending(path, options);
+        return [.. Enumerable.Range(0, pending.Count).Select(i => pending.Read(i).Messages)];
+    }
+
+    // The edit distance as the library computed it before the bit vectors: the whole table, a row at a time.
+    private static int TableDistance(int[] a, int[] b)
+    {
+        var row = Enumerable.Range(0, b.Length + 1).ToArray();
+        for (int i = 1; i <= a.Length; i++)
+        {
+            int diagonal = row[0];
+            row[0] = i;
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int above = row[j];
+                row[j] = Math.Min(Math.Min(above + 1, row[j - 1] + 1), diagonal + (a[i - 1] == b[j - 1] ? 0 : 1));
+                diagonal = above;
+            }
+        }
+
+        return row[b.Length];
     }
 
     private sealed class ExactMetric : ITuningMetric

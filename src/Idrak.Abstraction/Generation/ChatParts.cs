@@ -43,7 +43,8 @@ public sealed record ChatImage : ChatPart
 {
     private readonly byte[] _data;
 
-    private ChatImage(byte[] data, string? mediaType)
+    // Takes `data` as the image's own array, not a copy: callers pass an array nothing else holds.
+    internal ChatImage(byte[] data, string? mediaType)
     {
         if (data.Length == 0)
         {
@@ -85,6 +86,22 @@ public sealed record ChatImage : ChatPart
 
     /// <summary>The image encoded in <paramref name="data"/> (copied), of <paramref name="mediaType"/> when given.</summary>
     public static ChatImage FromBytes(ReadOnlySpan<byte> data, string? mediaType = null) => new(data.ToArray(), mediaType);
+
+    /// <summary>
+    /// The image in the next <paramref name="length"/> bytes of <paramref name="stream"/> (a zip entry, an upload whose
+    /// length is known), read straight into the image's own array: one copy of the bytes, where reading them into a buffer
+    /// and then <see cref="FromBytes"/> makes two.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is not positive.</exception>
+    /// <exception cref="EndOfStreamException">The stream ends before <paramref name="length"/> bytes.</exception>
+    public static ChatImage FromStream(Stream stream, int length, string? mediaType = null)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(length);
+        var data = GC.AllocateUninitializedArray<byte>(length);               // every byte is read over
+        stream.ReadExactly(data);
+        return new ChatImage(data, mediaType);
+    }
 
     /// <summary>
     /// The image in a base64 data URL, <c>data:image/png;base64,iVBOR…</c> (as OpenAI's <c>image_url</c> parts carry it).
@@ -373,7 +390,7 @@ public static class ChatParts
 
             try
             {
-                return ChatImage.FromBytes(Convert.FromBase64String(data), mediaType);
+                return new ChatImage(Convert.FromBase64String(data), mediaType);   // the decoded array is the image's own: no second copy
             }
             catch (FormatException)
             {
