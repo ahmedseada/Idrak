@@ -752,6 +752,43 @@ public abstract partial class Backend
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset) => false;
 
     /// <summary>
+    /// y = x · w for few rows with packed weights w (in <paramref name="format"/>), then y's own RMS normalization ·
+    /// (yGain + yOffset), sum = residual + that, and normalized = sum's RMS normalization · (gain + offset) per row: a
+    /// sandwich block's output (or down) projection, the norm after it, the residual addition and the next block's norm.
+    /// Writes y (the projection), sum and normalized. The default composes the format's product (as the packed layer runs
+    /// few rows: for int8 the device's packed product where it prefers it) with <see cref="RmsNormAffine"/> on y in place
+    /// and <see cref="AddRmsNormAffine"/>, the operations a block runs without it; a device may do it in one pass.
+    /// Returns false when the format has no product here.
+    /// </summary>
+    public virtual bool PackedMatMulNormAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+        Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        switch (format)
+        {
+            case PackedFormat.Int8 when scales is not null:
+                // As Tensor.MatMulInt8 runs few rows: the device's packed product where it prefers it, else the direct kernel.
+                if (!(PrefersPackedMatMul(format, x, packed, scales, y, m, n, k) && PackedMatMulLarge(format, x, packed, scales, y, m, n, k)))
+                {
+                    Int8MatMul(x, packed, scales, y, m, n, k);
+                }
+
+                break;
+            case PackedFormat.Int4 when scales is not null:
+                Int4MatMul(x, packed, scales, y, m, n, k);
+                break;
+            case PackedFormat.BFloat16:
+                BFloat16MatMul(x, packed, y, m, n, k);
+                break;
+            default:
+                return false;
+        }
+
+        RmsNormAffine(y, yGain, y, m, n, yEps, yOffset);
+        AddRmsNormAffine(residual, y, sum, gain, normalized, m, n, eps, offset);
+        return true;
+    }
+
+    /// <summary>
     /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), in <paramref name="format"/>
     /// (int8 as in <see cref="Int8MatMul"/>, 4-bit as in <see cref="Int4MatMul"/>, bfloat16 as in
     /// <see cref="BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then

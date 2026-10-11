@@ -10,7 +10,7 @@ namespace Idrak.Gpu.Cuda;
 // row padded to n4 = ceil(n / 4) words), with one float scale per column: w[k, j] = q[k, j] · scale[j].
 internal static partial class PtxKernels
 {
-    public static readonly string[] QuantizedNames = ["int8_matmul_f32", "int8_dequant_f32", "kv_write_int8", "attn_scores_int8", "attn_context_int8", "int8_gemv_f32", "int8_gemv_finish_f32", "bf16_gemv_f32", "bf16_dequant_f32", "int4_gemv_f32", "int4_dequant_f32", "int8_gemv_multi_f32", "bf16_gemv_multi_f32", "int4_gemv_multi_f32", "int8_gemv_silu_f32", "bf16_gemv_silu_f32", "int4_gemv_silu_f32", "int8_gemv_gelu_f32", "bf16_gemv_gelu_f32", "int4_gemv_gelu_f32", "int8_gemv_addnorm_f32", "bf16_gemv_addnorm_f32", "int4_gemv_addnorm_f32", "int8_gemv_multi_act_f32", "bf16_gemv_multi_act_f32", "int4_gemv_multi_act_f32"];
+    public static readonly string[] QuantizedNames = ["int8_matmul_f32", "int8_dequant_f32", "kv_write_int8", "attn_scores_int8", "attn_context_int8", "int8_gemv_f32", "int8_gemv_finish_f32", "bf16_gemv_f32", "bf16_dequant_f32", "int4_gemv_f32", "int4_dequant_f32", "int8_gemv_multi_f32", "bf16_gemv_multi_f32", "int4_gemv_multi_f32", "int8_gemv_silu_f32", "bf16_gemv_silu_f32", "int4_gemv_silu_f32", "int8_gemv_gelu_f32", "bf16_gemv_gelu_f32", "int4_gemv_gelu_f32", "int8_gemv_addnorm_f32", "bf16_gemv_addnorm_f32", "int4_gemv_addnorm_f32", "int8_gemv_multi_act_f32", "bf16_gemv_multi_act_f32", "int4_gemv_multi_act_f32", "int8_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32"];
 
     /// <summary>Rows of an int4 weight matrix that share one scale per column.</summary>
     public const int Int4Group = 32;
@@ -39,6 +39,9 @@ internal static partial class PtxKernels
         Int8Gemv(sb, int4: true, multi: true, gatedPair: true);
         Int8Gemv(sb, bf16: true, addNorm: true);
         Int8Gemv(sb, int4: true, addNorm: true);
+        Int8Gemv(sb, addNorm: true, normAdd: true);
+        Int8Gemv(sb, bf16: true, addNorm: true, normAdd: true);
+        Int8Gemv(sb, int4: true, addNorm: true, normAdd: true);
 
         // w[r, 8c + j] = nibble j of packed word (r, c) · s[r / Int4Group, 8c + j]: one thread per word.
         var dequant = new StringBuilder("""
@@ -395,17 +398,25 @@ internal static partial class PtxKernels
     // counters[gridDim.x], reset afterwards) computes them over whole rows. p_res, p_sum, p_gain, p_norm, p_eps and
     // p_offset follow p_counters.
     //
+    // normAdd (…_gemv_normaddnorm_f32, with addNorm): y's own RMS normalization · (ygain + yoffset) first, then sum = res
+    // + that and norm as above (a sandwich block's projection, the norm after it, the residual addition and the next
+    // norm). The last block reduces with the first RowThreads threads in the row kernels' order (rms_norm_affine_f32 and
+    // add_rms_norm_affine_f32: each thread's columns tid, tid + RowThreads, … in turn, the warp's butterfly, then the
+    // warps in order), multiplies and adds with explicit rounding (nothing contracted into a fused multiply-add), so its
+    // three outputs equal the product followed by those two kernels bit for bit. p_ygain, p_yeps and p_yoffset follow
+    // p_offset.
+    //
     // gatedPair (…_gemv_multi_act_f32): the multi kernel for the gate (product 0) and up (product 1) projections of
     // equal widths, then hidden = act(gate) · up (p_act as gated_act_f32's kind): the second product to finish a column
     // range (counted in counters[2·cstride + column block], reset afterwards) computes it for those columns. p_act and
     // p_hidden follow p_n2.
     private static void Int8Gemv(StringBuilder sb, bool bf16 = false, bool int4 = false, bool multi = false, int gated = 0, bool addNorm = false,
-        bool gatedPair = false)
+        bool gatedPair = false, bool normAdd = false)
     {
         int cpw = bf16 ? 2 : int4 ? 8 : 4, columns = 32 * cpw;
         int acc = GemvRows * cpw, dec = Math.Max(32, acc), sc = dec + 9, red = dec + 20;
         string part = bf16 ? "h_part" : int4 ? "i4_part" : "i8_part";
-        string name = (bf16 ? "bf16_gemv" : int4 ? "int4_gemv" : "int8_gemv") + (multi ? (gatedPair ? "_multi_act_f32" : "_multi_f32") : gated == 1 ? "_silu_f32" : gated == 2 ? "_gelu_f32" : addNorm ? "_addnorm_f32" : "_f32");
+        string name = (bf16 ? "bf16_gemv" : int4 ? "int4_gemv" : "int8_gemv") + (multi ? (gatedPair ? "_multi_act_f32" : "_multi_f32") : gated == 1 ? "_silu_f32" : gated == 2 ? "_gelu_f32" : normAdd ? "_normaddnorm_f32" : addNorm ? "_addnorm_f32" : "_f32");
         string finished = addNorm ? "COLS_DONE" : gatedPair ? "PAIR" : "DONE";
         int gt = red + 9;
         bool scaled = !bf16 && !int4;
@@ -423,7 +434,8 @@ internal static partial class PtxKernels
                 .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_n4, .param .u32 p_chunk, .param .u32 p_splits,
                 .param .u64 p_counters
               """ + (gated > 0 ? ", .param .u64 p_up" : "")
-              + (addNorm ? ", .param .u64 p_res, .param .u64 p_sum, .param .u64 p_gain, .param .u64 p_norm, .param .f32 p_eps, .param .f32 p_offset" : "");
+              + (addNorm ? ", .param .u64 p_res, .param .u64 p_sum, .param .u64 p_gain, .param .u64 p_norm, .param .f32 p_eps, .param .f32 p_offset" : "")
+              + (normAdd ? ", .param .u64 p_ygain, .param .f32 p_yeps, .param .f32 p_yoffset" : "");
         string loads = multi
             ? string.Create(CultureInfo.InvariantCulture, $$"""
                 mov.u32 %r39, %ctaid.z;
@@ -489,15 +501,17 @@ internal static partial class PtxKernels
                 ld.param.u32 %r31, [p_splits];
               """ + (gated > 0 ? "\n    ld.param.u64 %rd29, [p_up];\n    cvta.to.global.u64 %rd29, %rd29;\n    sub.u64 %rd29, %rd29, %rd1;" : "");
         // Written for blocks of Int8GemvThreads (16 slices of k × 32 lanes), declared so ptxas keeps its registers within
-        // what such a block may use; %x (and %u, the up projection of a gated kernel): each row's input of a k step.
+        // what such a block may use; %x (and %u, the up projection of a gated kernel): each row's input of a k step. The
+        // normaddnorm kernels also state one block per multiprocessor: with their last block's loops ptxas otherwise aimed at
+        // two (64 registers on sm_80) and spilled.
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{name}}(
             {{parameters}}
             )
-            .maxntid {{Int8GemvThreads}}, 1, 1
+            .maxntid {{Int8GemvThreads}}, 1, 1{{(normAdd ? "\n.minnctapersm 1" : "")}}
             {
                 .reg .pred %p<24>;
-                .reg .f32 %f<{{red + 12}}>;
+                .reg .f32 %f<{{red + (normAdd ? 26 : 12)}}>;
                 .reg .f32 %x<{{GemvRows}}>;{{(gated > 0 ? string.Create(CultureInfo.InvariantCulture, $"\n    .reg .f32 %u<{GemvRows}>;") : "")}}
                 .reg .b32 %r<40>;
                 .reg .b64 %rd<32>;
@@ -874,91 +888,100 @@ internal static partial class PtxKernels
                     membar.gl;
                     @%p14 st.global.u32 [%rd17], 0;
                     bar.sync 0;
-                    ld.param.u64 %rd18, [p_res];
-                    ld.param.u64 %rd19, [p_sum];
-                    ld.param.u64 %rd20, [p_gain];
-                    ld.param.u64 %rd21, [p_norm];
-                    cvta.to.global.u64 %rd18, %rd18;
-                    cvta.to.global.u64 %rd19, %rd19;
-                    cvta.to.global.u64 %rd20, %rd20;
-                    cvta.to.global.u64 %rd21, %rd21;
-                    ld.param.f32 %f{{t0}}, [p_eps];
-                    ld.param.f32 %f{{t1}}, [p_offset];
-                    cvt.rn.f32.u32 %f{{t2}}, %r2;
-                    shl.b32 %r22, %r7, 2;
-                    add.u32 %r22, %r22, %r14;
-                    setp.eq.u32 %p18, %r6, 0;
-                    mov.u32 %r32, 0;
-                AN_ROW:
-                    setp.ge.u32 %p16, %r32, %r1;
-                    @%p16 bra DONE;
-                    mul.lo.u32 %r33, %r32, %r2;
-                    mov.f32 %f{{t3}}, 0f00000000;
-                    mov.u32 %r20, %r5;
-                AN_SUM:
-                    setp.ge.u32 %p17, %r20, %r2;
-                    @%p17 bra AN_SUM_END;
-                    add.u32 %r21, %r33, %r20;
-                    mul.wide.u32 %rd22, %r21, 4;
-                    add.u64 %rd23, %rd22, %rd18;
-                    ld.global.f32 %f{{t4}}, [%rd23];
-                    add.u64 %rd23, %rd22, %rd4;
-                    ld.global.cg.f32 %f{{t5}}, [%rd23];
-                    add.f32 %f{{t4}}, %f{{t4}}, %f{{t5}};
-                    add.u64 %rd23, %rd22, %rd19;
-                    st.global.f32 [%rd23], %f{{t4}};
-                    fma.rn.f32 %f{{t3}}, %f{{t4}}, %f{{t4}}, %f{{t3}};
-                    add.u32 %r20, %r20, {{Int8GemvThreads}};
-                    bra AN_SUM;
-                AN_SUM_END:
-                    shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 16, 31, 0xffffffff;
-                    add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
-                    shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 8, 31, 0xffffffff;
-                    add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
-                    shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 4, 31, 0xffffffff;
-                    add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
-                    shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 2, 31, 0xffffffff;
-                    add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
-                    shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 1, 31, 0xffffffff;
-                    add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
-                    @%p18 st.shared.f32 [%r22], %f{{t3}};
-                    bar.sync 0;
-                    mov.f32 %f{{t3}}, 0f00000000;
                 """);
-            for (int w = 0; w < Int8GemvThreads / 32; w++)
+            if (normAdd)
             {
-                s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.f32 %f{t5}, [%r14+{4 * w}];");
-                s.AppendLine(CultureInfo.InvariantCulture, $"    add.f32 %f{t3}, %f{t3}, %f{t5};");
+                s.AppendLine(NormAddNorm(red));
             }
+            else
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $$"""
+                        ld.param.u64 %rd18, [p_res];
+                        ld.param.u64 %rd19, [p_sum];
+                        ld.param.u64 %rd20, [p_gain];
+                        ld.param.u64 %rd21, [p_norm];
+                        cvta.to.global.u64 %rd18, %rd18;
+                        cvta.to.global.u64 %rd19, %rd19;
+                        cvta.to.global.u64 %rd20, %rd20;
+                        cvta.to.global.u64 %rd21, %rd21;
+                        ld.param.f32 %f{{t0}}, [p_eps];
+                        ld.param.f32 %f{{t1}}, [p_offset];
+                        cvt.rn.f32.u32 %f{{t2}}, %r2;
+                        shl.b32 %r22, %r7, 2;
+                        add.u32 %r22, %r22, %r14;
+                        setp.eq.u32 %p18, %r6, 0;
+                        mov.u32 %r32, 0;
+                    AN_ROW:
+                        setp.ge.u32 %p16, %r32, %r1;
+                        @%p16 bra DONE;
+                        mul.lo.u32 %r33, %r32, %r2;
+                        mov.f32 %f{{t3}}, 0f00000000;
+                        mov.u32 %r20, %r5;
+                    AN_SUM:
+                        setp.ge.u32 %p17, %r20, %r2;
+                        @%p17 bra AN_SUM_END;
+                        add.u32 %r21, %r33, %r20;
+                        mul.wide.u32 %rd22, %r21, 4;
+                        add.u64 %rd23, %rd22, %rd18;
+                        ld.global.f32 %f{{t4}}, [%rd23];
+                        add.u64 %rd23, %rd22, %rd4;
+                        ld.global.cg.f32 %f{{t5}}, [%rd23];
+                        add.f32 %f{{t4}}, %f{{t4}}, %f{{t5}};
+                        add.u64 %rd23, %rd22, %rd19;
+                        st.global.f32 [%rd23], %f{{t4}};
+                        fma.rn.f32 %f{{t3}}, %f{{t4}}, %f{{t4}}, %f{{t3}};
+                        add.u32 %r20, %r20, {{Int8GemvThreads}};
+                        bra AN_SUM;
+                    AN_SUM_END:
+                        shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 16, 31, 0xffffffff;
+                        add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
+                        shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 8, 31, 0xffffffff;
+                        add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
+                        shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 4, 31, 0xffffffff;
+                        add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
+                        shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 2, 31, 0xffffffff;
+                        add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
+                        shfl.sync.bfly.b32 %f{{t5}}, %f{{t3}}, 1, 31, 0xffffffff;
+                        add.f32 %f{{t3}}, %f{{t3}}, %f{{t5}};
+                        @%p18 st.shared.f32 [%r22], %f{{t3}};
+                        bar.sync 0;
+                        mov.f32 %f{{t3}}, 0f00000000;
+                    """);
+                for (int w = 0; w < Int8GemvThreads / 32; w++)
+                {
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.f32 %f{t5}, [%r14+{4 * w}];");
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    add.f32 %f{t3}, %f{t3}, %f{t5};");
+                }
 
-            s.AppendLine(CultureInfo.InvariantCulture, $$"""
-                    bar.sync 0;
-                    div.rn.f32 %f{{t3}}, %f{{t3}}, %f{{t2}};
-                    add.f32 %f{{t3}}, %f{{t3}}, %f{{t0}};
-                    sqrt.rn.f32 %f{{t3}}, %f{{t3}};
-                    rcp.rn.f32 %f{{t3}}, %f{{t3}};
-                    mov.u32 %r20, %r5;
-                AN_NORM:
-                    setp.ge.u32 %p17, %r20, %r2;
-                    @%p17 bra AN_NORM_END;
-                    add.u32 %r21, %r33, %r20;
-                    mul.wide.u32 %rd22, %r21, 4;
-                    add.u64 %rd23, %rd22, %rd19;
-                    ld.global.f32 %f{{t4}}, [%rd23];
-                    mul.wide.u32 %rd24, %r20, 4;
-                    add.u64 %rd24, %rd24, %rd20;
-                    ld.global.f32 %f{{t5}}, [%rd24];
-                    add.f32 %f{{t5}}, %f{{t5}}, %f{{t1}};
-                    mul.f32 %f{{t4}}, %f{{t4}}, %f{{t3}};
-                    mul.f32 %f{{t4}}, %f{{t4}}, %f{{t5}};
-                    add.u64 %rd23, %rd22, %rd21;
-                    st.global.f32 [%rd23], %f{{t4}};
-                    add.u32 %r20, %r20, {{Int8GemvThreads}};
-                    bra AN_NORM;
-                AN_NORM_END:
-                    add.u32 %r32, %r32, 1;
-                    bra AN_ROW;
-                """);
+                s.AppendLine(CultureInfo.InvariantCulture, $$"""
+                        bar.sync 0;
+                        div.rn.f32 %f{{t3}}, %f{{t3}}, %f{{t2}};
+                        add.f32 %f{{t3}}, %f{{t3}}, %f{{t0}};
+                        sqrt.rn.f32 %f{{t3}}, %f{{t3}};
+                        rcp.rn.f32 %f{{t3}}, %f{{t3}};
+                        mov.u32 %r20, %r5;
+                    AN_NORM:
+                        setp.ge.u32 %p17, %r20, %r2;
+                        @%p17 bra AN_NORM_END;
+                        add.u32 %r21, %r33, %r20;
+                        mul.wide.u32 %rd22, %r21, 4;
+                        add.u64 %rd23, %rd22, %rd19;
+                        ld.global.f32 %f{{t4}}, [%rd23];
+                        mul.wide.u32 %rd24, %r20, 4;
+                        add.u64 %rd24, %rd24, %rd20;
+                        ld.global.f32 %f{{t5}}, [%rd24];
+                        add.f32 %f{{t5}}, %f{{t5}}, %f{{t1}};
+                        mul.f32 %f{{t4}}, %f{{t4}}, %f{{t3}};
+                        mul.f32 %f{{t4}}, %f{{t4}}, %f{{t5}};
+                        add.u64 %rd23, %rd22, %rd21;
+                        st.global.f32 [%rd23], %f{{t4}};
+                        add.u32 %r20, %r20, {{Int8GemvThreads}};
+                        bra AN_NORM;
+                    AN_NORM_END:
+                        add.u32 %r32, %r32, 1;
+                        bra AN_ROW;
+                    """);
+            }
         }
 
         if (gatedPair)
@@ -1055,5 +1078,182 @@ internal static partial class PtxKernels
             }
             """);
         sb.AppendLine(s.ToString());
+    }
+
+    // The normaddnorm kernels' last block (Int8Gemv, normAdd), once y is final: per row, y's RMS normalization · (ygain +
+    // yoffset), sum = res + that, norm = sum's normalization · (gain + offset). Each pass is the row kernels' own: the first
+    // RowThreads threads take columns tid, tid + RowThreads, … in turn (four loads in flight, their sums in that order),
+    // the warp's butterfly, then warps 0 to RowThreads / 32 - 1 added in order from 0 (BlockReduce); the others only meet
+    // the barriers. Multiplications and additions round on their own (.rn), as the separate kernels' stores did.
+    private static string NormAddNorm(int red)
+    {
+        int e1 = red + 6, o1 = red + 7, nf = red + 8, acc = red + 9, sh = red + 10, ye = red + 11, yo = red + 12, inv = red + 13;
+        int v = red + 14, w = red + 18, g = red + 22;                  // four values each: y (then the sum), residual, gain
+        const int Unroll = 4, Stride = RowThreads * 4;                 // bytes between a thread's consecutive columns
+        var s = new StringBuilder();
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
+                ld.param.u64 %rd18, [p_res];
+                ld.param.u64 %rd19, [p_sum];
+                ld.param.u64 %rd20, [p_gain];
+                ld.param.u64 %rd21, [p_norm];
+                ld.param.u64 %rd24, [p_ygain];
+                cvta.to.global.u64 %rd18, %rd18;
+                cvta.to.global.u64 %rd19, %rd19;
+                cvta.to.global.u64 %rd20, %rd20;
+                cvta.to.global.u64 %rd21, %rd21;
+                cvta.to.global.u64 %rd24, %rd24;
+                ld.param.f32 %f{{e1}}, [p_eps];
+                ld.param.f32 %f{{o1}}, [p_offset];
+                ld.param.f32 %f{{ye}}, [p_yeps];
+                ld.param.f32 %f{{yo}}, [p_yoffset];
+                cvt.rn.f32.u32 %f{{nf}}, %r2;
+                shl.b32 %r22, %r7, 2;
+                add.u32 %r22, %r22, %r14;
+                setp.eq.u32 %p18, %r6, 0;
+                setp.lt.u32 %p19, %r5, {{RowThreads}};
+                mov.u32 %r32, 0;
+            NA_ROW:
+                setp.ge.u32 %p16, %r32, %r1;
+                @%p16 bra DONE;
+                mul.lo.u32 %r33, %r32, %r2;
+                mul.wide.u32 %rd22, %r33, 4;
+            """);
+
+        // A pass's loop head: %r20 = this thread's next column (the row's end for threads past RowThreads), %p1-%p3 whether
+        // the 2nd to 4th columns of the step exist, %rd23 the column's byte offset, %rd30 the element's.
+        string Head(string label) => string.Create(CultureInfo.InvariantCulture, $"""
+                selp.b32 %r20, %r5, %r2, %p19;
+            {label}:
+                setp.ge.u32 %p17, %r20, %r2;
+                @%p17 bra {label}_END;
+                add.u32 %r21, %r20, {RowThreads};
+                setp.lt.u32 %p1, %r21, %r2;
+                add.u32 %r21, %r20, {2 * RowThreads};
+                setp.lt.u32 %p2, %r21, %r2;
+                add.u32 %r21, %r20, {3 * RowThreads};
+                setp.lt.u32 %p3, %r21, %r2;
+                mul.wide.u32 %rd23, %r20, 4;
+                add.u64 %rd30, %rd23, %rd22;
+            """);
+
+        string Tail(string label) => string.Create(CultureInfo.InvariantCulture, $"""
+                add.u32 %r20, %r20, {Unroll * RowThreads};
+                bra {label};
+            {label}_END:
+            """);
+
+        // @%p{j} for the j-th column of a step (the first always exists inside the loop).
+        static string On(int j) => j == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $"@%p{j} ");
+
+        // acc over the block as BlockReduce adds it, then inv = 1 / sqrt(acc / cols + eps) as the row kernels compute it.
+        string Reduce(int eps)
+        {
+            var r = new StringBuilder();
+            foreach (int offset in new[] { 16, 8, 4, 2, 1 })
+            {
+                r.AppendLine(CultureInfo.InvariantCulture, $"    shfl.sync.bfly.b32 %f{sh}, %f{acc}, {offset}, 31, 0xffffffff;");
+                r.AppendLine(CultureInfo.InvariantCulture, $"    add.f32 %f{acc}, %f{acc}, %f{sh};");
+            }
+
+            r.AppendLine(CultureInfo.InvariantCulture, $"    @%p18 st.shared.f32 [%r22], %f{acc};");
+            r.AppendLine("    bar.sync 0;");
+            r.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %f{acc}, {Zero};");
+            for (int warp = 0; warp < RowThreads / 32; warp++)
+            {
+                r.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.f32 %f{sh}, [%r14+{4 * warp}];");
+                r.AppendLine(CultureInfo.InvariantCulture, $"    add.f32 %f{acc}, %f{acc}, %f{sh};");
+            }
+
+            r.AppendLine(CultureInfo.InvariantCulture, $"""
+                    bar.sync 0;
+                    div.rn.f32 %f{inv}, %f{acc}, %f{nf};
+                    add.f32 %f{inv}, %f{inv}, %f{eps};
+                    sqrt.rn.f32 %f{inv}, %f{inv};
+                    rcp.rn.f32 %f{inv}, %f{inv};
+                """);
+            return r.ToString();
+        }
+
+        // Pass 1: Σ y² (y written by the other blocks: read through L2).
+        s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %f{acc}, {Zero};");
+        s.AppendLine(Head("NA_Y"));
+        s.AppendLine("    add.u64 %rd25, %rd30, %rd4;");
+        for (int j = 0; j < Unroll; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}ld.global.cg.f32 %f{v + j}, [%rd25+{j * Stride}];");
+        }
+
+        for (int j = 0; j < Unroll; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}fma.rn.f32 %f{acc}, %f{v + j}, %f{v + j}, %f{acc};");
+        }
+
+        s.AppendLine(Tail("NA_Y"));
+        s.AppendLine(Reduce(ye));
+
+        // Pass 2: sum = res + y · inv · (ygain + yoffset), written, and Σ sum².
+        s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %f{acc}, {Zero};");
+        s.AppendLine(Head("NA_S"));
+        s.AppendLine("""
+                add.u64 %rd25, %rd30, %rd4;
+                add.u64 %rd26, %rd30, %rd18;
+                add.u64 %rd27, %rd23, %rd24;
+                add.u64 %rd28, %rd30, %rd19;
+            """);
+        for (int j = 0; j < Unroll; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}ld.global.cg.f32 %f{v + j}, [%rd25+{j * Stride}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}ld.global.f32 %f{w + j}, [%rd26+{j * Stride}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}ld.global.f32 %f{g + j}, [%rd27+{j * Stride}];");
+        }
+
+        for (int j = 0; j < Unroll; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
+                    {On(j)}add.f32 %f{g + j}, %f{g + j}, %f{yo};
+                    {On(j)}mul.rn.f32 %f{v + j}, %f{v + j}, %f{inv};
+                    {On(j)}mul.rn.f32 %f{v + j}, %f{v + j}, %f{g + j};
+                    {On(j)}add.rn.f32 %f{v + j}, %f{w + j}, %f{v + j};
+                    {On(j)}st.global.f32 [%rd28+{j * Stride}], %f{v + j};
+                """);
+        }
+
+        for (int j = 0; j < Unroll; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}fma.rn.f32 %f{acc}, %f{v + j}, %f{v + j}, %f{acc};");
+        }
+
+        s.AppendLine(Tail("NA_S"));
+        s.AppendLine(Reduce(e1));
+
+        // Pass 3: norm = sum · inv · (gain + offset) (the sums this thread wrote).
+        s.AppendLine(Head("NA_N"));
+        s.AppendLine("""
+                add.u64 %rd28, %rd30, %rd19;
+                add.u64 %rd27, %rd23, %rd20;
+                add.u64 %rd25, %rd30, %rd21;
+            """);
+        for (int j = 0; j < Unroll; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}ld.global.f32 %f{v + j}, [%rd28+{j * Stride}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    {On(j)}ld.global.f32 %f{g + j}, [%rd27+{j * Stride}];");
+        }
+
+        for (int j = 0; j < Unroll; j++)
+        {
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
+                    {On(j)}add.f32 %f{g + j}, %f{g + j}, %f{o1};
+                    {On(j)}mul.rn.f32 %f{v + j}, %f{v + j}, %f{inv};
+                    {On(j)}mul.rn.f32 %f{v + j}, %f{v + j}, %f{g + j};
+                    {On(j)}st.global.f32 [%rd25+{j * Stride}], %f{v + j};
+                """);
+        }
+
+        s.AppendLine(Tail("NA_N"));
+        s.AppendLine("""
+                add.u32 %r32, %r32, 1;
+                bra NA_ROW;
+            """);
+        return s.ToString();
     }
 }

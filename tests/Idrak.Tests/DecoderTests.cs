@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
+using Idrak.Abstraction.Operations;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
@@ -19,6 +20,7 @@ internal static partial class Tests
         ("decoder: DecoderSpec variants match a plain reference implementation (GQA, q/k norm, biases, rope, tied, post-norms, parallel)", DecoderMatchesReference),
         ("decoder: cached decoding (float32 and int8 KV) and int8 weights match the full pass; generation", DecoderCachedAndInt8),
         ("decoder: cached decoding through int8 / int4 / bfloat16 weights (fused head layout, cache writes, split attention, gate/up + activation, projection + residual + norm) matches the full pass and the CPU", DecoderCachedPacked),
+        ("decoder: a sandwich block's projection, the norm after it, the residual addition and the next norm in one pass equal the separate operations bit for bit (int8 / int4 / bfloat16, one split count)", DecoderSandwichNorms),
         ("decoder: LoRA by layer name trains; JSON and package round trip", DecoderLoraAndPackage),
         ("decoder: tied head shares the table (float32, and a bfloat16 head's columns read as the embedding, bit for bit, also beside int8 / int4 projections); last-position prefill; bf16 embedding tables save and load", DecoderMemory),
     ];
@@ -758,6 +760,10 @@ internal static partial class Tests
                 Dim = 64, HeadDim = 16, FfDim = 128, MaxPositions = 256, NormOffset = 1f, Rope = new RopeSettings(100f, RotaryDim: 8, Interleaved: true),
                 Activation = FeedForwardActivation.Gelu,
             }),
+            ("post-norms (a sandwich block), norm offset, GELU", SmallSpec with
+            {
+                Dim = 64, HeadDim = 16, FfDim = 128, MaxPositions = 256, PostNorms = true, NormOffset = 1f, Activation = FeedForwardActivation.Gelu,
+            }),
         };
         int[] ids = [1, 4, 9, 16, 2, 7, 11, 3, 8, 20];
         int T = ids.Length;
@@ -798,12 +804,141 @@ internal static partial class Tests
                     string label = $"{name}, {weights} weights, {format} cache";
                     var cached = Decode(model, device, format);
                     float tolerance = format switch { KeyValueFormat.Float32 => 1e-3f * range, KeyValueFormat.BFloat16 => 0.04f * range, _ => 0.1f * range };
-                    AssertClose(full, cached, tolerance, $"{label}: against the full pass");
+                    if (format == KeyValueFormat.Float32 || !spec.PostNorms)
+                    {
+                        // The norms after attention and the feed-forward rescale small branches, and with them a quantized
+                        // cache's rounding (an int4 model with a bfloat16 cache moved a logit by 0.95 on the CPU before any
+                        // fused kernel): such caches are compared with the CPU's decoding only.
+                        AssertClose(full, cached, tolerance, $"{label}: against the full pass");
+                    }
+
                     if (cpuModel is not null)
                     {
                         AssertClose(Decode(cpuModel, Device.Cpu, format), cached, (format == KeyValueFormat.Int8 ? 0.01f : 2e-3f) * range, $"{label}: against the CPU");
                     }
                 }
+
+                if (spec.PostNorms)
+                {
+                    SandwichStep(model, device, spec, ids, $"{name}, {weights} weights");
+                }
+            }
+        }
+    }
+
+    // One decoding step of a sandwich block (norms after attention and the feed-forward): where the device has the fused
+    // kernels, each block's output and down projections run with the norm after them, the residual addition and the next
+    // norm as one operation (two a block); on CUDA one launch each, so the step runs no norm kernel of its own but the
+    // first block's (four a block before: the norm after each projection, then the addition with the next norm).
+    private static void SandwichStep(Sequential model, Device device, DecoderSpec spec, int[] ids, string label)
+    {
+        model.Eval();
+        using var context = new DecodingContext(device, 1, 256);
+        using (Autograd.NoGrad())
+        {
+            using (var prompt = Tensor.From([.. ids.Take(4).Select(i => (float)i)], [1, 4], device))
+            using (var first = Tensor.From([(float)ids[4]], [1, 1], device))
+            {
+                model.ForwardCached(prompt, context).Dispose();
+                model.ForwardCached(first, context).Dispose();               // the products' split counts measured
+            }
+
+            using var next = Tensor.From([(float)ids[5]], [1, 1], device);
+            long fused, norms, adds;
+            using (var trace = Kernels.Trace(device.Backend))
+            {
+                model.ForwardCached(next, context).Dispose();
+                device.Synchronize();
+                (fused, norms, adds) = (trace.Calls(Ops.PackedMatMulNormAddRmsNorm), trace.Calls(Ops.RmsNormAffine), trace.Calls(Ops.AddRmsNormAffine));
+            }
+
+            // A down projection that reads the activation itself (int4) keeps its own product, its norm and the addition.
+            bool downFuses = model.Descendants().OfType<FeedForward>().First().DownFusable;
+            int expected = device.Backend.Capabilities.FusedKernels ? (downFuses ? 2 : 1) * spec.Layers : 0;
+            Check(fused == expected, $"{label}: {fused} projections with their norm, addition and next norm in a step (expected {expected})");
+            if (device.Type == DeviceType.Cuda)
+            {
+                var (norm, add) = downFuses ? (1, 0) : (1 + spec.Layers, spec.Layers);
+                Check(norms == norm && adds == add, $"{label}: {norms} RmsNormAffine and {adds} AddRmsNormAffine launches in a step (expected {norm} and {add}: the norms after the output and down projections and the additions with the next norms run inside those projections)");
+            }
+        }
+    }
+
+    // PackedMatMulNormAddRmsNorm against the operations it stands for, on the same device: equal bit for bit when the
+    // products split k alike (CUDA: one launch whose last block reduces in the row kernels' order and rounds each step;
+    // elsewhere the default runs those operations). Widths below, at and past the 1,024 columns of a step of the last
+    // block's loop, one to eight rows.
+    private static void DecoderSandwichNorms(Device device)
+    {
+        var b = device.Backend;
+        var random = new Random(71);
+        var tensors = new List<Tensor>();
+        Tensor Make(int count, float scale)
+        {
+            var t = Tensor.From([.. Enumerable.Range(0, count).Select(_ => (float)(random.NextDouble() * 2 - 1) * scale)], [count], device);
+            tensors.Add(t);
+            return t;
+        }
+
+        int?[] splitCounts = device.Type == DeviceType.Cuda ? [1, 4] : [null];
+        try
+        {
+            foreach (var format in new[] { PackedFormat.Int8, PackedFormat.Int4, PackedFormat.BFloat16 })
+            {
+                foreach (var (k, n) in new[] { (128, 64), (192, 1000), (256, 2560) })
+                {
+                    var weights = Make(k * n, 0.5f);
+                    using var weight = PackedWeight.FromValues(format, weights.ToArray(), k, n, device);
+                    var (packed, scales) = (weight.PackedValues.Storage, weight.ScaleValues?.Storage);
+                    foreach (int m in new[] { 1, 3, 8 })
+                    {
+                        var (x, residual, yGain, gain) = (Make(m * k, 1f), Make(m * n, 2f), Make(n, 1f), Make(n, 1f));
+                        foreach (int? splits in splitCounts)
+                        {
+                            Idrak.Gpu.Cuda.CudaBackend.GemvSplits = splits;
+                            try
+                            {
+                                var (y, sum, normalized) = (Make(m * n, 0f), Make(m * n, 0f), Make(m * n, 0f));
+                                var (y2, sum2, normalized2) = (Make(m * n, 0f), Make(m * n, 0f), Make(m * n, 0f));
+                                Check(b.PackedMatMulNormAddRmsNorm(format, x.Storage, packed, scales, y.Storage, m, n, k, yGain.Storage, 1e-6f, 1f,
+                                    residual.Storage, sum.Storage, gain.Storage, normalized.Storage, 1e-5f, 1f), $"{format}: the operation ran");
+                                switch (format)
+                                {
+                                    case PackedFormat.Int8:
+                                        b.Int8MatMul(x.Storage, packed, scales!, y2.Storage, m, n, k);
+                                        break;
+                                    case PackedFormat.Int4:
+                                        b.Int4MatMul(x.Storage, packed, scales!, y2.Storage, m, n, k);
+                                        break;
+                                    default:
+                                        b.BFloat16MatMul(x.Storage, packed, y2.Storage, m, n, k);
+                                        break;
+                                }
+
+                                b.RmsNormAffine(y2.Storage, yGain.Storage, y2.Storage, m, n, 1e-6f, 1f);
+                                b.AddRmsNormAffine(residual.Storage, y2.Storage, sum2.Storage, gain.Storage, normalized2.Storage, m, n, 1e-5f, 1f);
+                                string what = $"{format}, {m} x {k} -> {n}, {(splits is { } s ? $"{s} splits" : "the default splits")}";
+                                foreach (var (fusedOut, composedOut, output) in new[] { (sum, sum2, "sum"), (normalized, normalized2, "normalized") })
+                                {
+                                    float[] f = fusedOut.ToArray(), c = composedOut.ToArray();
+                                    int differ = f.Where((v, i) => BitConverter.SingleToInt32Bits(v) != BitConverter.SingleToInt32Bits(c[i])).Count();
+                                    Check(differ == 0, $"{what}: {differ} of {f.Length} {output} values differ from the separate product, norm and addition with norm (largest difference {f.Zip(c, (p, q) => MathF.Abs(p - q)).Max()})");
+                                }
+                            }
+                            finally
+                            {
+                                Idrak.Gpu.Cuda.CudaBackend.GemvSplits = null;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            foreach (var t in tensors)
+            {
+                t.Dispose();
             }
         }
     }

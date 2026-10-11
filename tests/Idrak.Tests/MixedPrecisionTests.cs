@@ -832,6 +832,7 @@ internal static partial class Tests
             ("gate/up + act 1024 -> 2x3072", gateUpBytes, i => Linear.MatMulPackedGatedPair(x1024, gates[i], ups[i], 0), gates.Length),
             ("o + add + norm 2048 -> 1024", 2048L * 1024, i => Linear.MatMulPackedAddRmsNorm(x2048, os[i], x1024, norm), os.Length),
             ("down + add + norm 3072 -> 1024", 3072L * 1024, i => Linear.MatMulPackedAddRmsNorm(x3072, downs[i], x1024, norm), downs.Length),
+            ("down + norm + add + norm 3072 -> 1024", 3072L * 1024, i => Linear.MatMulPackedNormAddRmsNorm(x3072, downs[i], norm, x1024, norm), downs.Length),
             ("head 1024 -> 151936", 1024L * 151936, i => x1024.MatMulInt8(heads[i].Int8!), heads.Length),
         };
         int?[] splits = [null, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];

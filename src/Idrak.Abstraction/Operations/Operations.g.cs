@@ -35,129 +35,130 @@ internal static class OperationIndex
     public const int PackedMatMulLarge = 19;
     public const int PackedMatMulGated = 20;
     public const int PackedMatMulAddRmsNorm = 21;
-    public const int PackedMatMulMany = 22;
-    public const int PackedMatMulGatedPair = 23;
-    public const int MatMulMany = 24;
-    public const int MatMulBias = 25;
-    public const int MatMulLowRank = 26;
-    public const int BFloat16TransposedMatMul = 27;
-    public const int Float8QuantizeWeight = 28;
-    public const int Float8MatMul = 29;
-    public const int PackedMatMulLowRank = 30;
-    public const int GemmStrided = 31;
-    public const int AttentionStrided = 32;
-    public const int AttentionStridedBackward = 33;
-    public const int SumColumns = 34;
-    public const int AddDropout = 35;
-    public const int BatchedMatMul = 36;
-    public const int Softmax = 37;
-    public const int SoftmaxBackward = 38;
-    public const int ArgMax = 39;
-    public const int ClassMatch = 40;
-    public const int NormStats = 41;
-    public const int NormApply = 42;
-    public const int NormBackward = 43;
-    public const int GroupScaleShift = 44;
-    public const int GroupReduce = 45;
-    public const int InvSqrt = 46;
-    public const int Gather = 47;
-    public const int GatherBFloat16 = 48;
-    public const int GatherBFloat16Columns = 49;
-    public const int OneHot = 50;
-    public const int ScatterAdd = 51;
-    public const int Im2Col = 52;
-    public const int Col2Im = 53;
-    public const int MaxPool = 54;
-    public const int MaxPoolBackward = 55;
-    public const int MaxPoolBackward2 = 56;
-    public const int Convolution = 57;
-    public const int ConvolutionBackwardInput = 58;
-    public const int ConvolutionBackwardWeight = 59;
-    public const int AvgPool = 60;
-    public const int AvgPoolBackward = 61;
-    public const int ResizeNormalize = 62;
-    public const int Interpolate2d = 63;
-    public const int Interpolate2dBackward = 64;
-    public const int AdaptiveAvgPool = 65;
-    public const int AdaptiveAvgPoolBackward = 66;
-    public const int AdaptiveMaxPool = 67;
-    public const int AdaptiveMaxPoolBackward = 68;
-    public const int CtcLoss = 69;
-    public const int CtcLossBackward = 70;
-    public const int LstmCell = 71;
-    public const int LstmCellBackward = 72;
-    public const int GruCell = 73;
-    public const int GruCellBackward = 74;
-    public const int LstmStep = 75;
-    public const int LstmStepBackward = 76;
-    public const int GruStep = 77;
-    public const int GruStepBackward = 78;
-    public const int LstmSequence = 79;
-    public const int LstmSequenceBackward = 80;
-    public const int GruSequence = 81;
-    public const int GruSequenceBackward = 82;
-    public const int BoxIouLoss = 83;
-    public const int BoxIouLossBackward = 84;
-    public const int SigmoidFocalLoss = 85;
-    public const int SigmoidFocalLossBackward = 86;
-    public const int Permute = 87;
-    public const int SumAxis = 88;
-    public const int BroadcastAxis = 89;
-    public const int SgdStep = 90;
-    public const int AdamStep = 91;
-    public const int AdamStep8Bit = 92;
-    public const int SumSquares = 93;
-    public const int FusedAdamW = 94;
-    public const int ClipFactor = 95;
-    public const int Dropout = 96;
-    public const int DropoutBackward = 97;
-    public const int ScaleMaskSoftmax = 98;
-    public const int LayerNormFused = 99;
-    public const int LayerNormTrain = 100;
-    public const int LayerNormBackward = 101;
-    public const int BiasGelu = 102;
-    public const int Int8MatMul = 103;
-    public const int BFloat16MatMul = 104;
-    public const int BFloat16Dequantize = 105;
-    public const int PackBFloat16 = 106;
-    public const int Int8Dequantize = 107;
-    public const int Int4MatMul = 108;
-    public const int Int4Dequantize = 109;
-    public const int RmsNorm = 110;
-    public const int RmsNormBackward = 111;
-    public const int Rope = 112;
-    public const int RmsNormAffine = 113;
-    public const int AddRmsNormAffine = 114;
-    public const int RmsNormRope = 115;
-    public const int RmsNormRopePair = 116;
-    public const int NormRopeHeads = 117;
-    public const int SoftmaxCrossEntropyRows = 118;
-    public const int GatedActivation = 119;
-    public const int GatedActivationBackward = 120;
-    public const int GatedActivationPacked = 121;
-    public const int GatedActivationBackwardPacked = 122;
-    public const int KeyValueWriteInt8 = 123;
-    public const int AttentionScoresInt8 = 124;
-    public const int AttentionContextInt8 = 125;
-    public const int AttentionDecode = 126;
-    public const int AttentionInt8 = 127;
-    public const int AttentionBFloat16 = 128;
-    public const int KeyValueWriteBFloat16 = 129;
-    public const int AttentionTiledBackward = 130;
-    public const int AttentionSegmented = 131;
-    public const int AttentionRows = 132;
-    public const int AttentionSegmentedBackward = 133;
-    public const int AttentionTiled = 134;
-    public const int AttentionSpans = 135;
-    public const int AttentionSpansBackward = 136;
-    public const int DecoderMask = 137;
-    public const int KeyValueWrite = 138;
-    public const int SampleRows = 139;
-    public const int PenalizeRows = 140;
-    public const int HistoryPush = 141;
+    public const int PackedMatMulNormAddRmsNorm = 22;
+    public const int PackedMatMulMany = 23;
+    public const int PackedMatMulGatedPair = 24;
+    public const int MatMulMany = 25;
+    public const int MatMulBias = 26;
+    public const int MatMulLowRank = 27;
+    public const int BFloat16TransposedMatMul = 28;
+    public const int Float8QuantizeWeight = 29;
+    public const int Float8MatMul = 30;
+    public const int PackedMatMulLowRank = 31;
+    public const int GemmStrided = 32;
+    public const int AttentionStrided = 33;
+    public const int AttentionStridedBackward = 34;
+    public const int SumColumns = 35;
+    public const int AddDropout = 36;
+    public const int BatchedMatMul = 37;
+    public const int Softmax = 38;
+    public const int SoftmaxBackward = 39;
+    public const int ArgMax = 40;
+    public const int ClassMatch = 41;
+    public const int NormStats = 42;
+    public const int NormApply = 43;
+    public const int NormBackward = 44;
+    public const int GroupScaleShift = 45;
+    public const int GroupReduce = 46;
+    public const int InvSqrt = 47;
+    public const int Gather = 48;
+    public const int GatherBFloat16 = 49;
+    public const int GatherBFloat16Columns = 50;
+    public const int OneHot = 51;
+    public const int ScatterAdd = 52;
+    public const int Im2Col = 53;
+    public const int Col2Im = 54;
+    public const int MaxPool = 55;
+    public const int MaxPoolBackward = 56;
+    public const int MaxPoolBackward2 = 57;
+    public const int Convolution = 58;
+    public const int ConvolutionBackwardInput = 59;
+    public const int ConvolutionBackwardWeight = 60;
+    public const int AvgPool = 61;
+    public const int AvgPoolBackward = 62;
+    public const int ResizeNormalize = 63;
+    public const int Interpolate2d = 64;
+    public const int Interpolate2dBackward = 65;
+    public const int AdaptiveAvgPool = 66;
+    public const int AdaptiveAvgPoolBackward = 67;
+    public const int AdaptiveMaxPool = 68;
+    public const int AdaptiveMaxPoolBackward = 69;
+    public const int CtcLoss = 70;
+    public const int CtcLossBackward = 71;
+    public const int LstmCell = 72;
+    public const int LstmCellBackward = 73;
+    public const int GruCell = 74;
+    public const int GruCellBackward = 75;
+    public const int LstmStep = 76;
+    public const int LstmStepBackward = 77;
+    public const int GruStep = 78;
+    public const int GruStepBackward = 79;
+    public const int LstmSequence = 80;
+    public const int LstmSequenceBackward = 81;
+    public const int GruSequence = 82;
+    public const int GruSequenceBackward = 83;
+    public const int BoxIouLoss = 84;
+    public const int BoxIouLossBackward = 85;
+    public const int SigmoidFocalLoss = 86;
+    public const int SigmoidFocalLossBackward = 87;
+    public const int Permute = 88;
+    public const int SumAxis = 89;
+    public const int BroadcastAxis = 90;
+    public const int SgdStep = 91;
+    public const int AdamStep = 92;
+    public const int AdamStep8Bit = 93;
+    public const int SumSquares = 94;
+    public const int FusedAdamW = 95;
+    public const int ClipFactor = 96;
+    public const int Dropout = 97;
+    public const int DropoutBackward = 98;
+    public const int ScaleMaskSoftmax = 99;
+    public const int LayerNormFused = 100;
+    public const int LayerNormTrain = 101;
+    public const int LayerNormBackward = 102;
+    public const int BiasGelu = 103;
+    public const int Int8MatMul = 104;
+    public const int BFloat16MatMul = 105;
+    public const int BFloat16Dequantize = 106;
+    public const int PackBFloat16 = 107;
+    public const int Int8Dequantize = 108;
+    public const int Int4MatMul = 109;
+    public const int Int4Dequantize = 110;
+    public const int RmsNorm = 111;
+    public const int RmsNormBackward = 112;
+    public const int Rope = 113;
+    public const int RmsNormAffine = 114;
+    public const int AddRmsNormAffine = 115;
+    public const int RmsNormRope = 116;
+    public const int RmsNormRopePair = 117;
+    public const int NormRopeHeads = 118;
+    public const int SoftmaxCrossEntropyRows = 119;
+    public const int GatedActivation = 120;
+    public const int GatedActivationBackward = 121;
+    public const int GatedActivationPacked = 122;
+    public const int GatedActivationBackwardPacked = 123;
+    public const int KeyValueWriteInt8 = 124;
+    public const int AttentionScoresInt8 = 125;
+    public const int AttentionContextInt8 = 126;
+    public const int AttentionDecode = 127;
+    public const int AttentionInt8 = 128;
+    public const int AttentionBFloat16 = 129;
+    public const int KeyValueWriteBFloat16 = 130;
+    public const int AttentionTiledBackward = 131;
+    public const int AttentionSegmented = 132;
+    public const int AttentionRows = 133;
+    public const int AttentionSegmentedBackward = 134;
+    public const int AttentionTiled = 135;
+    public const int AttentionSpans = 136;
+    public const int AttentionSpansBackward = 137;
+    public const int DecoderMask = 138;
+    public const int KeyValueWrite = 139;
+    public const int SampleRows = 140;
+    public const int PenalizeRows = 141;
+    public const int HistoryPush = 142;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 142;
+    public const int Count = 143;
 }
 
 /// <summary>
@@ -302,6 +303,18 @@ public static class OperationKernels
     /// next normalization) in the same pass. Returns false when the device has no fused version.
     /// </summary>
     public delegate bool PackedMatMulAddRmsNorm(Backend backend, PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackedMatMulNormAddRmsNorm"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x · w for few rows with packed weights w (in <paramref name="format"/>), then y's own RMS normalization ·
+    /// (yGain + yOffset), sum = residual + that, and normalized = sum's RMS normalization · (gain + offset) per row: a
+    /// sandwich block's output (or down) projection, the norm after it, the residual addition and the next block's norm.
+    /// Writes y (the projection), sum and normalized. The default composes the format's product (as the packed layer runs
+    /// few rows: for int8 the device's packed product where it prefers it) with <see cref="Backend.RmsNormAffine"/> on y in place
+    /// and <see cref="Backend.AddRmsNormAffine"/>, the operations a block runs without it; a device may do it in one pass.
+    /// Returns false when the format has no product here.
+    /// </summary>
+    public delegate bool PackedMatMulNormAddRmsNorm(Backend backend, PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset);
 
     /// <summary>
     /// A kernel for <see cref="Ops.PackedMatMulMany"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1400,6 +1413,18 @@ public static partial class Ops
         new("PackedMatMulAddRmsNorm", "PackedMatMulAddRmsNormKernel", "PackedFormat,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Storage,Storage,Storage,Storage,Single,Single", OperationIndex.PackedMatMulAddRmsNorm, typeof(OperationKernels.PackedMatMulAddRmsNorm), KernelSource.None);
 
     /// <summary>
+    /// y = x · w for few rows with packed weights w (in <c>format</c>), then y's own RMS normalization ·
+    /// (yGain + yOffset), sum = residual + that, and normalized = sum's RMS normalization · (gain + offset) per row: a
+    /// sandwich block's output (or down) projection, the norm after it, the residual addition and the next block's norm.
+    /// Writes y (the projection), sum and normalized. The default composes the format's product (as the packed layer runs
+    /// few rows: for int8 the device's packed product where it prefers it) with <see cref="Backend.RmsNormAffine"/> on y in place
+    /// and <see cref="Backend.AddRmsNormAffine"/>, the operations a block runs without it; a device may do it in one pass.
+    /// Returns false when the format has no product here.
+    /// </summary>
+    public static readonly Operation PackedMatMulNormAddRmsNorm =
+        new("PackedMatMulNormAddRmsNorm", "PackedMatMulNormAddRmsNormKernel", "PackedFormat,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Storage,Single,Single,Storage,Storage,Storage,Storage,Single,Single", OperationIndex.PackedMatMulNormAddRmsNorm, typeof(OperationKernels.PackedMatMulNormAddRmsNorm), KernelSource.Composed);
+
+    /// <summary>
     /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), in <c>format</c>
     /// (int8 as in <see cref="Backend.Int8MatMul"/>, 4-bit as in <see cref="Backend.Int4MatMul"/>, bfloat16 as in
     /// <see cref="Backend.BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then
@@ -2376,6 +2401,7 @@ public static partial class Ops
         PackedMatMulLarge,
         PackedMatMulGated,
         PackedMatMulAddRmsNorm,
+        PackedMatMulNormAddRmsNorm,
         PackedMatMulMany,
         PackedMatMulGatedPair,
         MatMulMany,
