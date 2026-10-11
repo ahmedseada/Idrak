@@ -192,6 +192,17 @@ public readonly record struct EngineEvent(EngineEventKind Kind, string Model, Ti
 public readonly record struct DeviceFailed(string Device, string? Operation, string Message, bool RetriedOnHost, string? Hint);
 
 /// <summary>
+/// Published the first time an operation runs through the host fallback on a device (the device has no kernel of its
+/// own for it, or none for these arguments, such as a head size above its limit), to the hooks listening at
+/// <c>TelemetryLevel.Devices</c>: once per operation and device while someone listens. Every such call copies its
+/// operands to the CPU and back; <c>Operations.Kernels.HostCalls</c> and <c>KernelTrace.HostCallsByOperation</c> count
+/// them all.
+/// </summary>
+/// <param name="Device">The kind of device ("cuda", "vulkan", "hip", …).</param>
+/// <param name="Operation">The operation (as <c>Operation.Name</c>, or a copy's method name).</param>
+public readonly record struct HostFallback(string Device, string Operation);
+
+/// <summary>
 /// Published when an app's implementation of a slot threw, when <c>TelemetryLevel.Overrides</c> is enabled: under
 /// <see cref="SlotPolicy.Throw"/> (the default) the error went on to the caller, under <see cref="SlotPolicy.FallBack"/>
 /// the call was answered by the library default.

@@ -38,7 +38,8 @@ public enum TelemetryLevel
     Engine = 1 << 7,
 
     /// <summary>
-    /// Device failures (<see cref="DeviceFailed"/>): a GPU error, and an operation retried on the CPU. Rare; the built-in
+    /// Device failures (<see cref="DeviceFailed"/>): a GPU error, and an operation retried on the CPU; and the first host
+    /// fallback of each operation on a device (<see cref="HostFallback"/>). Rare; the built-in
     /// <see cref="ConsoleLogger"/> and <see cref="JsonLinesLogger"/> always include it.
     /// </summary>
     Devices = 1 << 8,
@@ -110,6 +111,11 @@ public interface ITelemetryHook
 
     /// <summary>A device failed, or an operation was retried on the CPU after its kernel failed (<see cref="TelemetryLevel.Devices"/>).</summary>
     void OnDeviceFailed(in DeviceFailed e)
+    {
+    }
+
+    /// <summary>An operation ran through the host fallback on a device for the first time (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnHostFallback(in HostFallback e)
     {
     }
 
@@ -287,6 +293,17 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnDeviceFailed(in e);
+            }
+        }
+    }
+
+    internal static void HostFallback(in HostFallback e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnHostFallback(in e);
             }
         }
     }

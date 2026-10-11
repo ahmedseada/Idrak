@@ -78,9 +78,17 @@ public static class ImagePrefill
         }
 
         var (blocks, first) = Prepare(decoder, ids, images, attention, segments: null);
-        using (blocks.Use())
+        blocks.KeepOnDevice = !Autograd.IsEnabled;                       // nothing recorded holds the tables past the pass
+        try
         {
-            return decoder.ForwardCached(ids, context, count, (i, x) => i == first ? blocks.Substitute(x) : x);
+            using (blocks.Use())
+            {
+                return decoder.ForwardCached(ids, context, count, (i, x) => i == first ? blocks.Substitute(x) : x);
+            }
+        }
+        finally
+        {
+            blocks.ReleaseDevice();
         }
     }
 
@@ -444,6 +452,10 @@ internal sealed class ImageBlocks
     private readonly Dictionary<int, (int Offset, int[]? RowStarts, float[] Starts, float[] Ends)> _spanValues = [];
     private readonly Dictionary<int, (int Offset, int[]? RowStarts, int KeyRows, float[] Mask)> _maskValues = [];
 
+    // The device copies of those host tables (by the array copied), while KeepOnDevice: one upload per table and pass
+    // instead of one per attention layer; freed by ReleaseDevice.
+    private readonly Dictionary<float[], Tensor> _uploaded = new(ReferenceEqualityComparer.Instance);
+
     public ImageBlocks(int batch, int steps, int dim, IReadOnlyList<PromptImage> images, IImageAttentionRule rule, IReadOnlyList<IReadOnlyList<int>>? segments,
         Buffers? buffers = null)
     {
@@ -464,6 +476,13 @@ internal sealed class ImageBlocks
 
     /// <summary>The fixed buffers the pass reads (a recordable pass), or null.</summary>
     public Buffers? Fixed { get; }
+
+    /// <summary>
+    /// Whether <see cref="Spans"/> and <see cref="Mask"/> keep their device copies for the next layer (a pass without
+    /// autograd, which ends with <see cref="ReleaseDevice"/>); otherwise each call copies the tables to the device anew,
+    /// tensors of the scope in effect.
+    /// </summary>
+    public bool KeepOnDevice { get; set; }
 
     /// <summary>Whether the attention layers attend by <see cref="Spans"/> (false: the rule is causal and the usual kernels run).</summary>
     public bool Attends { get; }
@@ -570,7 +589,35 @@ internal sealed class ImageBlocks
         }
 
         var (hostStarts, hostEnds) = HostSpans(window, offset, rowStarts);
-        return (Tensor.From(hostStarts, device), Tensor.From(hostEnds, device));          // copied to the device: the arrays stay as computed
+        return (Upload(hostStarts, [hostStarts.Length], device), Upload(hostEnds, [hostEnds.Length], device));   // the arrays stay as computed
+    }
+
+    // A host table on the device: the copy made for an earlier layer of this pass when KeepOnDevice, else a new tensor.
+    private Tensor Upload(float[] values, int[] shape, Device device)
+    {
+        if (!KeepOnDevice)
+        {
+            return Tensor.From(values, shape, device);
+        }
+
+        if (_uploaded.TryGetValue(values, out var copy) && copy.Device == device && !copy.IsDisposed)
+        {
+            return copy;
+        }
+
+        copy?.Dispose();
+        return _uploaded[values] = Tensor.Persistent(values, shape, device, requiresGrad: false);
+    }
+
+    /// <summary>Frees the device copies kept for the pass (<see cref="KeepOnDevice"/>).</summary>
+    public void ReleaseDevice()
+    {
+        foreach (var copy in _uploaded.Values)
+        {
+            copy.Dispose();
+        }
+
+        _uploaded.Clear();
     }
 
     /// <summary>
@@ -603,7 +650,7 @@ internal sealed class ImageBlocks
             _maskValues[window] = cached;
         }
 
-        return Tensor.From(cached.Mask, [cached.Mask.Length / keyRows, keyRows], device);
+        return Upload(cached.Mask, [cached.Mask.Length / keyRows, keyRows], device);
     }
 
     // The host tables of Spans, computed once per window, offset and row starts.

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Devices.Cpu;
@@ -293,6 +294,9 @@ public abstract partial class Backend
     // Operations this device has run through the host fallback (HostCall), read through Kernels.HostCalls.
     private long _hostCalls;
 
+    // The operations whose first host fallback was reported to telemetry (HostFallback), made on the first report.
+    private ConcurrentDictionary<string, bool>? _hostFallbacksReported;
+
     // RetryOnHost: 1 on, 0 off, -1 not read yet from IDRAK_RETRY_ON_HOST (read on first use, when Kind is safe to call).
     private int _retryOnHost = -1;
 
@@ -437,11 +441,18 @@ public abstract partial class Backend
     /// <summary>Operations run through the host fallback so far.</summary>
     internal long HostCalls => Interlocked.Read(ref _hostCalls);
 
-    /// <summary>Counts one host fallback of the operation named <paramref name="operation"/>.</summary>
+    /// <summary>
+    /// Counts one host fallback of the operation named <paramref name="operation"/>, and reports its first to telemetry.
+    /// </summary>
     internal void HostCalled(string operation)
     {
         Interlocked.Increment(ref _hostCalls);
         Volatile.Read(ref _trace)?.HostCalled(operation);
+        if (Telemetry.IsEnabled(TelemetryLevel.Devices)
+            && LazyInitializer.EnsureInitialized(ref _hostFallbacksReported, static () => new(StringComparer.Ordinal)).TryAdd(operation, true))
+        {
+            Telemetry.HostFallback(new HostFallback(Kind, operation));         // once per operation, while someone listens
+        }
     }
 
     // The kernel registered for an operation on this device, or null for the device's own (off the fast path: counted
