@@ -160,7 +160,7 @@ public static partial class PillowImageOps
                 n += histogram[i];
             }
 
-            Map(plane.AsSpan(0, size), lut);
+            Map(plane, size, lut);
         }
 
         return FromBytes(planes, image.Height, image.Width);
@@ -184,7 +184,7 @@ public static partial class PillowImageOps
         int size = image.Height * image.Width;
         foreach (var plane in planes)
         {
-            Map(plane.AsSpan(0, size), lut);
+            Map(plane, size, lut);
         }
 
         return FromBytes(planes, image.Height, image.Width);
@@ -204,7 +204,7 @@ public static partial class PillowImageOps
         }
 
         int size = image.Height * image.Width;
-        var grey = image.Channels == 1 ? Bytes(image)[0] : ImagePreprocessor.ToBytes(image, grayscale: true)[0];
+        var grey = image.Channels == 1 ? Bytes(image)[0] : ImagePreprocessor.ToBytes(image, grayscale: true)[0];   // one pass from the floats
         int t = threshold ?? Otsu(grey.AsSpan(0, size)) + 1;
         var lut = new byte[256];
         for (int i = 0; i < 256; i++)
@@ -212,7 +212,7 @@ public static partial class PillowImageOps
             lut[i] = (byte)(i >= t ? 255 : 0);
         }
 
-        Map(grey.AsSpan(0, size), lut);
+        Map(grey, size, lut);
         return FromBytes([grey], image.Height, image.Width);
     }
 
@@ -268,12 +268,17 @@ public static partial class PillowImageOps
 
     // ---------------------------------------------------------------- helpers
 
-    private static void Map(Span<byte> plane, ReadOnlySpan<byte> lut)
+    // Every byte of plane[..length] through a 256-entry table, in place, in parallel chunks (each byte on its own: the
+    // result does not depend on the split).
+    internal static void Map(byte[] plane, int length, byte[] lut)
     {
-        for (int i = 0; i < plane.Length; i++)
+        HostParallel.For(length, 1 << 15, (first, last) =>
         {
-            plane[i] = lut[plane[i]];
-        }
+            for (int i = first; i < last; i++)
+            {
+                plane[i] = lut[plane[i]];
+            }
+        });
     }
 
     // Otsu's threshold: the level t that maximizes the between-class variance of [0, t] and (t, 255], in double as the
