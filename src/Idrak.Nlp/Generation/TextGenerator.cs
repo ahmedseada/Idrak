@@ -565,7 +565,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         {
             // NoGrad is entered per compute call, never held across a yield (it is thread-local state of the caller).
             var (kept, keptIds) = options.UseCache && KeepCache ? TakeCache(context) : (null, []);
-            var decoding = kept ?? new DecodingContext(Device, 1, context, Layout);
+            // A cache kept for the next turn holds the whole window; otherwise it holds what this reply can reach (the
+            // prompt and its most tokens, as the batched path), less memory to hold and to clear on every call. Only a
+            // reply that can outgrow the window re-reads its last half, at the window's size as before.
+            int capacity = options.UseCache && KeepCache ? context : Math.Min(context, history.Count + limit);
+            var decoding = kept ?? new DecodingContext(Device, 1, capacity, Layout);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
             decoding.Cancellation = cancellationToken;                          // the prompt's pass stops between layers
             bool keep = false, steppedOnce = false;
@@ -651,7 +655,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                         break;
                     }
 
-                    if (!options.UseCache || decoding.Length >= context)
+                    if (!options.UseCache || decoding.Length >= decoding.Capacity)
                     {
                         // Full recompute needs every id on the host; a full window is re-read from its last half.
                         string piece = Collect(produced, final: false);
