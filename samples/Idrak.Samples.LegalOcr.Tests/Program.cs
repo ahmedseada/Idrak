@@ -32,14 +32,15 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
 
 (string Name, Action Run)[] tests =
 [
-    ("legal settings: bakrianoo's model is read with its model card's preprocessing and prompt, its full text from full_text_extract", () =>
+    ("legal settings: bakrianoo's model is read with its model card's preprocessing and its training data's instruction, its full text from full_text_extract", () =>
     {
         var configuration = new ConfigurationBuilder().AddJsonFile(Path.Combine(RepositoryRoot(), "samples", "Idrak.Samples.LegalOcr", "appsettings.json")).Build();
         var settings = configuration.GetSection("LegalOcr").Get<LegalOcrSettings>()!;
         var bakrianoo = settings.Models.Single(m => m.Id == "bakrianoo");
         Check(bakrianoo.Repo == "bakrianoo/arabic-legal-documents-ocr-1.0", bakrianoo.Repo ?? "no repo");
         Check(ImageTransformPipeline.Parse(bakrianoo.Preprocessing).ToString() == "grayscale,max_width=1024,contrast=1.5", bakrianoo.Preprocessing);
-        Check(bakrianoo.Prompt == "Extract details to JSON." && bakrianoo.MaxTokens == 2048, $"{bakrianoo.Prompt}, {bakrianoo.MaxTokens}");
+        Check(bakrianoo.Prompt.StartsWith("You are a professional OCR Details Extractor.\n", StringComparison.Ordinal) && bakrianoo.Prompt.Contains("confidence_quality", StringComparison.Ordinal)
+              && bakrianoo.MaxTokens == 2048, $"{bakrianoo.Prompt}, {bakrianoo.MaxTokens}");
         Check(settings.Models.All(m => m.FullText == "full_text_extract"), "the Full text tab shows full_text_extract");
         Check(settings.Weights == "bf16", settings.Weights);
         Check(settings.Models.Any(m => m.Id == settings.Tuning.Base) && ImageTransformPipeline.Parse(settings.Tuning.Preprocessing).ToString() == bakrianoo.Preprocessing
