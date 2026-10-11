@@ -984,6 +984,18 @@ public readonly record struct Idrak.Abstraction.Diagnostics.HostFallback : Syste
   public string Device { get; init; }
   public string Operation { get; init; }
 
+public interface Idrak.Abstraction.Diagnostics.IProfileProbe
+  public System.Action Begin(Idrak.Abstraction.Diagnostics.ProfileRun run)
+  public bool Intrusive { get; }
+  public bool Supports(Idrak.Abstraction.Device device)
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Diagnostics.IProfileWriter
+  public string Name { get; }
+  public string Summary { get; }
+  public void Write(Idrak.Abstraction.Diagnostics.ProfileReport report, System.IO.TextWriter output)
+
 public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public (default) void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
@@ -1081,6 +1093,104 @@ public readonly record struct Idrak.Abstraction.Diagnostics.OverrideFailed : Sys
   public string Registry { get; init; }
   public string Slot { get; init; }
   public string? Hint { get; init; }
+
+public sealed record Idrak.Abstraction.Diagnostics.ProfileOptions : System.IEquatable<Idrak.Abstraction.Diagnostics.ProfileOptions>
+  public Idrak.Abstraction.Diagnostics.ProfileStatistic Statistic { get; init; }
+  public ProfileOptions()
+  public System.Collections.Generic.IReadOnlyList<string>? Probes { get; init; }
+  public bool Cold { get; init; }
+  public int WarmRuns { get; init; }
+  public static Idrak.Abstraction.Diagnostics.ProfileOptions FromEnvironment(Idrak.Abstraction.Diagnostics.ProfileOptions? defaults = null)
+  public string Format { get; init; }
+  public string? Output { get; init; }
+
+public static class Idrak.Abstraction.Diagnostics.ProfileProbes
+  public static Idrak.Abstraction.Diagnostics.IProfileProbe Get(string name)
+  public static Idrak.Abstraction.Diagnostics.IProfileProbe? Default(string name)
+  public static Idrak.Abstraction.Diagnostics.IProfileProbe? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Diagnostics.IProfileProbe probe)
+
+public sealed class Idrak.Abstraction.Diagnostics.ProfileReport
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Diagnostics.ProfileOptions Options { get; }
+  public Idrak.Abstraction.Diagnostics.ProfileSummary? this[string name] { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.ProfileRun> Runs { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.ProfileSummary> Summary { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Probes { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Skipped { get; }
+  public string Name { get; }
+  public void Write()
+  public void Write(System.IO.TextWriter output, string? format = null)
+
+public sealed class Idrak.Abstraction.Diagnostics.ProfileRun
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Diagnostics.ProfileRunKind Kind { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.ProfileTable> Tables { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.ProfileValue> Values { get; }
+  public T Stage<T>(string name, System.Func<T> body)
+  public double? Value(string name)
+  public int Index { get; }
+  public string? Probe { get; }
+  public void Add(Idrak.Abstraction.Diagnostics.ProfileTable table)
+  public void Record(string name, double value, string unit = "")
+  public void Stage(string name, System.Action body)
+  public void Stage(string name, System.TimeSpan elapsed)
+
+public enum Idrak.Abstraction.Diagnostics.ProfileRunKind : int
+  Cold = 0
+  Probe = 2
+  Warm = 1
+
+public enum Idrak.Abstraction.Diagnostics.ProfileStatistic : int
+  Max = 3
+  Mean = 1
+  Median = 0
+  Min = 2
+
+public sealed record Idrak.Abstraction.Diagnostics.ProfileSummary : System.IEquatable<Idrak.Abstraction.Diagnostics.ProfileSummary>
+  public ProfileSummary(string Name, string Unit, string? Source, double? Cold, double? Value, double? Min, double? Max, int Count)
+  public double? Cold { get; init; }
+  public double? Max { get; init; }
+  public double? Min { get; init; }
+  public double? Value { get; init; }
+  public int Count { get; init; }
+  public string Name { get; init; }
+  public string Unit { get; init; }
+  public string? Source { get; init; }
+
+public sealed record Idrak.Abstraction.Diagnostics.ProfileTable : System.IEquatable<Idrak.Abstraction.Diagnostics.ProfileTable>
+  public ProfileTable(string Name, System.Collections.Generic.IReadOnlyList<string> Columns, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> Rows)
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> Rows { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Columns { get; init; }
+  public string Name { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.ProfileValue : System.IEquatable<Idrak.Abstraction.Diagnostics.ProfileValue>
+  public ProfileValue(string Name, double Value, string Unit, string? Source)
+  public double Value { get; init; }
+  public string Name { get; init; }
+  public string Unit { get; init; }
+  public string? Source { get; init; }
+
+public static class Idrak.Abstraction.Diagnostics.ProfileWriters
+  public const string Csv = "csv"
+  public const string Json = "json"
+  public const string Markdown = "markdown"
+  public const string Table = "table"
+  public static Idrak.Abstraction.Diagnostics.IProfileWriter Get(string name)
+  public static Idrak.Abstraction.Diagnostics.IProfileWriter? Default(string name)
+  public static Idrak.Abstraction.Diagnostics.IProfileWriter? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Diagnostics.IProfileWriter writer)
+
+public static class Idrak.Abstraction.Diagnostics.Profiler
+  public static Idrak.Abstraction.Diagnostics.ProfileReport Run(string name, Idrak.Abstraction.Device device, System.Action<Idrak.Abstraction.Diagnostics.ProfileRun> workload, Idrak.Abstraction.Diagnostics.ProfileOptions? options = null)
 
 public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static Idrak.Abstraction.Diagnostics.TelemetryBuilder Configure()
