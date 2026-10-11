@@ -160,38 +160,29 @@ public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderS
         }
 
         var config = Vision.Encoder;
-        int each = config.Channels * config.ImageSize * config.ImageSize;
 
-        // Every view's pixel values written into one pooled buffer, uploaded, and the buffer given back: a page leaves no
-        // 9.6 MB arrays on the managed heap (each one a large-object allocation that brings full collections nearer).
-        float[] values = System.Buffers.ArrayPool<float>.Shared.Rent(images.Count * each);
+        // Every view's pixel values as one batch on the encoder's device (ImagePreprocessor.ProcessBatch): on a GPU the views'
+        // bytes are uploaded and resized there (the host's values bit for bit); on the CPU written into one pooled buffer,
+        // so a page leaves no 9.6 MB arrays on the managed heap either way.
+        Tensor input;
         try
         {
-            for (int i = 0; i < images.Count; i++)
-            {
-                int written;
-                try
-                {
-                    written = Preprocessor.Pixels(images[i], values.AsSpan(i * each));
-                }
-                catch (ArgumentException)
-                {
-                    written = -1;
-                }
+            input = Preprocessor.ProcessBatch(images, WeightsDevice);
+        }
+        catch (ArgumentException)
+        {
+            input = null!;
+        }
 
-                if (written != each)
-                {
-                    var (h, w) = Preprocessor.OutputSize(images[i].Height, images[i].Width);
-                    throw new InvalidOperationException($"The preprocessor gives {h} x {w} pixel values per channel; the encoder takes {config.Channels} x {config.ImageSize} x {config.ImageSize}.");
-                }
+        using (input)
+        {
+            if (input is null || !input.Shape.SequenceEqual([images.Count, config.Channels, config.ImageSize, config.ImageSize]))
+            {
+                var (h, w) = Preprocessor.OutputSize(images[0].Height, images[0].Width);
+                throw new InvalidOperationException($"The preprocessor gives {h} x {w} pixel values per channel; the encoder takes {config.Channels} x {config.ImageSize} x {config.ImageSize}.");
             }
 
-            using var input = Tensor.From(values.AsSpan(0, images.Count * each), [images.Count, config.Channels, config.ImageSize, config.ImageSize], WeightsDevice);
             return Predict(input);
-        }
-        finally
-        {
-            System.Buffers.ArrayPool<float>.Shared.Return(values);
         }
     }
 
