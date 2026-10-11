@@ -1050,6 +1050,42 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// y [m, n] = x [m, k] · w (packed in <paramref name="format"/>, with <paramref name="scales"/> for int8 and 4-bit) +
+    /// <paramref name="bias"/> [n] on every row (when given), then gelu (the tanh approximation, as <see cref="BiasGelu"/>;
+    /// <paramref name="gelu"/> needs the bias) or + <paramref name="residual"/> [m, n] (when given; not with gelu): a
+    /// layer's product and what follows it in one pass where the device's product has the epilogue. By default the product
+    /// (<see cref="BFloat16MatMul"/>, <see cref="Int8MatMul"/> or <see cref="Int4MatMul"/>), then <see cref="BiasGelu"/> or
+    /// <see cref="AddRowVector"/>, then the residual's <see cref="Binary"/> add, in y: a device's own epilogue adds in the
+    /// same order (residual + (product + bias)).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulEpilogue"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulEpilogueKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void PackedMatMulEpilogue(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
+    {
+        if (_kernels is null)
+        {
+            PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+        else
+        {
+            PackedMatMulEpilogueRegistered(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackedMatMulEpilogueRegistered(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
+    {
+        if (Kernel(OperationIndex.PackedMatMulEpilogue) is OperationKernels.PackedMatMulEpilogue kernel)
+        {
+            kernel(this, format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+        else
+        {
+            PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+    }
+
+    /// <summary>
     /// y = (act(gate) · up) · w for few rows with packed weights w (in <paramref name="format"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
     /// without a separate activation pass. Returns false when the device has no fused version.
     /// </summary>

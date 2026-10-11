@@ -319,6 +319,30 @@ public sealed partial class Linear : Module, ILinearLayer
 
     private Linear[]? _alone;
 
+    /// <summary>
+    /// gelu(x·W + b) for inference (a feed-forward block's first projection): in the product's epilogue where the layer can
+    /// (<see cref="EpilogueReady"/>), else x·W then <see cref="Tensor.BiasGelu"/> (without a bias, the layer then gelu).
+    /// </summary>
+    internal Tensor ProjectGelu(Tensor input) =>
+        EpilogueReady(input, null) ? Tensor.MatMulPackedEpilogue(input, _packed!, Bias, gelu: true)
+        : Bias is { } bias ? ProjectWithoutBias(input).BiasGelu(bias) : Forward(input).Gelu();
+
+    /// <summary>x·W + b for inference: the bias in the product's epilogue where the layer can (<see cref="EpilogueReady"/>), else the layer.</summary>
+    internal Tensor ProjectBiased(Tensor input) => EpilogueReady(input, null) ? Tensor.MatMulPackedEpilogue(input, _packed!, Bias) : Forward(input);
+
+    /// <summary>
+    /// residual + (x·W + b) for inference (an output projection and its residual): in the product's epilogue where the layer
+    /// can (<see cref="EpilogueReady"/>), else the layer, then the sum.
+    /// </summary>
+    internal Tensor ProjectAdding(Tensor input, Tensor residual) =>
+        EpilogueReady(input, residual) ? Tensor.MatMulPackedEpilogue(input, _packed!, Bias, residual: residual) : residual + Forward(input);
+
+    // Bfloat16 or 4-bit weights of its own (their products are Backend.BFloat16MatMul / Int4MatMul, which the epilogue's
+    // default runs too; int8's tensor product chooses among several), a bias, nothing else in the layer, and no gradient.
+    private bool EpilogueReady(Tensor input, Tensor? residual) =>
+        _packed is { Format: PackedFormat.BFloat16 or PackedFormat.Int4 } && Bias is not null && Adapter is null && _tiedTo is null && _softcap is null
+        && input.Rank >= 2 && !(Autograd.IsEnabled && (input.RequiresGrad || Bias.RequiresGrad || residual is { RequiresGrad: true }));
+
     /// <summary>x·W, adapted by the adapter when one is attached.</summary>
     internal Tensor ProjectWithoutBias(Tensor input)
     {
