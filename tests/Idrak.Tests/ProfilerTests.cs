@@ -36,6 +36,18 @@ internal static partial class Tests
         Check(report["device bandwidth"] is { Unit: "GB/s", Count: 3, Value: > 0, Source: "bandwidth" } bandwidth && bandwidth.Min == bandwidth.Max
               && Profiler.Run("again", device, _ => { }, new ProfileOptions { WarmRuns = 1, Probes = ["bandwidth"] })["device bandwidth"]?.Value == bandwidth.Value,
             $"the device's bandwidth beside every run, measured once per device: {report["device bandwidth"]}");
+
+        // The stages probe: a workload's InferenceStage events summed in a run of its own, with the encoder's peak.
+        var staged = Profiler.Run("stages", device, _ =>
+        {
+            Telemetry.InferenceStage(InferenceStageKind.CacheAllocation, device, Telemetry.Start(TelemetryLevel.Inference), 64, 1 << 20);
+            Telemetry.InferenceStage(InferenceStageKind.CacheAllocation, device, Telemetry.Start(TelemetryLevel.Inference), 64, 1 << 20);
+            using var held = Tensor.Zeros([1 << 18], device);
+            Telemetry.InferenceStage(InferenceStageKind.Encoder, device, Telemetry.Start(TelemetryLevel.Inference), 1, 4096);
+        }, new ProfileOptions { WarmRuns = 1, Probes = ["stages"] });
+        Check(staged.Runs.Count == 3 && staged["CacheAllocation size"] is { Value: 2, Unit: "MB", Count: 1 } && staged["CacheAllocation count"]?.Value == 128
+              && staged["Encoder count"]?.Value == 1 && staged["encoder peak above start"] is { Value: >= 0 } peakAbove && (device.Type != DeviceType.Cpu || peakAbove.Value >= 1),
+            $"the stages in a run of their own: {string.Join("; ", staged.Summary.Select(s => $"{s.Name} {s.Value}"))}");
         foreach (string name in new[] { "cpu", "cores busy", "allocated", "gc0", "gc pause", "device in use", "device peak", "process peak" })
         {
             Check(report[name] is { Count: 3, Source: not null }, $"{name} measured around each warm run: {report[name]}");
@@ -166,7 +178,7 @@ internal static partial class Tests
         }
 
         Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "operations", "kernels"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "operations", "kernels", "stages"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.
