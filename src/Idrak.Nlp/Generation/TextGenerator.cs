@@ -78,6 +78,18 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     /// </summary>
     public bool KeepCache { get; set; } = true;
 
+    /// <summary>
+    /// The arithmetic of a prompt's pass (<see cref="MixedPrecision.Use"/> around the prefill alone), or null for the
+    /// caller's (<see cref="MixedPrecision.Current"/>). <see cref="MatMulPrecision.BFloat16"/> runs the prompt's matrix
+    /// products on tensor cores where the device has them (a long prompt, or an image's tokens, several times faster); the
+    /// decoding steps keep the caller's arithmetic. The cached keys and values come within bfloat16's rounding of float32:
+    /// compare a model's answers before relying on it.
+    /// </summary>
+    public MatMulPrecision? PrefillPrecision { get; set; }
+
+    // The scope a prompt's pass runs in (PrefillPrecision), or none.
+    private MixedPrecision.Scope? PrefillScope() => PrefillPrecision is { } precision ? MixedPrecision.Use(precision) : null;
+
     // Whether a decoding step can be recorded: not with experts, whose routing is read back to the host on every step.
     private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is MixtureOfExperts);
 
@@ -259,7 +271,13 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         using (Autograd.NoGrad())
         using (var scope = new TensorScope())
         {
-            sampler.Sample(Model.ForwardCached(Tensor.From(input, [rows, promptLength], Device), decoding));
+            Tensor logits;
+            using (PrefillScope())
+            {
+                logits = Model.ForwardCached(Tensor.From(input, [rows, promptLength], Device), decoding);
+            }
+
+            sampler.Sample(logits);
         }
 
         promptDuration = total.Elapsed;
@@ -455,10 +473,16 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         IReadOnlyList<PromptImage> ImagesFrom(int start) =>
             images.Count == 0 ? images : [.. images.Where(i => i.Position >= start).Select(i => i with { Position = i.Position - start })];
 
-        // A prefill (cached when a decoding context is given) with these images, attending by the family's rule; none: the plain one.
-        Tensor WithImages(Tensor ids, IReadOnlyList<PromptImage> from, DecodingContext? cached) =>
-            from.Count == 0 ? cached is null ? Model.Forward(ids) : Model.ForwardCached(ids, cached)
-            : cached is null ? Model.Forward(ids, from, attention!) : Model.ForwardCached(ids, from, attention!, cached);
+        // A prefill (cached when a decoding context is given) with these images, attending by the family's rule; none: the
+        // plain one. In PrefillPrecision's arithmetic.
+        Tensor WithImages(Tensor ids, IReadOnlyList<PromptImage> from, DecodingContext? cached)
+        {
+            using (PrefillScope())
+            {
+                return from.Count == 0 ? cached is null ? Model.Forward(ids) : Model.ForwardCached(ids, cached)
+                    : cached is null ? Model.Forward(ids, from, attention!) : Model.ForwardCached(ids, from, attention!, cached);
+            }
+        }
 
         int promptTokens = history.Count;
         var stops = options.Stop.Where(s => s.Length > 0).ToArray();
