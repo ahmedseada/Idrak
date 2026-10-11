@@ -13,7 +13,7 @@
 //   … -- --bench-window                                                          time windowed and soft-capped attention, kernels against the composed path (IDRAK_DEVICES, default every GPU)
 //   … -- --bench-spans [spans|composed|fastest] [train]                          time a 4,096-token bidirectional attention pass: tiled, composed, the measured choice (default all); train: forward and backward (IDRAK_DEVICES, default the CPU)
 //   … -- --bench-conv                                                            time convolutions (forward, both gradients) per path: host fallback, composed, implicit tiles, depthwise, the measured choice (IDRAK_DEVICES, default every GPU)
-//   … -- --bench-vision                                                          time Gemma 3 4B's image encoder and projector (random weights, one 896 x 896 image; IDRAK_DEVICES, default the CPU)
+//   … -- --bench-vision [bf16]                                                   time Gemma 3 4B's image encoder and projector (random weights, one 896 x 896 image; IDRAK_DEVICES, default the CPU); bf16: packed bfloat16 weights as the checkpoint stores them, float32 and bfloat16 products, batches of 1 and 5
 //   … -- --bench-image                                                         time the CPU side of reading a page (decoders, every image transform, the preprocessor, the preview PNG): cold, warm, bytes, output hashes
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
@@ -78,9 +78,9 @@ if (args is ["--bench-conv"])
     return Tests.BenchConv();
 }
 
-if (args is ["--bench-vision"])
+if (args is ["--bench-vision", .. var visionArguments] && visionArguments.Length <= 1)
 {
-    return Tests.BenchVision();
+    return Tests.BenchVision(visionArguments.FirstOrDefault());
 }
 
 if (args is ["--bench-image"])
