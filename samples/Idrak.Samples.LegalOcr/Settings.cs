@@ -46,6 +46,13 @@ public sealed record LegalOcrSettings
     /// <summary>How the projections are stored: "bf16" (half of float32; exact for the bfloat16 checkpoints), "int8", "int4" or "f32".</summary>
     public string Weights { get; init; } = "bf16";
 
+    /// <summary>
+    /// How the output head is stored when the projections are int8 or int4: "bf16" (the checkpoint's own next-word scores
+    /// and one vocabulary table: the most accurate, and less memory than an int8 or int4 head beside the table; a little
+    /// slower per word) or "" (as the projections: the fastest).
+    /// </summary>
+    public string HeadWeights { get; init; } = "bf16";
+
     /// <summary>The attention cache: "f32" or "bf16" (half the memory).</summary>
     public string KeyValueCache { get; init; } = "f32";
 

@@ -71,8 +71,16 @@ public static class DecoderBuilder
             PackedFormat? packed = options.Int8 ? PackedFormat.Int8 : options.Int4 ? PackedFormat.Int4 : options.BFloat16 ? PackedFormat.BFloat16 : null;
             string? packedName = options.PackedFormatName;
             var factory = packedName is null ? null : PackedWeight.Factory(packedName);
+            // The head's own format (a bfloat16 head beside int8 or int4 projections keeps the checkpoint's scores).
+            string? headName = options.HeadFormatName;
+            if (headName is not null && packed is null && factory is null)
+            {
+                throw new ArgumentException($"HeadFormatName '{headName}' packs the head of a build whose projections are packed (Int8, Int4, BFloat16 or PackedFormatName); this build keeps float32 weights.", nameof(options));
+            }
 
-            Linear Projection(string name, int inputs, int outputs, bool bias, float[]? transposedFrom = null)
+            var headFactory = headName is null ? null : PackedWeight.Factory(headName);
+
+            Linear Projection(string name, int inputs, int outputs, bool bias, float[]? transposedFrom = null, bool isHead = false)
             {
                 int[] shape = [inputs, outputs];
                 float[] Values() => transposedFrom is not null ? Transpose(transposedFrom, outputs, inputs)
@@ -80,7 +88,8 @@ public static class DecoderBuilder
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
-                return factory is not null ? Linear.FromPacked(PackedWeight.Pack(factory, packedName!, Values(), inputs, outputs, device), b)
+                return isHead && headFactory is not null ? Linear.FromPacked(PackedWeight.Pack(headFactory, headName!, Values(), inputs, outputs, device), b)
+                    : factory is not null ? Linear.FromPacked(PackedWeight.Pack(factory, packedName!, Values(), inputs, outputs, device), b)
                     : packed is { } format ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
                     : Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
             }
@@ -102,10 +111,11 @@ public static class DecoderBuilder
             // kept alive while every layer is read (a float tied head reads the embedding in place; see below). When that
             // copy is bfloat16, it is the only one: the embedding reads its columns (the same bfloat16 values the table
             // would hold, so lookups are unchanged bit for bit), which saves the table's memory once more. Heads in
-            // other formats (int8, int4, one's own) keep a separate bfloat16 table, since the head's values differ from it.
+            // other formats (int8, int4, one's own) keep a separate bfloat16 table, since the head's values differ from it;
+            // HeadFormatName "bfloat16" keeps one table beside int8 or int4 projections.
             if (spec.TieEmbeddings && frozen)
             {
-                head = Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, embeddingValues);
+                head = Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, embeddingValues, isHead: true);
             }
 
             var embedding = head is { BFloat16: not null } ? Embedding.FromHead(head)
@@ -178,7 +188,7 @@ public static class DecoderBuilder
             // A float tied head reads the embedding table in place; packed tied heads were made with the embedding.
             head ??= spec.TieEmbeddings
                 ? Linear.Tied(embedding, spec.HeadBias ? Tensor("head.bias", [spec.Vocabulary], () => new float[spec.Vocabulary]) : null)
-                : Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias);
+                : Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, isHead: true);
             head.Name = "head";
             head.OutputSoftcap = spec.LogitSoftcap;
             created.Add(head);

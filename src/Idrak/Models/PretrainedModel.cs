@@ -29,6 +29,13 @@ public sealed record PretrainedOptions
     /// </summary>
     public string? PackedFormatName { get; init; }
 
+    /// <summary>
+    /// Store the output head in this registered packed format (for example "bfloat16" beside int8 or int4 projections:
+    /// the checkpoint's own next-token scores, and for tied embeddings the only vocabulary table, so less memory than a
+    /// packed head beside a separate table; slower per generated token). Null packs it as the projections.
+    /// </summary>
+    public string? HeadFormatName { get; init; }
+
     /// <summary>Longest sequence to support (sizes the rotary tables); the model's maximum when null.</summary>
     public int? MaxPositions { get; init; }
 
@@ -138,7 +145,7 @@ public sealed class PretrainedModel : IDisposable
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
-        var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, MaxPositions = maxPositions };
+        var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, MaxPositions = maxPositions };
         var network = architecture.Build is { } build
             ? build(new PretrainedBuildContext(config, spec, weights, reader, buildOptions, notes)) switch
             {

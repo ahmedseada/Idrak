@@ -20,7 +20,7 @@ namespace Idrak.Cli.Shared;
 internal static class ModelChoices
 {
     /// <summary>The options a command that loads a language model accepts.</summary>
-    public static readonly string[] ValueOptions = ["--weights", "--kv", "--context", "--adapter"];
+    public static readonly string[] ValueOptions = ["--weights", "--head-weights", "--kv", "--context", "--adapter"];
 
     /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
     public const string VisionOption = "--vision-option";
@@ -59,6 +59,9 @@ internal static class ModelChoices
         /// </summary>
         public TuningImages? AdapterImages { get; init; }
 
+        /// <summary>The output head's own weight format (<c>--head-weights</c>, or the alias's "head_weights"), or null for the projections' format.</summary>
+        public string? HeadWeights { get; init; }
+
         /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
         public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
             ? ImageTransformPipeline.Parse("grayscale").Then(ImageTransforms)
@@ -69,7 +72,7 @@ internal static class ModelChoices
     public static ModelChoice Choose(CommandContext context, string name)
     {
         string model = name;
-        string? weights = null, kv = null;
+        string? weights = null, kv = null, headWeights = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
         ImageTransformPipeline? transforms = null;
@@ -77,6 +80,7 @@ internal static class ModelChoices
         {
             model = (string?)alias["model"] ?? name;
             weights = (string?)alias["weights"];
+            headWeights = (string?)alias["head_weights"];
             kv = (string?)alias["kv"];
             grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
             if (alias["vision_options"] is System.Text.Json.Nodes.JsonObject saved)
@@ -104,8 +108,16 @@ internal static class ModelChoices
         vision = vision.With(VisionOptionsOf(context));
         return new ModelChoice(model, context.Option("--weights") ?? weights, context.Option("--kv") ?? kv,
             context.Option("--context") is null ? null : context.IntOption("--context", 0), adapter,
-            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, given ?? transforms) { AdapterImages = tuned };
+            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, given ?? transforms) { AdapterImages = tuned, HeadWeights = context.Option("--head-weights") ?? headWeights };
     }
+
+    // The head's registered format name: bf16 is bfloat16's short name, as in --weights.
+    private static string? HeadFormat(string? name) => name?.ToLowerInvariant() switch
+    {
+        null => null,
+        "bf16" => "bfloat16",
+        _ => name,
+    };
 
     /// <summary>The image preparation an adapter folder was tuned with (<see cref="TuningImages.FileName"/>), or null when it has none.</summary>
     public static TuningImages? AdapterImages(string? adapter)
@@ -242,6 +254,7 @@ internal static class ModelChoices
                 Int4 = weights == "int4",
                 BFloat16 = weights is "bf16" or "bfloat16",
                 PackedFormatName = weights is null or "int8" or "int4" or "bf16" or "bfloat16" or "float32" or "f32" ? null : choice.Weights,
+                HeadFormatName = HeadFormat(choice.HeadWeights),
                 MaxPositions = choice.Context,
                 MergeAdapter = choice.Adapter,
             });
