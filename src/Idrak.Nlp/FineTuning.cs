@@ -1070,6 +1070,14 @@ public static class FineTuner
                 cancellationToken.ThrowIfCancellationRequested();
                 var group = batches.Skip(first).Take(accumulation).ToList();
                 var watch = Stopwatch.StartNew();
+                if (vision is not null)
+                {
+                    // The next step's images made on workers while this one runs (its own were started the step before).
+                    var coming = first + accumulation < batches.Count ? batches.Skip(first + accumulation).Take(accumulation)
+                        : epoch + 1 < options.Epochs ? epochBatches[epoch + 1].Take(accumulation) : [];
+                    vision.Prefetch(coming.SelectMany(b => b.Sequences.SelectMany(i => train[i].Images)));
+                }
+
                 var (loss, tokens) = runner.Run(group, cancellationToken,
                     b => $"step {step + 1}/{totalSteps}, batch {first + b + 1}/{batches.Count} of epoch {epoch + 1}");
                 float rate = optimizer.LearningRate;                     // the rate RunStep's update used

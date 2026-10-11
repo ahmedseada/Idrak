@@ -50,7 +50,12 @@ public sealed class TuningVision : IDisposable
     private readonly string _weights;                            // the encoder's weight formats, for the cache's keys
     private readonly Lazy<bool> _tensorCores;                    // whether the device runs reduced-precision products on tensor cores
     private readonly string?[] _withProducts = new string?[Enum.GetValues<MatMulPrecision>().Length];
-    private long _hits, _encoded;
+    private long _hits, _encoded, _prefetched;
+
+    // Pixel values a coming step will compute, made on a worker while the device runs the step before (Prefetch); the
+    // keys of the last two prefetches, so a step's own images are not dropped by the prefetch made just before it runs.
+    private readonly ConcurrentDictionary<(string Image, TuningImages Preparation), Task<Tensor>> _ahead = new();
+    private HashSet<(string, TuningImages)> _aheadLast = [];
 
     private TuningVision(PretrainedModel model, IVisionEncoder encoder, TuningImages images, IReadOnlyList<string> parts, IVisionTuningPart? tuning,
         IReadOnlyList<Tensor> parameters, IFeatureCache cache, bool ownsCache, string checkpoint)
@@ -165,6 +170,79 @@ public sealed class TuningVision : IDisposable
 
     /// <summary>Images run through the tower so far (each distinct image once while the cache keeps it).</summary>
     public long Encoded => Interlocked.Read(ref _encoded);
+
+    /// <summary>Images whose pixel values a step took from <see cref="Prefetch"/> instead of making them itself.</summary>
+    internal long Prefetched => Interlocked.Read(ref _prefetched);
+
+    /// <summary>
+    /// Starts making the pixel values of <paramref name="images"/> that the feature cache lacks on worker threads (decoded,
+    /// transformed and through the family's pixel values on the host), for the step that will need them: the host's share
+    /// of a cache miss then runs while the device runs the step before, not inside it with the device waiting (rule 79).
+    /// The step takes the same values it would have made. Prefetches two calls old that no step took are dropped.
+    /// Does nothing until the first step's images went through the encoder (its position check) or without the
+    /// family's stages.
+    /// </summary>
+    internal void Prefetch(IEnumerable<TrainingImage> images)
+    {
+        if (Encoder is not IVisionEncoderStages stages || !_positionsChecked)
+        {
+            return;
+        }
+
+        var wanted = new HashSet<(string, TuningImages)>();
+        foreach (var image in images)
+        {
+            var key = (image.Image.Hash, image.Preparation);
+            if (!wanted.Add(key) || _ahead.ContainsKey(key) || Cache.Contains(Key(image.Image, image.Preparation, CachedStage)))
+            {
+                continue;
+            }
+
+            _ahead[key] = Task.Run(() =>
+            {
+                var pixels = Read(image.Image, image.Preparation);
+                lock (_family)
+                {
+                    return stages.PixelValues(pixels, Options(image.Preparation));
+                }
+            });
+        }
+
+        foreach (var key in _ahead.Keys)
+        {
+            if (!wanted.Contains(key) && !_aheadLast.Contains(key) && _ahead.TryRemove(key, out var stale))
+            {
+                Drop(stale);
+            }
+        }
+
+        _aheadLast = wanted;
+    }
+
+    // A prefetch no step takes: its values are disposed once made (a failed one is dropped with its error).
+    private static void Drop(Task<Tensor> made) =>
+        made.ContinueWith(t => t.Result.Dispose(), CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+
+    // An image's pixel values on the encoder's device, in the caller's tensor scope: the prefetched ones when a worker made
+    // them (copied as OnDevice copies, the host's freed), else made here.
+    private Tensor PixelsOnDevice(IVisionEncoderStages stages, TrainingImage image)
+    {
+        if (_ahead.TryRemove((image.Image.Hash, image.Preparation), out var made))
+        {
+            using var host = made.GetAwaiter().GetResult();              // made outside every scope: freed here
+            Interlocked.Increment(ref _prefetched);
+            return Tensor.From(host.ToArray(), host.Shape.ToArray(), Encoder.Device);
+        }
+
+        var pixels = Read(image.Image, image.Preparation);
+        Tensor values;
+        lock (_family)
+        {
+            values = stages.PixelValues(pixels, Options(image.Preparation));
+        }
+
+        return OnDevice(values);
+    }
 
     /// <summary>
     /// <paramref name="image"/>'s pixels as the encoder reads them: decoded (<see cref="ChatImageDecoder.Decode(ChatImage)"/>,
@@ -437,7 +515,7 @@ public sealed class TuningVision : IDisposable
             }
         }
 
-        var pixels = images.Select(i => OnDevice(stages.PixelValues(Read(i.Image, i.Preparation), Options(i.Preparation)))).ToList();
+        var pixels = images.Select(i => PixelsOnDevice(stages, i)).ToList();
         if (TrainsTower)
         {
             return [.. pixels.Select(scope.Keep)];
@@ -517,6 +595,14 @@ public sealed class TuningVision : IDisposable
     /// <summary>Disposes the encoder, and the cache when this made it.</summary>
     public void Dispose()
     {
+        foreach (var key in _ahead.Keys)
+        {
+            if (_ahead.TryRemove(key, out var made))
+            {
+                Drop(made);
+            }
+        }
+
         Encoder.Dispose();
         if (_ownsCache)
         {
