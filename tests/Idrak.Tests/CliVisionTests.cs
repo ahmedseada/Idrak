@@ -50,6 +50,23 @@ internal static partial class Tests
                     $"{name}: read back as written");
             }
 
+            // Larger pages through the encoder's parallel rows and the sliced CRC (a gradient with noise and random bytes, odd
+            // widths, one row, grey and colour), read back exactly.
+            foreach (var (channels, height, width) in new[] { (1, 37, 101), (3, 29, 67), (1, 1, 33), (3, 64, 64) })
+            {
+                var pixels = new float[channels * height * width];
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    int x = i % width, y = i / width % height;
+                    pixels[i] = (i % 3 == 0 ? random.Next(256) : (x * 3 + y * 2 + random.Next(4)) % 256) / 255f;
+                }
+
+                var read = ImageCodecs.Decode(ImageEncoders.Get("png").Encode(new ImageData(pixels, channels, height, width)));
+                Check(read.Channels == channels && read.Height == height && read.Width == width && read.Pixels.Zip(pixels).All(p => MathF.Abs(p.First - p.Second) < 1e-6f),
+                    $"a {width} x {height} PNG of {channels} channels: read back as written");
+            }
+
+            Check(Idrak.Data.PngEncoder.Crc(0xFFFFFFFFu, "123456789"u8) == ~0xCBF43926u, "CRC-32's check value (the sliced tables and the byte tail)");
             Check(ImageEncoders.Names.Contains("png") && ImageEncoders.Origin("png") == Overrides.Library && ImageEncoders.Default("netpbm") is not null, "the library's encoders");
             ExpectRefusal<NotSupportedException>(() => ImageEncoders.Save(Path.Combine(folder, "x.tiff"), new ImageData(new float[4], 1, 2, 2)), "ImageEncoders.Register", "an unknown extension");
 
