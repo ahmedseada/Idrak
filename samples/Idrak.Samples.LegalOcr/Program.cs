@@ -28,6 +28,8 @@ builder.Services.AddSingleton<ReaderService>();
 builder.Services.AddSingleton<TuningService>();
 builder.Services.AddSingleton<EvaluationPages>();
 builder.Services.AddSingleton<Preprocessing>();
+// Open streams end when the app stops (see UntilStopped); anything else gets a few seconds, not the default half minute.
+builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
@@ -62,6 +64,34 @@ app.Run();
 /// <summary>The app's HTTP API (the page in wwwroot uses it; the tests call it in process).</summary>
 public static class LegalOcrApi
 {
+    // A stream that ends when its request does or when the app stops (Ctrl+C), so an open page (the tuning events, a read)
+    // never holds the shutdown until the host's timeout.
+    private static async IAsyncEnumerable<T> UntilStopped<T>(IHostApplicationLifetime lifetime, CancellationToken request, Func<CancellationToken, IAsyncEnumerable<T>> source,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken enumeration = default)
+    {
+        using var both = CancellationTokenSource.CreateLinkedTokenSource(request, lifetime.ApplicationStopping, enumeration);
+        await using var items = source(both.Token).GetAsyncEnumerator(both.Token);
+        while (true)
+        {
+            bool more;
+            try
+            {
+                more = await items.MoveNextAsync();
+            }
+            catch (OperationCanceledException) when (both.IsCancellationRequested)
+            {
+                more = false;
+            }
+
+            if (!more)
+            {
+                yield break;
+            }
+
+            yield return items.Current;
+        }
+    }
+
     /// <summary>Maps the endpoints under /api.</summary>
     public static void Map(IEndpointRouteBuilder app)
     {
@@ -94,7 +124,7 @@ public static class LegalOcrApi
             return host.Status;
         });
 
-        api.MapPost("/read", IResult (ReadRequest request, ReaderService host, CancellationToken cancellationToken) =>
+        api.MapPost("/read", IResult (ReadRequest request, ReaderService host, IHostApplicationLifetime lifetime, CancellationToken cancellationToken) =>
         {
             if (request.Image is not { Length: > 0 } data)
             {
@@ -111,7 +141,7 @@ public static class LegalOcrApi
                 return TypedResults.Problem($"The image is not a data URL or base64: {ex.Message}", statusCode: StatusCodes.Status400BadRequest);
             }
 
-            return TypedResults.ServerSentEvents(host.ReadAsync(image, request, null, cancellationToken));
+            return TypedResults.ServerSentEvents(UntilStopped(lifetime, cancellationToken, token => host.ReadAsync(image, request, null, token)));
         });
 
         // The preprocessing editor: the transforms with their inputs and the app's suggested values; a preview without a model.
@@ -167,24 +197,26 @@ public static class LegalOcrApi
         api.MapGet("/pages/{index:int}/image", IResult (int index, EvaluationPages pages) =>
             pages.Get(index) is { } page ? TypedResults.Bytes(page.Image.Data, page.Image.MediaType ?? "image/png") : TypedResults.NotFound());
 
-        api.MapPost("/pages/{index:int}/read", IResult (int index, ReadRequest request, EvaluationPages pages, ReaderService host, CancellationToken cancellationToken) =>
+        api.MapPost("/pages/{index:int}/read", IResult (int index, ReadRequest request, EvaluationPages pages, ReaderService host, IHostApplicationLifetime lifetime,
+            CancellationToken cancellationToken) =>
             pages.Get(index) is { } page
-                ? TypedResults.ServerSentEvents(host.ReadAsync(page.Image, request, page.Expected, cancellationToken))
+                ? TypedResults.ServerSentEvents(UntilStopped(lifetime, cancellationToken, token => host.ReadAsync(page.Image, request, page.Expected, token)))
                 : TypedResults.NotFound());
 
         // The first `count` evaluation pages (0: all) read and scored in a row.
-        api.MapPost("/pages/evaluate", IResult (ReadRequest request, int? count, EvaluationPages pages, ReaderService host, CancellationToken cancellationToken) =>
+        api.MapPost("/pages/evaluate", IResult (ReadRequest request, int? count, EvaluationPages pages, ReaderService host, IHostApplicationLifetime lifetime,
+            CancellationToken cancellationToken) =>
             pages.All is var all && pages.Error is { } error
                 ? TypedResults.Problem($"The evaluation pages could not be read: {error}", statusCode: StatusCodes.Status409Conflict)
-                : TypedResults.ServerSentEvents(host.EvaluateAsync(all, request, count ?? 0, cancellationToken)));
+                : TypedResults.ServerSentEvents(UntilStopped(lifetime, cancellationToken, token => host.EvaluateAsync(all, request, count ?? 0, token))));
 
         // Fine-tuning: the defaults, start, stop, the run's state and its live events.
         api.MapGet("/tuning/defaults", (TuningService tuning) => tuning.Defaults());
 
         api.MapGet("/tuning", (TuningService tuning) => new { status = tuning.Status, points = tuning.Points(), log = tuning.Log() });
 
-        api.MapGet("/tuning/events", (TuningService tuning, int? run, int? points, int? log, CancellationToken cancellationToken) =>
-            TypedResults.ServerSentEvents(tuning.EventsAsync(run ?? -1, points ?? 0, log ?? 0, cancellationToken)));
+        api.MapGet("/tuning/events", (TuningService tuning, int? run, int? points, int? log, IHostApplicationLifetime lifetime, CancellationToken cancellationToken) =>
+            TypedResults.ServerSentEvents(UntilStopped(lifetime, cancellationToken, token => tuning.EventsAsync(run ?? -1, points ?? 0, log ?? 0, token))));
 
         api.MapPost("/tuning/start", IResult (TuneRequest request, TuningService tuning) =>
         {

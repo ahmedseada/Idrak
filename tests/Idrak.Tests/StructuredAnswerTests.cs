@@ -18,7 +18,7 @@ internal static partial class Tests
         ("json repair: the registry has the library's lenient repair; an app's repair shadows it and is removed again; an unknown name is not registered", JsonRepairRegistry),
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
-        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own", ImageReaderReads),
+        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache", ImageReaderReads),
         ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
         ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
     ];
@@ -180,6 +180,12 @@ internal static partial class Tests
         var first = reader.Read(request, text => streamed.Append(text));
         var second = reader.Read(request);
         Check(first.Text == second.Text, $"greedy: \"{first.Text}\" then \"{second.Text}\"");
+        Check(!reader.Chat.Generator.HoldsCache, "no attention cache held between reads");
+        using (var keeping = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, KeepCache = true }))
+        {
+            Check(keeping.Read(request).Text == first.Text && keeping.Chat.Generator.HoldsCache, "KeepCache keeps it, the same answer");
+        }
+
         Check(streamed.ToString().Trim() == first.Text, $"streamed \"{streamed}\", read \"{first.Text}\"");
         Check(first.Stats is { GeneratedTokens: > 0 and <= 6 } && first.Truncated == (first.Stats.GeneratedTokens >= 6), $"{first.Stats?.GeneratedTokens} tokens, truncated {first.Truncated}");
         Check(reader.Vision.Family.Length > 0 && model.Vision is not null, "the family");

@@ -17,7 +17,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] VisionContractGroup =
     [
         ("vision contracts: a tiny LLaVA registered from outside the library (CLIP tower, vision_feature_layer, select strategy, MLP projector, causal image tokens) gives transformers' pixels, features, prompt logits and 20 greedy tokens, in both of its configurations", LlavaMatchesReference),
-        ("vision contracts: the tiny LLaVA through the public chat API (ChatGenerator with the family's encoder, format and rule) answers with transformers' 20 greedy tokens", LlavaChat),
+        ("vision contracts: the tiny LLaVA through the public chat API (ChatGenerator with the family's encoder, format and rule) answers with transformers' 20 greedy tokens; an encoder without room frees the kept KV cache and runs once more, a failed request keeps nothing", LlavaChat),
         ("vision contracts: the testing kit's vision-encoder suite passes for the Gemma 3 and LLaVA encoders (deterministic, token counts, batch equals single, device equals CPU)", VisionEncoderConformance),
         ("vision contracts: the library registers no vision family; image token formats expand by each image's blocks (several with Join's text); images whose tokens touch are told apart by their counts; M-RoPE position ids are refused by the decoder", VisionContractRules),
     ];
@@ -135,6 +135,58 @@ internal static partial class Tests
         Check(reply.Stats is { GeneratedTokens: 20 } && reply.Stats.PromptTokens == ((int[])[.. facts["input_ids"]!.AsArray().Select(n => (int)n!)]).Length,
             $"20 tokens after the prompt: {reply.Stats}");
         Check(reply.Message!.Content.Trim() == expected.Trim(), $"the answer: '{reply.Message.Content}', transformers' '{expected}'");
+
+        // A full device: the KV cache kept from the reply is freed when the encoder finds no room beside it, and the images
+        // encoded once more (the same answer); an encoder that never finds room fails the request with nothing kept, so the
+        // next request works.
+        var tight = new TightEncoder(encoder);
+        var tightChat = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(tight, vision.PromptFormat, vision.Attention) };
+        Check(chat.Generator.HoldsCache, "the reply's KV cache is kept");
+        tight.Fail = 1;
+        var retried = tightChat.Chat(request);
+        Check(tight.Calls == 2 && retried.Message!.Content == reply.Message.Content, $"{tight.Calls} encoder calls; '{retried.Message?.Content}'");
+        tight.Fail = 2;
+        try
+        {
+            tightChat.Chat(request);
+            Check(false, "an encoder with no room must fail the request");
+        }
+        catch (ResourceLimitExceededException)
+        {
+            Check(!chat.Generator.HoldsCache && tight.Fail == 0, "nothing kept after the failure");
+        }
+
+        Check(tightChat.Chat(request).Message!.Content == reply.Message.Content, "the next request answers");
+    }
+
+    // An encoder that finds the device full for its next `Fail` calls.
+    private sealed class TightEncoder(IVisionEncoder inner) : IVisionEncoder
+    {
+        public int Fail { get; set; }
+
+        public int Calls { get; private set; }
+
+        public int Width => inner.Width;
+
+        public Device Device => inner.Device;
+
+        public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => inner.Blocks(image, options);
+
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null)
+        {
+            Calls++;
+            if (Fail > 0)
+            {
+                Fail--;
+                throw new ResourceLimitExceededException("no room for the encoder");
+            }
+
+            return inner.Encode(images, options);
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     private static void VisionEncoderConformance(Device device)
