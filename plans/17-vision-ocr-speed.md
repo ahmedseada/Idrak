@@ -23,6 +23,7 @@ in 14 s; one 896 x 896 image through the encoder 0.43 s in float32, 0.11 s with 
 | **B4** stop at the end-of-turn id at once | **Dropped**: reading each sampled token as it is made is a host sync per step, which costs more over a long answer than the up to 7 steps after the end it saves | — |
 | **B5** warm-up at load | **Done** in the app: one short read of a blank page with the model's preprocessing and prompt after loading (encoder built, kernels loaded, shapes measured); "loaded in X s, warmed up in Y s" | `legal start` |
 | **H1** `IDRAK_FILTER` with `a\|b\|c` | **Done** in `tests/Idrak.Tests`, `Idrak.Samples.LegalOcr.Tests`, `Idrak.Samples.ArabicOcr.Tests` | the runs above used it |
+| **C9** `--bench-image` | **Done**: a seeded 1,654 x 2,339 colour scan through every CPU stage of a read, cold and warm, bytes allocated and output SHA-256. Baseline (4-thread container, before lane C): JPEG decode 188 ms (72 MB), PNG decode 72 ms, card pipeline 74 ms, preprocess to 896 50 ms (grey 1024) / 71 ms (colour page), preview PNG 47 ms; on the colour page contrast 262 ms, brightness 243, sharpness 337, autocontrast 253, max_width 105; on the grey 1024 page median/min/max 125-130, unsharp 113, jpeg=95 119 | the hashes are the lane's proof (rule 71) |
 | Stale checks | Fixed: three tests used `blur` as an unknown transform, registered since d2ad9fc; they use `emboss` now | `aspnetcore: images`, `cli serve: images`, `vision tuning contracts` |
 | Everything else in sections 2 and 6 | Not started | — |
 
