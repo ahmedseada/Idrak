@@ -24,12 +24,14 @@ using Idrak.Models;
 //   IDRAK_BENCH_BATCH       pages read together (ImageReader.ReadBatch; default 1: the page alone): the page this many times,
 //                           with the time a page and the tokens a second of the whole batch
 // How it is measured and written (ProfileOptions.FromEnvironment): IDRAK_PROFILE_WARM (3), IDRAK_PROFILE_COLD (1),
-// IDRAK_PROFILE_PROBES (all: cpu, heap, memory, operations, kernels), IDRAK_PROFILE_STATISTIC (median),
+// IDRAK_PROFILE_PROBES (all: bandwidth, cpu, heap, memory, operations, kernels, stages), IDRAK_PROFILE_STATISTIC (median),
 // IDRAK_PROFILE_FORMAT (table, markdown, csv, json), IDRAK_PROFILE_OUT (a file, appended).
 // Two profiles: the page alone before any model (decode, transforms), then the read: its stages (prepare; encode, the
 // image through the encoder and the prompt built: the read's time less the generation's; prefill; decode; first text),
 // the speeds (prompt and answer tokens a second, ms a token) and estimated compute (2 x parameters a token: GFLOP/s; the
-// weights read once a decoded token: GB/s), with what the probes measure around it.
+// weights read once a decoded token: GB/s), with what the probes measure around it. The read's memory: the decoder's
+// weights (MB), the device's in use, cached and peak ("memory"), and in the "stages" run the caches allocated, the
+// encoder's output and its peak above the run's start (its activations), cold and warm.
 internal static partial class Tests
 {
     internal static int BenchRead()
@@ -115,6 +117,7 @@ internal static partial class Tests
             {
                 run.Stage("prepare", () => reader.Prepared(request));
                 var reading = reader.Read(request);
+                run.Record("decoder weights", weightBytes / 1048576.0, "MB");
                 var stats = reading.Stats;
                 double prefill = stats?.PromptDuration.TotalMilliseconds ?? 0, decode = stats?.GenerationDuration.TotalMilliseconds ?? 0;
                 int promptTokens = stats?.PromptTokens ?? 0, answerTokens = stats?.GeneratedTokens ?? 0;

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Data.Abstractions;
 using Idrak.Generation;
 using Idrak.Generation.Abstractions;
@@ -21,6 +22,7 @@ internal static partial class Tests
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
         ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache; a sampled read with a seed repeats; pages with one instruction read as one batch, each answer its own read's", ImageReaderReads),
         ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
+        ("image reader: telemetry: a read publishes its stages at the Inference level (the page decoded and transformed, the encoder, each cache allocated, the prompt's pass, the decoding chunks) with their sizes; the console line and the JSON Lines record", ImageReaderTelemetry),
         ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
     ];
 
@@ -157,6 +159,77 @@ internal static partial class Tests
         clock.Now = clock.Now.AddMinutes(1);
         using (host.Acquire("d")) { }
         Check(!created["a"].Disposed && created["c"].Disposed, "the idle one went, the one in use stayed");
+    }
+
+    // Collects the stages of reading an answer (InferenceStage).
+    private sealed class StageHook : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Inference;
+
+        public List<InferenceStage> Stages { get; } = [];
+
+        public void OnInferenceStage(in InferenceStage e)
+        {
+            lock (Stages)
+            {
+                Stages.Add(e);
+            }
+        }
+    }
+
+    // A read with a hook listening at TelemetryLevel.Inference: the page decoded and transformed, the encoder, every cache
+    // allocated, the prompt's pass and the decoding chunks, each with its sizes; the console logger's line and the JSON
+    // Lines record of one.
+    private static void ImageReaderTelemetry(Device device)
+    {
+        RegisterGemma3Vision();
+        using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device });
+        using var reader = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256 });
+        var pixels = new float[3 * 12 * 20];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (i % 89) / 88f;
+        }
+
+        var page = ChatImage.FromBytes(ImageEncoders.Get("png").Encode(new ImageData(pixels, 3, 12, 20)), "image/png");
+        var request = new ImageReadRequest(page, "Extract details to JSON.") { MaxTokens = 6 };
+        var hook = new StageHook();
+        var console = new StringWriter();
+        ImageReading result;
+        using (Telemetry.Subscribe(hook))
+        using (Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Inference, output: console)))
+        {
+            result = reader.Read(request);
+        }
+
+        InferenceStage[] Of(InferenceStageKind kind) => [.. hook.Stages.Where(s => s.Stage == kind)];
+        string seen = string.Join(", ", hook.Stages.Select(s => $"{s.Stage} {s.Count}/{s.Bytes}"));
+        Check(Of(InferenceStageKind.ImageDecode) is [{ Count: 3 * 12 * 20, Device: "cpu" } decode] && decode.Bytes == page.Data.Length, $"the page decoded: {seen}");
+        Check(Of(InferenceStageKind.ImageTransforms) is [{ Count: 1 * 4 * 8 }], $"its transforms (grey, 8 wide): {seen}");
+        Check(Of(InferenceStageKind.Encoder) is [{ Count: 1, Bytes: > 0 } encoder] && encoder.Device == device.Backend.Kind, $"one image encoded on {device}: {seen}");
+        Check(Of(InferenceStageKind.CacheAllocation) is { Length: > 0 } caches && caches.All(c => c.Count > 0 && c.Bytes > 0), $"each layer's cache with its size: {seen}");
+        Check(Of(InferenceStageKind.Prefill) is [{ } prefill] && prefill.Count == result.Stats!.PromptTokens, $"the prompt's pass over {result.Stats!.PromptTokens} tokens: {seen}");
+        Check(Of(InferenceStageKind.DecodeChunk).Sum(c => c.Count) == result.Stats.GeneratedTokens - 1, $"the decoding chunks' tokens, {result.Stats.GeneratedTokens} generated: {seen}");
+        Check(hook.Stages.All(s => s.Duration >= TimeSpan.Zero), "durations");
+        Check(console.ToString().Contains("Read Prefill on ", StringComparison.Ordinal), $"the console logger's line: {console}");
+
+        var file = Path.Combine(Path.GetTempPath(), $"idrak-stages-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            using (var json = new JsonLinesLogger(file, TelemetryLevel.Inference))
+            using (Telemetry.Subscribe(json))
+            {
+                Telemetry.InferenceStage(InferenceStageKind.Encoder, device, Telemetry.Start(TelemetryLevel.Inference), 2, 4096);
+            }
+
+            string written = File.ReadAllText(file);
+            Check(written.Contains("\"event\":\"inference_stage\"", StringComparison.Ordinal) && written.Contains("\"stage\":\"Encoder\"", StringComparison.Ordinal)
+                  && written.Contains("\"bytes\":4096", StringComparison.Ordinal), $"the JSON Lines record: {written}");
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     private static void ImageReaderReads(Device device)

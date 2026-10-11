@@ -55,10 +55,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ProfileProbes.CpuProbe, ProfileProbes.HeapProbe, ProfileProbes.KernelsProbe, ProfileProbes.MemoryProbe, ProfileProbes.OperationsProbe |  | — | Abstraction |
+| `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.HeapProbe, ProfileProbes.KernelsProbe, ProfileProbes.MemoryProbe, ProfileProbes.OperationsProbe, +1 |  | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileWriter` | interface | public | — | ProfileWriters.CsvWriter, ProfileWriters.JsonWriter, ProfileWriters.TableWriter |  | — | Abstraction |
-| `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Diagnostics.ProfileProbes` | registry | public | — |  | cpu, heap, kernels, memory, operations | — | Abstraction |
+| `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder, ProfileProbes.StagesProbe.StageSums |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Diagnostics.ProfileProbes` | registry | public | Backend |  | bandwidth, cpu, heap, kernels, memory, operations, stages | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ProfileWriters` | registry | public | — |  | csv, json, markdown, table | — | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
@@ -195,16 +195,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 160 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (142, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 162 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (144, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 130 of 170 |
-| `CudaBackend` | 165 of 170 |
-| `HipBackend` | 23 of 170 |
-| `VulkanBackend` | 128 of 170 |
+| `CpuBackend` | 130 of 172 |
+| `CudaBackend` | 167 of 172 |
+| `HipBackend` | 23 of 172 |
+| `VulkanBackend` | 128 of 172 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -233,6 +233,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionSegmentedKernel(14)` | virtual | ✓ | ✓ |  |  |
 | `AttentionSpansBackwardKernel(19)` | virtual | ✓ | ✓ |  | ✓ |
 | `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  | ✓ |
+| `AttentionSpansStridedKernel(18)` | virtual |  | ✓ |  |  |
 | `AttentionStridedBackwardKernel(23)` | virtual |  | ✓ |  |  |
 | `AttentionStridedKernel(16)` | virtual |  | ✓ |  |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ |
@@ -331,6 +332,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `PackedMatMulAddRmsNormKernel(14)` | virtual |  | ✓ |  | ✓ |
+| `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |
 | `PackedMatMulGatedKernel(10)` | virtual |  | ✓ |  | ✓ |
 | `PackedMatMulGatedPairKernel(7)` | virtual |  | ✓ |  | ✓ |
 | `PackedMatMulLargeKernel(8)` | virtual |  | ✓ |  | ✓ |

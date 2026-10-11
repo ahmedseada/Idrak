@@ -406,6 +406,56 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
+    // [plain or residual] × [128-row tile, 64-row tile] for the epilogue products over bfloat16 weights; GELU apart.
+    private static readonly string[] PackedEpilogueKernels = ["gemm_tc_nn_bf16w_f32", "gemm_tc_nn_bf16w_m64_f32", "gemm_tc_nn_bf16w_res_f32", "gemm_tc_nn_bf16w_m64_res_f32"];
+    private static readonly string[] PackedGeluKernels = ["gemm_tc_nn_gelu_bf16w_f32", "gemm_tc_nn_gelu_bf16w_m64_f32"];
+
+    // Prompt-sized products over bfloat16 weights with the bias, then GELU or the residual, in the tensor-core product's
+    // epilogue (PtxKernels.TensorCore.cs: p_bias, the residual through p_aux): no pass over the output after the product.
+    // Elsewhere (few rows, other formats, no tensor cores) the composed passes.
+    public override void PackedMatMulEpilogueKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias,
+        Storage? residual, bool gelu)
+    {
+        if (format != PackedFormat.BFloat16 || m <= PtxKernels.GemvRows || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores
+            || gelu && (bias is null || residual is not null))
+        {
+            base.PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+            return;
+        }
+
+        int tileRows = PromptTileRows(m), tile = tileRows == 64 ? 1 : 0;
+        string kernel = gelu ? PackedGeluKernels[tile] : PackedEpilogueKernels[(residual is null ? 0 : 2) + tile];
+        if (TensorKernel(kernel) is not { } tensor)
+        {
+            base.PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+            return;
+        }
+
+        int rowTiles = (m + tileRows - 1) / tileRows, columnTiles = (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
+        void Run(int splits)
+        {
+            if (_profile is not null)
+            {
+                _profileLabel = $"{kernel[..^4]} {m}x{n}x{k}";
+                _profileFlops = 2.0 * m * n * k;
+            }
+
+            if (splits > 1)
+            {
+                Check(cuMemsetD32Async(P(y), 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
+            }
+
+            Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1, P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL,
+                0UL, bias is null ? 0UL : P(bias), U(k), U((n + 1) / 2), U(n), residual is null ? 0UL : P(residual));
+        }
+
+        // GELU is not linear: never split over k. The bias (and the residual) are added by the first split alone.
+        int packedVariant = (int)format * 2 + tile + (residual is null ? 0 : 16);
+        Run(gelu ? 1
+            : PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32))
+            : PromptSplitsTuned(new TuneKey(TuneOp.PackedSplits, packedVariant, m, n, k), rowTiles * columnTiles, k, Run));
+    }
+
     // Prompt-sized products of one input through 2-3 packed layers (queries/keys/values, gate/up) in one tensor-core
     // launch: the column tiles of every product side by side, so a few rows still fill the GPU (180 rows are 2 row
     // tiles: q/k/v alone gave 32 tiles, 16 and 16 in separate launches). Widths must be multiples of the 128-column tile,

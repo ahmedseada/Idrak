@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Diagnostics;
+
 namespace Idrak.Abstraction.Generation;
 
 /// <summary>How a <see cref="KeyValueCache"/> stores keys and values.</summary>
@@ -379,7 +381,9 @@ public sealed class DecodingContext : IDisposable
     {
         if (!_caches.TryGetValue(owner, out var cache))
         {
+            long start = Telemetry.Start(TelemetryLevel.Inference);
             _caches[owner] = cache = new KeyValueCache(rows, Capacity, headDim, Device, Layout);
+            Telemetry.InferenceStage(InferenceStageKind.CacheAllocation, Device, start, Capacity, cache.Bytes);
         }
 
         return cache;

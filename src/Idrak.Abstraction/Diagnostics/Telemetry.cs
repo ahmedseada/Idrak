@@ -28,7 +28,11 @@ public enum TelemetryLevel
     /// <summary>Every tensor operation, forward and backward, with shapes and timing. Very verbose.</summary>
     Operations = 1 << 4,
 
-    /// <summary>Every <see cref="Module.Predict(Tensor)"/> call: batch size, latency and throughput.</summary>
+    /// <summary>
+    /// Every <see cref="Module.Predict(Tensor)"/> call: batch size, latency and throughput; and each stage of reading an
+    /// answer (<see cref="InferenceStage"/>: an image decoded, transformed and encoded, the prompt's pass, each chunk of
+    /// decoding, a step recorded as a graph, each cache allocated).
+    /// </summary>
     Inference = 1 << 5,
 
     /// <summary>Every tool call made during a chat (<c>Generation.ToolRegistry</c>): name, duration, outcome.</summary>
@@ -101,6 +105,11 @@ public interface ITelemetryHook
 
     /// <summary>A tool call finished (<see cref="TelemetryLevel.Tools"/>).</summary>
     void OnToolCall(in ToolCallCompleted e)
+    {
+    }
+
+    /// <summary>A stage of reading an answer finished: an image decoded, encoded, the prompt's pass, a chunk of decoding (<see cref="TelemetryLevel.Inference"/>).</summary>
+    void OnInferenceStage(in InferenceStage e)
     {
     }
 
@@ -269,6 +278,29 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Tools) != 0)
             {
                 h.OnToolCall(in e);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reports a stage of reading an answer that began at <paramref name="start"/> (<see cref="Start"/> with
+    /// <see cref="TelemetryLevel.Inference"/>; 0 when nobody listened then, and nothing is reported), to the hooks listening
+    /// at <see cref="TelemetryLevel.Inference"/>: its duration to now (the device's queued work waited for first under
+    /// <see cref="SynchronizeForTiming"/>), what it counts and its bytes.
+    /// </summary>
+    public static void InferenceStage(InferenceStageKind stage, Device? device, long start, long count = 0, long bytes = 0)
+    {
+        if (start == 0)
+        {
+            return;
+        }
+
+        var e = new InferenceStage(stage, device?.Backend.Kind ?? "cpu", Elapsed(start, device), count, bytes);
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Inference) != 0)
+            {
+                h.OnInferenceStage(in e);
             }
         }
     }

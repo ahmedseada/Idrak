@@ -3,6 +3,7 @@
 
 using System.Collections.Frozen;
 using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Data;
 
 namespace Idrak.Generation;
@@ -61,8 +62,15 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
             }
         }
 
+        long start = Telemetry.Start(TelemetryLevel.Inference);
         var decoded = Decode(image);
+        Telemetry.InferenceStage(InferenceStageKind.ImageDecode, null, start, (long)decoded.Channels * decoded.Height * decoded.Width, image.Data.Length);
+        start = Telemetry.Start(TelemetryLevel.Inference);
         var pixels = pipeline.IsEmpty ? decoded : pipeline.Apply(decoded);
+        if (!pipeline.IsEmpty)
+        {
+            Telemetry.InferenceStage(InferenceStageKind.ImageTransforms, null, start, (long)pixels.Channels * pixels.Height * pixels.Width);
+        }
         lock (_lastLock)
         {
             _last = (image.Hash, transforms, pixels);
@@ -267,15 +275,30 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     // once more, so a full device never leaves every later prompt with images failing the same way.
     private IReadOnlyList<ImageFeatures> EncodeImages(IVisionEncoder encoder, IReadOnlyList<ImageData> images, VisionOptions? options)
     {
+        long start = Telemetry.Start(TelemetryLevel.Inference);
+        IReadOnlyList<ImageFeatures> features;
         try
         {
-            return encoder.Encode(images, options);
+            features = encoder.Encode(images, options);
         }
         catch (ResourceLimitExceededException) when (Generator.HoldsCache)
         {
             Generator.ReleaseCache();
-            return encoder.Encode(images, options);
+            features = encoder.Encode(images, options);
         }
+
+        if (start != 0)
+        {
+            long bytes = 0;
+            foreach (var feature in features)
+            {
+                bytes += 4L * feature.Features.Size;
+            }
+
+            Telemetry.InferenceStage(InferenceStageKind.Encoder, Generator.Device, start, images.Count, bytes);
+        }
+
+        return features;
     }
 
     // StreamBatch of requests with images (see there).
