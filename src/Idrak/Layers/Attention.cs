@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Layers.Abstractions;
 
 namespace Idrak.Layers;
@@ -79,7 +80,18 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     public bool Causal { get; }
 
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input)
+    protected override Tensor ForwardCore(Tensor input) => Attend(input, null, fused: false);
+
+    /// <summary>
+    /// residual + this layer's output, for inference: the projections' biases and the residual in their products'
+    /// epilogues where the layers can (<see cref="Linear.ProjectBiased"/>, <see cref="Linear.ProjectAdding"/>; the same
+    /// values). The caller has checked that nothing is recorded, offloaded or traced per layer: the inner layers' products
+    /// are called directly.
+    /// </summary>
+    internal Tensor ForwardAdding(Tensor input, Tensor residual) => Attend(input, residual, fused: true);
+
+    // The layer's output (plus the residual when given; `fused`: the projections through their epilogues).
+    private Tensor Attend(Tensor input, Tensor? residual, bool fused)
     {
         if (input.Rank != 3 || input.Shape[2] != Dim)
         {
@@ -87,7 +99,8 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         }
 
         int n = input.Shape[0], t = input.Shape[1], dh = Dim / Heads;
-        var qkv = _qkv.Forward(input);                                    // [N, T, 3D]
+        var qkv = fused ? _qkv.ProjectBiased(input) : _qkv.Forward(input); // [N, T, 3D]
+        Tensor Output(Tensor context) => residual is null ? _output.Forward(context) : _output.ProjectAdding(context, residual);
         Tensor SplitHeads(int part) => qkv.Narrow(2, part * Dim, Dim)
             .Reshape(n, t, Heads, dh)
             .Permute(0, 2, 1, 3)
@@ -103,11 +116,11 @@ public sealed class MultiHeadAttention : Module, ICachedModule
             var (starts, ends) = AllKeys(t, input.Device);
             if (Tensor.AttentionFastestPacked(qkv, Heads, Heads, dh, starts, ends, 1f / MathF.Sqrt(dh), everyKey: true) is { } attended)
             {
-                return _output.Forward(attended);
+                return Output(attended);
             }
 
             context = Tensor.AttentionFastest(SplitHeads(0), SplitHeads(1), SplitHeads(2), starts, ends, 1f / MathF.Sqrt(dh), everyKey: true);
-            return _output.Forward(context
+            return Output(context
                 .Reshape(n, Heads, t, dh)
                 .Permute(0, 2, 1, 3)
                 .Reshape(n, t, Dim));
@@ -141,7 +154,7 @@ public sealed class MultiHeadAttention : Module, ICachedModule
             .Reshape(n, Heads, t, dh)
             .Permute(0, 2, 1, 3)
             .Reshape(n, t, Dim);
-        return _output.Forward(context);
+        return Output(context);
     }
 
     /// <summary>
@@ -310,6 +323,14 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
     {
+        if (_dropout is null && _activation is null && FusedPasses(input))
+        {
+            // Inference: each residual added in its output projection's epilogue and the GELU in the first feed-forward
+            // projection's, where the layers hold packed weights (else the same operations one by one): the same values.
+            var sum = _attention.ForwardAdding(_norm1.Forward(input), input);
+            return _feedForward2.ProjectAdding(_feedForward1.ProjectGelu(_norm2.Forward(sum)), sum);
+        }
+
         var attended = _attention.Forward(_norm1.Forward(input));
         var x = input + (_dropout?.Forward(attended) ?? attended);
         var hidden = _feedForward2.Forward(FeedForwardHidden(_norm2.Forward(x)));
@@ -322,6 +343,11 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         var x = input + _attention.ForwardCached(_norm1.Forward(input), context);
         return x + _feedForward2.Forward(FeedForwardHidden(_norm2.Forward(x)));
     }
+
+    // The fused inference passes: no gradient, not a checkpointed pass's first run (its values must be the recompute's),
+    // nothing offloaded and no per-layer telemetry (they call the inner layers' products, not their Forward).
+    private static bool FusedPasses(Tensor input) =>
+        !Autograd.IsEnabled && !Checkpointing.FirstPass && input.Device.Backend.Offload is null && !Telemetry.IsEnabled(TelemetryLevel.Layers);
 
     /// <summary>
     /// GELU(x·W1 + b1) (fused into one kernel, plus the product, during inference; not in a checkpointed pass, whose values

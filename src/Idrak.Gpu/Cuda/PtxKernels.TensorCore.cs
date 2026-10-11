@@ -75,6 +75,17 @@ internal static partial class PtxKernels
         Module("attention row sums", FlashDelta),
         Module("int8 products", sb => BuildEightBit(sb, fp8: false)),
         Module("fp8 products", sb => BuildEightBit(sb, fp8: true), version: "8.4", target: "sm_89"),
+        // Prompt-sized products over bfloat16 weights with more in the epilogue (Backend.PackedMatMulEpilogue): GELU of the
+        // biased product (an encoder's first feed-forward projection) and the residual added after the bias (its output
+        // projections).
+        Module("product epilogues", sb =>
+        {
+            foreach (int tileM in new[] { TensorTile, 64 })
+            {
+                TensorCoreGemm(sb, false, false, 1, packed: 3, tileM: tileM);
+                TensorCoreGemm(sb, false, false, 0, packed: 3, tileM: tileM, residual: true);
+            }
+        }),
     ]);
 
     private static (string Name, string[] Kernels, string Source) Module(string name, Action<StringBuilder> build, string version = "7.0", string target = "sm_80")
@@ -150,12 +161,20 @@ internal static partial class PtxKernels
     // or [n, r] (b transposed), r = p_r ≤ 32; multi takes p_u1 / p_v1 and p_u2 / p_v2 for its other products. p_u = 0
     // skips the term. With split k only block z = 0 adds it.
     //
+    // residual (mode 0, plain or bfloat16 weights, …_res_f32): the epilogue adds p_aux (c's layout) after the bias,
+    // c = beta·c + (acc + bias) + aux; with split k only block z = 0 adds it, as the bias.
+    //
     // bf16B (B transposed, …_nt_bf16w_lr_f32): B is a bfloat16 weight W [n][k] stored as BFloat16Weight packs it (two
     // values per 32-bit word along k; ldb = words per row): dx = g · Wᵀ reads the weight as stored, with no float copy. Each
     // thread's pair of k is one word, copied to shared memory as it is (the tile holds bfloat16 pairs anyway).
     private static void TensorCoreGemm(StringBuilder sb, bool ta, bool tb, int mode, int packed = 0, bool multi = false, int tileM = TensorTile,
-        bool lowRank = false, bool bf16B = false)
+        bool lowRank = false, bool bf16B = false, bool residual = false)
     {
+        if (residual && (mode != 0 || packed is 1 or 2 || multi || lowRank))
+        {
+            throw new ArgumentException("The residual reads p_aux: mode 0, no int8 or 4-bit scales there, one product, no low-rank stage.");
+        }
+
         if (lowRank && (ta || mode != 0 || packed == 1 || tileM != TensorTile))
         {
             throw new ArgumentException("The low-rank stage needs A as stored, no epilogue, no int8 column scales and 128-row tiles.");
@@ -167,7 +186,7 @@ internal static partial class PtxKernels
         }
 
         string name = $"gemm_tc_{(ta ? 't' : 'n')}{(tb ? 't' : 'n')}{mode switch { 1 => "_gelu", 2 => "_gelugrad", _ => "" }}"
-                      + $"{packed switch { 1 => "_int8w", 2 => "_int4w", 3 => "_bf16w", _ => "" }}{(bf16B ? "_bf16w" : "")}{(multi ? "_multi" : "")}{(tileM == 64 ? "_m64" : "")}{(lowRank ? "_lr" : "")}_f32";
+                      + $"{packed switch { 1 => "_int8w", 2 => "_int4w", 3 => "_bf16w", _ => "" }}{(bf16B ? "_bf16w" : "")}{(multi ? "_multi" : "")}{(tileM == 64 ? "_m64" : "")}{(residual ? "_res" : "")}{(lowRank ? "_lr" : "")}_f32";
         int mts = tileM / 32, warpRowShift = (int)Math.Log2(tileM / 2);          // m16 slices per warp; the warp's first row
         int cpw = packed switch { 1 => 4, 2 => 8, _ => 2 }, tileWords = TensorTile / cpw, wordRows = TensorThreads / tileWords;
         int wordsPerThread = TensorK * tileWords / TensorThreads;
@@ -746,7 +765,7 @@ internal static partial class PtxKernels
             s.AppendLine("LR_DONE:");
         }
 
-        EmitTensorEpilogue(s, mode, packed == 1 ? t => ColumnScales(t, mts) : null, splitK: mode == 0, mts: mts);
+        EmitTensorEpilogue(s, mode, packed == 1 ? t => ColumnScales(t, mts) : null, splitK: mode == 0, mts: mts, residual: residual);
         s.AppendLine("""
                 ret;
             }
@@ -772,7 +791,8 @@ internal static partial class PtxKernels
     // (mode 0), %psplit (set by the caller) marks a split k: each block adds its partial sums into c atomically (beta
     // must be 0, c zeroed first, or 1) and only block z = 0 adds the bias.
     // mts: the m16 slices of each warp (4: 64 rows, the 128-row tiles; 2: 32 rows, the 64-row tiles).
-    private static void EmitTensorEpilogue(StringBuilder s, int mode, Action<StringBuilder>? scale, bool splitK = false, int mts = 4)
+    // residual (mode 0): aux (c's layout) added after the bias, by block z = 0 only under split k.
+    private static void EmitTensorEpilogue(StringBuilder s, int mode, Action<StringBuilder>? scale, bool splitK = false, int mts = 4, bool residual = false)
     {
         // Epilogue: c[row, col] = acc + beta · c (rows (lane >> 2) and +8 of each m16 tile, columns 2 (lane & 3) and +1
         // of each n8 tile). %r42 = first row, %r43 = first column, %rd14 = its address, %rd15 = a row in bytes.
@@ -911,6 +931,32 @@ internal static partial class PtxKernels
                             add.f32 %e{{2 * nt}}, %e{{2 * nt}}, %bias{{2 * nt}};
                             add.f32 %e{{2 * nt + 1}}, %e{{2 * nt + 1}}, %bias{{2 * nt + 1}};
                         """);
+                }
+
+                if (residual)
+                {
+                    // The residual's 8 values of this row group (c's layout at c + %rd22), read together, then added.
+                    s.AppendLine(CultureInfo.InvariantCulture, $"@!%pz0 bra EPI_RES_{group};");
+                    for (int nt = 0; nt < 4; nt++)
+                    {
+                        s.AppendLine(CultureInfo.InvariantCulture, $$"""
+                                mov.f32 %h{{2 * nt}}, 0f00000000;
+                                mov.f32 %h{{2 * nt + 1}}, 0f00000000;
+                                @%q{{3 * nt}} ld.global.v2.f32 {%h{{2 * nt}}, %h{{2 * nt + 1}}}, [%rd23+{{nt * 32}}];
+                                @%q{{3 * nt + 1}} ld.global.f32 %h{{2 * nt}}, [%rd23+{{nt * 32}}];
+                                @%q{{3 * nt + 2}} ld.global.f32 %h{{2 * nt + 1}}, [%rd23+{{nt * 32 + 4}}];
+                            """);
+                    }
+
+                    for (int nt = 0; nt < 4; nt++)
+                    {
+                        s.AppendLine(CultureInfo.InvariantCulture, $"""
+                                add.f32 %e{2 * nt}, %e{2 * nt}, %h{2 * nt};
+                                add.f32 %e{2 * nt + 1}, %e{2 * nt + 1}, %h{2 * nt + 1};
+                            """);
+                    }
+
+                    s.AppendLine(CultureInfo.InvariantCulture, $"EPI_RES_{group}:");
                 }
 
                 // Mode 1: pre = acc + bias (stored when aux is given), c = beta·c + gelu(pre).

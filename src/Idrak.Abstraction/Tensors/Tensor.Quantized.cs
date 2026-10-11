@@ -115,6 +115,53 @@ public sealed partial class Tensor
 
 
     /// <summary>
+    /// A layer's product with what follows it, for inference: [..., k] × <paramref name="weight"/> ([k, n], a built-in
+    /// packed format) + <paramref name="bias"/> [n], then gelu (the tanh approximation, as <see cref="BiasGelu"/>) when
+    /// <paramref name="gelu"/>, or + <paramref name="residual"/> (the output's shape) when given → [..., n]. In the
+    /// product's epilogue where the device has one (<see cref="Backend.PackedMatMulEpilogue"/>: no pass over the output
+    /// after the product), else the same passes one after another (the values of x·W + b, <see cref="BiasGelu"/> and
+    /// residual + y). Records no gradient.
+    /// </summary>
+    /// <param name="input">[..., k] on the weights' device.</param>
+    /// <param name="weight">The weights, in a built-in packed format (<see cref="PackedWeight.Format"/> not null).</param>
+    /// <param name="bias">[n], or null (gelu needs it).</param>
+    /// <param name="gelu">Gelu of the biased product (no residual then).</param>
+    /// <param name="residual">Added after the bias: the output's shape, or null.</param>
+    /// <exception cref="ArgumentException">The weights are not a built-in format, or the shapes or options do not fit.</exception>
+    /// <exception cref="InvalidOperationException">A gradient would be recorded.</exception>
+    public static Tensor MatMulPackedEpilogue(Tensor input, PackedWeight weight, Tensor? bias, bool gelu = false, Tensor? residual = null)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(weight);
+        input.ThrowIfDisposed();
+        int k = weight.Rows, n = weight.Columns;
+        if (weight.Format is not { } format || input.Rank < 2 || input._shape[^1] != k || bias is not null && bias.Size != n || gelu && (bias is null || residual is not null)
+            || residual is not null && (residual.Rank != input.Rank || !residual._shape.AsSpan(0, input.Rank - 1).SequenceEqual(input._shape.AsSpan(0, input.Rank - 1)) || residual._shape[^1] != n))
+        {
+            throw new ArgumentException($"MatMulPackedEpilogue takes [..., {k}] through built-in [{k}, {n}] weights, a bias [{n}] (gelu needs it), and a residual of the "
+                + $"output's shape (not with gelu); got {weight.Name} weights, {FormatShape(input._shape)}, bias {(bias is null ? "none" : FormatShape(bias._shape))}, "
+                + $"residual {(residual is null ? "none" : FormatShape(residual._shape))}, gelu {gelu}.");
+        }
+
+        if (Autograd.IsEnabled && (input.RequiresGrad || bias is { RequiresGrad: true } || residual is { RequiresGrad: true }))
+        {
+            throw new InvalidOperationException("MatMulPackedEpilogue records no gradient: run the layer's operations one by one while gradients are recorded.");
+        }
+
+        if (weight.Device != input.Device || bias is not null && bias.Device != input.Device || residual is not null && residual.Device != input.Device)
+        {
+            throw new ArgumentException($"MatMulPackedEpilogue: the weights are on {weight.Device}, the input on {input.Device}; the bias and residual must be there too.");
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        int m = input.Size / Math.Max(1, k);
+        var y = Empty([.. input._shape[..^1], n], input.Device);
+        input.Backend.PackedMatMulEpilogue(format, input.Storage, weight.PackedValues.Storage, weight.ScaleValues?.Storage, y.Storage, m, n, k, bias?.Storage,
+            residual?.Storage, gelu);
+        return Traced("matmul_packed_epilogue", y, start);
+    }
+
+    /// <summary>
     /// [..., k] × <paramref name="weight"/> ([k, n], 4-bit) → [..., n]. Few rows read the nibbles directly; more expand
     /// them to float32 once. Gradients flow to this tensor (the weights are fixed), so LoRA adapters on it train (QLoRA).
     /// </summary>

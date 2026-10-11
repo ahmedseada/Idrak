@@ -729,6 +729,67 @@ public abstract partial class Backend
     public virtual bool PackedMatMulLargeKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
+    /// y [m, n] = x [m, k] · w (packed in <paramref name="format"/>, with <paramref name="scales"/> for int8 and 4-bit) +
+    /// <paramref name="bias"/> [n] on every row (when given), then gelu (the tanh approximation, as <see cref="BiasGelu"/>;
+    /// <paramref name="gelu"/> needs the bias) or + <paramref name="residual"/> [m, n] (when given; not with gelu): a
+    /// layer's product and what follows it in one pass where the device's product has the epilogue. By default the product
+    /// (<see cref="BFloat16MatMul"/>, <see cref="Int8MatMul"/> or <see cref="Int4MatMul"/>), then <see cref="BiasGelu"/> or
+    /// <see cref="AddRowVector"/>, then the residual's <see cref="Binary"/> add, in y: a device's own epilogue adds in the
+    /// same order (residual + (product + bias)).
+    /// </summary>
+    public virtual void PackedMatMulEpilogueKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias,
+        Storage? residual, bool gelu)
+    {
+        if (gelu && (bias is null || residual is not null))
+        {
+            throw new ArgumentException("PackedMatMulEpilogue: gelu takes the bias and no residual.");
+        }
+
+        // Each pass writes a buffer of its own (no pass reads and writes one storage), as the separate tensors did.
+        Storage? product = bias is not null || residual is not null ? Allocate(m * n, zeroed: false) : null;
+        Storage? biased = bias is not null && residual is not null ? Allocate(m * n, zeroed: false) : null;
+        try
+        {
+            var current = product ?? y;
+            switch (format)
+            {
+                case PackedFormat.BFloat16:
+                    BFloat16MatMul(x, packed, current, m, n, k);
+                    break;
+                case PackedFormat.Int8:
+                    Int8MatMul(x, packed, scales ?? throw new ArgumentNullException(nameof(scales)), current, m, n, k);
+                    break;
+                case PackedFormat.Int4:
+                    Int4MatMul(x, packed, scales ?? throw new ArgumentNullException(nameof(scales)), current, m, n, k);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(format), format, "Not a built-in packed format.");
+            }
+
+            if (gelu)
+            {
+                BiasGelu(current, bias!, y, m * n, n);
+            }
+            else if (bias is not null)
+            {
+                var target = biased ?? y;
+                AddRowVector(current, bias, target, m, n);
+                current = target;
+            }
+
+            if (residual is not null)
+            {
+                Binary(BinaryOp.Add, residual, current, y, m * n);
+            }
+        }
+        finally
+        {
+            product?.Release();
+            biased?.Release();
+        }
+    }
+
+    /// <summary>
     /// True when <see cref="PackedMatMulLarge"/> is faster than the few-rows kernels for this shape although the rows are
     /// few enough for them (callers still fall back to those kernels when the packed product returns false). Given the
     /// real operands, so a device can measure both on itself; it may write <paramref name="y"/>, which the caller's product

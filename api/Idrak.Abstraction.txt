@@ -561,6 +561,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void NormStatsKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage mean, Idrak.Abstraction.Devices.Storage variance, Idrak.Abstraction.Devices.Storage invStd, int outer, int groups, int inner, float eps)
   public virtual void OneHotKernel(Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int classes)
   public virtual void PackBFloat16Kernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, int n)
+  public virtual void PackedMatMulEpilogueKernel(Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage? residual, bool gelu)
   public virtual void PenalizeRowsKernel(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage work, Idrak.Abstraction.Devices.Storage history, Idrak.Abstraction.Devices.Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
   public virtual void PermuteKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, System.ReadOnlySpan<int> outShape, System.ReadOnlySpan<int> inStrides, bool accumulate)
   public virtual void PowBackwardKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float exponent)
@@ -678,6 +679,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void NormStats(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage mean, Idrak.Abstraction.Devices.Storage variance, Idrak.Abstraction.Devices.Storage invStd, int outer, int groups, int inner, float eps)
   public void OneHot(Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int classes)
   public void PackBFloat16(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, int n)
+  public void PackedMatMulEpilogue(Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage? residual, bool gelu)
   public void PenalizeRows(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage work, Idrak.Abstraction.Devices.Storage history, Idrak.Abstraction.Devices.Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
   public void Permute(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, System.ReadOnlySpan<int> outShape, System.ReadOnlySpan<int> inStrides, bool accumulate)
   public void Pow(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float exponent)
@@ -2287,6 +2289,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.OneHot (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackBFloat16 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulAddRmsNorm (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulEpilogue (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGated (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGatedPair (below)
   nested Idrak.Abstraction.Operations.OperationKernels.PackedMatMulLarge (below)
@@ -2540,6 +2543,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.PackBFloat16(
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.PackedMatMulAddRmsNorm(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage residual, Idrak.Abstraction.Devices.Storage sum, Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage normalized, float eps, float offset)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.PackedMatMulEpilogue(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage? residual, bool gelu)
+
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGated(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, int activation, Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.PackedMatMulGatedPair(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.PackedFormat format, int activation, Idrak.Abstraction.Devices.Storage x, int m, int k, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, int)> products, Idrak.Abstraction.Devices.Storage hidden)
@@ -2720,6 +2725,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation OneHot
   public static readonly Idrak.Abstraction.Operations.Operation PackBFloat16
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulAddRmsNorm
+  public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulEpilogue
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulGated
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulGatedPair
   public static readonly Idrak.Abstraction.Operations.Operation PackedMatMulLarge
@@ -3018,6 +3024,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor GatherRows(Idrak.Abstraction.Tensor x, int[] rows)
   public static Idrak.Abstraction.Tensor MatMulBias(Idrak.Abstraction.Tensor x, Idrak.Abstraction.Tensor w, Idrak.Abstraction.Tensor bias)
   public static Idrak.Abstraction.Tensor MatMulFrozenTransposed(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Generation.BFloat16Weight transposed)
+  public static Idrak.Abstraction.Tensor MatMulPackedEpilogue(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.PackedWeight weight, Idrak.Abstraction.Tensor? bias, bool gelu = false, Idrak.Abstraction.Tensor? residual = null)
   public static Idrak.Abstraction.Tensor MatchRate(Idrak.Abstraction.Tensor predictions, Idrak.Abstraction.Tensor targets, float threshold)
   public static Idrak.Abstraction.Tensor Normal(System.ReadOnlySpan<int> shape, float mean = 0f, float std = 1f, System.Random? random = null, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor OneHot(Idrak.Abstraction.Tensor indices, int classes)

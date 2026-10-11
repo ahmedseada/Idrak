@@ -195,16 +195,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 161 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (143, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 162 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (144, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 130 of 171 |
-| `CudaBackend` | 166 of 171 |
-| `HipBackend` | 23 of 171 |
-| `VulkanBackend` | 128 of 171 |
+| `CpuBackend` | 130 of 172 |
+| `CudaBackend` | 167 of 172 |
+| `HipBackend` | 23 of 172 |
+| `VulkanBackend` | 128 of 172 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -332,6 +332,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `PackedMatMulAddRmsNormKernel(14)` | virtual |  | ✓ |  | ✓ |
+| `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |
 | `PackedMatMulGatedKernel(10)` | virtual |  | ✓ |  | ✓ |
 | `PackedMatMulGatedPairKernel(7)` | virtual |  | ✓ |  | ✓ |
 | `PackedMatMulLargeKernel(8)` | virtual |  | ✓ |  | ✓ |
