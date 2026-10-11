@@ -69,6 +69,12 @@ public sealed record LegalOcrSettings
     /// </summary>
     public string EncoderPrecision { get; init; } = "f32";
 
+    /// <summary>
+    /// The prompt's pass through the language model (the page's image tokens and the instruction): "f32" or "bf16" (tensor
+    /// cores where the GPU has them; the answer's decoding unaffected; compare CER on the evaluation pages before reading with it).
+    /// </summary>
+    public string PrefillPrecision { get; init; } = "f32";
+
     /// <summary>The attention cache: "f32" or "bf16" (half the memory).</summary>
     public string KeyValueCache { get; init; } = "f32";
 

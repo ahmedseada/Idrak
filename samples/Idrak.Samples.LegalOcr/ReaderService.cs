@@ -702,6 +702,7 @@ public sealed class LoadedReader : IDisposable
                 VisionOptions = model.Adapter is { } adapter && TuningImages.Read(adapter) is { VisionOptions.Count: > 0 } tuned ? tuned.VisionOptions : null,
                 CacheFormat = settings.KeyValueCache.ToLowerInvariant() is "bf16" or "bfloat16" ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32,
                 EncoderPrecision = settings.EncoderPrecision.ToLowerInvariant() is "bf16" or "bfloat16" ? MatMulPrecision.BFloat16 : null,
+                PrefillPrecision = settings.PrefillPrecision.ToLowerInvariant() is "bf16" or "bfloat16" ? MatMulPrecision.BFloat16 : null,
                 ContextLength = settings.Context,
             });
             return new LoadedReader(model, pretrained, reader, device);

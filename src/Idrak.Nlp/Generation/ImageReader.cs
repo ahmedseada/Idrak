@@ -38,6 +38,14 @@ public sealed record ImageReaderOptions
     /// </summary>
     public MatMulPrecision? EncoderPrecision { get; init; }
 
+    /// <summary>
+    /// The arithmetic of the prompt's pass (<see cref="TextGenerator.PrefillPrecision"/>: the page's image tokens and the
+    /// instruction through the language model); null: the caller's. <see cref="MatMulPrecision.BFloat16"/> runs the
+    /// prefill's products on tensor cores where the device has them; the answer's decoding steps are unaffected. Compare
+    /// a model's answers on the same pages before reading with it.
+    /// </summary>
+    public MatMulPrecision? PrefillPrecision { get; init; }
+
     /// <summary>Makes the vision encoder instead of the model's own (tests feed reference features with it).</summary>
     public Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? EncoderFactory { get; init; }
 }
@@ -148,6 +156,7 @@ public sealed class ImageReader : IDisposable
             _contextLength = Math.Min(options.ContextLength ?? model.MaxPositions, model.MaxPositions);
             var chat = model.CreateChat(options.CacheFormat, _contextLength);
             chat.Generator.KeepCache = options.KeepCache;
+            chat.Generator.PrefillPrecision = options.PrefillPrecision;
             var images = _images.Images;
             _reading = new ChatImages(images.Encoder, images.Format, images.Attention)
             {

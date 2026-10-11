@@ -18,7 +18,8 @@ using Idrak.Models;
 //   IDRAK_BENCH_TRANSFORMS  the card's pipeline (default grayscale,max_width=1024,contrast=1.5)
 //   IDRAK_BENCH_PROMPT      the instruction (default "Extract details to JSON.")
 //   IDRAK_BENCH_TOKENS      the answer's most tokens (default 64)
-//   IDRAK_BENCH_WEIGHTS     f32, bf16, int8 or int4 (default f32);  IDRAK_BENCH_CACHE f32 or bf16;  IDRAK_BENCH_ENCODER f32 or bf16
+//   IDRAK_BENCH_WEIGHTS     f32, bf16, int8 or int4 (default f32);  IDRAK_BENCH_CACHE f32 or bf16;  IDRAK_BENCH_ENCODER f32 or bf16;
+//                           IDRAK_BENCH_PREFILL f32 or bf16 (the prompt's pass)
 //   IDRAK_BENCH_CONTEXT     the context window (default the model's)
 // How it is measured and written (ProfileOptions.FromEnvironment): IDRAK_PROFILE_WARM (3), IDRAK_PROFILE_COLD (1),
 // IDRAK_PROFILE_PROBES (all: cpu, heap, memory, operations, kernels), IDRAK_PROFILE_STATISTIC (median),
@@ -55,7 +56,7 @@ internal static partial class Tests
         var options = ProfileOptions.FromEnvironment();
         string pageText = string.Create(CultureInfo.InvariantCulture, $"{page.MediaType} {page.Data.Length / 1024} KiB, \"{transforms}\"");
         string setup = $"{Path.GetFileName(folder.TrimEnd('/', '\\'))}, weights {weights}, cache {(Bf16("IDRAK_BENCH_CACHE") ? "bf16" : "f32")}, "
-                       + string.Create(CultureInfo.InvariantCulture, $"encoder {(Bf16("IDRAK_BENCH_ENCODER") ? "bf16" : "f32")}, {pageText}, up to {tokens} tokens");
+                       + string.Create(CultureInfo.InvariantCulture, $"encoder {(Bf16("IDRAK_BENCH_ENCODER") ? "bf16" : "f32")}, prefill {(Bf16("IDRAK_BENCH_PREFILL") ? "bf16" : "f32")}, {pageText}, up to {tokens} tokens");
 
         // The page alone, before any model is loaded: what preparing it costs with nothing else in the process (no trace
         // or kernel timing: it runs on the CPU's own code).
@@ -84,6 +85,7 @@ internal static partial class Tests
                 Transforms = pipeline,
                 CacheFormat = Bf16("IDRAK_BENCH_CACHE") ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32,
                 EncoderPrecision = Bf16("IDRAK_BENCH_ENCODER") ? MatMulPrecision.BFloat16 : null,
+                PrefillPrecision = Bf16("IDRAK_BENCH_PREFILL") ? MatMulPrecision.BFloat16 : null,
                 ContextLength = context,
             });
             long parameters = ModelMemory.WeightCount(model.Network), weightBytes = ModelMemory.TensorBytes(model.Network);

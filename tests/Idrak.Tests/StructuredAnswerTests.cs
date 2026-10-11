@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Data.Abstractions;
 using Idrak.Generation;
+using Idrak.Generation.Abstractions;
 using Idrak.Models;
 using Idrak.Nlp.Abstractions;
 
@@ -221,6 +222,30 @@ internal static partial class Tests
                 $"EncoderPrecision: the encoder under {string.Join(", ", precisions)}, the scope ended after it; \"{read.Text}\"");
         }
 
+        // PrefillPrecision: the prompt's pass (after the generator made its sampler, before its first sample) under it; the
+        // decoding steps (after) and the vision encoder (before the sampler) under the caller's.
+        var passes = new LayerPrecisions();
+        using (var prefill = new ImageReader(model, new ImageReaderOptions
+        {
+            Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, PrefillPrecision = MatMulPrecision.BFloat16,
+        }))
+        {
+            var generator = prefill.Chat.Generator;
+            Check(generator.PrefillPrecision == MatMulPrecision.BFloat16, "the reader's prefill precision reaches its generator");
+            var create = generator.CreateSampler;
+            generator.CreateSampler = request => new PhaseSampler(create(request), passes);
+            using (Telemetry.Subscribe(passes))
+            {
+                _ = prefill.Read(request);
+            }
+        }
+
+        var byPhase = passes.Seen.GroupBy(p => Math.Sign(p.Phase)).ToDictionary(g => g.Key, g => g.Select(p => p.Precision).ToList());
+        Check(byPhase.TryGetValue(0, out var prompt) && prompt.All(p => p == MatMulPrecision.BFloat16)
+              && byPhase.TryGetValue(1, out var steps) && steps.All(p => p == MixedPrecision.Default)
+              && (!byPhase.TryGetValue(-1, out var encoder) || encoder.All(p => p == MixedPrecision.Default)) && MixedPrecision.Current == MixedPrecision.Default,
+            $"PrefillPrecision: {string.Join("; ", byPhase.OrderBy(g => g.Key).Select(g => $"{(g.Key < 0 ? "encoder" : g.Key == 0 ? "prompt" : "decoding")} {g.Value.Count} layer passes under {string.Join(", ", g.Value.Distinct())}"))}");
+
         Check(streamed.ToString().Trim() == first.Text, $"streamed \"{streamed}\", read \"{first.Text}\"");
         Check(first.Stats is { GeneratedTokens: > 0 and <= 6 } && first.Truncated == (first.Stats.GeneratedTokens >= 6), $"{first.Stats?.GeneratedTokens} tokens, truncated {first.Truncated}");
         Check(reader.Vision.Family.Length > 0 && model.Vision is not null, "the family");
@@ -308,6 +333,60 @@ internal static partial class Tests
         Check(reading.DoneReason is "length" or "stop" or "repetition" && reading.Truncated == (reading.DoneReason == "length"),
             $"done reason {reading.DoneReason}, truncated {reading.Truncated}");
     }
+    // The precision each layer's forward pass ran under, by phase: -1 before the generator made its sampler (the vision
+    // encoder), 0 from then to its first sample (the prompt's pass), then the decoding step's number.
+    private sealed class LayerPrecisions : ITelemetryHook
+    {
+        public int Phase = -1;
+
+        public List<(int Phase, MatMulPrecision Precision)> Seen { get; } = [];
+
+        public TelemetryLevel Levels => TelemetryLevel.Layers;
+
+        public void OnLayerForward(in LayerForward e)
+        {
+            lock (Seen)
+            {
+                Seen.Add((Phase, MixedPrecision.Current));
+            }
+        }
+    }
+
+    // A sampler that moves LayerPrecisions' phase: made (the prompt's pass follows), then each sample (a decoding step follows).
+    private sealed class PhaseSampler : ITokenSampler
+    {
+        private readonly ITokenSampler _inner;
+        private readonly LayerPrecisions _phases;
+
+        public PhaseSampler(ITokenSampler inner, LayerPrecisions phases)
+        {
+            (_inner, _phases) = (inner, phases);
+            phases.Phase = 0;
+        }
+
+        public int Rows => _inner.Rows;
+
+        public int Vocabulary => _inner.Vocabulary;
+
+        public Tensor Ids => _inner.Ids;
+
+        public bool Recordable => _inner.Recordable;
+
+        public void Sample(Tensor logits)
+        {
+            _inner.Sample(logits);
+            _phases.Phase++;
+        }
+
+        public void SetHistory(IReadOnlyList<int> tokens) => _inner.SetHistory(tokens);
+
+        public void Reset() => _inner.Reset();
+
+        public SampledToken[][] Read(int fromStep, int toStep) => _inner.Read(fromStep, toStep);
+
+        public void Dispose() => _inner.Dispose();
+    }
+
     // An encoder that records the matrix-product precision it encodes under.
     private sealed class PrecisionProbe(IVisionEncoder inner, List<MatMulPrecision> seen) : IVisionEncoder
     {
