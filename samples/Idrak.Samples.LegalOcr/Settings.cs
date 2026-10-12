@@ -88,6 +88,13 @@ public sealed record LegalOcrSettings
     /// </summary>
     public string KeyValueCache { get; init; } = "f32";
 
+    /// <summary>
+    /// Where the separate token table of int8 or int4 weights with HeadWeights "" lives on a GPU (with HeadWeights "bf16"
+    /// the head is the only table and stays on the GPU): "auto" (on the GPU until it is full, then in system memory for
+    /// good, read in place: a few kilobytes a token), "host" (system memory from the load) or "device" (never moved).
+    /// </summary>
+    public string LookupTables { get; init; } = "auto";
+
     /// <summary>The longest prompt and answer in tokens (the image's tokens included).</summary>
     public int Context { get; init; } = 8192;
 

@@ -17,6 +17,24 @@ public enum OffloadPriority : byte
 }
 
 /// <summary>
+/// Where a frozen lookup table lives on a device that can keep storages in system memory (<see cref="IMemoryOffload"/>):
+/// a table a lookup reads a few rows of (a token embedding beside a head of another format), which the device reads in
+/// place over PCIe for a few kilobytes a token. Set for every model with <see cref="ComputeResources.LookupTables"/>
+/// (IDRAK_LOOKUP_TABLES), or for one build with its options.
+/// </summary>
+public enum LookupTablePlacement : byte
+{
+    /// <summary>On the device until an allocation finds the device full; then in system memory for good, and the allocation retried.</summary>
+    Automatic = 0,
+
+    /// <summary>In system memory from the start: the device's memory for everything else, the table's pinned in the system's.</summary>
+    HostMemory = 1,
+
+    /// <summary>On the device always: a full device fails the allocation as before.</summary>
+    DeviceMemory = 2,
+}
+
+/// <summary>
 /// Keeping tensors in system memory for a device whose own memory is full, implemented by each GPU backend that can
 /// (CUDA today; other GPU backends add their own). The library only talks to this interface: a device without it
 /// (the CPU, whose tensors are in system memory already) offloads nothing, and every caller simply skips the step.
@@ -73,4 +91,20 @@ public interface IMemoryOffload
     /// the device copies; the storages must not be written meanwhile (weights during a forward or backward pass).
     /// </summary>
     IDisposable? Stage(IReadOnlyList<Storage> storages);
+
+    /// <summary>
+    /// Marks <paramref name="storage"/> as a lookup table (<see cref="LookupTablePlacement.Automatic"/>): when an allocation
+    /// finds the device full, it goes to system memory for good (<see cref="PlaceOnHost"/>) before the allocation fails.
+    /// By default nothing is marked.
+    /// </summary>
+    void MarkLookupTable(Storage storage)
+    {
+    }
+
+    /// <summary>
+    /// Moves <paramref name="storage"/> to system memory for good (its values kept), read in place by the kernels: it never
+    /// comes back on its own, is never staged, and does not count as offloaded (<see cref="OffloadedCount"/>), so nothing
+    /// else changes. False when it cannot move now (a graph may hold its address); by default false.
+    /// </summary>
+    bool PlaceOnHost(Storage storage) => false;
 }

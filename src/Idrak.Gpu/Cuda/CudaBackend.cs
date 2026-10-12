@@ -459,14 +459,23 @@ internal sealed unsafe partial class CudaBackend : Backend
         MakeCurrent();
         using var use = UseStream();
         long bytes = BlockBytes(length);
-        bool releaseCache;
-        try
+        bool releaseCache, placed = false;
+        while (true)
         {
-            releaseCache = _memory.MustReleaseCacheFor(bytes); // throws when over the in-use limit
-        }
-        catch (ResourceLimitExceededException) when (ComputeResources.OffloadToHostMemory)
-        {
-            return AllocateHost(length, zeroed);
+            try
+            {
+                releaseCache = _memory.MustReleaseCacheFor(bytes); // throws when over the in-use limit
+                break;
+            }
+            catch (ResourceLimitExceededException) when (!placed && Volatile.Read(ref _lookupTableCount) > 0)
+            {
+                placed = true;
+                PlaceLookupTables();                                   // the lookup tables leave first; then the limit again
+            }
+            catch (ResourceLimitExceededException) when (ComputeResources.OffloadToHostMemory)
+            {
+                return AllocateHost(length, zeroed);
+            }
         }
 
         ulong pointer = 0;
@@ -564,9 +573,18 @@ internal sealed unsafe partial class CudaBackend : Backend
         bool Fits() => cuMemGetInfo(out nuint free, out _) != 0 || (long)free - (long)bytes >= MemoryReserve;
         int result = ErrorOutOfMemory;
         ulong pointer = 0;
-        for (int attempt = 0; attempt < 2 && result == ErrorOutOfMemory; attempt++)
+        for (int attempt = 0; attempt < 3 && result == ErrorOutOfMemory; attempt++)
         {
-            if (attempt == 1)
+            if (attempt == 2)
+            {
+                // Still full: lookup tables (LookupTablePlacement.Automatic) go to system memory for good, where kernels read
+                // the few rows a lookup needs in place, then once more.
+                if (!PlaceLookupTables())
+                {
+                    break;
+                }
+            }
+            else if (attempt == 1)
             {
                 // While a graph is recorded nothing may wait for the stream or free a block (the driver ends the capture
                 // with CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED): the recording fails as out of memory and its step runs
@@ -716,7 +734,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         var s = (CudaStorage)storage;
         lock (_pool)
         {
-            if (_cold.Count > 0 || _awayCount > 0 || _prefetched.Count > 0)
+            if (_cold.Count > 0 || _awayCount > 0 || _prefetched.Count > 0 || _lookupTableCount > 0)
             {
                 ForgetLocked(s);                                           // offload bookkeeping (CudaBackend.Offload.cs)
             }

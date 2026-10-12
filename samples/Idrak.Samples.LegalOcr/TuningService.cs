@@ -511,6 +511,7 @@ public sealed class TuningService : IDisposable
             BFloat16 = weights is "bf16" or "bfloat16",
             Int8 = weights == "int8",
             Int4 = weights == "int4",
+            LookupTables = ComputeResources.ParseLookupTables(_settings.LookupTables),
             MaxPositions = Math.Max(_settings.Context, settings.MaxLength + settings.AnswerTokens),
         });
     }

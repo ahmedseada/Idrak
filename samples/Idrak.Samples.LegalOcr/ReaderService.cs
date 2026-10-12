@@ -770,6 +770,7 @@ public sealed class LoadedReader : IDisposable
             Int8 = weights == "int8",
             Int4 = weights == "int4",
             HeadFormatName = HeadFormat(settings),
+            LookupTables = ComputeResources.ParseLookupTables(settings.LookupTables),
             MaxPositions = settings.Context,
             MergeAdapter = model.Adapter,
         });

@@ -106,7 +106,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             if (OnHostLocked(s))
             {
                 // Cold data that went to system memory when allocated is where it belongs: nothing to make room for.
-                if (priority > OffloadPriority.Hot)
+                if (priority > OffloadPriority.Hot && _away.Contains(s))
                 {
                     _spilled = Math.Max(0, _spilled - BlockBytes(s.Length));
                 }
@@ -548,6 +548,120 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
         }
     }
 
+    // Lookup tables (LookupTablePlacement.Automatic) still on the GPU: the first to leave it, for good, when an allocation
+    // finds it full. Under the pool lock (the count is read without it, as a quick test).
+    private readonly HashSet<CudaStorage> _lookupTables = [];
+    private int _lookupTableCount;
+
+    /// <summary>Lookup tables placed in system memory for good (for tests and diagnostics).</summary>
+    internal long PlacedOnHost;
+
+    public void MarkLookupTable(Storage storage)
+    {
+        if (Mine(storage) is not { } s)
+        {
+            return;
+        }
+
+        lock (_pool)
+        {
+            if (s.Alive && !s.Evicted && s.Pointer != 0 && !OnHostLocked(s))
+            {
+                _lookupTables.Add(s);
+                _lookupTableCount = _lookupTables.Count;
+            }
+        }
+    }
+
+    public bool PlaceOnHost(Storage storage)
+    {
+        if (Mine(storage) is not { } s)
+        {
+            return false;
+        }
+
+        MakeCurrent();
+        using var use = UseStream();
+        if (!Place(s))
+        {
+            return false;
+        }
+
+        ReleaseCachedMemory();                                             // its GPU block back to the driver
+        return true;
+    }
+
+    // The marked lookup tables to system memory for good, their GPU blocks back to the driver; false when none moved (none
+    // marked, or a graph may hold their addresses). With the work stream held.
+    private bool PlaceLookupTables()
+    {
+        CudaStorage[] tables;
+        lock (_pool)
+        {
+            if (_lookupTables.Count == 0 || !Movable)
+            {
+                return false;
+            }
+
+            tables = [.. _lookupTables];
+        }
+
+        int placed = 0;
+        foreach (var table in tables)
+        {
+            placed += Place(table) ? 1 : 0;
+        }
+
+        if (placed > 0)
+        {
+            ReleaseCachedMemory();
+        }
+
+        return placed > 0;
+    }
+
+    // Moves a storage to a pinned system block for good, as MoveOut does, except that it is not offloaded in the
+    // bookkeeping's sense (not away, never staged, rebalanced or brought back): kernels read it there.
+    private bool Place(CudaStorage s)
+    {
+        lock (_pool)
+        {
+            if (!s.Alive || s.Evicted || s.Pointer == 0 || !Movable)
+            {
+                return false;
+            }
+
+            if (OnHostLocked(s))
+            {
+                _lookupTables.Remove(s);
+                _lookupTableCount = _lookupTables.Count;
+                return true;
+            }
+        }
+
+        ulong host = TakeHostBlock(s.Length);
+        lock (_pool)
+        {
+            if (!s.Alive || s.Evicted || s.Pointer == 0 || OnHostLocked(s) || !Movable)
+            {
+                PushHostBlockLocked(host, s.Length);
+                return false;
+            }
+
+            Check(cuMemcpyDtoHAsync((void*)_hostBlocks[host], s.Pointer, (nuint)BlockBytes(s.Length), _stream), nameof(cuMemcpyDtoHAsync));
+            var (old, oldCapacity) = (s.Pointer, s.Capacity);
+            (s.Pointer, s.Capacity) = (host, s.Length);
+            ReturnDeviceBlockLocked(old, oldCapacity);                     // reused only after the copy, in stream order
+            _memory.Offloaded(BlockBytes(s.Length));
+            _cold.Remove(s);
+            _lookupTables.Remove(s);
+            _lookupTableCount = _lookupTables.Count;
+            s.KeepOnHost = true;
+            PlacedOnHost++;
+            return true;
+        }
+    }
+
     // Moves an offloaded storage into GPU memory if it fits with keepFree bytes to spare; the system block goes to the host
     // pool, or into `released` when given (the caller frees those).
     private bool MoveIn(CudaStorage s, long keepFree, bool useCache, List<(ulong Pointer, int Capacity)>? released)
@@ -682,6 +796,12 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
     private void ForgetLocked(CudaStorage s)
     {
         _cold.Remove(s);
+        if (_lookupTableCount > 0)
+        {
+            _lookupTables.Remove(s);
+            _lookupTableCount = _lookupTables.Count;
+        }
+
         if (_awayCount > 0 && _away.Contains(s))
         {
             RemoveAwayLocked(s);

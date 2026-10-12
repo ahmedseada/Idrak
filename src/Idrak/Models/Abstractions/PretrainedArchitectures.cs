@@ -147,6 +147,13 @@ public sealed record DecoderBuildOptions
     public string? HeadFormatName { get; init; }
 
     /// <summary>
+    /// Where a frozen build's separate token table lives (one beside a head of another format; a bfloat16 head is the
+    /// table itself and stays with the head) on a device that can keep it in system memory: null takes
+    /// <see cref="ComputeResources.LookupTables"/> (IDRAK_LOOKUP_TABLES; automatic by default).
+    /// </summary>
+    public LookupTablePlacement? LookupTables { get; init; }
+
+    /// <summary>
     /// Standard deviation of a normal initialization of every weight matrix and embedding table (biases zero, norm gains
     /// one), as GPT-2 and nanoGPT use (0.02). Null keeps the default (uniform Xavier weights, ±0.02 embeddings).
     /// Ignored when building from weights.

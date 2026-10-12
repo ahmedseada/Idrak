@@ -19,6 +19,7 @@ internal static partial class Tests
         ("offloading: a decoder whose base weights (float32 and int8) live in system memory gives the same outputs and LoRA gradients through its fused products (q/k/v, gate/up, down), staged as groups", OffloadDecoder),
         ("offloading: training with a full GPU moves optimizer state out first (then frozen weights), gives the weights of an ordinary run, and brings tensors back when memory frees up", OffloadColdFirst),
         ("offloading: before inference, a model that did not fit has its frozen weights marked cold before any pass and moved out, largest first, until the headroom is free; its outputs are unchanged", OffloadBeforeInference),
+        ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
     ];
 
     private static Sequential OffloadModel(Device device, int seed) => new(
@@ -462,5 +463,77 @@ internal static partial class Tests
         double host = Time("weights on the GPU, AdamW on the CPU (state in RAM)", false, true, true, true);
         Console.WriteLine($"  prefetch vs GPU-only: {prefetched / gpu:F2}x the time; CPU optimizer: {host / gpu:F2}x");
         return 0;
+    }
+
+    private static void LookupTablePlacements(Device device)
+    {
+        Check(ComputeResources.ParseLookupTables(null) == LookupTablePlacement.Automatic && ComputeResources.ParseLookupTables("auto") == LookupTablePlacement.Automatic
+            && ComputeResources.ParseLookupTables("Host") == LookupTablePlacement.HostMemory && ComputeResources.ParseLookupTables(" device ") == LookupTablePlacement.DeviceMemory,
+            "auto, host and device parse");
+        Expect<ArgumentException>(() => ComputeResources.ParseLookupTables("disk"), "auto, host or device", "an unknown placement");
+
+        // int8 projections and a tied int8 head beside a bfloat16 table of their own (as int8 weights load a checkpoint).
+        var spec = SmallSpec with { Vocabulary = 4096, TieEmbeddings = true };
+        using var sequence = Tensor.From([.. Enumerable.Range(0, 7).Select(i => (float)(i * 577 % spec.Vocabulary))], [1, 7], device);
+        Sequential Build(LookupTablePlacement placement) =>
+            spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device, Int8 = true, LookupTables = placement });
+        float[] Logits(Sequential model)
+        {
+            using (Autograd.NoGrad())
+            {
+                model.Eval();
+                return model.Predict(sequence).ToArray();
+            }
+        }
+
+        static Storage TableOf(Sequential model) => model.Descendants().OfType<Embedding>().Single().BFloat16!.Packed.Storage;
+
+        using var reference = Build(LookupTablePlacement.DeviceMemory);
+        var expected = Logits(reference);
+        if (OffloadOf(device) is not { } offload || device.Backend is not CudaBackend cuda)
+        {
+            using var host = Build(LookupTablePlacement.HostMemory);                 // the table is in system memory already
+            AssertClose(expected, Logits(host), 0f, "a device without offloading: the same logits");
+            return;
+        }
+
+        long tableBytes = TableOf(reference).Length * 4L;
+        long placed = cuda.PlacedOnHost, offloaded = ComputeResources.GetMemoryUsage(device).Offloaded;
+        using (var host = Build(LookupTablePlacement.HostMemory))
+        {
+            Check(cuda.PlacedOnHost == placed + 1, "host: the table in system memory from the build");
+            Check(ComputeResources.GetMemoryUsage(device).Offloaded - offloaded >= tableBytes, $"host: counted in system memory ({ComputeResources.GetMemoryUsage(device)})");
+            Check(offload.OffloadedCount == 0, "host: not offloaded (nothing staged, rebalanced or brought back)");
+            AssertClose(expected, Logits(host), 0f, "host: the same logits");
+        }
+
+        Check(ComputeResources.GetMemoryUsage(device).Offloaded == offloaded, "host: the system block released with the model");
+        long? limit = ComputeResources.GpuMemoryLimit;
+        try
+        {
+            // The device at its limit: an allocation the size of the table fits only once the table has left.
+            void AtLimit() => ComputeResources.GpuMemoryLimit = ComputeResources.GetMemoryUsage(device).InUse + tableBytes / 2;
+            AtLimit();
+            Expect<ResourceLimitExceededException>(() => Tensor.Zeros([(int)(tableBytes / 4)], device).Dispose(), "limit", "device: the table stays, the allocation fails");
+            Check(cuda.PlacedOnHost == placed + 1, "device: nothing placed");
+            ComputeResources.GpuMemoryLimit = limit;
+
+            using var automatic = Build(LookupTablePlacement.Automatic);
+            Check(cuda.PlacedOnHost == placed + 1, "automatic: on the device while it has room");
+            AssertClose(expected, Logits(automatic), 0f, "automatic, on the device: the same logits");
+            AtLimit();
+            using (Tensor.Zeros([(int)(tableBytes / 4)], device))
+            {
+                Check(cuda.PlacedOnHost == placed + 2, "automatic: the full device moved the table out and the allocation succeeded");
+            }
+
+            ComputeResources.GpuMemoryLimit = limit;
+            Check(offload.OffloadedCount == 0, "automatic: not offloaded");
+            AssertClose(expected, Logits(automatic), 0f, "automatic, in system memory: the same logits");
+        }
+        finally
+        {
+            ComputeResources.GpuMemoryLimit = limit;
+        }
     }
 }

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Devices;
+
 namespace Idrak.Abstraction;
 
 /// <summary>A snapshot of a device's memory accounting, in bytes.</summary>
@@ -80,6 +82,26 @@ public static class ComputeResources
     /// variable IDRAK_OFFLOAD=1 turns it on.
     /// </summary>
     public static bool OffloadToHostMemory { get; set; } = Environment.GetEnvironmentVariable("IDRAK_OFFLOAD") is "1" or "true";
+
+    /// <summary>
+    /// Where frozen lookup tables live on a GPU that can keep storages in system memory (see <see cref="LookupTablePlacement"/>):
+    /// <see cref="LookupTablePlacement.Automatic"/> by default (on the GPU until it is full, then in system memory for
+    /// good). IDRAK_LOOKUP_TABLES sets it: auto, host or device. A build's own setting (DecoderBuildOptions.LookupTables,
+    /// PretrainedOptions.LookupTables) wins.
+    /// </summary>
+    public static LookupTablePlacement LookupTables { get; set; } = ParseLookupTables(Environment.GetEnvironmentVariable("IDRAK_LOOKUP_TABLES"));
+
+    /// <summary>
+    /// A placement by name: "auto" (or empty), "host" or "device", any case.
+    /// </summary>
+    /// <exception cref="ArgumentException">Another name.</exception>
+    public static LookupTablePlacement ParseLookupTables(string? name) => name?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "auto" or "automatic" => LookupTablePlacement.Automatic,
+        "host" or "system" => LookupTablePlacement.HostMemory,
+        "device" or "gpu" => LookupTablePlacement.DeviceMemory,
+        _ => throw new ArgumentException($"Lookup table placement '{name}': use auto, host or device.", nameof(name)),
+    };
 
     /// <summary>
     /// With <see cref="OffloadToHostMemory"/>: when the GPU fills up, first move the storages that are used least to
