@@ -122,6 +122,12 @@ public sealed record LegalOcrSettings
     /// </summary>
     public bool ShowSuggestions { get; init; } = true;
 
+    /// <summary>The reads before the one the suggestions measure (1: the first read's cold work is not a page's).</summary>
+    public int SuggestAfterReads { get; init; } = 1;
+
+    /// <summary>The share of the GPU's memory the suggestions leave free beyond its own reserve (0 by default).</summary>
+    public double SuggestionHeadroom { get; init; }
+
     /// <summary>The models of the switch.</summary>
     public List<ReaderModel> Models { get; init; } = [];
 

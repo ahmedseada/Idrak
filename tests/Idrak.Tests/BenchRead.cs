@@ -29,6 +29,8 @@ using Idrak.Models;
 //   IDRAK_BENCH_BATCH_FIT   split (the default: pages that do not fit together are read in halves) or fail;
 //                           IDRAK_BENCH_MAX_BATCH the most pages together (default as many as fit)
 //   IDRAK_BENCH_SUGGEST     1 (the default): suggested settings (TelemetryLevel.Suggestions) printed as the reader makes them; 0: none
+//                           IDRAK_BENCH_SUGGEST_AFTER the reads before the one measured (default 1); IDRAK_BENCH_SUGGEST_HEADROOM the
+//                           share of the device's memory left free beyond its reserve (default 0)
 // How it is measured and written (ProfileOptions.FromEnvironment): IDRAK_PROFILE_WARM (3), IDRAK_PROFILE_COLD (1),
 // IDRAK_PROFILE_PROBES (all: bandwidth, cpu, heap, memory, operations, kernels, stages), IDRAK_PROFILE_STATISTIC (median),
 // IDRAK_PROFILE_FORMAT (table, markdown, csv, json), IDRAK_PROFILE_OUT (a file, appended).
@@ -94,6 +96,7 @@ internal static partial class Tests
                 Int4 = weights == "int4",
                 HeadFormatName = head,
                 MaxPositions = context,
+                SuggestionHeadroom = double.Parse(Setting("IDRAK_BENCH_SUGGEST_HEADROOM", "0"), CultureInfo.InvariantCulture),
             });
             double loadSeconds = Stopwatch.GetElapsedTime(loading).TotalSeconds;
             long loadPeak;                                                     // the process's host memory peak so far: the load's
@@ -110,6 +113,8 @@ internal static partial class Tests
                 ContextLength = context,
                 BatchFit = Setting("IDRAK_BENCH_BATCH_FIT", "split").ToLowerInvariant() == "fail" ? BatchFit.Fail : BatchFit.Split,
                 MaxBatch = Environment.GetEnvironmentVariable("IDRAK_BENCH_MAX_BATCH") is { Length: > 0 } most ? int.Parse(most, CultureInfo.InvariantCulture) : null,
+                SuggestAfterReads = int.Parse(Setting("IDRAK_BENCH_SUGGEST_AFTER", "1"), CultureInfo.InvariantCulture),
+                SuggestionHeadroom = double.Parse(Setting("IDRAK_BENCH_SUGGEST_HEADROOM", "0"), CultureInfo.InvariantCulture),
             });
             long parameters = ModelMemory.WeightCount(model.Network), weightBytes = ModelMemory.TensorBytes(model.Network);
             var request = new ImageReadRequest(page, prompt) { MaxTokens = tokens };

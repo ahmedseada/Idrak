@@ -275,6 +275,7 @@ public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idr
   public bool ReuseDecoding { get; init; }
   public bool? Suggest { get; init; }
   public double SuggestionHeadroom { get; init; }
+  public int SuggestAfterReads { get; init; }
   public int? ContextLength { get; init; }
   public int? MaxBatch { get; init; }
 

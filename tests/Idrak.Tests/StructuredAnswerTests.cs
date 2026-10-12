@@ -22,7 +22,7 @@ internal static partial class Tests
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
         ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache; a sampled read with a seed repeats; pages with one instruction read as one batch, each answer its own read's", ImageReaderReads),
         ("image reader: pages without room together (a memory limit between one page's peak and four's) are read in halves until they fit, each reading saying how many it was read with, the answers the pages' own; later batches start where they fit; BatchFit.Fail raises; MaxBatch caps the batch", ImageReaderBatchFits),
-        ("image reader: suggested settings (SettingAdvisors, TelemetryLevel.Suggestions): loading suggests bfloat16 weights for a bfloat16 checkpoint read as float32; the library's image reader advisor suggests bfloat16 encoder and prompt exactly where the device has matrix units, and after a measured first read the pages that fit together; each published once, printed and written as JSON; an app's advisor adds its own and is removed; no read measured when Suggest is false", ImageReaderSuggestions),
+        ("image reader: suggested settings (SettingAdvisors, TelemetryLevel.Suggestions): loading suggests bfloat16 weights for a bfloat16 checkpoint read as float32; the library's image reader advisor suggests bfloat16 encoder and prompt exactly where the device has matrix units, and after a measured read (the first warm one) the pages that fit together; each published once, printed and written as JSON; an app's advisor adds its own and is removed; no read measured when Suggest is false", ImageReaderSuggestions),
         ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
         ("image reader: telemetry: a read publishes its stages at the Inference level (the page decoded and transformed, the encoder, each cache allocated, the prompt's pass, the decoding chunks) with their sizes; the console line and the JSON Lines record", ImageReaderTelemetry),
         ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
@@ -678,10 +678,12 @@ internal static partial class Tests
             Check(recorder.Seen.All(s => s.Device == device.ToString() && s.Source == "image reader" && s.Reason.Length > 0), "each names its device, its advisor and why");
 
             reader.Read(request);
+            Check(recorder.Seen.All(s => s.Setting != "ImageReaderOptions.MaxBatch"), "the first (cold) read is not measured");
+            reader.Read(request);
             bool measurable = device.Backend.AvailableMemory() is not null && device.Backend.Hardware.MemoryBytes is not null;
             var batch = recorder.Seen.Where(s => s.Setting == "ImageReaderOptions.MaxBatch").ToList();
             Check(measurable ? batch.Count == 1 && int.Parse(batch[0].Value, System.Globalization.CultureInfo.InvariantCulture) >= 2 : batch.Count == 0,
-                $"after the first read (device memory {(measurable ? "reported" : "not reported")}): {string.Join("; ", recorder.Seen)}");
+                $"after the first warm read (device memory {(measurable ? "reported" : "not reported")}): {string.Join("; ", recorder.Seen)}");
             int published = recorder.Seen.Count;
             reader.Read(request);
             Check(recorder.Seen.Count == published, "each suggestion published once");
@@ -720,6 +722,7 @@ internal static partial class Tests
 
         // Not measured: with Suggest false the first read is not measured, so nothing from its figures.
         using var quiet = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, Suggest = false });
+        quiet.Read(request);
         quiet.Read(request);
         Check(quiet.Suggestions().All(s => s.Setting != "ImageReaderOptions.MaxBatch"), "Suggest = false: no read measured");
     }
