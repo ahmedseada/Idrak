@@ -118,14 +118,25 @@ internal static partial class Tests
                 // The page `batch` times, read together: the batch's time, a page's share of it, and the tokens of all.
                 var readings = run.Stage("read", () => reader.ReadBatch([.. Enumerable.Repeat(request, batch)]));
                 int answered = readings.Sum(r => r.Stats?.GeneratedTokens ?? 0);
-                double decode = readings.Max(r => r.Stats?.GenerationDuration.TotalMilliseconds ?? 0);
+
+                // Pages the device had no room for together were read in groups (BatchSize each, in order), one after
+                // another: the groups' times add up.
+                double decode = 0, prefill = 0;
+                for (int first = 0; first < readings.Count; first += Math.Max(1, readings[first].BatchSize))
+                {
+                    var group = readings.Skip(first).Take(Math.Max(1, readings[first].BatchSize)).ToList();
+                    decode += group.Max(r => r.Stats?.GenerationDuration.TotalMilliseconds ?? 0);
+                    prefill += group.Max(r => r.Stats?.PromptDuration.TotalMilliseconds ?? 0);
+                }
+
                 run.Record("page", run.Value("read")!.Value / batch, "ms");
-                run.Record("prefill", readings.Max(r => r.Stats?.PromptDuration.TotalMilliseconds ?? 0), "ms");
+                run.Record("prefill", prefill, "ms");
                 run.Record("decode", decode, "ms");
                 run.Record("answer tokens", answered, "tok");
                 run.Record("decode speed", Rate(answered, decode), "tok/s");
                 run.Record("same answers", readings.Select(r => r.Text).Distinct().Count() == 1 ? 1 : 0);
                 run.Record("pages together", readings.Min(r => r.BatchSize));
+                run.Record("pages a second", Rate(batch, run.Value("read")!.Value), "pages/s");
             }, options) : Profiler.Run($"read: {setup}", device, run =>
             {
                 run.Stage("prepare", () => reader.Prepared(request));

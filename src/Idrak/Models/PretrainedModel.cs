@@ -51,10 +51,11 @@ public sealed record PretrainedOptions
     public string? Architecture { get; init; }
 
     /// <summary>
-    /// The share of the device's memory the settings suggested after loading leave free (0.1: a tenth; see
-    /// <see cref="SettingAdvisors"/>, published at <see cref="TelemetryLevel.Suggestions"/>).
+    /// The share of the device's memory the settings suggested after loading leave free beyond the device's own reserve
+    /// (<see cref="ComputeResources.GpuMemoryReserve"/>): 0 by default (see <see cref="SettingAdvisors"/>, published at
+    /// <see cref="TelemetryLevel.Suggestions"/>).
     /// </summary>
-    public double SuggestionHeadroom { get; init; } = 0.1;
+    public double SuggestionHeadroom { get; init; }
 
     /// <summary>
     /// A folder holding a PEFT LoRA adapter (from <see cref="PretrainedModel.SaveAdapter"/> or peft) to merge into the

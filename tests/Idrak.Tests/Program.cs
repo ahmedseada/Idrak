@@ -93,6 +93,11 @@ if (args is ["--bench-read"])
     return Tests.BenchRead();
 }
 
+if (args is ["--bench-alloc"])
+{
+    return Tests.BenchAlloc();
+}
+
 if (args is ["--bench-offload"])
 {
     return Tests.BenchOffload();

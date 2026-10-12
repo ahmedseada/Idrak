@@ -12,22 +12,25 @@ namespace Idrak.Abstraction.Diagnostics;
 /// </summary>
 /// <param name="Items">Items handled together (pages read in one batch, rows of a step).</param>
 /// <param name="Positions">Positions each item's attention cache held (0 when the run kept none).</param>
-/// <param name="PeakAbove">The device's peak during the run above what it held before (the items' caches, activations, workspaces).</param>
+/// <param name="PeakAbove">The device's peak during the run above what it held before and after (the items' caches, activations, workspaces; not weights loaded on the way).</param>
 /// <param name="Available">Bytes new tensors could take on the device after the run (<see cref="Devices.Backend.AvailableMemory"/>).</param>
 public sealed record AdviceMeasure(int Items, int Positions, long PeakAbove, long Available);
 
 /// <summary>
 /// What an advisor is asked about: the device, the subject being advised (an image reader, a generator, a trainer, an
 /// app's own component: each advisor answers for the subjects it knows and passes over the others), the share of the
-/// device's memory the suggestions leave free, and a run's figures (null before one was measured).
+/// device's memory the suggestions leave free beyond its reserve, and a run's figures (null before one was measured).
 /// </summary>
 /// <param name="Device">The device the subject runs on.</param>
 /// <param name="Subject">What is advised.</param>
 /// <param name="Measured">A run's figures, or null.</param>
 public sealed record AdviceSituation(Device Device, object Subject, AdviceMeasure? Measured)
 {
-    /// <summary>The share of the device's memory the suggested settings leave free (0.1: a tenth), for what a run did not show.</summary>
-    public double Headroom { get; init; } = 0.1;
+    /// <summary>
+    /// The share of the device's memory the suggested settings leave free beyond what the device itself keeps in reserve
+    /// (<see cref="Devices.Backend.AvailableMemory"/> already leaves that out): 0 by default.
+    /// </summary>
+    public double Headroom { get; init; }
 }
 
 /// <summary>
