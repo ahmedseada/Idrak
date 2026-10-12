@@ -257,6 +257,7 @@ public sealed class Idrak.Generation.ImageReader : System.IDisposable
   public Idrak.Models.PretrainedModel Model { get; }
   public ImageReader(Idrak.Models.PretrainedModel model, Idrak.Generation.ImageReaderOptions? options = null)
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ChatChunk> Stream(Idrak.Generation.ImageReadRequest request, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.SettingSuggestion> Suggestions()
   public System.Collections.Generic.IReadOnlyList<Idrak.Generation.ImageReading> ReadBatch(System.Collections.Generic.IReadOnlyList<Idrak.Generation.ImageReadRequest> requests, System.Action<int, string>? onText = null, System.Threading.CancellationToken cancellationToken = default)
   public void Dispose()
 
@@ -272,6 +273,8 @@ public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idr
   public bool KeepCache { get; init; }
   public bool RememberBatchFit { get; init; }
   public bool ReuseDecoding { get; init; }
+  public bool? Suggest { get; init; }
+  public double SuggestionHeadroom { get; init; }
   public int? ContextLength { get; init; }
   public int? MaxBatch { get; init; }
 

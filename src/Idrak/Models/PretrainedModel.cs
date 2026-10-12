@@ -51,6 +51,12 @@ public sealed record PretrainedOptions
     public string? Architecture { get; init; }
 
     /// <summary>
+    /// The share of the device's memory the settings suggested after loading leave free (0.1: a tenth; see
+    /// <see cref="SettingAdvisors"/>, published at <see cref="TelemetryLevel.Suggestions"/>).
+    /// </summary>
+    public double SuggestionHeadroom { get; init; } = 0.1;
+
+    /// <summary>
     /// A folder holding a PEFT LoRA adapter (from <see cref="PretrainedModel.SaveAdapter"/> or peft) to merge into the
     /// weights as they are read: the model then runs as fast as the base model, and int8 / int4 / bfloat16 weights are
     /// packed with the update included. Use <see cref="PretrainedModel.LoadAdapter"/> instead to keep the adapter separate
@@ -235,6 +241,8 @@ public sealed class PretrainedModel : IDisposable
             model._vision[stored] = value;
         }
 
+        model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
+
         // The store's file time (when it measures it) apart from the rest of its reads; what the build did besides reading,
         // merging and the bfloat16 uploads is packing and the other weights' uploads.
         var read = fileTime ?? TimeSpan.Zero;
@@ -242,10 +250,26 @@ public sealed class PretrainedModel : IDisposable
         model.LoadTimes = new PretrainedLoadTimes(Stopwatch.GetElapsedTime(started, building), read, Max(weights.ReadTime - read), weights.MergeTime,
             weights.UploadTime, Max(others), Stopwatch.GetElapsedTime(buildEnded, visionRead), Stopwatch.GetElapsedTime(tokenizing, tokenized),
             Stopwatch.GetElapsedTime(started));
+        try
+        {
+            SettingAdvisors.Publish(new AdviceSituation(model.Device, model, null) { Headroom = options.SuggestionHeadroom }, new HashSet<(string, string)>());
+        }
+        catch
+        {
+            model.Dispose();
+            throw;
+        }
+
         return model;
 
         static TimeSpan Max(TimeSpan time) => time > TimeSpan.Zero ? time : TimeSpan.Zero;
     }
+
+    /// <summary>
+    /// The format most of the checkpoint's tensors are stored in (float32, float16 or bfloat16), or null when its store does
+    /// not say (<see cref="ITensorStore.FormatOf"/>).
+    /// </summary>
+    public WeightFormat? CheckpointFormat { get; private set; }
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);

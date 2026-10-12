@@ -1594,6 +1594,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.PretrainedVision? Vision { get; }
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.PretrainedArchitecture Architecture { get; }
+  public Idrak.Models.Abstractions.WeightFormat? CheckpointFormat { get; }
   public Idrak.Models.PretrainedLoadTimes LoadTimes { get; }
   public System.Collections.Generic.IEnumerable<(string, Idrak.Abstraction.Module)> NamedModules()
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedVisionTensors { get; }
@@ -1616,6 +1617,7 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public bool BFloat16 { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
+  public double SuggestionHeadroom { get; init; }
   public int? MaxPositions { get; init; }
   public string? Architecture { get; init; }
   public string? HeadFormatName { get; init; }

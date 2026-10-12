@@ -115,6 +115,13 @@ public sealed record LegalOcrSettings
     /// <summary>Whether later batches start at the size that fit after a split (true, the default) or with all their pages.</summary>
     public bool RememberBatchFit { get; init; } = true;
 
+    /// <summary>
+    /// Print the settings the library suggests for this device on the console (TelemetryLevel.Suggestions: the encoder's
+    /// and prompt's precision where the GPU has matrix units, and after the first read the pages that fit together, the
+    /// cache's and the weights' format), each once per loaded model.
+    /// </summary>
+    public bool ShowSuggestions { get; init; } = true;
+
     /// <summary>The models of the switch.</summary>
     public List<ReaderModel> Models { get; init; } = [];
 

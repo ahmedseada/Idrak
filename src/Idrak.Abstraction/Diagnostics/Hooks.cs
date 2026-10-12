@@ -23,7 +23,7 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     private readonly TextWriter _out = output ?? Console.Out;
 
     /// <inheritdoc />
-    public TelemetryLevel Levels { get; } = levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides;
+    public TelemetryLevel Levels { get; } = levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions;
 
     /// <inheritdoc />
     public void OnTrainingStarted(in TrainingStarted e)
@@ -135,6 +135,9 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnOverrideCompared(in OverrideCompared e) =>
         _out.WriteLine($"Shadow {e.Registry}/{e.Slot} ({e.Implementation}): {(e.Agreed ? "agrees" : "differs: " + e.Difference)}; "
                        + string.Create(CultureInfo.InvariantCulture, $"library {e.LibraryTime.TotalMilliseconds:F3} ms, {e.LibraryBytes:N0} B; override {e.OverrideTime.TotalMilliseconds:F3} ms, {e.OverrideBytes:N0} B"));
+
+    /// <inheritdoc />
+    public void OnSuggestion(in SettingSuggestion e) => _out.WriteLine($"Suggested for {e.Device}: {e.Setting} = {e.Value} ({e.Reason}) [{e.Source}]");
 }
 
 /// <summary>Keeps every epoch (and optionally batch) event in memory, for charts, reports or CSV export.</summary>
@@ -307,6 +310,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
 
     /// <inheritdoc />
     public void OnOverrideCompared(in OverrideCompared e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnSuggestion(in SettingSuggestion e) => Write(e);
 }
 
 /// <summary>
@@ -325,7 +331,7 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
     /// </summary>
     public JsonLinesLogger(string path, TelemetryLevel levels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Inference)
     {
-        _channel = new ChannelTelemetry(levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides);
+        _channel = new ChannelTelemetry(levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions);
         var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16, useAsync: true);
         _writer = Task.Run(() => WriteAsync(stream));
     }
@@ -374,6 +380,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnOverrideCompared(in OverrideCompared e) => _channel.OnOverrideCompared(in e);
+
+    /// <inheritdoc />
+    public void OnSuggestion(in SettingSuggestion e) => _channel.OnSuggestion(in e);
 
     private async Task WriteAsync(FileStream stream)
     {
@@ -560,6 +569,14 @@ public static class TelemetryJson
                 w.WriteNumber("override_ms", e.OverrideTime.TotalMilliseconds);
                 w.WriteNumber("library_bytes", e.LibraryBytes);
                 w.WriteNumber("override_bytes", e.OverrideBytes);
+                break;
+            case SettingSuggestion e:
+                w.WriteString("event", "setting_suggestion");
+                w.WriteString("setting", e.Setting);
+                w.WriteString("value", e.Value);
+                w.WriteString("reason", e.Reason);
+                w.WriteString("device", e.Device);
+                w.WriteString("source", e.Source);
                 break;
         }
 
