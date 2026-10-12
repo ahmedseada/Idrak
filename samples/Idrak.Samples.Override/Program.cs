@@ -14,7 +14,6 @@
 //   dotnet run -c Release --project samples/Idrak.Samples.Override.Tests      the kit, run from the app's tests
 
 using Idrak.Generation;
-using Idrak.Generation.Abstractions;
 using Idrak.Layers;
 
 var device = Device.Cpu;

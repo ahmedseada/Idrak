@@ -5,7 +5,7 @@ using System.Net;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>Built-in tools.</summary>
 public static partial class WebTools

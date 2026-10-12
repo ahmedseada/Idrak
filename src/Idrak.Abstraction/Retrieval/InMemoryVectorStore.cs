@@ -2,9 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Numerics;
-using Idrak.Retrieval.Abstractions;
 
-namespace Idrak.Retrieval;
+namespace Idrak.Abstraction.Retrieval;
 
 /// <summary>
 /// An <see cref="IVectorStore"/> held in memory: exact search (every record is compared, SIMD dot products), records

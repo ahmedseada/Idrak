@@ -3,11 +3,12 @@
 
 using Idrak;
 using Idrak.Gemma3Vision;
-using Idrak.Models;
-using Idrak.Models.Abstractions;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models;
+using Idrak.Models.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Generation;
 
 // Plan 11, "Vision contracts (families are applications)": the library registers no vision family. Gemma 3's is a
 // registration from outside it (samples/Gemma3Vision), registered by the tests that use it; without it a Gemma 3

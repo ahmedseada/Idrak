@@ -7,9 +7,10 @@ using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Mcp;
+using Idrak.Nlp.Generation;
+using Idrak.Nlp.Retrieval;
+using Idrak.Nlp.Retrieval.Abstractions;
 using Idrak.Optimizers;
-using Idrak.Retrieval;
-using Idrak.Retrieval.Abstractions;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 

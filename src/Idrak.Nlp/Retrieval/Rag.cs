@@ -5,9 +5,10 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
-using Idrak.Retrieval.Abstractions;
+using Idrak.Nlp.Generation;
+using Idrak.Nlp.Retrieval.Abstractions;
 
-namespace Idrak.Retrieval;
+namespace Idrak.Nlp.Retrieval;
 
 /// <summary>A passage shown to the model, with the number it is cited by.</summary>
 /// <param name="Number">The citation number ([1], [2], …).</param>

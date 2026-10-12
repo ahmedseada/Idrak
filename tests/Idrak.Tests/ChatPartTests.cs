@@ -8,6 +8,7 @@ using Idrak.Cli.Commands.Run;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Nlp;
+using Idrak.Nlp.Generation;
 using Idrak.Nlp.Inference;
 
 // Plan 11, phase 1: message content as parts (ChatPart: text, images, kinds of one's own) registered in ChatParts, and

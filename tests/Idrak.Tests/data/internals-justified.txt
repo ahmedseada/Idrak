@@ -6,7 +6,6 @@
 Idrak.Nlp | Idrak.Layers.Linear | AttachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Nlp | Idrak.Layers.Linear | DetachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Nlp | Idrak.Layers.PackedSequences | Suspend() | turns packed sequences off around a fine-tuning step; moves with the decoding contracts (phase 3)
-Idrak.Nlp | Idrak.Layers.CausalSelfAttention | SupportsRows() | the text generator decodes prompts of different lengths together only when every attention layer attends from per-row starts; public with the decoding contracts
 Idrak.Cli | Idrak.Gpu.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
 Idrak.Cli | Idrak.Gpu.Hip.HipKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
 Idrak.Cli | Idrak.Gpu.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public

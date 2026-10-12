@@ -2,9 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
-using Idrak.Generation.Abstractions;
 
-namespace Idrak.Generation;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// Samples the next token for a batch of sequences on the device that holds the logits, so the chosen ids can feed

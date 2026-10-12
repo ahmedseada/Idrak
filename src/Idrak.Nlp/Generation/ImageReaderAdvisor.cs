@@ -5,7 +5,7 @@ using System.Globalization;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>
 /// The library's advisor for an <see cref="ImageReader"/> ("image reader" in <see cref="SettingAdvisors"/>): the encoder's

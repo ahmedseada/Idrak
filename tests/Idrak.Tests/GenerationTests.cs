@@ -8,6 +8,7 @@ using Idrak.Datasets.Abstractions;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
+using Idrak.Nlp.Generation;
 
 internal static partial class Tests
 {
@@ -78,7 +79,7 @@ internal static partial class Tests
         {
             var reusing = new TextGenerator(model, tokenizer, 64) { KeepCache = false, ReuseDecoding = true };
             DecodingContext? previous = null;
-            Idrak.Generation.Abstractions.ITokenSampler? previousSampler = null;
+            Idrak.Abstraction.Generation.ITokenSampler? previousSampler = null;
             // Prompts of one length (the context and sampler kept), a longer one (a new context, the sampler kept), other
             // options, no seed (its sampler not kept), then a seed again.
             var runs = new (string Prompt, GenerationOptions Options, bool SameContext, bool SameSampler)[]

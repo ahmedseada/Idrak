@@ -11,6 +11,7 @@ using Idrak.Cli.Commands.Serve;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Mcp;
+using Idrak.Nlp.Generation;
 using Idrak.Nlp.Inference;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;

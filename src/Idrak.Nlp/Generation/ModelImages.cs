@@ -5,7 +5,7 @@ using Idrak.Data;
 using Idrak.Imaging;
 using Idrak.Models;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>
 /// How a chat generator reads a vision-language model's images (<see cref="Images"/>, for

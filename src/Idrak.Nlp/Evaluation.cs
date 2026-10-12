@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
+using Idrak.Nlp.Generation;
 
 namespace Idrak.Nlp;
 

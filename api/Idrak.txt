@@ -238,6 +238,39 @@ public static class Idrak.Diagnostics.ModelMemory
   public static long TensorBytes(Idrak.Abstraction.Module module)
   public static long WeightCount(Idrak.Abstraction.Module module)
 
+public sealed record Idrak.Generation.BatchChunk : System.IEquatable<Idrak.Generation.BatchChunk>
+  public BatchChunk(int Index, string Text, bool Done = false, string? DoneReason = null, Idrak.Abstraction.Generation.GenerationStats? Stats = null)
+  public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
+  public bool Done { get; init; }
+  public int Index { get; init; }
+  public string Text { get; init; }
+  public string? DoneReason { get; init; }
+
+public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
+  public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
+  public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
+  public Idrak.Abstraction.Generation.KeyValueLayout? CacheLayout { get; init; }
+  public Idrak.Abstraction.MatMulPrecision? PrefillPrecision { get; set; }
+  public Idrak.Layers.Sequential Model { get; }
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.GenerationChunk> Stream(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.GenerationChunk> Stream(string prompt, int imageToken, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> images, Idrak.Abstraction.Generation.IImageAttentionRule attention, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IEnumerable<Idrak.Generation.BatchChunk> StreamBatch(System.Collections.Generic.IReadOnlyList<string> prompts, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IEnumerable<Idrak.Generation.BatchChunk> StreamBatch(System.Collections.Generic.IReadOnlyList<string> prompts, int imageToken, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures>> images, Idrak.Abstraction.Generation.IImageAttentionRule attention, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<(string, string, Idrak.Abstraction.Generation.GenerationStats)> GenerateBatch(System.Collections.Generic.IReadOnlyList<string> prompts, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> CreateSampler { get; set; }
+  public System.Threading.Tasks.Task<(string, string, Idrak.Abstraction.Generation.GenerationStats)> GenerateAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public TextGenerator(Idrak.Layers.Sequential model, Idrak.Abstraction.Generation.ITokenizer tokenizer, int contextLength)
+  public bool HoldsCache { get; }
+  public bool KeepCache { get; set; }
+  public bool ReuseDecoding { get; set; }
+  public bool SupportsBatches { get; }
+  public const int MaxTokens = 4096
+  public int ContextLength { get; }
+  public void ReleaseCache()
+
 public sealed record Idrak.Inference.Abstractions.CtcDecodeOptions : System.IEquatable<Idrak.Inference.Abstractions.CtcDecodeOptions>
   public CtcDecodeOptions()
   public float? MinLogProbability { get; init; }

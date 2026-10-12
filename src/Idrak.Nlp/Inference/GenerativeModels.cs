@@ -3,6 +3,7 @@
 
 using Idrak.Generation;
 using Idrak.Inference;
+using Idrak.Nlp.Generation;
 
 namespace Idrak.Nlp.Inference;
 

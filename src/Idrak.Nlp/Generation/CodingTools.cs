@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>The outcome of <see cref="CodingTools.ExecuteAsync"/>.</summary>
 /// <param name="ExitCode">The exit code, or null when the command timed out or was refused.</param>

@@ -3,7 +3,6 @@
 
 using Idrak;
 using Idrak.Generation;
-using Idrak.Generation.Abstractions;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 

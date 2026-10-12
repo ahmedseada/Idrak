@@ -1,0 +1,8 @@
+# Contracts kept in Idrak.Abstraction because any package can use them (CLAUDE.md: a contract any package can use, now
+# or later, lives in Idrak.Abstraction), though one package uses them today. Decision 10
+# (tests/Idrak.Tests/InventoryTests.cs) keeps them there; once several packages use one, its line is refused as stale,
+# so the list only shrinks.
+# contract | why
+Idrak.Abstraction.Generation.ITokenSampler | any model that generates tokens step by step samples them the same way, whatever the tokens stand for (text, speech, images)
+Idrak.Abstraction.Generation.TokenSamplers | the sampler every token-generating package takes, overridable once for all of them
+Idrak.Abstraction.Retrieval.IVectorStore | embeddings of any kind (text, images, audio) are stored and searched the same way
