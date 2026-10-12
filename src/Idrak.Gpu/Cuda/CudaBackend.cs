@@ -761,6 +761,50 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
     }
 
+    // Gives the cached blocks at `pointers` back to the driver now (a chunk's block to its chunk), leaving the rest of the
+    // cache: scratch used once whose sizes rarely come back. Not while a graph is recorded (its blocks are the graph's).
+    private void FreeCachedBlocks(HashSet<ulong> pointers)
+    {
+        if (pointers.Count == 0 || _captureFree is not null)
+        {
+            return;
+        }
+
+        MakeCurrent();
+        Check(cuStreamSynchronize(_stream), nameof(cuStreamSynchronize));  // kernels queued earlier may still use them
+        lock (_pool)
+        {
+            foreach (var (length, bucket) in _pool)
+            {
+                if (!bucket.Any(pointers.Contains))
+                {
+                    continue;
+                }
+
+                var kept = bucket.Where(p => !pointers.Contains(p)).Reverse().ToArray();   // bottom first, as pushed
+                foreach (ulong pointer in bucket.Where(pointers.Contains))
+                {
+                    if (!ChunkRelease(pointer))
+                    {
+                        Check(cuMemFree(pointer), nameof(cuMemFree));
+                        _memory.Freed(BlockBytes(length));
+                    }
+                }
+
+                bucket.Clear();
+                foreach (ulong pointer in kept)
+                {
+                    bucket.Push(pointer);
+                }
+
+                if (bucket.Count == 0)
+                {
+                    _poolSizes.Remove(length);
+                }
+            }
+        }
+    }
+
     // Called when the last reference is released, possibly from the finalizer thread, so it only
     // touches the pool and never the driver.
     protected override void Detach(Storage storage) => (((CudaStorage)storage).Pointer, ((CudaStorage)storage).Home) = (0, 0);

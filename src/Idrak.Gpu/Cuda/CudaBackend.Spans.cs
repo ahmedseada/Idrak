@@ -528,7 +528,11 @@ internal sealed unsafe partial class CudaBackend
             return false;
         }
 
-        return MeasureAttentionPath(key, q, keys, values, starts, ends, mask, heads, rows, keyRows, dim, scale, training, scores, outputs, keyFloats);
+        lock (_measuring)                                                  // one measurement at a time, its scratch made once
+        {
+            return KnownChoice(key, candidates) is { } measured ? measured == 1
+                : MeasureAttentionPath(key, q, keys, values, starts, ends, mask, heads, rows, keyRows, dim, scale, training, scores, outputs, keyFloats);
+        }
     }
 
     // Times both attention paths for `key` (PrefersComposedAttention); true when the composed one won.
@@ -589,10 +593,20 @@ internal sealed unsafe partial class CudaBackend
         }
         finally
         {
+            // The scratch (the full scores: often the largest blocks a model ever takes) goes back to the driver, not to
+            // the pool: its sizes come back only for the composed path itself, chosen rarely.
+            var blocks = new HashSet<ulong>();
             foreach (var storage in scratch)
             {
+                if (storage is CudaStorage block)
+                {
+                    blocks.Add(block.Pointer);
+                }
+
                 storage.Release();
             }
+
+            FreeCachedBlocks(blocks);
         }
     }
 

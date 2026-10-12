@@ -20,6 +20,7 @@ internal static partial class Tests
         ("offloading: training with a full GPU moves optimizer state out first (then frozen weights), gives the weights of an ordinary run, and brings tensors back when memory frees up", OffloadColdFirst),
         ("offloading: before inference, a model that did not fit has its frozen weights marked cold before any pass and moved out, largest first, until the headroom is free; its outputs are unchanged", OffloadBeforeInference),
         ("memory chunks: long-lived blocks (Backend.LongLivedAllocations) the driver would round to its page share chunks: the driver takes about their bytes instead of a page more each; values and kernels unchanged; a freed block's room is reused; outside the scope a block takes the chunks' free room and makes none; with GpuChunkBytes 0 each block is its own; empty chunks go back to the driver", ChunkedBlocks),
+        ("memory tuning: measurements on a device run one at a time (four threads measuring the same choice measure it once, with no event read across threads), and the attention path's scratch goes back to the driver, not to the pool", MeasuringAlone),
         ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
     ];
 
@@ -625,5 +626,50 @@ internal static partial class Tests
         }
 
         Check(cuda.ChunkCount == chunksBefore, $"empty chunks back to the driver: {cuda.ChunkCount} held, {chunksBefore} before");
+    }
+
+    private static void MeasuringAlone(Device device)
+    {
+        if (device.Backend is not CudaBackend cuda || !CudaBackend.Autotune)
+        {
+            return;                                                              // nothing is measured
+        }
+
+        // The attention path for a shape of its own: the scores and weights it measures with leave the cache as they came.
+        const int heads = 2, rows = 512, dim = 64;
+        var r = new Random(5);
+        float[] Values(int n) => [.. Enumerable.Range(0, n).Select(_ => (float)(r.NextDouble() * 2 - 1))];
+        using var q = Tensor.From(Values(heads * rows * dim), [heads, rows, dim], device);
+        using var k = Tensor.From(Values(heads * rows * dim), [heads, rows, dim], device);
+        using var v = Tensor.From(Values(heads * rows * dim), [heads, rows, dim], device);
+        using var starts = Tensor.From(new float[heads * rows], [heads * rows], device);
+        using var ends = Tensor.From(Enumerable.Repeat((float)rows, heads * rows).ToArray(), [heads * rows], device);
+        cuda.PrefersComposedAttention(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, null, heads, rows, rows, dim, 0.125f);
+        cuda.ForgetMeasurements(TuneOp.AttentionPath);                          // the choices its candidates need stay settled
+        ComputeResources.ReleaseCachedMemory(device);
+        long cached = ComputeResources.GetMemoryUsage(device).Cached, measured = cuda.MeasuredCount;
+        cuda.PrefersComposedAttention(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, null, heads, rows, rows, dim, 0.125f);
+        long kept = ComputeResources.GetMemoryUsage(device).Cached - cached, scores = 4L * heads * rows * rows;
+        Check(cuda.MeasuredCount == measured + 1, $"the attention path measured: {cuda.MeasuredCount - measured} measurements");
+        Check(kept < scores, $"the measurement's scratch back to the driver: the cache grew by {kept:N0} bytes (the scores alone are {scores:N0})");
+
+        // Four threads asking for the same unmeasured choice at once: one measures, the others take its choice.
+        cuda.ForgetMeasurements(TuneOp.AttentionPath);
+        measured = cuda.MeasuredCount;
+        var errors = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var choices = new System.Collections.Concurrent.ConcurrentBag<bool>();
+        Parallel.For(0, 4, new ParallelOptions { MaxDegreeOfParallelism = 4 }, _ =>
+        {
+            try
+            {
+                choices.Add(cuda.PrefersComposedAttention(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, null, heads, rows, rows, dim, 0.125f));
+            }
+            catch (Exception e)
+            {
+                errors.Add($"{e.GetType().Name}: {e.Message}");
+            }
+        });
+        Check(errors.IsEmpty, $"measuring from four threads: {string.Join("; ", errors)}");
+        Check(cuda.MeasuredCount - measured == 1 && choices.Distinct().Count() == 1, $"{cuda.MeasuredCount - measured} measurements, choices {string.Join(", ", choices)}");
     }
 }
