@@ -914,11 +914,18 @@ public sealed class ImagePreprocessor
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static ulong Read(ReadOnlySpan<byte> bytes, int at) => BinaryPrimitives.ReadUInt64LittleEndian(bytes[at..]);
 
-        // Eight bytes (rows 0 to 7 of one column) to eight ints.
+        // Eight bytes (rows 0 to 7 of one column, row r in bits 8r to 8r + 7) to eight ints.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static void Widen(ulong column, Span<int> to)
         {
+            if (!BitConverter.IsLittleEndian)
+            {
+                column = BinaryPrimitives.ReverseEndianness(column);                    // row 0 in the vector's first byte
+            }
+
             var (low, high) = Vector128.Widen(Vector128.WidenLower(Vector128.CreateScalar(column).AsByte()));
             low.AsInt32().CopyTo(to);
             high.AsInt32().CopyTo(to[4..]);
@@ -992,6 +999,7 @@ public sealed class ImagePreprocessor
         Swap(ref a3, ref a7, 32, 0x00000000FFFFFFFF);
 
         // The high parts of `low` trade places with the low parts of `high`.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static void Swap(ref ulong low, ref ulong high, int shift, ulong mask)
         {
             ulong t = ((low >> shift) ^ high) & mask;
@@ -1044,6 +1052,7 @@ public sealed class ImagePreprocessor
             output[x] = Clip8(sum);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static Vector<uint> Clip(Vector<int> sums, Vector<int> top) =>
             Vector.AsVectorUInt32(Vector.Min(Vector.Max(Vector.ShiftRightArithmetic(sums, PrecisionBits), Vector<int>.Zero), top));
     }
