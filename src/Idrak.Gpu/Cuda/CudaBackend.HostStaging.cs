@@ -48,6 +48,7 @@ internal sealed unsafe partial class CudaBackend
 
         public void Download(Storage source, int offset, int slot, int floats)
         {
+            using var operation = _backend.EnterOperation();                   // addresses read until the copy is queued (GuardMoves)
             _backend.MakeCurrent();
             using var use = _backend.UseStream();
             Check(cuMemcpyDtoHAsync((void*)_buffers[slot], P(source) + (ulong)offset * sizeof(float), (nuint)floats * sizeof(float), _backend._stream),
@@ -57,6 +58,7 @@ internal sealed unsafe partial class CudaBackend
 
         public void Upload(int slot, Storage destination, int offset, int floats)
         {
+            using var operation = _backend.EnterOperation();                   // addresses read until the copy is queued (GuardMoves)
             _backend.MakeCurrent();
             using var use = _backend.UseStream();
             Check(cuMemcpyHtoDAsync(P(destination) + (ulong)offset * sizeof(float), (void*)_buffers[slot], (nuint)floats * sizeof(float), _backend._stream),

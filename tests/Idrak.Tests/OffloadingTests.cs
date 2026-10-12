@@ -21,7 +21,8 @@ internal static partial class Tests
         ("offloading: before inference, a model that did not fit has its frozen weights marked cold before any pass and moved out, largest first, until the headroom is free; its outputs are unchanged", OffloadBeforeInference),
         ("memory chunks: long-lived blocks (Backend.LongLivedAllocations) the driver would round to its page share chunks: the driver takes about their bytes instead of a page more each; values and kernels unchanged; a freed block's room is reused; outside the scope a block takes the chunks' free room and makes none; with GpuChunkBytes 0 each block is its own; empty chunks go back to the driver", ChunkedBlocks),
         ("memory tuning: measurements on a device run one at a time (four threads measuring the same choice measure it once, with no event read across threads), and the attention path's scratch goes back to the driver, not to the pool", MeasuringAlone),
-        ("memory stress: four threads take, check and free blocks of every kind the pool hands out (small, best-fit, chunk-sized in and out of the long-lived scope, a page and a little, whole pages) while others release the cache, record and replay graphs and measure the attention path; then again with the device at its limit and offloading on: no block handed out twice, every value kept, every graph recorded, no thread failing, and the pool's figures back where they started", MemoryStress),
+        ("memory stress: four threads take, check and free blocks of every kind the pool hands out (small, best-fit, chunk-sized in and out of the long-lived scope, a page and a little, whole pages) while others release the cache, record and replay graphs and measure the attention path; then again with the device at its limit and offloading on; then while another thread moves tensors they read and write between the device and system memory: no block handed out twice, every value and write kept, every graph recorded, no address read outside an operation or a move, no thread failing, and the pool's figures back where they started", MemoryStress),
+        ("move gate: a move waits for other threads' operations and holds new ones back until it ends; one that may not wait, or is asked from inside an operation, runs only while no other thread is inside one; the mover's own operations and nested moves go through", MoveGateOrder),
         ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
     ];
 
@@ -714,8 +715,36 @@ internal static partial class Tests
         var start = ComputeResources.GetMemoryUsage(device);
         int chunksBefore = cuda?.ChunkCount ?? 0;
 
-        Run("the device as it is", offloading: false);
-        if (cuda is not null && OffloadOf(device) is not null)
+        bool checking = CudaBackend.CheckAddressReads;
+        CudaBackend.CheckAddressReads = cuda is not null;                    // every address read inside an operation or a move
+        try
+        {
+            Run("the device as it is", offloading: false, moving: false);
+            if (cuda is not null && OffloadOf(device) is not null)
+            {
+                RunAtLimit();
+                if (cuda.LiveGraphs > 0)
+                {
+                    GC.Collect();                                              // graphs of earlier tests' generators
+                    GC.WaitForPendingFinalizers();
+                }
+
+                if (cuda.LiveGraphs == 0)
+                {
+                    Run("tensors moved while read and written", offloading: false, moving: true);
+                }
+                else
+                {
+                    Console.WriteLine($"    {cuda.LiveGraphs} recorded graphs alive (nothing moves while one exists): the moves are not checked");
+                }
+            }
+        }
+        finally
+        {
+            CudaBackend.CheckAddressReads = checking;
+        }
+
+        void RunAtLimit()
         {
             long? limit = ComputeResources.GpuMemoryLimit;
             bool offloading = ComputeResources.OffloadToHostMemory;
@@ -724,7 +753,7 @@ internal static partial class Tests
                 // A few pages above what is in use: most new blocks land in system memory, the cache and chunks still serve.
                 ComputeResources.OffloadToHostMemory = true;
                 ComputeResources.GpuMemoryLimit = ComputeResources.GetMemoryUsage(device).InUse + 4 * page;
-                Run("at the limit, offloading on", offloading: true);
+                Run("at the limit, offloading on", offloading: true, moving: false);
             }
             finally
             {
@@ -740,12 +769,25 @@ internal static partial class Tests
         Check(end.Offloaded <= start.Offloaded, $"no system block left: {end.Offloaded:N0} bytes, {start.Offloaded:N0} before");
         Check(cuda is null || cuda.ChunkCount <= chunksBefore, $"empty chunks back to the driver: {cuda?.ChunkCount} held, {chunksBefore} before");
 
-        void Run(string name, bool offloading)
+        void Run(string name, bool offloading, bool moving)
         {
             const int Workers = 4, Steps = 400, MostLive = 12;
             var errors = new System.Collections.Concurrent.ConcurrentQueue<string>();
             var live = new System.Collections.Concurrent.ConcurrentDictionary<ulong, int>();   // CUDA: block address → worker
-            int finished = 0, releases = 0, graphs = 0, measurements = 0, onHost = 0;
+            int finished = 0, releases = 0, graphs = 0, measurements = 0, onHost = 0, moves = 0, writes = 0;
+
+            // Moving: tensors every worker reads (one of each size class) and one a writer fills again and again, moved
+            // between the device and system memory by another thread meanwhile.
+            var sharedSeeds = new[] { 7, 8, 9, 10 };
+            Tensor Shared(int seed)
+            {
+                int length = Size(new Random(seed));
+                return Tensor.From(Pattern(length, seed), [length], device);
+            }
+
+            var shared = moving ? sharedSeeds.Select(Shared).ToArray() : [];
+            long movedOut = cuda?.MovedToHost ?? 0, movedIn = cuda?.MovedToDevice ?? 0;
+            using var written = moving ? Tensor.Zeros([(int)(page / 4) + 1024], device) : null;
             long taken = 0;
             bool Done() => Volatile.Read(ref finished) == Workers;
             void Fail(string what, Exception e) => errors.Enqueue($"{what}: {e.GetType().Name}: {e.Message}");
@@ -785,6 +827,12 @@ internal static partial class Tests
                 {
                     for (int step = 0; step < Steps; step++)
                     {
+                        if (moving)
+                        {
+                            int j = r.Next(shared.Length);
+                            Verify(shared[j], sharedSeeds[j], $"worker {worker}, shared tensor {j} (moved meanwhile)");
+                        }
+
                         if (held.Count == 0 || (held.Count < MostLive && r.Next(3) > 0))
                         {
                             int length = Size(r), seed = worker * 1_000 + step;
@@ -919,6 +967,68 @@ internal static partial class Tests
                 }
             }
 
+            void Write()
+            {
+                try
+                {
+                    int k = 0;
+                    do
+                    {
+                        float value = ++k % 251;
+                        written!.Fill(value);                                  // a write a move must not lose
+                        var got = written.ToArray();
+                        int wrong = Array.FindIndex(got, v => v != value);
+                        if (wrong >= 0)
+                        {
+                            errors.Enqueue($"a write lost to a move: element {wrong} is {got[wrong]}, {value} written");
+                            return;
+                        }
+
+                        Interlocked.Increment(ref writes);
+                    }
+                    while (!Done());
+                }
+                catch (Exception e)
+                {
+                    Fail("writing a moved tensor", e);
+                }
+            }
+
+            void Move()
+            {
+                try
+                {
+                    var offload = OffloadOf(device)!;
+                    var targets = shared.Append(written!).ToArray();
+                    int round = 0;
+                    do
+                    {
+                        foreach (var t in targets)
+                        {
+                            offload.MoveToHost(t.Storage, keep: false);
+                        }
+
+                        Thread.Sleep(1);
+                        if (++round % 2 == 0)
+                        {
+                            ComputeResources.ReturnOffloaded(device);                   // the step boundary's way back
+                        }
+                        else
+                        {
+                            foreach (var t in targets)
+                            {
+                                offload.MoveToDevice(t.Storage);
+                            }
+                        }
+                    }
+                    while (!Done());
+                }
+                catch (Exception e)
+                {
+                    Fail("moving tensors", e);
+                }
+            }
+
             var threads = new List<Thread>();
             for (int w = 0; w < Workers; w++)
             {
@@ -927,8 +1037,17 @@ internal static partial class Tests
             }
 
             threads.Add(new Thread(Release) { IsBackground = true });
-            threads.Add(new Thread(Record) { IsBackground = true });
-            if (cuda is not null && CudaBackend.Autotune && !offloading)
+            if (moving)
+            {
+                threads.Add(new Thread(Write) { IsBackground = true });
+                threads.Add(new Thread(Move) { IsBackground = true });   // no graphs: nothing moves while one exists
+            }
+            else
+            {
+                threads.Add(new Thread(Record) { IsBackground = true });
+            }
+
+            if (cuda is not null && CudaBackend.Autotune && !offloading && !moving)
             {
                 threads.Add(new Thread(Measure) { IsBackground = true });
             }
@@ -936,11 +1055,101 @@ internal static partial class Tests
             var watch = System.Diagnostics.Stopwatch.StartNew();
             threads.ForEach(t => t.Start());
             threads.ForEach(t => t.Join());
-            Console.WriteLine($"    {name}: {taken} blocks taken by {Workers} threads, {releases} cache releases, {graphs} graphs recorded and replayed, " +
-                $"{measurements} attention-path measurements, {watch.Elapsed.TotalSeconds:F1} s");
+            foreach (var t in shared)
+            {
+                t.Dispose();
+            }
+
+            if (cuda is not null)
+            {
+                moves = (int)(cuda.MovedToHost - movedOut + cuda.MovedToDevice - movedIn);
+            }
+
+            string recorded = device.Backend.SupportsGraphs ? "graphs recorded and replayed" : "graph steps replayed (no device graphs)";
+            Console.WriteLine($"    {name}: {taken} blocks taken by {Workers} threads, {releases} cache releases, " +
+                (moving ? $"{moves} moves, {writes} writes checked, " : $"{graphs} {recorded}, {measurements} attention-path measurements, ") +
+                $"{watch.Elapsed.TotalSeconds:F1} s");
             Check(errors.IsEmpty, $"{name}: {errors.Count} failures; first: {string.Join(" | ", errors.Take(5))}");
-            Check(graphs > 0 && releases > 0, $"{name}: the other threads ran ({graphs} graphs, {releases} releases)");
+            Check((moving ? moves > 0 && writes > 0 : graphs > 0) && releases > 0, $"{name}: the other threads ran ({graphs} graphs, {moves} moves, {writes} writes, {releases} releases)");
             Check(!offloading || Volatile.Read(ref onHost) == 1, $"{name}: blocks went to system memory at the limit");
         }
+    }
+
+    // Backend.GuardMoves' gate, with threads and timeouts (a failure ends the wait instead of hanging the run).
+    private static void MoveGateOrder(Device device)
+    {
+        var gate = new MoveGate();
+        var timeout = TimeSpan.FromSeconds(10);
+        static bool Quiet(ManualResetEventSlim e) => !e.Wait(150);         // not set within a moment
+
+        using var readerIn = new ManualResetEventSlim();
+        using var readerOut = new ManualResetEventSlim();
+        var reader = new Thread(() =>
+        {
+            gate.Enter();
+            readerIn.Set();
+            readerOut.Wait();
+            gate.Exit();
+        }) { IsBackground = true };
+        reader.Start();
+        Check(readerIn.Wait(timeout), "the reader entered");
+        Check(!gate.Holds, "a thread outside any operation holds no address");
+        Check(!gate.BeginMove(wait: false), "a move that may not wait does not run while another thread is inside an operation");
+
+        // A waiting move: after the reader's operation; meanwhile, and while it runs, a new operation waits.
+        using var moved = new ManualResetEventSlim();
+        using var endMove = new ManualResetEventSlim();
+        bool ownWork = false, nested = false;
+        var mover = new Thread(() =>
+        {
+            if (!gate.BeginMove(wait: true))
+            {
+                return;
+            }
+
+            gate.Enter();                                                 // the mover's own operation goes through
+            ownWork = gate.Holds;
+            gate.Exit();
+            nested = gate.BeginMove(wait: true);                           // and so does a nested move
+            gate.EndMove();
+            moved.Set();
+            endMove.Wait();
+            gate.EndMove();
+        }) { IsBackground = true };
+        mover.Start();
+        Check(Quiet(moved), "the move waits for the reader's operation");
+
+        using var lateIn = new ManualResetEventSlim();
+        using var lateOut = new ManualResetEventSlim();
+        var late = new Thread(() =>
+        {
+            gate.Enter();
+            lateIn.Set();
+            lateOut.Wait();
+            gate.Exit();
+        }) { IsBackground = true };
+        late.Start();
+        Check(Quiet(lateIn), "a new operation waits while a move waits");
+        readerOut.Set();
+        Check(moved.Wait(timeout), "the move runs once the reader's operation ended");
+        Check(ownWork && nested, "the mover's own operation and its nested move went through");
+        Check(Quiet(lateIn), "a new operation waits while the move runs");
+        endMove.Set();
+        Check(lateIn.Wait(timeout), "the new operation runs once the move ended");
+
+        // From inside an operation a move never waits: with another thread inside one it does not run; alone it runs.
+        gate.Enter();
+        Check(gate.Holds, "inside an operation the addresses hold");
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Check(!gate.BeginMove(wait: true), "from inside an operation, with another thread inside one: no move");
+        Check(watch.Elapsed < TimeSpan.FromSeconds(1), $"and no waiting ({watch.Elapsed.TotalMilliseconds:F0} ms)");
+        lateOut.Set();
+        Check(late.Join(timeout), "the other operation ended");
+        Check(gate.BeginMove(wait: true), "from inside an operation, alone: the move runs");
+        gate.EndMove();
+        gate.Exit();
+        Check(reader.Join(timeout) && mover.Join(timeout), "every thread ended");
+        Check(gate.BeginMove(wait: false), "with nobody inside an operation even a move that may not wait runs");
+        gate.EndMove();
     }
 }

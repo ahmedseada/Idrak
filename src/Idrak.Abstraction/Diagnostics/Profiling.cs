@@ -650,6 +650,11 @@ public static class ProfileProbes
         public Action Begin(ProfileRun run)
         {
             var backend = run.Device.Backend;
+
+            // Blocks of tensors already unreachable go back first: freed by the finalizer during the run, they would lower
+            // what is in use below the start and the encoder's peak above it with it.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             backend.ResetPeakMemoryUsage();
             var hook = new StageSums(backend, backend.GetMemoryUsage().InUse);
             var subscription = Telemetry.Subscribe(hook);

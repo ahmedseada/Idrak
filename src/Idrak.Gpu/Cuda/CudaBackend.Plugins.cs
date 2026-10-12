@@ -20,6 +20,7 @@ internal sealed unsafe partial class CudaBackend
     internal void Launch(CudaKernel kernel, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ,
         ReadOnlySpan<KernelArgument> arguments, uint sharedBytes)
     {
+        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
         long threads = (long)blockX * blockY * blockZ;
         if (threads > _limits.MaxThreadsPerBlock || (threads == 0 && gridX * (ulong)gridY * gridZ != 0))
         {

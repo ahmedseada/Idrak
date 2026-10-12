@@ -504,6 +504,57 @@ public abstract partial class Backend
     /// <summary>Keeping tensors in system memory when the device is full, or null when the device has no such support.</summary>
     public virtual IMemoryOffload? Offload => null;
 
+    // Moves of live storages against the operations reading their addresses (GuardMoves), or null: no device move.
+    private MoveGate? _moves;
+
+    /// <summary>
+    /// For a device that moves live storages between memories (offloading): from now on every operation runs as one
+    /// (<see cref="EnterOperation"/>), and a move (<see cref="BeginMove"/>) waits until no other thread is inside one, so
+    /// no thread queues work with an address a move has given up meanwhile. Call it from the constructor, before any
+    /// operation. A device that never moves a live storage does not call it, and its operations pay nothing for it.
+    /// </summary>
+    protected void GuardMoves() => _moves ??= new MoveGate();
+
+    /// <summary>
+    /// The scope of an operation that reads storages' addresses outside the operations of this class (uploads, downloads,
+    /// copies, a recording, an app's kernel): from reading the addresses until the work using them is queued. Free on a
+    /// device that does not guard its moves (<see cref="GuardMoves"/>).
+    /// </summary>
+    protected OperationScope EnterOperation()
+    {
+        _moves?.Enter();
+        return new OperationScope(_moves);
+    }
+
+    /// <summary>
+    /// Starts a move of live storages (see <see cref="GuardMoves"/>): true once no other thread is inside an operation
+    /// (end it with <see cref="EndMove"/>); false when the move may not run now. With <paramref name="wait"/> false, or
+    /// from inside an operation, it never waits: it runs only if no other thread is inside an operation (a caller holding
+    /// a lock those operations may need passes false). Moves by one thread nest. Always true on a device that does not
+    /// guard its moves.
+    /// </summary>
+    protected bool BeginMove(bool wait) => _moves is null || _moves.BeginMove(wait);
+
+    /// <summary>Ends a move started by <see cref="BeginMove"/> (when it returned true).</summary>
+    protected void EndMove() => _moves?.EndMove();
+
+    /// <summary>
+    /// Whether the addresses this thread reads stay valid: it is inside an operation or a move, or the device does not
+    /// guard its moves (<see cref="GuardMoves"/>).
+    /// </summary>
+    protected bool HoldsAddresses => _moves is null || _moves.Holds;
+
+    /// <summary>An operation's scope (<see cref="EnterOperation"/>): disposing it ends the operation.</summary>
+    protected readonly struct OperationScope : IDisposable
+    {
+        private readonly MoveGate? _gate;
+
+        internal OperationScope(MoveGate? gate) => _gate = gate;
+
+        /// <summary>Ends the operation.</summary>
+        public void Dispose() => _gate?.Exit();
+    }
+
     /// <summary>
     /// Until the result is disposed, this thread's allocations on the device are long-lived (weights, attention caches):
     /// the device may place them together (CUDA: blocks the driver would round up to its page are taken from shared

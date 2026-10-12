@@ -20,6 +20,7 @@ namespace Idrak.Abstraction.Devices;
 // itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation
 // matches it or whether its error came from the device at all; its errors reach the caller. An operation the device
 // has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).
+// On a device that guards its moves (Backend.GuardMoves) every call takes the second path, inside an operation scope.
 public abstract partial class Backend
 {
     /// <summary>y[i] = value for i &lt; n.</summary>
@@ -27,7 +28,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Fill(Storage y, int n, float value)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             FillKernel(y, n, value);
         }
@@ -40,6 +41,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void FillRegistered(Storage y, int n, float value)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Fill) is OperationKernels.Fill kernel)
         {
             kernel(this, y, n, value);
@@ -80,7 +82,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Unary(UnaryOp op, Storage x, Storage y, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             UnaryKernel(op, x, y, n);
         }
@@ -93,6 +95,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void UnaryRegistered(UnaryOp op, Storage x, Storage y, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Unary) is OperationKernels.Unary kernel)
         {
             kernel(this, op, x, y, n);
@@ -133,7 +136,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             UnaryBackwardKernel(op, x, y, dy, dx, n);
         }
@@ -146,6 +149,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void UnaryBackwardRegistered(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.UnaryBackward) is OperationKernels.UnaryBackward kernel)
         {
             kernel(this, op, x, y, dy, dx, n);
@@ -186,7 +190,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BinaryKernel(op, a, b, c, n);
         }
@@ -199,6 +203,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BinaryRegistered(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Binary) is OperationKernels.Binary kernel)
         {
             kernel(this, op, a, b, c, n);
@@ -242,7 +247,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ExtremumBackward(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ExtremumBackwardKernel(op, a, b, dy, da, db, n);
         }
@@ -255,6 +260,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ExtremumBackwardRegistered(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ExtremumBackward) is OperationKernels.ExtremumBackward kernel)
         {
             kernel(this, op, a, b, dy, da, db, n);
@@ -295,7 +301,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Pow(Storage x, Storage y, int n, float exponent)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             PowKernel(x, y, n, exponent);
         }
@@ -308,6 +314,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PowRegistered(Storage x, Storage y, int n, float exponent)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Pow) is OperationKernels.Pow kernel)
         {
             kernel(this, x, y, n, exponent);
@@ -348,7 +355,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PowBackward(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             PowBackwardKernel(x, dy, dx, n, exponent);
         }
@@ -361,6 +368,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PowBackwardRegistered(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.PowBackward) is OperationKernels.PowBackward kernel)
         {
             kernel(this, x, dy, dx, n, exponent);
@@ -401,7 +409,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Clamp(Storage x, Storage y, int n, float min, float max)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ClampKernel(x, y, n, min, max);
         }
@@ -414,6 +422,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClampRegistered(Storage x, Storage y, int n, float min, float max)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Clamp) is OperationKernels.Clamp kernel)
         {
             kernel(this, x, y, n, min, max);
@@ -454,7 +463,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClampBackward(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ClampBackwardKernel(x, dy, dx, n, min, max);
         }
@@ -467,6 +476,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClampBackwardRegistered(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ClampBackward) is OperationKernels.ClampBackward kernel)
         {
             kernel(this, x, dy, dx, n, min, max);
@@ -507,7 +517,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Where(Storage condition, Storage a, Storage b, Storage y, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             WhereKernel(condition, a, b, y, n);
         }
@@ -520,6 +530,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void WhereRegistered(Storage condition, Storage a, Storage b, Storage y, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Where) is OperationKernels.Where kernel)
         {
             kernel(this, condition, a, b, y, n);
@@ -560,7 +571,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WhereBackward(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             WhereBackwardKernel(condition, dy, da, db, n);
         }
@@ -573,6 +584,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void WhereBackwardRegistered(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.WhereBackward) is OperationKernels.WhereBackward kernel)
         {
             kernel(this, condition, dy, da, db, n);
@@ -613,7 +625,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Affine(Storage x, Storage y, int n, float alpha, float beta)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AffineKernel(x, y, n, alpha, beta);
         }
@@ -626,6 +638,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AffineRegistered(Storage x, Storage y, int n, float alpha, float beta)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Affine) is OperationKernels.Affine kernel)
         {
             kernel(this, x, y, n, alpha, beta);
@@ -666,7 +679,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Axpy(Storage x, Storage y, int n, float alpha)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AxpyKernel(x, y, n, alpha);
         }
@@ -679,6 +692,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AxpyRegistered(Storage x, Storage y, int n, float alpha)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Axpy) is OperationKernels.Axpy kernel)
         {
             kernel(this, x, y, n, alpha);
@@ -719,7 +733,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MulAdd(Storage a, Storage b, Storage c, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             MulAddKernel(a, b, c, n);
         }
@@ -732,6 +746,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MulAddRegistered(Storage a, Storage b, Storage c, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.MulAdd) is OperationKernels.MulAdd kernel)
         {
             kernel(this, a, b, c, n);
@@ -772,7 +787,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AddRowVectorKernel(a, v, c, rows, cols);
         }
@@ -785,6 +800,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddRowVectorRegistered(Storage a, Storage v, Storage c, int rows, int cols)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AddRowVector) is OperationKernels.AddRowVector kernel)
         {
             kernel(this, a, v, c, rows, cols);
@@ -825,7 +841,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumRows(Storage x, Storage y, int rows, int cols)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SumRowsKernel(x, y, rows, cols);
         }
@@ -838,6 +854,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumRowsRegistered(Storage x, Storage y, int rows, int cols)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SumRows) is OperationKernels.SumRows kernel)
         {
             kernel(this, x, y, rows, cols);
@@ -878,7 +895,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Sum(Storage x, Storage result, int n, float scale)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SumKernel(x, result, n, scale);
         }
@@ -891,6 +908,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumRegistered(Storage x, Storage result, int n, float scale)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Sum) is OperationKernels.Sum kernel)
         {
             kernel(this, x, result, n, scale);
@@ -931,7 +949,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AxpyAt(Storage x, Storage y, int offset, float alpha)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AxpyAtKernel(x, y, offset, alpha);
         }
@@ -944,6 +962,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AxpyAtRegistered(Storage x, Storage y, int offset, float alpha)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AxpyAt) is OperationKernels.AxpyAt kernel)
         {
             kernel(this, x, y, offset, alpha);
@@ -984,7 +1003,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddBroadcastScalar(Storage s, Storage y, int n, float scale)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AddBroadcastScalarKernel(s, y, n, scale);
         }
@@ -997,6 +1016,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddBroadcastScalarRegistered(Storage s, Storage y, int n, float scale)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AddBroadcastScalar) is OperationKernels.AddBroadcastScalar kernel)
         {
             kernel(this, s, y, n, scale);
@@ -1040,12 +1060,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
-        return _kernels is null ? PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k) : PackedMatMulLargeRegistered(format, x, packed, scales, y, m, n, k);
+        return _kernels is null && _moves is null ? PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k) : PackedMatMulLargeRegistered(format, x, packed, scales, y, m, n, k);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool PackedMatMulLargeRegistered(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.PackedMatMulLarge) is OperationKernels.PackedMatMulLarge kernel ? kernel(this, format, x, packed, scales, y, m, n, k) : PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k);
     }
 
@@ -1062,7 +1083,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PackedMatMulEpilogue(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
         }
@@ -1075,6 +1096,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PackedMatMulEpilogueRegistered(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.PackedMatMulEpilogue) is OperationKernels.PackedMatMulEpilogue kernel)
         {
             kernel(this, format, x, packed, scales, y, m, n, k, bias, residual, gelu);
@@ -1093,12 +1115,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
-        return _kernels is null ? PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedRegistered(format, activation, gate, up, packed, scales, y, m, n, k);
+        return _kernels is null && _moves is null ? PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedRegistered(format, activation, gate, up, packed, scales, y, m, n, k);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool PackedMatMulGatedRegistered(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.PackedMatMulGated) is OperationKernels.PackedMatMulGated kernel ? kernel(this, format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k);
     }
 
@@ -1111,12 +1134,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
-        return _kernels is null ? PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        return _kernels is null && _moves is null ? PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool PackedMatMulAddRmsNormRegistered(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.PackedMatMulAddRmsNorm) is OperationKernels.PackedMatMulAddRmsNorm kernel ? kernel(this, format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
@@ -1133,12 +1157,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulNormAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
-        return _kernels is null ? PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+        return _kernels is null && _moves is null ? PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool PackedMatMulNormAddRmsNormRegistered(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.PackedMatMulNormAddRmsNorm) is OperationKernels.PackedMatMulNormAddRmsNorm kernel ? kernel(this, format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
     }
 
@@ -1152,12 +1177,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
-        return _kernels is null ? PackedMatMulManyKernel(format, x, m, k, products) : PackedMatMulManyRegistered(format, x, m, k, products);
+        return _kernels is null && _moves is null ? PackedMatMulManyKernel(format, x, m, k, products) : PackedMatMulManyRegistered(format, x, m, k, products);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool PackedMatMulManyRegistered(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.PackedMatMulMany) is OperationKernels.PackedMatMulMany kernel ? kernel(this, format, x, m, k, products) : PackedMatMulManyKernel(format, x, m, k, products);
     }
 
@@ -1170,12 +1196,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
     {
-        return _kernels is null ? PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairRegistered(format, activation, x, m, k, products, hidden);
+        return _kernels is null && _moves is null ? PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairRegistered(format, activation, x, m, k, products, hidden);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool PackedMatMulGatedPairRegistered(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.PackedMatMulGatedPair) is OperationKernels.PackedMatMulGatedPair kernel ? kernel(this, format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden);
     }
 
@@ -1187,7 +1214,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MatMulMany(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             MatMulManyKernel(a, m, k, products);
         }
@@ -1200,6 +1227,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MatMulManyRegistered(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.MatMulMany) is OperationKernels.MatMulMany kernel)
         {
             kernel(this, a, m, k, products);
@@ -1218,12 +1246,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
-        return _kernels is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : MatMulBiasRegistered(a, b, bias, c, m, n, k);
+        return _kernels is null && _moves is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : MatMulBiasRegistered(a, b, bias, c, m, n, k);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool MatMulBiasRegistered(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.MatMulBias) is OperationKernels.MatMulBias kernel ? kernel(this, a, b, bias, c, m, n, k) : MatMulBiasKernel(a, b, bias, c, m, n, k);
     }
 
@@ -1236,12 +1265,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
     {
-        return _kernels is null ? MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankRegistered(a, b, c, m, n, k, transB, beta, u, v, rank);
+        return _kernels is null && _moves is null ? MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankRegistered(a, b, c, m, n, k, transB, beta, u, v, rank);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool MatMulLowRankRegistered(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.MatMulLowRank) is OperationKernels.MatMulLowRank kernel ? kernel(this, a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank);
     }
 
@@ -1255,12 +1285,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
     {
-        return _kernels is null ? BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulRegistered(a, packed, c, m, n, k, beta, u, v, rank);
+        return _kernels is null && _moves is null ? BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulRegistered(a, packed, c, m, n, k, beta, u, v, rank);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool BFloat16TransposedMatMulRegistered(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.BFloat16TransposedMatMul) is OperationKernels.BFloat16TransposedMatMul kernel ? kernel(this, a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank);
     }
 
@@ -1278,12 +1309,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales)
     {
-        return _kernels is null ? Float8QuantizeWeightKernel(w, k, n, values, scales) : Float8QuantizeWeightRegistered(w, k, n, values, scales);
+        return _kernels is null && _moves is null ? Float8QuantizeWeightKernel(w, k, n, values, scales) : Float8QuantizeWeightRegistered(w, k, n, values, scales);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool Float8QuantizeWeightRegistered(Storage w, int k, int n, Storage values, Storage scales)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.Float8QuantizeWeight) is OperationKernels.Float8QuantizeWeight kernel ? kernel(this, w, k, n, values, scales) : Float8QuantizeWeightKernel(w, k, n, values, scales);
     }
 
@@ -1298,12 +1330,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
     {
-        return _kernels is null ? Float8MatMulKernel(x, m, k, values, scales, n, y, beta) : Float8MatMulRegistered(x, m, k, values, scales, n, y, beta);
+        return _kernels is null && _moves is null ? Float8MatMulKernel(x, m, k, values, scales, n, y, beta) : Float8MatMulRegistered(x, m, k, values, scales, n, y, beta);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool Float8MatMulRegistered(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.Float8MatMul) is OperationKernels.Float8MatMul kernel ? kernel(this, x, m, k, values, scales, n, y, beta) : Float8MatMulKernel(x, m, k, values, scales, n, y, beta);
     }
 
@@ -1316,12 +1349,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
-        return _kernels is null ? PackedMatMulLowRankKernel(format, x, m, k, products, rank) : PackedMatMulLowRankRegistered(format, x, m, k, products, rank);
+        return _kernels is null && _moves is null ? PackedMatMulLowRankKernel(format, x, m, k, products, rank) : PackedMatMulLowRankRegistered(format, x, m, k, products, rank);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool PackedMatMulLowRankRegistered(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.PackedMatMulLowRank) is OperationKernels.PackedMatMulLowRank kernel ? kernel(this, format, x, m, k, products, rank) : PackedMatMulLowRankKernel(format, x, m, k, products, rank);
     }
 
@@ -1337,12 +1371,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None, Storage? aux = null, long auxOffset = 0)
     {
-        return _kernels is null ? GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedRegistered(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
+        return _kernels is null && _moves is null ? GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedRegistered(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool GemmStridedRegistered(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.GemmStrided) is OperationKernels.GemmStrided kernel ? kernel(this, a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
     }
 
@@ -1361,12 +1396,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
-        return _kernels is null ? AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
+        return _kernels is null && _moves is null ? AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionStridedRegistered(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.AttentionStrided) is OperationKernels.AttentionStrided kernel ? kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
     }
 
@@ -1382,12 +1418,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
-        return _kernels is null ? AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
+        return _kernels is null && _moves is null ? AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionStridedBackwardRegistered(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.AttentionStridedBackward) is OperationKernels.AttentionStridedBackward kernel ? kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
     }
 
@@ -1396,7 +1433,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SumColumnsKernel(x, offset, ld, y, rows, cols);
         }
@@ -1409,6 +1446,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumColumnsRegistered(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SumColumns) is OperationKernels.SumColumns kernel)
         {
             kernel(this, x, offset, ld, y, rows, cols);
@@ -1449,7 +1487,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddDropout(Storage residual, Storage x, Storage output, int n, float p, uint seed)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AddDropoutKernel(residual, x, output, n, p, seed);
         }
@@ -1462,6 +1500,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddDropoutRegistered(Storage residual, Storage x, Storage output, int n, float p, uint seed)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AddDropout) is OperationKernels.AddDropout kernel)
         {
             kernel(this, residual, x, output, n, p, seed);
@@ -1477,7 +1516,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
         }
@@ -1490,6 +1529,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BatchedMatMulRegistered(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.BatchedMatMul) is OperationKernels.BatchedMatMul kernel)
         {
             kernel(this, a, b, c, batch, m, n, k, transA, transB, beta);
@@ -1530,7 +1570,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Softmax(Storage x, Storage y, int rows, int cols, bool log)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SoftmaxKernel(x, y, rows, cols, log);
         }
@@ -1543,6 +1583,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SoftmaxRegistered(Storage x, Storage y, int rows, int cols, bool log)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Softmax) is OperationKernels.Softmax kernel)
         {
             kernel(this, x, y, rows, cols, log);
@@ -1585,7 +1626,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SoftmaxBackward(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
         }
@@ -1598,6 +1639,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SoftmaxBackwardRegistered(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SoftmaxBackward) is OperationKernels.SoftmaxBackward kernel)
         {
             kernel(this, y, dy, dx, rows, cols, log);
@@ -1638,7 +1680,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ArgMax(Storage x, Storage y, int rows, int cols)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ArgMaxKernel(x, y, rows, cols);
         }
@@ -1651,6 +1693,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ArgMaxRegistered(Storage x, Storage y, int rows, int cols)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ArgMax) is OperationKernels.ArgMax kernel)
         {
             kernel(this, x, y, rows, cols);
@@ -1694,7 +1737,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClassMatch(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
         }
@@ -1707,6 +1750,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClassMatchRegistered(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ClassMatch) is OperationKernels.ClassMatch kernel)
         {
             kernel(this, predictions, targets, y, rows, cols, threshold);
@@ -1747,7 +1791,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormStats(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
         }
@@ -1760,6 +1804,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void NormStatsRegistered(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.NormStats) is OperationKernels.NormStats kernel)
         {
             kernel(this, x, mean, variance, invStd, outer, groups, inner, eps);
@@ -1800,7 +1845,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormApply(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
         }
@@ -1813,6 +1858,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void NormApplyRegistered(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.NormApply) is OperationKernels.NormApply kernel)
         {
             kernel(this, x, mean, invStd, y, outer, groups, inner);
@@ -1853,7 +1899,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormBackward(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
         }
@@ -1866,6 +1912,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void NormBackwardRegistered(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.NormBackward) is OperationKernels.NormBackward kernel)
         {
             kernel(this, dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
@@ -1908,7 +1955,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GroupScaleShift(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
         }
@@ -1921,6 +1968,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GroupScaleShiftRegistered(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GroupScaleShift) is OperationKernels.GroupScaleShift kernel)
         {
             kernel(this, x, scale, shift, y, n, groups, inner, accumulate);
@@ -1961,7 +2009,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GroupReduce(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
         }
@@ -1974,6 +2022,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GroupReduceRegistered(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GroupReduce) is OperationKernels.GroupReduce kernel)
         {
             kernel(this, a, b, sumA, sumAB, outer, groups, inner);
@@ -2014,7 +2063,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void InvSqrt(Storage x, Storage y, int n, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             InvSqrtKernel(x, y, n, eps);
         }
@@ -2027,6 +2076,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void InvSqrtRegistered(Storage x, Storage y, int n, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.InvSqrt) is OperationKernels.InvSqrt kernel)
         {
             kernel(this, x, y, n, eps);
@@ -2067,7 +2117,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Gather(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GatherKernel(table, indices, y, count, dim, vocabulary);
         }
@@ -2080,6 +2130,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatherRegistered(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Gather) is OperationKernels.Gather kernel)
         {
             kernel(this, table, indices, y, count, dim, vocabulary);
@@ -2120,7 +2171,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
         }
@@ -2133,6 +2184,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatherBFloat16Registered(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GatherBFloat16) is OperationKernels.GatherBFloat16 kernel)
         {
             kernel(this, packed, indices, y, count, dim, vocabulary);
@@ -2177,7 +2229,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatherBFloat16Columns(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
         }
@@ -2190,6 +2242,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatherBFloat16ColumnsRegistered(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GatherBFloat16Columns) is OperationKernels.GatherBFloat16Columns kernel)
         {
             kernel(this, packed, indices, y, count, dim, vocabulary);
@@ -2230,7 +2283,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void OneHot(Storage indices, Storage y, int count, int classes)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             OneHotKernel(indices, y, count, classes);
         }
@@ -2243,6 +2296,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void OneHotRegistered(Storage indices, Storage y, int count, int classes)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.OneHot) is OperationKernels.OneHot kernel)
         {
             kernel(this, indices, y, count, classes);
@@ -2283,7 +2337,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ScatterAdd(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
         }
@@ -2296,6 +2350,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ScatterAddRegistered(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ScatterAdd) is OperationKernels.ScatterAdd kernel)
         {
             kernel(this, dy, indices, dtable, count, dim, vocabulary);
@@ -2336,7 +2391,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Im2Col(Storage x, Storage cols, in ConvGeometry g)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Im2ColKernel(x, cols, in g);
         }
@@ -2349,6 +2404,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Im2ColRegistered(Storage x, Storage cols, in ConvGeometry g)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Im2Col) is OperationKernels.Im2Col kernel)
         {
             kernel(this, x, cols, in g);
@@ -2389,7 +2445,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Col2Im(Storage dcols, Storage dx, in ConvGeometry g)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Col2ImKernel(dcols, dx, in g);
         }
@@ -2402,6 +2458,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Col2ImRegistered(Storage dcols, Storage dx, in ConvGeometry g)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Col2Im) is OperationKernels.Col2Im kernel)
         {
             kernel(this, dcols, dx, in g);
@@ -2442,7 +2499,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPool(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             MaxPoolKernel(x, y, argmax, in g);
         }
@@ -2455,6 +2512,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MaxPoolRegistered(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.MaxPool) is OperationKernels.MaxPool kernel)
         {
             kernel(this, x, y, argmax, in g);
@@ -2495,7 +2553,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, int count)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             MaxPoolBackwardKernel(dy, argmax, dx, count);
         }
@@ -2508,6 +2566,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MaxPoolBackwardRegistered(Storage dy, Storage argmax, Storage dx, int count)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.MaxPoolBackward) is OperationKernels.MaxPoolBackward kernel)
         {
             kernel(this, dy, argmax, dx, count);
@@ -2551,7 +2610,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             MaxPoolBackwardKernel(dy, argmax, dx, in g);
         }
@@ -2564,6 +2623,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MaxPoolBackward2Registered(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.MaxPoolBackward2) is OperationKernels.MaxPoolBackward2 kernel)
         {
             kernel(this, dy, argmax, dx, in g);
@@ -2585,7 +2645,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Convolution(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
         }
@@ -2598,6 +2658,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ConvolutionRegistered(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Convolution) is OperationKernels.Convolution kernel)
         {
             kernel(this, x, weight, bias, y, in g, filters, groups, activation);
@@ -2617,7 +2678,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ConvolutionBackwardInput(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
         }
@@ -2630,6 +2691,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ConvolutionBackwardInputRegistered(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ConvolutionBackwardInput) is OperationKernels.ConvolutionBackwardInput kernel)
         {
             kernel(this, dy, weight, dx, in g, filters, groups);
@@ -2648,7 +2710,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ConvolutionBackwardWeight(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
         }
@@ -2661,6 +2723,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ConvolutionBackwardWeightRegistered(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ConvolutionBackwardWeight) is OperationKernels.ConvolutionBackwardWeight kernel)
         {
             kernel(this, x, dy, dweight, in g, filters, groups);
@@ -2682,7 +2745,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AvgPool(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
         }
@@ -2695,6 +2758,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AvgPoolRegistered(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AvgPool) is OperationKernels.AvgPool kernel)
         {
             kernel(this, x, y, in g, countIncludePad, padBottom, padRight);
@@ -2738,7 +2802,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AvgPoolBackward(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
@@ -2751,6 +2815,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AvgPoolBackwardRegistered(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AvgPoolBackward) is OperationKernels.AvgPoolBackward kernel)
         {
             kernel(this, dy, dx, in g, countIncludePad, padBottom, padRight);
@@ -2802,7 +2867,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ResizeNormalize(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
         }
@@ -2815,6 +2880,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ResizeNormalizeRegistered(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ResizeNormalize) is OperationKernels.ResizeNormalize kernel)
         {
             kernel(this, x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
@@ -2861,7 +2927,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Interpolate2d(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
@@ -2874,6 +2940,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Interpolate2dRegistered(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Interpolate2d) is OperationKernels.Interpolate2d kernel)
         {
             kernel(this, x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -2914,7 +2981,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Interpolate2dBackward(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
@@ -2927,6 +2994,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Interpolate2dBackwardRegistered(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Interpolate2dBackward) is OperationKernels.Interpolate2dBackward kernel)
         {
             kernel(this, dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -2971,7 +3039,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveAvgPool(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
         }
@@ -2984,6 +3052,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdaptiveAvgPoolRegistered(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AdaptiveAvgPool) is OperationKernels.AdaptiveAvgPool kernel)
         {
             kernel(this, x, y, planes, height, width, outHeight, outWidth);
@@ -3024,7 +3093,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveAvgPoolBackward(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
         }
@@ -3037,6 +3106,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdaptiveAvgPoolBackwardRegistered(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AdaptiveAvgPoolBackward) is OperationKernels.AdaptiveAvgPoolBackward kernel)
         {
             kernel(this, dy, dx, planes, height, width, outHeight, outWidth);
@@ -3080,7 +3150,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveMaxPool(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
         }
@@ -3093,6 +3163,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdaptiveMaxPoolRegistered(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AdaptiveMaxPool) is OperationKernels.AdaptiveMaxPool kernel)
         {
             kernel(this, x, y, argmax, planes, height, width, outHeight, outWidth);
@@ -3137,7 +3208,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveMaxPoolBackward(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
         }
@@ -3150,6 +3221,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdaptiveMaxPoolBackwardRegistered(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AdaptiveMaxPoolBackward) is OperationKernels.AdaptiveMaxPoolBackward kernel)
         {
             kernel(this, dy, argmax, dx, planes, height, width, outHeight, outWidth);
@@ -3172,7 +3244,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void CtcLoss(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
@@ -3185,6 +3257,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void CtcLossRegistered(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.CtcLoss) is OperationKernels.CtcLoss kernel)
         {
             kernel(this, logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -3229,7 +3302,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void CtcLossBackward(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
@@ -3242,6 +3315,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void CtcLossBackwardRegistered(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.CtcLossBackward) is OperationKernels.CtcLossBackward kernel)
         {
             kernel(this, logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -3294,12 +3368,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCell(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool LstmCellRegistered(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.LstmCell) is OperationKernels.LstmCell kernel ? kernel(this, projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
     }
 
@@ -3317,12 +3392,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCellBackward(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool LstmCellBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.LstmCellBackward) is OperationKernels.LstmCellBackward kernel ? kernel(this, gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3340,12 +3416,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCell(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool GruCellRegistered(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.GruCell) is OperationKernels.GruCell kernel ? kernel(this, projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
     }
 
@@ -3363,12 +3440,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCellBackward(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool GruCellBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.GruCellBackward) is OperationKernels.GruCellBackward kernel ? kernel(this, gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3386,12 +3464,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStep(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool LstmStepRegistered(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.LstmStep) is OperationKernels.LstmStep kernel ? kernel(this, projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3407,12 +3486,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStepBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool LstmStepBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.LstmStepBackward) is OperationKernels.LstmStepBackward kernel ? kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
     }
 
@@ -3426,12 +3506,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStep(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool GruStepRegistered(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.GruStep) is OperationKernels.GruStep kernel ? kernel(this, projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3447,12 +3528,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStepBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool GruStepBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.GruStepBackward) is OperationKernels.GruStepBackward kernel ? kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
     }
 
@@ -3467,12 +3549,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool LstmSequenceRegistered(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.LstmSequence) is OperationKernels.LstmSequence kernel ? kernel(this, projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
     }
 
@@ -3487,12 +3570,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool LstmSequenceBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.LstmSequenceBackward) is OperationKernels.LstmSequenceBackward kernel ? kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
     }
 
@@ -3505,12 +3589,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool GruSequenceRegistered(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.GruSequence) is OperationKernels.GruSequence kernel ? kernel(this, projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
     }
 
@@ -3524,12 +3609,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool GruSequenceBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.GruSequenceBackward) is OperationKernels.GruSequenceBackward kernel ? kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
     }
 
@@ -3544,7 +3630,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BoxIouLoss(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
         }
@@ -3557,6 +3643,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BoxIouLossRegistered(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.BoxIouLoss) is OperationKernels.BoxIouLoss kernel)
         {
             kernel(this, predicted, target, losses, count, overlap, eps);
@@ -3601,7 +3688,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BoxIouLossBackward(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
         }
@@ -3614,6 +3701,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BoxIouLossBackwardRegistered(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.BoxIouLossBackward) is OperationKernels.BoxIouLossBackward kernel)
         {
             kernel(this, predicted, target, lossGrads, dPredicted, count, overlap, eps);
@@ -3658,7 +3746,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SigmoidFocalLoss(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
         }
@@ -3671,6 +3759,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SigmoidFocalLossRegistered(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SigmoidFocalLoss) is OperationKernels.SigmoidFocalLoss kernel)
         {
             kernel(this, logits, targets, losses, count, alpha, gamma);
@@ -3711,7 +3800,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SigmoidFocalLossBackward(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
         }
@@ -3724,6 +3813,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SigmoidFocalLossBackwardRegistered(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SigmoidFocalLossBackward) is OperationKernels.SigmoidFocalLossBackward kernel)
         {
             kernel(this, logits, targets, lossGrads, dLogits, count, alpha, gamma);
@@ -3767,7 +3857,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Permute(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             PermuteKernel(x, y, outShape, inStrides, accumulate);
         }
@@ -3780,6 +3870,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PermuteRegistered(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Permute) is OperationKernels.Permute kernel)
         {
             kernel(this, x, y, outShape, inStrides, accumulate);
@@ -3820,7 +3911,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumAxis(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
         }
@@ -3833,6 +3924,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumAxisRegistered(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SumAxis) is OperationKernels.SumAxis kernel)
         {
             kernel(this, x, y, outer, dim, inner, scale, accumulate);
@@ -3873,7 +3965,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BroadcastAxis(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
         }
@@ -3886,6 +3978,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BroadcastAxisRegistered(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.BroadcastAxis) is OperationKernels.BroadcastAxis kernel)
         {
             kernel(this, dy, dx, outer, dim, inner, scale);
@@ -3926,7 +4019,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SgdStep(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SgdStepKernel(p, g, v, n, lr, momentum);
         }
@@ -3939,6 +4032,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SgdStepRegistered(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SgdStep) is OperationKernels.SgdStep kernel)
         {
             kernel(this, p, g, v, n, lr, momentum);
@@ -3979,7 +4073,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdamStep(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
         }
@@ -3992,6 +4086,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdamStepRegistered(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AdamStep) is OperationKernels.AdamStep kernel)
         {
             kernel(this, p, g, m, v, n, lr, beta1, beta2, eps);
@@ -4039,7 +4134,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
         }
@@ -4052,6 +4147,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdamStep8BitRegistered(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AdamStep8Bit) is OperationKernels.AdamStep8Bit kernel)
         {
             kernel(this, p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
@@ -4092,7 +4188,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumSquares(Storage x, Storage total, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SumSquaresKernel(x, total, n);
         }
@@ -4105,6 +4201,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumSquaresRegistered(Storage x, Storage total, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SumSquares) is OperationKernels.SumSquares kernel)
         {
             kernel(this, x, total, n);
@@ -4151,12 +4248,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
-        return _kernels is null ? FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWRegistered(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        return _kernels is null && _moves is null ? FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWRegistered(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool FusedAdamWRegistered(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.FusedAdamW) is OperationKernels.FusedAdamW kernel)
         {
             return kernel(this, tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
@@ -4206,7 +4304,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClipFactor(Storage sumSquares, Storage factor, float maxNorm)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ClipFactorKernel(sumSquares, factor, maxNorm);
         }
@@ -4219,6 +4317,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClipFactorRegistered(Storage sumSquares, Storage factor, float maxNorm)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ClipFactor) is OperationKernels.ClipFactor kernel)
         {
             kernel(this, sumSquares, factor, maxNorm);
@@ -4259,7 +4358,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Dropout(Storage x, Storage y, int n, float p, uint seed)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             DropoutKernel(x, y, n, p, seed);
         }
@@ -4272,6 +4371,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void DropoutRegistered(Storage x, Storage y, int n, float p, uint seed)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Dropout) is OperationKernels.Dropout kernel)
         {
             kernel(this, x, y, n, p, seed);
@@ -4312,7 +4412,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             DropoutBackwardKernel(dy, dx, n, p, seed);
         }
@@ -4325,6 +4425,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void DropoutBackwardRegistered(Storage dy, Storage dx, int n, float p, uint seed)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.DropoutBackward) is OperationKernels.DropoutBackward kernel)
         {
             kernel(this, dy, dx, n, p, seed);
@@ -4365,7 +4466,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ScaleMaskSoftmax(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
         }
@@ -4378,6 +4479,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ScaleMaskSoftmaxRegistered(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.ScaleMaskSoftmax) is OperationKernels.ScaleMaskSoftmax kernel)
         {
             kernel(this, x, mask, y, rows, cols, maskRows, scale);
@@ -4418,7 +4520,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormFused(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
         }
@@ -4431,6 +4533,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LayerNormFusedRegistered(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.LayerNormFused) is OperationKernels.LayerNormFused kernel)
         {
             kernel(this, x, gamma, beta, y, rows, cols, eps);
@@ -4471,7 +4574,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormTrain(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
         }
@@ -4484,6 +4587,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LayerNormTrainRegistered(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.LayerNormTrain) is OperationKernels.LayerNormTrain kernel)
         {
             kernel(this, x, gamma, beta, y, stats, rows, cols, eps);
@@ -4526,7 +4630,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormBackward(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
         }
@@ -4539,6 +4643,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LayerNormBackwardRegistered(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.LayerNormBackward) is OperationKernels.LayerNormBackward kernel)
         {
             kernel(this, x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
@@ -4579,7 +4684,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BiasGelu(Storage x, Storage bias, Storage y, int n, int cols)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BiasGeluKernel(x, bias, y, n, cols);
         }
@@ -4592,6 +4697,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BiasGeluRegistered(Storage x, Storage bias, Storage y, int n, int cols)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.BiasGelu) is OperationKernels.BiasGelu kernel)
         {
             kernel(this, x, bias, y, n, cols);
@@ -4635,7 +4741,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Int8MatMulKernel(x, q, scales, y, m, n, k);
         }
@@ -4648,6 +4754,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Int8MatMulRegistered(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Int8MatMul) is OperationKernels.Int8MatMul kernel)
         {
             kernel(this, x, q, scales, y, m, n, k);
@@ -4691,7 +4798,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BFloat16MatMulKernel(x, packed, y, m, n, k);
         }
@@ -4704,6 +4811,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BFloat16MatMulRegistered(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.BFloat16MatMul) is OperationKernels.BFloat16MatMul kernel)
         {
             kernel(this, x, packed, y, m, n, k);
@@ -4744,7 +4852,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BFloat16Dequantize(Storage packed, Storage w, int k, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             BFloat16DequantizeKernel(packed, w, k, n);
         }
@@ -4757,6 +4865,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BFloat16DequantizeRegistered(Storage packed, Storage w, int k, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.BFloat16Dequantize) is OperationKernels.BFloat16Dequantize kernel)
         {
             kernel(this, packed, w, k, n);
@@ -4800,7 +4909,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PackBFloat16(Storage x, Storage packed, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             PackBFloat16Kernel(x, packed, n);
         }
@@ -4813,6 +4922,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PackBFloat16Registered(Storage x, Storage packed, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.PackBFloat16) is OperationKernels.PackBFloat16 kernel)
         {
             kernel(this, x, packed, n);
@@ -4853,7 +4963,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int8Dequantize(Storage q, Storage scales, Storage w, int k, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Int8DequantizeKernel(q, scales, w, k, n);
         }
@@ -4866,6 +4976,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Int8DequantizeRegistered(Storage q, Storage scales, Storage w, int k, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Int8Dequantize) is OperationKernels.Int8Dequantize kernel)
         {
             kernel(this, q, scales, w, k, n);
@@ -4910,7 +5021,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Int4MatMulKernel(x, q, scales, y, m, n, k);
         }
@@ -4923,6 +5034,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Int4MatMulRegistered(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Int4MatMul) is OperationKernels.Int4MatMul kernel)
         {
             kernel(this, x, q, scales, y, m, n, k);
@@ -4963,7 +5075,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             Int4DequantizeKernel(q, scales, w, k, n);
         }
@@ -4976,6 +5088,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Int4DequantizeRegistered(Storage q, Storage scales, Storage w, int k, int n)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Int4Dequantize) is OperationKernels.Int4Dequantize kernel)
         {
             kernel(this, q, scales, w, k, n);
@@ -5016,7 +5129,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             RmsNormKernel(x, y, inv, rows, cols, eps);
         }
@@ -5029,6 +5142,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormRegistered(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.RmsNorm) is OperationKernels.RmsNorm kernel)
         {
             kernel(this, x, y, inv, rows, cols, eps);
@@ -5069,7 +5183,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormBackward(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
         }
@@ -5082,6 +5196,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormBackwardRegistered(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.RmsNormBackward) is OperationKernels.RmsNormBackward kernel)
         {
             kernel(this, dy, y, inv, dx, rows, cols);
@@ -5126,7 +5241,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Rope(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
         }
@@ -5139,6 +5254,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RopeRegistered(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.Rope) is OperationKernels.Rope kernel)
         {
             kernel(this, x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
@@ -5179,7 +5295,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
         }
@@ -5192,6 +5308,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormAffineRegistered(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.RmsNormAffine) is OperationKernels.RmsNormAffine kernel)
         {
             kernel(this, x, gain, y, rows, cols, eps, offset);
@@ -5232,7 +5349,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddRmsNormAffine(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
         }
@@ -5245,6 +5362,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddRmsNormAffineRegistered(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AddRmsNormAffine) is OperationKernels.AddRmsNormAffine kernel)
         {
             kernel(this, a, b, sum, gain, y, rows, cols, eps, offset);
@@ -5288,7 +5406,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormRope(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
         }
@@ -5301,6 +5419,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormRopeRegistered(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.RmsNormRope) is OperationKernels.RmsNormRope kernel)
         {
             kernel(this, x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
@@ -5344,7 +5463,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormRopePair(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
         }
@@ -5357,6 +5476,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormRopePairRegistered(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.RmsNormRopePair) is OperationKernels.RmsNormRopePair kernel)
         {
             kernel(this, x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
@@ -5379,12 +5499,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
     {
-        return _kernels is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool NormRopeHeadsRegistered(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
     {
+        using var operation = EnterOperation();
         return Kernel(OperationIndex.NormRopeHeads) is OperationKernels.NormRopeHeads kernel ? kernel(this, q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
     }
 
@@ -5397,7 +5518,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
         }
@@ -5410,6 +5531,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SoftmaxCrossEntropyRowsRegistered(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SoftmaxCrossEntropyRows) is OperationKernels.SoftmaxCrossEntropyRows kernel)
         {
             kernel(this, logits, targets, weights, losses, rows, vocabulary, scale);
@@ -5450,7 +5572,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GatedActivationKernel(gate, up, y, n, kind);
         }
@@ -5463,6 +5585,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatedActivationRegistered(Storage gate, Storage up, Storage y, int n, int kind)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GatedActivation) is OperationKernels.GatedActivation kernel)
         {
             kernel(this, gate, up, y, n, kind);
@@ -5503,7 +5626,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
         }
@@ -5516,6 +5639,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatedActivationBackwardRegistered(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GatedActivationBackward) is OperationKernels.GatedActivationBackward kernel)
         {
             kernel(this, gate, up, dy, dgate, dup, n, kind, flags);
@@ -5561,7 +5685,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationPacked(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
         }
@@ -5574,6 +5698,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatedActivationPackedRegistered(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GatedActivationPacked) is OperationKernels.GatedActivationPacked kernel)
         {
             kernel(this, gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
@@ -5614,7 +5739,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationBackwardPacked(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
         }
@@ -5627,6 +5752,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatedActivationBackwardPackedRegistered(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.GatedActivationBackwardPacked) is OperationKernels.GatedActivationBackwardPacked kernel)
         {
             kernel(this, packedGate, packedUp, dy, dgate, dup, n, kind, flags);
@@ -5667,7 +5793,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWriteInt8(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
         }
@@ -5680,6 +5806,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void KeyValueWriteInt8Registered(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.KeyValueWriteInt8) is OperationKernels.KeyValueWriteInt8 kernel)
         {
             kernel(this, source, cache, scales, position, heads, steps, capacity, dim);
@@ -5720,7 +5847,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionScoresInt8(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
         }
@@ -5733,6 +5860,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionScoresInt8Registered(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionScoresInt8) is OperationKernels.AttentionScoresInt8 kernel)
         {
             kernel(this, q, cache, scales, y, rows, steps, capacity, dim);
@@ -5773,7 +5901,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionContextInt8(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
         }
@@ -5786,6 +5914,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionContextInt8Registered(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionContextInt8) is OperationKernels.AttentionContextInt8 kernel)
         {
             kernel(this, weights, cache, scales, y, rows, steps, capacity, dim);
@@ -5833,7 +5962,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
@@ -5846,6 +5975,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionDecodeRegistered(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionDecode) is OperationKernels.AttentionDecode kernel)
         {
             kernel(this, q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -5890,7 +6020,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
@@ -5903,6 +6033,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionInt8Registered(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionInt8) is OperationKernels.AttentionInt8 kernel)
         {
             kernel(this, q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -5946,7 +6077,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
@@ -5959,6 +6090,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionBFloat16Registered(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionBFloat16) is OperationKernels.AttentionBFloat16 kernel)
         {
             kernel(this, q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -5999,7 +6131,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
         }
@@ -6012,6 +6144,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void KeyValueWriteBFloat16Registered(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.KeyValueWriteBFloat16) is OperationKernels.KeyValueWriteBFloat16 kernel)
         {
             kernel(this, source, cache, position, heads, steps, capacity, dim);
@@ -6056,7 +6189,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
@@ -6069,6 +6202,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionTiledBackwardRegistered(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionTiledBackward) is OperationKernels.AttentionTiledBackward kernel)
         {
             kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -6115,12 +6249,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedRegistered(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedRegistered(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionSegmentedRegistered(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionSegmented) is OperationKernels.AttentionSegmented kernel)
         {
             return kernel(this, q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
@@ -6163,12 +6298,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsRegistered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsRegistered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionRowsRegistered(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionRows) is OperationKernels.AttentionRows kernel)
         {
             return kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -6207,12 +6343,13 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionSegmentedBackwardRegistered(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionSegmentedBackward) is OperationKernels.AttentionSegmentedBackward kernel)
         {
             return kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
@@ -6257,7 +6394,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
@@ -6270,6 +6407,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionTiledRegistered(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionTiled) is OperationKernels.AttentionTiled kernel)
         {
             kernel(this, q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -6328,7 +6466,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionSpans(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
@@ -6341,6 +6479,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionSpansRegistered(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionSpans) is OperationKernels.AttentionSpans kernel)
         {
             kernel(this, q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -6391,7 +6530,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionSpansStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
         }
@@ -6404,6 +6543,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionSpansStridedRegistered(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionSpansStrided) is OperationKernels.AttentionSpansStrided kernel)
         {
             kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
@@ -6425,7 +6565,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionSpansBackward(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
@@ -6438,6 +6578,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionSpansBackwardRegistered(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.AttentionSpansBackward) is OperationKernels.AttentionSpansBackward kernel)
         {
             kernel(this, q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -6479,7 +6620,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DecoderMask(Storage position, Storage mask, int rows, int capacity)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             DecoderMaskKernel(position, mask, rows, capacity);
         }
@@ -6492,6 +6633,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void DecoderMaskRegistered(Storage position, Storage mask, int rows, int capacity)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.DecoderMask) is OperationKernels.DecoderMask kernel)
         {
             kernel(this, position, mask, rows, capacity);
@@ -6532,7 +6674,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
         }
@@ -6545,6 +6687,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void KeyValueWriteRegistered(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.KeyValueWrite) is OperationKernels.KeyValueWrite kernel)
         {
             kernel(this, source, cache, position, heads, steps, capacity, dim);
@@ -6599,7 +6742,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SampleRows(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
         }
@@ -6612,6 +6755,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SampleRowsRegistered(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.SampleRows) is OperationKernels.SampleRows kernel)
         {
             kernel(this, logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
@@ -6657,7 +6801,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PenalizeRows(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
         }
@@ -6670,6 +6814,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PenalizeRowsRegistered(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.PenalizeRows) is OperationKernels.PenalizeRows kernel)
         {
             kernel(this, logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
@@ -6710,7 +6855,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void HistoryPush(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
-        if (_kernels is null)
+        if (_kernels is null && _moves is null)
         {
             HistoryPushKernel(ids, history, length, rows, capacity);
         }
@@ -6723,6 +6868,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void HistoryPushRegistered(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
+        using var operation = EnterOperation();
         if (Kernel(OperationIndex.HistoryPush) is OperationKernels.HistoryPush kernel)
         {
             kernel(this, ids, history, length, rows, capacity);

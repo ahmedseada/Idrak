@@ -214,6 +214,9 @@ internal sealed unsafe partial class CudaBackend
     // Tune's measuring part (its closure is created here, not on every call).
     private int TuneMeasured(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
     {
+        // Inside an operation before the lock (GuardMoves): a thread holding it is never one a move keeps waiting while
+        // another thread's operation waits for the lock.
+        using var operation = EnterOperation();
         lock (_measuring)
         {
             // Another thread may have measured it while this one waited.
