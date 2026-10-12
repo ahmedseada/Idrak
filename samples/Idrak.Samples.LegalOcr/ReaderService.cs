@@ -771,6 +771,7 @@ public sealed class LoadedReader : IDisposable
             LookupTables = ComputeResources.ParseLookupTables(settings.LookupTables),
             MaxPositions = settings.Context,
             MergeAdapter = model.Adapter,
+            SuggestionHeadroom = settings.SuggestionHeadroom,
         });
         try
         {
@@ -784,6 +785,8 @@ public sealed class LoadedReader : IDisposable
                 ContextLength = settings.Context,
                 BatchFit = settings.ReadBatchFit.ToLowerInvariant() == "fail" ? BatchFit.Fail : BatchFit.Split,
                 RememberBatchFit = settings.RememberBatchFit,
+                SuggestAfterReads = settings.SuggestAfterReads,
+                SuggestionHeadroom = settings.SuggestionHeadroom,
             });
             return new LoadedReader(model, pretrained, reader, device);
         }

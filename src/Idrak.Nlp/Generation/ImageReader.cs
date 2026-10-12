@@ -82,6 +82,12 @@ public sealed record ImageReaderOptions
     public bool? Suggest { get; init; }
 
     /// <summary>
+    /// The reads before the one measured for the suggestions (1 by default: the first read runs cold work a page does not
+    /// need again, kernels compiled and tuned, weights loaded on the way, and its peak is not a page's).
+    /// </summary>
+    public int SuggestAfterReads { get; init; } = 1;
+
+    /// <summary>
     /// The share of the device's memory the suggested settings leave free beyond the device's own reserve
     /// (<see cref="ComputeResources.GpuMemoryReserve"/>, which what the device reports as available already leaves): 0
     /// by default; more for what a read did not show (other programs, longer answers).
@@ -238,6 +244,7 @@ public sealed class ImageReader : IDisposable
     private AdviceSituation Situation => new(Model.Device, this, _measured) { Headroom = Options.SuggestionHeadroom };
 
     private AdviceMeasure? _measured;
+    private int _reads;                                                     // reads seen while waiting to measure one
     private readonly HashSet<(string Setting, string Value)> _published = [];
 
     private bool Suggesting => Options.Suggest ?? Telemetry.IsEnabled(TelemetryLevel.Suggestions);
@@ -245,12 +252,12 @@ public sealed class ImageReader : IDisposable
     // Each suggestion once, to the hooks listening at TelemetryLevel.Suggestions.
     private void Publish() => SettingAdvisors.Publish(Situation, _published);
 
-    // The first read, measured for the suggestions (when wanted and the device reports its free memory): the device's
-    // peak above what it held before, and what it has left after.
+    // The first read after SuggestAfterReads, measured for the suggestions (when wanted and the device reports its free
+    // memory): the device's peak above what it held before and after, and what it has left after.
     private T Measured<T>(Func<T> read, Func<T, (int Pages, int Positions)> figures)
     {
         var backend = Model.Device.Backend;
-        if (_measured is not null || !Suggesting || backend.AvailableMemory() is null)
+        if (_measured is not null || !Suggesting || _reads++ < Options.SuggestAfterReads || backend.AvailableMemory() is null)
         {
             return read();
         }
