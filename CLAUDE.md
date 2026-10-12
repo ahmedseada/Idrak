@@ -15,6 +15,8 @@ These are the owner's standing rules. They hold in every session, after every co
   time; never hardcode a card, a vendor path or a GB budget in code, comments, tests, docs or advice.
 - **Abstraction always.** New behaviour goes through a contract plus a `SlotTable` registry (decision 10). Keep the
   inventory test and the public API guard (`api/Idrak.txt`) passing; regenerate the dump when the public API changes.
+  A contract only one package can use lives in that package's `{package}.Abstractions` namespace; one that any package
+  can use (now or later) lives in `Idrak.Abstraction`, and each package registers its own implementations into it.
 - **Nothing fixed that someone may need to adjust.** Every behaviour, policy, threshold or placement that a user, an app
   or a run may need to control has a setting: a library option (`ComputeResources`, the build, load or run options) with
   an environment variable where the library already reads one, carried through to the apps' settings and the benches'
