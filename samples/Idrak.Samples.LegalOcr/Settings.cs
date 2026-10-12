@@ -128,6 +128,15 @@ public sealed record LegalOcrSettings
     /// <summary>The share of the GPU's memory the suggestions leave free beyond its own reserve (0 by default).</summary>
     public double SuggestionHeadroom { get; init; }
 
+    /// <summary>
+    /// MiB of the chunks the GPU's long-lived blocks (weights, attention caches) share, so the driver's page rounding is
+    /// paid once a chunk; null: the library's default (32 of the device's allocation pages); 0: each block its own.
+    /// </summary>
+    public long? GpuChunkMB { get; init; }
+
+    /// <summary>The stack of each GPU thread in bytes; null: the library's default (none beyond what kernels need).</summary>
+    public long? GpuStackBytes { get; init; }
+
     /// <summary>The models of the switch.</summary>
     public List<ReaderModel> Models { get; init; } = [];
 

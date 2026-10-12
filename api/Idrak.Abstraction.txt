@@ -75,8 +75,10 @@ public static class Idrak.Abstraction.ComputeResources
   public static int MaxCpuThreads { get; set; }
   public static int ReturnOffloaded(Idrak.Abstraction.Device? device = null)
   public static long? CpuMemoryLimit { get; set; }
+  public static long? GpuChunkBytes { get; set; }
   public static long? GpuMemoryLimit { get; set; }
   public static long? GpuMemoryReserve { get; set; }
+  public static long? GpuStackBytes { get; set; }
   public static long? OffloadReturnHeadroom { get; set; }
   public static void ReleaseCachedMemory(Idrak.Abstraction.Device? device = null)
   public static void ResetPeakMemoryUsage(Idrak.Abstraction.Device device)
@@ -438,6 +440,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual Idrak.Abstraction.Devices.IMemoryOffload? Offload { get; }
   public virtual System.Collections.Generic.Dictionary<string, (long, long, double)> StopProfile()
   public virtual System.Collections.Generic.List<Idrak.Abstraction.Devices.Storage> AbortCapture()
+  public virtual System.IDisposable? LongLivedAllocations()
   public virtual System.IDisposable? ReuseQuantizedOperands()
   public virtual bool AttentionRowsKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual bool AttentionSegmentedBackwardKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
@@ -2149,9 +2152,10 @@ public enum Idrak.Abstraction.MatMulPrecision : int
   Float8 = 2
 
 public readonly record struct Idrak.Abstraction.MemoryUsage : System.IEquatable<Idrak.Abstraction.MemoryUsage>
-  public MemoryUsage(long InUse, long Cached, long? Limit, long Offloaded = 0, long Peak = 0)
+  public MemoryUsage(long InUse, long Cached, long? Limit, long Offloaded = 0, long Peak = 0, long Largest = 0)
   public long Cached { get; init; }
   public long InUse { get; init; }
+  public long Largest { get; init; }
   public long Offloaded { get; init; }
   public long Peak { get; init; }
   public long Reserved { get; }

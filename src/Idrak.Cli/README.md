@@ -628,6 +628,7 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP` | Backends not looked for |
 | `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |
 | `IDRAK_MATMUL`, `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Matrix product precision; spilling to system memory; where a token table lives (auto, host, device) |
+| `IDRAK_GPU_CHUNK_MB`, `IDRAK_GPU_STACK_BYTES` | The chunks long-lived GPU blocks share (0: off); each GPU thread's stack |
 | `HF_TOKEN`, `HF_ENDPOINT`, `HF_HOME` | The Hugging Face token, hub address and folder |
 | `IDRAK_API_KEY` | The key `serve` requires and the client commands send |
 | `IDRAK_PORT` | The port `serve` and `ui` listen on and the client commands call (`--port` wins; default 7317) |

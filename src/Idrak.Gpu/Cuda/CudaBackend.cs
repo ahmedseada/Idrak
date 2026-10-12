@@ -259,11 +259,20 @@ internal sealed unsafe partial class CudaBackend : Backend
     private readonly IntPtr _sigmoidBwd, _tanhBwd, _reluBwd, _squareBwd, _absBwd, _dropout;
     private readonly IntPtr _addRowVec, _addScalar, _sumRows, _sum, _sgdMomentum, _adam, _matmul;
 
+    // The driver's handle of this device (cuDeviceGet).
+    private readonly int _deviceHandle;
+
     private CudaBackend(int ordinal)
     {
         Check(cuDeviceGet(out int device, ordinal), nameof(cuDeviceGet));
+        _deviceHandle = device;
         Check(cuDevicePrimaryCtxRetain(out _context, device), nameof(cuDevicePrimaryCtxRetain));
         MakeCurrent();
+
+        // The stack every thread the device can run at once is given (ComputeResources.GpuStackBytes): none by default,
+        // since the driver raises it for any kernel that needs more and the library's kernels need none. A value the
+        // driver refuses leaves its own.
+        cuCtxSetLimit(LimitStackSize, (nuint)Math.Max(0, ComputeResources.GpuStackBytes ?? 0));
         Check(cuStreamCreate(out _stream, 0), nameof(cuStreamCreate));
 
         byte* name = stackalloc byte[256];
@@ -515,13 +524,47 @@ internal sealed unsafe partial class CudaBackend : Backend
                 ReleaseCachedMemory();
             }
 
-            pointer = AllocateDevice(length);
-            if (pointer == 0)
+            if (Chunked(bytes) && ChunkTake(bytes, out int chunkCapacity) is var chunkBlock && chunkBlock != 0)
             {
-                return AllocateHost(length, zeroed);
+                (pointer, capacity) = (chunkBlock, chunkCapacity);              // a long-lived block in a shared chunk
+                _memory.Reused(BlockBytes(capacity));
             }
+            else
+            {
+                ulong room = 0;
+                int roomCapacity = 0;
+                try
+                {
+                    pointer = AllocateDevice(length);
+                }
+                catch (ResourceLimitExceededException)
+                {
+                    room = ChunkRoom(bytes, out roomCapacity);             // the chunks' free room: the last place a block fits
+                    if (room == 0)
+                    {
+                        throw;
+                    }
+                }
 
-            _memory.Allocated(bytes);
+                if (room == 0 && pointer == 0)
+                {
+                    room = ChunkRoom(bytes, out roomCapacity);
+                }
+
+                if (room != 0)
+                {
+                    (pointer, capacity) = (room, roomCapacity);
+                    _memory.Reused(BlockBytes(capacity));
+                }
+                else if (pointer == 0)
+                {
+                    return AllocateHost(length, zeroed);
+                }
+                else
+                {
+                    _memory.Allocated(bytes);
+                }
+            }
         }
 
         if (zeroed && length > 0)
@@ -691,8 +734,12 @@ internal sealed unsafe partial class CudaBackend : Backend
             {
                 while (bucket.Count > 0)
                 {
-                    Check(cuMemFree(bucket.Pop()), nameof(cuMemFree));
-                    _memory.Freed(BlockBytes(length));
+                    ulong pointer = bucket.Pop();
+                    if (!ChunkRelease(pointer))                            // a chunk's block goes back to its chunk
+                    {
+                        Check(cuMemFree(pointer), nameof(cuMemFree));
+                        _memory.Freed(BlockBytes(length));
+                    }
                 }
             }
 

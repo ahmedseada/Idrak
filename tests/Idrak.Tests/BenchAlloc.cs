@@ -40,29 +40,36 @@ internal static partial class Tests
 
             ComputeResources.ReleaseCachedMemory(device);
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  held outside the library after its first kernels: {Outside() / 1048576.0,5:F1} MiB"));
-            Console.WriteLine("  block size     blocks   asked MiB   driver MiB   driver per block   overhead");
-            foreach (long size in (long[])[4 << 10, 64 << 10, 1 << 20, (1 << 20) + (4 << 10), 2 << 20, (2 << 20) + (4 << 10), (10 << 20) + (4 << 10), (26 << 20) + (4 << 10)])
+            foreach (bool longLived in (bool[])[false, true])
             {
-                int count = (int)Math.Clamp(budget / size, 4, 2048);
-                ComputeResources.ReleaseCachedMemory(device);
-                long before = backend.FreeMemory()!.Value;
-                var blocks = new List<Tensor>(count);
-                try
+                Console.WriteLine(longLived ? "  the same blocks as long-lived ones (Backend.LongLivedAllocations: shared chunks)" : "  each block its own allocation");
+                Console.WriteLine("  block size     blocks   asked MiB   driver MiB   driver per block   overhead");
+                foreach (long size in (long[])[4 << 10, 64 << 10, 1 << 20, (1 << 20) + (4 << 10), 2 << 20, (2 << 20) + (4 << 10), (10 << 20) + (4 << 10), (26 << 20) + (4 << 10)])
                 {
-                    for (int i = 0; i < count; i++)
-                    {
-                        blocks.Add(Tensor.Zeros([(int)(size / 4)], device));
-                    }
-
-                    _ = blocks[^1].ToArray().Length;                                // the zeroing done
-                    long taken = before - backend.FreeMemory()!.Value, asked = size * count;
-                    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                        $"  {Size(size),-12} {count,8} {asked / 1048576.0,11:F1} {taken / 1048576.0,12:F1} {Size(taken / count),18} {100.0 * (taken - asked) / asked,9:F1}%"));
-                }
-                finally
-                {
-                    blocks.ForEach(b => b.Dispose());
+                    int count = (int)Math.Clamp(budget / size, 4, 2048);
                     ComputeResources.ReleaseCachedMemory(device);
+                    long before = backend.FreeMemory()!.Value;
+                    var blocks = new List<Tensor>(count);
+                    try
+                    {
+                        using (longLived ? backend.LongLivedAllocations() : null)
+                        {
+                            for (int i = 0; i < count; i++)
+                            {
+                                blocks.Add(Tensor.Zeros([(int)(size / 4)], device));
+                            }
+                        }
+
+                        _ = blocks[^1].ToArray().Length;                                // the zeroing done
+                        long taken = before - backend.FreeMemory()!.Value, asked = size * count;
+                        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                            $"  {Size(size),-12} {count,8} {asked / 1048576.0,11:F1} {taken / 1048576.0,12:F1} {Size(taken / count),18} {100.0 * (taken - asked) / asked,9:F1}%"));
+                    }
+                    finally
+                    {
+                        blocks.ForEach(b => b.Dispose());
+                        ComputeResources.ReleaseCachedMemory(device);
+                    }
                 }
             }
         }

@@ -504,6 +504,14 @@ public abstract partial class Backend
     /// <summary>Keeping tensors in system memory when the device is full, or null when the device has no such support.</summary>
     public virtual IMemoryOffload? Offload => null;
 
+    /// <summary>
+    /// Until the result is disposed, this thread's allocations on the device are long-lived (weights, attention caches):
+    /// the device may place them together (CUDA: blocks the driver would round up to its page are taken from shared
+    /// chunks, <see cref="ComputeResources.GpuChunkBytes"/>, so the rounding is paid once a chunk). Null on devices that
+    /// place every block alike. Scopes nest.
+    /// </summary>
+    public virtual IDisposable? LongLivedAllocations() => null;
+
     /// <summary>Pinned buffers for background copies to and from system memory, or null when the device has none (see <see cref="IHostStaging"/>).</summary>
     public virtual IHostStaging? CreateHostStaging(int slots, int slotFloats) => null;
 
@@ -2269,13 +2277,34 @@ public sealed class MemoryAccountant(Func<long?> limit, string deviceName)
     private long _cached;
     private long _offloaded;
     private long _peak;
+    private long _largest;
 
     /// <summary>The bytes in use, cached and offloaded, the limit and the peak in use, as <see cref="Backend.GetMemoryUsage"/> reports them.</summary>
     public MemoryUsage Usage => new(Interlocked.Read(ref _inUse), Interlocked.Read(ref _cached), limit(), Interlocked.Read(ref _offloaded),
-        Math.Max(Interlocked.Read(ref _peak), Interlocked.Read(ref _inUse)));
+        Math.Max(Interlocked.Read(ref _peak), Interlocked.Read(ref _inUse)), Interlocked.Read(ref _largest));
 
-    /// <summary>Starts the peak again from the bytes in use now (<see cref="Backend.ResetPeakMemoryUsage"/>).</summary>
-    public void ResetPeak() => Interlocked.Exchange(ref _peak, Interlocked.Read(ref _inUse));
+    /// <summary>Starts the peak again from the bytes in use now, and the largest block from none (<see cref="Backend.ResetPeakMemoryUsage"/>).</summary>
+    public void ResetPeak()
+    {
+        Interlocked.Exchange(ref _peak, Interlocked.Read(ref _inUse));
+        Interlocked.Exchange(ref _largest, 0);
+    }
+
+    // Raises the largest block taken to `bytes` when larger.
+    private void Largest(long bytes)
+    {
+        long largest = Interlocked.Read(ref _largest);
+        while (bytes > largest)
+        {
+            long seen = Interlocked.CompareExchange(ref _largest, bytes, largest);
+            if (seen == largest)
+            {
+                return;
+            }
+
+            largest = seen;
+        }
+    }
 
     // Raises the peak to `inUse` when higher.
     private void Peak(long inUse)
@@ -2320,11 +2349,16 @@ public sealed class MemoryAccountant(Func<long?> limit, string deviceName)
     }
 
     /// <summary>Counts newly allocated bytes as in use.</summary>
-    public void Allocated(long bytes) => Peak(Interlocked.Add(ref _inUse, bytes));
+    public void Allocated(long bytes)
+    {
+        Largest(bytes);
+        Peak(Interlocked.Add(ref _inUse, bytes));
+    }
 
     /// <summary>Moves bytes taken from the pool from cached to in use.</summary>
     public void Reused(long bytes)
     {
+        Largest(bytes);
         Interlocked.Add(ref _cached, -bytes);
         Peak(Interlocked.Add(ref _inUse, bytes));
     }
