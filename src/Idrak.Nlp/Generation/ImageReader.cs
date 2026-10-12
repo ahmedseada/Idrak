@@ -57,6 +57,32 @@ public sealed record ImageReaderOptions
 
     /// <summary>Makes the vision encoder instead of the model's own (tests feed reference features with it).</summary>
     public Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? EncoderFactory { get; init; }
+
+    /// <summary>
+    /// What <see cref="ImageReader.ReadBatch"/> does when the device has no room for the pages together:
+    /// <see cref="BatchFit.Split"/> (the default) reads them in halves until they fit, <see cref="BatchFit.Fail"/> raises
+    /// the device's <see cref="ResourceLimitExceededException"/>.
+    /// </summary>
+    public BatchFit BatchFit { get; init; } = BatchFit.Split;
+
+    /// <summary>The most pages <see cref="ImageReader.ReadBatch"/> reads together (null: as many as asked, while they fit).</summary>
+    public int? MaxBatch { get; init; }
+
+    /// <summary>
+    /// Whether a batch that had to be split sets where later batches start (the pages that fit together), so the device's
+    /// shortage is paid for once (the default); false: every batch starts with all its pages.
+    /// </summary>
+    public bool RememberBatchFit { get; init; } = true;
+}
+
+/// <summary>What a batch of pages does when the device has no room for them together (<see cref="ImageReaderOptions.BatchFit"/>).</summary>
+public enum BatchFit
+{
+    /// <summary>Read them in halves (and halves of those) until they fit; each reading says how many it was read with.</summary>
+    Split = 0,
+
+    /// <summary>Raise the device's out-of-memory error.</summary>
+    Fail = 1,
 }
 
 /// <summary>One page to read: the image, the instruction, and what replaces the reader's own settings for it.</summary>
@@ -134,6 +160,12 @@ public sealed record ImageReading(string Text, GenerationStats? Stats, TimeSpan 
 
     /// <summary>Why the answer ended: "stop" (the model finished), "length" (the token limit), "repetition" (a loop, see <see cref="ImageReadRequest.RepeatStop"/>).</summary>
     public string? DoneReason { get; init; }
+
+    /// <summary>
+    /// How many pages were read together with this one, itself included (<see cref="ImageReader.ReadBatch"/>; fewer than
+    /// asked when the device had no room for them all, see <see cref="ImageReaderOptions.BatchFit"/>); 1 for a page read alone.
+    /// </summary>
+    public int BatchSize { get; init; } = 1;
 }
 
 /// <summary>
@@ -216,34 +248,77 @@ public sealed class ImageReader : IDisposable
     /// <paramref name="onText"/> gets each page's pieces with its index. Pages that cannot share a batch are read one by
     /// one. Each reading's <see cref="ImageReading.Elapsed"/> is the time until its answer was done.
     /// </summary>
+    /// <remarks>
+    /// When the device has no room for the pages together, they are read in halves until they fit (see
+    /// <see cref="ImageReaderOptions.BatchFit"/>, <see cref="ImageReaderOptions.MaxBatch"/> and
+    /// <see cref="ImageReaderOptions.RememberBatchFit"/>); each reading's <see cref="ImageReading.BatchSize"/> says how many
+    /// it was read with. A batch is split only before any of its text reached <paramref name="onText"/>.
+    /// </remarks>
     public IReadOnlyList<ImageReading> ReadBatch(IReadOnlyList<ImageReadRequest> requests, Action<int, string>? onText = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requests);
         var clock = Stopwatch.StartNew();
         var results = new ImageReading?[requests.Count];
         var firsts = new TimeSpan?[requests.Count];
-        foreach (var (index, chunk) in _chat.StreamBatch([.. requests.Select(ChatRequestFor)], cancellationToken))
+        int size = Math.Max(1, Math.Min(requests.Count, Math.Min(Options.MaxBatch ?? int.MaxValue, Options.RememberBatchFit ? _batchFit : int.MaxValue)));
+        for (int start = 0; start < requests.Count;)
         {
-            if (chunk.Delta.Content.Length > 0)
+            int count = Math.Min(size, requests.Count - start);
+            bool streamed = false;
+            try
             {
-                firsts[index] ??= clock.Elapsed;
-                onText?.Invoke(index, chunk.Delta.Content);
+                ReadGroup(start, count);
+                start += count;
+            }
+            catch (ResourceLimitExceededException) when (Options.BatchFit == BatchFit.Split && count > 1 && !streamed)
+            {
+                // No room for these pages together: what the attempt held goes back, and they are read in halves.
+                ComputeResources.ReleaseCachedMemory(Model.Device);
+                size = (count + 1) / 2;
+                if (Options.RememberBatchFit)
+                {
+                    _batchFit = size;
+                }
             }
 
-            if (chunk.Done)
+            void ReadGroup(int first, int pages)
             {
-                var stats = chunk.Stats;
-                results[index] = new ImageReading((chunk.Message?.Content ?? "").Trim(), stats, clock.Elapsed)
+                var group = new ChatRequest[pages];
+                for (int i = 0; i < pages; i++)
                 {
-                    FirstText = firsts[index],
-                    Truncated = chunk.DoneReason == "length" || chunk.DoneReason is null && stats?.GeneratedTokens >= requests[index].MaxTokens,
-                    DoneReason = chunk.DoneReason,
-                };
+                    group[i] = ChatRequestFor(requests[first + i]);
+                }
+
+                foreach (var (offset, chunk) in _chat.StreamBatch(group, cancellationToken))
+                {
+                    int index = first + offset;
+                    if (chunk.Delta.Content.Length > 0)
+                    {
+                        firsts[index] ??= clock.Elapsed;
+                        streamed = onText is not null;
+                        onText?.Invoke(index, chunk.Delta.Content);
+                    }
+
+                    if (chunk.Done)
+                    {
+                        var stats = chunk.Stats;
+                        results[index] = new ImageReading((chunk.Message?.Content ?? "").Trim(), stats, clock.Elapsed)
+                        {
+                            FirstText = firsts[index],
+                            Truncated = chunk.DoneReason == "length" || chunk.DoneReason is null && stats?.GeneratedTokens >= requests[index].MaxTokens,
+                            DoneReason = chunk.DoneReason,
+                            BatchSize = pages,
+                        };
+                    }
+                }
             }
         }
 
         return [.. results.Select((r, i) => r ?? throw new InvalidOperationException($"Page {i} ended without an answer."))];
     }
+
+    // The most pages a batch found room for (ImageReaderOptions.RememberBatchFit): where later batches start.
+    private int _batchFit = int.MaxValue;
 
     // The chat request of a page read: the system text, the page and its instruction in one user turn, greedy unless sampled.
     private ChatRequest ChatRequestFor(ImageReadRequest request)

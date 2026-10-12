@@ -585,8 +585,8 @@ public sealed class ReaderService : IDisposable
         return Scored(reading, read, expected);
     }
 
-    // Pages read together (ImageReader.ReadBatch), each scored as ReadPage scores it; when the device has no room for the
-    // batch, the pages are read one by one.
+    // Pages read together (ImageReader.ReadBatch: when the device has no room for them all, the library reads them in
+    // smaller batches, as ReadBatchFit says), each scored as ReadPage scores it.
     private IReadOnlyList<PageResult> ReadPages(LoadedReader loaded, IReadOnlyList<(ChatImage Image, string? Expected, ReadRequest Request)> pages,
         CancellationToken cancellationToken)
     {
@@ -595,12 +595,10 @@ public sealed class ReaderService : IDisposable
         try
         {
             readings = loaded.Reader.ReadBatch(reads, null, cancellationToken);
-        }
-        catch (ResourceLimitExceededException)
-        {
-            ComputeResources.ReleaseCachedMemory(Device);
-            _logger.LogWarning("No room on the device to read {Pages} pages together; reading them one by one", pages.Count);
-            return [.. pages.Select(p => ReadPage(loaded, p.Image, p.Request, p.Expected, null, cancellationToken))];
+            if (readings.Count > 0 && readings.Min(r => r.BatchSize) < pages.Count)
+            {
+                _logger.LogInformation("No room on the device for {Pages} pages together; read {Together} at a time", pages.Count, readings.Min(r => r.BatchSize));
+            }
         }
         catch
         {
@@ -784,6 +782,8 @@ public sealed class LoadedReader : IDisposable
                 EncoderPrecision = settings.EncoderPrecision.ToLowerInvariant() is "bf16" or "bfloat16" ? MatMulPrecision.BFloat16 : null,
                 PrefillPrecision = settings.PrefillPrecision.ToLowerInvariant() is "bf16" or "bfloat16" ? MatMulPrecision.BFloat16 : null,
                 ContextLength = settings.Context,
+                BatchFit = settings.ReadBatchFit.ToLowerInvariant() == "fail" ? BatchFit.Fail : BatchFit.Split,
+                RememberBatchFit = settings.RememberBatchFit,
             });
             return new LoadedReader(model, pretrained, reader, device);
         }

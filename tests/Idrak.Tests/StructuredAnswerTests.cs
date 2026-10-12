@@ -21,6 +21,7 @@ internal static partial class Tests
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
         ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache; a sampled read with a seed repeats; pages with one instruction read as one batch, each answer its own read's", ImageReaderReads),
+        ("image reader: pages without room together (a memory limit between one page's peak and four's) are read in halves until they fit, each reading saying how many it was read with, the answers the pages' own; later batches start where they fit; BatchFit.Fail raises; MaxBatch caps the batch", ImageReaderBatchFits),
         ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
         ("image reader: telemetry: a read publishes its stages at the Inference level (the page decoded and transformed, the encoder, each cache allocated, the prompt's pass, the decoding chunks) with their sizes; the console line and the JSON Lines record", ImageReaderTelemetry),
         ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
@@ -540,5 +541,89 @@ internal static partial class Tests
         }
 
         public void Dispose() => inner.Dispose();
+    }
+
+    private static void ImageReaderBatchFits(Device device)
+    {
+        RegisterGemma3Vision();
+        using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device });
+        ImageReader Reader(BatchFit fit, int? most = null) => new(model, new ImageReaderOptions
+        {
+            Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, BatchFit = fit, MaxBatch = most,
+        });
+        ChatImage Page(int shift)
+        {
+            var values = new float[3 * 12 * 20];
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = ((i * (shift + 1) + shift * 31) % 97) / 96f;
+            }
+
+            return ChatImage.FromBytes(ImageEncoders.Get("png").Encode(new ImageData(values, 3, 12, 20)), "image/png");
+        }
+
+        ImageReadRequest[] pages = [.. Enumerable.Range(1, 4).Select(i => new ImageReadRequest(Page(i), "Extract details to JSON.") { MaxTokens = 12 })];
+        long InUse() => ComputeResources.GetMemoryUsage(device).InUse;
+        long Above(Action read)
+        {
+            ComputeResources.ReleaseCachedMemory(device);
+            long start = InUse();
+            device.Backend.ResetPeakMemoryUsage();
+            read();
+            return ComputeResources.GetMemoryUsage(device).Peak - start;
+        }
+
+        void Limit(long? bytes)
+        {
+            if (device.Type == DeviceType.Cpu)
+            {
+                ComputeResources.CpuMemoryLimit = bytes;
+            }
+            else
+            {
+                ComputeResources.GpuMemoryLimit = bytes;
+            }
+        }
+
+        // What one page and four together take above what the model holds (the encoder loaded by a first read).
+        List<ImageReading> alone;
+        long one, four;
+        using (var measured = Reader(BatchFit.Split))
+        {
+            alone = [.. pages.Select(p => measured.Read(p))];
+            one = Above(() => measured.Read(pages[0]));
+            four = Above(() => measured.ReadBatch(pages));
+        }
+
+        Check(four > one, $"four pages together take more than one: {four:N0} and {one:N0} bytes above the model");
+        string Same(IReadOnlyList<ImageReading> read) => string.Join("; ", read.Select((r, i) => r.Text == alone[i].Text ? null : $"page {i}: \"{r.Text}\", alone \"{alone[i].Text}\"").OfType<string>());
+        try
+        {
+            using (var failing = Reader(BatchFit.Fail))
+            {
+                failing.Read(pages[0]);
+                Limit(InUse() + (one + four) / 2);
+                Expect<ResourceLimitExceededException>(() => failing.ReadBatch(pages), "limit", "BatchFit.Fail: four pages without room");
+                Limit(null);
+            }
+
+            using var splitting = Reader(BatchFit.Split);
+            splitting.Read(pages[0]);
+            Limit(InUse() + (one + four) / 2);
+            var read = splitting.ReadBatch(pages);
+            int fit = read.Max(r => r.BatchSize);
+            Check(read.All(r => r.BatchSize < pages.Length) && Same(read).Length == 0,
+                $"BatchFit.Split: pages read {string.Join(", ", read.Select(r => r.BatchSize))} together; {Same(read)}");
+            var again = splitting.ReadBatch(pages);
+            Check(again.All(r => r.BatchSize <= fit) && Same(again).Length == 0, $"a later batch starts where the pages fit ({fit}): {string.Join(", ", again.Select(r => r.BatchSize))}");
+        }
+        finally
+        {
+            Limit(null);
+        }
+
+        using var capped = Reader(BatchFit.Split, most: 2);
+        var two = capped.ReadBatch(pages);
+        Check(two.All(r => r.BatchSize == 2) && Same(two).Length == 0, $"MaxBatch 2: {string.Join(", ", two.Select(r => r.BatchSize))}; {Same(two)}");
     }
 }

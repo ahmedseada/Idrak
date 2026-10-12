@@ -195,16 +195,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 164 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 165 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (145, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 130 of 174 |
-| `CudaBackend` | 169 of 174 |
-| `HipBackend` | 23 of 174 |
-| `VulkanBackend` | 128 of 174 |
+| `CpuBackend` | 130 of 175 |
+| `CudaBackend` | 170 of 175 |
+| `HipBackend` | 23 of 175 |
+| `VulkanBackend` | 128 of 175 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -279,6 +279,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Float8MatMulKernel(8)` | virtual |  | ✓ |  |  |
 | `Float8PaddedK(1)` | virtual |  | ✓ |  |  |
 | `Float8QuantizeWeightKernel(5)` | virtual |  | ✓ |  |  |
+| `FreeMemory(0)` | virtual |  | ✓ |  |  |
 | `FusedAdamWKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
 | `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |

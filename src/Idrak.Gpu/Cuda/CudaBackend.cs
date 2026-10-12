@@ -611,9 +611,11 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
 
             cuMemGetInfo(out nuint free, out nuint total);
+            var usage = _memory.Usage;
+            long other = Math.Max(0, (long)total - (long)free - usage.InUse - usage.Cached);
             throw new ResourceLimitExceededException(
                 $"{Name} is out of memory: {bytes:N0} more bytes needed, {free:N0} of {total:N0} free with {MemoryReserve:N0} kept in reserve " +
-                $"({_memory.Usage}). Use smaller batches or shorter sequences, or set ComputeResources.OffloadToHostMemory (IDRAK_OFFLOAD=1) " +
+                $"({usage}; {other:N0} held outside the library: the driver's context and kernels, other programs). Use smaller batches or shorter sequences, or set ComputeResources.OffloadToHostMemory (IDRAK_OFFLOAD=1) " +
                 "to keep what does not fit in system memory (slower).");
         }
 

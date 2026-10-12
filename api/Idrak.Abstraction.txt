@@ -478,6 +478,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual bool SupportsSegmentedAttention(int dim, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual int Float8PaddedK(int k)
   public virtual long? AvailableMemory()
+  public virtual long? FreeMemory()
   public virtual string? TensorCoresUnavailable()
   public virtual void AdamStep8BitKernel(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, Idrak.Abstraction.Devices.Storage absMax, Idrak.Abstraction.Devices.Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
   public virtual void AdamStepKernel(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, int n, float lr, float beta1, float beta2, float eps)
