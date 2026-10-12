@@ -529,31 +529,36 @@ internal sealed unsafe partial class CudaBackend : Backend
                 (pointer, capacity) = (chunkBlock, chunkCapacity);              // a long-lived block in a shared chunk
                 _memory.Reused(BlockBytes(capacity));
             }
+            else if (_chunkBlocks.Count > 0 && Chunkable(bytes) && ChunkRoom(bytes, out int roomCapacity) is var room && room != 0)
+            {
+                (pointer, capacity) = (room, roomCapacity);                     // a chunk's free room before new memory
+                _memory.Reused(BlockBytes(capacity));
+            }
             else
             {
-                ulong room = 0;
-                int roomCapacity = 0;
+                ulong last = 0;
+                int lastCapacity = 0;
                 try
                 {
                     pointer = AllocateDevice(length);
                 }
                 catch (ResourceLimitExceededException)
                 {
-                    room = ChunkRoom(bytes, out roomCapacity);             // the chunks' free room: the last place a block fits
-                    if (room == 0)
+                    last = ChunkRoom(bytes, out lastCapacity);             // the chunks' free room: the last place a block fits
+                    if (last == 0)
                     {
                         throw;
                     }
                 }
 
-                if (room == 0 && pointer == 0)
+                if (last == 0 && pointer == 0)
                 {
-                    room = ChunkRoom(bytes, out roomCapacity);
+                    last = ChunkRoom(bytes, out lastCapacity);
                 }
 
-                if (room != 0)
+                if (last != 0)
                 {
-                    (pointer, capacity) = (room, roomCapacity);
+                    (pointer, capacity) = (last, lastCapacity);
                     _memory.Reused(BlockBytes(capacity));
                 }
                 else if (pointer == 0)
