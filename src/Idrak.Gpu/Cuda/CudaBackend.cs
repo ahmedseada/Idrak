@@ -723,12 +723,14 @@ internal sealed unsafe partial class CudaBackend : Backend
     /// <summary>Frees every cached (currently unused) device block back to the driver.</summary>
     public override void ReleaseCachedMemory()
     {
+        // With the work stream held: another thread's recording ends first (a synchronize issued during it would end the
+        // recording with CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED and fail here); the recording thread's own call returns.
+        MakeCurrent();
+        using var use = UseStream();
         if (_captureFree is not null)
         {
             return;                                                        // recording a graph: no wait and no free until it ends
         }
-
-        MakeCurrent();
 
         // A cached block was released by the host, but kernels queued earlier may still read or write it: wait for
         // them before the memory goes back to the driver.
@@ -765,12 +767,18 @@ internal sealed unsafe partial class CudaBackend : Backend
     // cache: scratch used once whose sizes rarely come back. Not while a graph is recorded (its blocks are the graph's).
     private void FreeCachedBlocks(HashSet<ulong> pointers)
     {
-        if (pointers.Count == 0 || _captureFree is not null)
+        if (pointers.Count == 0)
         {
             return;
         }
 
         MakeCurrent();
+        using var use = UseStream();                                       // as ReleaseCachedMemory: after another thread's recording
+        if (_captureFree is not null)
+        {
+            return;
+        }
+
         Check(cuStreamSynchronize(_stream), nameof(cuStreamSynchronize));  // kernels queued earlier may still use them
         lock (_pool)
         {

@@ -77,7 +77,7 @@ internal sealed unsafe partial class CudaBackend
     }
 
     // The driver's allocation page (cuMemGetAllocationGranularity), asked once; 0 when it does not report one (no chunks).
-    private long Page
+    internal long Page
     {
         get
         {
