@@ -2,8 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Text.Json;
 using Idrak.Abstraction.Devices;
 using Idrak.Data.Abstractions;
@@ -753,24 +756,33 @@ public sealed class ImagePreprocessor
             int last = yBounds[2 * (outHeight - 1)] + yBounds[2 * (outHeight - 1) + 1];
             rows = last - first;
             var across = new byte[checked(rows * outWidth)];
-            HostParallel.For(rows, 8, (r0, r1) =>
-            {
-                for (int y = r0; y < r1; y++)
-                {
-                    var input = source.AsSpan((first + y) * width, width);
-                    var output = across.AsSpan(y * outWidth, outWidth);
-                    for (int x = 0; x < outWidth; x++)
-                    {
-                        int start = xBounds[2 * x], count = xBounds[2 * x + 1];
-                        var k = xWeights.AsSpan(x * xTaps, count);
-                        int sum = 1 << (PrecisionBits - 1);
-                        for (int i = 0; i < k.Length; i++)
-                        {
-                            sum += input[start + i] * k[i];
-                        }
 
-                        output[x] = Clip8(sum);
+            // Strips of eight rows through vectors where they are accelerated; the rows short of a strip (and every row
+            // without vectors) one at a time.
+            int stripped = Vector128.IsHardwareAccelerated ? rows / StripRows * StripRows : 0;
+            HostParallel.For(stripped / StripRows, 1, (s0, s1) =>
+            {
+                int[] interleaved = ArrayPool<int>.Shared.Rent(width * StripRows);
+                byte[] columns = ArrayPool<byte>.Shared.Rent((outWidth + 3) / 4 * 4 * StripRows);
+                try
+                {
+                    for (int s = s0; s < s1; s++)
+                    {
+                        HorizontalStrip(source.AsSpan((first + s * StripRows) * width, StripRows * width), width,
+                            across.AsSpan(s * StripRows * outWidth, StripRows * outWidth), outWidth, xBounds, xWeights, xTaps, interleaved, columns);
                     }
+                }
+                finally
+                {
+                    ArrayPool<int>.Shared.Return(interleaved);
+                    ArrayPool<byte>.Shared.Return(columns);
+                }
+            });
+            HostParallel.For(rows - stripped, 8, (r0, r1) =>
+            {
+                for (int y = stripped + r0; y < stripped + r1; y++)
+                {
+                    HorizontalRow(source.AsSpan((first + y) * width, width), across.AsSpan(y * outWidth, outWidth), xBounds, xWeights, xTaps);
                 }
             });
             current = across;
@@ -792,6 +804,200 @@ public sealed class ImagePreprocessor
             }
         });
         return result;
+    }
+
+    // The rows a strip of the horizontal pass holds: one 8 x 8 byte transpose wide, and one Vector256<int> (or two
+    // Vector128<int>) of sums per output column.
+    private const int StripRows = 8;
+
+    // One row of the horizontal pass, pixel by pixel (Resample.c's loop): the rows short of a strip, or every row when
+    // vectors are not accelerated.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void HorizontalRow(ReadOnlySpan<byte> input, Span<byte> output, int[] bounds, int[] weights, int taps)
+    {
+        for (int x = 0; x < output.Length; x++)
+        {
+            int start = bounds[2 * x], count = bounds[2 * x + 1];
+            var k = weights.AsSpan(x * taps, count);
+            int sum = 1 << (PrecisionBits - 1);
+            for (int i = 0; i < k.Length; i++)
+            {
+                sum += input[start + i] * k[i];
+            }
+
+            output[x] = Clip8(sum);
+        }
+    }
+
+    // Eight rows of the horizontal pass at once, each vector lane its own row, so a tap is one load and one multiply for
+    // eight pixels and no lane is summed across: the rows are interleaved once (`interleaved[x * 8 + r]` is row r's byte
+    // x, eight columns at a time through a byte transpose), each output column's eight sums are clipped and narrowed to
+    // bytes (`columns[x * 8 + r]`), and those are transposed back to the eight output rows. Each lane holds the same sum
+    // as HorizontalRow's (integer sums are order-free), so the bytes are the same.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void HorizontalStrip(ReadOnlySpan<byte> rows, int width, Span<byte> output, int outWidth, int[] bounds, int[] weights, int taps,
+        int[] interleaved, byte[] columns)
+    {
+        const int r = StripRows;
+        int x = 0;
+        for (; x + r <= width; x += r)
+        {
+            ulong a0 = Read(rows, x), a1 = Read(rows, width + x), a2 = Read(rows, 2 * width + x), a3 = Read(rows, 3 * width + x),
+                a4 = Read(rows, 4 * width + x), a5 = Read(rows, 5 * width + x), a6 = Read(rows, 6 * width + x), a7 = Read(rows, 7 * width + x);
+            Transpose8(ref a0, ref a1, ref a2, ref a3, ref a4, ref a5, ref a6, ref a7);
+            var to = interleaved.AsSpan(x * r, r * r);
+            Widen(a0, to);
+            Widen(a1, to[r..]);
+            Widen(a2, to[(2 * r)..]);
+            Widen(a3, to[(3 * r)..]);
+            Widen(a4, to[(4 * r)..]);
+            Widen(a5, to[(5 * r)..]);
+            Widen(a6, to[(6 * r)..]);
+            Widen(a7, to[(7 * r)..]);
+        }
+
+        for (; x < width; x++)
+        {
+            for (int row = 0; row < r; row++)
+            {
+                interleaved[x * r + row] = rows[row * width + x];
+            }
+        }
+
+        // Every column's taps lie within the row (Resample.c's bounds), so the unchecked loads below stay in `interleaved`.
+        ref int samples = ref MemoryMarshal.GetArrayDataReference(interleaved);
+        ref int k0 = ref MemoryMarshal.GetArrayDataReference(weights);
+        if (Vector256.IsHardwareAccelerated)
+        {
+            var half = Vector256.Create(1 << (PrecisionBits - 1));
+            for (x = 0; x < outWidth; x += 4)
+            {
+                var c0 = Column256(ref samples, ref k0, bounds, taps, x, outWidth, half);
+                var c1 = Column256(ref samples, ref k0, bounds, taps, x + 1, outWidth, half);
+                var c2 = Column256(ref samples, ref k0, bounds, taps, x + 2, outWidth, half);
+                var c3 = Column256(ref samples, ref k0, bounds, taps, x + 3, outWidth, half);
+                Vector256.Narrow(Vector256.Narrow(c0, c1), Vector256.Narrow(c2, c3)).CopyTo(columns.AsSpan(x * r));
+            }
+        }
+        else
+        {
+            var half = Vector128.Create(1 << (PrecisionBits - 1));
+            for (x = 0; x < outWidth; x += 2)
+            {
+                var (l0, h0) = Column128(ref samples, ref k0, bounds, taps, x, outWidth, half);
+                var (l1, h1) = Column128(ref samples, ref k0, bounds, taps, x + 1, outWidth, half);
+                Vector128.Narrow(Vector128.Narrow(l0, h0), Vector128.Narrow(l1, h1)).CopyTo(columns.AsSpan(x * r));
+            }
+        }
+
+        for (x = 0; x + r <= outWidth; x += r)
+        {
+            var from = columns.AsSpan(x * r, r * r);
+            ulong a0 = Read(from, 0), a1 = Read(from, r), a2 = Read(from, 2 * r), a3 = Read(from, 3 * r),
+                a4 = Read(from, 4 * r), a5 = Read(from, 5 * r), a6 = Read(from, 6 * r), a7 = Read(from, 7 * r);
+            Transpose8(ref a0, ref a1, ref a2, ref a3, ref a4, ref a5, ref a6, ref a7);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[x..], a0);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[(outWidth + x)..], a1);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[(2 * outWidth + x)..], a2);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[(3 * outWidth + x)..], a3);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[(4 * outWidth + x)..], a4);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[(5 * outWidth + x)..], a5);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[(6 * outWidth + x)..], a6);
+            BinaryPrimitives.WriteUInt64LittleEndian(output[(7 * outWidth + x)..], a7);
+        }
+
+        for (; x < outWidth; x++)
+        {
+            for (int row = 0; row < r; row++)
+            {
+                output[row * outWidth + x] = columns[x * r + row];
+            }
+        }
+
+        static ulong Read(ReadOnlySpan<byte> bytes, int at) => BinaryPrimitives.ReadUInt64LittleEndian(bytes[at..]);
+
+        // Eight bytes (rows 0 to 7 of one column) to eight ints.
+        static void Widen(ulong column, Span<int> to)
+        {
+            var (low, high) = Vector128.Widen(Vector128.WidenLower(Vector128.CreateScalar(column).AsByte()));
+            low.AsInt32().CopyTo(to);
+            high.AsInt32().CopyTo(to[4..]);
+        }
+    }
+
+    // One output column of a strip: its eight row sums, clipped (Clip8 on every lane); zeros past the last column. Never
+    // tier-0 code (a loop keeps the JIT from inlining it on its own; unoptimized, the first strips ran several times slower).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static Vector256<uint> Column256(ref int samples, ref int k0, int[] bounds, int taps, int x, int outWidth, Vector256<int> half)
+    {
+        if (x >= outWidth)
+        {
+            return Vector256<uint>.Zero;
+        }
+
+        int start = bounds[2 * x], count = bounds[2 * x + 1];
+        ref int at = ref Unsafe.Add(ref samples, start * StripRows);
+        ref int k = ref Unsafe.Add(ref k0, x * taps);
+        var sums = half;
+        for (int i = 0; i < count; i++)
+        {
+            sums += Vector256.LoadUnsafe(ref Unsafe.Add(ref at, i * StripRows)) * Vector256.Create(Unsafe.Add(ref k, i));
+        }
+
+        return Vector256.Min(Vector256.Max(Vector256.ShiftRightArithmetic(sums, PrecisionBits), Vector256<int>.Zero), Vector256.Create(255)).AsUInt32();
+    }
+
+    // Column256 as two halves of four rows, where only 128-bit vectors are accelerated.
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static (Vector128<uint> Low, Vector128<uint> High) Column128(ref int samples, ref int k0, int[] bounds, int taps, int x, int outWidth,
+        Vector128<int> half)
+    {
+        if (x >= outWidth)
+        {
+            return (Vector128<uint>.Zero, Vector128<uint>.Zero);
+        }
+
+        int start = bounds[2 * x], count = bounds[2 * x + 1];
+        ref int at = ref Unsafe.Add(ref samples, start * StripRows);
+        ref int k = ref Unsafe.Add(ref k0, x * taps);
+        Vector128<int> low = half, high = half;
+        for (int i = 0; i < count; i++)
+        {
+            var w = Vector128.Create(Unsafe.Add(ref k, i));
+            low += Vector128.LoadUnsafe(ref Unsafe.Add(ref at, i * StripRows)) * w;
+            high += Vector128.LoadUnsafe(ref Unsafe.Add(ref at, i * StripRows + 4)) * w;
+        }
+
+        var top = Vector128.Create(255);
+        return (Vector128.Min(Vector128.Max(Vector128.ShiftRightArithmetic(low, PrecisionBits), Vector128<int>.Zero), top).AsUInt32(),
+                Vector128.Min(Vector128.Max(Vector128.ShiftRightArithmetic(high, PrecisionBits), Vector128<int>.Zero), top).AsUInt32());
+    }
+
+    // Eight rows of eight bytes (each read little-endian, so byte j is column j on every platform) transposed in place:
+    // afterwards a[j] holds column j, its byte r from row r. Three rounds of swaps: bytes, pairs, quads.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Transpose8(ref ulong a0, ref ulong a1, ref ulong a2, ref ulong a3, ref ulong a4, ref ulong a5, ref ulong a6, ref ulong a7)
+    {
+        Swap(ref a0, ref a1, 8, 0x00FF00FF00FF00FF);
+        Swap(ref a2, ref a3, 8, 0x00FF00FF00FF00FF);
+        Swap(ref a4, ref a5, 8, 0x00FF00FF00FF00FF);
+        Swap(ref a6, ref a7, 8, 0x00FF00FF00FF00FF);
+        Swap(ref a0, ref a2, 16, 0x0000FFFF0000FFFF);
+        Swap(ref a1, ref a3, 16, 0x0000FFFF0000FFFF);
+        Swap(ref a4, ref a6, 16, 0x0000FFFF0000FFFF);
+        Swap(ref a5, ref a7, 16, 0x0000FFFF0000FFFF);
+        Swap(ref a0, ref a4, 32, 0x00000000FFFFFFFF);
+        Swap(ref a1, ref a5, 32, 0x00000000FFFFFFFF);
+        Swap(ref a2, ref a6, 32, 0x00000000FFFFFFFF);
+        Swap(ref a3, ref a7, 32, 0x00000000FFFFFFFF);
+
+        // The high parts of `low` trade places with the low parts of `high`.
+        static void Swap(ref ulong low, ref ulong high, int shift, ulong mask)
+        {
+            ulong t = ((low >> shift) ^ high) & mask;
+            high ^= t;
+            low ^= t << shift;
+        }
     }
 
     // One output row of the vertical pass: output[x] = Clip8(sum over taps of row (start + i)'s byte x times weight i). A
