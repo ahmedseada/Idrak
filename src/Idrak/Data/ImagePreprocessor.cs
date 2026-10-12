@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Idrak.Abstraction.Devices;
 using Idrak.Data.Abstractions;
@@ -784,53 +785,61 @@ public sealed class ImagePreprocessor
         var plane = current;
         HostParallel.For(outHeight, 4, (r0, r1) =>
         {
-            var sums = new int[outWidth];
             for (int y = r0; y < r1; y++)
             {
                 int start = yBounds[2 * y] - first, count = yBounds[2 * y + 1];
-                var k = yWeights.AsSpan(y * yTaps, count);
-                Array.Fill(sums, 1 << (PrecisionBits - 1));
-                for (int i = 0; i < k.Length; i++)
-                {
-                    AddWeighted(plane.AsSpan((start + i) * outWidth, outWidth), k[i], sums);
-                }
-
-                var output = result.AsSpan(y * outWidth, outWidth);
-                for (int x = 0; x < outWidth; x++)
-                {
-                    output[x] = Clip8(sums[x]);
-                }
+                VerticalRow(plane, outWidth, start, yWeights.AsSpan(y * yTaps, count), result.AsSpan(y * outWidth, outWidth));
             }
         });
         return result;
     }
 
-    // sums[x] += input[x] * weight for a row: a vector loop (bytes widened to 32-bit lanes) and a scalar tail. Integer sums
-    // wrap alike in either, so the order does not matter.
-    private static void AddWeighted(ReadOnlySpan<byte> input, int weight, Span<int> sums)
+    // One output row of the vertical pass: output[x] = Clip8(sum over taps of row (start + i)'s byte x times weight i). A
+    // vector of columns at a time (bytes widened to 32-bit lanes) with every tap added into sums held in registers and the
+    // clip fused into the store, then a scalar tail. Integer sums wrap alike in either, so the order does not matter.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void VerticalRow(byte[] plane, int width, int start, ReadOnlySpan<int> weights, Span<byte> output)
     {
-        int x = 0;
-        if (Vector.IsHardwareAccelerated && input.Length >= Vector<byte>.Count)
+        int x = 0, n = Vector<byte>.Count;
+        if (Vector.IsHardwareAccelerated && width >= n)
         {
-            var w = new Vector<int>(weight);
-            int quarter = Vector<int>.Count;
-            for (; x <= input.Length - Vector<byte>.Count; x += Vector<byte>.Count)
+            var half = new Vector<int>(1 << (PrecisionBits - 1));
+            var top = new Vector<int>(255);
+            for (; x <= width - n; x += n)
             {
-                Vector.Widen(new Vector<byte>(input[x..]), out var low, out var high);
-                Vector.Widen(low, out var a, out var b);
-                Vector.Widen(high, out var c, out var d);
-                var s = sums[x..];
-                (new Vector<int>(s) + Vector.AsVectorInt32(a) * w).CopyTo(s);
-                (new Vector<int>(s[quarter..]) + Vector.AsVectorInt32(b) * w).CopyTo(s[quarter..]);
-                (new Vector<int>(s[(2 * quarter)..]) + Vector.AsVectorInt32(c) * w).CopyTo(s[(2 * quarter)..]);
-                (new Vector<int>(s[(3 * quarter)..]) + Vector.AsVectorInt32(d) * w).CopyTo(s[(3 * quarter)..]);
+                Vector<int> a = half, b = half, c = half, d = half;
+                for (int i = 0; i < weights.Length; i++)
+                {
+                    var w = new Vector<int>(weights[i]);
+                    Vector.Widen(new Vector<byte>(plane.AsSpan((start + i) * width + x, n)), out var low, out var high);
+                    Vector.Widen(low, out var la, out var lb);
+                    Vector.Widen(high, out var ha, out var hb);
+                    a += Vector.AsVectorInt32(la) * w;
+                    b += Vector.AsVectorInt32(lb) * w;
+                    c += Vector.AsVectorInt32(ha) * w;
+                    d += Vector.AsVectorInt32(hb) * w;
+                }
+
+                // Clip8 on every lane: value >> 22 held to [0, 255] (at or above 1 << 30 it is 255, at or below 0 it is 0).
+                var low16 = Vector.Narrow(Clip(a, top), Clip(b, top));
+                var high16 = Vector.Narrow(Clip(c, top), Clip(d, top));
+                Vector.Narrow(low16, high16).CopyTo(output[x..]);
             }
         }
 
-        for (; x < input.Length; x++)
+        for (; x < width; x++)
         {
-            sums[x] += input[x] * weight;
+            int sum = 1 << (PrecisionBits - 1);
+            for (int i = 0; i < weights.Length; i++)
+            {
+                sum += plane[(start + i) * width + x] * weights[i];
+            }
+
+            output[x] = Clip8(sum);
         }
+
+        static Vector<uint> Clip(Vector<int> sums, Vector<int> top) =>
+            Vector.AsVectorUInt32(Vector.Min(Vector.Max(Vector.ShiftRightArithmetic(sums, PrecisionBits), Vector<int>.Zero), top));
     }
 
     private static byte Clip8(int value) => value >= 1 << PrecisionBits << 8 ? (byte)255 : value <= 0 ? (byte)0 : (byte)(value >> PrecisionBits);
