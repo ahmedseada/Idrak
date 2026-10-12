@@ -9,8 +9,9 @@ namespace Idrak.Gpu.Cuda;
 // Long-lived blocks in shared chunks (Backend.LongLivedAllocations, ComputeResources.GpuChunkBytes). The driver rounds
 // every allocation above half a page up to whole pages (measured: 1 MiB + 4 KiB takes 2 MiB, 10 MiB + 4 KiB 12 MiB),
 // and a model's weights and its attention caches are hundreds of such blocks. Inside the scope, a block the driver would
-// round (at least half a page, not a whole number of pages, at most an eighth of a chunk) is taken first-fit from a
-// chunk's free ranges, else from a new chunk; the rounding is then paid once a chunk.
+// round (at least half a page, not a whole number of pages, at most a quarter of a chunk) is taken first-fit from a
+// chunk's free ranges, else from a new chunk; the rounding is then paid once a chunk. Any other block of that kind takes
+// a chunk's free room before new memory (the chunks are held by what lives in them; their room would otherwise idle).
 //
 // - Freeing: a chunk's block goes back to the pool by its size like any other (Return); only when the pool's cache is
 //   released (ReleaseCachedMemory) does it go back to its chunk's free ranges, merged with its neighbours, and a chunk
@@ -93,16 +94,20 @@ internal sealed unsafe partial class CudaBackend
     // The chunk size in use: the setting, else 32 pages; 0 when chunks are off.
     internal long ChunkSize => ComputeResources.GpuChunkBytes is { } set ? Math.Max(0, set) : 32 * Page;
 
-    // Whether a new block of `bytes` goes into a chunk.
-    private bool Chunked(long bytes)
+    // Whether a new long-lived block of `bytes` goes into a chunk (a new one when none has room).
+    private bool Chunked(long bytes) => t_longLived > 0 && Chunkable(bytes);
+
+    // Whether a block of `bytes` may sit in a chunk: one the driver would round (half a page or more, not whole pages), at
+    // most a quarter of a chunk, never while a graph is recorded.
+    private bool Chunkable(long bytes)
     {
-        if (t_longLived <= 0 || _captureFree is not null)
+        if (_captureFree is not null)
         {
             return false;
         }
 
         long page = Page, chunk = ChunkSize;
-        return page > 0 && chunk > 0 && bytes >= page / 2 && bytes % page != 0 && bytes <= chunk / 8;
+        return page > 0 && chunk > 0 && bytes >= page / 2 && bytes % page != 0 && bytes <= chunk / 4;
     }
 
     // A block of `bytes` from a chunk (a new one when none has room), with its capacity in floats; 0 when no chunk can

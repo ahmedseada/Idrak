@@ -19,7 +19,7 @@ internal static partial class Tests
         ("offloading: a decoder whose base weights (float32 and int8) live in system memory gives the same outputs and LoRA gradients through its fused products (q/k/v, gate/up, down), staged as groups", OffloadDecoder),
         ("offloading: training with a full GPU moves optimizer state out first (then frozen weights), gives the weights of an ordinary run, and brings tensors back when memory frees up", OffloadColdFirst),
         ("offloading: before inference, a model that did not fit has its frozen weights marked cold before any pass and moved out, largest first, until the headroom is free; its outputs are unchanged", OffloadBeforeInference),
-        ("memory chunks: long-lived blocks (Backend.LongLivedAllocations) the driver would round to its page share chunks: the driver takes about their bytes instead of a page more each; values and kernels unchanged; outside the scope and with GpuChunkBytes 0 each block is its own; a freed block's room is reused and empty chunks go back to the driver", ChunkedBlocks),
+        ("memory chunks: long-lived blocks (Backend.LongLivedAllocations) the driver would round to its page share chunks: the driver takes about their bytes instead of a page more each; values and kernels unchanged; a freed block's room is reused; outside the scope a block takes the chunks' free room and makes none; with GpuChunkBytes 0 each block is its own; empty chunks go back to the driver", ChunkedBlocks),
         ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
     ];
 
@@ -592,12 +592,16 @@ internal static partial class Tests
 
             Check(cuda.ChunksAllocated == made, "the freed block's room reused, no chunk added");
 
-            // Outside the scope, and with chunks off, a block is its own allocation.
+            // Outside the scope a block takes the chunks' free room (they are held anyway), and makes no chunk of its own.
             long chunked = cuda.ChunkedBlocks;
-            using (Tensor.From(values, [floats], device))
+            using (var outside = Tensor.From(values, [floats], device))
             {
-                Check(cuda.ChunkedBlocks == chunked, "outside the scope: a block of its own");
+                Check(cuda.ChunkedBlocks == chunked + 1 && cuda.ChunksAllocated == made, "outside the scope: the chunks' free room, no new chunk");
+                AssertClose(values, outside.ToArray(), 0f, "a block in a chunk's free room keeps its values");
             }
+
+            ComputeResources.ReleaseCachedMemory(device);
+            chunked = cuda.ChunkedBlocks;
 
             long? setting = ComputeResources.GpuChunkBytes;
             ComputeResources.GpuChunkBytes = 0;
