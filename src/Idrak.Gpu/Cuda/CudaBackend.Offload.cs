@@ -79,7 +79,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
     }
 
     // A move of live storages (Backend.BeginMove): Began false when it may not run now. Disposing it ends the move.
-    private Moving Move(bool wait) => new(this, BeginMove(wait));
+    private Moving Move(bool wait, bool lookupTablesOnly = false) => new(this, BeginMove(wait, lookupTablesOnly));
 
     private readonly struct Moving(CudaBackend backend, bool began) : IDisposable
     {
@@ -657,17 +657,19 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
     }
 
     // The marked lookup tables to system memory for good, their GPU blocks back to the driver; false when none moved (none
-    // marked, or a graph may hold their addresses). With the work stream held.
-    private bool PlaceLookupTables()
+    // marked, another thread placed them meanwhile, or a graph may hold their addresses).
+    private bool PlaceLookupTables(bool wait)
     {
-        // From an allocation, with the stream gate held: no waiting for other threads' operations (one may wait for this
-        // allocation's locks); the tables move only while no other thread is inside an operation.
-        using var move = Move(wait: false);
+        // From an allocation, outside the stream gate: a placement of lookup tables, which waits for other threads'
+        // operations even from inside one (wait false when this thread still holds a lock they may need).
+        using var move = Move(wait, lookupTablesOnly: true);
         if (!move.Began)
         {
             return false;
         }
 
+        MakeCurrent();
+        using var use = UseStream();                                       // the copies, after the move began (lock order)
         CudaStorage[] tables;
         lock (_pool)
         {
