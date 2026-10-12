@@ -743,17 +743,13 @@ public sealed class ImagePreprocessor
         }
 
         var (xBounds, xWeights, xTaps) = Coefficients(width, outWidth, filter);
-        var (yBounds, yWeights, yTaps) = Coefficients(height, outHeight, filter);
+        var (yBounds, yWeights, yTaps) = Coefficients(height, outHeight, filter);           // shared: read, never written
         byte[] current = source;
-        int rows = height;
+        int rows = height, first = 0;                                                       // the rows the vertical pass reads start at `first`
         if (outWidth != width)
         {
-            int first = yBounds[0], last = yBounds[2 * (outHeight - 1)] + yBounds[2 * (outHeight - 1) + 1];
-            for (int i = 0; i < outHeight; i++)
-            {
-                yBounds[2 * i] -= first;
-            }
-
+            first = yBounds[0];
+            int last = yBounds[2 * (outHeight - 1)] + yBounds[2 * (outHeight - 1) + 1];
             rows = last - first;
             var across = new byte[checked(rows * outWidth)];
             HostParallel.For(rows, 8, (r0, r1) =>
@@ -791,7 +787,7 @@ public sealed class ImagePreprocessor
             var sums = new int[outWidth];
             for (int y = r0; y < r1; y++)
             {
-                int start = yBounds[2 * y], count = yBounds[2 * y + 1];
+                int start = yBounds[2 * y] - first, count = yBounds[2 * y + 1];
                 var k = yWeights.AsSpan(y * yTaps, count);
                 Array.Fill(sums, 1 << (PrecisionBits - 1));
                 for (int i = 0; i < k.Length; i++)
@@ -839,9 +835,36 @@ public sealed class ImagePreprocessor
 
     private static byte Clip8(int value) => value >= 1 << PrecisionBits << 8 ? (byte)255 : value <= 0 ? (byte)0 : (byte)(value >> PrecisionBits);
 
+    // The coefficients of the sizes resized last: a resize asks for them per plane and per call (a sine per tap for Lanczos
+    // and Hamming), and a page's planes, a batch's pages and a pipeline's repeated steps ask for the same sizes again. A few
+    // entries, replaced in turn; an entry is never changed once made, so readers on other threads need no lock.
+    private sealed record ResizeTaps(int InSize, int OutSize, ImageResampling Filter, int[] Bounds, int[] Weights, int Taps);
+
+    private static readonly ResizeTaps?[] TapCache = new ResizeTaps?[16];
+    private static int tapCacheNext = -1;
+
+    // Resample.c's coefficients for one direction (see ComputeCoefficients), from the cache when the sizes were seen. The
+    // arrays are shared: callers read them and never write to them.
+    private static (int[] Bounds, int[] Weights, int Taps) Coefficients(int inSize, int outSize, ImageResampling filter)
+    {
+        for (int i = 0; i < TapCache.Length; i++)
+        {
+            var entry = Volatile.Read(ref TapCache[i]);
+            if (entry is not null && entry.InSize == inSize && entry.OutSize == outSize && entry.Filter == filter)
+            {
+                return (entry.Bounds, entry.Weights, entry.Taps);
+            }
+        }
+
+        var (bounds, weights, taps) = ComputeCoefficients(inSize, outSize, filter);
+        int slot = (int)((uint)Interlocked.Increment(ref tapCacheNext) % (uint)TapCache.Length);
+        Volatile.Write(ref TapCache[slot], new ResizeTaps(inSize, outSize, filter, bounds, weights, taps));
+        return (bounds, weights, taps);
+    }
+
     // Resample.c precompute_coeffs and normalize_coeffs_8bpc: for each output pixel, the first input pixel and the count
     // it reads (bounds, in pairs) and its weights (`taps` per pixel), as 22-bit fixed point rounded away from zero.
-    private static (int[] Bounds, int[] Weights, int Taps) Coefficients(int inSize, int outSize, ImageResampling filter)
+    private static (int[] Bounds, int[] Weights, int Taps) ComputeCoefficients(int inSize, int outSize, ImageResampling filter)
     {
         double support = filter switch
         {
