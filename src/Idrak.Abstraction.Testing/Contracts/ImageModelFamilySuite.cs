@@ -8,7 +8,7 @@ namespace Idrak.Abstraction.Testing;
 
 /// <summary>
 /// An image model loaded through its family, as the family checks see it. The contracts live with the packages that use
-/// them (core's <c>IImageModelFamily</c> and <c>ImageModel</c>, Idrak.Vision's predictors) and this kit depends on
+/// them (Idrak.Vision's <c>IImageModelFamily</c>, <c>ImageModel</c> and predictors) and this kit depends on
 /// Idrak.Abstraction alone, so a test wraps the loaded model in these delegates: its task, its labels, and each image's
 /// outputs (logits for a classifier, the decoded detections flattened for a detector, the mask for a segmenter, the
 /// features for a backbone; whatever the test compares with its reference).
@@ -46,7 +46,7 @@ public sealed record ImageFamilySample(string Path, IReadOnlyList<ImageData>? Im
     string? Error = null);
 
 /// <summary>
-/// The checks of an image model family (core's <c>IImageModelFamily</c>, registered in <c>ImageModelFamilies</c>) on
+/// The checks of an image model family (Idrak.Vision's <c>IImageModelFamily</c>, registered in <c>ImageModelFamilies</c>) on
 /// checkpoints of its own. The implementation is the loading, as a delegate: a checkpoint's path in, the loaded model out
 /// (<see cref="ImageModelUnderTest"/>; <c>path =&gt; Wrap(ImageModels.Load(path))</c>). For each sample:
 /// <list type="bullet">

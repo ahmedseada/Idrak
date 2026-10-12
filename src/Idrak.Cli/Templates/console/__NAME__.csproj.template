@@ -10,6 +10,7 @@
 
   <ItemGroup>
     __REF(Idrak)__
+    __REF(Idrak.Gpu)__
   </ItemGroup>
 
 </Project>

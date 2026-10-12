@@ -346,6 +346,17 @@ public readonly record struct Idrak.Abstraction.Data.PixelBox : System.IEquatabl
 
 public delegate Idrak.Abstraction.Data.ISampleSource Idrak.Abstraction.Data.SampleSourceFactory(string path, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
+public static class Idrak.Abstraction.Data.SampleSources
+  public static Idrak.Abstraction.Data.ISampleSource Open(string name, string path, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static Idrak.Abstraction.Data.SampleSourceFactory Get(string name)
+  public static Idrak.Abstraction.Data.SampleSourceFactory? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Contains(string name)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, Idrak.Abstraction.Data.SampleSourceFactory factory)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
 public sealed class Idrak.Abstraction.Device
   public Idrak.Abstraction.DeviceType Type { get; }
   public Idrak.Abstraction.Devices.Backend Backend { get; }
@@ -1375,10 +1386,37 @@ public sealed class Idrak.Abstraction.DifferentiableFunction
   public Idrak.Abstraction.Tensor Apply(scoped params System.ReadOnlySpan<Idrak.Abstraction.Tensor> inputs)
   public string Name { get; }
 
+public static class Idrak.Abstraction.Formats.CheckpointFormats
+  public static Idrak.Abstraction.Formats.ICheckpointFormat For(string path)
+  public static Idrak.Abstraction.Formats.ICheckpointFormat Get(string name)
+  public static Idrak.Abstraction.Formats.ICheckpointFormat? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Formats.ICheckpointFormat format)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public interface Idrak.Abstraction.Formats.ICheckpointFormat
+  public Idrak.Abstraction.Formats.ITensorStore Open(string folder)
+  public System.Collections.Generic.IEnumerable<string> Notes(string folder)
+  public bool CanOpen(string path)
+  public string Name { get; }
+  public string Prepare(string path)
+
 public interface Idrak.Abstraction.Formats.IModelSource
   public bool CanResolve(string model)
   public string Name { get; }
   public string Resolve(string model, Idrak.Abstraction.Formats.ModelSourceOptions options)
+
+public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
+  public (default) Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
+  public (default) System.TimeSpan? ReadTime { get; }
+  public (default) bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public (default) float[] ReadTransposed(string name)
+  public System.Collections.Generic.IEnumerable<string> Names { get; }
+  public bool Contains(string name)
+  public float[] Read(string name)
+  public int[] ShapeOf(string name)
 
 public sealed record Idrak.Abstraction.Formats.ModelSourceOptions : System.IEquatable<Idrak.Abstraction.Formats.ModelSourceOptions>
   public Idrak.Abstraction.Data.IDownloader? Downloader { get; init; }
@@ -1396,6 +1434,11 @@ public static class Idrak.Abstraction.Formats.ModelSources
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Formats.IModelSource source)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public enum Idrak.Abstraction.Formats.WeightFormat : int
+  BFloat16 = 2
+  Float16 = 1
+  Float32 = 0
 
 public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstraction.Generation.PackedWeight
   public Idrak.Abstraction.Tensor Packed { get; }

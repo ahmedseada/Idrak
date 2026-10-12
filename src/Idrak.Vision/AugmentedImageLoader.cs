@@ -4,7 +4,7 @@
 using System.Buffers;
 using System.Collections;
 using System.Collections.Concurrent;
-using Idrak.Data.Abstractions;
+using Idrak.Datasets.Abstractions;
 
 namespace Idrak.Vision;
 

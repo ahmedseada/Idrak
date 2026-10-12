@@ -7,6 +7,7 @@ using Idrak;
 using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Generation;
+using Idrak.Imaging;
 using Idrak.Models;
 
 // A page read profiled (plan 17, H3) through the library's profiler (Profiler, ProfileProbes, ProfileWriters): the app's

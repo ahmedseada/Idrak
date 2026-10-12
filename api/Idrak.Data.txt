@@ -291,8 +291,8 @@ public enum Idrak.Data.RowKind : int
 public static class Idrak.Data.TableSamples
   public static Idrak.Abstraction.Data.ISampleStream Stream(string path, System.Collections.Generic.IReadOnlyList<string> features, System.Collections.Generic.IReadOnlyList<string> targets, System.Collections.Generic.IReadOnlyList<string>? classes = null, Idrak.Data.Abstractions.ReadOptions? options = null)
   public static Idrak.Abstraction.Data.SampleSourceFactory Factory { get; }
-  public static Idrak.Data.Dataset FromRows(System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> rows, System.Collections.Generic.IReadOnlyList<string> features, System.Collections.Generic.IReadOnlyList<string> targets, System.Collections.Generic.IReadOnlyList<string>? classes = null)
-  public static Idrak.Data.Dataset Load(string path, System.Collections.Generic.IReadOnlyList<string> features, System.Collections.Generic.IReadOnlyList<string> targets, System.Collections.Generic.IReadOnlyList<string>? classes = null, Idrak.Data.Abstractions.ReadOptions? options = null)
+  public static Idrak.Datasets.Dataset FromRows(System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> rows, System.Collections.Generic.IReadOnlyList<string> features, System.Collections.Generic.IReadOnlyList<string> targets, System.Collections.Generic.IReadOnlyList<string>? classes = null)
+  public static Idrak.Datasets.Dataset Load(string path, System.Collections.Generic.IReadOnlyList<string> features, System.Collections.Generic.IReadOnlyList<string> targets, System.Collections.Generic.IReadOnlyList<string>? classes = null, Idrak.Data.Abstractions.ReadOptions? options = null)
 
 public sealed class Idrak.Data.VocFormat : Idrak.Data.Abstractions.IAnnotationFormat
   public Idrak.Abstraction.Data.AnnotatedDataset Read(string path, Idrak.Data.Abstractions.AnnotationReadOptions? options = null)

@@ -9,7 +9,7 @@
 //        classify points (x,y in [-1, 1]) with the saved model
 
 using Idrak;
-using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;

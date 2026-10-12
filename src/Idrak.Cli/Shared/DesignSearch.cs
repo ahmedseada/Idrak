@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
@@ -110,7 +111,7 @@ internal static class DesignSearch
     }
 
     // The share of rows whose highest output is the target's class.
-    private static double Accuracy(float[,] predictions, Idrak.Data.Dataset data)
+    private static double Accuracy(float[,] predictions, Idrak.Datasets.Dataset data)
     {
         int right = 0, classes = data.TargetCount;
         for (int i = 0; i < data.Count; i++)

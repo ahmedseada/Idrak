@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Data;
+using Idrak.Imaging;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Gemma3Vision;

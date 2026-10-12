@@ -163,7 +163,7 @@ public static class Conformance
     }
 
     /// <summary>
-    /// Checks an image model family (core's <c>IImageModelFamily</c>, given as its loading: a checkpoint's path in, the
+    /// Checks an image model family (Idrak.Vision's <c>IImageModelFamily</c>, given as its loading: a checkpoint's path in, the
     /// loaded model wrapped as <see cref="ImageModelUnderTest"/> out) on checkpoints of its own
     /// (<see cref="ImageModelFamilySuite"/>): it loads, predicts finite outputs, the same every time, from several threads,
     /// alone and in a batch, and after loading again; the reference's outputs when given; invalid checkpoints refused saying

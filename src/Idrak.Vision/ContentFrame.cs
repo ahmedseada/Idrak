@@ -2,7 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
-using Idrak.Data;
+using Idrak.Datasets;
+using Idrak.Imaging;
 using Idrak.Vision.Abstractions;
 
 namespace Idrak.Vision;

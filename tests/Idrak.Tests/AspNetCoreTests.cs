@@ -4,20 +4,22 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using Idrak;
+using Idrak.AspNetCore;
+using Idrak.Data;
+using Idrak.Datasets;
+using Idrak.Generation;
+using Idrak.Inference;
+using Idrak.Layers;
+using Idrak.Nlp.Inference;
+using Idrak.Optimizers;
+using Idrak.Training;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Idrak;
-using Idrak.AspNetCore;
-using Idrak.Data;
-using Idrak.Generation;
-using Idrak.Inference;
-using Idrak.Layers;
-using Idrak.Optimizers;
-using Idrak.Training;
 
 // Idrak.AspNetCore over a real Kestrel server on a free port (CPU only; the endpoints do not depend on the device).
 internal static partial class Tests

@@ -6,6 +6,19 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json.Nodes;
+using Idrak;
+using Idrak.AspNetCore;
+using Idrak.Cli;
+using Idrak.Data;
+using Idrak.Gemma3Vision;
+using Idrak.Generation;
+using Idrak.Generation.Abstractions;
+using Idrak.Imaging;
+using Idrak.Inference;
+using Idrak.Models;
+using Idrak.Models.Abstractions;
+using Idrak.Nlp;
+using Idrak.Nlp.Inference;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -13,17 +26,6 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Idrak;
-using Idrak.AspNetCore;
-using Idrak.Cli;
-using Idrak.Data;
-using Idrak.Generation;
-using Idrak.Gemma3Vision;
-using Idrak.Generation.Abstractions;
-using Idrak.Inference;
-using Idrak.Models;
-using Idrak.Models.Abstractions;
-using Idrak.Nlp;
 
 // Images in chat over HTTP (plan 11, phase 8) with the tiny Gemma 3 of phase 0, in-process on a loopback port: the
 // engine hosting a vision-language chat model (GenerativeModelBuilder.Images), /v1/chat/completions with image_url data

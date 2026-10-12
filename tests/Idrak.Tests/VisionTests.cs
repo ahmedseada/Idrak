@@ -3,6 +3,7 @@
 
 using Idrak;
 using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;

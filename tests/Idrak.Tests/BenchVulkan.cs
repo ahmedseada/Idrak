@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using Idrak;
+using Idrak.Datasets.Abstractions;
 using Idrak.Generation;
 using Idrak.Gpu.Vulkan;
 using Idrak.Layers;

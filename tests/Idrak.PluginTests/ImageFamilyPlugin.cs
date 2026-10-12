@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Imaging;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models;

@@ -5,6 +5,13 @@ using System.IO.Pipelines;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
+using Idrak.AspNetCore;
+using Idrak.Cli;
+using Idrak.Cli.Commands.Serve;
+using Idrak.Generation;
+using Idrak.Inference;
+using Idrak.Mcp;
+using Idrak.Nlp.Inference;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -13,12 +20,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using Idrak.AspNetCore;
-using Idrak.Cli;
-using Idrak.Cli.Commands.Serve;
-using Idrak.Generation;
-using Idrak.Inference;
-using Idrak.Mcp;
 
 // The tool contracts of Idrak.Abstraction (IToolRegistry, IToolChatModel, ChatTools.WithTools) and the bridges built
 // on them alone: server-side tool execution in the ASP.NET Core chat endpoint, the engine's models as MCP tools

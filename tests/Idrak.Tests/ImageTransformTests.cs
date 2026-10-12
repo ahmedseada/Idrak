@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Imaging;
 using Idrak.Nlp;
 
 // Plan 11, image transforms: the contract and registry (Idrak.Abstraction.Data), the library's transforms against

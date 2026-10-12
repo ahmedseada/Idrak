@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Generation;
+using Idrak.Inference;
 
-namespace Idrak.Inference;
+namespace Idrak.Nlp.Inference;
 
 /// <summary>
 /// Text and chat models in the <see cref="InferenceEngine"/>: each copy is a <see cref="TextGenerator"/> and runs one

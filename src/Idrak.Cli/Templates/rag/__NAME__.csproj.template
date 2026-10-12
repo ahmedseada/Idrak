@@ -10,6 +10,7 @@
 
   <ItemGroup>
     __REF(Idrak)__
+    __REF(Idrak.Gpu)__
     __REF(Idrak.Nlp)__
   </ItemGroup>
 

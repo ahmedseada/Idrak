@@ -14,7 +14,7 @@
 
 using System.Diagnostics;
 using Idrak;
-using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Diagnostics;
 using Idrak.Inference;
 using Idrak.Layers;

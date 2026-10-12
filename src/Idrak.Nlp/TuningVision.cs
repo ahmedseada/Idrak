@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Idrak.Data;
+using Idrak.Imaging;
 using Idrak.Models;
 using Idrak.Nlp.Abstractions;
 

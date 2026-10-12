@@ -4,6 +4,7 @@
 using Idrak;
 using Idrak.Data;
 using Idrak.Gemma3Vision;
+using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models;
 
@@ -123,7 +124,7 @@ internal static partial class Tests
         }
 
         using var reader = SafeTensorsReader.Open(folder);
-        var store = (Idrak.Models.Abstractions.ITensorStore)reader;
+        var store = (Idrak.Abstraction.Formats.ITensorStore)reader;
         SafeTensorsWriter.Write(Path.Combine(copy, "model.safetensors"), [.. store.Names.Select(n => (n, store.ShapeOf(n), store.Read(n)))], SafeTensorType.BF16);
         return copy;
     }

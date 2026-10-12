@@ -8,6 +8,8 @@ using Idrak.Abstraction.Devices;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Datasets.Abstractions;
+using Idrak.Imaging;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;

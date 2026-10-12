@@ -11,10 +11,12 @@ machine.
 
 ```bash
 dotnet add package Idrak
+dotnet add package Idrak.Gpu       # the CUDA, Vulkan and HIP devices (they register themselves)
+dotnet add package Idrak.Imaging   # images: codecs, Pillow's transforms, model preprocessors
 ```
 
-Runs on any machine with .NET 10 (x64 or ARM64: Windows, Linux, macOS, Android) and uses the GPU through its driver
-alone.
+Runs on any machine with .NET 10 (x64 or ARM64: Windows, Linux, macOS, Android); with `Idrak.Gpu` it uses the GPU
+through its driver alone.
 
 ## What is in the package
 
@@ -23,7 +25,7 @@ alone.
 | Tensors | N-D tensors with automatic differentiation, float32, bfloat16 and FP8 precision, int8 / int4 / bfloat16 weights |
 | Layers | Linear, Conv2d, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head attention, transformer layers, mixture of experts; graph modules with skip connections and branches |
 | Training | `Trainer` and `TrainingRun`, losses, metrics, early stopping, SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, schedules, gradient clipping, memory offloading |
-| Data | In-memory datasets and lazy sources (streamed CSV, image folders, memory-mapped token files and .npy arrays), views, image augmentation, PNG / BMP / PGM / PPM decoding |
+| Datasets | In-memory datasets and lazy sources (streamed CSV, memory-mapped token files and .npy arrays), views, scalers, the `DataLoader` (`Idrak.Datasets`; image folders, augmentation and codecs are in `Idrak.Imaging`) |
 | Pretrained models | Llama, Qwen, Mistral, Gemma and mixture-of-experts models by Hugging Face id, folder or GGUF file: safetensors and quantized GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
 | Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive (text and chat models are added by `Idrak.Nlp`) |
 | Vision | Channel normalization layer; per-pixel loss for segmentation (region classification and content framing are in `Idrak.Vision`) |

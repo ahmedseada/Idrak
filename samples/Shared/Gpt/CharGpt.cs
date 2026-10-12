@@ -386,7 +386,7 @@ public static class Grammar
 /// <summary>Builds training windows (inputs and next-character targets) and trains a <see cref="CharGpt"/>.</summary>
 public static class GptTraining
 {
-    public static Data.Dataset Windows(string corpus, GptConfig config, int maxWindows, int seed)
+    public static Datasets.Dataset Windows(string corpus, GptConfig config, int maxWindows, int seed)
     {
         var index = config.Vocabulary.Select((c, i) => (c, i)).ToDictionary(p => p.c, p => p.i);
         var random = new Random(seed);
@@ -405,7 +405,7 @@ public static class GptTraining
         }
 
         string[] positions = [.. Enumerable.Range(0, context).Select(t => $"t{t}")];
-        return Data.Dataset.FromFlat(features, targets, windows, positions, positions);
+        return Datasets.Dataset.FromFlat(features, targets, windows, positions, positions);
     }
 
     /// <summary>Trains with AdamW, cosine schedule and gradient clipping; returns the config with training results.</summary>
@@ -420,8 +420,8 @@ public static class GptTraining
             Scheduler = new Abstraction.Training.CosineAnnealing(optimizer, epochs, minLearningRate: 2e-4f),
             MaxGradientNorm = 1f,
         };
-        var history = trainer.Fit(new Data.DataLoader(train, batchSize, shuffle: true, device: gpt.Device, seed: 5), epochs,
-            validation: new Data.DataLoader(validation, 256, device: gpt.Device), cancellationToken);
+        var history = trainer.Fit(new Datasets.DataLoader(train, batchSize, shuffle: true, device: gpt.Device, seed: 5), epochs,
+            validation: new Datasets.DataLoader(validation, 256, device: gpt.Device), cancellationToken);
         var last = history.Epochs[^1];
         return gpt.Config with
         {

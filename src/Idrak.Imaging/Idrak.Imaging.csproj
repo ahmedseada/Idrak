@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Imaging</RootNamespace>
+    <AssemblyName>Idrak.Imaging</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Imaging</PackageId>
+    <Description>Images for Idrak (no dependencies beyond Idrak): PNG, JPEG, BMP and Netpbm decoders and encoders in C#, Pillow's resampling, filters and enhancements byte for byte, model preprocessors (resize, crop, rescale, normalize, on the device too), chat image decoding, sample augmentations and image-folder datasets.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Devices" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+</Project>

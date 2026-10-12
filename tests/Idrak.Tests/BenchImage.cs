@@ -8,6 +8,8 @@ using System.Security.Cryptography;
 using Idrak;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Imaging;
+using Idrak.Imaging.Abstractions;
 
 // The CPU side of reading a page (plan 17, lane C): a scan-sized page (1,654 x 2,339, an A4 page at 200 dpi, made here from
 // a seeded generator: a light background with grain and dark strokes) through every stage a read runs: the JPEG and PNG

@@ -6,10 +6,13 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Commands.Run;
 using Idrak.Cli.Shared;
 using Idrak.Data;
+using Idrak.Imaging;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
+using Idrak.Vision;
+using Idrak.Vision.Abstractions;
 
 namespace Idrak.Cli.Commands.Train;
 

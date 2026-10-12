@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
-using Idrak.Data;
+using Idrak.Datasets.Abstractions;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;

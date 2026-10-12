@@ -25,7 +25,7 @@ public static class Losses
     /// <summary>
     /// Multi-class cross-entropy from raw scores (logits, no softmax layer needed):
     /// mean over rows of -Σ target · log_softmax(logits). Targets are one-hot rows (or class probabilities)
-    /// with the same shape as the logits; see <see cref="Data.Dataset.FromClassLabels"/>.
+    /// with the same shape as the logits; see <see cref="Datasets.Dataset.FromClassLabels"/>.
     /// </summary>
     /// <param name="logits">[..., classes] unnormalized scores.</param>
     /// <param name="targets">[..., classes] one-hot or probability targets.</param>

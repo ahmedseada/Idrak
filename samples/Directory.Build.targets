@@ -1,4 +1,9 @@
 <Project>
+  <!-- The apps take the GPU devices (Idrak brings the CPU only); a plug-in sample (a library) leaves the choice to its app. -->
+  <ItemGroup Condition="'$(OutputType)' != 'Library'">
+    <PackageReference Include="Idrak.Gpu" Version="$(IdrakVersion)" />
+  </ItemGroup>
+
   <!-- Samples that reference Idrak as packages (as apps do) build against this clone (build/IdrakFromSource.targets). -->
   <Import Project="$(IdrakFromSource)/build/IdrakFromSource.targets" Condition="'$(IdrakFromSource)' != ''" />
 </Project>

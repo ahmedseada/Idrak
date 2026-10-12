@@ -3,6 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Data;
+using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;

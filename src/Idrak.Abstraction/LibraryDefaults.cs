@@ -27,7 +27,7 @@ internal static class LibraryDefaults
     // an internal static class `<assembly>.LibraryRegistrations` with a static `RegisterFor(Type registry)`; one that is
     // missing (not shipped with the application) is skipped. Planned packages are listed so they work the day they appear.
     private static readonly string[] Assemblies =
-        ["Idrak", "Idrak.Gpu", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio"];
+        ["Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio"];
 
     /// <summary>
     /// Has the first-party assemblies register their built-ins of <paramref name="registry"/>, unless done already (on
@@ -35,6 +35,7 @@ internal static class LibraryDefaults
     /// </summary>
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.LibraryRegistrations", "Idrak")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Gpu.LibraryRegistrations", "Idrak.Gpu")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Imaging.LibraryRegistrations", "Idrak.Imaging")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Data.LibraryRegistrations", "Idrak.Data")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Nlp.LibraryRegistrations", "Idrak.Nlp")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]

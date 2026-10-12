@@ -182,7 +182,7 @@ internal static partial class Tests
         Check(Idrak.Data.Abstractions.ParquetCodecs.Origin(1) == library && Idrak.Data.Abstractions.DataFileFormats.Origin("Csv") == library
               && Idrak.Data.Abstractions.DatasetSources.Origin("hf") == library, "Data's registries");
         var origins = Overrides.Report().Select(o => o.Origin).ToHashSet();
-        Check(!origins.Overlaps(["Idrak", "Idrak.Abstraction", "Idrak.Gpu", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision"]),
+        Check(!origins.Overlaps(["Idrak", "Idrak.Abstraction", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision"]),
             $"no library assembly is reported as overriding: {string.Join(", ", origins)}");
         Check(RopeScalings.Get(LinearType) == RopeScalings.Default(LinearType), "with only its default, a slot hands it out as it is");
     }

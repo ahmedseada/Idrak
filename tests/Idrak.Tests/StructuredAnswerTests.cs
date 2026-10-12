@@ -6,6 +6,7 @@ using Idrak.Abstraction.Diagnostics;
 using Idrak.Data.Abstractions;
 using Idrak.Generation;
 using Idrak.Generation.Abstractions;
+using Idrak.Imaging.Abstractions;
 using Idrak.Models;
 using Idrak.Nlp.Abstractions;
 
@@ -660,7 +661,7 @@ internal static partial class Tests
         {
             using var loaded = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device });
             bool bfloat16 = loading.Seen.Any(s => s.Setting == "PretrainedOptions.BFloat16" && s.Source == "pretrained model");
-            Check(bfloat16 == (loaded.CheckpointFormat == Idrak.Models.Abstractions.WeightFormat.BFloat16),
+            Check(bfloat16 == (loaded.CheckpointFormat == Idrak.Abstraction.Formats.WeightFormat.BFloat16),
                 $"checkpoint {loaded.CheckpointFormat?.ToString() ?? "not reported"}, read as float32: {string.Join("; ", loading.Seen)}");
         }
 

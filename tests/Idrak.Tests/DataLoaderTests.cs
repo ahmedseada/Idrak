@@ -8,6 +8,9 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Datasets;
+using Idrak.Datasets.Abstractions;
+using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
@@ -977,7 +980,7 @@ internal static partial class Tests
             }
             catch (NotSupportedException e)
             {
-                Check(e.Message.Contains("csv, images, tokens, npy", StringComparison.Ordinal) && e.Message.Contains("SampleSources.Register", StringComparison.Ordinal), e.Message);
+                Check(e.Message.Contains("csv, tokens, npy, images", StringComparison.Ordinal) && e.Message.Contains("SampleSources.Register", StringComparison.Ordinal), e.Message);
             }
         }
         finally

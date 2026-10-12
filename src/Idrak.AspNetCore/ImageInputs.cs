@@ -5,7 +5,7 @@ using System.Buffers;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
-using Idrak.Data;
+using Idrak.Imaging;
 
 namespace Idrak.AspNetCore;
 
