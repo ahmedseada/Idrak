@@ -372,28 +372,6 @@ public sealed class Idrak.Generation.TokenSampler : Idrak.Generation.Abstraction
 public static class Idrak.Generation.WebTools
   public static Idrak.Abstraction.Generation.Tool Fetch(System.Net.Http.HttpClient http, System.Func<System.Uri, bool> allow, int maxCharacters)
 
-public sealed class Idrak.Inference.GenerativeModelBuilder
-  public Idrak.Inference.GenerativeModelBuilder Device(Idrak.Abstraction.Device device)
-  public Idrak.Inference.GenerativeModelBuilder Images(System.Func<Idrak.Generation.TextGenerator, Idrak.Generation.ChatImages> images)
-  public Idrak.Inference.GenerativeModelBuilder Instances(int count)
-  public Idrak.Inference.GenerativeModelBuilder KeepAlive(System.TimeSpan? idle)
-  public Idrak.Inference.GenerativeModelBuilder QueueLimit(int waiting)
-  public Idrak.Inference.GenerativeModelBuilder Template(Idrak.Abstraction.Generation.ChatTemplate template)
-  public Idrak.Inference.GenerativeModelBuilder Timeout(System.TimeSpan limit)
-  public Idrak.Inference.GenerativeModelBuilder Tools(Idrak.Abstraction.Generation.IToolRegistry tools)
-  public Idrak.Inference.GenerativeModelBuilder WarmUp(string prompt)
-
-public static class Idrak.Inference.GenerativeModels
-  public static Idrak.Inference.InferenceEngineBuilder ChatModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, Idrak.Generation.TextGenerator generator, System.Func<Idrak.Inference.GenerativeModelBuilder, Idrak.Inference.GenerativeModelBuilder>? configure = null)
-  public static Idrak.Inference.InferenceEngineBuilder ChatModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, System.Func<Idrak.Generation.TextGenerator> load, System.Func<Idrak.Inference.GenerativeModelBuilder, Idrak.Inference.GenerativeModelBuilder>? configure = null)
-  public static Idrak.Inference.InferenceEngineBuilder ChatModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, string packagePath, string tokenizer, System.Func<Idrak.Inference.GenerativeModelBuilder, Idrak.Inference.GenerativeModelBuilder>? configure = null)
-  public static Idrak.Inference.InferenceEngineBuilder TextModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, Idrak.Generation.TextGenerator generator, System.Func<Idrak.Inference.GenerativeModelBuilder, Idrak.Inference.GenerativeModelBuilder>? configure = null)
-  public static Idrak.Inference.InferenceEngineBuilder TextModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, System.Func<Idrak.Generation.TextGenerator> load, System.Func<Idrak.Inference.GenerativeModelBuilder, Idrak.Inference.GenerativeModelBuilder>? configure = null)
-  public static Idrak.Inference.InferenceEngineBuilder TextModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, string packagePath, string tokenizer, System.Func<Idrak.Inference.GenerativeModelBuilder, Idrak.Inference.GenerativeModelBuilder>? configure = null)
-
-public static class Idrak.Inference.ModelPackageReaderExtensions
-  public static Idrak.Generation.TextGenerator TextGenerator(this Idrak.Inference.ModelPackageReader package, string tokenizer, string model = "model", Idrak.Abstraction.Device? device = null)
-
 public static class Idrak.Nlp.Abstractions.AnswerTexts
   public const string Raw = "raw"
   public const string Values = "values"
@@ -809,6 +787,28 @@ public static class Idrak.Nlp.FineTuningSchedules
   public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Create(string name, float warmupFraction = 0.03f, float minLearningRate = 0f, float decayFraction = 0.2f)
   public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Linear(float warmupFraction = 0.03f, float minLearningRate = 0f)
   public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> WarmupStableDecay(float warmupFraction = 0.03f, float decayFraction = 0.2f, float minLearningRate = 0f)
+
+public sealed class Idrak.Nlp.Inference.GenerativeModelBuilder
+  public Idrak.Nlp.Inference.GenerativeModelBuilder Device(Idrak.Abstraction.Device device)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder Images(System.Func<Idrak.Generation.TextGenerator, Idrak.Generation.ChatImages> images)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder Instances(int count)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder KeepAlive(System.TimeSpan? idle)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder QueueLimit(int waiting)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder Template(Idrak.Abstraction.Generation.ChatTemplate template)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder Timeout(System.TimeSpan limit)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder Tools(Idrak.Abstraction.Generation.IToolRegistry tools)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder WarmUp(string prompt)
+
+public static class Idrak.Nlp.Inference.GenerativeModels
+  public static Idrak.Inference.InferenceEngineBuilder ChatModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, Idrak.Generation.TextGenerator generator, System.Func<Idrak.Nlp.Inference.GenerativeModelBuilder, Idrak.Nlp.Inference.GenerativeModelBuilder>? configure = null)
+  public static Idrak.Inference.InferenceEngineBuilder ChatModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, System.Func<Idrak.Generation.TextGenerator> load, System.Func<Idrak.Nlp.Inference.GenerativeModelBuilder, Idrak.Nlp.Inference.GenerativeModelBuilder>? configure = null)
+  public static Idrak.Inference.InferenceEngineBuilder ChatModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, string packagePath, string tokenizer, System.Func<Idrak.Nlp.Inference.GenerativeModelBuilder, Idrak.Nlp.Inference.GenerativeModelBuilder>? configure = null)
+  public static Idrak.Inference.InferenceEngineBuilder TextModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, Idrak.Generation.TextGenerator generator, System.Func<Idrak.Nlp.Inference.GenerativeModelBuilder, Idrak.Nlp.Inference.GenerativeModelBuilder>? configure = null)
+  public static Idrak.Inference.InferenceEngineBuilder TextModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, System.Func<Idrak.Generation.TextGenerator> load, System.Func<Idrak.Nlp.Inference.GenerativeModelBuilder, Idrak.Nlp.Inference.GenerativeModelBuilder>? configure = null)
+  public static Idrak.Inference.InferenceEngineBuilder TextModel(this Idrak.Inference.InferenceEngineBuilder engine, string name, string packagePath, string tokenizer, System.Func<Idrak.Nlp.Inference.GenerativeModelBuilder, Idrak.Nlp.Inference.GenerativeModelBuilder>? configure = null)
+
+public static class Idrak.Nlp.Inference.ModelPackageReaderExtensions
+  public static Idrak.Generation.TextGenerator TextGenerator(this Idrak.Inference.ModelPackageReader package, string tokenizer, string model = "model", Idrak.Abstraction.Device? device = null)
 
 public sealed class Idrak.Nlp.JinjaChatTemplate : Idrak.Abstraction.Generation.ChatTemplate
   public (string, string) ReasoningTags { get; init; }

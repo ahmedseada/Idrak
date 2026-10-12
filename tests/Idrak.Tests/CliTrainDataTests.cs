@@ -10,6 +10,8 @@ using Idrak.Cli.Commands.Data;
 using Idrak.Cli.Commands.Train;
 using Idrak.Cli.Shared;
 using Idrak.Data;
+using Idrak.Datasets;
+using Idrak.Imaging;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;

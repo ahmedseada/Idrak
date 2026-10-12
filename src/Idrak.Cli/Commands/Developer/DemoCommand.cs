@@ -5,6 +5,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Data;
+using Idrak.Datasets;
+using Idrak.Datasets.Abstractions;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Optimizers;

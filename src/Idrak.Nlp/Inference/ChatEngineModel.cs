@@ -4,8 +4,9 @@
 using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using Idrak.Generation;
+using Idrak.Inference;
 
-namespace Idrak.Inference;
+namespace Idrak.Nlp.Inference;
 
 /// <summary>
 /// The chat kind of the inference engine: answers chat requests with <see cref="ChatGenerator"/> copies (and continues

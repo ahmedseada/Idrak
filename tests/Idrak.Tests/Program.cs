@@ -22,9 +22,10 @@
 
 using System.Diagnostics;
 using Idrak;
-using Idrak.Gpu.Cuda;
 using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Diagnostics;
+using Idrak.Gpu.Cuda;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;

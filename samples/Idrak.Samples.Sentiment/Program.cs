@@ -10,7 +10,7 @@
 //        classify sentences with every saved model (separate sentences with ';')
 
 using Idrak;
-using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;

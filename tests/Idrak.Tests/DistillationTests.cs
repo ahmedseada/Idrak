@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Nlp;

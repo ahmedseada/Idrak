@@ -5,6 +5,8 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Imaging;
+using Idrak.Imaging.Abstractions;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
@@ -66,7 +68,7 @@ internal static partial class Tests
                     $"a {width} x {height} PNG of {channels} channels: read back as written");
             }
 
-            Check(Idrak.Data.PngEncoder.Crc(0xFFFFFFFFu, "123456789"u8) == ~0xCBF43926u, "CRC-32's check value (the sliced tables and the byte tail)");
+            Check(Idrak.Imaging.PngEncoder.Crc(0xFFFFFFFFu, "123456789"u8) == ~0xCBF43926u, "CRC-32's check value (the sliced tables and the byte tail)");
             Check(ImageEncoders.Names.Contains("png") && ImageEncoders.Origin("png") == Overrides.Library && ImageEncoders.Default("netpbm") is not null, "the library's encoders");
             ExpectRefusal<NotSupportedException>(() => ImageEncoders.Save(Path.Combine(folder, "x.tiff"), new ImageData(new float[4], 1, 2, 2)), "ImageEncoders.Register", "an unknown extension");
 

@@ -5,6 +5,7 @@ using System.Collections.Frozen;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Data;
+using Idrak.Imaging;
 
 namespace Idrak.Generation;
 
@@ -92,7 +93,7 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
 
     /// <summary>
     /// What the encoder holds (its module, built on first use for example), or null: the inference engine disposes it
-    /// when it unloads the chat model these images were made for (<see cref="Idrak.Inference.GenerativeModelBuilder.Images"/>);
+    /// when it unloads the chat model these images were made for (<see cref="Idrak.Nlp.Inference.GenerativeModelBuilder.Images"/>);
     /// otherwise whoever made them disposes it.
     /// </summary>
     public IDisposable? Owner { get; init; }

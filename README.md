@@ -52,13 +52,14 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 
 | Package | What it gives you |
 |---------|-------------------|
-| `Idrak` (core) | Tensors and autograd, layers, training, the inference engine, pretrained models (Hugging Face and GGUF weights, BPE tokenizers, LoRA adapters), ONNX export and import, telemetry; brings `Idrak.Gpu`, so every device is there |
-| `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: every contract more than one package uses (a package's own contracts are in its `.Abstractions` namespace), `Tensor` and `Module`, the CPU device, and the public device API (`Backend`, `Storage`, `DeviceProviders`, `Kernels.Register`) the GPU devices are built on (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
+| `Idrak` (core) | Tensors and autograd, layers, training, the inference engine, pretrained models (Hugging Face and GGUF weights, BPE tokenizers, LoRA adapters), ONNX export and import, datasets and loaders, telemetry; the CPU device (add `Idrak.Gpu` for the GPUs, `Idrak.Imaging` for images) |
+| `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: every contract more than one package uses (a package's own contracts are in its `.Abstractions` namespace), `Tensor` and `Module`, the CPU device, and the public device API (`Backend`, `Storage`, `DeviceProviders`, `Kernels.Register`) the GPU devices are built on (preview; brought along by every package; see [plan 10](plans/10-abstraction.md)) |
 | `Idrak.Abstraction.Testing` | The conformance and stress kit for an app's or a plug-in's tests: checks a device, a token sampler, a tokenizer, a RoPE scaling or a contract of your own against the library default (fixed and random cases, tolerances), stress runs (threads, long runs, odd and large shapes, cancellation, memory growth) and saved regression cases; returns reports, no test framework needed; on `Idrak.Abstraction` only |
-| `Idrak.Gpu` | The CUDA, Vulkan and HIP devices and all their kernels (PTX, SPIR-V and HIP source generated in C#), built on the public device API of `Idrak.Abstraction` alone; brought along by `Idrak`, or used on its own with `Idrak.Abstraction` |
+| `Idrak.Gpu` | The CUDA, Vulkan and HIP devices and all their kernels (PTX, SPIR-V and HIP source generated in C#), built on the public device API of `Idrak.Abstraction` alone; add it beside `Idrak` (or on its own with `Idrak.Abstraction`), and the devices register themselves |
+| `Idrak.Imaging` | Images without dependencies: PNG, JPEG, BMP and Netpbm decoders and encoders, Pillow's resampling, filters and enhancements byte for byte, model preprocessors (resize, crop, normalize, on the device too), chat image decoding, sample augmentations and image-folder datasets; on `Idrak` |
 | `Idrak.Nlp` | Text generation, chat and tools, the models' own Jinja chat templates, the engine's text and chat models, LoRA / QLoRA fine-tuning, evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
-| `Idrak.Vision` | Region classification, content framing and image statistics, detection and segmentation over any network; the vision contracts (`Idrak.Vision.Abstractions`) |
+| `Idrak.Vision` | Image model families (classifiers, detectors, segmenters from checkpoints), region classification, content framing and image statistics, detection and segmentation over any network; the vision contracts (`Idrak.Vision.Abstractions`); on `Idrak.Imaging` |
 | `Idrak.AspNetCore` | Serve models over HTTP from an ASP.NET Core app: `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (OpenAI-compatible `/v1`) |
 | `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools and the engine's models (generate, chat, embed) over MCP; depends on `Idrak.Abstraction` only |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
@@ -117,7 +118,7 @@ that does, with the `.Abstractions` namespace to add a `using` line for:
 | Kinds of message parts (text, images, or audio of your own) | `ChatParts` | `Idrak.Abstraction` |
 | ONNX import operators | `OnnxImportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
 | ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
-| Checkpoint formats | `CheckpointFormats` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Checkpoint formats | `CheckpointFormats` | `Idrak.Abstraction` (`Idrak.Abstraction.Formats`; safetensors and GGUF: `Idrak`) |
 | Model families (a spec, or a network built by the family) | `PretrainedArchitectures` | `Idrak` (`Idrak.Models.Abstractions`) |
 | GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak` (`Idrak.Models.Abstractions`) |
 | Model sources | `ModelSources` | `Idrak.Abstraction` (folders and GGUF files: `Idrak`; Hugging Face ids: `Idrak.Data`) |
@@ -125,7 +126,7 @@ that does, with the `.Abstractions` namespace to add a `using` line for:
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak` (`Idrak.Models.Abstractions`) |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Data` (`Idrak.Data.Abstractions`) |
 | Training data: samples, streams, transforms | `ISampleSource`, `ISampleStream`, `ISampleTransform` | `Idrak.Abstraction` |
-| Whole batches; sample sources by name | `IBatchSource`; `SampleSources` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Whole batches; sample sources by name | `IBatchSource`; `SampleSources` | `Idrak` (`Idrak.Datasets.Abstractions`); `Idrak.Abstraction` (`Idrak.Abstraction.Data`) |
 | Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak.Abstraction` (`Idrak.Abstraction.Data`) |
 | Optimizers | derive from `Optimizer` | `Idrak.Abstraction` |
 | Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak.Abstraction` |
@@ -148,11 +149,12 @@ that does, with the `.Abstractions` namespace to add a `using` line for:
 **Libraries**: add them to a project (`dotnet add package`, run in the project's folder):
 
 ```bash
-dotnet add package Idrak                      # tensors, layers, training, pretrained models, ONNX; every device
-dotnet add package Idrak.Gpu                  # the GPU devices alone, on Idrak.Abstraction (Idrak brings them)
+dotnet add package Idrak                      # tensors, layers, training, pretrained models, ONNX; the CPU
+dotnet add package Idrak.Gpu                  # the CUDA, Vulkan and HIP devices
+dotnet add package Idrak.Imaging              # image codecs, Pillow's transforms, model preprocessors
 dotnet add package Idrak.Nlp                  # generation, chat, fine-tuning of language models, RAG
 dotnet add package Idrak.Data                 # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
-dotnet add package Idrak.Vision               # region classification, content framing
+dotnet add package Idrak.Vision               # image model families, detection, segmentation, region classification
 dotnet add package Idrak.AspNetCore           # serve models from ASP.NET Core
 dotnet add package Idrak.Mcp                  # Model Context Protocol tools
 dotnet add package Idrak.Onnx.Runtime         # run ONNX models with ONNX Runtime
@@ -249,7 +251,7 @@ src/Idrak.Abstraction/              no dependencies: every contract more than on
   Diagnostics/                      telemetry: the hub, events, ConsoleLogger, MetricsRecorder, JsonLinesLogger
   Overrides/                        slots: every registry's library default and the app's registration over it, failure
                                     policies, versions, the overrides report
-src/Idrak/                          core: layers, training, data, inference, model loading, ONNX
+src/Idrak/                          core: layers, training, datasets, inference, model loading, ONNX
   Layers/                           Linear, Conv2d, ConvTranspose2d, MaxPool2d, AvgPool2d, AdaptiveAvgPool2d,
                                     AdaptiveMaxPool2d, GlobalAveragePool2d, Upsample, Flatten,
                                     BatchNorm, GroupNorm, LayerNorm, RMSNorm, Embedding, LSTM, GRU,
@@ -259,8 +261,8 @@ src/Idrak/                          core: layers, training, data, inference, mod
                                     connections, branches); freezing (ModuleExtensions)
   Losses.cs                         MSE, MAE, CrossEntropy, BinaryCrossEntropy(WithLogits), CTC, token log-probabilities
   Optimizers/                       AdamW8Bit, GroupedOptimizer, HostOptimizer
-  Data/                             Dataset (CSV, class labels, feature shapes), sample sources (CSV, images, tokens, .npy),
-                                    views, image codecs and transforms, scalers, DataLoader, DataExtensions
+  Datasets/                         Dataset (CSV, class labels, feature shapes), sample sources (CSV, tokens, .npy),
+                                    views, scalers, DataLoader, DataExtensions (Idrak.Datasets)
   Training/                         Trainer, callbacks, TrainingRun, distillation from stored logits
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
   Models/                           pretrained models: PretrainedModel and the architecture registry (Llama, Mistral,
@@ -271,16 +273,19 @@ src/Idrak/                          core: layers, training, data, inference, mod
   Diagnostics/                      device listing, GPU profiler
 src/Idrak.Abstraction.Testing/      the testing kit (Idrak.Abstraction only): Conformance (devices operation by operation
                                     against the CPU, and contract suites), Stress, Regression (saved failing cases)
-src/Idrak.Gpu/                      the GPU devices (Idrak.Abstraction only; the Idrak package brings it): Cuda (PTX
+src/Idrak.Gpu/                      the GPU devices (Idrak.Abstraction only; apps add it): Cuda (PTX
                                     kernels generated in C#), Vulkan (SPIR-V generated by SpirV/KernelBuilder; fused
                                     decoding, graphs, cooperative matrices), Hip (hipRTC kernels); the CPU device, the
                                     device contract and the device registry are in Idrak.Abstraction/Devices
-src/Idrak.Nlp/                      optional package (Idrak and Idrak.Data): language
+src/Idrak.Imaging/                  optional package (Idrak): PNG, JPEG, BMP and Netpbm codecs, PillowImageOps
+                                    (Pillow's resampling, filters, enhancements), ImageTransforms, ImagePreprocessor,
+                                    ChatImageDecoder, augmentations (RandomFlip, RandomShift, ...), ImageFolderSource
+src/Idrak.Nlp/                      optional package (Idrak, Idrak.Data and Idrak.Imaging): language
   Generation/                       TokenSampler (temperature, top-k/p, min-p, penalties, on the device), TextGenerator
                                     (streaming, batches), chat, Conversation, tools, ModelHost, CodingAgent and CodingTools
   Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
                                     search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
-  Inference/                        the engine's text and chat models (GenerativeModels)
+  Inference/                        the engine's text and chat models (GenerativeModels; Idrak.Nlp.Inference)
   Jinja, ChatTemplates              the model's own Jinja chat template; tool-call formats
   FineTuning, TuningManifest        LoRA / DoRA / QLoRA fine-tuning, preference losses, distillation (a teacher model or
                                     stored top-k logits), packing, CUDA graphs, memory fallbacks; adapters
@@ -292,8 +297,8 @@ src/Idrak.Data/                     optional package (Idrak): JSON Lines, JSON, 
 src/Idrak.AspNetCore/               optional package: serve models over HTTP (AddIdrak(), MapPredictor, MapGenerate,
                                     MapChatApi, MapCompletionsApi for the OpenAI-compatible /v1 API, MapIdrakStatus)
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools and models over MCP
-src/Idrak.Vision/                   optional package (Idrak): RegionClassifier (ComponentProposer), ContentFrame,
-                                    ChannelStatistics, ModelDetector, ModelSegmenter, Foreground, ConnectedComponents,
+src/Idrak.Vision/                   optional package (Idrak.Imaging): ImageModels (image model families),
+                                    RegionClassifier (ComponentProposer), ContentFrame, ChannelStatistics, ModelDetector, ModelSegmenter, Foreground, ConnectedComponents,
                                     NonMaxSuppression, segmentation metrics; its contracts (boxes, detection decoding,
                                     segmentation) under Abstractions/
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
@@ -473,7 +478,7 @@ about 5% mean error** in about a second, close to the ±6% noise built into the 
 
 ```csharp
 using Idrak;
-using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
@@ -1121,7 +1126,7 @@ stays dependency-free.
 ### Quantization: int8 weights, half-precision files
 
 ```csharp
-using Idrak.Models.Abstractions;   // WeightFormat
+using Idrak.Abstraction.Formats;   // WeightFormat
 
 model.QuantizeInt8();                          // every Linear: 1 byte per weight + 1 scale per output column (¼ of the memory)
 model.QuantizeInt8(l => l.OutFeatures > 64);   // or only some layers
@@ -1355,7 +1360,7 @@ package's own `.Abstractions`).
 | Graph operations (`GraphModule` nodes; relu, clip, pow, ... built in) | `GraphOps.Register(name, GraphOp)` | `Idrak` (`Idrak.Layers.Abstractions`) |
 | Graph layer types (`GraphModule` JSON and model packages) | `LayerTypes.Register<T>(type, describe, create)` | `Idrak` (`Idrak.Layers.Abstractions`) |
 | RoPE scaling methods (linear, llama3, yarn, dynamic built in) | `RopeScalings.Register(type, RopeScalingMethod)` | `Idrak.Abstraction` |
-| Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Checkpoint formats (safetensors and GGUF built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak.Abstraction` (`Idrak.Abstraction.Formats`; Idrak registers the built-ins) |
 | Model families (Hugging Face `architectures`; a `DecoderSpec`, or a `Build` delegate for its own network) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak` (`Idrak.Models.Abstractions`) |
 | GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak` (`Idrak.Models.Abstractions`) |
 | Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.Abstraction` (folders and GGUF files: `Idrak`; Hugging Face ids: `Idrak.Data`) |
@@ -1363,9 +1368,9 @@ package's own `.Abstractions`).
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak` (`Idrak.Models.Abstractions`) |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Data` (`Idrak.Data.Abstractions`) |
 | Training data (samples, streams, per-sample transforms) | implement `ISampleSource`, `ISampleStream` or `ISampleTransform` | `Idrak.Abstraction` |
-| Whole batches | implement `IBatchSource` | `Idrak` (`Idrak.Data.Abstractions`) |
-| Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` (`Idrak.Data.Abstractions`) |
-| Image formats (png, jpeg, bmp, netpbm built in; others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak.Abstraction` (`Idrak.Abstraction.Data`; core registers the built-ins) |
+| Whole batches | implement `IBatchSource` | `Idrak` (`Idrak.Datasets.Abstractions`) |
+| Sample sources by name (csv, tokens, npy built in; images with Idrak.Imaging) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak.Abstraction` (`Idrak.Abstraction.Data`) |
+| Image formats (png, jpeg, bmp, netpbm built in; others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak.Abstraction` (`Idrak.Abstraction.Data`; Idrak.Imaging registers the built-ins) |
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
 | Device kernels for the library's operations, per kind of device | `Kernels.Register(Ops.Name, kind, kernel, requirement)` | `Idrak.Abstraction` |
@@ -1573,7 +1578,7 @@ with `removeDuplicates: false`) and `Concat(others)`; `Dataset.FromSource(source
 sample into memory. Samples in order whose count is unknown are an `ISampleStream`, batched with
 `new DataLoader(stream, batchSize, shuffleBuffer: 10_000)`.
 
-Images are decoded without dependencies: PNG (every bit depth and colour type, interlaced or not, through .NET's zlib),
+Images are decoded without dependencies (`Idrak.Imaging`): PNG (every bit depth and colour type, interlaced or not, through .NET's zlib),
 JPEG (baseline and progressive, grey, colour, CMYK and YCCK, decoded to Pillow's RGB; not 12-bit), BMP (1 to 32
 bits, uncompressed or bit fields) and PGM/PPM; alpha is dropped. Other formats plug in
 as an `IImageCodec` registered with `ImageCodecs.Register`. Augmentation runs in the loader, with random numbers seeded
@@ -1638,7 +1643,7 @@ The device contract (`src/Idrak.Abstraction/Devices/Backend.cs`) leaves room for
 
 ## GPU support
 
-Three GPU backends, in the `Idrak.Gpu` package (which `Idrak` brings), share one set of operations, and every operation a backend lacks falls back to the host, so a model
+Three GPU backends, in the `Idrak.Gpu` package (add it beside `Idrak`; its devices register themselves), share one set of operations, and every operation a backend lacks falls back to the host, so a model
 runs on any of them unchanged (`-d cuda:0`, `-d vulkan:1`, `-d hip:0`, or `Device.Parse`). Sizes and kernel choices
 come from what the device reports or from measurements on the user's device, stored per device and driver: never
 from a card's name ([plans/README.md](plans/README.md)).

@@ -4,6 +4,8 @@
 using System.Buffers;
 using System.Text.Json;
 using Idrak.Data;
+using Idrak.Datasets;
+using Idrak.Imaging;
 using Idrak.Nlp;
 
 namespace Idrak.Samples.ArabicOcr;

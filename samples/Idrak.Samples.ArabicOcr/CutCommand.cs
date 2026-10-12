@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Text.Json.Nodes;
+using Idrak.Imaging.Abstractions;
 
 namespace Idrak.Samples.ArabicOcr;
 

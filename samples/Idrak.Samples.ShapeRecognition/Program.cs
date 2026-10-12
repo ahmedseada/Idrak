@@ -11,8 +11,9 @@
 //        draw new random images of those shapes and classify them with the saved model
 
 using Idrak;
-using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Diagnostics;
+using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Samples;

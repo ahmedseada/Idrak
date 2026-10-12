@@ -2,9 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Generation;
+using Idrak.Inference;
 using Idrak.Layers;
 
-namespace Idrak.Inference;
+namespace Idrak.Nlp.Inference;
 
 /// <summary>What Idrak.Nlp reads from a <see cref="ModelPackageReader"/> (Idrak): a language model as a text generator.</summary>
 public static class ModelPackageReaderExtensions

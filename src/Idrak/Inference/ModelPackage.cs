@@ -7,8 +7,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
-using Idrak.Data;
-using Idrak.Data.Abstractions;
+using Idrak.Datasets;
+using Idrak.Datasets.Abstractions;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
@@ -59,10 +59,10 @@ public enum PackageEntryKind
     /// <summary>A network description (<see cref="NetworkBuilder.ToJson"/>).</summary>
     Architecture,
 
-    /// <summary>A <see cref="Data.StandardScaler"/>.</summary>
+    /// <summary>A <see cref="Datasets.StandardScaler"/>.</summary>
     StandardScaler,
 
-    /// <summary>A <see cref="Data.MinMaxScaler"/>.</summary>
+    /// <summary>A <see cref="Datasets.MinMaxScaler"/>.</summary>
     MinMaxScaler,
 
     /// <summary>A <see cref="CharTokenizer"/> or <see cref="WordTokenizer"/>.</summary>
@@ -108,7 +108,7 @@ public sealed class ModelPackageWriter
     public ModelPackageWriter Architecture(string name, JsonObject description) =>
         Add(PackageEntryKind.Architecture, name, s => WriteJson(s, description));
 
-    /// <summary>A <see cref="Data.StandardScaler"/> or <see cref="Data.MinMaxScaler"/> in its text format.</summary>
+    /// <summary>A <see cref="Datasets.StandardScaler"/> or <see cref="Datasets.MinMaxScaler"/> in its text format.</summary>
     public ModelPackageWriter Scaler(string name, IScaler scaler) => scaler switch
     {
         StandardScaler standard => Add(PackageEntryKind.StandardScaler, name, s => WriteText(s, standard.Save)),
@@ -326,18 +326,18 @@ public sealed class ModelPackageReader : IDisposable
         }
     }
 
-    /// <summary>The <see cref="Data.StandardScaler"/> named <paramref name="name"/>.</summary>
+    /// <summary>The <see cref="Datasets.StandardScaler"/> named <paramref name="name"/>.</summary>
     public StandardScaler StandardScaler(string name)
     {
         using var reader = new StreamReader(Find(PackageEntryKind.StandardScaler, name).Open());
-        return Data.StandardScaler.Load(reader);
+        return Datasets.StandardScaler.Load(reader);
     }
 
-    /// <summary>The <see cref="Data.MinMaxScaler"/> named <paramref name="name"/>.</summary>
+    /// <summary>The <see cref="Datasets.MinMaxScaler"/> named <paramref name="name"/>.</summary>
     public MinMaxScaler MinMaxScaler(string name)
     {
         using var reader = new StreamReader(Find(PackageEntryKind.MinMaxScaler, name).Open());
-        return Data.MinMaxScaler.Load(reader);
+        return Datasets.MinMaxScaler.Load(reader);
     }
 
     /// <summary>The scaler named <paramref name="name"/>, whichever kind it is.</summary>

@@ -6,6 +6,7 @@ using Idrak;
 using Idrak.Abstraction.Testing;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Imaging;
 using Idrak.Vision;
 
 // Plan 13, step 5: augmentations that move boxes and masks with the pixels (registered by name, deterministic with a

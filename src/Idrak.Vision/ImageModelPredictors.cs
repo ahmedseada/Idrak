@@ -3,6 +3,7 @@
 
 using Idrak.Inference;
 using Idrak.Models.Abstractions;
+using Idrak.Vision.Abstractions;
 
 namespace Idrak.Vision;
 

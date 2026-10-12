@@ -63,7 +63,7 @@ static FeatureCacheKey Key(FeatureKeyFields f) => new(f.Image, f.Transforms, f.V
 Conformance.CheckFeatureCache(new FeatureCacheUnderTest((k, v) => cache.Put(Key(k), v), (k, d) => cache.TryGet(Key(k), d, out var v) ? v : null, cache.Clear)).ThrowIfFailed();
 ```
 
-An image model family (core's `IImageModelFamily`, registered in `ImageModelFamilies`) is checked as its loading: a
+An image model family (Idrak.Vision's `IImageModelFamily`, registered in `ImageModelFamilies`) is checked as its loading: a
 checkpoint's path in, the loaded model wrapped in `ImageModelUnderTest` (its task, labels and each image's outputs) out.
 The suite (`ImageModelFamilySuite`) checks that it loads, predicts finite outputs, the same every time, from two threads,
 alone and in a batch and after loading again, the reference's outputs when given, and that invalid checkpoints are

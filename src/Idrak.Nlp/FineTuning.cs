@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Data;
+using Idrak.Datasets.Abstractions;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;

@@ -13,12 +13,12 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Idrak.AspNetCore;
 using Idrak.Samples.Gpt;
 using Idrak.Samples.GptApi;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Scalar.AspNetCore;
-using static Idrak.Inference.GenerativeModels;      // engine.ChatModel (all of Idrak.Inference would bring a second ModelStatus)
+using static Idrak.Nlp.Inference.GenerativeModels; // engine.ChatModel (all of Idrak.Nlp.Inference would bring a second ModelStatus)
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>

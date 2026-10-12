@@ -17,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
+    <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
   </ItemGroup>
 
 </Project>

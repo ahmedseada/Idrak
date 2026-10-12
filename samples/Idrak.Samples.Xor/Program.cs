@@ -11,7 +11,7 @@
 //   dotnet run -c Release --project samples/Idrak.Samples.Xor -- --help     all options
 
 using Idrak;
-using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;

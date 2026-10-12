@@ -4,6 +4,7 @@
 using Idrak;
 using Idrak.Abstraction.Operations;
 using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;

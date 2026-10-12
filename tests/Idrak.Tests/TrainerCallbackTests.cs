@@ -4,6 +4,8 @@
 using System.Globalization;
 using Idrak;
 using Idrak.Data;
+using Idrak.Datasets;
+using Idrak.Datasets.Abstractions;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;

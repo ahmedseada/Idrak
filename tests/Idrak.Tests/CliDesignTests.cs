@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Cli.Shared;
 using Idrak.Data;
+using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Optimizers;
 

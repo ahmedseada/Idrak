@@ -3,8 +3,9 @@
 
 using System.Runtime.CompilerServices;
 using Idrak.Generation;
+using Idrak.Inference;
 
-namespace Idrak.Inference;
+namespace Idrak.Nlp.Inference;
 
 /// <summary>The text kind of the inference engine: continues prompts with <see cref="TextGenerator"/> copies, one generation per copy at a time.</summary>
 internal sealed class TextEngineModel(GenerativeModelBuilder settings, Func<Device?, TextGenerator> load, bool owns, bool reloadable)

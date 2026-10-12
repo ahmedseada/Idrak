@@ -6,6 +6,7 @@ using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Data;
 using Idrak.Gpu.Cuda;
 using Idrak.Gpu.Vulkan;
+using Idrak.Imaging;
 using Idrak.Layers;
 
 // Plan 13, step 1: convolution, pooling, resampling and CTC as device operations. On the CPU: the inference fusion of a

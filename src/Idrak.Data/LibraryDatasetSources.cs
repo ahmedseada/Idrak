@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Data.Abstractions;
+using Idrak.Datasets;
 
 namespace Idrak.Data;
 

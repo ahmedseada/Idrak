@@ -7,6 +7,7 @@ using Idrak;
 using Idrak.Data;
 using Idrak.Gemma3Vision;
 using Idrak.Generation;
+using Idrak.Imaging;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Nlp;

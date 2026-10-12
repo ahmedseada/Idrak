@@ -11,7 +11,7 @@ the sigmoid focal loss and soft dice (`DetectionLosses`, `SegmentationLosses`, b
 predictions to objects by IoU thresholds or one to one by the Hungarian algorithm (`BoxMatching`, `BoxMatchers`); COCO and
 Pascal VOC mean average precision and mean IoU (`CocoAveragePrecision`, `VocAveragePrecision`, `SegmentationMetrics`, by
 name in `VisionMetrics`); augmentations that move boxes and masks with the pixels (resized crop, rotation, affine, colour
-jitter, cutout, mosaic, mixup, resize; core's flip and shift; by name in `Augmentations`), and `AugmentedImageLoader`,
+jitter, cutout, mosaic, mixup, resize; Idrak.Imaging's flip and shift; by name in `Augmentations`), and `AugmentedImageLoader`,
 which batches augmented samples on worker threads while the model trains.
 
 ## Contracts
@@ -21,7 +21,7 @@ In `Idrak.Vision.Abstractions` (add the `using` line to name them): `IObjectDete
 `ISegmentationMetric`) and `VisionMetrics`, and the records they speak in (`Detection`, `SegmentationMask`,
 `ForegroundImage`). Boxes (`BoundingBox`, `PixelBox`), training samples (`AnnotatedImage`), dataset annotations
 (`AnnotatedDataset`, `ObjectAnnotation`, `ObjectMask`) and augmentations (`IAugmentation`, `Augmentations`) are in
-`Idrak.Abstraction.Data`, which core and Idrak.Data use too.
+`Idrak.Abstraction.Data`, which Idrak.Imaging and Idrak.Data use too.
 
 `DetectionDecoders` (also in `Idrak.Vision.Abstractions`) holds the detection decoders by name: `ModelDetector` takes one
 by name, and an image model family names its own. The library registers only the generic "boxes-scores" (a network that
@@ -30,14 +30,14 @@ or app that brings the family.
 
 ## Image models from their families
 
-Image model families (classifiers, detectors, segmenters, backbones) are plug-ins: core's `ImageModelFamilies` registry,
-filled by whoever brings a family (the library registers none). `ImageModels.Load` (core) reads a checkpoint (a
-safetensors folder with config.json, or an ONNX file) through its family; this package makes it ready for images with
-the family's preprocessing:
+Image model families (classifiers, detectors, segmenters, backbones) are plug-ins: the `ImageModelFamilies` registry,
+filled by whoever brings a family (the library registers none). `ImageModels.Load` reads a checkpoint (a safetensors
+folder with config.json, or an ONNX file) through its family, and this package makes it ready for images with the
+family's preprocessing:
 
 ```csharp
-using Idrak.Models;   // ImageModels
 using Idrak.Vision;
+using Idrak.Vision.Abstractions;   // ImageModelFamilies
 
 ImageModelFamilies.Register(new MyDetectorFamily());          // a plug-in's family
 DetectionDecoders.Register("my-grid", MyGridDecoder.Create);  // and its decoder
