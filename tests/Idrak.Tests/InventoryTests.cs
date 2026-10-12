@@ -41,7 +41,7 @@ internal static partial class Tests
     ];
 
     private const string InventoryPath = "plans/10-abstraction-inventory.md", AllowListPath = "tests/Idrak.Tests/data/abstraction-allow-list.txt",
-        JustifiedPath = "tests/Idrak.Tests/data/internals-justified.txt";
+        JustifiedPath = "tests/Idrak.Tests/data/internals-justified.txt", SharedContractsPath = "tests/Idrak.Tests/data/shared-contracts.txt";
 
     private const BindingFlags AllDeclared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
 
@@ -171,6 +171,8 @@ internal static partial class Tests
 
         var misplaced = Abstractions().Select(a => Misplaced(a.Type)).OfType<string>().ToList();
         Check(misplaced.Count == 0, $"contracts that do not live with their users (decision 10): {string.Join("; ", misplaced)}");
+        var stale = Shared.Value.Keys.Where(t => ContractUsers().Users[t].Count > 1).Select(Display).Order(StringComparer.Ordinal).ToList();
+        Check(stale.Count == 0, $"{SharedContractsPath}: several packages use these now (decision 10 keeps them in Abstraction); remove their lines: {string.Join(", ", stale)}");
     }
 
     private const string AbstractionAssembly = "Idrak.Abstraction";
@@ -186,7 +188,7 @@ internal static partial class Tests
         }
 
         // The .Abstractions sub-namespace of a namespace this assembly's implementations use (Idrak.Vision.Abstractions
-        // beside Idrak.Vision, Idrak.Generation.Abstractions beside Nlp's Idrak.Generation).
+        // beside Idrak.Vision, Idrak.Nlp.Retrieval.Abstractions beside Nlp's Idrak.Nlp.Retrieval).
         return ns.EndsWith(".Abstractions", StringComparison.Ordinal) && ns != "Idrak.Abstractions" && !InAbstractionNamespace(type)
                && type.Assembly.GetTypes().Any(t => t.Namespace == ns[..^".Abstractions".Length]);
     }
@@ -196,6 +198,11 @@ internal static partial class Tests
     private static string BelongsIn(Type type)
     {
         var users = ContractUsers().Users[Outermost(type)];
+        if (Shared.Value.ContainsKey(Outermost(type)))
+        {
+            return AbstractionAssembly;                                    // any package can use it (shared-contracts.txt)
+        }
+
         return users.Count switch
         {
             0 => type.Assembly.GetName().Name!,
@@ -259,8 +266,8 @@ internal static partial class Tests
             "Idrak.Optimizers" or "Idrak.Training" => "Training",
             "Idrak.Data" or "Idrak.Data.Parquet" or "Idrak.Datasets" or "Idrak.Imaging" => "Data",
             "Idrak.Vision" => "Vision",
-            "Idrak.Retrieval" => "Retrieval",
-            "Idrak.Generation" or "Idrak.Nlp" or "Idrak.Nlp.Inference" => "Generation",
+            "Idrak.Retrieval" or "Idrak.Nlp.Retrieval" => "Retrieval",
+            "Idrak.Generation" or "Idrak.Nlp" or "Idrak.Nlp.Generation" or "Idrak.Nlp.Inference" => "Generation",
             "Idrak.Models" or "Idrak.Onnx" or "Idrak.Onnx.Runtime" => "Formats",
             "Idrak.Inference" or "Idrak.AspNetCore" or "Idrak.Mcp" => "Serving",
             "Idrak.Diagnostics" => "Diagnostics",
@@ -351,6 +358,27 @@ internal static partial class Tests
         }
 
         return _contractUsers = new(users, referrers);
+    }
+
+    // tests/Idrak.Tests/data/shared-contracts.txt: "contract | why", contracts kept in Idrak.Abstraction because any package
+    // can use them (CLAUDE.md), though one package uses them today. A line whose contract several packages use now is
+    // stale (decision 10 keeps it in Abstraction on its own), so the list only shrinks.
+    private static readonly Lazy<Dictionary<Type, string>> Shared = new(SharedContracts);
+
+    private static Dictionary<Type, string> SharedContracts()
+    {
+        var shared = new Dictionary<Type, string>();
+        foreach (string line in File.ReadLines(Path.Combine(RepositoryRoot(), SharedContractsPath)).Where(l => l.Length > 0 && !l.StartsWith('#')))
+        {
+            var fields = line.Split(" | ", 2);
+            Check(fields.Length == 2 && fields[1].Trim().Length > 0, $"{SharedContractsPath}: '{line}' is not contract | why");
+            string name = fields[0].Trim();
+            var type = LibraryAssemblies().Select(a => a.GetType(name)).FirstOrDefault(t => t is not null);
+            Check(type is not null && type.Assembly.GetName().Name == AbstractionAssembly, $"{SharedContractsPath}: no contract {name} in {AbstractionAssembly}; remove the line");
+            shared[type!] = fields[1].Trim();
+        }
+
+        return shared;
     }
 
     private static Type Outermost(Type type)

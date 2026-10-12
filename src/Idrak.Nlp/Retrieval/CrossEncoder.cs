@@ -2,9 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Layers;
-using Idrak.Retrieval.Abstractions;
+using Idrak.Nlp.Retrieval.Abstractions;
 
-namespace Idrak.Retrieval;
+namespace Idrak.Nlp.Retrieval;
 
 /// <summary>
 /// Re-ranks passages by reading the query and each passage together (a cross-encoder): more accurate than comparing

@@ -5,9 +5,11 @@ using System.Collections.Frozen;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Data;
+using Idrak.Generation;
 using Idrak.Imaging;
+using Idrak.Nlp.Retrieval.Abstractions;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>
 /// What a <see cref="ChatGenerator"/> needs to read the images of a conversation (a vision-language model), all of it

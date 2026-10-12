@@ -8,11 +8,11 @@ using Idrak.Data;
 using Idrak.Data.Abstractions;
 using Idrak.Gemma3Vision;
 using Idrak.Generation;
-using Idrak.Generation.Abstractions;
 using Idrak.Imaging;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Generation;
 
 // Images on the command line (plan 11, phase 7): run --image and chat --image / /image with the tiny Gemma 3 of phase 0
 // give transformers' greedy tokens through the CLI's own path (the real encoder, and phase 0's features fed in);

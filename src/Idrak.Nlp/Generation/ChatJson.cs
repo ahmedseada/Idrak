@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>
 /// Conversations in the OpenAI / Hugging Face chat JSON, the layout fine-tuning reads

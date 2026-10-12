@@ -8,6 +8,7 @@ using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Nlp.Generation;
 using Idrak.Nlp.Inference;
 using Idrak.Optimizers;
 using Idrak.Training;

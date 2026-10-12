@@ -15,6 +15,7 @@ using Idrak.Imaging.Abstractions;
 using Idrak.Models;
 using Idrak.Nlp;
 using Idrak.Nlp.Abstractions;
+using Idrak.Nlp.Generation;
 
 namespace Idrak.Samples.LegalOcr;
 

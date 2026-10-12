@@ -10,6 +10,7 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Generation;
 
 // Gemma 3's pan and scan through the Gemma 3 plug-in (plan 11, "Pan and scan"): one image becomes the whole image and
 // its crops, each a block of image tokens with Gemma3Processor's text between them, matching transformers on the tiny

@@ -33,6 +33,9 @@ public static class Idrak.Abstraction.Autograd
 public readonly struct Idrak.Abstraction.Autograd.NoGradScope : System.IDisposable
   public void Dispose()
 
+public static class Idrak.Abstraction.BackgroundStream
+  public static System.Collections.Generic.IAsyncEnumerable<T> Run<T>(System.Func<System.Threading.CancellationToken, System.Collections.Generic.IEnumerable<T>> source, System.Threading.CancellationToken cancellationToken)
+
 public enum Idrak.Abstraction.BoxOverlap : int
   CIoU = 3
   DIoU = 2
@@ -1756,6 +1759,16 @@ public interface Idrak.Abstraction.Generation.IImagePromptFormat
 public interface Idrak.Abstraction.Generation.ITextModel
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
 
+public interface Idrak.Abstraction.Generation.ITokenSampler : System.IDisposable
+  public Idrak.Abstraction.Generation.SampledToken[][] Read(int fromStep, int toStep)
+  public Idrak.Abstraction.Tensor Ids { get; }
+  public bool Recordable { get; }
+  public int Rows { get; }
+  public int Vocabulary { get; }
+  public void Reset()
+  public void Sample(Idrak.Abstraction.Tensor logits)
+  public void SetHistory(System.Collections.Generic.IReadOnlyList<int> tokens)
+
 public interface Idrak.Abstraction.Generation.ITokenizer
   public (default) string Decode(System.ReadOnlySpan<int> ids)
   public (default) string TokenOf(int id)
@@ -2024,6 +2037,60 @@ public sealed record Idrak.Abstraction.Generation.RopeSettings : System.IEquatab
   public double[] Frequencies(int headDim)
   public float Theta { get; init; }
   public int? RotaryDim { get; init; }
+
+public readonly record struct Idrak.Abstraction.Generation.SampledToken : System.IEquatable<Idrak.Abstraction.Generation.SampledToken>
+  public (int, float)[] Alternatives { get; init; }
+  public SampledToken(int Id, float Probability, float Entropy, (int, float)[] Alternatives)
+  public float Entropy { get; init; }
+  public float Probability { get; init; }
+  public int Id { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.SamplerRequest : System.IEquatable<Idrak.Abstraction.Generation.SamplerRequest>
+  public Idrak.Abstraction.Device Device { get; init; }
+  public Idrak.Abstraction.Generation.GenerationOptions Options { get; init; }
+  public SamplerRequest(Idrak.Abstraction.Device Device, int Rows, int Vocabulary, int MaxSteps, int HistoryCapacity, Idrak.Abstraction.Generation.GenerationOptions Options)
+  public int HistoryCapacity { get; init; }
+  public int MaxSteps { get; init; }
+  public int Rows { get; init; }
+  public int Vocabulary { get; init; }
+
+public sealed class Idrak.Abstraction.Generation.TokenSampler : Idrak.Abstraction.Generation.ITokenSampler, System.IDisposable
+  public Idrak.Abstraction.Generation.SampledToken[][] Read(int fromStep, int toStep)
+  public Idrak.Abstraction.Tensor Ids { get; }
+  public TokenSampler(Idrak.Abstraction.Device device, int rows, int vocabulary, int maxSteps, int historyCapacity = 256)
+  public bool Recordable { get; }
+  public bool RejectNonFinite { get; set; }
+  public float FrequencyPenalty { get; set; }
+  public float MinP { get; set; }
+  public float PresencePenalty { get; set; }
+  public float RepeatPenalty { get; set; }
+  public float Temperature { get; set; }
+  public float TopP { get; set; }
+  public int HistoryCapacity { get; }
+  public int MaxSteps { get; }
+  public int RepeatLastN { get; set; }
+  public int Rows { get; }
+  public int TopK { get; set; }
+  public int Vocabulary { get; }
+  public static Idrak.Abstraction.Generation.ITokenSampler Create(Idrak.Abstraction.Generation.SamplerRequest request)
+  public uint Seed { get; set; }
+  public void Dispose()
+  public void Reset()
+  public void Sample(Idrak.Abstraction.Tensor logits)
+  public void SetHistory(System.Collections.Generic.IReadOnlyList<int> tokens)
+
+public static class Idrak.Abstraction.Generation.TokenSamplers
+  public const string DefaultName = "default"
+  public static Idrak.Abstraction.Generation.ITokenSampler Create(Idrak.Abstraction.Generation.SamplerRequest request)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> Get(string name)
+  public static System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler>? Default(string name)
+  public static System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler>? Default(string name, int version)
+  public static bool Unregister(string name)
+  public static int DefaultVersion(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> create)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public static class Idrak.Abstraction.Generation.Tokenizers
   public static Idrak.Abstraction.Generation.ITokenizer Load(System.IO.Stream stream)
@@ -2931,6 +2998,58 @@ public sealed class Idrak.Abstraction.ResourceLimitExceededException : System.Ex
 public interface Idrak.Abstraction.Retrieval.IEmbedder
   public System.Threading.Tasks.ValueTask<float[][]> EmbedAsync(System.Collections.Generic.IReadOnlyList<string> texts, System.Threading.CancellationToken cancellationToken = default)
 
+public interface Idrak.Abstraction.Retrieval.IVectorStore
+  public System.Threading.Tasks.ValueTask DeleteAsync(System.Collections.Generic.IReadOnlyList<string> ids, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.ValueTask UpsertAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.VectorRecord> records, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.VectorMatch>> SearchAsync(float[] query, int top, System.Collections.Generic.IReadOnlyDictionary<string, string>? where = null, System.Threading.CancellationToken cancellationToken = default)
+
+public sealed class Idrak.Abstraction.Retrieval.InMemoryVectorStore : Idrak.Abstraction.Retrieval.IVectorStore
+  public Idrak.Abstraction.Retrieval.VectorMetric Metric { get; }
+  public InMemoryVectorStore(int dimensions, Idrak.Abstraction.Retrieval.VectorMetric metric = (Idrak.Abstraction.Retrieval.VectorMetric)1)
+  public System.Threading.Tasks.ValueTask DeleteAsync(System.Collections.Generic.IReadOnlyList<string> ids, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.ValueTask UpsertAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.VectorRecord> records, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.VectorMatch>> SearchAsync(float[] query, int top, System.Collections.Generic.IReadOnlyDictionary<string, string>? where = null, System.Threading.CancellationToken cancellationToken = default)
+  public int Count { get; }
+  public int Dimensions { get; }
+
+public readonly record struct Idrak.Abstraction.Retrieval.SearchHit : System.IEquatable<Idrak.Abstraction.Retrieval.SearchHit>
+  public SearchHit(int Id, double Score)
+  public double Score { get; init; }
+  public int Id { get; init; }
+
+public sealed class Idrak.Abstraction.Retrieval.TopHits
+  public Idrak.Abstraction.Retrieval.SearchHit[] ToArray()
+  public TopHits(int keep)
+  public void Offer(int id, double score)
+
+public sealed class Idrak.Abstraction.Retrieval.VectorIndex
+  public Idrak.Abstraction.Retrieval.VectorMetric Metric { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.SearchHit> Search(System.ReadOnlySpan<float> query, int top)
+  public VectorIndex(int dimensions, Idrak.Abstraction.Retrieval.VectorMetric metric)
+  public float[] this[int id] { get; }
+  public int Add(System.ReadOnlySpan<float> vector)
+  public int Count { get; }
+  public int Dimensions { get; }
+  public static Idrak.Abstraction.Retrieval.VectorIndex Load(System.IO.Stream stream)
+  public void AddRange(System.Collections.Generic.IEnumerable<float[]> vectors)
+  public void Save(System.IO.Stream stream)
+
+public sealed record Idrak.Abstraction.Retrieval.VectorMatch : System.IEquatable<Idrak.Abstraction.Retrieval.VectorMatch>
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Metadata { get; init; }
+  public VectorMatch(string Id, double Score, System.Collections.Generic.IReadOnlyDictionary<string, string>? Metadata)
+  public double Score { get; init; }
+  public string Id { get; init; }
+
+public enum Idrak.Abstraction.Retrieval.VectorMetric : int
+  Cosine = 1
+  Dot = 0
+
+public sealed record Idrak.Abstraction.Retrieval.VectorRecord : System.IEquatable<Idrak.Abstraction.Retrieval.VectorRecord>
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Metadata { get; init; }
+  public VectorRecord(string Id, float[] Vector, System.Collections.Generic.IReadOnlyDictionary<string, string>? Metadata = null)
+  public float[] Vector { get; init; }
+  public string Id { get; init; }
+
 public sealed record Idrak.Abstraction.Serving.EngineHosting : System.IEquatable<Idrak.Abstraction.Serving.EngineHosting>
   public EngineHosting()
   public System.TimeSpan? KeepAlive { get; init; }
@@ -2983,6 +3102,13 @@ public static class Idrak.Abstraction.Serving.KeepAlive
   public static System.TimeSpan? Parse(System.Text.Json.JsonElement? value, System.TimeSpan? fallback)
   public static System.TimeSpan? Parse(string text)
 
+public sealed record Idrak.Abstraction.Serving.LoadedModel : System.IEquatable<Idrak.Abstraction.Serving.LoadedModel>
+  public LoadedModel(string Name, System.DateTimeOffset LoadedAt, System.DateTimeOffset? ExpiresAt, int ActiveUsers)
+  public System.DateTimeOffset LoadedAt { get; init; }
+  public System.DateTimeOffset? ExpiresAt { get; init; }
+  public int ActiveUsers { get; init; }
+  public string Name { get; init; }
+
 public sealed record Idrak.Abstraction.Serving.ModelDescription : System.IEquatable<Idrak.Abstraction.Serving.ModelDescription>
   public Idrak.Abstraction.Device Device { get; init; }
   public ModelDescription(string Name, string Kind, long Parameters, Idrak.Abstraction.Device Device, int? ContextLength)
@@ -2990,6 +3116,23 @@ public sealed record Idrak.Abstraction.Serving.ModelDescription : System.IEquata
   public long Parameters { get; init; }
   public string Kind { get; init; }
   public string Name { get; init; }
+
+public sealed class Idrak.Abstraction.Serving.ModelHost<TModel> : System.IDisposable where TModel : class, System.IDisposable
+  nested Idrak.Abstraction.Serving.ModelHost<TModel>.Lease (below)
+  public ModelHost(System.Func<string, TModel> load, System.TimeSpan? defaultKeepAlive, System.TimeProvider? timeProvider = null)
+  public ModelHost.Lease Acquire(string name)
+  public ModelHost.Lease Acquire(string name, System.TimeSpan? keepAlive)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Serving.LoadedModel> Loaded { get; }
+  public bool Unload(string name)
+  public int? MaxLoaded { get; init; }
+  public void Dispose()
+
+public sealed class Idrak.Abstraction.Serving.ModelHost<TModel>.Lease : System.IDisposable
+  public System.TimeSpan LoadDuration { get; }
+  public System.TimeSpan? KeepAlive { get; set; }
+  public TModel Model { get; }
+  public string Name { get; }
+  public void Dispose()
 
 public sealed class Idrak.Abstraction.ShadowRun
   public void Answered()

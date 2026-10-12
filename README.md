@@ -107,7 +107,7 @@ that does, with the `.Abstractions` namespace to add a `using` line for:
 
 | What plugs in | Registry or hook | Package |
 |---------------|------------------|---------|
-| Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak.Nlp` (`Idrak.Generation.Abstractions`) |
+| Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak.Abstraction` (`Idrak.Abstraction.Generation`) |
 | KV cache formats | `KeyValueLayouts` | `Idrak.Abstraction` |
 | Packed weight formats | `PackedWeight` | `Idrak.Abstraction` |
 | Network builder steps | `NetworkOps` (steps see `INetworkBuilder`) | `Idrak` (`Idrak.Layers.Abstractions`) |
@@ -246,8 +246,11 @@ src/Idrak.Abstraction/              no dependencies: every contract more than on
   Modules/                          Module, RecurrentModule, ILinearAdapter with LoRA and DoRA
   Training/                         Optimizer, Sgd, Adam, AdamW, learning-rate schedules
   Generation/                       tokenizers, chat (messages, templates, IChatModel, tools), tool-call formats, packed
-                                    weights (int8, int4, bfloat16), key/value caches, RoPE scalings, DecoderSpec
-  Data/, Formats/, Retrieval/, Serving/  sample sources, downloads, model sources, IEmbedder, the engine's model kinds
+                                    weights (int8, int4, bfloat16), key/value caches, RoPE scalings, DecoderSpec,
+                                    TokenSampler (temperature, top-k/p, min-p, penalties, on the device)
+  Retrieval/                        IEmbedder, IVectorStore, InMemoryVectorStore, VectorIndex (exact SIMD search), TopHits
+  Data/, Formats/, Serving/         sample sources, downloads, model and checkpoint formats, the engine's model kinds,
+                                    ModelHost (keep-alive)
   Diagnostics/                      telemetry: the hub, events, ConsoleLogger, MetricsRecorder, JsonLinesLogger
   Overrides/                        slots: every registry's library default and the app's registration over it, failure
                                     policies, versions, the overrides report
@@ -264,6 +267,7 @@ src/Idrak/                          core: layers, training, datasets, inference,
   Datasets/                         Dataset (CSV, class labels, feature shapes), sample sources (CSV, tokens, .npy),
                                     views, scalers, DataLoader, DataExtensions (Idrak.Datasets)
   Training/                         Trainer, callbacks, TrainingRun, distillation from stored logits
+  Generation/                       TextGenerator: the decoding loop over a decoder (streaming, batches, recorded steps)
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
   Models/                           pretrained models: PretrainedModel and the architecture registry (Llama, Mistral,
                                     Qwen2/3, Gemma 1/2/3, Mixtral, Qwen2-MoE, Qwen3-MoE); SafeTensors, Gguf, GgufModel
@@ -281,10 +285,10 @@ src/Idrak.Imaging/                  optional package (Idrak): PNG, JPEG, BMP and
                                     (Pillow's resampling, filters, enhancements), ImageTransforms, ImagePreprocessor,
                                     ChatImageDecoder, augmentations (RandomFlip, RandomShift, ...), ImageFolderSource
 src/Idrak.Nlp/                      optional package (Idrak, Idrak.Data and Idrak.Imaging): language
-  Generation/                       TokenSampler (temperature, top-k/p, min-p, penalties, on the device), TextGenerator
-                                    (streaming, batches), chat, Conversation, tools, ModelHost, CodingAgent and CodingTools
-  Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
-                                    search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
+  Generation/                       chat (ChatGenerator, ChatImages), Conversation, ImageReader, tools, CodingAgent and
+                                    CodingTools (Idrak.Nlp.Generation)
+  Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), RetrievalIndex (hybrid search with rank
+                                    fusion), CrossEncoder (re-ranking), Rag pipeline, search tool (Idrak.Nlp.Retrieval)
   Inference/                        the engine's text and chat models (GenerativeModels; Idrak.Nlp.Inference)
   Jinja, ChatTemplates              the model's own Jinja chat template; tool-call formats
   FineTuning, TuningManifest        LoRA / DoRA / QLoRA fine-tuning, preference losses, distillation (a teacher model or
@@ -691,7 +695,7 @@ Measured on the sample GPT (341K parameters) on a 4-core CPU container
 
 On a GPU, CUDA graphs remove the per-step launch cost, and batching keeps the GPU busy.
 
-### Text generation, chat and tools (`Idrak.Generation`, in `Idrak.Nlp`)
+### Text generation, chat and tools (`TextGenerator` in `Idrak.Generation`, core; chat, conversations and tools in `Idrak.Nlp.Generation`)
 
 A higher-level layer on top of the cache, sampler and graphs, with the options and conventions of common
 local LLM servers:
@@ -1047,7 +1051,7 @@ var score = new SegmentationMetrics(classes).Add(mask, truth).Score(); // pixel 
 On an A4 page at 300 dpi with 1,848 objects, foreground, connected components and framing take about 110 ms on a CPU
 and allocate 67 MB (the foreground and the label map).
 
-### Retrieval and RAG (`Idrak.Retrieval`, in `Idrak.Nlp`)
+### Retrieval and RAG (`Idrak.Nlp.Retrieval`; vector search in `Idrak.Abstraction.Retrieval`)
 
 These are new building blocks; the original way is writing the search, the scoring loop and the prompt by hand.
 
@@ -1348,7 +1352,7 @@ package's own `.Abstractions`).
 
 | What | Register with | Package |
 |---|---|---|
-| Token sampling (temperature, top-k, penalties, ...) | `TokenSamplers.Register("default", ...)` (an `ITokenSampler` per generation), or `TextGenerator.CreateSampler` for one generator | `Idrak.Nlp` (`Idrak.Generation.Abstractions`) |
+| Token sampling (temperature, top-k, penalties, ...) | `TokenSamplers.Register("default", ...)` (an `ITokenSampler` per generation), or `TextGenerator.CreateSampler` for one generator | `Idrak.Abstraction` (`Idrak.Abstraction.Generation`; the built-in `TokenSampler` too) |
 | Optimizers | derive from `Optimizer` (in-place writes: `AddScaled`, `Scale`, `CopyFrom`; state from `CreateState`) | `Idrak.Abstraction` |
 | Differentiable operations (own forward and backward) | `Autograd.Function(name, forward, backward)` | `Idrak.Abstraction` |
 | KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak.Abstraction` |

@@ -13,7 +13,7 @@ public static class ModelPackageReaderExtensions
     extension(ModelPackageReader package)
     {
         /// <summary>
-        /// A <see cref="Generation.TextGenerator"/> for a language model stored with its architecture: the network named
+        /// A <see cref="Idrak.Generation.TextGenerator"/> for a language model stored with its architecture: the network named
         /// <paramref name="model"/> is rebuilt with its weights, the tokenizer is <paramref name="tokenizer"/>, and the
         /// context length is the architecture's token length (<c>Network.Tokens(length)</c>).
         /// </summary>

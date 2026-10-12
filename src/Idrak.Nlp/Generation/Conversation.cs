@@ -4,7 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>The outcome of <see cref="Conversation.SendAsync"/>.</summary>
 /// <param name="Message">The assistant's final message (also added to <see cref="Conversation.Messages"/>).</param>

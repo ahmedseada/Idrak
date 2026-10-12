@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
-using Idrak.Generation.Abstractions;
 
 // Plan 10, phases 5 and 6c: the testing kit (Idrak.Abstraction.Testing) is the one source of the per-device operation
 // checks. The device check runs on every device of the run; the contract checks, stress runs and saved cases once.

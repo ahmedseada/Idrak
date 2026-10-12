@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Nlp;
-using Idrak.Retrieval;
+using Idrak.Nlp.Retrieval;
 
 // --bench-text: the library's text paths (tokenizer, chat template, streamed output parsing, chunking, keyword search),
 // timed on the README as input. CPU only; no model or download needed.

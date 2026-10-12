@@ -4,11 +4,11 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
-namespace Idrak.Generation.Abstractions;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// The token samplers generation makes, by name. <see cref="DefaultName"/> is the built-in <see cref="TokenSampler"/>
-/// (temperature, top-k, top-p, min-p and penalties, on the device), which <see cref="TextGenerator.CreateSampler"/> makes
+/// (temperature, top-k, top-p, min-p and penalties, on the device), which Idrak's <c>TextGenerator.CreateSampler</c> makes
 /// unless set. Register a sampler under <see cref="DefaultName"/> to override it for every generation: the built-in stays
 /// behind it until <see cref="Unregister"/>. A sampler keeps state through a generation (its steps, its
 /// random stream, the history penalties look at), so under <see cref="SlotPolicy.FallBack"/> it falls back when it is

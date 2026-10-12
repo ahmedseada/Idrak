@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
+using Idrak.Nlp.Retrieval.Abstractions;
 
 namespace Idrak.Cli.Commands.Run;
 

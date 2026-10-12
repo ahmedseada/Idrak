@@ -5,6 +5,7 @@ using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using Idrak.Generation;
 using Idrak.Inference;
+using Idrak.Nlp.Generation;
 
 namespace Idrak.Nlp.Inference;
 

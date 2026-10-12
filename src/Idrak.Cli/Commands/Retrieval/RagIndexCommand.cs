@@ -4,7 +4,8 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.Retrieval;
+using Idrak.Nlp.Retrieval;
+using Idrak.Nlp.Retrieval.Abstractions;
 
 namespace Idrak.Cli.Commands.Retrieval;
 

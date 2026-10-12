@@ -4,9 +4,9 @@
 using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Idrak.Retrieval.Abstractions;
+using Idrak.Nlp.Retrieval.Abstractions;
 
-namespace Idrak.Retrieval;
+namespace Idrak.Nlp.Retrieval;
 
 /// <summary>
 /// Searchable chunks: keyword search (<see cref="Bm25Index"/>), vector search (<see cref="TextEncoder"/> +

@@ -7,6 +7,13 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json.Nodes;
+using Idrak;
+using Idrak.AspNetCore;
+using Idrak.Cli;
+using Idrak.Cli.Commands.Serve;
+using Idrak.Generation;
+using Idrak.Mcp;
+using Idrak.Nlp.Generation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -14,13 +21,6 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
-using Idrak;
-using Idrak.AspNetCore;
-using Idrak.Cli;
-using Idrak.Cli.Commands.Serve;
-using Idrak.Generation;
-using Idrak.Mcp;
-using Idrak.Retrieval;
 
 /// <summary>Tools served by the 'idrak mcp serve' test (the test assembly is the tools assembly).</summary>
 public sealed class CliServeTestTools

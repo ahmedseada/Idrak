@@ -8,7 +8,7 @@ using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
 
-namespace Idrak.Retrieval;
+namespace Idrak.Nlp.Retrieval;
 
 /// <summary>
 /// Turns texts into unit-length vectors whose dot product measures how related they are (a bi-encoder, for

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Generation;
+namespace Idrak.Abstraction.Serving;
 
 /// <summary>A loaded model as reported by <see cref="ModelHost{TModel}.Loaded"/>.</summary>
 /// <param name="Name">The name it was loaded under.</param>

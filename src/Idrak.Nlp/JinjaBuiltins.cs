@@ -4,6 +4,7 @@
 using System.Collections;
 using System.Globalization;
 using System.Text;
+using Idrak.Nlp.Retrieval.Abstractions;
 
 namespace Idrak.Nlp;
 

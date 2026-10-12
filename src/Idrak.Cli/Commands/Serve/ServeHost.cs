@@ -13,12 +13,12 @@ using Idrak.AspNetCore;
 using Idrak.Cli.Shared;
 using Idrak.Datasets;
 using Idrak.Generation;
-using Idrak.Generation.Abstractions;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Generation;
 using Idrak.Nlp.Inference;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -509,7 +509,7 @@ internal sealed class ServeHost
 
     // How a loaded copy reads images: the command line's (ModelImages: the encoder built on the first image, on the
     // model's device, with the model's preprocessing, grey with --grayscale or the alias's setting, EXIF orientation).
-    private Idrak.Generation.ChatImages Images(ServedModel model, TextGenerator generator)
+    private Idrak.Nlp.Generation.ChatImages Images(ServedModel model, TextGenerator generator)
     {
         var pretrained = _loaded.TryGetValue(generator, out var p) ? p : throw new InvalidOperationException($"{model.Name}: the loaded model is unknown.");
         var images = ImageInputs.For(pretrained, model.Choice.Transforms, model.Choice.VisionOptions, out string? reason)

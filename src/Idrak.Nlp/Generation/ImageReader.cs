@@ -3,10 +3,11 @@
 
 using System.Diagnostics;
 using Idrak.Data;
+using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Nlp;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>How an <see cref="ImageReader"/> reads: the images' preparation and the attention cache.</summary>
 public sealed record ImageReaderOptions

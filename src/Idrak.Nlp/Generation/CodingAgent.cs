@@ -4,7 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Generation;
+namespace Idrak.Nlp.Generation;
 
 /// <summary>
 /// A coding task: a prompt, the project it starts from, and the commands that decide whether it was done. On disk a task

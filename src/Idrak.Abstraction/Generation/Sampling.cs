@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Generation.Abstractions;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>One sampled token with the statistics recorded by <see cref="TokenSampler"/>.</summary>
 /// <param name="Id">The chosen token id.</param>

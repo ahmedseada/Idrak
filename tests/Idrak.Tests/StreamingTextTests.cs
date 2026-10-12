@@ -5,6 +5,8 @@ using System.Text;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Nlp.Generation;
+using Idrak.Nlp.Retrieval.Abstractions;
 
 // Streamed text stays whole characters however a byte-level tokenizer splits their UTF-8 bytes across tokens.
 internal static partial class Tests

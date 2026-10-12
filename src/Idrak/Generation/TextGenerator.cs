@@ -5,7 +5,6 @@ using System.Buffers;
 using System.Diagnostics;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Diagnostics;
-using Idrak.Generation.Abstractions;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 
@@ -206,8 +205,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
     internal static int MinSlidingSteps { get; set; } = 128;
 
-    // Whether a KV cache is kept from the last generation (see KeepCache).
-    internal bool HoldsCache
+    /// <summary>
+    /// Whether a key/value cache is kept from the last generation (<see cref="KeepCache"/>): a caller that runs out of
+    /// memory can release it (<see cref="ReleaseCache"/>) and try again.
+    /// </summary>
+    public bool HoldsCache
     {
         get
         {
@@ -1086,47 +1088,6 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
 
             return false;
-        }
-    }
-}
-
-/// <summary>Runs a synchronous stream on a thread-pool thread and hands its items to an asynchronous reader.</summary>
-internal static class BackgroundStream
-{
-    public static async IAsyncEnumerable<T> Run<T>(Func<CancellationToken, IEnumerable<T>> source,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var channel = System.Threading.Channels.Channel.CreateUnbounded<T>(
-            new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-        var producer = Task.Run(() =>
-        {
-            try
-            {
-                foreach (var item in source(stop.Token))
-                {
-                    channel.Writer.TryWrite(item);
-                }
-
-                channel.Writer.TryComplete();
-            }
-            catch (Exception ex)
-            {
-                channel.Writer.TryComplete(ex);
-            }
-        }, CancellationToken.None);
-
-        try
-        {
-            await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
-            {
-                yield return item;
-            }
-        }
-        finally
-        {
-            stop.Cancel();
-            await producer.ConfigureAwait(false);
         }
     }
 }
