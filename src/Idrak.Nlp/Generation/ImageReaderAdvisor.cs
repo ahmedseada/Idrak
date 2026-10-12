@@ -76,7 +76,7 @@ internal sealed class ImageReaderAdvisor : ISettingAdvisor
         }
 
         // The weights' format: bfloat16 (the checkpoint's own values for most) where the device has room for it, int8 where
-        // it has too little beside a page.
+        // the next page would not fit beside it.
         var projections = model.Network.Descendants().OfType<Linear>().Where(l => l.Name != "head").ToList();
         long weights = projections.Sum(l => (long)l.InFeatures * l.OutFeatures);
         if (weights == 0)
@@ -95,10 +95,10 @@ internal sealed class ImageReaderAdvisor : ISettingAdvisor
                     $"bfloat16 weights fit: about {Mb(more)} MB more than {format}, a page's {Mb(perPage)} MB still free beyond the headroom", device, AdvisorName);
             }
         }
-        else if (room < 0)
+        else if (room < perPage)
         {
             yield return new("PretrainedOptions.Int8", "true",
-                $"the headroom is short by {Mb(-room)} MB beside a page: int8 weights hold about {Mb(held - weights)} MB less than {format ?? "float32"}", device, AdvisorName);
+                $"a page takes about {Mb(perPage)} MB and {Mb(Math.Max(0, room))} MB is free beyond the headroom: int8 weights hold about {Mb(held - weights)} MB less than {format ?? "float32"}", device, AdvisorName);
         }
     }
 

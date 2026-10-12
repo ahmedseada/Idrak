@@ -76,13 +76,17 @@ public sealed record ImageReaderOptions
 
     /// <summary>
     /// Whether the reader measures its first read for suggested settings (<see cref="ImageReader.Suggestions"/>: the
-    /// device's peak during it, reset for the read, and what it has left): null (the default) when telemetry listens at
+    /// device's peak during it above what it holds before and after, the peak reset for the read, and what it has left): null (the default) when telemetry listens at
     /// <see cref="TelemetryLevel.Suggestions"/> (the suggestions are published there, each once), true always, false never.
     /// </summary>
     public bool? Suggest { get; init; }
 
-    /// <summary>The share of the device's memory the suggested settings leave free (0.1: a tenth), for what a read did not show.</summary>
-    public double SuggestionHeadroom { get; init; } = 0.1;
+    /// <summary>
+    /// The share of the device's memory the suggested settings leave free beyond the device's own reserve
+    /// (<see cref="ComputeResources.GpuMemoryReserve"/>, which what the device reports as available already leaves): 0
+    /// by default; more for what a read did not show (other programs, longer answers).
+    /// </summary>
+    public double SuggestionHeadroom { get; init; }
 }
 
 /// <summary>What a batch of pages does when the device has no room for them together (<see cref="ImageReaderOptions.BatchFit"/>).</summary>
@@ -255,7 +259,11 @@ public sealed class ImageReader : IDisposable
         backend.ResetPeakMemoryUsage();
         var result = read();
         var (pages, positions) = figures(result);
-        _measured = new AdviceMeasure(pages, positions, Math.Max(0, backend.GetMemoryUsage().Peak - start), backend.AvailableMemory() ?? 0);
+
+        // What the read needed for its pages: its peak above what is held after it as well as before (weights it loaded
+        // on the way, as the encoder's on a first read, stay and are not a page's).
+        var after = backend.GetMemoryUsage();
+        _measured = new AdviceMeasure(pages, positions, Math.Max(0, after.Peak - Math.Max(start, after.InUse)), backend.AvailableMemory() ?? 0);
         Publish();
         return result;
     }

@@ -670,7 +670,7 @@ internal static partial class Tests
         var recorder = new SuggestionRecorder();
         using (Telemetry.Subscribe(recorder))
         {
-            using var reader = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, SuggestionHeadroom = 0 });
+            using var reader = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256 });
             bool matrixUnits = device.Backend.TensorCoresUnavailable() is null;
             bool precision = recorder.Seen.Any(s => s.Setting == "ImageReaderOptions.EncoderPrecision" && s.Value == "BFloat16")
                              && recorder.Seen.Any(s => s.Setting == "ImageReaderOptions.PrefillPrecision");
@@ -719,7 +719,7 @@ internal static partial class Tests
         }
 
         // Not measured: with Suggest false the first read is not measured, so nothing from its figures.
-        using var quiet = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, Suggest = false, SuggestionHeadroom = 0 });
+        using var quiet = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, Suggest = false });
         quiet.Read(request);
         Check(quiet.Suggestions().All(s => s.Setting != "ImageReaderOptions.MaxBatch"), "Suggest = false: no read measured");
     }

@@ -10,7 +10,7 @@ namespace Idrak.Models;
 /// <summary>
 /// The library's advisor for a loaded <see cref="PretrainedModel"/> ("pretrained model" in <see cref="SettingAdvisors"/>),
 /// asked when <see cref="PretrainedModel.Load"/> ends: bfloat16 weights for float32 ones read from a bfloat16 checkpoint
-/// (the same values in half the memory), and a smaller weights' format when the device has less than its headroom left.
+/// (the same values in half the memory), and a smaller weights' format when the device has nothing left beyond its headroom.
 /// A figure the device does not report decides nothing.
 /// </summary>
 internal sealed class PretrainedModelAdvisor : ISettingAdvisor
@@ -20,7 +20,7 @@ internal sealed class PretrainedModelAdvisor : ISettingAdvisor
 
     public string Name => AdvisorName;
 
-    public string Summary => "a loaded model: bfloat16 weights for a bfloat16 checkpoint read as float32; a smaller weights' format when the device has less than its headroom left";
+    public string Summary => "a loaded model: bfloat16 weights for a bfloat16 checkpoint read as float32; a smaller weights' format when the device has nothing left beyond its headroom";
 
     public IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation)
     {
@@ -53,12 +53,12 @@ internal sealed class PretrainedModelAdvisor : ISettingAdvisor
         }
 
         long room = available - (long)(Math.Clamp(situation.Headroom, 0, 1) * total);
-        if (room >= 0)
+        if (room > 0)
         {
             yield break;
         }
 
-        // Less than the headroom left after loading: the next smaller format, with what it saves.
+        // Nothing left beyond the headroom after loading: the next smaller format, with what it saves.
         var (option, smaller) = format switch
         {
             "int8" => ("PretrainedOptions.Int4", (long)(0.625 * weights)),
@@ -68,7 +68,7 @@ internal sealed class PretrainedModelAdvisor : ISettingAdvisor
         if (option is not null && held > smaller)
         {
             yield return new(option, "true",
-                $"{Mb(-room)} MB short of the headroom after loading: about {Mb(held - smaller)} MB less than {format}", device, AdvisorName);
+                $"no room left beyond the headroom after loading ({Mb(-room)} MB short): about {Mb(held - smaller)} MB less than {format}", device, AdvisorName);
         }
     }
 
