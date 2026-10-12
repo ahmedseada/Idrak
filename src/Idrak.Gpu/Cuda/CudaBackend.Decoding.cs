@@ -111,10 +111,24 @@ internal sealed unsafe partial class CudaBackend
 
     public override bool SupportsGraphs => true;
 
+    // The recording's operation scope (GuardMoves), from BeginCapture to its end: no move while it records, and its own
+    // operations never wait for one.
+    private OperationScope _recording;
+
     public override void BeginCapture()
     {
+        var operation = EnterOperation();                          // before the stream gate, as every operation
         MakeCurrent();
-        _streamGate.EnterWriteLock();                              // other threads' stream work waits for the recording
+        try
+        {
+            _streamGate.EnterWriteLock();                          // other threads' stream work waits for the recording
+        }
+        catch
+        {
+            operation.Dispose();
+            throw;
+        }
+
         try
         {
             lock (_pool)
@@ -139,10 +153,13 @@ internal sealed unsafe partial class CudaBackend
 
                 Check(result, nameof(cuStreamBeginCapture));
             }
+
+            _recording = operation;
         }
         catch
         {
             _streamGate.ExitWriteLock();
+            operation.Dispose();
             throw;
         }
     }
@@ -195,6 +212,9 @@ internal sealed unsafe partial class CudaBackend
         if (_streamGate.IsWriteLockHeld)
         {
             _streamGate.ExitWriteLock();
+            var operation = _recording;
+            _recording = default;
+            operation.Dispose();
         }
     }
 

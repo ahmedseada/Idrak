@@ -304,6 +304,7 @@ def generate():
     d.append("// itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation")
     d.append("// matches it or whether its error came from the device at all; its errors reach the caller. An operation the device")
     d.append("// has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).")
+    d.append("// On a device that guards its moves (Backend.GuardMoves) every call takes the second path, inside an operation scope.")
     d.append("public abstract partial class Backend")
     d.append("{")
     for i, (method, op, returns, parameters, docs, default) in enumerate(named):
@@ -326,7 +327,7 @@ def generate():
         d.append(f"    public {returns} {method}({parameters})")
         d.append("    {")
         if returns == "void":
-            d.append("        if (_kernels is null)")
+            d.append("        if (_kernels is null && _moves is null)")
             d.append("        {")
             d.append(f"            {own};")
             d.append("        }")
@@ -335,12 +336,15 @@ def generate():
             d.append(f"            {registered};")
             d.append("        }")
         else:
-            d.append(f"        return _kernels is null ? {own} : {registered};")
+            d.append(f"        return _kernels is null && _moves is null ? {own} : {registered};")
         d.append("    }")
         d.append("")
         d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
         d.append(f"    private {returns} {op}Registered({plain})")
         d.append("    {")
+        # On a device that guards its moves (GuardMoves), the call is an operation: no move runs between reading the
+        # storages' addresses and queuing the work that uses them.
+        d.append("        using var operation = EnterOperation();")
         if default == "Host":
             # With RetryOnHost the device's own kernel runs under a HostRetry (see the comment the file starts with).
             ret = "" if returns == "void" else "return "

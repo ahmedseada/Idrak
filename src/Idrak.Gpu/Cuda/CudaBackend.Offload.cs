@@ -14,8 +14,10 @@ namespace Idrak.Gpu.Cuda;
 //   recorded graph exists (graphs hold raw addresses) or one is being recorded.
 // - Cold first: allocations that found the GPU full and went to system memory are counted; at the next step boundary
 //   (Rebalance, called by Optimizer.ZeroGrad) that many bytes of cold storages (optimizer state, then frozen weights,
-//   largest first) move out instead, so the next step's activations fit on the GPU. Moving happens only at step
-//   boundaries, where no operation holds a raw address.
+//   largest first) move out instead, so the next step's activations fit on the GPU. Moving happens at step boundaries;
+//   with other threads computing on the device, a move waits until none is inside an operation (Backend.GuardMoves:
+//   every operation reads its addresses and queues its work inside one), and an allocation's placement of lookup tables
+//   runs only while none is.
 // - Staging: before a layer computes, its offloaded weights get a GPU copy (Pointer on the copy, Home on the system
 //   block) until the stage token is disposed; the next layer's copies start on a separate copy stream while this one
 //   computes (Prefetch). Copy blocks come from the caching pool, and layers of one model share shapes, so after the
@@ -28,6 +30,9 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
 
     /// <summary>Recorded graphs not yet destroyed: they hold raw addresses, so nothing moves while any exists.</summary>
     private int _liveGraphs;
+
+    /// <summary>Recorded graphs not yet destroyed (tests: no move runs while one exists).</summary>
+    internal int LiveGraphs => Volatile.Read(ref _liveGraphs);
 
     // Under the pool lock: storages colder than Hot on the GPU (candidates to move out), storages in system memory (staged
     // or not), and the bytes of hot allocations that went to system memory since the last Rebalance.
@@ -71,6 +76,22 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
     {
         _away.Remove(s);
         _awayCount = _away.Count;
+    }
+
+    // A move of live storages (Backend.BeginMove): Began false when it may not run now. Disposing it ends the move.
+    private Moving Move(bool wait) => new(this, BeginMove(wait));
+
+    private readonly struct Moving(CudaBackend backend, bool began) : IDisposable
+    {
+        public readonly bool Began = began;
+
+        public void Dispose()
+        {
+            if (Began)
+            {
+                backend.EndMove();
+            }
+        }
     }
 
     private CudaStorage? Mine(Storage storage) => storage is CudaStorage s && ReferenceEquals(s.Backend, this) ? s : null;
@@ -129,6 +150,12 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return false;
         }
 
+        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        if (!move.Began)
+        {
+            return false;
+        }
+
         MakeCurrent();
         using var use = UseStream();
         lock (_pool)
@@ -156,6 +183,12 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return false;
         }
 
+        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        if (!move.Began)
+        {
+            return false;
+        }
+
         MakeCurrent();
         using var use = UseStream();
         lock (_pool)
@@ -178,6 +211,12 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             {
                 return 0;                                                  // the usual case: nothing offloaded
             }
+        }
+
+        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        if (!move.Began)
+        {
+            return 0;
         }
 
         MakeCurrent();
@@ -279,6 +318,12 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return 0;                                                      // the model fits: nothing to make room for
         }
 
+        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        if (!move.Began)
+        {
+            return 0;
+        }
+
         MakeCurrent();
         using var use = UseStream();
         long need = ReturnHeadroom - DeviceRoom();
@@ -330,6 +375,13 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
     public void Prefetch(IReadOnlyList<Storage> storages)
     {
         if (OffloadedCount == 0 || !ComputeResources.PrefetchOffloadedWeights || storages.Count == 0)
+        {
+            return;
+        }
+
+        // A move's scope: the system blocks it copies from stay theirs while another thread's move could give them up.
+        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        if (!move.Began)
         {
             return;
         }
@@ -403,6 +455,12 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
     public IDisposable? Stage(IReadOnlyList<Storage> storages)
     {
         if (OffloadedCount == 0 || storages.Count == 0)
+        {
+            return null;
+        }
+
+        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        if (!move.Began)
         {
             return null;
         }
@@ -484,6 +542,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
 
     private void Unstage(List<CudaStorage> staged)
     {
+        using var move = Move(wait: true);                                 // the addresses go back home: after other threads' operations
         MakeCurrent();
         using var use = UseStream();
         lock (_pool)
@@ -580,6 +639,12 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return false;
         }
 
+        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        if (!move.Began)
+        {
+            return false;
+        }
+
         MakeCurrent();
         using var use = UseStream();
         if (!Place(s))
@@ -595,6 +660,14 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
     // marked, or a graph may hold their addresses). With the work stream held.
     private bool PlaceLookupTables()
     {
+        // From an allocation, with the stream gate held: no waiting for other threads' operations (one may wait for this
+        // allocation's locks); the tables move only while no other thread is inside an operation.
+        using var move = Move(wait: false);
+        if (!move.Began)
+        {
+            return false;
+        }
+
         CudaStorage[] tables;
         lock (_pool)
         {

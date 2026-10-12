@@ -274,6 +274,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         // driver refuses leaves its own.
         cuCtxSetLimit(LimitStackSize, (nuint)Math.Max(0, ComputeResources.GpuStackBytes ?? 0));
         Check(cuStreamCreate(out _stream, 0), nameof(cuStreamCreate));
+        GuardMoves();                                                      // offloading moves live storages (CudaBackend.Offload.cs)
 
         byte* name = stackalloc byte[256];
         Check(cuDeviceGetName(name, 256, device), nameof(cuDeviceGetName));
@@ -876,6 +877,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override void Upload(ReadOnlySpan<float> source, Storage destination)
     {
+        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
         MakeCurrent();
         using var use = UseStream();
         if (TryUploadAsync(source, destination))
@@ -893,6 +895,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override void DownloadRange(Storage source, int offset, Span<float> destination)
     {
+        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
         MakeCurrent();
         using var use = UseStream();
         fixed (float* p = destination)
@@ -905,6 +908,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override void Copy(Storage x, Storage y, int n)
     {
+        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
         MakeCurrent();
         using var use = UseStream();
         Check(cuMemcpyDtoDAsync(P(y), P(x), (nuint)n * sizeof(float), _stream), nameof(cuMemcpyDtoDAsync));
@@ -2056,7 +2060,22 @@ internal sealed unsafe partial class CudaBackend : Backend
     // IDRAK_CUDA_DEBUG=1: synchronize after every kernel launch and name the kernel that failed (slow).
     private static readonly bool DebugLaunches = Environment.GetEnvironmentVariable("IDRAK_CUDA_DEBUG") is "1" or "true";
 
-    private static ulong P(Storage s) => ((CudaStorage)s).Pointer;
+    private static ulong P(Storage s)
+    {
+        var storage = (CudaStorage)s;
+        if (CheckAddressReads && !((CudaBackend)storage.Backend).HoldsAddresses)
+        {
+            throw new InvalidOperationException("A storage's address was read outside an operation or a move: a move on another thread may give its block up before the work using it is queued.");
+        }
+
+        return storage.Pointer;
+    }
+
+    /// <summary>
+    /// Tests: every address read must come from inside an operation or a move (Backend.GuardMoves), else it throws, naming
+    /// the path that misses its scope.
+    /// </summary>
+    internal static bool CheckAddressReads;
 
     private static ulong F(float value) => BitConverter.SingleToUInt32Bits(value);
 

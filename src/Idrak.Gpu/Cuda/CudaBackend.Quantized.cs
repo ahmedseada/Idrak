@@ -290,6 +290,7 @@ internal sealed unsafe partial class CudaBackend
     // nothing can be measured, the GEMV.
     public override bool PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
+        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
         if (format != PackedFormat.Int8 || m < 2 || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores)
         {
             return false;

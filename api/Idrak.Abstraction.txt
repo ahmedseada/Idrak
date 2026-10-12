@@ -381,14 +381,20 @@ public readonly record struct Idrak.Abstraction.Devices.AttentionVariant : Syste
   public int Window { get; init; }
 
 public abstract class Idrak.Abstraction.Devices.Backend
+  nested Idrak.Abstraction.Devices.Backend.OperationScope (below)
   protected Backend()
+  protected Idrak.Abstraction.Devices.Backend.OperationScope EnterOperation()
   protected abstract void Attach(Idrak.Abstraction.Devices.Storage storage, Idrak.Abstraction.Devices.Storage fresh)
   protected abstract void Detach(Idrak.Abstraction.Devices.Storage storage)
+  protected bool BeginMove(bool wait)
+  protected bool HoldsAddresses { get; }
   protected void ComposedAttention(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage scores, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage y, int heads, int rows, int keyRows, int dim, float scale)
   protected void ComposedAttentionTraining(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage scores, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage gradients, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rows, int keyRows, int dim, float scale)
   protected void ComposedConvolution(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups, Idrak.Abstraction.Devices.ConvActivation activation)
   protected void ComposedConvolutionBackwardInput(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups)
   protected void ComposedConvolutionBackwardWeight(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dweight, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups)
+  protected void EndMove()
+  protected void GuardMoves()
   public abstract Idrak.Abstraction.Devices.BackendCapabilities Capabilities { get; }
   public abstract Idrak.Abstraction.Devices.Storage Allocate(int length, bool zeroed)
   public abstract Idrak.Abstraction.MemoryUsage GetMemoryUsage()

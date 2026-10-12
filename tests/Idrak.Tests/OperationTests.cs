@@ -155,7 +155,7 @@ internal static partial class Tests
     [
         "AbortCapture", "BeginCapture", "EndCapture", "DestroyGraph", "ReplayGraph", "CreateHostStaging", "StartProfile", "StopProfile",
         "TensorCoresUnavailable", "ReuseQuantizedOperands", "Float8PaddedK", "SupportsSegmentedAttention", "SupportsAttentionRows", "PrefersPackedMatMul", "PrefersComposedAttention", "Copy", "Copy2D",
-        "AvailableMemory", "ResetPeakMemoryUsage",
+        "AvailableMemory", "FreeMemory", "ResetPeakMemoryUsage", "LongLivedAllocations",
     ];
 
     private static void OperationsMatchBackend(Device device)

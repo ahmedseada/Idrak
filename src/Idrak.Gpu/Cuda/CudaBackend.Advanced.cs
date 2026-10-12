@@ -195,6 +195,7 @@ internal sealed unsafe partial class CudaBackend
 
     public override void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
     {
+        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
         int n = rows * cols;
         Launch1D(K("copy2d_f32"), n, P(src), P(dst), U(srcOffset), U(srcStride), U(dstOffset), U(dstStride), U(cols), U(accumulate ? 1 : 0), U(n));
     }
