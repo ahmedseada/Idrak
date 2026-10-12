@@ -22,7 +22,8 @@ internal static partial class Tests
         ("memory chunks: long-lived blocks (Backend.LongLivedAllocations) the driver would round to its page share chunks: the driver takes about their bytes instead of a page more each; values and kernels unchanged; a freed block's room is reused; outside the scope a block takes the chunks' free room and makes none; with GpuChunkBytes 0 each block is its own; empty chunks go back to the driver", ChunkedBlocks),
         ("memory tuning: measurements on a device run one at a time (four threads measuring the same choice measure it once, with no event read across threads), and the attention path's scratch goes back to the driver, not to the pool", MeasuringAlone),
         ("memory stress: four threads take, check and free blocks of every kind the pool hands out (small, best-fit, chunk-sized in and out of the long-lived scope, a page and a little, whole pages) while others release the cache, record and replay graphs and measure the attention path; then again with the device at its limit and offloading on; then while another thread moves tensors they read and write between the device and system memory: no block handed out twice, every value and write kept, every graph recorded, no address read outside an operation or a move, no thread failing, and the pool's figures back where they started", MemoryStress),
-        ("move gate: a move waits for other threads' operations and holds new ones back until it ends; one that may not wait, or is asked from inside an operation, runs only while no other thread is inside one; the mover's own operations and nested moves go through", MoveGateOrder),
+        ("move gate: a move waits for other threads' operations and holds new ones back until it ends; one that may not wait, or is asked from inside an operation, runs only while no other thread is inside one; the mover's own operations and nested moves go through; a placement of lookup tables from inside an operation waits for the others, another inside one steps aside for it (counted again before it ends), and a general move still waiting gives way to it", MoveGateOrder),
+        ("offloading: a lookup table placed while other threads keep reading it: an allocation at the limit outside any operation waits for their operations, moves the table and succeeds; their reads give the same sums before and after", LookupTablesUnderReaders),
         ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
     ];
 
@@ -1094,7 +1095,7 @@ internal static partial class Tests
         reader.Start();
         Check(readerIn.Wait(timeout), "the reader entered");
         Check(!gate.Holds, "a thread outside any operation holds no address");
-        Check(!gate.BeginMove(wait: false), "a move that may not wait does not run while another thread is inside an operation");
+        Check(!gate.BeginMove(wait: false, lookupTablesOnly: false), "a move that may not wait does not run while another thread is inside an operation");
 
         // A waiting move: after the reader's operation; meanwhile, and while it runs, a new operation waits.
         using var moved = new ManualResetEventSlim();
@@ -1102,7 +1103,7 @@ internal static partial class Tests
         bool ownWork = false, nested = false;
         var mover = new Thread(() =>
         {
-            if (!gate.BeginMove(wait: true))
+            if (!gate.BeginMove(wait: true, lookupTablesOnly: false))
             {
                 return;
             }
@@ -1110,7 +1111,7 @@ internal static partial class Tests
             gate.Enter();                                                 // the mover's own operation goes through
             ownWork = gate.Holds;
             gate.Exit();
-            nested = gate.BeginMove(wait: true);                           // and so does a nested move
+            nested = gate.BeginMove(wait: true, lookupTablesOnly: false);                           // and so does a nested move
             gate.EndMove();
             moved.Set();
             endMove.Wait();
@@ -1141,15 +1142,195 @@ internal static partial class Tests
         gate.Enter();
         Check(gate.Holds, "inside an operation the addresses hold");
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        Check(!gate.BeginMove(wait: true), "from inside an operation, with another thread inside one: no move");
+        Check(!gate.BeginMove(wait: true, lookupTablesOnly: false), "from inside an operation, with another thread inside one: no move");
         Check(watch.Elapsed < TimeSpan.FromSeconds(1), $"and no waiting ({watch.Elapsed.TotalMilliseconds:F0} ms)");
         lateOut.Set();
         Check(late.Join(timeout), "the other operation ended");
-        Check(gate.BeginMove(wait: true), "from inside an operation, alone: the move runs");
+        Check(gate.BeginMove(wait: true, lookupTablesOnly: false), "from inside an operation, alone: the move runs");
         gate.EndMove();
         gate.Exit();
         Check(reader.Join(timeout) && mover.Join(timeout), "every thread ended");
-        Check(gate.BeginMove(wait: false), "with nobody inside an operation even a move that may not wait runs");
+        Check(gate.BeginMove(wait: false, lookupTablesOnly: false), "with nobody inside an operation even a move that may not wait runs");
         gate.EndMove();
+
+        // A placement of lookup tables from inside an operation (thread A) waits for the other operation (thread B); B,
+        // needing one too, steps aside and gets false, counted again before A's placement ends.
+        using var bIn = new ManualResetEventSlim();
+        using var bGo = new ManualResetEventSlim();
+        using var bParked = new ManualResetEventSlim();
+        using var bLeave = new ManualResetEventSlim();
+        bool parkedMoved = true;
+        var b = new Thread(() =>
+        {
+            gate.Enter();
+            bIn.Set();
+            bGo.Wait();
+            parkedMoved = gate.BeginMove(wait: true, lookupTablesOnly: true);
+            bParked.Set();
+            bLeave.Wait();
+            gate.Exit();
+        }) { IsBackground = true };
+        b.Start();
+        Check(bIn.Wait(timeout), "B entered");
+        using var aMoved = new ManualResetEventSlim();
+        using var aEnd = new ManualResetEventSlim();
+        var a = new Thread(() =>
+        {
+            gate.Enter();
+            if (gate.BeginMove(wait: true, lookupTablesOnly: true))
+            {
+                aMoved.Set();
+                aEnd.Wait();
+                gate.EndMove();
+            }
+
+            gate.Exit();
+        }) { IsBackground = true };
+        a.Start();
+        Check(Quiet(aMoved), "a placement from inside an operation waits for the other operation");
+        bGo.Set();
+        Check(aMoved.Wait(timeout), "it runs once the other thread steps aside");
+        Check(Quiet(bParked), "the thread that stepped aside waits while the placement runs");
+        Check(!gate.BeginMove(wait: false, lookupTablesOnly: false), "no other move while the placement runs");
+        aEnd.Set();
+        Check(bParked.Wait(timeout) && !parkedMoved, "after the placement the thread that stepped aside gets false (its allocation tries again)");
+        Check(a.Join(timeout), "A ended");
+        Check(!gate.BeginMove(wait: false, lookupTablesOnly: false), "the thread that stepped aside counts again: a move must wait for it");
+        bLeave.Set();
+        Check(b.Join(timeout), "B ended");
+
+        // A general move waiting for an operation gives way to that operation's placement of lookup tables.
+        using var rIn = new ManualResetEventSlim();
+        using var rGo = new ManualResetEventSlim();
+        using var rMoved = new ManualResetEventSlim();
+        using var rLeave = new ManualResetEventSlim();
+        bool placement = false;
+        var r = new Thread(() =>
+        {
+            gate.Enter();
+            rIn.Set();
+            rGo.Wait();
+            placement = gate.BeginMove(wait: true, lookupTablesOnly: true);
+            if (placement)
+            {
+                gate.EndMove();
+            }
+
+            rMoved.Set();
+            rLeave.Wait();
+            gate.Exit();
+        }) { IsBackground = true };
+        r.Start();
+        Check(rIn.Wait(timeout), "R entered");
+        using var gDone = new ManualResetEventSlim();
+        bool general = true;
+        var g = new Thread(() =>
+        {
+            general = gate.BeginMove(wait: true, lookupTablesOnly: false);
+            if (general)
+            {
+                gate.EndMove();
+            }
+
+            gDone.Set();
+        }) { IsBackground = true };
+        g.Start();
+        Check(Quiet(gDone), "the general move waits for R's operation");
+        rGo.Set();
+        Check(gDone.Wait(timeout) && !general, "the general move gave way (false: its caller does without)");
+        Check(rMoved.Wait(timeout) && placement, "R's placement ran");
+        rLeave.Set();
+        Check(r.Join(timeout) && g.Join(timeout), "R and the general move ended");
+    }
+
+    // The allocation that found the device full with a lookup table on it, while other threads read the table without pause.
+    private static void LookupTablesUnderReaders(Device device)
+    {
+        if (OffloadOf(device) is not { } offload || device.Backend is not CudaBackend cuda)
+        {
+            return;                                                          // nothing moves on a device without offloading
+        }
+
+        const int Floats = 1 << 20, Readers = 3;
+        var values = new float[Floats];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = i % 2;                                               // sums exact in float32
+        }
+
+        long? limit = ComputeResources.GpuMemoryLimit;
+        try
+        {
+            for (int round = 0; round < 3; round++)
+            {
+                ComputeResources.ReleaseCachedMemory(device);
+                using var table = Tensor.From(values, [Floats], device);
+                offload.MarkLookupTable(table.Storage);
+                float expected;
+                using (var first = table.Sum())
+                {
+                    expected = first.Item();
+                }
+
+                var errors = new System.Collections.Concurrent.ConcurrentQueue<string>();
+                int stop = 0, reads = 0, readsAfter = 0;
+                long placed = cuda.PlacedOnHost;
+                var readers = Enumerable.Range(0, Readers).Select(_ => new Thread(() =>
+                {
+                    try
+                    {
+                        while (Volatile.Read(ref stop) == 0)
+                        {
+                            using var sum = table.Sum();                    // an operation reading the whole table
+                            float got = sum.Item();
+                            if (got != expected)
+                            {
+                                errors.Enqueue($"a read gave {got}, expected {expected}");
+                                return;
+                            }
+
+                            Interlocked.Increment(ref reads);
+                            if (cuda.PlacedOnHost > placed)
+                            {
+                                Interlocked.Increment(ref readsAfter);
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        errors.Enqueue($"{e.GetType().Name}: {e.Message}");
+                    }
+                }) { IsBackground = true }).ToList();
+                readers.ForEach(t => t.Start());
+                try
+                {
+                    SpinWait.SpinUntil(() => Volatile.Read(ref reads) >= Readers * 4, TimeSpan.FromSeconds(10));
+
+                    // The device at its limit: a block of three quarters of the table fits only once the table has left.
+                    ComputeResources.GpuMemoryLimit = ComputeResources.GetMemoryUsage(device).InUse + 4L * Floats / 2;
+                    using (var block = Tensor.Zeros([Floats * 3 / 4], device))
+                    {
+                        Check(cuda.PlacedOnHost == placed + 1, $"round {round}: the table moved to system memory and the allocation succeeded");
+                    }
+
+                    ComputeResources.GpuMemoryLimit = limit;
+                    SpinWait.SpinUntil(() => Volatile.Read(ref readsAfter) >= Readers * 4 || !errors.IsEmpty, TimeSpan.FromSeconds(10));
+                }
+                finally
+                {
+                    ComputeResources.GpuMemoryLimit = limit;
+                    Volatile.Write(ref stop, 1);
+                    readers.ForEach(t => t.Join());
+                }
+
+                Check(errors.IsEmpty, $"round {round}: {string.Join(" | ", errors.Take(3))}");
+                Check(readsAfter > 0, $"round {round}: reads of the table in system memory ({reads} reads, {readsAfter} after the move)");
+            }
+        }
+        finally
+        {
+            ComputeResources.GpuMemoryLimit = limit;
+            ComputeResources.ReleaseCachedMemory(device);
+        }
     }
 }

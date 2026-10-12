@@ -11,10 +11,15 @@ namespace Idrak.Abstraction.Devices;
 // - Operations: each thread counts once while inside any operation of the device (nested operations, and an operation
 //   inside a move by the same thread, do not count again or wait). A thread starting an operation while a move runs or
 //   waits steps back until the move ends.
-// - Moves: one thread at a time; a move waits until no other thread is inside an operation. A thread that is inside an
-//   operation itself, or holds a lock the operations it waits for may need (the caller says so with wait: false), never
-//   waits: its move runs only when no other thread is inside an operation, else it does not run (the caller does without).
-//   Moves by the moving thread nest.
+// - Moves: one thread at a time; a move waits until no other thread is inside an operation. A caller holding a lock the
+//   operations it waits for may need says so (wait: false): its move runs only when no other thread is inside an
+//   operation, else it does not run (the caller does without). Moves by the moving thread nest.
+// - From inside an operation: a move of any storage never waits (the operation may hold addresses of what it moves). A
+//   placement of lookup tables (an allocation that found the device full; lookupTablesOnly) waits like any move: no
+//   kernel reads a lookup table's address before an allocation of its own, so while another thread places lookup tables
+//   this one steps aside (no longer counted, and counted again before the placement ends, so no other move runs in
+//   between) and then tries its allocation again; and a general move still waiting for this thread gives way to it (that
+//   move does not run; its caller does without, as when the device is busy).
 //
 // Lock order: the gate before any lock of the device (its stream, its pool), as operations take it before the device's
 // own locks; a move that waits holds none of them.
@@ -31,6 +36,10 @@ internal sealed class MoveGate
     private int _inside;                                                  // threads inside an operation
     private int _mover;                                                   // the moving thread's managed id; 0 when none
     private int _moves;                                                   // the moving thread's nested moves
+    private bool _tables;                                                 // the move places lookup tables only
+    private bool _yield;                                                  // a placement inside an operation waits for the general move
+    private int _parked;                                                  // threads inside operations stepped aside for a placement
+    private long _ended;                                                  // moves ended so far (under the lock)
 
     private ref int Depth()
     {
@@ -95,7 +104,7 @@ internal sealed class MoveGate
         }
     }
 
-    public bool BeginMove(bool wait)
+    public bool BeginMove(bool wait, bool lookupTablesOnly)
     {
         int self = Environment.CurrentManagedThreadId;
         if (Volatile.Read(ref _mover) == self)
@@ -105,7 +114,7 @@ internal sealed class MoveGate
         }
 
         int mine = Depth() > 0 ? 1 : 0;
-        wait &= mine == 0;                                                // inside an operation: never wait for the others
+        wait &= mine == 0 || lookupTablesOnly;                            // inside an operation only a placement waits
         lock (_sync)
         {
             while (_mover != 0)
@@ -115,16 +124,38 @@ internal sealed class MoveGate
                     return false;
                 }
 
+                if (mine > 0)
+                {
+                    if (_tables)
+                    {
+                        // Another thread places lookup tables: step aside until it ends (counted again by then); the
+                        // caller tries again, with the tables gone.
+                        long ended = _ended;
+                        Interlocked.Decrement(ref _inside);
+                        _parked++;
+                        Monitor.PulseAll(_sync);
+                        while (_ended == ended)
+                        {
+                            Monitor.Wait(_sync);
+                        }
+
+                        return false;
+                    }
+
+                    _yield = true;                                        // the general move waiting for this thread gives way
+                    Monitor.PulseAll(_sync);
+                }
+
                 Monitor.Wait(_sync);
             }
 
             Interlocked.Exchange(ref _mover, self);                       // a full fence before counting the operations
+            (_tables, _yield) = (lookupTablesOnly, false);
             while (Volatile.Read(ref _inside) > mine)
             {
-                if (!wait)
+                if (!wait || (_yield && !lookupTablesOnly))
                 {
-                    Interlocked.Exchange(ref _mover, 0);
-                    Monitor.PulseAll(_sync);
+                    EndLocked();                                          // not now (or giving way to a placement)
                     return false;
                 }
 
@@ -145,8 +176,17 @@ internal sealed class MoveGate
 
         lock (_sync)
         {
-            Interlocked.Exchange(ref _mover, 0);
-            Monitor.PulseAll(_sync);
+            EndLocked();
         }
+    }
+
+    // Under the lock: the threads that stepped aside count again before any other move can start, then the move ends.
+    private void EndLocked()
+    {
+        Interlocked.Add(ref _inside, _parked);
+        (_parked, _tables, _yield) = (0, false, false);
+        _ended++;
+        Interlocked.Exchange(ref _mover, 0);
+        Monitor.PulseAll(_sync);
     }
 }

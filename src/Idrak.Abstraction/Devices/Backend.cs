@@ -528,12 +528,15 @@ public abstract partial class Backend
 
     /// <summary>
     /// Starts a move of live storages (see <see cref="GuardMoves"/>): true once no other thread is inside an operation
-    /// (end it with <see cref="EndMove"/>); false when the move may not run now. With <paramref name="wait"/> false, or
-    /// from inside an operation, it never waits: it runs only if no other thread is inside an operation (a caller holding
-    /// a lock those operations may need passes false). Moves by one thread nest. Always true on a device that does not
-    /// guard its moves.
+    /// (end it with <see cref="EndMove"/>); false when the move may not run now. With <paramref name="wait"/> false it
+    /// never waits: it runs only if no other thread is inside an operation (a caller holding a lock those operations may
+    /// need passes false). From inside an operation a move never waits either, except a placement of lookup tables
+    /// (<paramref name="lookupTablesOnly"/>: storages <see cref="IMemoryOffload.MarkLookupTable"/> marked, which no kernel
+    /// reads before an allocation of its own): it waits for the other operations, a general move still waiting for this
+    /// thread gives way to it, and while another thread places lookup tables this one steps aside and gets false (its
+    /// allocation tries again). Moves by one thread nest. Always true on a device that does not guard its moves.
     /// </summary>
-    protected bool BeginMove(bool wait) => _moves is null || _moves.BeginMove(wait);
+    protected bool BeginMove(bool wait, bool lookupTablesOnly = false) => _moves is null || _moves.BeginMove(wait, lookupTablesOnly);
 
     /// <summary>Ends a move started by <see cref="BeginMove"/> (when it returned true).</summary>
     protected void EndMove() => _moves?.EndMove();

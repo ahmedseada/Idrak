@@ -466,26 +466,40 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override Storage Allocate(int length, bool zeroed)
     {
+        bool placed = false;
+        while (true)
+        {
+            if (TryAllocate(length, zeroed, placed) is { } storage)
+            {
+                return storage;
+            }
+
+            // The device is full with lookup tables on it: they leave it for good, then the allocation again. Outside the
+            // stream gate, so the placement waits for other threads' operations (GuardMoves); while this thread still holds
+            // the gate or measures, it runs only if no other thread is inside an operation.
+            placed = true;
+            PlaceLookupTables(wait: !_streamGate.IsReadLockHeld && !_streamGate.IsWriteLockHeld && !_measuring.IsHeldByCurrentThread);
+        }
+    }
+
+    // A block for `length` floats, or null when the device is full and lookup tables could leave it (not tried yet).
+    private CudaStorage? TryAllocate(int length, bool zeroed, bool tablesPlaced)
+    {
         MakeCurrent();
         using var use = UseStream();
         long bytes = BlockBytes(length);
-        bool releaseCache, placed = false;
-        while (true)
+        bool releaseCache;
+        try
         {
-            try
-            {
-                releaseCache = _memory.MustReleaseCacheFor(bytes); // throws when over the in-use limit
-                break;
-            }
-            catch (ResourceLimitExceededException) when (!placed && Volatile.Read(ref _lookupTableCount) > 0)
-            {
-                placed = true;
-                PlaceLookupTables();                                   // the lookup tables leave first; then the limit again
-            }
-            catch (ResourceLimitExceededException) when (ComputeResources.OffloadToHostMemory)
-            {
-                return AllocateHost(length, zeroed);
-            }
+            releaseCache = _memory.MustReleaseCacheFor(bytes);     // throws when over the in-use limit
+        }
+        catch (ResourceLimitExceededException) when (!tablesPlaced && Volatile.Read(ref _lookupTableCount) > 0)
+        {
+            return null;                                           // the lookup tables leave first; then the limit again
+        }
+        catch (ResourceLimitExceededException) when (ComputeResources.OffloadToHostMemory)
+        {
+            return AllocateHost(length, zeroed);
         }
 
         ulong pointer = 0;
@@ -541,7 +555,11 @@ internal sealed unsafe partial class CudaBackend : Backend
                 int lastCapacity = 0;
                 try
                 {
-                    pointer = AllocateDevice(length);
+                    pointer = AllocateDevice(length, tablesPlaced, out bool placeTables);
+                    if (placeTables)
+                    {
+                        return null;                                        // the lookup tables leave first
+                    }
                 }
                 catch (ResourceLimitExceededException)
                 {
@@ -616,8 +634,9 @@ internal sealed unsafe partial class CudaBackend : Backend
     // New GPU memory, or 0 when the GPU is full and offloading is on (the caller then uses system memory). A block
     // "fits" when the GPU keeps MemoryReserve free afterwards, so the driver never pages GPU
     // memory out on its own.
-    private ulong AllocateDevice(int length)
+    private ulong AllocateDevice(int length, bool tablesPlaced, out bool placeTables)
     {
+        placeTables = false;
         nuint bytes = (nuint)BlockBytes(length);
         bool Fits() => cuMemGetInfo(out nuint free, out _) != 0 || (long)free - (long)bytes >= MemoryReserve;
         int result = ErrorOutOfMemory;
@@ -627,11 +646,9 @@ internal sealed unsafe partial class CudaBackend : Backend
             if (attempt == 2)
             {
                 // Still full: lookup tables (LookupTablePlacement.Automatic) go to system memory for good, where kernels read
-                // the few rows a lookup needs in place, then once more.
-                if (!PlaceLookupTables())
-                {
-                    break;
-                }
+                // the few rows a lookup needs in place. The caller places them outside the stream gate, then tries again.
+                placeTables = !tablesPlaced && Volatile.Read(ref _lookupTableCount) > 0;
+                break;
             }
             else if (attempt == 1)
             {
@@ -654,6 +671,11 @@ internal sealed unsafe partial class CudaBackend : Backend
 
         if (result == ErrorOutOfMemory)
         {
+            if (placeTables)
+            {
+                return 0;
+            }
+
             if (ComputeResources.OffloadToHostMemory)
             {
                 return 0;
