@@ -6,7 +6,8 @@ namespace Idrak;
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the offloading hooks of its layers
 /// (with the devices, which Idrak.Gpu registers right after) and the model sources loading a pretrained model asks
-/// (folder, store, .gguf). <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once per
+/// (folder, store, .gguf), and the loaded model's advisor ("pretrained model" in <see cref="SettingAdvisors"/>).
+/// <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once per
 /// registry, before that registry is first used, so an application pays only for the registries it uses. The registries
 /// that live here (layer types, graph operations, network-builder steps, sample sources, ONNX translators, checkpoint
 /// formats, GGUF tables, pretrained families) register their built-ins themselves, on first use.
@@ -20,6 +21,7 @@ internal static class LibraryRegistrations
         [typeof(ImageTransforms)] = Data.LibraryImageTransforms.RegisterDefaults,   // Pillow's operations, byte for byte
         [typeof(Augmentations)] = Data.LibraryAugmentations.RegisterDefaults,       // flip and shift (Idrak.Vision adds the others)
         [typeof(ImageCodecs)] = RegisterImageCodecs,                                 // png, jpeg, bmp, netpbm (asked newest first)
+        [typeof(SettingAdvisors)] = () => SettingAdvisors.Register(new Models.PretrainedModelAdvisor()),   // a loaded model's weights
     };
 
     private static void RegisterImageCodecs()

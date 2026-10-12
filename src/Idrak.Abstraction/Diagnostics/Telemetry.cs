@@ -54,8 +54,16 @@ public enum TelemetryLevel
     /// </summary>
     Overrides = 1 << 9,
 
+    /// <summary>
+    /// Settings suggested from what the device reports and what a run measured (<see cref="SettingSuggestion"/>: a vision
+    /// reader's encoder and prompt precision where the device has tensor cores, the pages that fit together, the cache's
+    /// and the weights' format). Each once per reader; the built-in <see cref="ConsoleLogger"/> and
+    /// <see cref="JsonLinesLogger"/> always include them.
+    /// </summary>
+    Suggestions = 1 << 10,
+
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions,
 }
 
 /// <summary>
@@ -135,6 +143,11 @@ public interface ITelemetryHook
 
     /// <summary>A call of a <see cref="SlotPolicy.Shadow"/> slot ran both implementations and compared them (<see cref="TelemetryLevel.Overrides"/>).</summary>
     void OnOverrideCompared(in OverrideCompared e)
+    {
+    }
+
+    /// <summary>A setting was suggested from the device's capabilities and a run's figures (<see cref="TelemetryLevel.Suggestions"/>).</summary>
+    void OnSuggestion(in SettingSuggestion e)
     {
     }
 }
@@ -301,6 +314,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Inference) != 0)
             {
                 h.OnInferenceStage(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a suggested setting, to the hooks listening at <see cref="TelemetryLevel.Suggestions"/>.</summary>
+    public static void Suggestion(in SettingSuggestion e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Suggestions) != 0)
+            {
+                h.OnSuggestion(in e);
             }
         }
     }

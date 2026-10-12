@@ -219,6 +219,17 @@ public enum InferenceStageKind
 public readonly record struct InferenceStage(InferenceStageKind Stage, string Device, TimeSpan Duration, long Count, long Bytes);
 
 /// <summary>
+/// Published at <c>TelemetryLevel.Suggestions</c>: a setting worth changing, computed from what the device reports (its
+/// memory, its matrix units) and what a run measured; nothing is suggested where a figure is missing.
+/// </summary>
+/// <param name="Setting">The option, as the library names it ("ImageReaderOptions.MaxBatch", "PretrainedOptions.BFloat16").</param>
+/// <param name="Value">The suggested value, as text ("3", "BFloat16", "true").</param>
+/// <param name="Reason">Why, with the figures it came from.</param>
+/// <param name="Device">The device it is for.</param>
+/// <param name="Source">The advisor that suggested it (a registered name).</param>
+public readonly record struct SettingSuggestion(string Setting, string Value, string Reason, string Device, string Source);
+
+/// <summary>
 /// Published when a device fails (<c>Devices.DeviceException</c>), to the hooks listening at
 /// <c>TelemetryLevel.Devices</c>: once when the error is raised, or once by the dispatcher when it retried the operation
 /// on the CPU (<c>Backend.RetryOnHost</c>).

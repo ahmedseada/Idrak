@@ -73,6 +73,16 @@ public sealed record ImageReaderOptions
     /// shortage is paid for once (the default); false: every batch starts with all its pages.
     /// </summary>
     public bool RememberBatchFit { get; init; } = true;
+
+    /// <summary>
+    /// Whether the reader measures its first read for suggested settings (<see cref="ImageReader.Suggestions"/>: the
+    /// device's peak during it, reset for the read, and what it has left): null (the default) when telemetry listens at
+    /// <see cref="TelemetryLevel.Suggestions"/> (the suggestions are published there, each once), true always, false never.
+    /// </summary>
+    public bool? Suggest { get; init; }
+
+    /// <summary>The share of the device's memory the suggested settings leave free (0.1: a tenth), for what a read did not show.</summary>
+    public double SuggestionHeadroom { get; init; } = 0.1;
 }
 
 /// <summary>What a batch of pages does when the device has no room for them together (<see cref="ImageReaderOptions.BatchFit"/>).</summary>
@@ -205,12 +215,49 @@ public sealed class ImageReader : IDisposable
                 Decode = images.Decode, Transforms = images.Transforms, Owner = images.Owner, EncoderPrecision = options.EncoderPrecision,
             };
             _chat = new ChatGenerator(chat.Generator, chat.Template) { Images = _reading };
+            Publish();                                                      // what the device alone decides
         }
         catch
         {
             _images.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Settings worth changing for this reader (every advisor of <see cref="SettingAdvisors"/>), from what its device
+    /// reports and, once a read was measured (<see cref="ImageReaderOptions.Suggest"/>), from that read's figures; none
+    /// where a figure is missing.
+    /// </summary>
+    public IReadOnlyList<SettingSuggestion> Suggestions() => SettingAdvisors.Suggest(Situation);
+
+    private AdviceSituation Situation => new(Model.Device, this, _measured) { Headroom = Options.SuggestionHeadroom };
+
+    private AdviceMeasure? _measured;
+    private readonly HashSet<(string Setting, string Value)> _published = [];
+
+    private bool Suggesting => Options.Suggest ?? Telemetry.IsEnabled(TelemetryLevel.Suggestions);
+
+    // Each suggestion once, to the hooks listening at TelemetryLevel.Suggestions.
+    private void Publish() => SettingAdvisors.Publish(Situation, _published);
+
+    // The first read, measured for the suggestions (when wanted and the device reports its free memory): the device's
+    // peak above what it held before, and what it has left after.
+    private T Measured<T>(Func<T> read, Func<T, (int Pages, int Positions)> figures)
+    {
+        var backend = Model.Device.Backend;
+        if (_measured is not null || !Suggesting || backend.AvailableMemory() is null)
+        {
+            return read();
+        }
+
+        long start = backend.GetMemoryUsage().InUse;
+        backend.ResetPeakMemoryUsage();
+        var result = read();
+        var (pages, positions) = figures(result);
+        _measured = new AdviceMeasure(pages, positions, Math.Max(0, backend.GetMemoryUsage().Peak - start), backend.AvailableMemory() ?? 0);
+        Publish();
+        return result;
     }
 
     // The chat the pages are read with (the tests look at its generator).
@@ -257,6 +304,12 @@ public sealed class ImageReader : IDisposable
     public IReadOnlyList<ImageReading> ReadBatch(IReadOnlyList<ImageReadRequest> requests, Action<int, string>? onText = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requests);
+        return requests.Count == 0 ? [] : Measured(() => ReadBatchCore(requests, onText, cancellationToken),
+            read => (read.Max(r => r.BatchSize), read.Max(r => r.Stats?.PromptTokens ?? 0) + requests.Max(r => r.MaxTokens)));
+    }
+
+    private IReadOnlyList<ImageReading> ReadBatchCore(IReadOnlyList<ImageReadRequest> requests, Action<int, string>? onText, CancellationToken cancellationToken)
+    {
         var clock = Stopwatch.StartNew();
         var results = new ImageReading?[requests.Count];
         var firsts = new TimeSpan?[requests.Count];
@@ -356,6 +409,12 @@ public sealed class ImageReader : IDisposable
     /// is generated.
     /// </summary>
     public ImageReading Read(ImageReadRequest request, Action<string>? onText = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return Measured(() => ReadCore(request, onText, cancellationToken), read => (1, (read.Stats?.PromptTokens ?? 0) + request.MaxTokens));
+    }
+
+    private ImageReading ReadCore(ImageReadRequest request, Action<string>? onText, CancellationToken cancellationToken)
     {
         var clock = Stopwatch.StartNew();
         string text = "";

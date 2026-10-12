@@ -22,6 +22,7 @@ Gemma3VisionPlugin.Register();
 
 var builder = WebApplication.CreateBuilder(args);
 var settings = builder.Configuration.GetSection("LegalOcr").Get<LegalOcrSettings>() ?? new LegalOcrSettings();
+using var suggestions = settings.ShowSuggestions ? Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Suggestions)) : null;
 builder.Services.AddSingleton(settings);
 builder.Services.AddSingleton(new AdapterStore(settings, builder.Environment.ContentRootPath));
 builder.Services.AddSingleton<ReaderService>();

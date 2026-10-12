@@ -31,7 +31,7 @@ internal sealed class TraceCommand : Command
 
     /// <summary>What is traced without <c>--levels</c>: everything but the per-operation events and gradient norms.</summary>
     public const TelemetryLevel DefaultLevels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Layers
-        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides;
+        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions;
 
     public override string Name => "trace";
 

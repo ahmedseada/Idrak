@@ -913,6 +913,20 @@ public enum Idrak.Abstraction.Devices.UnaryOp : int
   Square = 3
   Tanh = 1
 
+public sealed record Idrak.Abstraction.Diagnostics.AdviceMeasure : System.IEquatable<Idrak.Abstraction.Diagnostics.AdviceMeasure>
+  public AdviceMeasure(int Items, int Positions, long PeakAbove, long Available)
+  public int Items { get; init; }
+  public int Positions { get; init; }
+  public long Available { get; init; }
+  public long PeakAbove { get; init; }
+
+public sealed record Idrak.Abstraction.Diagnostics.AdviceSituation : System.IEquatable<Idrak.Abstraction.Diagnostics.AdviceSituation>
+  public AdviceSituation(Idrak.Abstraction.Device Device, object Subject, Idrak.Abstraction.Diagnostics.AdviceMeasure? Measured)
+  public Idrak.Abstraction.Device Device { get; init; }
+  public Idrak.Abstraction.Diagnostics.AdviceMeasure? Measured { get; init; }
+  public double Headroom { get; init; }
+  public object Subject { get; init; }
+
 public readonly record struct Idrak.Abstraction.Diagnostics.BatchCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.BatchCompleted>
   public BatchCompleted(int Epoch, int Batch, int BatchesPerEpoch, long Step, int BatchSize, double Loss, float LearningRate, double? GradientNorm, System.TimeSpan DataTime, System.TimeSpan ComputeTime)
   public System.TimeSpan ComputeTime { get; init; }
@@ -942,6 +956,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
@@ -960,6 +975,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
@@ -1018,6 +1034,11 @@ public interface Idrak.Abstraction.Diagnostics.IProfileWriter
   public string Summary { get; }
   public void Write(Idrak.Abstraction.Diagnostics.ProfileReport report, System.IO.TextWriter output)
 
+public interface Idrak.Abstraction.Diagnostics.ISettingAdvisor
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Diagnostics.SettingSuggestion> Suggest(Idrak.Abstraction.Diagnostics.AdviceSituation situation)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public (default) void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
@@ -1030,6 +1051,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public (default) void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public (default) void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public (default) void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public (default) void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public (default) void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public (default) void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
@@ -1078,6 +1100,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
@@ -1233,6 +1256,26 @@ public static class Idrak.Abstraction.Diagnostics.ProfileWriters
 public static class Idrak.Abstraction.Diagnostics.Profiler
   public static Idrak.Abstraction.Diagnostics.ProfileReport Run(string name, Idrak.Abstraction.Device device, System.Action<Idrak.Abstraction.Diagnostics.ProfileRun> workload, Idrak.Abstraction.Diagnostics.ProfileOptions? options = null)
 
+public static class Idrak.Abstraction.Diagnostics.SettingAdvisors
+  public static Idrak.Abstraction.Diagnostics.ISettingAdvisor? Default(string name)
+  public static Idrak.Abstraction.Diagnostics.ISettingAdvisor? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.SettingSuggestion> Suggest(Idrak.Abstraction.Diagnostics.AdviceSituation situation)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Publish(Idrak.Abstraction.Diagnostics.AdviceSituation situation, System.Collections.Generic.ISet<(string, string)> published)
+  public static void Register(Idrak.Abstraction.Diagnostics.ISettingAdvisor advisor)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.Diagnostics.SettingSuggestion : System.IEquatable<Idrak.Abstraction.Diagnostics.SettingSuggestion>
+  public SettingSuggestion(string Setting, string Value, string Reason, string Device, string Source)
+  public string Device { get; init; }
+  public string Reason { get; init; }
+  public string Setting { get; init; }
+  public string Source { get; init; }
+  public string Value { get; init; }
+
 public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static Idrak.Abstraction.Diagnostics.TelemetryBuilder Configure()
   public static Idrak.Abstraction.Diagnostics.TelemetryLevel ActiveLevels { get; }
@@ -1245,6 +1288,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void Engine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public static void EpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0)
+  public static void Suggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public static void ToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public static void TrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public static void TrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
@@ -1262,7 +1306,7 @@ public static class Idrak.Abstraction.Diagnostics.TelemetryJson
   public static void Write(System.Text.Json.Utf8JsonWriter w, Idrak.Abstraction.Diagnostics.TelemetryRecord record)
 
 [Flags] public enum Idrak.Abstraction.Diagnostics.TelemetryLevel : int
-  All = 1023
+  All = 2047
   Batches = 2
   Devices = 256
   Engine = 128
@@ -1272,6 +1316,7 @@ public static class Idrak.Abstraction.Diagnostics.TelemetryJson
   None = 0
   Operations = 16
   Overrides = 512
+  Suggestions = 1024
   Tools = 64
   Training = 1
 

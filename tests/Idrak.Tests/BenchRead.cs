@@ -28,6 +28,7 @@ using Idrak.Models;
 //                           with the time a page and the tokens a second of the whole batch
 //   IDRAK_BENCH_BATCH_FIT   split (the default: pages that do not fit together are read in halves) or fail;
 //                           IDRAK_BENCH_MAX_BATCH the most pages together (default as many as fit)
+//   IDRAK_BENCH_SUGGEST     1 (the default): suggested settings (TelemetryLevel.Suggestions) printed as the reader makes them; 0: none
 // How it is measured and written (ProfileOptions.FromEnvironment): IDRAK_PROFILE_WARM (3), IDRAK_PROFILE_COLD (1),
 // IDRAK_PROFILE_PROBES (all: bandwidth, cpu, heap, memory, operations, kernels, stages), IDRAK_PROFILE_STATISTIC (median),
 // IDRAK_PROFILE_FORMAT (table, markdown, csv, json), IDRAK_PROFILE_OUT (a file, appended).
@@ -42,6 +43,8 @@ internal static partial class Tests
     internal static int BenchRead()
     {
         RegisterGemma3Vision();
+        using var suggestions = Environment.GetEnvironmentVariable("IDRAK_BENCH_SUGGEST") is "0" or "false" ? null
+            : Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Suggestions));
         string Setting(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
         string folder = Setting("IDRAK_BENCH_MODEL", TestData("vlm/tiny-gemma3"));
         if (!Directory.Exists(folder) && folder.Count(ch => ch == '/') == 1 && !Path.IsPathRooted(folder))
