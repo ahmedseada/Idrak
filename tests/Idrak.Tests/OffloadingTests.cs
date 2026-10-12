@@ -21,6 +21,7 @@ internal static partial class Tests
         ("offloading: before inference, a model that did not fit has its frozen weights marked cold before any pass and moved out, largest first, until the headroom is free; its outputs are unchanged", OffloadBeforeInference),
         ("memory chunks: long-lived blocks (Backend.LongLivedAllocations) the driver would round to its page share chunks: the driver takes about their bytes instead of a page more each; values and kernels unchanged; a freed block's room is reused; outside the scope a block takes the chunks' free room and makes none; with GpuChunkBytes 0 each block is its own; empty chunks go back to the driver", ChunkedBlocks),
         ("memory tuning: measurements on a device run one at a time (four threads measuring the same choice measure it once, with no event read across threads), and the attention path's scratch goes back to the driver, not to the pool", MeasuringAlone),
+        ("memory stress: four threads take, check and free blocks of every kind the pool hands out (small, best-fit, chunk-sized in and out of the long-lived scope, a page and a little, whole pages) while others release the cache, record and replay graphs and measure the attention path; then again with the device at its limit and offloading on: no block handed out twice, every value kept, every graph recorded, no thread failing, and the pool's figures back where they started", MemoryStress),
         ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
     ];
 
@@ -671,5 +672,275 @@ internal static partial class Tests
         });
         Check(errors.IsEmpty, $"measuring from four threads: {string.Join("; ", errors)}");
         Check(cuda.MeasuredCount - measured == 1 && choices.Distinct().Count() == 1, $"{cuda.MeasuredCount - measured} measurements, choices {string.Join(", ", choices)}");
+    }
+
+    // The allocator's policies at once, from several threads on one device: the pool by size and best fit, chunks inside and
+    // outside the long-lived scope, the cache released by another thread, blocks freed while a graph is recorded, the
+    // attention path's scratch freed alone, and system blocks once the device is at its limit.
+    private static void MemoryStress(Device device)
+    {
+        var cuda = device.Backend as CudaBackend;
+        long page = cuda is { Page: > 0 } ? cuda.Page : 2L << 20;               // sizes around the driver's page
+
+        // A block's values: whole numbers below 251, exact in float32 and doubled exactly.
+        static float[] Pattern(int length, int seed)
+        {
+            var values = new float[length];
+            for (int i = 0; i < length; i++)
+            {
+                values[i] = (seed + i) % 251;
+            }
+
+            return values;
+        }
+
+        int Size(Random r) => r.Next(5) switch
+        {
+            0 => r.Next(1, 1024),                                              // below best fit: exact sizes only
+            1 => r.Next(1024, 64 << 10),                                       // best fit: up to a quarter larger
+            2 => (int)((page / 2 + r.Next(1, (int)(page / 8))) / 4),           // half a page and more: chunk-sized
+            3 => (int)((page + 4096) / 4),                                     // a page and a little: rounded to two alone
+            _ => (int)(page / 4),                                              // whole pages: never in a chunk
+        };
+
+        // One warm round, so what the device makes once (kernels, the tuning events, its zero position) is not counted.
+        using (var warm = Tensor.From(Pattern(4096, 1), [4096], device))
+        using (var doubled = warm * 2f)
+        {
+            _ = doubled.ToArray();
+        }
+
+        ComputeResources.ReleaseCachedMemory(device);
+        var start = ComputeResources.GetMemoryUsage(device);
+        int chunksBefore = cuda?.ChunkCount ?? 0;
+
+        Run("the device as it is", offloading: false);
+        if (cuda is not null && OffloadOf(device) is not null)
+        {
+            long? limit = ComputeResources.GpuMemoryLimit;
+            bool offloading = ComputeResources.OffloadToHostMemory;
+            try
+            {
+                // A few pages above what is in use: most new blocks land in system memory, the cache and chunks still serve.
+                ComputeResources.OffloadToHostMemory = true;
+                ComputeResources.GpuMemoryLimit = ComputeResources.GetMemoryUsage(device).InUse + 4 * page;
+                Run("at the limit, offloading on", offloading: true);
+            }
+            finally
+            {
+                ComputeResources.GpuMemoryLimit = limit;
+                ComputeResources.OffloadToHostMemory = offloading;
+            }
+        }
+
+        ComputeResources.ReleaseCachedMemory(device);
+        var end = ComputeResources.GetMemoryUsage(device);
+        Check(end.InUse <= start.InUse, $"in use back where it started: {end.InUse:N0} bytes, {start.InUse:N0} before");
+        Check(end.Cached <= start.Cached, $"nothing cached after the release: {end.Cached:N0} bytes, {start.Cached:N0} before");
+        Check(end.Offloaded <= start.Offloaded, $"no system block left: {end.Offloaded:N0} bytes, {start.Offloaded:N0} before");
+        Check(cuda is null || cuda.ChunkCount <= chunksBefore, $"empty chunks back to the driver: {cuda?.ChunkCount} held, {chunksBefore} before");
+
+        void Run(string name, bool offloading)
+        {
+            const int Workers = 4, Steps = 400, MostLive = 12;
+            var errors = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            var live = new System.Collections.Concurrent.ConcurrentDictionary<ulong, int>();   // CUDA: block address → worker
+            int finished = 0, releases = 0, graphs = 0, measurements = 0, onHost = 0;
+            long taken = 0;
+            bool Done() => Volatile.Read(ref finished) == Workers;
+            void Fail(string what, Exception e) => errors.Enqueue($"{what}: {e.GetType().Name}: {e.Message}");
+
+            void Verify(Tensor t, int seed, string what)
+            {
+                using var doubled = t * 2f;                                    // a kernel reads the block
+                var got = doubled.ToArray();
+                for (int i = 0; i < got.Length; i++)
+                {
+                    if (got[i] != 2 * ((seed + i) % 251))
+                    {
+                        errors.Enqueue($"{what}: element {i} of {got.Length} is {got[i] / 2}, expected {(seed + i) % 251} (a block shared or overwritten)");
+                        return;
+                    }
+                }
+            }
+
+            void Work(int worker)
+            {
+                var r = new Random(100 + worker);
+                var held = new List<(Tensor Tensor, int Seed, ulong Address)>();
+                void Free(int at)
+                {
+                    var (t, seed, address) = held[at];
+                    held.RemoveAt(at);
+                    Verify(t, seed, $"worker {worker}");
+                    if (address != 0)
+                    {
+                        live.TryRemove(address, out _);                         // before the block can be handed out again
+                    }
+
+                    t.Dispose();
+                }
+
+                try
+                {
+                    for (int step = 0; step < Steps; step++)
+                    {
+                        if (held.Count == 0 || (held.Count < MostLive && r.Next(3) > 0))
+                        {
+                            int length = Size(r), seed = worker * 1_000 + step;
+                            bool longLived = worker % 2 == 0 && r.Next(2) == 0;
+                            Tensor t;
+                            using (longLived ? device.Backend.LongLivedAllocations() : null)
+                            {
+                                t = Tensor.From(Pattern(length, seed), [length], device);
+                            }
+
+                            ulong address = t.Storage is CudaStorage block ? block.Pointer : 0;
+                            if (address != 0 && !live.TryAdd(address, worker))
+                            {
+                                errors.Enqueue($"worker {worker}: block 0x{address:X} handed out while worker {live.GetValueOrDefault(address)} holds it");
+                            }
+
+                            held.Add((t, seed, address));
+                            Interlocked.Increment(ref taken);
+                            if (offloading && ComputeResources.GetMemoryUsage(device).Offloaded > start.Offloaded)
+                            {
+                                Volatile.Write(ref onHost, 1);
+                            }
+                        }
+                        else
+                        {
+                            Free(r.Next(held.Count));
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Fail($"worker {worker}", e);
+                }
+                finally
+                {
+                    while (held.Count > 0)
+                    {
+                        try
+                        {
+                            Free(held.Count - 1);
+                        }
+                        catch (Exception e)
+                        {
+                            Fail($"worker {worker} freeing", e);
+                        }
+                    }
+
+                    Interlocked.Increment(ref finished);
+                }
+            }
+
+            void Release()
+            {
+                try
+                {
+                    do                                                         // at least once, however soon the workers finish
+                    {
+                        ComputeResources.ReleaseCachedMemory(device);
+                        Interlocked.Increment(ref releases);
+                        Thread.Sleep(1);
+                    }
+                    while (!Done());
+                }
+                catch (Exception e)
+                {
+                    Fail("releasing the cache", e);
+                }
+            }
+
+            void Record()
+            {
+                try
+                {
+                    var input = Pattern(4096, 3);
+                    using var x = Tensor.From(input, [4096], device);
+                    using var output = Tensor.Zeros([4096], device);
+                    var expected = input.Select(v => 2 * v + 1).ToArray();
+                    do
+                    {
+                        using var graph = ComputeGraph.Capture(device, () =>
+                        {
+                            using var doubled = x * 2f;                         // freed while recording: the graph's block
+                            using var plus = doubled + 1f;
+                            output.CopyFrom(plus);
+                        });
+                        if (device.Backend.SupportsGraphs && !graph.IsRecorded)
+                        {
+                            errors.Enqueue($"a graph not recorded: {graph.FailureReason}");
+                        }
+
+                        output.Fill(-1f);
+                        graph.Replay();
+                        var got = output.ToArray();
+                        if (!got.AsSpan().SequenceEqual(expected))
+                        {
+                            errors.Enqueue($"a replayed graph wrote {got[0]}, {got[^1]}; expected {expected[0]}, {expected[^1]}");
+                        }
+
+                        Interlocked.Increment(ref graphs);
+                    }
+                    while (!Done());
+                }
+                catch (Exception e)
+                {
+                    Fail("recording graphs", e);
+                }
+            }
+
+            void Measure()
+            {
+                // The attention path measured again and again: its scratch (the scores) is freed alone, past the cache.
+                const int heads = 2, rows = 256, dim = 64;
+                try
+                {
+                    var r = new Random(9);
+                    float[] Values(int n) => [.. Enumerable.Range(0, n).Select(_ => (float)(r.NextDouble() * 2 - 1))];
+                    using var q = Tensor.From(Values(heads * rows * dim), [heads, rows, dim], device);
+                    using var k = Tensor.From(Values(heads * rows * dim), [heads, rows, dim], device);
+                    using var v = Tensor.From(Values(heads * rows * dim), [heads, rows, dim], device);
+                    using var starts = Tensor.From(new float[heads * rows], [heads * rows], device);
+                    using var ends = Tensor.From(Enumerable.Repeat((float)rows, heads * rows).ToArray(), [heads * rows], device);
+                    while (!Done())
+                    {
+                        cuda!.ForgetMeasurements(TuneOp.AttentionPath);
+                        cuda.PrefersComposedAttention(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, null, heads, rows, rows, dim, 0.125f);
+                        Interlocked.Increment(ref measurements);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Fail("measuring the attention path", e);
+                }
+            }
+
+            var threads = new List<Thread>();
+            for (int w = 0; w < Workers; w++)
+            {
+                int worker = w;
+                threads.Add(new Thread(() => Work(worker)) { IsBackground = true });
+            }
+
+            threads.Add(new Thread(Release) { IsBackground = true });
+            threads.Add(new Thread(Record) { IsBackground = true });
+            if (cuda is not null && CudaBackend.Autotune && !offloading)
+            {
+                threads.Add(new Thread(Measure) { IsBackground = true });
+            }
+
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            threads.ForEach(t => t.Start());
+            threads.ForEach(t => t.Join());
+            Console.WriteLine($"    {name}: {taken} blocks taken by {Workers} threads, {releases} cache releases, {graphs} graphs recorded and replayed, " +
+                $"{measurements} attention-path measurements, {watch.Elapsed.TotalSeconds:F1} s");
+            Check(errors.IsEmpty, $"{name}: {errors.Count} failures; first: {string.Join(" | ", errors.Take(5))}");
+            Check(graphs > 0 && releases > 0, $"{name}: the other threads ran ({graphs} graphs, {releases} releases)");
+            Check(!offloading || Volatile.Read(ref onHost) == 1, $"{name}: blocks went to system memory at the limit");
+        }
     }
 }
