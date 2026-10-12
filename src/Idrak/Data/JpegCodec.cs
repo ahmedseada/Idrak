@@ -2,6 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Buffers.Binary;
+using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using Idrak.Abstraction.Devices;
 using Idrak.Data.Abstractions;
 
@@ -153,6 +158,20 @@ internal sealed class JpegDecoder
         static int Fix(double v) => (int)(v * (1 << scale) + 0.5);
     }
 
+    // The pooled coefficients back to the pool (after Output, or when decoding failed).
+    private void ReturnCoefficients()
+    {
+        foreach (var c in components)
+        {
+            if (c.Pooled)
+            {
+                c.Pooled = false;
+                ArrayPool<short>.Shared.Return(c.Coefficients);
+                c.Coefficients = [];
+            }
+        }
+    }
+
     private JpegDecoder(byte[] data, int fileSize) => (this.data, this.fileSize) = (data, fileSize);
 
     /// <summary>Whether <paramref name="marker"/> starts a frame (SOF0 to SOF15, but DHT, JPG and DAC).</summary>
@@ -162,16 +181,18 @@ internal sealed class JpegDecoder
     public static (byte[][] Planes, int Height, int Width) Decode(ReadOnlySpan<byte> file)
     {
         byte[] data = ArrayPool<byte>.Shared.Rent(file.Length);
+        JpegDecoder? decoder = null;
         try
         {
             file.CopyTo(data);
-            var decoder = new JpegDecoder(data, file.Length);
+            decoder = new JpegDecoder(data, file.Length);
             decoder.ReadSegments();
             return (decoder.Output(), decoder.height, decoder.width);
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(data);
+            decoder?.ReturnCoefficients();
         }
     }
 
@@ -348,7 +369,11 @@ internal sealed class JpegDecoder
             c.Height = (height * c.V + maxV - 1) / maxV;
             c.BlocksPerLine = mcusX * c.H;
             c.BlockRows = mcusY * c.V;
-            c.Coefficients = new short[checked(c.BlocksPerLine * c.BlockRows * 64)];
+            // A sequential frame's blocks are each cleared as its scan reaches them (in cache), so its coefficients come
+            // from the pool; a progressive frame's scans add to every block, so they start as zeros.
+            int length = checked(c.BlocksPerLine * c.BlockRows * 64);
+            c.Coefficients = isProgressive ? new short[length] : ArrayPool<short>.Shared.Rent(length);
+            c.Pooled = !isProgressive;
         }
     }
 
@@ -450,6 +475,12 @@ internal sealed class JpegDecoder
         bits = 0;
         count = 0;
         eobRun = 0;
+        if (mode == Mode.Sequential)
+        {
+            SequentialScan(scan);
+            return position;
+        }
+
         int done = 0;
         if (n == 1)
         {
@@ -505,6 +536,7 @@ internal sealed class JpegDecoder
         AcRefine,
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private void Block(Component c, int offset, Mode mode, int ss, int se, int ah, int al)
     {
         var block = c.Coefficients.AsSpan(offset, 64);
@@ -591,8 +623,225 @@ internal sealed class JpegDecoder
         }
     }
 
+    // A sequential scan (baseline and extended files): every block in one loop, the bit reader in locals. Bytes come eight
+    // at a time while the next 0xFF (found with IndexOf) is at least eight bytes away, else one at a time as Fill takes
+    // them (a stuffed 0xFF 0x00, or a marker that stops the reader and feeds zero bits). An AC code whose value bits also
+    // lie in the lookahead is one lookup (Huffman.Combined). The same bits are read in the same order as Block reads them.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private void SequentialScan(Component[] scan)
+    {
+        byte[] bytes = data;
+        int size = fileSize, pos = position, nextFF = NextFF(bytes, pos, size);
+        ulong bits = 0;
+        int count = 0;
+        var natural = Natural;
+        int n = scan.Length;
+        int unitsAcross = n == 1 ? (scan[0].Width + 7) / 8 : mcusX, unitsDown = n == 1 ? (scan[0].Height + 7) / 8 : mcusY;
+        int units = unitsAcross * unitsDown, done = 0;
+
+        // The blocks of one unit (an MCU, or one block of a lone component), in their order: component, row and column.
+        int perUnit = 0;
+        foreach (var c in scan)
+        {
+            perUnit += n == 1 ? 1 : c.H * c.V;
+            c.Scanned = true;                                                           // its blocks are all decoded below
+        }
+
+        var unitComponent = new Component[perUnit];
+        var unitOffset = new int[perUnit];                                              // the block's offset at unit (0, 0)
+        var unitDown = new int[perUnit];                                                // and per unit down and across
+        var unitAcross = new int[perUnit];
+        var unitDc = new Huffman[perUnit];
+        var unitAc = new Huffman[perUnit];
+        for (int i = 0, b = 0; i < n; i++)
+        {
+            var c = scan[i];
+            int v = n == 1 ? 1 : c.V, h = n == 1 ? 1 : c.H;
+            for (int dy = 0; dy < v; dy++)
+            {
+                for (int dx = 0; dx < h; dx++, b++)
+                {
+                    (unitComponent[b], unitOffset[b], unitDown[b], unitAcross[b]) = (c, (dy * c.BlocksPerLine + dx) * 64, v * c.BlocksPerLine * 64, h * 64);
+                    (unitDc[b], unitAc[b]) = (dcTables[c.DcTable]!, acTables[c.AcTable]!);
+                }
+            }
+        }
+
+        ref byte zigzag = ref MemoryMarshal.GetArrayDataReference(natural);
+        for (int uy = 0; uy < unitsDown; uy++)
+        {
+            for (int ux = 0; ux < unitsAcross; ux++)
+            {
+                for (int b = 0; b < perUnit; b++)
+                {
+                    var c = unitComponent[b];
+                    var block = c.Coefficients.AsSpan(unitOffset[b] + uy * unitDown[b] + ux * unitAcross[b], 64);
+                    block.Clear();
+                    ref short first = ref MemoryMarshal.GetReference(block);
+                    var dc = unitDc[b];
+                    var ac = unitAc[b];
+
+                    // The DC difference.
+                    if (count < 32)
+                    {
+                        Refill(ref bits, ref count, ref pos, ref nextFF, bytes, size);
+                    }
+
+                    int code = dc.Lookup(bits), length = code >> 8, t = code & 0xFF;
+                    bits <<= length;
+                    count -= length;
+                    if (t != 0)
+                    {
+                        if (count < t)
+                        {
+                            Refill(ref bits, ref count, ref pos, ref nextFF, bytes, size);
+                        }
+
+                        int value = (int)(bits >> (64 - t));
+                        bits <<= t;
+                        count -= t;
+                        c.Predictor += Extend(value, t);
+                    }
+
+                    block[0] = (short)c.Predictor;
+
+                    // The AC coefficients.
+                    var combined = ac.Combined;
+                    for (int k = 1; k < 64;)
+                    {
+                        if (count < 32)
+                        {
+                            Refill(ref bits, ref count, ref pos, ref nextFF, bytes, size);
+                        }
+
+                        int entry = combined[(int)(bits >> (64 - Huffman.LookBits))];
+                        if (entry != 0)
+                        {
+                            int used = entry & 0xFF;
+                            k += (entry >> 8) & 0xFF;
+                            bits <<= used;
+                            count -= used;
+                            Unsafe.Add(ref first, Unsafe.Add(ref zigzag, k)) = (short)(entry >> 16);   // k <= 78: Natural's length
+                            k++;
+                            continue;
+                        }
+
+                        code = ac.Lookup(bits);
+                        length = code >> 8;
+                        bits <<= length;
+                        count -= length;
+                        int rs = code & 0xFF;
+                        int r = rs >> 4, s = rs & 15;
+                        if (s == 0)
+                        {
+                            if (r != 15)
+                            {
+                                break;
+                            }
+
+                            k += 16;
+                            continue;
+                        }
+
+                        k += r;
+                        int coefficient = (int)(bits >> (64 - s));
+                        bits <<= s;
+                        count -= s;
+                        Unsafe.Add(ref first, Unsafe.Add(ref zigzag, k)) = (short)Extend(coefficient, s);
+                        k++;
+                    }
+                }
+
+                if (restartInterval > 0 && ++done % restartInterval == 0 && done < units)
+                {
+                    // The bits left are padding; the next marker should be RSTn; predictions restart.
+                    bits = 0;
+                    count = 0;
+                    foreach (var c in scan)
+                    {
+                        c.Predictor = 0;
+                    }
+
+                    int at = pos;
+                    if (NextMarker(ref at) is >= 0xD0 and <= 0xD7)
+                    {
+                        pos = at;
+                    }
+
+                    nextFF = NextFF(bytes, pos, size);
+                }
+            }
+        }
+
+        position = pos;
+    }
+
+    // Where the next 0xFF at or after `from` lies (the end when none does).
+    private static int NextFF(byte[] bytes, int from, int size)
+    {
+        int found = from < size ? bytes.AsSpan(from, size - from).IndexOf((byte)0xFF) : -1;
+        return found < 0 ? size : from + found;
+    }
+
+    // At least 57 bits in `bits` (zeros past a marker or the end): eight bytes at once while no 0xFF is among them (the bits
+    // below `count` then hold the next byte's first bits, which the next load writes again), else a byte at a time as Fill.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Refill(ref ulong bits, ref int count, ref int pos, ref int nextFF, byte[] bytes, int size)
+    {
+        if (pos + 8 <= nextFF)
+        {
+            bits |= BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(pos, 8)) >> count;
+            pos += (63 - count) >> 3;
+            count |= 56;
+            return;
+        }
+
+        (bits, count, pos, nextFF) = SlowRefill(bits, count, pos, nextFF, bytes, size);
+    }
+
+    // Refill's byte-at-a-time path (Fill's), its state passed and returned by value so the scan's locals stay in registers.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static (ulong Bits, int Count, int Pos, int NextFF) SlowRefill(ulong bits, int count, int pos, int nextFF, byte[] bytes, int size)
+    {
+        while (count <= 56)
+        {
+            int b = 0;
+            if (pos < size)
+            {
+                b = bytes[pos];
+                if (b == 0xFF)
+                {
+                    int next = pos + 1 < size ? bytes[pos + 1] : 0xD9;
+                    if (next == 0x00)
+                    {
+                        pos += 2;
+                    }
+                    else
+                    {
+                        b = 0;                                                          // a marker: stay before it
+                    }
+                }
+                else
+                {
+                    pos++;
+                }
+            }
+
+            bits |= (ulong)b << (56 - count);
+            count += 8;
+        }
+
+        if (pos > nextFF)
+        {
+            nextFF = NextFF(bytes, pos, size);
+        }
+
+        return (bits, count, pos, nextFF);
+    }
+
     // A refinement scan of AC coefficients (T.81 G.1.2.3, as jdphuff.c decode_mcu_AC_refine): one more bit of every
     // coefficient already non-zero, and new coefficients of magnitude 1 << al.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private void AcRefine(Component c, Span<short> block, int ss, int se, int al)
     {
         int p1 = 1 << al, m1 = -1 << al;
@@ -731,12 +980,13 @@ internal sealed class JpegDecoder
         public int Id, H, V, Table, DcTable, AcTable, Predictor;
         public int Width, Height, BlocksPerLine, BlockRows;
         public short[] Coefficients = [];
+        public bool Pooled, Scanned;
     }
 
     // A Huffman table: codes of up to 9 bits from one lookup, longer ones from the canonical code limits.
     private sealed class Huffman
     {
-        private const int LookBits = 9;
+        public const int LookBits = 9;
         private readonly ushort[] fast = new ushort[1 << LookBits];                     // (length << 8 | symbol), 0 when longer
         private readonly int[] maxCode = new int[17], offset = new int[17];
         private readonly byte[] symbols;
@@ -753,9 +1003,14 @@ internal sealed class JpegDecoder
                     if (length <= LookBits)
                     {
                         int shift = LookBits - length;
+                        int run = symbols[k] >> 4, size = symbols[k] & 15;
                         for (int fill = 0; fill < 1 << shift; fill++)
                         {
                             fast[code << shift | fill] = (ushort)(length << 8 | symbols[k]);
+                            if (size != 0 && length + size <= LookBits)
+                            {
+                                Combined[code << shift | fill] = Extend(fill >> (shift - size), size) << 16 | run << 8 | (length + size);
+                            }
                         }
                     }
                 }
@@ -764,6 +1019,34 @@ internal sealed class JpegDecoder
                 code <<= 1;
             }
 
+        }
+
+        // For an AC table: a code and its value bits in one lookup where both lie in the lookahead, as
+        // (value << 16 | run << 8 | bits used); 0 where they do not (EOB, ZRL, longer codes).
+        public int[] Combined { get; } = new int[1 << LookBits];
+
+        // The symbol the top of `bits` codes, as (length << 8 | symbol); a code that is not one (damaged data) is a zero of 16 bits.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int Lookup(ulong bits)
+        {
+            int entry = fast[(int)(bits >> (64 - LookBits))];
+            return entry != 0 ? entry : LookupLong(bits);
+        }
+
+        private int LookupLong(ulong bits)
+        {
+            int look = (int)(bits >> 48);
+            for (int length = LookBits + 1; length <= 16; length++)
+            {
+                int code = look >> (16 - length);
+                if (code <= maxCode[length])
+                {
+                    int index = code + offset[length];
+                    return length << 8 | ((uint)index < (uint)symbols.Length ? symbols[index] : 0);
+                }
+            }
+
+            return 16 << 8;
         }
 
         public int Decode(JpegDecoder reader)
@@ -807,88 +1090,354 @@ internal sealed class JpegDecoder
     {
         // Each component's samples at its own resolution (whole blocks; the rows and columns past its size unused).
         var samples = new byte[components.Length][];
-        for (int i = 0; i < components.Length; i++)
+        try
         {
-            var c = components[i];
-            int stride = c.BlocksPerLine * 8, rows = (c.Height + 7) / 8, across = (c.Width + 7) / 8;
-            var plane = samples[i] = new byte[stride * rows * 8];
-            var table = quant[c.Table] ?? throw new InvalidDataException("a JPEG component without a quantization table.");
-            HostParallel.For(rows, 1, (first, last) =>
+            for (int i = 0; i < components.Length; i++)
             {
-                Span<int> workspace = stackalloc int[64];
-                for (int by = first; by < last; by++)
+                var c = components[i];
+                if (c.Pooled && !c.Scanned)
                 {
-                    for (int bx = 0; bx < across; bx++)
+                    c.Coefficients.AsSpan().Clear();                                        // no scan reached it: zeros, as a new array
+                }
+
+                int stride = c.BlocksPerLine * 8, rows = (c.Height + 7) / 8, across = (c.Width + 7) / 8;
+                var plane = samples[i] = ArrayPool<byte>.Shared.Rent(checked(stride * rows * 8));  // every byte read below is written by the IDCT
+                var table = quant[c.Table] ?? throw new InvalidDataException("a JPEG component without a quantization table.");
+                HostParallel.For(rows, 1, [MethodImpl(MethodImplOptions.AggressiveOptimization)] (first, last) =>
+                {
+                    Span<int> workspace = stackalloc int[64];
+                    for (int by = first; by < last; by++)
                     {
-                        Idct(c.Coefficients.AsSpan((by * c.BlocksPerLine + bx) * 64, 64), table, plane.AsSpan(by * 8 * stride + bx * 8), stride, workspace);
+                        for (int bx = 0; bx < across; bx++)
+                        {
+                            var block = c.Coefficients.AsSpan((by * c.BlocksPerLine + bx) * 64, 64);
+                            var target = plane.AsSpan(by * 8 * stride + bx * 8);
+                            if (Vector256.IsHardwareAccelerated)
+                            {
+                                IdctVector(block, table, target, stride);
+                            }
+                            else
+                            {
+                                Idct(block, table, target, stride, workspace);
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Every component at full size and to RGB in one pass over the output, a band of rows at a time: each output row's
+            // samples of every component (a sample plane's own row where the component is not subsampled, else upsampled into
+            // a row buffer), then the colour conversion straight into the output planes.
+            int n = components.Length;
+            bool rgb = n == 3 && (sawJfif ? false
+                : sawAdobe ? adobeTransform == 0
+                : components[0].Id == 'R' && components[1].Id == 'G' && components[2].Id == 'B');
+            bool ycck = n == 4 && sawAdobe && adobeTransform == 2;
+            var output = new byte[n == 1 ? 1 : 3][];
+            for (int i = 0; i < output.Length; i++)
+            {
+                output[i] = GC.AllocateUninitializedArray<byte>(checked(width * height));         // every byte written below
+            }
+
+            int w = width, widest = 0;
+            foreach (var c in components)
+            {
+                widest = Math.Max(widest, c.Width);
+            }
+
+            HostParallel.For(height, 16, [MethodImpl(MethodImplOptions.AggressiveOptimization)] (first, last) =>
+            {
+                var buffers = new byte[n][];
+                int[] sums = ArrayPool<int>.Shared.Rent(widest);
+                ushort[] narrowSums = ArrayPool<ushort>.Shared.Rent(widest + Vector<ushort>.Count);
+                byte[] wide = ArrayPool<byte>.Shared.Rent(2 * widest);
+                for (int i = 0; i < n; i++)
+                {
+                    buffers[i] = ArrayPool<byte>.Shared.Rent(w);
+                }
+
+                try
+                {
+                    for (int y = first; y < last; y++)
+                    {
+                        int at = y * w;
+                        var s0 = ComponentRow(0, samples[0], y, buffers[0], sums, narrowSums, wide);
+                        if (n == 1)
+                        {
+                            s0.CopyTo(output[0].AsSpan(at, w));
+                            continue;
+                        }
+
+                        var s1 = ComponentRow(1, samples[1], y, buffers[1], sums, narrowSums, wide);
+                        var s2 = ComponentRow(2, samples[2], y, buffers[2], sums, narrowSums, wide);
+                        if (n == 4)
+                        {
+                            CmykRow(s0, s1, s2, ComponentRow(3, samples[3], y, buffers[3], sums, narrowSums, wide), ycck,
+                                output[0].AsSpan(at, w), output[1].AsSpan(at, w), output[2].AsSpan(at, w));
+                        }
+                        else if (rgb)
+                        {
+                            s0.CopyTo(output[0].AsSpan(at, w));
+                            s1.CopyTo(output[1].AsSpan(at, w));
+                            s2.CopyTo(output[2].AsSpan(at, w));
+                        }
+                        else
+                        {
+                            YccRow(s0, s1, s2, output[0].AsSpan(at, w), output[1].AsSpan(at, w), output[2].AsSpan(at, w));
+                        }
+                    }
+                }
+                finally
+                {
+                    ArrayPool<int>.Shared.Return(sums);
+                    ArrayPool<ushort>.Shared.Return(narrowSums);
+                    ArrayPool<byte>.Shared.Return(wide);
+                    foreach (var buffer in buffers)
+                    {
+                        ArrayPool<byte>.Shared.Return(buffer);
                     }
                 }
             });
+            return output;
         }
-
-        // Every component at full size, then to RGB.
-        var full = new byte[components.Length][];
-        for (int i = 0; i < components.Length; i++)
+        finally
         {
-            full[i] = Upsample(components[i], samples[i]);
+            foreach (var plane in samples)
+            {
+                if (plane is not null)
+                {
+                    ArrayPool<byte>.Shared.Return(plane);
+                }
+            }
         }
-
-        if (components.Length == 1)
-        {
-            return full;
-        }
-
-        if (components.Length == 4)
-        {
-            return CmykToRgb(full);
-        }
-
-        bool rgb = sawJfif ? false
-            : sawAdobe ? adobeTransform == 0
-            : components[0].Id == 'R' && components[1].Id == 'G' && components[2].Id == 'B';
-        if (!rgb)
-        {
-            YccToRgb(full[0], full[1], full[2]);
-        }
-
-        return full;
     }
 
-    // Four components to RGB as Pillow gives them: libjpeg turns YCCK (Adobe transform 2) into CMYK (jdcolor.c
+    // Output row y of component i at the image's size: the sample plane's own row when the component has the largest
+    // sampling; libjpeg's fancy (triangle) upsampling for 2:1 in either direction or both; repeated samples for other ratios.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private ReadOnlySpan<byte> ComponentRow(int i, byte[] plane, int y, byte[] buffer, int[] sums, ushort[] narrowSums, byte[] wide)
+    {
+        var c = components[i];
+        int stride = c.BlocksPerLine * 8, cw = c.Width, ch = c.Height, w = width;
+        int rx = maxH / c.H, ry = maxV / c.V;
+        if (rx == 1 && ry == 1)
+        {
+            return plane.AsSpan(y * stride, w);
+        }
+
+        var target = buffer.AsSpan(0, w);
+        bool fancy = rx == 2 && ry is 1 or 2 || rx == 1 && ry == 2;
+        if (!fancy || cw < 2 && rx == 2)
+        {
+            var source = plane.AsSpan(Math.Min(y / ry, ch - 1) * stride);
+            for (int x = 0; x < w; x++)
+            {
+                target[x] = source[Math.Min(x / rx, cw - 1)];
+            }
+
+            return target;
+        }
+
+        int r = y / ry, v = y % ry;
+        var current = plane.AsSpan(r * stride, cw);
+        if (ry == 1)
+        {
+            H2V1(current, target, wide);
+            return target;
+        }
+
+        // Vertically: three parts of this row and one of the row above (for the upper output row) or below (for the
+        // lower), the edges repeated.
+        var other = plane.AsSpan(Math.Clamp(v == 0 ? r - 1 : r + 1, 0, ch - 1) * stride, cw);
+        if (rx == 2)
+        {
+            FancyH2V2(current, other, target, narrowSums, sums, wide);
+            return target;
+        }
+
+        var row = sums.AsSpan(0, cw);
+        for (int x = 0; x < cw; x++)
+        {
+            row[x] = current[x] * 3 + other[x];
+        }
+
+        if (rx == 1)
+        {
+            int bias = v == 0 ? 1 : 2;                                                  // jdsample.c h1v2_fancy_upsample
+            for (int x = 0; x < w; x++)
+            {
+                target[x] = (byte)((row[x] + bias) >> 2);
+            }
+        }
+        else
+        {
+            H2V2(row, target, wide);
+        }
+
+        return target;
+    }
+
+    // jdsample.c h2v2_fancy_upsample for one output row: the column sums (3/4 of `current`, 1/4 of `other`; at most 1,020,
+    // so 16-bit lanes hold them and their weighted sums), then each output pair from a sum and its neighbours. Vectors of
+    // pairs where they are accelerated on a little-endian host (a pair is one 16-bit lane, odd << 8 | even, stored as its
+    // two bytes); the edges and the rest as H2V2.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void FancyH2V2(ReadOnlySpan<byte> current, ReadOnlySpan<byte> other, Span<byte> target, ushort[] sums, int[] row, byte[] wide)
+    {
+        int n = current.Length, lanes = Vector<ushort>.Count;
+        if (!Vector.IsHardwareAccelerated || !BitConverter.IsLittleEndian || n < lanes + 2)
+        {
+            for (int x = 0; x < n; x++)
+            {
+                row[x] = current[x] * 3 + other[x];
+            }
+
+            H2V2(row.AsSpan(0, n), target, wide);
+            return;
+        }
+
+        var three = new Vector<ushort>(3);
+        int x0 = 0;
+        for (; x0 + Vector<byte>.Count <= n; x0 += Vector<byte>.Count)
+        {
+            Vector.Widen(new Vector<byte>(current[x0..]), out var c0, out var c1);
+            Vector.Widen(new Vector<byte>(other[x0..]), out var o0, out var o1);
+            (c0 * three + o0).CopyTo(sums.AsSpan(x0));
+            (c1 * three + o1).CopyTo(sums.AsSpan(x0 + lanes));
+        }
+
+        for (; x0 < n; x0++)
+        {
+            sums[x0] = (ushort)(current[x0] * 3 + other[x0]);
+        }
+
+        // Pairs 1 .. n - 2 in vectors (each needs its left and right neighbour), the first and last pairs as H2V2 makes them.
+        int w = target.Length;
+        var eight = new Vector<ushort>(8);
+        var seven = new Vector<ushort>(7);
+        var pairs = MemoryMarshal.Cast<byte, ushort>(target);                             // whole pairs only: 2i + 1 < w
+        int last = Math.Min(n - 2, (w >> 1) - 1);                                        // the last pair index written here
+        int i = 1;
+        for (; i + lanes - 1 <= last; i += lanes)
+        {
+            var s = new Vector<ushort>(sums.AsSpan(i));
+            var left = new Vector<ushort>(sums.AsSpan(i - 1));
+            var right = new Vector<ushort>(sums.AsSpan(i + 1));
+            var even = Vector.ShiftRightLogical(s * three + left + eight, 4);
+            var odd = Vector.ShiftRightLogical(s * three + right + seven, 4);
+            (even | Vector.ShiftLeft(odd, 8)).CopyTo(pairs[i..]);
+        }
+
+        for (; i <= n - 2; i++)
+        {
+            int value = sums[i] * 3;
+            Put(target, 2 * i, (value + sums[i - 1] + 8) >> 4);
+            Put(target, 2 * i + 1, (value + sums[i + 1] + 7) >> 4);
+        }
+
+        Put(target, 0, (sums[0] * 4 + 8) >> 4);
+        Put(target, 1, (sums[0] * 3 + sums[1] + 7) >> 4);
+        Put(target, 2 * n - 2, (sums[n - 1] * 3 + sums[n - 2] + 8) >> 4);
+        Put(target, 2 * n - 1, (sums[n - 1] * 4 + 7) >> 4);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void Put(Span<byte> target, int at, int value)
+        {
+            if (at < target.Length)
+            {
+                target[at] = (byte)value;
+            }
+        }
+    }
+
+    // jdcolor.c's constants (16 fractional bits, rounded as libjpeg rounds them), the ones its tables are made of.
+    private static readonly int FixCrToR = Fix(1.40200), FixCbToB = Fix(1.77200), FixCrToG = Fix(0.71414), FixCbToG = Fix(0.34414);
+
+    private static int Fix(double v) => (int)(v * (1 << 16) + 0.5);
+
+    // One row of YCbCr to RGB, as the tables give it (CrToR, CbToB, CbToG + CrToG): the same integer formula on a vector
+    // of pixels at a time, then a scalar tail through the tables.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void YccRow(ReadOnlySpan<byte> luma, ReadOnlySpan<byte> cb, ReadOnlySpan<byte> cr, Span<byte> red, Span<byte> green, Span<byte> blue)
+    {
+        int x = 0, n = Vector<byte>.Count, w = red.Length;
+        if (Vector.IsHardwareAccelerated && w >= n)
+        {
+            var half = new Vector<int>(1 << 15);
+            var centre = new Vector<int>(128);
+            var top = new Vector<int>(255);
+            var toR = new Vector<int>(FixCrToR);
+            var toB = new Vector<int>(FixCbToB);
+            var crToG = new Vector<int>(-FixCrToG);
+            var cbToG = new Vector<int>(-FixCbToG);
+            for (; x <= w - n; x += n)
+            {
+                Vector.Widen(new Vector<byte>(luma[x..]), out var y01, out var y23);
+                Vector.Widen(new Vector<byte>(cb[x..]), out var b01, out var b23);
+                Vector.Widen(new Vector<byte>(cr[x..]), out var r01, out var r23);
+                Vector.Widen(y01, out var y0, out var y1);
+                Vector.Widen(y23, out var y2, out var y3);
+                Vector.Widen(b01, out var b0, out var b1);
+                Vector.Widen(b23, out var b2, out var b3);
+                Vector.Widen(r01, out var r0, out var r1);
+                Vector.Widen(r23, out var r2, out var r3);
+                Pixel(y0, b0, r0, out var oR0, out var oG0, out var oB0);
+                Pixel(y1, b1, r1, out var oR1, out var oG1, out var oB1);
+                Pixel(y2, b2, r2, out var oR2, out var oG2, out var oB2);
+                Pixel(y3, b3, r3, out var oR3, out var oG3, out var oB3);
+                Vector.Narrow(Vector.Narrow(oR0, oR1), Vector.Narrow(oR2, oR3)).CopyTo(red[x..]);
+                Vector.Narrow(Vector.Narrow(oG0, oG1), Vector.Narrow(oG2, oG3)).CopyTo(green[x..]);
+                Vector.Narrow(Vector.Narrow(oB0, oB1), Vector.Narrow(oB2, oB3)).CopyTo(blue[x..]);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            void Pixel(Vector<uint> yy, Vector<uint> bb, Vector<uint> rr, out Vector<uint> oR, out Vector<uint> oG, out Vector<uint> oB)
+            {
+                var l = Vector.AsVectorInt32(yy);
+                var xb = Vector.AsVectorInt32(bb) - centre;
+                var xr = Vector.AsVectorInt32(rr) - centre;
+                oR = Clamp(l + Vector.ShiftRightArithmetic(toR * xr + half, 16));
+                oG = Clamp(l + Vector.ShiftRightArithmetic(cbToG * xb + half + crToG * xr, 16));
+                oB = Clamp(l + Vector.ShiftRightArithmetic(toB * xb + half, 16));
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            Vector<uint> Clamp(Vector<int> v) => Vector.AsVectorUInt32(Vector.Min(Vector.Max(v, Vector<int>.Zero), top));
+        }
+
+        for (; x < w; x++)
+        {
+            int l = luma[x], b = cb[x], r = cr[x];
+            red[x] = (byte)Math.Clamp(l + CrToR[r], 0, 255);
+            green[x] = (byte)Math.Clamp(l + ((CbToG[b] + CrToG[r]) >> 16), 0, 255);
+            blue[x] = (byte)Math.Clamp(l + CbToB[b], 0, 255);
+        }
+    }
+
+    // One row of four components to RGB as Pillow gives them: libjpeg turns YCCK (Adobe transform 2) into CMYK (jdcolor.c
     // ycck_cmyk_convert: the inverse of the YCbCr colours, K kept); Pillow reads every CMYK JPEG as inverted (Adobe's
     // convention, its "CMYK;I", with or without the Adobe segment), then converts with its cmyk2rgb: each channel is
     // (255 - K) - C * (255 - K) / 255, rounded as Pillow's MULDIV255.
-    private byte[][] CmykToRgb(byte[][] full)
+    private static void CmykRow(ReadOnlySpan<byte> c, ReadOnlySpan<byte> m, ReadOnlySpan<byte> y, ReadOnlySpan<byte> k, bool ycck,
+        Span<byte> red, Span<byte> green, Span<byte> blue)
     {
-        byte[] c = full[0], m = full[1], y = full[2], k = full[3];
-        bool ycck = sawAdobe && adobeTransform == 2;
-        var rgb = new byte[3][];
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < red.Length; i++)
         {
-            rgb[i] = new byte[width * height];
-        }
-
-        HostParallel.For(height, 16, (first, last) =>
-        {
-            for (int i = first * width; i < last * width; i++)
+            int cyan = c[i], magenta = m[i], yellow = y[i], black = k[i];
+            if (ycck)
             {
-                int cyan = c[i], magenta = m[i], yellow = y[i], black = k[i];
-                if (ycck)
-                {
-                    int luma = cyan, blue = magenta, red = yellow;
-                    cyan = Math.Clamp(255 - (luma + CrToR[red]), 0, 255);
-                    magenta = Math.Clamp(255 - (luma + ((CbToG[blue] + CrToG[red]) >> 16)), 0, 255);
-                    yellow = Math.Clamp(255 - (luma + CbToB[blue]), 0, 255);
-                }
-
-                (cyan, magenta, yellow, black) = (255 - cyan, 255 - magenta, 255 - yellow, 255 - black);
-                int nk = 255 - black;
-                rgb[0][i] = (byte)Math.Clamp(nk - MulDiv255(cyan, nk), 0, 255);
-                rgb[1][i] = (byte)Math.Clamp(nk - MulDiv255(magenta, nk), 0, 255);
-                rgb[2][i] = (byte)Math.Clamp(nk - MulDiv255(yellow, nk), 0, 255);
+                int luma = cyan, chromaBlue = magenta, chromaRed = yellow;
+                cyan = Math.Clamp(255 - (luma + CrToR[chromaRed]), 0, 255);
+                magenta = Math.Clamp(255 - (luma + ((CbToG[chromaBlue] + CrToG[chromaRed]) >> 16)), 0, 255);
+                yellow = Math.Clamp(255 - (luma + CbToB[chromaBlue]), 0, 255);
             }
-        });
-        return rgb;
+
+            (cyan, magenta, yellow, black) = (255 - cyan, 255 - magenta, 255 - yellow, 255 - black);
+            int nk = 255 - black;
+            red[i] = (byte)Math.Clamp(nk - MulDiv255(cyan, nk), 0, 255);
+            green[i] = (byte)Math.Clamp(nk - MulDiv255(magenta, nk), 0, 255);
+            blue[i] = (byte)Math.Clamp(nk - MulDiv255(yellow, nk), 0, 255);
+        }
 
         static int MulDiv255(int a, int b)
         {
@@ -897,114 +1446,8 @@ internal sealed class JpegDecoder
         }
     }
 
-    private void YccToRgb(byte[] y, byte[] cb, byte[] cr)
-    {
-        HostParallel.For(height, 16, (first, last) =>
-        {
-            for (int i = first * width; i < last * width; i++)
-            {
-                int luma = y[i], blue = cb[i], red = cr[i];
-                y[i] = Clamp(luma + CrToR[red]);
-                cb[i] = Clamp(luma + ((CbToG[blue] + CrToG[red]) >> 16));
-                cr[i] = Clamp(luma + CbToB[blue]);
-            }
-        });
-
-        static byte Clamp(int v) => (byte)Math.Clamp(v, 0, 255);
-    }
-
-    // A component's samples at the image's size: as they are (the same sampling as the largest), with libjpeg's fancy
-    // (triangle) upsampling for 2:1 in either direction or both, and by repeating samples for other ratios.
-    private byte[] Upsample(Component c, byte[] plane)
-    {
-        int stride = c.BlocksPerLine * 8, cw = c.Width, ch = c.Height, w = width, h = height;
-        int rx = maxH / c.H, ry = maxV / c.V;
-        var output = new byte[checked(w * h)];
-        if (rx == 1 && ry == 1)
-        {
-            for (int y = 0; y < h; y++)
-            {
-                plane.AsSpan(y * stride, w).CopyTo(output.AsSpan(y * w));
-            }
-
-            return output;
-        }
-
-        bool fancy = rx == 2 && ry is 1 or 2 || rx == 1 && ry == 2;
-        if (!fancy || cw < 2 && rx == 2)
-        {
-            HostParallel.For(h, 16, (first, last) =>
-            {
-                for (int y = first; y < last; y++)
-                {
-                    var source = plane.AsSpan(Math.Min(y / ry, ch - 1) * stride);
-                    var target = output.AsSpan(y * w, w);
-                    for (int x = 0; x < w; x++)
-                    {
-                        target[x] = source[Math.Min(x / rx, cw - 1)];
-                    }
-                }
-            });
-            return output;
-        }
-
-        HostParallel.For(ch, 8, (first, last) =>
-        {
-            var row = ArrayPool<int>.Shared.Rent(cw);
-            var wide = ArrayPool<byte>.Shared.Rent(2 * cw);
-            try
-            {
-                for (int r = first; r < last; r++)
-                {
-                    var current = plane.AsSpan(r * stride, cw);
-                    for (int v = 0; v < ry; v++)
-                    {
-                        int y = r * ry + v;
-                        if (y >= h)
-                        {
-                            break;
-                        }
-
-                        var target = output.AsSpan(y * w, w);
-                        if (ry == 1)
-                        {
-                            H2V1(current, target, wide);
-                            continue;
-                        }
-
-                        // Vertically: three parts of this row and one of the row above (for the upper output row) or
-                        // below (for the lower), the edges repeated.
-                        var other = plane.AsSpan(Math.Clamp(v == 0 ? r - 1 : r + 1, 0, ch - 1) * stride, cw);
-                        for (int x = 0; x < cw; x++)
-                        {
-                            row[x] = current[x] * 3 + other[x];
-                        }
-
-                        if (rx == 1)
-                        {
-                            int bias = v == 0 ? 1 : 2;                                  // jdsample.c h1v2_fancy_upsample
-                            for (int x = 0; x < w; x++)
-                            {
-                                target[x] = (byte)((row[x] + bias) >> 2);
-                            }
-                        }
-                        else
-                        {
-                            H2V2(row.AsSpan(0, cw), target, wide);
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                ArrayPool<int>.Shared.Return(row);
-                ArrayPool<byte>.Shared.Return(wide);
-            }
-        });
-        return output;
-    }
-
     // jdsample.c h2v1_fancy_upsample: each output sample is 3/4 of the nearer input sample and 1/4 of the further one.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void H2V1(ReadOnlySpan<byte> input, Span<byte> target, byte[] wide)
     {
         int n = input.Length;
@@ -1023,6 +1466,7 @@ internal sealed class JpegDecoder
     }
 
     // jdsample.c h2v2_fancy_upsample, horizontally, on column sums already 3/4 this row and 1/4 the other.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void H2V2(ReadOnlySpan<int> sums, Span<byte> target, byte[] wide)
     {
         int n = sums.Length;
@@ -1038,6 +1482,175 @@ internal sealed class JpegDecoder
         wide[2 * n - 2] = (byte)((sums[n - 1] * 3 + sums[n - 2] + 8) >> 4);
         wide[2 * n - 1] = (byte)((sums[n - 1] * 4 + 7) >> 4);
         wide.AsSpan(0, target.Length).CopyTo(target);
+    }
+
+    // jidctint.c's islow on eight columns (then eight rows) at once, one Vector256<int> lane each: the same integer formula
+    // as Idct, branch-free, with each zero-AC shortcut of Idct taken per lane (they equal the full formula except where its
+    // 32-bit products wrap, so selecting them keeps every byte Idct gives).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void IdctVector(ReadOnlySpan<short> input, int[] q, Span<byte> output, int stride)
+    {
+        const int constBits = 13, pass1Bits = 2;
+        ref short c0 = ref MemoryMarshal.GetReference(input);
+        ref int q0 = ref MemoryMarshal.GetArrayDataReference(q);
+
+        // Pass 1: the columns, a lane each; the rows of the block are the vectors.
+        var i0 = Row(ref c0, ref q0, 0);
+        var i1 = Row(ref c0, ref q0, 1);
+        var i2 = Row(ref c0, ref q0, 2);
+        var i3 = Row(ref c0, ref q0, 3);
+        var i4 = Row(ref c0, ref q0, 4);
+        var i5 = Row(ref c0, ref q0, 5);
+        var i6 = Row(ref c0, ref q0, 6);
+        var i7 = Row(ref c0, ref q0, 7);
+        var rawAc = Vector128.LoadUnsafe(ref c0, 8) | Vector128.LoadUnsafe(ref c0, 16) | Vector128.LoadUnsafe(ref c0, 24) | Vector128.LoadUnsafe(ref c0, 32)
+            | Vector128.LoadUnsafe(ref c0, 40) | Vector128.LoadUnsafe(ref c0, 48) | Vector128.LoadUnsafe(ref c0, 56);
+        var acZero = Vector256.WidenLower(Vector128.Equals(rawAc, Vector128<short>.Zero).ToVector256Unsafe());
+        Butterfly(i0, i1, i2, i3, i4, i5, i6, i7, out var w0, out var w1, out var w2, out var w3, out var w4, out var w5, out var w6, out var w7);
+        const int shift1 = constBits - pass1Bits;
+        var round1 = Vector256.Create(1 << (shift1 - 1));
+        var dc = i0 << pass1Bits;
+        w0 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w0 + round1, shift1));
+        w1 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w1 + round1, shift1));
+        w2 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w2 + round1, shift1));
+        w3 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w3 + round1, shift1));
+        w4 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w4 + round1, shift1));
+        w5 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w5 + round1, shift1));
+        w6 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w6 + round1, shift1));
+        w7 = Vector256.ConditionalSelect(acZero, dc, Vector256.ShiftRightArithmetic(w7 + round1, shift1));
+
+        // Pass 2: the rows, a lane each, after a transpose.
+        Transpose(ref w0, ref w1, ref w2, ref w3, ref w4, ref w5, ref w6, ref w7);
+        acZero = Vector256.Equals(w1 | w2 | w3 | w4 | w5 | w6 | w7, Vector256<int>.Zero);
+        Butterfly(w0, w1, w2, w3, w4, w5, w6, w7, out var o0, out var o1, out var o2, out var o3, out var o4, out var o5, out var o6, out var o7);
+        const int shift2 = constBits + pass1Bits + 3;
+        var round2 = Vector256.Create(1 << (shift2 - 1));
+        var flat = Limit(Vector256.ShiftRightArithmetic(w0 + Vector256.Create(1 << (pass1Bits + 2)), pass1Bits + 3));
+        o0 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o0 + round2, shift2)));
+        o1 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o1 + round2, shift2)));
+        o2 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o2 + round2, shift2)));
+        o3 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o3 + round2, shift2)));
+        o4 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o4 + round2, shift2)));
+        o5 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o5 + round2, shift2)));
+        o6 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o6 + round2, shift2)));
+        o7 = Vector256.ConditionalSelect(acZero, flat, Limit(Vector256.ShiftRightArithmetic(o7 + round2, shift2)));
+
+        // Back to rows of samples (0..255 in each lane), eight bytes a row.
+        Transpose(ref o0, ref o1, ref o2, ref o3, ref o4, ref o5, ref o6, ref o7);
+        var r03 = Vector256.Narrow(Vector256.Narrow(o0.AsUInt32(), o1.AsUInt32()), Vector256.Narrow(o2.AsUInt32(), o3.AsUInt32())).AsUInt64();
+        var r47 = Vector256.Narrow(Vector256.Narrow(o4.AsUInt32(), o5.AsUInt32()), Vector256.Narrow(o6.AsUInt32(), o7.AsUInt32())).AsUInt64();
+        MemoryMarshal.Write(output, r03.GetElement(0));
+        MemoryMarshal.Write(output[stride..], r03.GetElement(1));
+        MemoryMarshal.Write(output[(2 * stride)..], r03.GetElement(2));
+        MemoryMarshal.Write(output[(3 * stride)..], r03.GetElement(3));
+        MemoryMarshal.Write(output[(4 * stride)..], r47.GetElement(0));
+        MemoryMarshal.Write(output[(5 * stride)..], r47.GetElement(1));
+        MemoryMarshal.Write(output[(6 * stride)..], r47.GetElement(2));
+        MemoryMarshal.Write(output[(7 * stride)..], r47.GetElement(3));
+
+        // Row r of the coefficients, dequantized, as ints.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static Vector256<int> Row(ref short c0, ref int q0, int r) =>
+            Vector256.WidenLower(Vector128.LoadUnsafe(ref Unsafe.Add(ref c0, 8 * r)).ToVector256Unsafe()) * Vector256.LoadUnsafe(ref Unsafe.Add(ref q0, 8 * r));
+
+        // IdctLimit's table on every lane: the low 10 bits of v, signed, plus 128, held to 0..255.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static Vector256<int> Limit(Vector256<int> v) =>
+            Vector256.Min(Vector256.Max(Vector256.ShiftRightArithmetic(v << 22, 22) + Vector256.Create(128), Vector256<int>.Zero), Vector256.Create(255));
+    }
+
+    // The even and odd parts of jidctint.c's islow on eight lanes, before the descale: x0..x7 the inputs, y0..y7 the outputs
+    // in their order (tmp10 + tmp3, tmp11 + tmp2, tmp12 + tmp1, tmp13 + tmp0, tmp13 - tmp0, tmp12 - tmp1, tmp11 - tmp2, tmp10 - tmp3).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Butterfly(Vector256<int> x0, Vector256<int> x1, Vector256<int> x2, Vector256<int> x3, Vector256<int> x4, Vector256<int> x5,
+        Vector256<int> x6, Vector256<int> x7, out Vector256<int> y0, out Vector256<int> y1, out Vector256<int> y2, out Vector256<int> y3,
+        out Vector256<int> y4, out Vector256<int> y5, out Vector256<int> y6, out Vector256<int> y7)
+    {
+        const int constBits = 13;
+        const int fix0298631336 = 2446, fix0390180644 = 3196, fix0541196100 = 4433, fix0765366865 = 6270, fix0899976223 = 7373,
+            fix1175875602 = 9633, fix1501321110 = 12299, fix1847759065 = 15137, fix1961570560 = 16069, fix2053119869 = 16819,
+            fix2562915447 = 20995, fix3072711026 = 25172;
+        var z1 = (x2 + x6) * Vector256.Create(fix0541196100);
+        var tmp2 = z1 + x6 * Vector256.Create(-fix1847759065);
+        var tmp3 = z1 + x2 * Vector256.Create(fix0765366865);
+        var tmp0 = (x0 + x4) << constBits;
+        var tmp1 = (x0 - x4) << constBits;
+        Vector256<int> tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+
+        z1 = x7 + x1;
+        var z2 = x5 + x3;
+        var z3 = x7 + x3;
+        var z4 = x5 + x1;
+        var z5 = (z3 + z4) * Vector256.Create(fix1175875602);
+        tmp0 = x7 * Vector256.Create(fix0298631336);
+        tmp1 = x5 * Vector256.Create(fix2053119869);
+        tmp2 = x3 * Vector256.Create(fix3072711026);
+        tmp3 = x1 * Vector256.Create(fix1501321110);
+        z1 *= Vector256.Create(-fix0899976223);
+        z2 *= Vector256.Create(-fix2562915447);
+        z3 = z3 * Vector256.Create(-fix1961570560) + z5;
+        z4 = z4 * Vector256.Create(-fix0390180644) + z5;
+        tmp0 += z1 + z3;
+        tmp1 += z2 + z4;
+        tmp2 += z2 + z3;
+        tmp3 += z1 + z4;
+
+        y0 = tmp10 + tmp3;
+        y7 = tmp10 - tmp3;
+        y1 = tmp11 + tmp2;
+        y6 = tmp11 - tmp2;
+        y2 = tmp12 + tmp1;
+        y5 = tmp12 - tmp1;
+        y3 = tmp13 + tmp0;
+        y4 = tmp13 - tmp0;
+    }
+
+    // An 8 x 8 transpose of ints, one row a vector, with portable operations only: 32-bit elements traded inside 64-bit
+    // ones (shifts and masks), 64-bit ones inside 128-bit halves (an in-lane shuffle and a select), then the halves.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Transpose(ref Vector256<int> r0, ref Vector256<int> r1, ref Vector256<int> r2, ref Vector256<int> r3,
+        ref Vector256<int> r4, ref Vector256<int> r5, ref Vector256<int> r6, ref Vector256<int> r7)
+    {
+        Swap32(ref r0, ref r1);
+        Swap32(ref r2, ref r3);
+        Swap32(ref r4, ref r5);
+        Swap32(ref r6, ref r7);
+        Swap64(ref r0, ref r2);
+        Swap64(ref r1, ref r3);
+        Swap64(ref r4, ref r6);
+        Swap64(ref r5, ref r7);
+        Swap128(ref r0, ref r4);
+        Swap128(ref r1, ref r5);
+        Swap128(ref r2, ref r6);
+        Swap128(ref r3, ref r7);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void Swap32(ref Vector256<int> a, ref Vector256<int> b)
+        {
+            var mask = Vector256.Create(0x00000000FFFFFFFFUL);
+            var t = (Vector256.ShiftRightLogical(a.AsUInt64(), 32) ^ b.AsUInt64()) & mask;
+            b = (b.AsUInt64() ^ t).AsInt32();
+            a = (a.AsUInt64() ^ (t << 32)).AsInt32();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void Swap64(ref Vector256<int> a, ref Vector256<int> b)
+        {
+            var odd = Vector256.Create(0UL, ulong.MaxValue, 0UL, ulong.MaxValue);
+            var swappedA = Vector256.Shuffle(a.AsUInt64(), Vector256.Create(1UL, 0, 3, 2));
+            var swappedB = Vector256.Shuffle(b.AsUInt64(), Vector256.Create(1UL, 0, 3, 2));
+            var newA = Vector256.ConditionalSelect(odd, swappedB, a.AsUInt64());
+            b = Vector256.ConditionalSelect(odd, b.AsUInt64(), swappedA).AsInt32();
+            a = newA.AsInt32();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void Swap128(ref Vector256<int> a, ref Vector256<int> b)
+        {
+            var newA = Vector256.Create(a.GetLower(), b.GetLower());
+            b = Vector256.Create(a.GetUpper(), b.GetUpper());
+            a = newA;
+        }
     }
 
     private static byte[] BuildIdctLimit()
