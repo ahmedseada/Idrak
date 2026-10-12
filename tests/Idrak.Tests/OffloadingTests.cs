@@ -19,6 +19,7 @@ internal static partial class Tests
         ("offloading: a decoder whose base weights (float32 and int8) live in system memory gives the same outputs and LoRA gradients through its fused products (q/k/v, gate/up, down), staged as groups", OffloadDecoder),
         ("offloading: training with a full GPU moves optimizer state out first (then frozen weights), gives the weights of an ordinary run, and brings tensors back when memory frees up", OffloadColdFirst),
         ("offloading: before inference, a model that did not fit has its frozen weights marked cold before any pass and moved out, largest first, until the headroom is free; its outputs are unchanged", OffloadBeforeInference),
+        ("memory chunks: long-lived blocks (Backend.LongLivedAllocations) the driver would round to its page share chunks: the driver takes about their bytes instead of a page more each; values and kernels unchanged; outside the scope and with GpuChunkBytes 0 each block is its own; a freed block's room is reused and empty chunks go back to the driver", ChunkedBlocks),
         ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
     ];
 
@@ -535,5 +536,90 @@ internal static partial class Tests
         {
             ComputeResources.GpuMemoryLimit = limit;
         }
+    }
+
+    private static void ChunkedBlocks(Device device)
+    {
+        if (device.Backend is not CudaBackend cuda)
+        {
+            Check(device.Backend.LongLivedAllocations() is null, "a device that places every block alike has no long-lived scope");
+            return;
+        }
+
+        long chunk = cuda.ChunkSize;
+        if (chunk <= 0)
+        {
+            Console.WriteLine("    the driver reports no allocation page: no chunks to check");
+            return;
+        }
+
+        // Blocks of half a chunk's page count and a little more: alone, each takes the driver's next whole page.
+        int floats = (int)((chunk / 32 + 4096) / 4), count = 24;
+        var values = Enumerable.Range(0, floats).Select(i => MathF.Sin(i)).ToArray();
+        ComputeResources.ReleaseCachedMemory(device);
+        int chunksBefore = cuda.ChunkCount;
+        long blocksBefore = cuda.ChunkedBlocks, free = cuda.FreeMemory()!.Value;
+        var blocks = new List<Tensor>();
+        try
+        {
+            using (device.Backend.LongLivedAllocations())
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    blocks.Add(Tensor.From(values, [floats], device));
+                }
+            }
+
+            long taken = free - cuda.FreeMemory()!.Value, asked = 4L * floats * count;
+            Check(cuda.ChunkedBlocks - blocksBefore == count, $"{cuda.ChunkedBlocks - blocksBefore} of {count} blocks in chunks");
+            Check(taken <= asked + chunk, $"the driver took {taken:N0} bytes for {asked:N0} (alone each would take {count * (chunk / 16):N0})");
+            using (var doubled = blocks[^1] * 2f)
+            {
+                AssertClose([.. values.Select(v => v * 2f)], doubled.ToArray(), 0f, "a chunk's block read by a kernel");
+            }
+
+            AssertClose(values, blocks[0].ToArray(), 0f, "a chunk's block keeps its values");
+
+            // A freed block's room is taken again by the next block of the scope.
+            long made = cuda.ChunksAllocated;
+            blocks[3].Dispose();
+            blocks.RemoveAt(3);
+            ComputeResources.ReleaseCachedMemory(device);
+            using (device.Backend.LongLivedAllocations())
+            {
+                blocks.Add(Tensor.From(values, [floats], device));
+            }
+
+            Check(cuda.ChunksAllocated == made, "the freed block's room reused, no chunk added");
+
+            // Outside the scope, and with chunks off, a block is its own allocation.
+            long chunked = cuda.ChunkedBlocks;
+            using (Tensor.From(values, [floats], device))
+            {
+                Check(cuda.ChunkedBlocks == chunked, "outside the scope: a block of its own");
+            }
+
+            long? setting = ComputeResources.GpuChunkBytes;
+            ComputeResources.GpuChunkBytes = 0;
+            try
+            {
+                using (device.Backend.LongLivedAllocations())
+                using (Tensor.From(values, [floats], device))
+                {
+                    Check(cuda.ChunkedBlocks == chunked, "GpuChunkBytes 0: a block of its own");
+                }
+            }
+            finally
+            {
+                ComputeResources.GpuChunkBytes = setting;
+            }
+        }
+        finally
+        {
+            blocks.ForEach(b => b.Dispose());
+            ComputeResources.ReleaseCachedMemory(device);
+        }
+
+        Check(cuda.ChunkCount == chunksBefore, $"empty chunks back to the driver: {cuda.ChunkCount} held, {chunksBefore} before");
     }
 }

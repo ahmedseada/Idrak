@@ -147,6 +147,28 @@ internal static unsafe partial class CudaDriver
     [LibraryImport(Library, EntryPoint = "cuMemGetInfo_v2")]
     public static partial int cuMemGetInfo(out nuint free, out nuint total);
 
+    /// <summary>CU_LIMIT_STACK_SIZE: the stack of each GPU thread, in bytes (cuCtxSetLimit).</summary>
+    public const int LimitStackSize = 0;
+
+    [LibraryImport(Library)]
+    public static partial int cuCtxSetLimit(int limit, nuint value);
+
+    [LibraryImport(Library)]
+    public static partial int cuCtxGetLimit(out nuint value, int limit);
+
+    /// <summary>CUmemAllocationProp: pinned device memory on one device (the fields cuMemGetAllocationGranularity reads).</summary>
+    [StructLayout(LayoutKind.Explicit, Size = 32)]
+    public struct MemAllocationProp
+    {
+        [FieldOffset(0)] public int Type;                                 // CU_MEM_ALLOCATION_TYPE_PINNED = 1
+        [FieldOffset(4)] public int RequestedHandleTypes;
+        [FieldOffset(8)] public int LocationType;                         // CU_MEM_LOCATION_TYPE_DEVICE = 1
+        [FieldOffset(12)] public int LocationId;
+    }
+
+    [LibraryImport(Library)]
+    public static partial int cuMemGetAllocationGranularity(out nuint granularity, in MemAllocationProp prop, int option);
+
     [LibraryImport(Library)]
     public static partial int cuMemHostAlloc(out IntPtr pointer, nuint bytes, uint flags);
 

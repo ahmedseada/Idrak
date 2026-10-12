@@ -197,16 +197,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 165 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 166 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (145, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 130 of 175 |
-| `CudaBackend` | 170 of 175 |
-| `HipBackend` | 23 of 175 |
-| `VulkanBackend` | 128 of 175 |
+| `CpuBackend` | 130 of 176 |
+| `CudaBackend` | 171 of 176 |
+| `HipBackend` | 23 of 176 |
+| `VulkanBackend` | 128 of 176 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -315,6 +315,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
 | `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `LongLivedAllocations(0)` | virtual |  | ✓ |  |  |
 | `LstmCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |
 | `LstmCellKernel(11)` | virtual | ✓ | ✓ |  |  |
 | `LstmSequenceBackwardKernel(10)` | virtual |  | ✓ |  |  |

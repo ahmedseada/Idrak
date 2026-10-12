@@ -93,6 +93,8 @@ internal static class EnvironmentVariables
         new("IDRAK_MATMUL", Precision, "float32", "bf16 (bfloat16) or fp8 (float8): the precision of matrix products outside any precision scope", OnDevice),
         new("IDRAK_FP8_DELAYED", Precision, "not set", "1: delayed column scaling for float8 products on CUDA", OnDevice),
         new("IDRAK_OFFLOAD", Precision, "not set", "1 or true: move tensors to system memory when device memory runs out", OnDevice),
+        new("IDRAK_GPU_CHUNK_MB", Precision, "32 of the device's allocation pages", "MiB of the chunks long-lived blocks (weights, attention caches) share on a GPU; 0: each block its own allocation", OnDevice),
+        new("IDRAK_GPU_STACK_BYTES", Precision, "none beyond what kernels need", "The stack of each GPU thread, reserved for every thread the device can run at once", OnDevice),
         new("IDRAK_LOOKUP_TABLES", Precision, "auto", "auto, host or device: where a frozen model's separate token table lives (auto: on the GPU until it is full)", OnDevice),
 
         new("IDRAK_CPU_KCHUNK", Cpu, "from the cache sizes", "Forces the k chunk of the CPU's few-row kernels (tests; every chunk gives the same results)", OnDevice),

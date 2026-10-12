@@ -192,14 +192,20 @@ public sealed class PretrainedModel : IDisposable
         var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
-        var network = architecture.Build is { } build
-            ? build(new PretrainedBuildContext(config, spec, weights, reader, buildOptions, notes)) switch
-            {
-                null => throw new InvalidOperationException($"The architecture '{name}' built no network."),
-                Sequential built => built,
-                var layers => new Sequential(layers) { Name = "decoder" },
-            }
-            : spec.Build(weights, buildOptions);
+        Sequential network;
+        using ((options.Device ?? Idrak.Abstraction.Device.Default).Backend.LongLivedAllocations())
+        {
+            // The weights live as long as the model: the device may place them together (Backend.LongLivedAllocations).
+            network = architecture.Build is { } build
+                ? build(new PretrainedBuildContext(config, spec, weights, reader, buildOptions, notes)) switch
+                {
+                    null => throw new InvalidOperationException($"The architecture '{name}' built no network."),
+                    Sequential built => built,
+                    var layers => new Sequential(layers) { Name = "decoder" },
+                }
+                : spec.Build(weights, buildOptions);
+        }
+
         long buildEnded = Stopwatch.GetTimestamp();
         fileTime = reader.ReadTime - fileTime;
         var vision = visionFamily?.Read(new VisionCheckpoint(name, config, reader, folder, () => format.Open(folder), notes));
@@ -314,7 +320,12 @@ public sealed class PretrainedModel : IDisposable
             options = options with { TrainedParts = [.. options.TrainedParts.Union(parts.PartsOf(_vision.Keys), StringComparer.OrdinalIgnoreCase)] };
         }
 
-        var encoder = vision.CreateEncoder(options);
+        IVisionEncoder encoder;
+        using (options.Device!.Backend.LongLivedAllocations())                  // the encoder's weights live as long as it
+        {
+            encoder = vision.CreateEncoder(options);
+        }
+
         if (_vision.Count == 0)
         {
             return encoder;

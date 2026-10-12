@@ -11,7 +11,8 @@ namespace Idrak.Abstraction;
 /// <param name="Limit">The configured cap, or null when unlimited.</param>
 /// <param name="Offloaded">Bytes of this GPU's tensors kept in system memory (see <see cref="ComputeResources.OffloadToHostMemory"/>).</param>
 /// <param name="Peak">The most bytes held by live tensors at once since the device started or <see cref="ComputeResources.ResetPeakMemoryUsage"/>.</param>
-public readonly record struct MemoryUsage(long InUse, long Cached, long? Limit, long Offloaded = 0, long Peak = 0)
+/// <param name="Largest">The largest single block taken since then (what made a peak, when one block did).</param>
+public readonly record struct MemoryUsage(long InUse, long Cached, long? Limit, long Offloaded = 0, long Peak = 0, long Largest = 0)
 {
     /// <summary>InUse + Cached: what the library currently holds from the system.</summary>
     public long Reserved => InUse + Cached;
@@ -82,6 +83,23 @@ public static class ComputeResources
     /// variable IDRAK_OFFLOAD=1 turns it on.
     /// </summary>
     public static bool OffloadToHostMemory { get; set; } = Environment.GetEnvironmentVariable("IDRAK_OFFLOAD") is "1" or "true";
+
+    /// <summary>
+    /// The size of the chunks a GPU places long-lived blocks in (<see cref="Backend.LongLivedAllocations"/>: weights and
+    /// attention caches), so the driver's page rounding of each block (a block of a page and a little more takes two
+    /// pages) is paid once a chunk. Null (the default): 32 of the device's allocation pages, as its driver reports them; 0:
+    /// every block its own allocation. IDRAK_GPU_CHUNK_MB sets it in MiB.
+    /// </summary>
+    public static long? GpuChunkBytes { get; set; } = Environment.GetEnvironmentVariable("IDRAK_GPU_CHUNK_MB") is { Length: > 0 } chunk
+        ? long.Parse(chunk, System.Globalization.CultureInfo.InvariantCulture) << 20 : null;
+
+    /// <summary>
+    /// The stack each GPU thread is given when a device opens: the driver reserves it for every thread the device can run
+    /// at once. Null (the default): none beyond what a kernel needs (the driver raises it for any kernel that needs more,
+    /// and the library's kernels need none); a value sets it. IDRAK_GPU_STACK_BYTES sets it.
+    /// </summary>
+    public static long? GpuStackBytes { get; set; } = Environment.GetEnvironmentVariable("IDRAK_GPU_STACK_BYTES") is { Length: > 0 } stack
+        ? long.Parse(stack, System.Globalization.CultureInfo.InvariantCulture) : null;
 
     /// <summary>
     /// Where frozen lookup tables live on a GPU that can keep storages in system memory (see <see cref="LookupTablePlacement"/>):
