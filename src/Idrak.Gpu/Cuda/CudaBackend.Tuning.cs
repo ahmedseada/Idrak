@@ -95,6 +95,25 @@ internal sealed unsafe partial class CudaBackend
     /// <summary>Choices timed on the device in this process (not read from the cache file; tests and diagnostics).</summary>
     internal int MeasuredCount { get; private set; }
 
+    /// <summary>
+    /// Forgets the choices of <paramref name="op"/> (every choice when null) measured or read from the cache file, without
+    /// reading it again (tests: measure anew).
+    /// </summary>
+    internal void ForgetMeasurements(TuneOp? op = null)
+    {
+        lock (_tuned)
+        {
+            _persisted ??= TuningFileLocked() is { } file ? TuningCache.Load(file.Path, file.Identity) : [];
+            foreach (var table in (Dictionary<TuneKey, int>[])[_tuned, _persisted])
+            {
+                foreach (var key in table.Keys.Where(k => op is null || k.Op == op).ToList())
+                {
+                    table.Remove(key);
+                }
+            }
+        }
+    }
+
     /// <summary>What the cache file of this GPU belongs to (tests and diagnostics).</summary>
     internal TuningIdentity TuningIdentity => new(
         $"{_deviceName}; compute {_computeMajor}.{_computeMinor}; {_multiprocessors} SMs; {_totalMemory >> 20} MiB; power {PowerSource.Current}",
@@ -187,8 +206,22 @@ internal sealed unsafe partial class CudaBackend
     private int Tune(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold = false, Action<int, int>? part = null, int parts = 0) =>
         TryTuned(key, candidates, fallback, out int settled) ? settled : TuneMeasured(key, candidates, fallback, run, cold, part, parts);
 
+    // Measurements one at a time on a device: they share the timing events and the work stream, and two threads measuring
+    // at once read each other's events (CUDA_ERROR_NOT_READY) and time each other's kernels. Reentrant: a candidate's first
+    // run may settle a choice of its own.
+    private readonly Lock _measuring = new();
+
     // Tune's measuring part (its closure is created here, not on every call).
     private int TuneMeasured(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
+    {
+        lock (_measuring)
+        {
+            // Another thread may have measured it while this one waited.
+            return TryTuned(key, candidates, fallback, out int settled) ? settled : TuneMeasuredLocked(key, candidates, fallback, run, cold, part, parts);
+        }
+    }
+
+    private int TuneMeasuredLocked(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
     {
         MakeCurrent();
         using var use = UseStream();
