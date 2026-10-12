@@ -101,10 +101,19 @@ public sealed record LegalOcrSettings
     /// <summary>
     /// Pages the Evaluate tab reads together (ImageReader.ReadBatch: one pass a token for all of them, each answer the
     /// page's own): 1 reads them one by one. Each page in a batch holds its own attention cache; when the device has no
-    /// room for a batch, its pages are read one by one. 8 together scored the first 20 evaluation pages as one by one (mean
-    /// CER 0.415) in 154 s against 183 s.
+    /// room for a batch, the library reads it in smaller ones (ReadBatchFit). 8 together scored the first 20 evaluation
+    /// pages as one by one (mean CER 0.415) in 154 s against 183 s.
     /// </summary>
     public int ReadBatch { get; init; } = 1;
+
+    /// <summary>
+    /// When the device has no room for ReadBatch pages together: "split" (the default: the library reads them in halves
+    /// until they fit) or "fail" (the evaluation stops with the device's out-of-memory error).
+    /// </summary>
+    public string ReadBatchFit { get; init; } = "split";
+
+    /// <summary>Whether later batches start at the size that fit after a split (true, the default) or with all their pages.</summary>
+    public bool RememberBatchFit { get; init; } = true;
 
     /// <summary>The models of the switch.</summary>
     public List<ReaderModel> Models { get; init; } = [];

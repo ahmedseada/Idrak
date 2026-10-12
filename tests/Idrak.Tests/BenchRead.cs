@@ -26,6 +26,8 @@ using Idrak.Models;
 //   IDRAK_BENCH_CONTEXT     the context window (default the model's)
 //   IDRAK_BENCH_BATCH       pages read together (ImageReader.ReadBatch; default 1: the page alone): the page this many times,
 //                           with the time a page and the tokens a second of the whole batch
+//   IDRAK_BENCH_BATCH_FIT   split (the default: pages that do not fit together are read in halves) or fail;
+//                           IDRAK_BENCH_MAX_BATCH the most pages together (default as many as fit)
 // How it is measured and written (ProfileOptions.FromEnvironment): IDRAK_PROFILE_WARM (3), IDRAK_PROFILE_COLD (1),
 // IDRAK_PROFILE_PROBES (all: bandwidth, cpu, heap, memory, operations, kernels, stages), IDRAK_PROFILE_STATISTIC (median),
 // IDRAK_PROFILE_FORMAT (table, markdown, csv, json), IDRAK_PROFILE_OUT (a file, appended).
@@ -103,6 +105,8 @@ internal static partial class Tests
                 EncoderPrecision = Bf16("IDRAK_BENCH_ENCODER") ? MatMulPrecision.BFloat16 : null,
                 PrefillPrecision = Bf16("IDRAK_BENCH_PREFILL") ? MatMulPrecision.BFloat16 : null,
                 ContextLength = context,
+                BatchFit = Setting("IDRAK_BENCH_BATCH_FIT", "split").ToLowerInvariant() == "fail" ? BatchFit.Fail : BatchFit.Split,
+                MaxBatch = Environment.GetEnvironmentVariable("IDRAK_BENCH_MAX_BATCH") is { Length: > 0 } most ? int.Parse(most, CultureInfo.InvariantCulture) : null,
             });
             long parameters = ModelMemory.WeightCount(model.Network), weightBytes = ModelMemory.TensorBytes(model.Network);
             var request = new ImageReadRequest(page, prompt) { MaxTokens = tokens };
@@ -118,6 +122,7 @@ internal static partial class Tests
                 run.Record("answer tokens", answered, "tok");
                 run.Record("decode speed", Rate(answered, decode), "tok/s");
                 run.Record("same answers", readings.Select(r => r.Text).Distinct().Count() == 1 ? 1 : 0);
+                run.Record("pages together", readings.Min(r => r.BatchSize));
             }, options) : Profiler.Run($"read: {setup}", device, run =>
             {
                 run.Stage("prepare", () => reader.Prepared(request));

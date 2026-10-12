@@ -478,7 +478,9 @@ public static class Profiler
 /// <item>"heap": the managed heap: bytes allocated on every thread ("allocated", MB), collections of each generation
 /// ("gc0", "gc1", "gc2") and the time paused for them ("gc pause", ms).</item>
 /// <item>"memory": the device's memory after the run ("device in use", "device cached", MB), its peak during the run
-/// ("device peak", MB), and the process's working set ("process", MB) and peak since it started ("process peak", MB).</item>
+/// ("device peak", MB), on devices that report it what their driver has free ("device free", MB) and what neither the
+/// library nor that holds ("device other", MB: the driver's context and kernels, other programs), and the process's
+/// working set ("process", MB) and peak since it started ("process peak", MB).</item>
 /// <item>"operations" (intrusive): every operation called on the device ("operations", calls; "operation kinds") and every
 /// host fallback ("host fallbacks", calls), with tables of both by operation.</item>
 /// <item>"kernels" (intrusive; devices that time their kernels, such as CUDA): the device's time in kernels ("kernel time",
@@ -768,6 +770,13 @@ public static class ProfileProbes
                 run.Record("device in use", usage.InUse / 1048576.0, "MB");
                 run.Record("device cached", usage.Cached / 1048576.0, "MB");
                 run.Record("device peak", usage.Peak / 1048576.0, "MB");
+                if (run.Device.Backend.FreeMemory() is { } free && run.Device.Backend.Hardware.MemoryBytes is { } total)
+                {
+                    // What the library does not hold: the driver's context, its loaded kernels, other programs.
+                    run.Record("device free", free / 1048576.0, "MB");
+                    run.Record("device other", Math.Max(0, total - free - usage.InUse - usage.Cached) / 1048576.0, "MB");
+                }
+
                 using var process = Process.GetCurrentProcess();
                 run.Record("process", process.WorkingSet64 / 1048576.0, "MB");
                 run.Record("process peak", process.PeakWorkingSet64 / 1048576.0, "MB");

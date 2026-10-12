@@ -2129,6 +2129,13 @@ public abstract partial class Backend
     /// </summary>
     public virtual long? AvailableMemory() => null;
 
+    /// <summary>
+    /// Bytes of device memory the device's driver reports free now (outside every pool, before any reserve), or null when
+    /// it reports none. With <see cref="BackendHardware.MemoryBytes"/> and <see cref="GetMemoryUsage"/> it shows what the
+    /// library does not hold: the driver's context, its loaded kernels and other programs.
+    /// </summary>
+    public virtual long? FreeMemory() => null;
+
     /// <summary>Starts counting the peak of the bytes in use (<see cref="MemoryUsage.Peak"/>) again from what is in use now.</summary>
     public virtual void ResetPeakMemoryUsage()
     {

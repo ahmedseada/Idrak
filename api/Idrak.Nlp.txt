@@ -96,6 +96,10 @@ public sealed record Idrak.Generation.BatchChunk : System.IEquatable<Idrak.Gener
   public string Text { get; init; }
   public string? DoneReason { get; init; }
 
+public enum Idrak.Generation.BatchFit : int
+  Fail = 1
+  Split = 0
+
 public sealed class Idrak.Generation.ChatGenerator : Idrak.Abstraction.Generation.IChatModel
   public ChatGenerator(Idrak.Generation.TextGenerator generator, Idrak.Abstraction.Generation.ChatTemplate? template = null)
   public Idrak.Abstraction.Generation.ChatChunk Chat(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
@@ -262,11 +266,14 @@ public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idr
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public Idrak.Abstraction.MatMulPrecision? EncoderPrecision { get; init; }
   public Idrak.Abstraction.MatMulPrecision? PrefillPrecision { get; init; }
+  public Idrak.Generation.BatchFit BatchFit { get; init; }
   public ImageReaderOptions()
   public System.Func<Idrak.Models.PretrainedModel, Idrak.Abstraction.Generation.VisionEncoderOptions, Idrak.Abstraction.Generation.IVisionEncoder>? EncoderFactory { get; init; }
   public bool KeepCache { get; init; }
+  public bool RememberBatchFit { get; init; }
   public bool ReuseDecoding { get; init; }
   public int? ContextLength { get; init; }
+  public int? MaxBatch { get; init; }
 
 public sealed record Idrak.Generation.ImageReading : System.IEquatable<Idrak.Generation.ImageReading>
   public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
@@ -274,6 +281,7 @@ public sealed record Idrak.Generation.ImageReading : System.IEquatable<Idrak.Gen
   public System.TimeSpan Elapsed { get; init; }
   public System.TimeSpan? FirstText { get; init; }
   public bool Truncated { get; init; }
+  public int BatchSize { get; init; }
   public string Text { get; init; }
   public string? DoneReason { get; init; }
 

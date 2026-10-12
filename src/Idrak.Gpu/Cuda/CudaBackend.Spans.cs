@@ -622,6 +622,12 @@ internal sealed unsafe partial class CudaBackend
         return null;
     }
 
+    public override long? FreeMemory()
+    {
+        MakeCurrent();
+        return cuMemGetInfo(out nuint free, out _) == 0 ? (long)free : null;
+    }
+
     public override long? AvailableMemory()
     {
         MakeCurrent();
