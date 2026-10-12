@@ -1,8 +1,9 @@
 # Plan 17: speed and memory for vision and OCR (the library first; the legal OCR app as the measuring ground)
 
-**Status:** planned 2026-10-11 against `abstraction` a61c979, from a read-only audit of the read path, the image pipeline,
-the vision encoder, the tuning path and every open item of plans 11 to 16 and `docs/performance-notes.md`. Nothing here
-is built. The owner's demo of `samples/Idrak.Samples.LegalOcr` is the measuring ground: a scanned Arabic legal page in,
+**Status:** **finished for CUDA and the CPU** (2026-10-12, `abstraction` 00d3e81): every item done, dropped with a reason
+or covered, confirmed on the owner's CUDA cards and on the CPU; the other devices are not finished, see "Left for other
+devices" below. Planned 2026-10-11 against `abstraction` a61c979, from a read-only audit of the read path, the image pipeline,
+the vision encoder, the tuning path and every open item of plans 11 to 16 and `docs/performance-notes.md`. The owner's demo of `samples/Idrak.Samples.LegalOcr` is the measuring ground: a scanned Arabic legal page in,
 Gemma 3 4B (bakrianoo's fine-tune) reading it, JSON out, and the Fine-tune tab. Every change below is in the library
 (`Idrak.Abstraction`, `Idrak`, `Idrak.Data`, `Idrak.Nlp`, `Idrak.Gpu`) or in the family's plug-in; the app only stops
 doing work the library now does once.
@@ -11,6 +12,19 @@ Numbers quoted "measured" come from the plans and notes (with their line); numbe
 tensor shapes and need measuring first (section 3 says how). Baseline on the owner's card, real model, bfloat16 decoder,
 float32 encoder (`plans/11-vision-language.md:412,466`): prompt with the image 1.0 s, 80 tokens/s, a 1,032-token answer
 in 14 s; one 896 x 896 image through the encoder 0.43 s in float32, 0.11 s with bfloat16 tensor cores (`:769-770,906`).
+
+## Left for other devices (not finished: Vulkan and HIP)
+
+Plan 17 is finished for **CUDA** and the **CPU** only. Every change went through a contract with a default, so Vulkan,
+HIP and outside backends give the same results as before (the CPU and the minimal device run the defaults in the tests),
+but they do not get the speed or memory gains, and **no Vulkan or HIP device has run this plan's tests or benches**.
+
+| Device | Has | Left (runs the contract's default today: correct, no gain) |
+|---|---|---|
+| **CUDA** | everything | Only a confirmation: E9 (stack trim, chunks, the measurement's scratch) ran on the larger card; the smaller card has not run it yet |
+| **CPU** | every item that applies, its tests passing on the CPU | Nothing required. D9's rest (the composed path per 64-row block) is not taken: it changes the sums, so it could only be a CER-gated option. The device-memory items (E6, E9) do not apply to host memory |
+| **Vulkan** | span kernels up to head size 256 (A3), `ResizeNormalize` on the device (C6), `AvailableMemory` from its heap; the generic items (B, E1-E3, E7, E8, F, G, H) | No `AttentionSpansStrided` (D3: copies the heads), `PackedMatMulEpilogue` (D2), `PackedMatMulNormAddRmsNorm` (D11), `AttentionRows` for pages of different lengths (F3), greedy sampling without top-k (B8), `IMemoryOffload` (E6: lookup tables stay on the device), chunks and long-lived blocks (E9), a driver free-memory figure (E7's "device other"); the read, the CER gate and `--bench-read` never run on a Vulkan device |
+| **HIP** | the generic items only | Everything Vulkan lacks, plus span kernels (it keeps the CPU's limits, A3) and `ResizeNormalize` (C6); never run on a HIP device |
 
 ## Progress (updated as lanes land)
 
@@ -86,7 +100,7 @@ in 14 s; one 896 x 896 image through the encoder 0.43 s in float32, 0.11 s with 
 | **E9** (new, from the owner's run on the larger card) memory held after the first read | **Done** (library, generic; 78ecc44, 7f0cda7, 59b20c9). (1) The context's stack: the driver raised each thread's stack for the largest kernel and kept it; `cuCtxSetLimit` trims it at device open (`ComputeResources.GpuStackBytes`, `IDRAK_GPU_STACK_BYTES`; the driver still raises it for a kernel that needs more): the context 1,270 to 1,166 MiB. (2) Driver page rounding: long-lived blocks (the load, the encoder, the decoding cache, inside `Backend.LongLivedAllocations()`) and any block of half a page or more up to a quarter chunk share chunks of 32 pages (the page from `cuMemGetAllocationGranularity`), first fit with merged free ranges; `ComputeResources.GpuChunkBytes` (`IDRAK_GPU_CHUNK_MB`, 0 off); `--bench-alloc`: a 1 MiB + 4 KiB block's overhead 98% to 25% (the rest is the bench's last chunk). (3) The attention-path measurement's scratch (two 1 GiB score buffers on the larger card) went back to the pool and stayed cached; it now goes back to the driver. (4) A race found by the conformance stress run (`cuEventElapsedTime` not ready): two threads measuring on one device at once; measurements on a device now run one at a time and re-check the cache inside the lock | `memory chunks`, `memory tuning`, `conformance kit: a stress run` |
 | **E4** int8 projections with the bfloat16 head on a smaller device | **Confirmed** (the owner's run on the smaller card, 8,150 MiB, 20 SMs): bfloat16 weights need more than the card (about 8.6 GB); int8 with the bfloat16 head failed in the encoder before E6 and reads after it, 32.9 tok/s; 8 pages read as groups of 2 (E7), 7.5 s a page. The CER gate's D run covered this format. Recommended there, and what the suggestions print: `Weights` int8, `HeadWeights` bf16, `ReadBatch` 2 | the owner's run |
 | **Memory CUDA run** (the owner's, 2026-10-12, the larger card, 16,302 MiB, 70 SMs, 59b20c9) | **Confirmed**: 64 of 64, the stress run and `memory tuning` among them. `--bench-read`, one page, first run after a build (before at 7f0cda7, after at 59b20c9): device cached 3,448 to 1,400 MB, free 3,053 to 5,473 MB, held outside the library 1,566 to 1,194 MB, in use 8,236 MB both; decode 82.3 to 83.3 tok/s, first text 225 to 223 ms. Suggestions: `MaxBatch` 14 (was 13), the bfloat16 cache would fit 17 pages | the owner's run |
-| Everything else in sections 2 and 6 | **Plan finished** (2026-10-12): every item done, confirmed on the owner's CUDA card and, where it could change answers, by the CER gate; C2 (the JPEG decoder) and C3 (the resize) done in a second attempt, measured A/B against e82e562; the memory items E6 to E9 added after, from the owner's runs on a smaller and a larger card: E6 to E8 confirmed on the smaller, E9 on the larger (the smaller card has not run E9 yet) | the owner's runs above |
+| Everything else in sections 2 and 6 | **Plan finished for CUDA and the CPU** (2026-10-12; Vulkan and HIP: "Left for other devices" above): every item done, confirmed on the owner's CUDA card and, where it could change answers, by the CER gate; C2 (the JPEG decoder) and C3 (the resize) done in a second attempt, measured A/B against e82e562; the memory items E6 to E9 added after, from the owner's runs on a smaller and a larger card: E6 to E8 confirmed on the smaller, E9 on the larger (the smaller card has not run E9 yet) | the owner's runs above |
 
 **The owner's CUDA run (2026-10-11, RTX 5070 Ti, compute 12.0, driver CUDA 13.3), after wave 1 to F1:** `attention spans|image prefill|image reader|generation:|pretrained:|conversation tuning`, 35 of 35 pass: transformers' logits within 6.2e-6 and its 20 greedy tokens through the image prefill (float32 cache; bfloat16 0.0358 and int8 0.255 from float32, as before), the grouped-heads composed test, the encoder-precision probe, the cache sized to the reply, the scorer's stop and the loss cap. Not covered by these tests: the composed path at head size 256 (the tiny models' heads are small); the real model's read in the app covers it.
 
