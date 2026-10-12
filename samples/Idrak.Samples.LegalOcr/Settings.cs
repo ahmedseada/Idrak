@@ -52,7 +52,11 @@ public sealed record LegalOcrSettings
     /// <summary>The model (an id of <see cref="Models"/>) loaded before the server starts, or null to pick one on the page.</summary>
     public string? LoadAtStart { get; init; }
 
-    /// <summary>How the projections are stored: "bf16" (half of float32; exact for the bfloat16 checkpoints), "int8", "int4" or "f32".</summary>
+    /// <summary>
+    /// How the projections are stored: "bf16" (half of float32; exact for the bfloat16 checkpoints), "int8" (half again;
+    /// with HeadWeights "bf16" it read the first 20 evaluation pages at mean CER 0.401 against bf16's 0.415), "int4" (a
+    /// quarter; not measured by CER) or "f32".
+    /// </summary>
     public string Weights { get; init; } = "bf16";
 
     /// <summary>
@@ -63,22 +67,24 @@ public sealed record LegalOcrSettings
     public string HeadWeights { get; init; } = "bf16";
 
     /// <summary>
-    /// The vision encoder's products: "f32" (the checkpoint's own features) or "bf16" (tensor cores: a page's encoding
-    /// several times faster on GPUs that have them, features within bfloat16's rounding; compare CER on the evaluation
-    /// pages before reading with it).
+    /// The vision encoder's products: "bf16" (the default: tensor cores, a page's encoding several times faster on GPUs
+    /// that have them, features within bfloat16's rounding; the first 20 evaluation pages read at mean CER 0.418 against
+    /// float32's 0.424) or "f32" (the checkpoint's own features).
     /// </summary>
-    public string EncoderPrecision { get; init; } = "f32";
+    public string EncoderPrecision { get; init; } = "bf16";
 
     /// <summary>
-    /// The prompt's pass through the language model (the page's image tokens and the instruction): "f32" or "bf16" (tensor
-    /// cores where the GPU has them; the answer's decoding unaffected; compare CER on the evaluation pages before reading with it).
+    /// The prompt's pass through the language model (the page's image tokens and the instruction): "bf16" (the default:
+    /// tensor cores where the GPU has them, the answer's decoding unaffected; with the bf16 encoder the first 20 evaluation
+    /// pages read at mean CER 0.415 against float32's 0.424) or "f32".
     /// </summary>
-    public string PrefillPrecision { get; init; } = "f32";
+    public string PrefillPrecision { get; init; } = "bf16";
 
     /// <summary>
     /// The attention cache: "f32" (the default: keys and values as computed) or "bf16" (each rounded to bfloat16: half the
-    /// cache's memory, so a larger ReadBatch fits the GPU; the answers can change, so compare CER on the evaluation pages
-    /// before reading with it). Pages of different lengths read together keep a float32 cache for their batch.
+    /// cache's memory, so a larger ReadBatch fits the GPU; the answers can change: the first 20 evaluation pages read at
+    /// mean CER 0.407 against the float32 cache's 0.415). Pages of different lengths read together keep a float32 cache
+    /// for their batch.
     /// </summary>
     public string KeyValueCache { get; init; } = "f32";
 
@@ -88,7 +94,8 @@ public sealed record LegalOcrSettings
     /// <summary>
     /// Pages the Evaluate tab reads together (ImageReader.ReadBatch: one pass a token for all of them, each answer the
     /// page's own): 1 reads them one by one. Each page in a batch holds its own attention cache; when the device has no
-    /// room for a batch, its pages are read one by one.
+    /// room for a batch, its pages are read one by one. 8 together scored the first 20 evaluation pages as one by one (mean
+    /// CER 0.415) in 154 s against 183 s.
     /// </summary>
     public int ReadBatch { get; init; } = 1;
 
