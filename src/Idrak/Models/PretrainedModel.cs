@@ -37,6 +37,13 @@ public sealed record PretrainedOptions
     /// </summary>
     public string? HeadFormatName { get; init; }
 
+    /// <summary>
+    /// Where the separate token table of int8, int4 or packed weights lives (one beside a head of another format) on a
+    /// device that can keep it in system memory, where a lookup reads its rows in place: null takes
+    /// <see cref="ComputeResources.LookupTables"/> (IDRAK_LOOKUP_TABLES; automatic: on the device until it is full).
+    /// </summary>
+    public LookupTablePlacement? LookupTables { get; init; }
+
     /// <summary>Longest sequence to support (sizes the rotary tables); the model's maximum when null.</summary>
     public int? MaxPositions { get; init; }
 
@@ -175,7 +182,7 @@ public sealed class PretrainedModel : IDisposable
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
-        var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, MaxPositions = maxPositions };
+        var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         var network = architecture.Build is { } build

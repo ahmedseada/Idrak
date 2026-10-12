@@ -63,6 +63,8 @@ public sealed class Idrak.Abstraction.ComputeGraph : System.IDisposable
   public void Replay()
 
 public static class Idrak.Abstraction.ComputeResources
+  public static Idrak.Abstraction.Devices.LookupTablePlacement LookupTables { get; set; }
+  public static Idrak.Abstraction.Devices.LookupTablePlacement ParseLookupTables(string? name)
   public static Idrak.Abstraction.MemoryUsage GetMemoryUsage(Idrak.Abstraction.Device device)
   public static System.Threading.Tasks.ParallelOptions ParallelOptions { get; }
   public static bool AllowParallel { get; }
@@ -822,7 +824,9 @@ public interface Idrak.Abstraction.Devices.IHostStaging : System.IDisposable
   public void Wait(int slot)
 
 public interface Idrak.Abstraction.Devices.IMemoryOffload
+  public (default) bool PlaceOnHost(Idrak.Abstraction.Devices.Storage storage)
   public (default) int KeepFree()
+  public (default) void MarkLookupTable(Idrak.Abstraction.Devices.Storage storage)
   public System.IDisposable? Stage(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Devices.Storage> storages)
   public bool IsOffloaded(Idrak.Abstraction.Devices.Storage storage)
   public bool MoveToDevice(Idrak.Abstraction.Devices.Storage storage)
@@ -835,6 +839,11 @@ public interface Idrak.Abstraction.Devices.IMemoryOffload
 public enum Idrak.Abstraction.Devices.InterpolationMode : int
   Bilinear = 1
   Nearest = 0
+
+public enum Idrak.Abstraction.Devices.LookupTablePlacement : byte
+  Automatic = 0
+  DeviceMemory = 2
+  HostMemory = 1
 
 public sealed class Idrak.Abstraction.Devices.MemoryAccountant
   public Idrak.Abstraction.MemoryUsage Usage { get; }

@@ -150,6 +150,20 @@ public static class DecoderBuilder
                 : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(EmbeddingValues(), [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
             embedding.Name = "embed";
             created.Add(embedding);
+            if (embedding.BFloat16 is { } table && device.Backend.Offload is { } offload)
+            {
+                // A separate table (beside a head of another format) is only looked up: a few rows a token, which the device
+                // reads in place from system memory, so it is the first thing to leave a full device.
+                switch (options.LookupTables ?? ComputeResources.LookupTables)
+                {
+                    case LookupTablePlacement.Automatic:
+                        offload.MarkLookupTable(table.Packed.Storage);
+                        break;
+                    case LookupTablePlacement.HostMemory:
+                        offload.PlaceOnHost(table.Packed.Storage);
+                        break;
+                }
+            }
 
             embeddingValues = null;
             if (spec.EmbeddingScale is { } scale)

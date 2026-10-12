@@ -1290,6 +1290,7 @@ public static class Idrak.Models.Abstractions.CheckpointFormats
 public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEquatable<Idrak.Models.Abstractions.DecoderBuildOptions>
   public DecoderBuildOptions()
   public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
   public bool BFloat16 { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
@@ -1610,6 +1611,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
 
 public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Models.PretrainedOptions>
   public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
   public PretrainedOptions()
   public bool BFloat16 { get; init; }
   public bool Int4 { get; init; }
