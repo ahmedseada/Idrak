@@ -261,6 +261,11 @@ public interface Idrak.Abstraction.Data.ISampleStream
 public interface Idrak.Abstraction.Data.ISampleTransform
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
 
+public interface Idrak.Abstraction.Data.IScanProfile
+  public Idrak.Abstraction.Data.ImageTransformPipeline Sample(int seed)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Abstraction.Data.ITextShaper
   public Idrak.Abstraction.Data.ShapedGlyph[] Shape(Idrak.Abstraction.Data.IFontFace font, string text, Idrak.Abstraction.Data.TextRun run, System.Collections.Generic.IReadOnlyCollection<string>? features = null)
   public string Name { get; }
@@ -492,6 +497,26 @@ public static class Idrak.Abstraction.Data.SampleSources
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(string name, Idrak.Abstraction.Data.SampleSourceFactory factory)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed class Idrak.Abstraction.Data.ScanProfile : Idrak.Abstraction.Data.IScanProfile
+  public Idrak.Abstraction.Data.ImageTransformPipeline Sample(int seed)
+  public ScanProfile(string name, string text, string? summary = null)
+  public System.Collections.Generic.IReadOnlyList<string> Transforms { get; }
+  public override string ToString()
+  public string Name { get; }
+  public string Summary { get; }
+  public string Text { get; }
+
+public static class Idrak.Abstraction.Data.ScanProfiles
+  public static Idrak.Abstraction.Data.IScanProfile Get(string name)
+  public static Idrak.Abstraction.Data.IScanProfile Resolve(string nameOrText)
+  public static Idrak.Abstraction.Data.IScanProfile? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IScanProfile profile)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public readonly record struct Idrak.Abstraction.Data.ShapedGlyph : System.IEquatable<Idrak.Abstraction.Data.ShapedGlyph>

@@ -15,14 +15,15 @@ dotnet add package Idrak.Imaging
 | Area | What is there |
 |------|---------------|
 | Codecs | `PngCodec`, `JpegCodec` (baseline and progressive, decoded to Pillow's RGB), `BmpCodec`, `NetpbmCodec`; `PngEncoder`, `JpegEncoder`, `NetpbmEncoder`; registered in `ImageCodecs` (Idrak.Abstraction) when the registry is first used, so `ImageCodecs.Decode(path)` reads them |
-| Transforms | `PillowImageOps` (resize with Pillow's filters, rank filters, blur, blends, point maps), the named transforms of `ImageTransforms` ("grayscale", "max_width", "contrast", ...) |
+| Transforms | `PillowImageOps` (resize with Pillow's filters, rank filters, blur, blends, point maps), the named transforms of `ImageTransforms` ("grayscale", "max_width", "contrast", ...), and scan degradations ("rotate", "perspective", "noise", "speckle", "fade", "tint", "stain", "lowres", "bleed"; seeded) mixed by the scan profiles of `ScanProfiles` ("clean", "office", "old", "fax", or one written as text) |
 | Preprocessing | `ImagePreprocessor`: a model family's resize, crop, rescale and normalization from its preprocessor config, on the host or the device |
 | Chat images | `ChatImageDecoder`: the images of a chat request (data URLs, files, bytes) decoded once |
-| Fonts | `OpenTypeFormat` ("opentype": .ttf, .otf and .ttc with TrueType or CFF outlines, in C#; registered in `FontFormats`), `CoverageRasterizer` ("coverage": exact area coverage, unhinted; in `OutlineRasterizers`); text shaping in `TextShapers` ("general" for every script, "arabic" for the joining scripts: HarfBuzz's OpenType path, every GSUB and GPOS lookup kind) with the Unicode bidirectional algorithm |
+| Fonts | `OpenTypeFormat` ("opentype": .ttf, .otf and .ttc with TrueType or CFF outlines, in C#; registered in `FontFormats`), `CoverageRasterizer` ("coverage": exact area coverage, unhinted; in `OutlineRasterizers`); text shaping in `TextShapers` ("general" for every script, "arabic" for the joining scripts: HarfBuzz's OpenType path, every GSUB and GPOS lookup kind) with the Unicode bidirectional algorithm; `TextLayout` (lines: wrapping, direction, alignment, justification, fallback fonts) and `TextRenderer` |
+| Pages | the page layouts of `PageLayouts` ("letter": an official letter with a three-place header, emblem, rule, subject, body, signature, stamp and footer; "plain"): a `PageContent` drawn in a `PageStyle`, every choice from the page's seed, with its text in reading order (plan 18) |
 | Training | `ImageFolderSource` (class folders, and the "images" source of `SampleSources`), augmentations for the `DataLoader` (`RandomFlip`, `RandomShift`, `RandomRotation`, `GaussianNoise`; "flip" and "shift" in `Augmentations`) |
 
 ## Contracts
 
 The plug-in points only this package uses are in `Idrak.Imaging.Abstractions`: `ImageEncoders` and `IImageEncoder` (image
 file encoders by format). The shared contracts (`ImageCodecs`, `ImageTransforms`, `Augmentations`, `SampleSources`,
-`ImageData`, `FontFormats`, `OutlineRasterizers`) are in Idrak.Abstraction, and this package registers its built-ins into them.
+`ImageData`, `FontFormats`, `OutlineRasterizers`, `TextShapers`, `PageLayouts`, `ScanProfiles`) are in Idrak.Abstraction, and this package registers its built-ins into them.
