@@ -22,6 +22,7 @@ internal static class LibraryRegistrations
         [typeof(SampleSources)] = () => SampleSources.Register("images", OpenImages),
         [typeof(FontFormats)] = () => FontFormats.Register(new OpenTypeFormat()),            // TrueType outlines, single fonts and collections
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),
+        [typeof(TextShapers)] = RegisterShapers,                                 // general for every script, arabic for the joining scripts
     };
 
     private static void RegisterImageCodecs()
@@ -29,6 +30,16 @@ internal static class LibraryRegistrations
         foreach (var codec in (IImageCodec[])[new NetpbmCodec(), new BmpCodec(), new JpegCodec(), new PngCodec()])
         {
             ImageCodecs.Register(codec);
+        }
+    }
+
+    private static void RegisterShapers()
+    {
+        TextShapers.Register(TextShapers.AnyScript, new Shaping.OpenTypeShaper());
+        var arabic = new Shaping.ArabicShaper();
+        foreach (string script in Shaping.ArabicShaper.Scripts)
+        {
+            TextShapers.Register(script, arabic);
         }
     }
 

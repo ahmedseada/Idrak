@@ -1,0 +1,242 @@
+[
+ {
+  "text": "abc (النظام) 123 ١٤٢٦/٥/٢١",
+  "base": "L",
+  "visual": "abc (ماظنلا) ١٤٢٦/٥/٢١ 123"
+ },
+ {
+  "text": "abc (النظام) 123 ١٤٢٦/٥/٢١",
+  "base": "R",
+  "visual": "١٤٢٦/٥/٢١ 123 )ماظنلا( abc"
+ },
+ {
+  "text": "abc (النظام) 123 ١٤٢٦/٥/٢١",
+  "base": null,
+  "visual": "abc (ماظنلا) ١٤٢٦/٥/٢١ 123"
+ },
+ {
+  "text": "بسم الله الرحمن الرحيم",
+  "base": "L",
+  "visual": "ميحرلا نمحرلا هللا مسب"
+ },
+ {
+  "text": "بسم الله الرحمن الرحيم",
+  "base": "R",
+  "visual": "ميحرلا نمحرلا هللا مسب"
+ },
+ {
+  "text": "بسم الله الرحمن الرحيم",
+  "base": null,
+  "visual": "ميحرلا نمحرلا هللا مسب"
+ },
+ {
+  "text": "المادة 12 من النظام",
+  "base": "L",
+  "visual": "ماظنلا نم 12 ةداملا"
+ },
+ {
+  "text": "المادة 12 من النظام",
+  "base": "R",
+  "visual": "ماظنلا نم 12 ةداملا"
+ },
+ {
+  "text": "المادة 12 من النظام",
+  "base": null,
+  "visual": "ماظنلا نم 12 ةداملا"
+ },
+ {
+  "text": "رقم (م/٥٥) وتاريخ ١٤٠٩/١٠/٢٣هـ",
+  "base": "L",
+  "visual": "ـه١٤٠٩/١٠/٢٣ خيراتو )٥٥/م( مقر"
+ },
+ {
+  "text": "رقم (م/٥٥) وتاريخ ١٤٠٩/١٠/٢٣هـ",
+  "base": "R",
+  "visual": "ـه١٤٠٩/١٠/٢٣ خيراتو )٥٥/م( مقر"
+ },
+ {
+  "text": "رقم (م/٥٥) وتاريخ ١٤٠٩/١٠/٢٣هـ",
+  "base": null,
+  "visual": "ـه١٤٠٩/١٠/٢٣ خيراتو )٥٥/م( مقر"
+ },
+ {
+  "text": "Hello عالم world",
+  "base": "L",
+  "visual": "Hello ملاع world"
+ },
+ {
+  "text": "Hello عالم world",
+  "base": "R",
+  "visual": "world ملاع Hello"
+ },
+ {
+  "text": "Hello عالم world",
+  "base": null,
+  "visual": "Hello ملاع world"
+ },
+ {
+  "text": "The price is 50% (خمسون) today.",
+  "base": "L",
+  "visual": "The price is 50% (نوسمخ) today."
+ },
+ {
+  "text": "The price is 50% (خمسون) today.",
+  "base": "R",
+  "visual": ".today )نوسمخ( The price is 50%"
+ },
+ {
+  "text": "The price is 50% (خمسون) today.",
+  "base": null,
+  "visual": "The price is 50% (نوسمخ) today."
+ },
+ {
+  "text": "عنوان: http://x.y/a?b=1 هنا",
+  "base": "L",
+  "visual": "ناونع: http://x.y/a?b=1 انه"
+ },
+ {
+  "text": "عنوان: http://x.y/a?b=1 هنا",
+  "base": "R",
+  "visual": "انه http://x.y/a?b=1 :ناونع"
+ },
+ {
+  "text": "عنوان: http://x.y/a?b=1 هنا",
+  "base": null,
+  "visual": "انه http://x.y/a?b=1 :ناونع"
+ },
+ {
+  "text": "1-2-3 ٤-٥",
+  "base": "L",
+  "visual": "1-2-3 ٥-٤"
+ },
+ {
+  "text": "1-2-3 ٤-٥",
+  "base": "R",
+  "visual": "٥-٤ 1-2-3"
+ },
+ {
+  "text": "1-2-3 ٤-٥",
+  "base": null,
+  "visual": "1-2-3 ٥-٤"
+ },
+ {
+  "text": "שלום, world!",
+  "base": "L",
+  "visual": "םולש, world!"
+ },
+ {
+  "text": "שלום, world!",
+  "base": "R",
+  "visual": "!world ,םולש"
+ },
+ {
+  "text": "שלום, world!",
+  "base": null,
+  "visual": "!world ,םולש"
+ },
+ {
+  "text": "abc",
+  "base": "L",
+  "visual": "abc"
+ },
+ {
+  "text": "abc",
+  "base": "R",
+  "visual": "abc"
+ },
+ {
+  "text": "abc",
+  "base": null,
+  "visual": "abc"
+ },
+ {
+  "text": "  مرحبا  ",
+  "base": "L",
+  "visual": "  ابحرم  "
+ },
+ {
+  "text": "  مرحبا  ",
+  "base": "R",
+  "visual": "  ابحرم  "
+ },
+ {
+  "text": "  مرحبا  ",
+  "base": null,
+  "visual": "  ابحرم  "
+ },
+ {
+  "text": "a‏b c",
+  "base": "L",
+  "visual": "a‏b c"
+ },
+ {
+  "text": "a‏b c",
+  "base": "R",
+  "visual": "b c‏a"
+ },
+ {
+  "text": "a‏b c",
+  "base": null,
+  "visual": "a‏b c"
+ },
+ {
+  "text": "(abc) [عربي]",
+  "base": "L",
+  "visual": "(abc) [يبرع]"
+ },
+ {
+  "text": "(abc) [عربي]",
+  "base": "R",
+  "visual": "]يبرع[ )abc("
+ },
+ {
+  "text": "(abc) [عربي]",
+  "base": null,
+  "visual": "(abc) [يبرع]"
+ },
+ {
+  "text": "سعر 3.5 ريال، و 1,000.25 دولار",
+  "base": "L",
+  "visual": "رالود 1,000.25 و ،لاير 3.5 رعس"
+ },
+ {
+  "text": "سعر 3.5 ريال، و 1,000.25 دولار",
+  "base": "R",
+  "visual": "رالود 1,000.25 و ،لاير 3.5 رعس"
+ },
+ {
+  "text": "سعر 3.5 ريال، و 1,000.25 دولار",
+  "base": null,
+  "visual": "رالود 1,000.25 و ،لاير 3.5 رعس"
+ },
+ {
+  "text": "عدد -5 و +7",
+  "base": "L",
+  "visual": "7+ و 5- ددع"
+ },
+ {
+  "text": "عدد -5 و +7",
+  "base": "R",
+  "visual": "7+ و 5- ددع"
+ },
+ {
+  "text": "عدد -5 و +7",
+  "base": null,
+  "visual": "7+ و 5- ددع"
+ },
+ {
+  "text": "قال: «نعم».",
+  "base": "L",
+  "visual": "معن« :لاق»."
+ },
+ {
+  "text": "قال: «نعم».",
+  "base": "R",
+  "visual": ".»معن« :لاق"
+ },
+ {
+  "text": "قال: «نعم».",
+  "base": null,
+  "visual": ".»معن« :لاق"
+ }
+]

@@ -21,7 +21,7 @@
  },
  {
   "text": "é",
-  "glyph": 98,
+  "glyph": 100,
   "ppem": 24,
   "left": 1,
   "top": 20,
@@ -51,7 +51,7 @@
  },
  {
   "text": "ب",
-  "glyph": 110,
+  "glyph": 291,
   "ppem": 24,
   "left": 1,
   "top": 8,
@@ -61,7 +61,7 @@
  },
  {
   "text": "ج",
-  "glyph": 114,
+  "glyph": 295,
   "ppem": 48,
   "left": 3,
   "top": 21,
@@ -71,7 +71,7 @@
  },
  {
   "text": "س",
-  "glyph": 121,
+  "glyph": 302,
   "ppem": 48,
   "left": 3,
   "top": 18,
@@ -81,7 +81,7 @@
  },
  {
   "text": "ع",
-  "glyph": 127,
+  "glyph": 308,
   "ppem": 24,
   "left": 1,
   "top": 13,
@@ -91,7 +91,7 @@
  },
  {
   "text": "ه",
-  "glyph": 136,
+  "glyph": 317,
   "ppem": 48,
   "left": 3,
   "top": 18,
@@ -101,7 +101,7 @@
  },
  {
   "text": "أ",
-  "glyph": 105,
+  "glyph": 286,
   "ppem": 48,
   "left": 2,
   "top": 48,
@@ -111,7 +111,7 @@
  },
  {
   "text": "ك",
-  "glyph": 132,
+  "glyph": 313,
   "ppem": 24,
   "left": 1,
   "top": 19,
@@ -121,7 +121,7 @@
  },
  {
   "text": "٣",
-  "glyph": 154,
+  "glyph": 335,
   "ppem": 48,
   "left": 1,
   "top": 31,

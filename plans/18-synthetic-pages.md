@@ -1,6 +1,6 @@
 # 18. Synthetic document pages: tuning data from text
 
-Status: phase 1 done 2026-10-13 (fonts: reader and rasterizer, tests "fonts:"). Planned 2026-10-13. Owner's choice: the library's own font engine (no dependency). Arabic is the main goal; the
+Status: phases 1 and 2 done 2026-10-13 (fonts: reader and rasterizer, tests "fonts:"; shaping: bidi, itemizer, the general and Arabic shapers, every GSUB and GPOS lookup kind, tests "shaping:", glyph for glyph as HarfBuzz 14 on 33 strings). Planned 2026-10-13. Owner's choice: the library's own font engine (no dependency). Arabic is the main goal; the
 engine serves any language (owner, 2026-10-13).
 
 ## Why

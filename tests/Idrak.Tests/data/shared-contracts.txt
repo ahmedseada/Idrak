@@ -13,3 +13,5 @@ Idrak.Abstraction.Data.IFontFormat | the font file formats a face comes from, re
 Idrak.Abstraction.Data.FontFormats | the font formats by name, overridable once for every package that draws text (Imaging, Nlp's synthetic pages, Vision)
 Idrak.Abstraction.Data.IOutlineRasterizer | how glyph and shape outlines become pixels, for every package that draws text or shapes (Imaging, Nlp's synthetic pages, Vision's synthetic samples)
 Idrak.Abstraction.Data.OutlineRasterizers | the outline rasterizers by name, overridable once for every package that draws outlines
+Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per script, for every package that draws text (Imaging draws, Nlp's synthetic pages lay out, Vision makes text samples); a script's shaper is registered once for all of them
+Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for every package that draws text
