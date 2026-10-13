@@ -44,6 +44,16 @@ public sealed record ReaderModel
     public int? MaxPixels { get; init; }
 
     /// <summary>
+    /// How this model's projections are stored ("bf16", "int8", "int4", "f32"), over the app's <see cref="LegalOcrSettings.Weights"/>:
+    /// a model whose bfloat16 weights do not fit the device next to its encoder reads with int8 while the others stay
+    /// bfloat16. Null: the app's.
+    /// </summary>
+    public string? Weights { get; init; }
+
+    /// <summary>This model's head format with int8 or int4 projections, over the app's <see cref="LegalOcrSettings.HeadWeights"/>; null: the app's.</summary>
+    public string? HeadWeights { get; init; }
+
+    /// <summary>
     /// The key of the answer's JSON holding the page's whole text, shown alone in the Full text tab ("full_text_extract"
     /// for bakrianoo's model); null: a key starting with "full_text", else the longest text in the answer.
     /// </summary>
@@ -53,6 +63,10 @@ public sealed record ReaderModel
 /// <summary>The app's settings (the "LegalOcr" section of appsettings.json, or --LegalOcr:Key=value on the command line).</summary>
 public sealed record LegalOcrSettings
 {
+    /// <summary>These settings with <paramref name="model"/>'s own weight formats over the app's.</summary>
+    public LegalOcrSettings For(ReaderModel model) =>
+        model.Weights is null && model.HeadWeights is null ? this : this with { Weights = model.Weights ?? Weights, HeadWeights = model.HeadWeights ?? HeadWeights };
+
     /// <summary>"auto" (the best device found), "cpu", "cuda", "cuda:N".</summary>
     public string Device { get; init; } = "auto";
 

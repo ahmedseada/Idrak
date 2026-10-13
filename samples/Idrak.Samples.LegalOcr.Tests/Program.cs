@@ -180,13 +180,14 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
         Check(done.Data["cer"] is { } cer && cer.GetValue<double>() >= 0 && done.Data["expected"]!.GetValue<string>().Contains("محكمة", StringComparison.Ordinal),
             done.Data.ToJsonString());
     }),
-    ("legal qwen: a tiny Qwen2.5-VL beside Gemma 3 in the switch reads a page (Gemma's pan and scan is not sent to it), its pixel budget (the model's, or the read's) sets its image tokens, and a tuning run on it with the merger trained writes the adapter the switch reads with", () =>
+    ("legal qwen: a tiny Qwen2.5-VL beside Gemma 3 in the switch reads a page (Gemma's pan and scan is not sent to it), its pixel budget (the model's, or the read's) sets its image tokens, a model's own weight formats go over the app's, and a tuning run on it with the merger trained writes the adapter the switch reads with", () =>
     {
         var basic = TuningSettings("tune-q");
         var settings = basic with
         {
             Models = [new ReaderModel { Id = "g", Name = "g", Folder = tinyGemma, Preprocessing = "grayscale", MaxTokens = 4 },
-                new ReaderModel { Id = "q", Name = "q", Folder = tinyQwen, Preprocessing = "grayscale", MaxTokens = 4, MaxPixels = 2048 }],
+                new ReaderModel { Id = "q", Name = "q", Folder = tinyQwen, Preprocessing = "grayscale", MaxTokens = 4, MaxPixels = 2048 },
+                new ReaderModel { Id = "q8", Name = "q8", Folder = tinyQwen, Preprocessing = "grayscale", MaxTokens = 4, Weights = "int8", HeadWeights = "bf16" }],
             Tuning = basic.Tuning with { Base = "q" },
         };
         using var readers = Service(settings);
@@ -197,6 +198,12 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
         var smaller = Read(readers, Page(60, 80), new ReadRequest(MaxTokens: 3, MaxPixels: 1024), null);
         Check(smaller[^1].Event == "done" && smaller[^1].Data["promptTokens"]!.GetValue<int>() < full[^1].Data["promptTokens"]!.GetValue<int>(),
             $"prompt tokens {full[^1].Data["promptTokens"]} at 2048 pixels, {smaller[^1].Data["promptTokens"]} at 1024");
+
+        // A model's own weight formats over the app's (f32 here): int8 projections with a bfloat16 head.
+        Check(readers.TransformersGeneration("q").Weights == "f32" && readers.TransformersGeneration("q8").Weights == "int8, bf16 head",
+            $"weights: q {readers.TransformersGeneration("q").Weights}, q8 {readers.TransformersGeneration("q8").Weights}");
+        Load(readers, "q8");
+        Check(Read(readers, Page(60, 80), new ReadRequest(MaxTokens: 3), null)[^1].Event == "done", "the int8 model reads");
 
         using var tuning = new TuningService(settings, readers, Adapters(settings), NullLogger<TuningService>.Instance);
         tuning.Start(new TuneRequest { Name = "qwen", Base = "q", TrainProjector = true });
