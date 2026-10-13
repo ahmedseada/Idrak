@@ -6,3 +6,5 @@
 Idrak.Abstraction.Generation.ITokenSampler | any model that generates tokens step by step samples them the same way, whatever the tokens stand for (text, speech, images)
 Idrak.Abstraction.Generation.TokenSamplers | the sampler every token-generating package takes, overridable once for all of them
 Idrak.Abstraction.Retrieval.IVectorStore | embeddings of any kind (text, images, audio) are stored and searched the same way
+Idrak.Abstraction.Generation.IImagePositionRule | how a vision-language family's image tokens sit on a multi-axis rotary embedding: the decoder (core) applies it, a family plug-in or an app may give its own, and a tuner or server placing tokens itself reads it
+Idrak.Abstraction.Generation.ImagePositionRules | the position rules by name, beside ImageAttentionRules, overridable once for every package that places image tokens

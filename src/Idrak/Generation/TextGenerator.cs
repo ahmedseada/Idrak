@@ -581,7 +581,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     }
                 }
 
-                if (graph is null && !padded && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Layout.Recordable && StepsRecordable)
+                if (graph is null && !padded && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Recordable && StepsRecordable)
                 {
                     graph = decoding.CaptureStep(Step);
                 }
@@ -995,7 +995,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     {
                         // The first step runs as it is: the device measures its card-dependent choices for these
                         // shapes (which it cannot while recording), and the graph recorded from the second step keeps them.
-                        if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Layout.Recordable && StepsRecordable)
+                        if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Recordable && StepsRecordable)
                         {
                             graph = decoding.CaptureStep(Step);
                         }

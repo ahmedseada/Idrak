@@ -17,8 +17,11 @@ public sealed record PromptImage(int Position, Tensor Features)
     public int Sequence { get; init; }
 
     /// <summary>
-    /// The image tokens' position ids on each axis of a multi-axis rotary embedding (M-RoPE), [axes, tokens], or null (the
-    /// default): they take the prompt's next positions, as text does. A decoder without multi-axis positions refuses them.
+    /// The image tokens' position ids on each axis of a multi-axis rotary embedding (M-RoPE), [axes, tokens], counted from
+    /// the image's start, or null (the default): they take the prompt's next positions, as text does. With them, every
+    /// token of the pass is placed by the image position rule (<see cref="ImagePositionRules.Grid"/>) and the decoder's
+    /// rotary embedding rotates each frequency pair by its axis (<see cref="RopeSettings.Sections"/>); a decoder without
+    /// sections refuses them.
     /// </summary>
     public Tensor? Positions { get; init; }
 
@@ -79,12 +82,44 @@ public static class ImagePrefill
 
         var (blocks, first) = Prepare(decoder, ids, images, attention, segments: null);
         blocks.KeepOnDevice = !Autograd.IsEnabled;                       // nothing recorded holds the tables past the pass
+        int before = context.Length;
+        if (blocks.HasAxes)
+        {
+            // Each row's tokens from its next rotary position (its length in its sequence plus the offset in effect).
+            var starts = new int[blocks.Batch];
+            var real = new int[blocks.Batch];
+            for (int b = 0; b < starts.Length; b++)
+            {
+                int rowStart = context.RowStarts?[b] ?? 0;
+                real[b] = Math.Clamp(rowStart - before, 0, blocks.Steps);
+                starts[b] = Math.Max(0, before - rowStart) + (context.RotaryOffsets?[b] ?? 0);
+            }
+
+            blocks.PlaceRotary(starts, real);
+        }
+
         try
         {
+            Tensor logits;
             using (blocks.Use())
             {
-                return decoder.ForwardCached(ids, context, count, (i, x) => i == first ? blocks.Substitute(x) : x);
+                logits = decoder.ForwardCached(ids, context, count, (i, x) => i == first ? blocks.Substitute(x) : x);
             }
+
+            if (blocks.HasAxes && context.Length == before + blocks.Steps)
+            {
+                // The tokens after the pass rotate from each row's rotary end: its offset to the row's sequence length.
+                var ends = blocks.RotaryEnds!;
+                var offsets = new int[ends.Length];
+                for (int b = 0; b < offsets.Length; b++)
+                {
+                    offsets[b] = ends[b] - Math.Max(0, context.Length - (context.RowStarts?[b] ?? 0));
+                }
+
+                context.SetRotaryOffsets(offsets, before + images.Min(i => i.Position));
+            }
+
+            return logits;
         }
         finally
         {
@@ -231,7 +266,7 @@ public static class ImagePrefill
         }
 
         var (first, dim) = FirstBlock(decoder);
-        CheckPositions(images);
+        CheckPositions(decoder, images);
         return (new ImageBlocks(ids.Shape[0], ids.Shape[1], dim, images, attention, segments), first);
     }
 
@@ -255,14 +290,14 @@ public static class ImagePrefill
         return (first, ((DecoderBlock)decoder[first]).Attention.Query.InFeatures);
     }
 
-    private static void CheckPositions(IReadOnlyList<PromptImage> images)
+    // Images with axis positions need a decoder whose rotary embedding has sections (M-RoPE).
+    private static void CheckPositions(Sequential decoder, IReadOnlyList<PromptImage> images)
     {
-        if (images.FirstOrDefault(i => i?.Positions is not null) is { } placed)
+        if (images.FirstOrDefault(i => i?.Positions is not null) is { } placed
+            && !decoder.Descendants().OfType<CausalSelfAttention>().Any(a => a.Rope?.Sections is not null))
         {
-            // The slot is in the contract (ImageFeatures.Positions) for M-RoPE families (Qwen2-VL, Qwen2.5-VL); this decoder
-            // places each token by one position (plan 11, "Vision contracts": what it would need).
             throw new NotSupportedException($"The image at {placed.Position} has multi-axis position ids (M-RoPE); this decoder places each token by one position "
-                + "and has no multi-axis rotary embedding.");
+                + "and has no multi-axis rotary embedding (RopeSettings.Sections).");
         }
     }
 }
@@ -358,9 +393,20 @@ public sealed class ImagePrefillInputs : IDisposable
         // One pair of range tables per window the decoder's layers attend with (a sliding-window layer and a global one
         // see different keys), none for a causal rule (its layers keep their causal kernels).
         int[] windows = attention.Causal ? [] : [.. decoder.Descendants().OfType<CausalSelfAttention>().Select(a => a.SpanWindow).Distinct()];
+
+        // One pair of rotary rows per rotary setting with several axes (every position of every row placed by the rule,
+        // text-only rows too), and the index the layers read them by.
+        var rotary = decoder.Descendants().OfType<CausalSelfAttention>().Where(a => a.Rope?.Sections is not null)
+            .Select(a => (Rope: a.Rope!, a.HeadDim)).Distinct()
+            .ToDictionary(r => r, r => (Tensor.PersistentZeros([batch * steps, r.Rope.Scaled(r.HeadDim).Frequencies.Length], device),
+                Tensor.PersistentZeros([batch * steps, r.Rope.Scaled(r.HeadDim).Frequencies.Length], device)));
         var buffers = new ImageBlocks.Buffers(Tensor.PersistentZeros([imageTokens, dim], device),
             Tensor.PersistentZeros([batch * steps], device),
-            windows.ToDictionary(w => w, _ => (Tensor.PersistentZeros([batch * steps], device), Tensor.PersistentZeros([batch * steps], device))));
+            windows.ToDictionary(w => w, _ => (Tensor.PersistentZeros([batch * steps], device), Tensor.PersistentZeros([batch * steps], device))))
+        {
+            Rotary = rotary,
+            RotaryIndex = rotary.Count == 0 ? null : Tensor.Persistent([.. Enumerable.Range(0, batch * steps).Select(i => (float)i)], [batch * steps], device, requiresGrad: false),
+        };
         return new ImagePrefillInputs(new ImageBlocks(batch, steps, dim, [], attention, null, buffers), first);
     }
 
@@ -456,6 +502,16 @@ internal sealed class ImageBlocks
     // instead of one per attention layer; freed by ReleaseDevice.
     private readonly Dictionary<float[], Tensor> _uploaded = new(ReferenceEqualityComparer.Instance);
 
+    // Multi-axis rotary positions (images whose features carry axis positions): each row's first rotary position and
+    // first real token (a cached pass; 0 and 0 without a cache), every token's position on each axis [axes · batch ·
+    // steps], each row's rotary position after the pass, and the rotary rows built from them per rotary setting.
+    private int[]? _rotaryStarts;
+    private int[]? _rotaryFirst;
+    private float[]? _axisPositions;
+    private int[]? _rotaryEnds;
+    private float[]? _rotaryIndex;
+    private readonly Dictionary<(RopeSettings Rope, int HeadDim), (float[] Cos, float[] Sin)> _rotaryRows = [];
+
     public ImageBlocks(int batch, int steps, int dim, IReadOnlyList<PromptImage> images, IImageAttentionRule rule, IReadOnlyList<IReadOnlyList<int>>? segments,
         Buffers? buffers = null)
     {
@@ -489,6 +545,171 @@ internal sealed class ImageBlocks
 
     /// <summary>Whether an attention layer over [n, t] takes its key ranges from these blocks.</summary>
     public bool AttendsFor(int n, int t) => Attends && n == Batch && t == Steps;
+
+    /// <summary>Whether the images carry axis positions (M-RoPE): every token of the pass is then placed on the rotary axes.</summary>
+    public bool HasAxes { get; private set; }
+
+    /// <summary>The rotary axes of the images' positions (0 without).</summary>
+    public int Axes { get; private set; }
+
+    /// <summary>For a cached pass: each row's first rotary position and first real token (the tokens before it are padding).</summary>
+    public void PlaceRotary(int[] starts, int[] first)
+    {
+        (_rotaryStarts, _rotaryFirst) = (starts, first);
+        ClearRotary();
+    }
+
+    /// <summary>Each row's rotary position after the pass (its last token's plus one), once the positions are placed.</summary>
+    public int[]? RotaryEnds
+    {
+        get
+        {
+            _ = AxisPositions();
+            return _rotaryEnds;
+        }
+    }
+
+    /// <summary>
+    /// The rotary rows of an attention layer over [n, t] rotating by <paramref name="rope"/> with heads of
+    /// <paramref name="headDim"/>, when the pass places its tokens on several axes: cos and sin [n · t, half] (each
+    /// frequency pair by its axis' position; a text token's row equals the plain table's row at its position) and the
+    /// index [n · t] that reads them, one row per token. Null when the pass has no axis positions or the layer another shape.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The layer's rotary embedding has no sections for the images' axes.</exception>
+    public (Tensor Cos, Tensor Sin, Tensor Index)? Rotary(RopeSettings rope, int headDim, int n, int t, Device device)
+    {
+        if (n != Batch || t != Steps)
+        {
+            return null;
+        }
+
+        if (Fixed is { } buffers)
+        {
+            return buffers.RotaryIndex is not null && buffers.Rotary.TryGetValue((rope, headDim), out var rows) ? (rows.Cos, rows.Sin, buffers.RotaryIndex) : null;
+        }
+
+        if (!HasAxes)
+        {
+            return null;
+        }
+
+        var (cos, sin) = RotaryRows(rope, headDim);
+        int half = cos.Length / (n * t);
+        _rotaryIndex ??= [.. Enumerable.Range(0, n * t).Select(i => (float)i)];
+        return (Upload(cos, [n * t, half], device), Upload(sin, [n * t, half], device), Upload(_rotaryIndex, [n * t], device));
+    }
+
+    // The host rotary rows of one setting, computed once per pass: pair i of token r rotates by the position of r on the
+    // axis of i (RopeTables' arithmetic, so a text token's row is bit for bit the table's).
+    private (float[] Cos, float[] Sin) RotaryRows(RopeSettings rope, int headDim)
+    {
+        if (_rotaryRows.TryGetValue((rope, headDim), out var rows))
+        {
+            return rows;
+        }
+
+        var sections = rope.Sections ?? throw new NotSupportedException("The prompt's images carry multi-axis position ids (M-RoPE), but this attention layer's "
+            + "rotary embedding rotates by one position (RopeSettings.Sections is null).");
+        var scaled = rope.Scaled(headDim);
+        int half = scaled.Frequencies.Length;
+        if (sections.Axes != Axes || sections.Total != half)
+        {
+            throw new NotSupportedException($"The rotary sections {sections} ({sections.Axes} axes, {sections.Total} pairs) do not fit the images' {Axes} axes "
+                + $"and the head's {half} frequency pairs.");
+        }
+
+        var positions = AxisPositions();
+        var axisOf = sections.AxisOfPairs();
+        int tokens = Batch * Steps;
+        double factor = scaled.AttentionFactor;
+        var cos = new float[tokens * half];
+        var sin = new float[tokens * half];
+        for (int r = 0; r < tokens; r++)
+        {
+            for (int i = 0; i < half; i++)
+            {
+                int p = (int)positions[axisOf[i] * tokens + r];
+                var frequencies = scaled.FrequenciesAt?.Invoke(p) ?? scaled.Frequencies;
+                double angle = p * frequencies[i];
+                cos[r * half + i] = (float)(Math.Cos(angle) * factor);
+                sin[r * half + i] = (float)(Math.Sin(angle) * factor);
+            }
+        }
+
+        _rotaryRows[(rope, headDim)] = rows = (cos, sin);
+        return rows;
+    }
+
+    // Every token's position on each axis, [axes · batch · steps], placed by the image position rule: each row from its
+    // rotary start (0 without a cache; each packed sequence from 0), padding at 0.
+    private float[] AxisPositions()
+    {
+        if (_axisPositions is not null)
+        {
+            return _axisPositions;
+        }
+
+        int tokens = Batch * Steps, axes = Math.Max(1, Axes);
+        var rule = ImagePositionRules.Get(ImagePositionRules.Grid);
+        var positions = new float[axes * tokens];
+        var ends = new int[Batch];
+        var relative = new Dictionary<PromptImage, float[]>(ReferenceEqualityComparer.Instance);
+        foreach (var image in _images)
+        {
+            relative[image] = image.Positions?.ToArray() ?? [];
+        }
+
+        for (int b = 0; b < Batch; b++)
+        {
+            var row = _images.Where(i => i.Sequence == b).OrderBy(i => i.Position).ToList();
+            var pieces = _segments is not null
+                ? Pieces(_segments[b].Append(Steps - _segments[b].Sum()), start: _ => 0)
+                : [(Begin: _rotaryFirst?[b] ?? 0, Length: Steps - (_rotaryFirst?[b] ?? 0), Start: _rotaryStarts?[b] ?? 0)];
+            foreach (var (begin, length, start) in pieces)
+            {
+                if (length <= 0)
+                {
+                    continue;
+                }
+
+                var runs = row.Where(i => i.Position >= begin && i.Position < begin + length)
+                    .Select(i => new ImageRun(i.Position - begin, i.Tokens, relative[i])).ToList();
+                var placed = new float[axes * length];
+                int end = rule.Place(start, length, runs, axes, placed);
+                for (int a = 0; a < axes; a++)
+                {
+                    placed.AsSpan(a * length, length).CopyTo(positions.AsSpan(a * tokens + b * Steps + begin, length));
+                }
+
+                ends[b] = end;
+            }
+        }
+
+        (_axisPositions, _rotaryEnds) = (positions, ends);
+        return positions;
+    }
+
+    // The packed sequences of a row (and the padding after them) as (begin, length, rotary start).
+    private static List<(int Begin, int Length, int Start)> Pieces(IEnumerable<int> lengths, Func<int, int> start)
+    {
+        var pieces = new List<(int Begin, int Length, int Start)>();
+        int begin = 0;
+        foreach (int length in lengths)
+        {
+            pieces.Add((begin, length, start(begin)));
+            begin += length;
+        }
+
+        return pieces;
+    }
+
+    private void ClearRotary()
+    {
+        _axisPositions = null;
+        _rotaryEnds = null;
+        _rotaryIndex = null;
+        _rotaryRows.Clear();
+    }
 
     // Takes the images (and, for packed rows, each row's sequence lengths; the rest of a row is padding), checking that each
     // lies inside its row, or inside one sequence of it, and that none overlap.
@@ -540,9 +761,26 @@ internal sealed class ImageBlocks
             _ = KeySpans.ImageBlocks(Steps, row);                        // refuses overlapping blocks
         }
 
+        // Axis positions: every image of the pass has them (the same number of axes) or none has.
+        int[] axes = [.. list.Select(i => i.Positions is { } p ? p.Shape[0] : 0).Distinct()];
+        if (axes.Length > 1)
+        {
+            throw new ArgumentException($"The images' axis positions differ ({string.Join(", ", axes)} axes, 0 for none): give every image of a pass the same axes, or none.", nameof(images));
+        }
+
+        foreach (var image in list.Where(i => i.Positions is not null))
+        {
+            if (image.Positions!.Rank != 2 || image.Positions.Shape[1] != image.Tokens)
+            {
+                throw new ArgumentException($"The image at {image.Position}: its axis positions are [axes, {image.Tokens}], got {Tensor.FormatShape(image.Positions.Shape)}.", nameof(images));
+            }
+        }
+
         (_images, _blocks, _segments) = (list, blocks, segments);
+        (Axes, HasAxes) = (axes.Length == 1 ? axes[0] : 0, axes.Length == 1 && axes[0] > 0);
         _spanValues.Clear();
         _maskValues.Clear();
+        ClearRotary();
     }
 
     // The packed sequence of a row (its first position and length) holding `position`; length 0 in the padding.
@@ -796,6 +1034,19 @@ internal sealed class ImageBlocks
             starts.Load(s);
             ends.Load(e);
         }
+
+        foreach (var ((rope, headDim), (cos, sin)) in buffers.Rotary)
+        {
+            // A batch without axis positions is placed as text, one position each: the plain tables' rows.
+            if (!HasAxes)
+            {
+                Axes = rope.Sections!.Axes;
+            }
+
+            var (c, n) = RotaryRows(rope, headDim);
+            cos.Load(c);
+            sin.Load(n);
+        }
     }
 
     /// <summary>The embeddings [batch, steps, dim] with each image's rows replaced by its features (one gather).</summary>
@@ -848,7 +1099,14 @@ internal sealed class ImageBlocks
 
         public Dictionary<int, (Tensor Starts, Tensor Ends)> Spans { get; } = spans;
 
-        public long Bytes => 4L * (Features.Size + Rows.Size + Spans.Values.Sum(s => (long)s.Starts.Size + s.Ends.Size));
+        /// <summary>The rotary rows [batch · steps, half] per rotary setting with sections (none for a decoder rotating by one position).</summary>
+        public Dictionary<(RopeSettings Rope, int HeadDim), (Tensor Cos, Tensor Sin)> Rotary { get; init; } = [];
+
+        /// <summary>The index [batch · steps] reading the rotary rows, one per token; null without them.</summary>
+        public Tensor? RotaryIndex { get; init; }
+
+        public long Bytes => 4L * (Features.Size + Rows.Size + Spans.Values.Sum(s => (long)s.Starts.Size + s.Ends.Size)
+            + Rotary.Values.Sum(r => (long)r.Cos.Size + r.Sin.Size) + (RotaryIndex?.Size ?? 0));
 
         public void Dispose()
         {
@@ -859,6 +1117,14 @@ internal sealed class ImageBlocks
                 starts.Dispose();
                 ends.Dispose();
             }
+
+            foreach (var (cos, sin) in Rotary.Values)
+            {
+                cos.Dispose();
+                sin.Dispose();
+            }
+
+            RotaryIndex?.Dispose();
         }
     }
 }

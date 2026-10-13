@@ -1665,12 +1665,15 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public Idrak.Abstraction.Tensor? Mask { get; }
   public Idrak.Abstraction.Tensor? MaskOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public Idrak.Abstraction.Tensor? Positions { get; }
+  public Idrak.Abstraction.Tensor? RotaryPositions { get; }
   public Idrak.Abstraction.Tensor? TokenPositions { get; }
   public Idrak.Abstraction.Tensor? TokenStarts { get; }
+  public System.Collections.Generic.IReadOnlyList<int>? RotaryOffsets { get; }
   public System.Collections.Generic.IReadOnlyList<int>? RowStarts { get; }
   public System.Threading.CancellationToken Cancellation { get; set; }
   public bool InStep { get; }
   public bool LastPositionOnly { get; set; }
+  public bool Recordable { get; }
   public int Batch { get; }
   public int Capacity { get; }
   public int Length { get; }
@@ -1683,6 +1686,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public void EndStep(int steps)
   public void ReplayStep(Idrak.Abstraction.ComputeGraph graph, int steps = 1)
   public void Reset()
+  public void SetRotaryOffsets(System.Collections.Generic.IReadOnlyList<int>? offsets, int from)
   public void SetRowStarts(System.Collections.Generic.IReadOnlyList<int>? starts)
   public void Truncate(int length)
 
@@ -1751,6 +1755,10 @@ public interface Idrak.Abstraction.Generation.IImageAttentionRule
   public bool Causal { get; }
   public string Name { get; }
 
+public interface Idrak.Abstraction.Generation.IImagePositionRule
+  public int Place(int start, int count, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageRun> images, int axes, System.Span<float> positions)
+  public string Name { get; }
+
 public interface Idrak.Abstraction.Generation.IImagePromptFormat
   public int ImageToken { get; }
   public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout>> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
@@ -1789,6 +1797,7 @@ public interface Idrak.Abstraction.Generation.IToolRegistry
   public System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult>> InvokeAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall> calls, System.Threading.CancellationToken cancellationToken = default)
 
 public interface Idrak.Abstraction.Generation.IVisionEncoder : System.IDisposable
+  public (default) float[]? AxisPositions(Idrak.Abstraction.Generation.ImageTokenLayout layout)
   public Idrak.Abstraction.Device Device { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images, Idrak.Abstraction.Generation.VisionOptions? options = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
@@ -1826,6 +1835,23 @@ public sealed class Idrak.Abstraction.Generation.ImageFeatures : System.IDisposa
   public ImageFeatures(Idrak.Abstraction.Tensor features, Idrak.Abstraction.Generation.ImageTokenLayout layout, Idrak.Abstraction.Tensor? positions = null)
   public int Tokens { get; }
   public void Dispose()
+
+public static class Idrak.Abstraction.Generation.ImagePositionRules
+  public const string Grid = "grid"
+  public static Idrak.Abstraction.Generation.IImagePositionRule Get(string name)
+  public static Idrak.Abstraction.Generation.IImagePositionRule? Default(string name)
+  public static Idrak.Abstraction.Generation.IImagePositionRule? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Generation.IImagePositionRule rule)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.Generation.ImageRun : System.IEquatable<Idrak.Abstraction.Generation.ImageRun>
+  public ImageRun(int Offset, int Length, System.ReadOnlyMemory<float> Relative)
+  public System.ReadOnlyMemory<float> Relative { get; init; }
+  public int Length { get; init; }
+  public int Offset { get; init; }
 
 public sealed class Idrak.Abstraction.Generation.ImageTokenFormat : Idrak.Abstraction.Generation.IImagePromptFormat
   public ImageTokenFormat(string name, int marker, int imageToken, int? begin = null, int? end = null, string before = "", string after = "")
@@ -2032,11 +2058,23 @@ public static class Idrak.Abstraction.Generation.RopeScalings
 public sealed record Idrak.Abstraction.Generation.RopeSettings : System.IEquatable<Idrak.Abstraction.Generation.RopeSettings>
   public Idrak.Abstraction.Generation.RopeScaling? Scaling { get; init; }
   public Idrak.Abstraction.Generation.RopeScalingResult Scaled(int headDim)
+  public Idrak.Abstraction.Generation.RotarySections? Sections { get; init; }
   public RopeSettings(float Theta, int? RotaryDim = null, bool Interleaved = false, Idrak.Abstraction.Generation.RopeScaling? Scaling = null)
   public bool Interleaved { get; init; }
   public double[] Frequencies(int headDim)
   public float Theta { get; init; }
   public int? RotaryDim { get; init; }
+
+public sealed class Idrak.Abstraction.Generation.RotarySections : System.IEquatable<Idrak.Abstraction.Generation.RotarySections>
+  public RotarySections(params int[] pairs)
+  public System.Collections.Generic.IReadOnlyList<int> Pairs { get; }
+  public bool Equals(Idrak.Abstraction.Generation.RotarySections? other)
+  public int Axes { get; }
+  public int Total { get; }
+  public int[] AxisOfPairs()
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
 
 public readonly record struct Idrak.Abstraction.Generation.SampledToken : System.IEquatable<Idrak.Abstraction.Generation.SampledToken>
   public (int, float)[] Alternatives { get; init; }

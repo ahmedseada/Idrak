@@ -211,6 +211,10 @@
         <label for="maxTokens">Most tokens in the answer</label>
         <input type="number" id="maxTokens" min="1" max="8000" step="64">
       </div>
+      <div>
+        <label for="maxPixels">Most pixels of the page (Qwen-VL: its resolution, about 28 × 28 pixels per image token; empty: the model's own; other models ignore it)</label>
+        <input type="number" id="maxPixels" min="3136" step="28224" placeholder="the model's own">
+      </div>
     </div>
 
   </section>
@@ -438,6 +442,7 @@ async function pick(m) {
 function useSettings(m) {
   $("prompt").value = m.prompt;
   $("maxTokens").value = m.maxTokens;
+  $("maxPixels").value = m.maxPixels ?? "";
   // Your own steps stay across models; any other choice follows the model.
   if ($("preset").value !== "custom") setSteps($("preset").value === "model" ? m.preprocessing : presets[$("preset").value] ?? "", $("preset").value);
 }
@@ -787,7 +792,7 @@ function refreshRead() {
 $("evaluate").onclick = evaluate;
 $("evaluateStop").onclick = () => evaluating && evaluating.abort();
 async function evaluate() {
-  const body = { prompt: $("evaluatePagePrompts").checked ? null : $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
+  const body = { prompt: $("evaluatePagePrompts").checked ? null : $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, maxPixels: Number($("maxPixels").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
   const count = Math.max(0, Number($("evaluateCount").value) || 0);
   evaluating = new AbortController();
   $("evaluate").disabled = true; $("evaluateStop").disabled = false; refreshRead();
@@ -820,7 +825,7 @@ async function evaluate() {
 $("read").onclick = () => reading ? reading.abort() : read();
 
 async function read() {
-  const body = { prompt: $("evaluatePagePrompts").checked ? null : $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
+  const body = { prompt: $("evaluatePagePrompts").checked ? null : $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, maxPixels: Number($("maxPixels").value) || null, panAndScan: $("panAndScan").checked, addSpecialTokens: $("addSpecialTokens").checked, ...generationBody() };
   if (pageIndex == null) body.image = imageData;
   const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
   reading = new AbortController();

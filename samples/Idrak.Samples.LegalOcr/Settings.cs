@@ -3,7 +3,7 @@
 
 namespace Idrak.Samples.LegalOcr;
 
-/// <summary>A model the page can switch to: a Gemma 3 vision checkpoint, its preprocessing, prompt and answer length.</summary>
+/// <summary>A model the page can switch to: a vision-language checkpoint (Gemma 3, Qwen-VL), its preprocessing, prompt and answer length.</summary>
 public sealed record ReaderModel
 {
     /// <summary>The switch's key ("bakrianoo", "gemma"; a tuned adapter's is "adapter:" and its folder's name).</summary>
@@ -35,6 +35,13 @@ public sealed record ReaderModel
 
     /// <summary>Gemma 3's pan and scan by default (an elongated page also read as crops); off, as transformers' processor has it.</summary>
     public bool PanAndScan { get; init; }
+
+    /// <summary>
+    /// Qwen-VL's pixel budget (its processor's <c>max_pixels</c>): a page is resized to at most this many pixels before the
+    /// tower, about 28 × 28 per image token, so it sets the page's resolution, its image tokens and the read's time and
+    /// memory. Null: the model's preprocessor_config.json. Families without a pixel budget ignore it.
+    /// </summary>
+    public int? MaxPixels { get; init; }
 
     /// <summary>
     /// The key of the answer's JSON holding the page's whole text, shown alone in the Full text tab ("full_text_extract"

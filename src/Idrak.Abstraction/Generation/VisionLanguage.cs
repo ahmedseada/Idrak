@@ -62,7 +62,9 @@ public sealed class ImageFeatures : IDisposable
     /// <param name="layout">The image's token layout; its <see cref="ImageTokenLayout.Tokens"/> is the features' rows.</param>
     /// <param name="positions">
     /// Null (the usual case): the image's tokens take the next positions of the prompt, one each, as text does. Otherwise
-    /// [axes, tokens]: each token's position on each axis of a multi-axis rotary embedding (M-RoPE), whole numbers as floats.
+    /// [axes, tokens]: each token's position on each axis of a multi-axis rotary embedding (M-RoPE), whole numbers as
+    /// floats, counted from the image's start (0 for its first row and column); the image position rule
+    /// (<see cref="ImagePositionRules"/>) places them in the prompt. Read on the host once per prompt.
     /// </param>
     /// <exception cref="ArgumentException">The shapes do not agree with each other or with the layout.</exception>
     public ImageFeatures(Tensor features, ImageTokenLayout layout, Tensor? positions = null)
@@ -90,7 +92,7 @@ public sealed class ImageFeatures : IDisposable
     /// <summary>The image's token layout.</summary>
     public ImageTokenLayout Layout { get; }
 
-    /// <summary>[axes, tokens] position ids for a multi-axis rotary embedding, or null: the prompt's next positions.</summary>
+    /// <summary>[axes, tokens] position ids for a multi-axis rotary embedding, from the image's start, or null: the prompt's next positions.</summary>
     public Tensor? Positions { get; }
 
     /// <summary>The image's tokens.</summary>
@@ -140,6 +142,15 @@ public interface IVisionEncoder : IDisposable
     /// </summary>
     /// <exception cref="ArgumentException">An option is not one the family takes, or its value is not valid.</exception>
     IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null);
+
+    /// <summary>
+    /// The position ids of a block's tokens on each axis of a multi-axis rotary embedding, [axes · tokens] (axis a of
+    /// token j at a · tokens + j), counted from the block's start: what <see cref="Encode"/> gives as
+    /// <see cref="ImageFeatures.Positions"/>, from the block's layout alone, so a caller that makes the features in stages
+    /// (fine-tuning) places the tokens without encoding. Null (the default) for a family whose image tokens take the
+    /// prompt's next positions, as text does.
+    /// </summary>
+    float[]? AxisPositions(ImageTokenLayout layout) => null;
 }
 
 /// <summary>
@@ -400,5 +411,172 @@ public static class ImageAttentionRules
 
         public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) =>
             slot.Call(() => app.Spans(rows, blocks, window), () => library.Spans(rows, blocks, window), (a, b) => a.Starts.SequenceEqual(b.Starts) && a.Ends.SequenceEqual(b.Ends) ? null : "different key ranges");
+    }
+}
+
+/// <summary>
+/// One image of a sequence for an <see cref="IImagePositionRule"/>: where its tokens are in the sequence and each token's
+/// position on each axis, counted from the image's start (<see cref="ImageFeatures.Positions"/>).
+/// </summary>
+/// <param name="Offset">The image's first token, counted from the start of the tokens being placed.</param>
+/// <param name="Length">The image's tokens.</param>
+/// <param name="Relative">[axes · length]: axis a of token j at <c>a · Length + j</c>, whole numbers from 0.</param>
+public readonly record struct ImageRun(int Offset, int Length, ReadOnlyMemory<float> Relative);
+
+/// <summary>
+/// How the tokens of a sequence holding images are placed on the axes of a multi-axis rotary embedding (M-RoPE,
+/// <see cref="RopeSettings.Sections"/>): text and image tokens alike get one position per axis, from the sequence's next
+/// rotary position on. The decoder rotates each frequency pair by its axis' position, and decodes the tokens after the
+/// sequence from the rotary position the rule returns (the difference to the sequence's length is kept by
+/// <see cref="DecodingContext.RotaryOffsets"/>).
+/// </summary>
+public interface IImagePositionRule
+{
+    /// <summary>The rule's name in <see cref="ImagePositionRules"/>.</summary>
+    string Name { get; }
+
+    /// <summary>
+    /// Places <paramref name="count"/> tokens starting at rotary position <paramref name="start"/>: writes
+    /// <paramref name="positions"/>[a · count + i] for every axis a and token i, the images at their offsets in order (the
+    /// other tokens are text), and returns the rotary position after the last token.
+    /// </summary>
+    int Place(int start, int count, IReadOnlyList<ImageRun> images, int axes, Span<float> positions);
+}
+
+/// <summary>
+/// The image position rules, by name. The library has one, <see cref="Grid"/>, the multi-axis placement of Qwen2-VL and
+/// Qwen2.5-VL's <c>get_rope_index</c>, which a prompt whose image features carry axis positions uses; an app may take its
+/// place (or register another rule for its own use). An unknown name is an error naming this registry.
+/// </summary>
+public static class ImagePositionRules
+{
+    /// <summary>
+    /// Text tokens take the next position on every axis; an image's tokens take the position after the text before it
+    /// plus their own axis positions; the text after the image continues from one past the largest position the image
+    /// took. The rotary position after a sequence is one past its largest position.
+    /// </summary>
+    public const string Grid = "grid";
+
+    private static readonly SlotTable<string, IImagePositionRule> Table = BuiltIn();
+
+    private static SlotTable<string, IImagePositionRule> BuiltIn()
+    {
+        var table = new SlotTable<string, IImagePositionRule>(nameof(ImagePositionRules), Guard, StringComparer.Ordinal);
+        table.RegisterDefault(Grid, new GridRule());
+        return table;
+    }
+
+    private static IImagePositionRule Guard(Slot slot, IImagePositionRule app, IImagePositionRule library) => new GuardedRule(slot, app, library);
+
+    /// <summary>Registers <paramref name="rule"/> under its <see cref="IImagePositionRule.Name"/>; under a library name it takes that rule's place.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(IImagePositionRule rule)
+    {
+        ArgumentNullException.ThrowIfNull(rule);
+        ArgumentException.ThrowIfNullOrEmpty(rule.Name);
+        Table.Register(rule.Name, rule, System.Reflection.Assembly.GetCallingAssembly());
+    }
+
+    /// <summary>Removes the app's rule <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Table.Unregister(name);
+
+    /// <summary>The registered names.</summary>
+    public static IReadOnlyCollection<string> Names => Table.Keys;
+
+    /// <summary>The rule <paramref name="name"/>, or null when none is registered.</summary>
+    public static IImagePositionRule? Find(string name) => Table.Find(name);
+
+    /// <summary>The rule <paramref name="name"/>.</summary>
+    /// <exception cref="NotSupportedException">None is registered under that name; the message names <see cref="Register"/>.</exception>
+    public static IImagePositionRule Get(string name) => Table.Find(name)
+        ?? throw new NotSupportedException($"No image position rule '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ImagePositionRules.Register.");
+
+    /// <summary>The library's rule <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IImagePositionRule? Default(string name) => Table.Default(name);
+
+    /// <summary>Who registered the rule <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Table.Origin(name);
+
+    /// <summary>What happens when the app's rule <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set).</summary>
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
+
+    private sealed class GridRule : IImagePositionRule
+    {
+        public string Name => Grid;
+
+        public int Place(int start, int count, IReadOnlyList<ImageRun> images, int axes, Span<float> positions)
+        {
+            if (positions.Length < axes * count)
+            {
+                throw new ArgumentException($"The positions hold {positions.Length} values; {axes} axes x {count} tokens need {axes * count}.", nameof(positions));
+            }
+
+            int next = start, i = 0;
+            foreach (var image in images)
+            {
+                if (image.Offset < i || image.Offset + image.Length > count || image.Relative.Length != axes * image.Length)
+                {
+                    throw new ArgumentException($"An image of {image.Length} tokens at {image.Offset} (with {image.Relative.Length} axis positions) does not fit "
+                        + $"{count} tokens after the previous image, {axes} axes each.", nameof(images));
+                }
+
+                for (; i < image.Offset; i++, next++)
+                {
+                    for (int a = 0; a < axes; a++)
+                    {
+                        positions[a * count + i] = next;
+                    }
+                }
+
+                // The image's tokens from here on, each axis by its own position; the text after it starts one past the
+                // largest position any of its tokens took.
+                var relative = image.Relative.Span;
+                float largest = 0;
+                for (int a = 0; a < axes; a++)
+                {
+                    for (int j = 0; j < image.Length; j++)
+                    {
+                        float p = relative[a * image.Length + j];
+                        positions[a * count + i + j] = next + p;
+                        largest = Math.Max(largest, p);
+                    }
+                }
+
+                i += image.Length;
+                next += (int)largest + 1;
+            }
+
+            for (; i < count; i++, next++)
+            {
+                for (int a = 0; a < axes; a++)
+                {
+                    positions[a * count + i] = next;
+                }
+            }
+
+            return next;
+        }
+
+        public override string ToString() => "grid positions (M-RoPE)";
+    }
+
+    private sealed class GuardedRule(Slot slot, IImagePositionRule app, IImagePositionRule library) : IImagePositionRule
+    {
+        public string Name => app.Name;
+
+        public int Place(int start, int count, IReadOnlyList<ImageRun> images, int axes, Span<float> positions)
+        {
+            // Each rule writes its own copy (the slot may run both, and compare them); the answer's is kept.
+            (int Next, float[] Values) Run(IImagePositionRule rule)
+            {
+                var values = new float[axes * count];
+                return (rule.Place(start, count, images, axes, values), values);
+            }
+
+            var answer = slot.Call(() => Run(app), () => Run(library),
+                (a, b) => a.Next == b.Next && a.Values.AsSpan().SequenceEqual(b.Values) ? null : "different positions");
+            answer.Values.CopyTo(positions);
+            return answer.Next;
+        }
     }
 }

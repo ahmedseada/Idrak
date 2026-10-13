@@ -170,6 +170,13 @@ public sealed class DecodingContext : IDisposable
     private readonly List<SlidingWindow> _windows = [];
     private int _slidingSteps;
 
+    // The rotary offsets (RotaryOffsets): host values, the device copy a uniform offset is added from, and each pass that
+    // set them (its first image's length, the length when set, the offsets before) for Truncate.
+    private int[]? _rotary;
+    private Tensor? _rotaryOffset;
+    private bool _rotaryOwned;
+    private readonly List<(int From, int End, int[]? Before)> _rotaryPasses = [];
+
     /// <summary>Creates an empty context.</summary>
     /// <param name="device">Where caches and counters live (the model's device).</param>
     /// <param name="batch">Sequences decoded together.</param>
@@ -370,6 +377,65 @@ public sealed class DecodingContext : IDisposable
     /// <summary>With <see cref="RowStarts"/>: each new token's row start, [batch · newSteps].</summary>
     public Tensor? TokenStarts { get; private set; }
 
+    /// <summary>
+    /// For a decoder with several rotary axes (<see cref="RopeSettings.Sections"/>) after a prompt whose image tokens were
+    /// placed by an image position rule (<see cref="ImagePositionRules"/>): each row's rotary position minus its position
+    /// in its sequence (Qwen2-VL's <c>rope_deltas</c>, negative when images take fewer positions than tokens), which the
+    /// tokens after it rotate by. Null (the default): rotary positions are the sequence's positions.
+    /// </summary>
+    public IReadOnlyList<int>? RotaryOffsets => _rotary;
+
+    /// <summary>
+    /// With <see cref="RotaryOffsets"/>: the current step's rotary positions, the indices of the rotary tables, one per step
+    /// ([newSteps], every row alike) or, when the rows' offsets differ or they have <see cref="RowStarts"/>, one per token
+    /// ([batch · newSteps]); null otherwise (the attention layers rotate by <see cref="Positions"/>).
+    /// </summary>
+    public Tensor? RotaryPositions { get; private set; }
+
+    /// <summary>
+    /// Sets <see cref="RotaryOffsets"/> (one per row; null: none) after a pass that placed images: the offsets hold for the
+    /// tokens from <paramref name="from"/> (the pass's first image token, counted like <see cref="Length"/>) on, and the
+    /// ones before keep those in effect before. <see cref="Truncate"/> to <paramref name="from"/> or earlier brings those
+    /// back; truncating between <paramref name="from"/> and <see cref="Length"/> is refused (the tokens there were placed
+    /// by the pass). Not while a step is open.
+    /// </summary>
+    /// <exception cref="ArgumentException">Not one offset per row, or <paramref name="from"/> outside [0, <see cref="Length"/>].</exception>
+    public void SetRotaryOffsets(IReadOnlyList<int>? offsets, int from)
+    {
+        if (offsets is not null && offsets.Count != Batch)
+        {
+            throw new ArgumentException($"Rotary offsets: one per row ({Batch}), got {offsets.Count}.", nameof(offsets));
+        }
+
+        if (from < 0 || from > Length)
+        {
+            throw new ArgumentException($"The offsets hold from position {from}, which is outside the {Length} positions processed.", nameof(from));
+        }
+
+        if (InStep)
+        {
+            throw new InvalidOperationException("Set the rotary offsets between steps.");
+        }
+
+        _rotaryPasses.Add((from, Length, _rotary));
+        ApplyRotary(offsets is null ? null : [.. offsets]);
+    }
+
+    // The offsets in effect from now on, and the device copy of a uniform one (written in place, so a recorded step adds
+    // the value set last when replayed).
+    private void ApplyRotary(int[]? offsets)
+    {
+        _rotary = offsets;
+        if (offsets is not null && offsets.All(o => o == offsets[0]))
+        {
+            _rotaryOffset ??= Tensor.Persistent([0f], [1], Device, requiresGrad: false);
+            _rotaryOffset.FillInPlace(offsets[0]);
+        }
+    }
+
+    /// <summary>Whether a step can be recorded (<see cref="CaptureStep"/>): rows start together and share one rotary offset, and the cache format is recordable.</summary>
+    public bool Recordable => RowStarts is null && Layout.Recordable && (_rotary is null || _rotary.All(o => o == _rotary[0]));
+
     /// <summary>Prepares mask and positions for <paramref name="steps"/> new positions (all computed on the device).</summary>
     public void BeginStep(int steps)
     {
@@ -414,6 +480,37 @@ public sealed class DecodingContext : IDisposable
             positions.Backend.AddBroadcastScalar(Position.Storage, positions.Storage, steps, 1f);
             Positions = positions;
         }
+
+        if (_rotary is { } offsets)
+        {
+            RotaryPositions = RotaryStep(offsets, steps);
+        }
+    }
+
+    // The step's rotary positions: on the device from Position for a uniform offset (the same graph valid at every
+    // position, adding the offset set last), else per token on the host (rows with starts, or different offsets).
+    private Tensor RotaryStep(int[] offsets, int steps)
+    {
+        if (RowStarts is null && offsets.All(o => o == offsets[0]))
+        {
+            _rotaryOwned = false;
+            var rotary = Positions!.Narrow(0, 0, steps);
+            rotary.Backend.AddBroadcastScalar(_rotaryOffset!.Storage, rotary.Storage, steps, 1f);
+            return rotary;
+        }
+
+        var values = new float[Batch * steps];
+        for (int b = 0; b < Batch; b++)
+        {
+            for (int t = 0; t < steps; t++)
+            {
+                int position = Length + t - (RowStarts?[b] ?? 0);
+                values[b * steps + t] = position < 0 ? 0 : position + offsets[b];     // padding: position 0 (it attends to nothing)
+            }
+        }
+
+        _rotaryOwned = true;
+        return Tensor.Persistent(values, [Batch * steps], Device, requiresGrad: false);
     }
 
     /// <summary>
@@ -453,6 +550,11 @@ public sealed class DecodingContext : IDisposable
             throw new InvalidOperationException($"The key/value cache format '{Layout.Name}' is not recordable (KeyValueLayout.Recordable); run its steps as they are.");
         }
 
+        if (!Recordable)
+        {
+            throw new InvalidOperationException("Rows with different rotary offsets (images placed differently) upload their rotary positions from the host and cannot be recorded.");
+        }
+
         Slide(1);                                     // a sliding window moves now: the recording cannot
         int length = Length;
         var graph = ComputeGraph.Capture(Device, step);
@@ -475,6 +577,13 @@ public sealed class DecodingContext : IDisposable
         TokenPositions = null;
         TokenStarts?.Dispose();
         TokenStarts = null;
+        if (_rotaryOwned)
+        {
+            RotaryPositions?.Dispose();
+            _rotaryOwned = false;
+        }
+
+        RotaryPositions = null;
         InStep = false;
         Positions = null;
     }
@@ -493,10 +602,12 @@ public sealed class DecodingContext : IDisposable
         Length = length + steps;
     }
 
-    /// <summary>Forgets all positions; caches are overwritten from position 0.</summary>
+    /// <summary>Forgets all positions (and the <see cref="RotaryOffsets"/>); caches are overwritten from position 0.</summary>
     public void Reset()
     {
         Position.FillInPlace(0f);
+        _rotaryPasses.Clear();
+        ApplyRotary(null);
         foreach (var window in _windows)
         {
             window.Base = 0;
@@ -510,7 +621,10 @@ public sealed class DecodingContext : IDisposable
     /// Keeps the first <paramref name="length"/> positions and forgets the rest (their cache entries are overwritten by
     /// the next steps): reuses the cached keys and values of a shared prompt prefix.
     /// </summary>
-    /// <exception cref="InvalidOperationException">A sliding window's cache has moved (its first positions are gone).</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A sliding window's cache has moved (its first positions are gone), or <paramref name="length"/> falls inside the
+    /// images of a pass that set <see cref="RotaryOffsets"/> (<see cref="SetRotaryOffsets"/>).
+    /// </exception>
     public void Truncate(int length)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(length);
@@ -518,6 +632,20 @@ public sealed class DecodingContext : IDisposable
         if (_windows.Any(w => w.Base > 0))
         {
             throw new InvalidOperationException("A sliding window's cache has moved past the first positions (SlidingWindowSteps); Reset and feed the prompt again.");
+        }
+
+        // The rotary offsets in effect at `length`: those set before every pass whose images start at or after it.
+        while (_rotaryPasses.Count > 0 && _rotaryPasses[^1].End > length)
+        {
+            var pass = _rotaryPasses[^1];
+            if (length > pass.From)
+            {
+                throw new InvalidOperationException($"Truncating to {length} falls inside a pass whose images (from position {pass.From} to {pass.End}) set the rotary "
+                    + "offsets; truncate to before its first image and feed the rest again.");
+            }
+
+            _rotaryPasses.RemoveAt(_rotaryPasses.Count - 1);
+            ApplyRotary(pass.Before);
         }
 
         Position.FillInPlace(length);
@@ -593,6 +721,7 @@ public sealed class DecodingContext : IDisposable
 
         _windows.Clear();
         _iota?.Dispose();
+        _rotaryOffset?.Dispose();
         Position.Dispose();
     }
 }

@@ -320,6 +320,11 @@ public sealed record DecoderSpec
             r["scaling"] = new JsonObject { ["type"] = s.Type, ["parameters"] = s.Parameters };
         }
 
+        if (rope.Sections is { } sections)
+        {
+            r["sections"] = new JsonArray([.. sections.Pairs.Select(p => (JsonNode?)p)]);
+        }
+
         return r;
     }
 
@@ -330,7 +335,10 @@ public sealed record DecoderSpec
             : (string)s["type"]! == "llama3"                                  // written before scalings were registered
                 ? RopeScaling.Llama3((double)s["factor"]!, (double)s["lowFrequencyFactor"]!, (double)s["highFrequencyFactor"]!, (int)s["originalMaxPositions"]!)
                 : new((string)s["type"]!, new JsonObject { ["factor"] = (double)s["factor"]! });
-        return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!, scaling);
+        return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!, scaling)
+        {
+            Sections = r["sections"] is JsonArray sections ? new RotarySections([.. sections.Select(p => (int)p!)]) : null,
+        };
     }
 
     /// <summary>Reads a spec written by <see cref="ToJson"/>.</summary>

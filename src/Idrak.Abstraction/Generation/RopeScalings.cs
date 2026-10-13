@@ -351,6 +351,14 @@ public static class RopeScalings
 /// <param name="Scaling">Frequency scaling for long contexts, or null.</param>
 public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Interleaved = false, RopeScaling? Scaling = null)
 {
+    /// <summary>
+    /// Several position axes (M-RoPE, as Qwen2-VL and Qwen2.5-VL rotate), or null for one: each frequency pair rotates by
+    /// the position on the axis <see cref="RotarySections"/> gives it. Text tokens hold the same position on every axis,
+    /// so a model with sections reads text exactly as without them; a prompt with images whose tokens carry axis positions
+    /// (<see cref="ImageFeatures.Positions"/>) rotates each pair by its own axis (<see cref="ImagePositionRules"/>).
+    /// </summary>
+    public RotarySections? Sections { get; init; }
+
     /// <summary>The rotation frequency of each pair (after scaling; for a scaling whose frequencies depend on the position, those of the first positions).</summary>
     public double[] Frequencies(int headDim) => Scaled(headDim).Frequencies;
 
@@ -380,4 +388,71 @@ public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Inter
 
         return result;
     }
+}
+
+/// <summary>
+/// How the frequency pairs of a rotary embedding split over several position axes (M-RoPE): <see cref="Pairs"/>[a]
+/// consecutive pairs take their position from axis a, in order (Qwen2-VL's <c>mrope_section</c>, for example
+/// [16, 24, 24]: time, height, width over a head of 128 dimensions). Compared by value.
+/// </summary>
+public sealed class RotarySections : IEquatable<RotarySections>
+{
+    private readonly int[] _pairs;
+
+    /// <summary>The pairs per axis, in axis order.</summary>
+    /// <exception cref="ArgumentException">No axis, or an axis without pairs.</exception>
+    public RotarySections(params int[] pairs)
+    {
+        ArgumentNullException.ThrowIfNull(pairs);
+        if (pairs.Length == 0 || pairs.Any(p => p <= 0))
+        {
+            throw new ArgumentException($"Rotary sections are one positive count of frequency pairs per axis, got [{string.Join(", ", pairs)}].", nameof(pairs));
+        }
+
+        _pairs = [.. pairs];
+    }
+
+    /// <summary>The frequency pairs of each axis.</summary>
+    public IReadOnlyList<int> Pairs => _pairs;
+
+    /// <summary>The number of position axes.</summary>
+    public int Axes => _pairs.Length;
+
+    /// <summary>All the pairs: half the rotated dimensions of a head.</summary>
+    public int Total => _pairs.Sum();
+
+    /// <summary>The axis of each frequency pair, [<see cref="Total"/>].</summary>
+    public int[] AxisOfPairs()
+    {
+        var axes = new int[Total];
+        int at = 0;
+        for (int a = 0; a < _pairs.Length; a++)
+        {
+            axes.AsSpan(at, _pairs[a]).Fill(a);
+            at += _pairs[a];
+        }
+
+        return axes;
+    }
+
+    /// <inheritdoc />
+    public bool Equals(RotarySections? other) => other is not null && _pairs.AsSpan().SequenceEqual(other._pairs);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => Equals(obj as RotarySections);
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        foreach (int p in _pairs)
+        {
+            hash.Add(p);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    /// <inheritdoc />
+    public override string ToString() => $"[{string.Join(", ", _pairs)}]";
 }

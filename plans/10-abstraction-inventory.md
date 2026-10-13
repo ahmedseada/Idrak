@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 41 | 13 | 20 | 73 | 0 |
+| `Idrak.Abstraction` | 42 | 13 | 21 | 75 | 0 |
 | `Idrak` | 10 | 4 | 12 | 26 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 1 | 0 | 1 | 2 | 0 |
@@ -76,6 +76,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IChatPartKind` | interface | public | — | ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule |  | Abstraction, Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.IImagePositionRule` | interface | public | — | ImagePositionRules.GridRule, ImagePositionRules.GuardedRule |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.IImagePromptFormat` | interface | public | — | ImageTokenFormat |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, TextEngineModel, TextGenerator |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Idrak | Abstraction |
@@ -87,6 +88,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal | — | Abstraction |
+| `Idrak.Abstraction.Generation.ImagePositionRules` | registry | public | — |  | grid | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | Abstraction, AspNetCore, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.MarkedToolCallParser` | abstract class | internal | — | DeepSeekToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |

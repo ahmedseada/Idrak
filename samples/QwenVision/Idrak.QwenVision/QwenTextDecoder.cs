@@ -9,42 +9,62 @@ namespace Idrak.QwenVision;
 
 /// <summary>
 /// The text decoder of a Qwen-VL checkpoint, registered under the family's architecture name
-/// (<see cref="PretrainedArchitectures"/>): a Qwen2-style decoder (q/k/v biases) whose rotary positions have three
-/// sections (<c>rope_scaling.mrope_section</c>: time, height, width), read from <c>text_config</c> (Qwen2.5-VL in
-/// transformers 5, and Qwen2-VL there) or the top-level keys (transformers 4.x), with the tensor names of both layouts
-/// (<c>model.layers.*</c>; <c>model.language_model.layers.*</c>). One registration per family: the library holds no
-/// Qwen-VL decoder, as it holds no Gemma 3 one after plan 16, step 4. The sections need the library's multi-axis rotary
-/// positions (plan 16, step 2); until then the spec fails loudly rather than reading the positions as one axis.
+/// (<see cref="PretrainedArchitectures"/>): Qwen2's decoder (q, k and v biases) whose rotary embedding has three axes
+/// (<see cref="RopeSettings.Sections"/> from <c>mrope_section</c>: time, height, width pairs), read from
+/// <c>text_config</c> and its <c>rope_parameters</c> (transformers 5) or the top-level keys with
+/// <c>rope_scaling {"type": "mrope"}</c> and <c>rope_theta</c> (the hub's 4.x checkpoints), the tensors under
+/// <c>model.layers.*</c> (the hub's naming) or <c>model.language_model.layers.*</c>. A text-only prompt reads as Qwen2
+/// does (its tokens take the same position on every axis).
 /// </summary>
 public static class QwenTextDecoder
 {
-    /// <summary>Registers the variant's text decoder under its architecture name.</summary>
-    public static void Register(QwenVlVariant variant) => PretrainedArchitectures.Register(QwenVisionFamily.ArchitectureOf(variant), For(variant));
+    private const string Nested = "model.language_model.";
 
-    /// <summary>The architecture of one variant's text decoder.</summary>
-    public static PretrainedArchitecture For(QwenVlVariant variant) => new()
+    /// <summary>Registers the variant's text decoder under its architecture name.</summary>
+    public static void Register(QwenVlVariant variant) => PretrainedArchitectures.Register(QwenVisionFamily.ArchitectureOf(variant), For(nested: false));
+
+    // The architecture in one tensor naming; the checkpoint's names choose the other when it has them.
+    private static PretrainedArchitecture For(bool nested) => new()
     {
-        Spec = (config, notes) => Spec(config, notes, variant),
-        TensorName = TensorName,
+        Spec = Spec,
+        TensorName = name => PretrainedFamilies.LlamaTensorName(name) switch
+        {
+            string stored when nested && stored.StartsWith("model.", StringComparison.Ordinal) => Nested + stored["model.".Length..],
+            var stored => stored,
+        },
+        ForCheckpoint = names => For(nested: names.Contains(Nested + "embed_tokens.weight")),
     };
 
-    // The decoder's spec: Qwen2's common keys with biases, plus the rotary sections (step 2 gives DecoderSpec a place for them).
-    private static DecoderSpec Spec(JsonObject config, List<string> notes, QwenVlVariant variant)
+    /// <summary>The decoder's spec from a Qwen-VL config.json (either layout).</summary>
+    /// <exception cref="InvalidDataException">The configuration gives no <c>mrope_section</c>.</exception>
+    public static DecoderSpec Spec(JsonObject config, List<string> notes)
     {
         ArgumentNullException.ThrowIfNull(config);
-        throw QwenVisionPlugin.NotBuilt($"the text decoder of {QwenVisionFamily.ArchitectureOf(variant)} (multi-axis rotary positions come first)", 2);
-    }
-
-    // The checkpoint's name of a decoder tensor in Idrak's naming, or null for the vision part. Both layouts: the
-    // language model at the root (transformers 4.x) or under model.language_model (4.52 and later, 5).
-    private static string? TensorName(string name)
-    {
-        const string nested = "model.language_model.";
-        if (name.StartsWith("visual.", StringComparison.Ordinal) || name.StartsWith("model.visual.", StringComparison.Ordinal))
+        var text = config["text_config"] is JsonObject nested ? (JsonObject)nested.DeepClone() : (JsonObject)config.DeepClone();
+        foreach (string key in (string[])["tie_word_embeddings", "vocab_size"])
         {
-            return null;
+            if (!text.ContainsKey(key) && config[key] is { } value)
+            {
+                text[key] = value.DeepClone();
+            }
         }
 
-        return PretrainedFamilies.LlamaTensorName(name.StartsWith(nested, StringComparison.Ordinal) ? "model." + name[nested.Length..] : name);
+        var rope = text["rope_parameters"] as JsonObject ?? text["rope_scaling"] as JsonObject ?? config["rope_scaling"] as JsonObject;
+        if (rope?["mrope_section"] is not JsonArray sections)
+        {
+            throw new InvalidDataException("config.json gives no mrope_section (rope_parameters or rope_scaling): Qwen-VL's decoder rotates by three axes.");
+        }
+
+        string type = (string?)rope["rope_type"] ?? (string?)rope["type"] ?? "default";
+        if (type is not ("default" or "mrope"))
+        {
+            throw new NotSupportedException($"Qwen-VL's rotary embedding of type '{type}' is not supported (default with mrope_section).");
+        }
+
+        text["rope_theta"] = (float?)rope["rope_theta"] ?? (float?)text["rope_theta"] ?? 1_000_000f;
+        text.Remove("rope_parameters");
+        text.Remove("rope_scaling");
+        var spec = PretrainedFamilies.CommonSpec(text, notes) with { QkvBias = true };
+        return spec with { Rope = spec.Rope! with { Sections = new RotarySections([.. sections.Select(s => (int)s!)]) } };
     }
 }

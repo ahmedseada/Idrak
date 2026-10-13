@@ -17,6 +17,7 @@ using Idrak;
 using Idrak.Data.Abstractions;
 using Idrak.Gemma3Vision;
 using Idrak.Imaging.Abstractions;
+using Idrak.QwenVision;
 using Idrak.Samples.LegalOcr;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -26,10 +27,12 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 Gemma3VisionPlugin.Register();
+QwenVisionPlugin.Register();
 string device = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } devices ? devices.Split(',')[0].Trim() : "cpu";
 string root = Path.Combine(Path.GetTempPath(), $"idrak-legal-tests-{Environment.ProcessId}");
 Directory.CreateDirectory(root);
 string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vlm", "tiny-gemma3");
+string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vlm-qwen", "tiny-qwen2.5-vl");
 
 (string Name, Action Run)[] tests =
 [
@@ -176,6 +179,34 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         var done = Read(service, first.Image, new ReadRequest(MaxTokens: 4), first.Expected)[^1];
         Check(done.Data["cer"] is { } cer && cer.GetValue<double>() >= 0 && done.Data["expected"]!.GetValue<string>().Contains("محكمة", StringComparison.Ordinal),
             done.Data.ToJsonString());
+    }),
+    ("legal qwen: a tiny Qwen2.5-VL beside Gemma 3 in the switch reads a page (Gemma's pan and scan is not sent to it), its pixel budget (the model's, or the read's) sets its image tokens, and a tuning run on it with the merger trained writes the adapter the switch reads with", () =>
+    {
+        var basic = TuningSettings("tune-q");
+        var settings = basic with
+        {
+            Models = [new ReaderModel { Id = "g", Name = "g", Folder = tinyGemma, Preprocessing = "grayscale", MaxTokens = 4 },
+                new ReaderModel { Id = "q", Name = "q", Folder = tinyQwen, Preprocessing = "grayscale", MaxTokens = 4, MaxPixels = 2048 }],
+            Tuning = basic.Tuning with { Base = "q" },
+        };
+        using var readers = Service(settings);
+        Check(readers.Models().Single(m => m.Id == "q").MaxPixels == 2048, "the switch shows the model's pixel budget");
+        Load(readers, "q");
+        var full = Read(readers, Page(60, 80), new ReadRequest(MaxTokens: 3, PanAndScan: true), null);
+        Check(full[^1].Event == "done" && full[^1].Data["model"]!.GetValue<string>() == "q", full[^1].Data.ToJsonString());
+        var smaller = Read(readers, Page(60, 80), new ReadRequest(MaxTokens: 3, MaxPixels: 1024), null);
+        Check(smaller[^1].Event == "done" && smaller[^1].Data["promptTokens"]!.GetValue<int>() < full[^1].Data["promptTokens"]!.GetValue<int>(),
+            $"prompt tokens {full[^1].Data["promptTokens"]} at 2048 pixels, {smaller[^1].Data["promptTokens"]} at 1024");
+
+        using var tuning = new TuningService(settings, readers, Adapters(settings), NullLogger<TuningService>.Instance);
+        tuning.Start(new TuneRequest { Name = "qwen", Base = "q", TrainProjector = true });
+        tuning.WaitAsync().GetAwaiter().GetResult();
+        Check(tuning.Status.State == TuningState.Finished && tuning.Status.Loss is > 0, $"{tuning.Status.State}: {tuning.Status.Message}\n{string.Join("\n", tuning.Log())}");
+        string folder = Path.Combine(root, "tune-q", "qwen");
+        Check(File.Exists(Path.Combine(folder, "adapter_model.safetensors")) && Idrak.Nlp.TuningManifest.Read(folder)!.BaseModel == Path.GetFullPath(tinyQwen), "the adapter and its manifest");
+        Load(readers, "adapter:qwen");
+        var done = Read(readers, Page(24, 32), new ReadRequest(MaxTokens: 3), null)[^1];
+        Check(done.Event == "done" && done.Data["model"]!.GetValue<string>() == "adapter:qwen", done.Data.ToJsonString());
     }),
     ("legal tuning: a run on the base model reports its stages and steps, scores CER before and while training, writes the adapter with its preparation, manifest and record; the switch lists it and reads with it", () =>
     {

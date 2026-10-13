@@ -304,6 +304,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             throw new NotSupportedException("Packed sequences need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores (pad the batches instead).");
         }
 
+        // Images placed on several rotary axes (M-RoPE): each token rotates by its own rows.
+        var rotary = Rope is not null ? ImageBlocks.Current?.Rotary(Rope, HeadDim, n, t, input.Device) : null;
         if (ImageBlocks.Current is { } images && images.AttendsFor(n, t))
         {
             // A prompt with images (ImagePrefill): each row's range of keys, image blocks seen whole; in packed rows each
@@ -315,7 +317,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
                     : "Packed rows hold images laid out without the packing (open the image scope while the packing is in effect).");
             }
 
-            var (iq, ik, iv) = Project(input, packing?.Positions ?? Positions(t), packed: packing is not null);
+            var (iq, ik, iv) = Project(input, rotary?.Index ?? packing?.Positions ?? Positions(t), packed: packing is not null || rotary is not null, rotary: rotary);
             var attendedImages = AttendSpans(iq, ik!, iv!, images, offset: 0, rowStarts: null);
             ActivationMemory.Compress(iq, ik!, iv!);
             return Merge(attendedImages, n, t);
@@ -337,7 +339,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         }
 
         var positions = packing?.Positions ?? Positions(t);
-        var (q, keys, values) = Project(input, positions, packed: packing is not null);
+        var (q, keys, values) = Project(input, rotary?.Index ?? positions, packed: packing is not null || rotary is not null, rotary: rotary);
         Tensor k = keys!, v = values!;
         if (packing is not null)
         {
@@ -385,9 +387,10 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         int n = input.Shape[0], t = input.Shape[1];
         var positions = context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first.");
         var cache = context.CacheFor(this, n * KvHeads, HeadDim, SlidesIn(input.Backend) ? _window!.Value : 0);
+        var rotary = Rope is not null ? ImageBlocks.Current?.Rotary(Rope, HeadDim, n, t, input.Device) : null;
         if (ImageBlocks.Current is { } images && images.AttendsFor(n, t))
         {
-            return MergeHeads(AttendImages(input, context, cache, images), n, t);
+            return MergeHeads(AttendImages(input, context, cache, images, rotary), n, t);
         }
 
         if (context.RowStarts is not null)
@@ -403,7 +406,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
                 throw new NotSupportedException("Rows of different lengths need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores.");
             }
 
-            var (rq, rk, rv) = Project(input, context.TokenPositions!, packed: true);
+            var (rq, rk, rv) = Project(input, rotary?.Index ?? context.RotaryPositions ?? context.TokenPositions!, packed: true, rotary: rotary);
             Tensor.WriteKeyValues(rk!, cache.Keys, context.PositionOf(cache));
             Tensor.WriteKeyValues(rv!, cache.Values, context.PositionOf(cache));
             var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.PositionOf(cache), t, ScoreScale, context.TokenStarts!, KvHeads, Variant)
@@ -411,7 +414,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             return MergeHeads(rows, n, t);
         }
 
-        var (q, k, v) = Project(input, positions, cache, context.PositionOf(cache));   // k and v null: already in the cache
+        // The rotary positions: the pass's own rows (images on several axes), the context's (after them), or the positions.
+        bool perToken = rotary is not null || context.RotaryPositions is { } rp && n > 1 && rp.Size == n * t;
+        var (q, k, v) = Project(input, rotary?.Index ?? context.RotaryPositions ?? positions, cache, context.PositionOf(cache), packed: perToken, rotary: rotary);
         float scale = ScoreScale;
         if (k is not null)
         {
@@ -433,9 +438,10 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     // A prefill step with images (ImagePrefill): keys and values written to the cache as the plain prefill writes them,
     // then attention over the cached positions, each row over its own range (its image block seen whole; causal and
     // windowed elsewhere).
-    private Tensor AttendImages(Tensor input, DecodingContext context, KeyValueCache cache, ImageBlocks images)
+    private Tensor AttendImages(Tensor input, DecodingContext context, KeyValueCache cache, ImageBlocks images, (Tensor Cos, Tensor Sin, Tensor Index)? rotary)
     {
         Tensor q;
+        int n = input.Shape[0], t = input.Shape[1];
         if (context.RowStarts is not null)
         {
             if (!cache.Layout.RowStarts)
@@ -443,14 +449,16 @@ public sealed class CausalSelfAttention : Module, ICachedModule
                 throw new NotSupportedException("Rows of different lengths need a float32 key/value cache.");
             }
 
-            var (rq, rk, rv) = Project(input, context.TokenPositions!, packed: true);
+            var (rq, rk, rv) = Project(input, rotary?.Index ?? context.RotaryPositions ?? context.TokenPositions!, packed: true, rotary: rotary);
             Tensor.WriteKeyValues(rk!, cache.Keys, context.PositionOf(cache));
             Tensor.WriteKeyValues(rv!, cache.Values, context.PositionOf(cache));
             q = rq;
         }
         else
         {
-            var (pq, k, v) = Project(input, context.Positions!, cache, context.PositionOf(cache));   // k and v null: already in the cache
+            bool perToken = rotary is not null || context.RotaryPositions is { } rp && n > 1 && rp.Size == n * t;
+            var (pq, k, v) = Project(input, rotary?.Index ?? context.RotaryPositions ?? context.Positions!, cache, context.PositionOf(cache), packed: perToken,
+                rotary: rotary);   // k and v null: already in the cache
             if (k is not null)
             {
                 cache.Layout.Write(k, v!, cache, context.PositionOf(cache));
@@ -518,12 +526,16 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     // Projections → q [n·kv, group·t, d] (the query heads sharing a key/value head are stacked), k and v [n·kv, t, d];
     // with a (float32 or bfloat16) cache, inference writes k and v into it in the same pass and returns them null.
     // packed: positions hold one entry per token of the [n, t] batch (PackedSequences) instead of one per step.
-    private (Tensor Q, Tensor? K, Tensor? V) Project(Tensor input, Tensor positions, KeyValueCache? cache = null, Tensor? position = null, bool packed = false)
+    // rotary: the pass's own rotary rows (images on several axes; positions then index them, one per token), else the
+    // layer's tables.
+    private (Tensor Q, Tensor? K, Tensor? V) Project(Tensor input, Tensor positions, KeyValueCache? cache = null, Tensor? position = null, bool packed = false,
+        (Tensor Cos, Tensor Sin, Tensor Index)? rotary = null)
     {
         int n = input.Shape[0], t = input.Shape[1], d = HeadDim;
+        var (cosTable, sinTable) = rotary is { } rows ? (rows.Cos, rows.Sin) : (_cos, _sin);
         var projected = Linear.ForwardMany(input, _projections);
         if (!Autograd.IsEnabled && !packed && RMSNorm.NormRopeHeads(projected[0], projected[1], projected[2], Heads, KvHeads, d, QueryNorm, KeyNorm,
-                Rope is null ? null : _cos, Rope is null ? null : _sin, positions, Rope?.Interleaved ?? false,
+                Rope is null ? null : cosTable, Rope is null ? null : sinTable, positions, Rope?.Interleaved ?? false,
                 cache is { Layout.FusedWrite: true } ? cache : null, cache is { Layout.FusedWrite: true } ? position : null) is { } heads)
         {
             return heads;                           // normalization, rotation and head layout (or cache writes) in one pass
@@ -536,9 +548,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         if (Rope is not null && QueryNorm is not null && KeyNorm is not null && !Autograd.IsEnabled && !packed)
         {
             // Inference: each head's normalization and rotation in one pass.
-            int half = _cos.Shape[1];
+            int half = cosTable.Shape[1];
             (q, k) = Tensor.RmsNormRopePair(q, QueryNorm.Gain, QueryNorm.Epsilon, QueryNorm.Offset, k, KeyNorm.Gain, KeyNorm.Epsilon,
-                KeyNorm.Offset, _cos, _sin, positions, half, Rope.Interleaved);
+                KeyNorm.Offset, cosTable, sinTable, positions, half, Rope.Interleaved);
         }
         else
         {
@@ -554,17 +566,17 @@ public sealed class CausalSelfAttention : Module, ICachedModule
 
             if (Rope is not null)
             {
-                int half = _cos.Shape[1];
+                int half = cosTable.Shape[1];
                 if (packed)
                 {
                     // One position per token: the batch as a single row of n·t steps.
-                    q = q.Reshape(1, n * t, Heads, d).Rope(_cos, _sin, positions, half, Rope.Interleaved).Reshape(n, t, Heads, d);
-                    k = k.Reshape(1, n * t, KvHeads, d).Rope(_cos, _sin, positions, half, Rope.Interleaved).Reshape(n, t, KvHeads, d);
+                    q = q.Reshape(1, n * t, Heads, d).Rope(cosTable, sinTable, positions, half, Rope.Interleaved).Reshape(n, t, Heads, d);
+                    k = k.Reshape(1, n * t, KvHeads, d).Rope(cosTable, sinTable, positions, half, Rope.Interleaved).Reshape(n, t, KvHeads, d);
                 }
                 else
                 {
-                    q = q.Rope(_cos, _sin, positions, half, Rope.Interleaved);
-                    k = k.Rope(_cos, _sin, positions, half, Rope.Interleaved);
+                    q = q.Rope(cosTable, sinTable, positions, half, Rope.Interleaved);
+                    k = k.Rope(cosTable, sinTable, positions, half, Rope.Interleaved);
                 }
             }
         }

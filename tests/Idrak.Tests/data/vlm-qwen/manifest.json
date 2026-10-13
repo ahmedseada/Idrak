@@ -1,0 +1,2878 @@
+{
+ "facts": {
+  "tiny-qwen2-vl": {
+   "flat_layout_same_logits": true,
+   "pages": {
+    "page": {
+     "cu_window_seqlens": null,
+     "grid_thw": [
+      1,
+      8,
+      12
+     ],
+     "resized": [
+      32,
+      48
+     ],
+     "size": [
+      100,
+      75
+     ],
+     "tokens": 24
+    },
+    "page-small": {
+     "cu_window_seqlens": null,
+     "grid_thw": [
+      1,
+      8,
+      10
+     ],
+     "resized": [
+      32,
+      40
+     ],
+     "size": [
+      20,
+      15
+     ],
+     "tokens": 20
+    },
+    "page-tall": {
+     "cu_window_seqlens": null,
+     "grid_thw": [
+      1,
+      14,
+      8
+     ],
+     "resized": [
+      56,
+      32
+     ],
+     "size": [
+      40,
+      75
+     ],
+     "tokens": 28
+    }
+   },
+   "prompt-image": {
+    "input_ids": [
+     337,
+     115,
+     333,
+     10,
+     89,
+     322,
+     256,
+     271,
+     256,
+     32,
+     313,
+     290,
+     46,
+     338,
+     10,
+     337,
+     331,
+     10,
+     345,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     346,
+     82,
+     101,
+     293,
+     260,
+     278,
+     46,
+     338,
+     10,
+     337,
+     97,
+     287,
+     10
+    ],
+    "new_tokens": [
+     189,
+     84,
+     198,
+     58,
+     128,
+     48,
+     96,
+     326,
+     311,
+     117,
+     311,
+     279,
+     17,
+     50,
+     179,
+     328,
+     85,
+     327,
+     184,
+     284
+    ],
+    "rendered": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>Read the scan.<|im_end|>\n<|im_start|>assistant\n",
+    "rope_delta": -18,
+    "text": "�T�:�0`serghtughtant\u00112�texUstem�line"
+   },
+   "prompt-text": {
+    "input_ids": [
+     337,
+     115,
+     333,
+     10,
+     89,
+     322,
+     256,
+     271,
+     256,
+     32,
+     313,
+     290,
+     46,
+     338,
+     10,
+     337,
+     331,
+     10,
+     87,
+     323,
+     273,
+     265,
+     288,
+     256,
+     297,
+     260,
+     32,
+     320,
+     275,
+     260,
+     262,
+     330,
+     277,
+     260,
+     32,
+     321,
+     46,
+     338,
+     10,
+     337,
+     97,
+     287,
+     10
+    ],
+    "new_tokens": [
+     326,
+     311,
+     314,
+     278,
+     35,
+     297,
+     264,
+     49,
+     47,
+     108,
+     102,
+     346,
+     83,
+     102,
+     269,
+     317,
+     17,
+     177,
+     13,
+     83
+    ],
+    "rendered": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWrite one line about the moon and the sun in the night.<|im_end|>\n<|im_start|>assistant\n",
+    "rope_delta": 0,
+    "text": "serghticture scan#boutage1/lf<|vision_end|>Sfmageith\u0011�\rS"
+   },
+   "prompt-two-images": {
+    "input_ids": [
+     337,
+     115,
+     333,
+     10,
+     82,
+     101,
+     293,
+     260,
+     278,
+     115,
+     46,
+     338,
+     10,
+     337,
+     331,
+     10,
+     345,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     346,
+     261,
+     100,
+     345,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     346,
+     87,
+     312,
+     291,
+     277,
+     260,
+     285,
+     276,
+     115,
+     63,
+     338,
+     10,
+     337,
+     97,
+     287,
+     10
+    ],
+    "new_tokens": [
+     315,
+     74,
+     57,
+     57,
+     57,
+     57,
+     57,
+     57,
+     61,
+     280,
+     13,
+     120,
+     332,
+     25,
+     85,
+     279,
+     17,
+     287,
+     239,
+     164
+    ],
+    "rendered": "<|im_start|>system\nRead the scans.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>and<|vision_start|><|image_pad|><|vision_end|>What is in these images?<|im_end|>\n<|im_start|>assistant\n",
+    "rope_delta": -39,
+    "text": "ightJ999999=bo\rxyou\u0019Uant\u0011ssistant�"
+   },
+   "tuning": {
+    "answer": "A page with lines of text and a box in the corner.",
+    "answer_ids": [
+     65,
+     289,
+     264,
+     274,
+     317,
+     288,
+     115,
+     292,
+     32,
+     329,
+     275,
+     256,
+     335,
+     277,
+     260,
+     32,
+     302,
+     46,
+     338
+    ],
+    "loss": 7.692561149597168
+   }
+  },
+  "tiny-qwen2.5-vl": {
+   "flat_layout_same_logits": true,
+   "pages": {
+    "page": {
+     "cu_window_seqlens": [
+      0,
+      36,
+      72,
+      84,
+      96
+     ],
+     "grid_thw": [
+      1,
+      8,
+      12
+     ],
+     "resized": [
+      32,
+      48
+     ],
+     "size": [
+      100,
+      75
+     ],
+     "tokens": 24
+    },
+    "page-small": {
+     "cu_window_seqlens": [
+      0,
+      36,
+      60,
+      72,
+      80
+     ],
+     "grid_thw": [
+      1,
+      8,
+      10
+     ],
+     "resized": [
+      32,
+      40
+     ],
+     "size": [
+      20,
+      15
+     ],
+     "tokens": 20
+    },
+    "page-tall": {
+     "cu_window_seqlens": [
+      0,
+      36,
+      48,
+      84,
+      96,
+      108,
+      112
+     ],
+     "grid_thw": [
+      1,
+      14,
+      8
+     ],
+     "resized": [
+      56,
+      32
+     ],
+     "size": [
+      40,
+      75
+     ],
+     "tokens": 28
+    }
+   },
+   "prompt-image": {
+    "input_ids": [
+     337,
+     115,
+     333,
+     10,
+     89,
+     322,
+     256,
+     271,
+     256,
+     32,
+     313,
+     290,
+     46,
+     338,
+     10,
+     337,
+     331,
+     10,
+     345,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     346,
+     82,
+     101,
+     293,
+     260,
+     278,
+     46,
+     338,
+     10,
+     337,
+     97,
+     287,
+     10
+    ],
+    "new_tokens": [
+     3,
+     3,
+     3,
+     202,
+     200,
+     200,
+     23,
+     152,
+     276,
+     345,
+     125,
+     125,
+     149,
+     299,
+     218,
+     218,
+     218,
+     218,
+     218,
+     218
+    ],
+    "rendered": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>Read the scan.<|im_end|>\n<|im_start|>assistant\n",
+    "rope_delta": -18,
+    "text": "\u0003\u0003\u0003���\u0017� image<|vision_start|>}}�ct������"
+   },
+   "prompt-text": {
+    "input_ids": [
+     337,
+     115,
+     333,
+     10,
+     89,
+     322,
+     256,
+     271,
+     256,
+     32,
+     313,
+     290,
+     46,
+     338,
+     10,
+     337,
+     331,
+     10,
+     87,
+     323,
+     273,
+     265,
+     288,
+     256,
+     297,
+     260,
+     32,
+     320,
+     275,
+     260,
+     262,
+     330,
+     277,
+     260,
+     32,
+     321,
+     46,
+     338,
+     10,
+     337,
+     97,
+     287,
+     10
+    ],
+    "new_tokens": [
+     293,
+     225,
+     326,
+     308,
+     191,
+     34,
+     225,
+     28,
+     49,
+     110,
+     110,
+     110,
+     95,
+     64,
+     69,
+     87,
+     242,
+     294,
+     96,
+     49
+    ],
+    "rendered": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWrite one line about the moon and the sun in the night.<|im_end|>\n<|im_start|>assistant\n",
+    "rope_delta": 0,
+    "text": "ad�serelpfu�\"�\u001c1nnn_@EW�at`1"
+   },
+   "prompt-two-images": {
+    "input_ids": [
+     337,
+     115,
+     333,
+     10,
+     82,
+     101,
+     293,
+     260,
+     278,
+     115,
+     46,
+     338,
+     10,
+     337,
+     331,
+     10,
+     345,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     346,
+     261,
+     100,
+     345,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     348,
+     346,
+     87,
+     312,
+     291,
+     277,
+     260,
+     285,
+     276,
+     115,
+     63,
+     338,
+     10,
+     337,
+     97,
+     287,
+     10
+    ],
+    "new_tokens": [
+     229,
+     49,
+     49,
+     49,
+     49,
+     311,
+     202,
+     163,
+     163,
+     125,
+     243,
+     12,
+     308,
+     321,
+     308,
+     294,
+     239,
+     42,
+     282,
+     110
+    ],
+    "rendered": "<|im_start|>system\nRead the scans.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>and<|vision_start|><|image_pad|><|vision_end|>What is in these images?<|im_end|>\n<|im_start|>assistant\n",
+    "rope_delta": -39,
+    "text": "�1111ghtʣ�}�\felpfunightelpfuat�*istn"
+   },
+   "tuning": {
+    "answer": "A page with lines of text and a box in the corner.",
+    "answer_ids": [
+     65,
+     289,
+     264,
+     274,
+     317,
+     288,
+     115,
+     292,
+     32,
+     329,
+     275,
+     256,
+     335,
+     277,
+     260,
+     32,
+     302,
+     46,
+     338
+    ],
+    "loss": 12.470904350280762
+   }
+  }
+ },
+ "files": {
+  "page-small.png": {
+   "bytes": 330,
+   "sha256": "9b905bc6b86da3eb980cc4e6857efe0177d51aa8809179264650f81c6b38ac0b"
+  },
+  "page-tall.png": {
+   "bytes": 2764,
+   "sha256": "b9774f441672594e4b96c37a639a75fba3ba63cb688138bee67c3c2a02debaff"
+  },
+  "page.png": {
+   "bytes": 6947,
+   "sha256": "5cd6699e7ef464f2c1b1e4760a4267dd3e5a8f9158c827a0a28bdcef3d29d2d0"
+  },
+  "reference/qwen2-vl-page-features.npy": {
+   "bytes": 6272,
+   "sha256": "3c901ee1c7430e60bdc20c0518ae88968b68fd74d5f3089d106ee8dc97b67e7d"
+  },
+  "reference/qwen2-vl-page-patch_embed.npy": {
+   "bytes": 12416,
+   "sha256": "e344cebbef95fbb5532a32fe90b2849c8774da834feb5969bdeff6035bb68e2d"
+  },
+  "reference/qwen2-vl-page-pixel_values.npy": {
+   "bytes": 36992,
+   "sha256": "836f7febc3d70d5534bfe47bfa77c6e2be76a1a1a770778b8dc612bd824308ad"
+  },
+  "reference/qwen2-vl-page-small-features.npy": {
+   "bytes": 5248,
+   "sha256": "6f8396af33d2c9cce8261764f86caa0b4f5082c72cac28f16226de7dee7cfd05"
+  },
+  "reference/qwen2-vl-page-small-patch_embed.npy": {
+   "bytes": 10368,
+   "sha256": "4e3b4f6449f3135fce4f7c2b0394cffb057bde96d3b41860ea78cdc4e4b53508"
+  },
+  "reference/qwen2-vl-page-small-pixel_values.npy": {
+   "bytes": 30848,
+   "sha256": "503c7bda813e1b741b6f23672c9da04ea2107f08b9cb88c384698b1faa341aea"
+  },
+  "reference/qwen2-vl-page-small-tower.npy": {
+   "bytes": 10368,
+   "sha256": "89bf5dfd800af8f501558fc2ae5fad144bc31819b288bf7c32be39979dd4fb9a"
+  },
+  "reference/qwen2-vl-page-tall-features.npy": {
+   "bytes": 7296,
+   "sha256": "eaebe5d439c13b68d9d34955b4dc37cc4037a0159b71900640a6d1aa53e83d0b"
+  },
+  "reference/qwen2-vl-page-tall-patch_embed.npy": {
+   "bytes": 14464,
+   "sha256": "6244462f1916a7d792d79c80cc6992222279c32f844645d20d4a0bd98df635eb"
+  },
+  "reference/qwen2-vl-page-tall-pixel_values.npy": {
+   "bytes": 43136,
+   "sha256": "171f2b72104021d8013740c2d1dbe8ee559a8f43ce1b9967be6864dee61e9bfd"
+  },
+  "reference/qwen2-vl-page-tall-tower.npy": {
+   "bytes": 14464,
+   "sha256": "902d3ed32e8e7372d7cd0ea54abab68728f815e230fa0b608290f8f8c3f61529"
+  },
+  "reference/qwen2-vl-page-tower.npy": {
+   "bytes": 12416,
+   "sha256": "0e56e2b53daa923851aeb2d95e5c11a50921b6f6396a3431cdcfc00862d5e357"
+  },
+  "reference/qwen2-vl-prompt-image-generate-logits.npy": {
+   "bytes": 28128,
+   "sha256": "149bde9a4243b26285c5254d99d5a93d86481a3e9096282590e3ee79d6811057"
+  },
+  "reference/qwen2-vl-prompt-image-input_ids.npy": {
+   "bytes": 576,
+   "sha256": "4c1929964e13eacd3d93d9a81969230973e37684c0c841415524efda3f07a47a"
+  },
+  "reference/qwen2-vl-prompt-image-logits.npy": {
+   "bytes": 78528,
+   "sha256": "260b1048fc114b585297027f648d04c0eb9faaa9ffe28a22ea0dde07d98b161e"
+  },
+  "reference/qwen2-vl-prompt-image-position_ids.npy": {
+   "bytes": 1472,
+   "sha256": "bd3f94ed245c9b70355b1cb0b5932f883638263e9f23ba8ac85bb7b5866325c6"
+  },
+  "reference/qwen2-vl-prompt-text-generate-logits.npy": {
+   "bytes": 28128,
+   "sha256": "bcb0289016680e3730e6ee409a2b836826142af8a8baa763a295f975d04832f1"
+  },
+  "reference/qwen2-vl-prompt-text-input_ids.npy": {
+   "bytes": 472,
+   "sha256": "aa35d478ec483dc1ec5c6c250ad62b2f7a144bbcc73fc8339925c8f669ed9b3d"
+  },
+  "reference/qwen2-vl-prompt-text-logits.npy": {
+   "bytes": 60328,
+   "sha256": "371b0db9b3c3b3e31ccc521ddef2c76aa66d2a05aa7dbfdef517f591161f804c"
+  },
+  "reference/qwen2-vl-prompt-two-images-generate-logits.npy": {
+   "bytes": 28128,
+   "sha256": "fa6354ad105a34647096ebb790bf2397bb92cf5e48114714550eaac17e02f424"
+  },
+  "reference/qwen2-vl-prompt-two-images-input_ids.npy": {
+   "bytes": 840,
+   "sha256": "542030a0bf9a2d27b97bd45687fe9fb0b1b62abc2f2bdbca0af5282f4642f34b"
+  },
+  "reference/qwen2-vl-prompt-two-images-logits.npy": {
+   "bytes": 124728,
+   "sha256": "9edfdc27a455353367940583e77eefee77401987817237f18db2e618481c57dc"
+  },
+  "reference/qwen2-vl-prompt-two-images-position_ids.npy": {
+   "bytes": 2264,
+   "sha256": "35a9c49832ec67f6e6eb3fbdd4bd58b3ce10a9324fca276573bc4ce12240f2f0"
+  },
+  "reference/qwen2-vl-tuning-input_ids.npy": {
+   "bytes": 728,
+   "sha256": "22af4b4a1898dcdaed09d4a7147715dc33bfba4beee38680c10af5a043e97505"
+  },
+  "reference/qwen2-vl-tuning-logits.npy": {
+   "bytes": 105128,
+   "sha256": "f2be4f9d7eb5d8051ae4fc63e931bec3e273ba03e8deb732b2b67f7228902a10"
+  },
+  "reference/qwen2.5-vl-page-features.npy": {
+   "bytes": 6272,
+   "sha256": "3815a1c00e83898dabe075ba398cb52a14a492160c0de64f92163e3e99ac6a22"
+  },
+  "reference/qwen2.5-vl-page-patch_embed.npy": {
+   "bytes": 12416,
+   "sha256": "56322209dc66af1d0ccd801c4ce238da3647f195233633d5c58818005da586a1"
+  },
+  "reference/qwen2.5-vl-page-pixel_values.npy": {
+   "bytes": 36992,
+   "sha256": "836f7febc3d70d5534bfe47bfa77c6e2be76a1a1a770778b8dc612bd824308ad"
+  },
+  "reference/qwen2.5-vl-page-small-features.npy": {
+   "bytes": 5248,
+   "sha256": "24e89faddf83d6ce5aa1f5025aa1740aac3b12b65e82b7fd129906a9494fd051"
+  },
+  "reference/qwen2.5-vl-page-small-patch_embed.npy": {
+   "bytes": 10368,
+   "sha256": "cc8d11a3e74179af21f56f88bed7fffd7f5904b036603b658740126687ce7aa0"
+  },
+  "reference/qwen2.5-vl-page-small-pixel_values.npy": {
+   "bytes": 30848,
+   "sha256": "503c7bda813e1b741b6f23672c9da04ea2107f08b9cb88c384698b1faa341aea"
+  },
+  "reference/qwen2.5-vl-page-small-tower.npy": {
+   "bytes": 10368,
+   "sha256": "5dcf28a80eec3c09326a7741d893a03bf7f2b44f700845759417929d43883d2d"
+  },
+  "reference/qwen2.5-vl-page-tall-features.npy": {
+   "bytes": 7296,
+   "sha256": "cee287d0c1f588ef5e5a6c7f0b571fa55cabb2e230bdedae256d7de7202dc9b4"
+  },
+  "reference/qwen2.5-vl-page-tall-patch_embed.npy": {
+   "bytes": 14464,
+   "sha256": "84c06542e21f62d40af6dbd5ff33018557d71f70a6ec3cec50f85f344086d8bf"
+  },
+  "reference/qwen2.5-vl-page-tall-pixel_values.npy": {
+   "bytes": 43136,
+   "sha256": "171f2b72104021d8013740c2d1dbe8ee559a8f43ce1b9967be6864dee61e9bfd"
+  },
+  "reference/qwen2.5-vl-page-tall-tower.npy": {
+   "bytes": 14464,
+   "sha256": "dcf7f1a4e3ee4479c29d5aac0191f021bffba1296c6f64a107ddd5749549fe0a"
+  },
+  "reference/qwen2.5-vl-page-tower.npy": {
+   "bytes": 12416,
+   "sha256": "e7abb7c04117451fb6bf0859f69d74d46cba2ca0dca0e0250209e65e1d6d9c9a"
+  },
+  "reference/qwen2.5-vl-prompt-image-generate-logits.npy": {
+   "bytes": 28128,
+   "sha256": "529abcba181c132cfeb6ff4647f0c6fb561ba7a62749e9bd64f4362bccd42b87"
+  },
+  "reference/qwen2.5-vl-prompt-image-input_ids.npy": {
+   "bytes": 576,
+   "sha256": "4c1929964e13eacd3d93d9a81969230973e37684c0c841415524efda3f07a47a"
+  },
+  "reference/qwen2.5-vl-prompt-image-logits.npy": {
+   "bytes": 78528,
+   "sha256": "2099960683a60e9b5834d124db696423b2394d2cc0236e89ea936dd5334ae8b5"
+  },
+  "reference/qwen2.5-vl-prompt-image-position_ids.npy": {
+   "bytes": 1472,
+   "sha256": "bd3f94ed245c9b70355b1cb0b5932f883638263e9f23ba8ac85bb7b5866325c6"
+  },
+  "reference/qwen2.5-vl-prompt-text-generate-logits.npy": {
+   "bytes": 28128,
+   "sha256": "9b19835845cd7575ec6a1946a8622e7d6b9464ebdcec2440093eb9d4b58994fd"
+  },
+  "reference/qwen2.5-vl-prompt-text-input_ids.npy": {
+   "bytes": 472,
+   "sha256": "aa35d478ec483dc1ec5c6c250ad62b2f7a144bbcc73fc8339925c8f669ed9b3d"
+  },
+  "reference/qwen2.5-vl-prompt-text-logits.npy": {
+   "bytes": 60328,
+   "sha256": "a286bd3d6d3e4ea3f062c1a90523807b152bc24347e3ede75086d6d7a8f4a29b"
+  },
+  "reference/qwen2.5-vl-prompt-two-images-generate-logits.npy": {
+   "bytes": 28128,
+   "sha256": "cbc204556e0a501bb54bf542ccde481cc5bdf0c7b145fb32a5d65db50a171add"
+  },
+  "reference/qwen2.5-vl-prompt-two-images-input_ids.npy": {
+   "bytes": 840,
+   "sha256": "542030a0bf9a2d27b97bd45687fe9fb0b1b62abc2f2bdbca0af5282f4642f34b"
+  },
+  "reference/qwen2.5-vl-prompt-two-images-logits.npy": {
+   "bytes": 124728,
+   "sha256": "899eb89f623408a4da0eea466e21a682e623c4fc20414d33ab32f4d3d1b62eaf"
+  },
+  "reference/qwen2.5-vl-prompt-two-images-position_ids.npy": {
+   "bytes": 2264,
+   "sha256": "35a9c49832ec67f6e6eb3fbdd4bd58b3ce10a9324fca276573bc4ce12240f2f0"
+  },
+  "reference/qwen2.5-vl-tuning-input_ids.npy": {
+   "bytes": 728,
+   "sha256": "22af4b4a1898dcdaed09d4a7147715dc33bfba4beee38680c10af5a043e97505"
+  },
+  "reference/qwen2.5-vl-tuning-logits.npy": {
+   "bytes": 105128,
+   "sha256": "b9b970bd739b183282cb65686f2be5cb4f44dfb58eb6b1dac7b7c53ad402c523"
+  },
+  "tiny-qwen2-vl-flat/config.json": {
+   "bytes": 1118,
+   "sha256": "680deae1b1cb2298e05b21219425cb8fc810f79ee3ef3638cfb68db68be4ac62"
+  },
+  "tiny-qwen2-vl-flat/model.safetensors": {
+   "bytes": 612832,
+   "sha256": "ff2a3eb15d8c1b208b1d4f5cda877e81b3fa3a2e602a4cd9e2c9f2e4f8a4fb94"
+  },
+  "tiny-qwen2-vl-flat/preprocessor_config.json": {
+   "bytes": 425,
+   "sha256": "416a7bcc22d99fde44e30730e8d1f0bb70ab3b52706e06ccab5dfc829037405d"
+  },
+  "tiny-qwen2-vl-flat/tokenizer.json": {
+   "bytes": 10576,
+   "sha256": "890d6f23ff59705c02676a3cfb441f31ea87b4fd1cc51f2f1e18423e8c2398fd"
+  },
+  "tiny-qwen2-vl-flat/tokenizer_config.json": {
+   "bytes": 3569,
+   "sha256": "2c7242b3a53209f53c219702e5cc923cc38810f22a2892255db96bfdd87dbdf7"
+  },
+  "tiny-qwen2-vl/config.json": {
+   "bytes": 1454,
+   "sha256": "df4a2b39e1defa84cfa4c3699c9c4a644929963efbe342513cc5d8f125d113be"
+  },
+  "tiny-qwen2-vl/model.safetensors": {
+   "bytes": 612832,
+   "sha256": "ff2a3eb15d8c1b208b1d4f5cda877e81b3fa3a2e602a4cd9e2c9f2e4f8a4fb94"
+  },
+  "tiny-qwen2-vl/preprocessor_config.json": {
+   "bytes": 425,
+   "sha256": "416a7bcc22d99fde44e30730e8d1f0bb70ab3b52706e06ccab5dfc829037405d"
+  },
+  "tiny-qwen2-vl/tokenizer.json": {
+   "bytes": 10576,
+   "sha256": "890d6f23ff59705c02676a3cfb441f31ea87b4fd1cc51f2f1e18423e8c2398fd"
+  },
+  "tiny-qwen2-vl/tokenizer_config.json": {
+   "bytes": 3569,
+   "sha256": "2c7242b3a53209f53c219702e5cc923cc38810f22a2892255db96bfdd87dbdf7"
+  },
+  "tiny-qwen2.5-vl-flat/config.json": {
+   "bytes": 1225,
+   "sha256": "0f3ac8b5d639d4ba2e3751a19d1d7d7656f3b90b73c49af6e8189e28ffdebdde"
+  },
+  "tiny-qwen2.5-vl-flat/model.safetensors": {
+   "bytes": 601360,
+   "sha256": "c51a0f867c23ce39f0f4d9b44cfe90b0a1c8fbf82bd5c95db3bee1d53547a0a7"
+  },
+  "tiny-qwen2.5-vl-flat/preprocessor_config.json": {
+   "bytes": 425,
+   "sha256": "416a7bcc22d99fde44e30730e8d1f0bb70ab3b52706e06ccab5dfc829037405d"
+  },
+  "tiny-qwen2.5-vl-flat/tokenizer.json": {
+   "bytes": 10576,
+   "sha256": "890d6f23ff59705c02676a3cfb441f31ea87b4fd1cc51f2f1e18423e8c2398fd"
+  },
+  "tiny-qwen2.5-vl-flat/tokenizer_config.json": {
+   "bytes": 3569,
+   "sha256": "2c7242b3a53209f53c219702e5cc923cc38810f22a2892255db96bfdd87dbdf7"
+  },
+  "tiny-qwen2.5-vl/config.json": {
+   "bytes": 1562,
+   "sha256": "6fbf80792f18d0385e86f19c8b81766d10f45b5808c994924a6513bce6e22ee1"
+  },
+  "tiny-qwen2.5-vl/model.safetensors": {
+   "bytes": 601360,
+   "sha256": "c51a0f867c23ce39f0f4d9b44cfe90b0a1c8fbf82bd5c95db3bee1d53547a0a7"
+  },
+  "tiny-qwen2.5-vl/preprocessor_config.json": {
+   "bytes": 425,
+   "sha256": "416a7bcc22d99fde44e30730e8d1f0bb70ab3b52706e06ccab5dfc829037405d"
+  },
+  "tiny-qwen2.5-vl/tokenizer.json": {
+   "bytes": 10576,
+   "sha256": "890d6f23ff59705c02676a3cfb441f31ea87b4fd1cc51f2f1e18423e8c2398fd"
+  },
+  "tiny-qwen2.5-vl/tokenizer_config.json": {
+   "bytes": 3569,
+   "sha256": "2c7242b3a53209f53c219702e5cc923cc38810f22a2892255db96bfdd87dbdf7"
+  }
+ },
+ "layouts": {
+  "tiny-qwen2-vl": {
+   "tensors": {
+    "lm_head.weight": {
+     "dtype": "F32",
+     "shape": [
+      350,
+      64
+     ]
+    },
+    "model.embed_tokens.weight": {
+     "dtype": "F32",
+     "shape": [
+      350,
+      64
+     ]
+    },
+    "model.layers.0.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.0.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.0.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.0.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.0.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "visual.blocks.0.norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.1.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.1.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.1.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "visual.blocks.1.norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.ln_q.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.ln_q.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.mlp.0.bias": {
+     "dtype": "F32",
+     "shape": [
+      128
+     ]
+    },
+    "visual.merger.mlp.0.weight": {
+     "dtype": "F32",
+     "shape": [
+      128,
+      128
+     ]
+    },
+    "visual.merger.mlp.2.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.merger.mlp.2.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      128
+     ]
+    },
+    "visual.patch_embed.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      3,
+      2,
+      4,
+      4
+     ]
+    }
+   }
+  },
+  "tiny-qwen2-vl-flat": {
+   "tensors": {
+    "lm_head.weight": {
+     "dtype": "F32",
+     "shape": [
+      350,
+      64
+     ]
+    },
+    "model.embed_tokens.weight": {
+     "dtype": "F32",
+     "shape": [
+      350,
+      64
+     ]
+    },
+    "model.layers.0.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.0.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.0.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.0.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.0.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "visual.blocks.0.norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.1.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.1.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.1.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "visual.blocks.1.norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.ln_q.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.ln_q.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.mlp.0.bias": {
+     "dtype": "F32",
+     "shape": [
+      128
+     ]
+    },
+    "visual.merger.mlp.0.weight": {
+     "dtype": "F32",
+     "shape": [
+      128,
+      128
+     ]
+    },
+    "visual.merger.mlp.2.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.merger.mlp.2.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      128
+     ]
+    },
+    "visual.patch_embed.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      3,
+      2,
+      4,
+      4
+     ]
+    }
+   }
+  },
+  "tiny-qwen2.5-vl": {
+   "tensors": {
+    "model.embed_tokens.weight": {
+     "dtype": "F32",
+     "shape": [
+      350,
+      64
+     ]
+    },
+    "model.layers.0.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.0.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.0.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.0.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.0.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.0.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.1.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.1.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.1.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.1.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.2.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.2.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.2.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.2.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.2.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.2.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.2.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.2.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.3.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.3.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.3.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.3.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.3.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.3.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.3.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.3.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.ln_q.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.mlp.0.bias": {
+     "dtype": "F32",
+     "shape": [
+      128
+     ]
+    },
+    "visual.merger.mlp.0.weight": {
+     "dtype": "F32",
+     "shape": [
+      128,
+      128
+     ]
+    },
+    "visual.merger.mlp.2.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.merger.mlp.2.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      128
+     ]
+    },
+    "visual.patch_embed.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      3,
+      2,
+      4,
+      4
+     ]
+    }
+   }
+  },
+  "tiny-qwen2.5-vl-flat": {
+   "tensors": {
+    "model.embed_tokens.weight": {
+     "dtype": "F32",
+     "shape": [
+      350,
+      64
+     ]
+    },
+    "model.layers.0.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.0.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      96
+     ]
+    },
+    "model.layers.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      64
+     ]
+    },
+    "model.layers.1.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "model.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      64
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "model.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      64
+     ]
+    },
+    "model.norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.blocks.0.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.0.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.0.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.0.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.0.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.0.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.0.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.1.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.1.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.1.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.1.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.1.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.1.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.2.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.2.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.2.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.2.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.2.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.2.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.2.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.2.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.2.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.attn.proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.attn.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      32
+     ]
+    },
+    "visual.blocks.3.attn.qkv.bias": {
+     "dtype": "F32",
+     "shape": [
+      96
+     ]
+    },
+    "visual.blocks.3.attn.qkv.weight": {
+     "dtype": "F32",
+     "shape": [
+      96,
+      32
+     ]
+    },
+    "visual.blocks.3.mlp.down_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      48
+     ]
+    },
+    "visual.blocks.3.mlp.gate_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.3.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.3.mlp.up_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      48
+     ]
+    },
+    "visual.blocks.3.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      32
+     ]
+    },
+    "visual.blocks.3.norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.blocks.3.norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.ln_q.weight": {
+     "dtype": "F32",
+     "shape": [
+      32
+     ]
+    },
+    "visual.merger.mlp.0.bias": {
+     "dtype": "F32",
+     "shape": [
+      128
+     ]
+    },
+    "visual.merger.mlp.0.weight": {
+     "dtype": "F32",
+     "shape": [
+      128,
+      128
+     ]
+    },
+    "visual.merger.mlp.2.bias": {
+     "dtype": "F32",
+     "shape": [
+      64
+     ]
+    },
+    "visual.merger.mlp.2.weight": {
+     "dtype": "F32",
+     "shape": [
+      64,
+      128
+     ]
+    },
+    "visual.patch_embed.proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      3,
+      2,
+      4,
+      4
+     ]
+    }
+   }
+  }
+ },
+ "processor": {
+  "max_pixels": 2048,
+  "merge_size": 2,
+  "min_pixels": 1024,
+  "patch_size": 4,
+  "temporal_patch_size": 2
+ },
+ "token_ids": {
+  "<|box_end|>": 342,
+  "<|box_start|>": 341,
+  "<|endoftext|>": 336,
+  "<|im_end|>": 338,
+  "<|im_start|>": 337,
+  "<|image_pad|>": 348,
+  "<|object_ref_end|>": 340,
+  "<|object_ref_start|>": 339,
+  "<|quad_end|>": 344,
+  "<|quad_start|>": 343,
+  "<|video_pad|>": 349,
+  "<|vision_end|>": 346,
+  "<|vision_pad|>": 347,
+  "<|vision_start|>": 345
+ },
+ "versions": {
+  "numpy": "2.5.4",
+  "pillow": "12.3.0",
+  "python": "3.12.15",
+  "safetensors": "0.8.0",
+  "tokenizers": "0.23.3",
+  "torch": "2.13.0",
+  "transformers": "5.19.0"
+ }
+}

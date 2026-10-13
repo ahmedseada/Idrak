@@ -1,0 +1,844 @@
+{
+ "added_tokens": [
+  {
+   "content": "<|endoftext|>",
+   "id": 336,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|im_start|>",
+   "id": 337,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|im_end|>",
+   "id": 338,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|object_ref_start|>",
+   "id": 339,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|object_ref_end|>",
+   "id": 340,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|box_start|>",
+   "id": 341,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|box_end|>",
+   "id": 342,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|quad_start|>",
+   "id": 343,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|quad_end|>",
+   "id": 344,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|vision_start|>",
+   "id": 345,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|vision_end|>",
+   "id": 346,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|vision_pad|>",
+   "id": 347,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|image_pad|>",
+   "id": 348,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  },
+  {
+   "content": "<|video_pad|>",
+   "id": 349,
+   "lstrip": false,
+   "normalized": false,
+   "rstrip": false,
+   "single_word": false,
+   "special": true
+  }
+ ],
+ "decoder": {
+  "add_prefix_space": true,
+  "trim_offsets": true,
+  "type": "ByteLevel",
+  "use_regex": true
+ },
+ "model": {
+  "byte_fallback": false,
+  "continuing_subword_prefix": null,
+  "dropout": null,
+  "end_of_word_suffix": null,
+  "fuse_unk": false,
+  "ignore_merges": false,
+  "merges": [
+   [
+    "Ġ",
+    "a"
+   ],
+   [
+    "t",
+    "h"
+   ],
+   [
+    "Ġ",
+    "i"
+   ],
+   [
+    "Ġ",
+    "th"
+   ],
+   [
+    "Ġth",
+    "e"
+   ],
+   [
+    "a",
+    "n"
+   ],
+   [
+    "Ġ",
+    "s"
+   ],
+   [
+    "a",
+    "g"
+   ],
+   [
+    "ag",
+    "e"
+   ],
+   [
+    "n",
+    "e"
+   ],
+   [
+    "Ġ",
+    "."
+   ],
+   [
+    "c",
+    "an"
+   ],
+   [
+    "i",
+    "s"
+   ],
+   [
+    "m",
+    "age"
+   ],
+   [
+    "n",
+    "d"
+   ],
+   [
+    "r",
+    "e"
+   ],
+   [
+    "t",
+    "e"
+   ],
+   [
+    "Ġ",
+    "o"
+   ],
+   [
+    "Ġ",
+    "w"
+   ],
+   [
+    "Ġa",
+    "nd"
+   ],
+   [
+    "Ġi",
+    "mage"
+   ],
+   [
+    "Ġi",
+    "n"
+   ],
+   [
+    "Ġs",
+    "can"
+   ],
+   [
+    "an",
+    "t"
+   ],
+   [
+    "b",
+    "o"
+   ],
+   [
+    "i",
+    "ne"
+   ],
+   [
+    "is",
+    "t"
+   ],
+   [
+    "ist",
+    "ant"
+   ],
+   [
+    "l",
+    "ine"
+   ],
+   [
+    "s",
+    "e"
+   ],
+   [
+    "s",
+    "istant"
+   ],
+   [
+    "s",
+    "sistant"
+   ],
+   [
+    "Ġ",
+    "line"
+   ],
+   [
+    "Ġ",
+    "p"
+   ],
+   [
+    "Ġa",
+    "ssistant"
+   ],
+   [
+    "Ġi",
+    "s"
+   ],
+   [
+    "Ġo",
+    "f"
+   ],
+   [
+    "a",
+    "d"
+   ],
+   [
+    "a",
+    "t"
+   ],
+   [
+    "bo",
+    "u"
+   ],
+   [
+    "bo",
+    "x"
+   ],
+   [
+    "bou",
+    "t"
+   ],
+   [
+    "c",
+    "o"
+   ],
+   [
+    "c",
+    "t"
+   ],
+   [
+    "co",
+    "r"
+   ],
+   [
+    "cor",
+    "ne"
+   ],
+   [
+    "corne",
+    "r"
+   ],
+   [
+    "ct",
+    "u"
+   ],
+   [
+    "ctu",
+    "re"
+   ],
+   [
+    "e",
+    "l"
+   ],
+   [
+    "el",
+    "p"
+   ],
+   [
+    "elp",
+    "f"
+   ],
+   [
+    "elpf",
+    "u"
+   ],
+   [
+    "elpfu",
+    "l"
+   ],
+   [
+    "g",
+    "h"
+   ],
+   [
+    "gh",
+    "t"
+   ],
+   [
+    "h",
+    "at"
+   ],
+   [
+    "h",
+    "elpful"
+   ],
+   [
+    "i",
+    "cture"
+   ],
+   [
+    "i",
+    "ght"
+   ],
+   [
+    "i",
+    "te"
+   ],
+   [
+    "i",
+    "th"
+   ],
+   [
+    "m",
+    "o"
+   ],
+   [
+    "mo",
+    "o"
+   ],
+   [
+    "moo",
+    "n"
+   ],
+   [
+    "n",
+    "ight"
+   ],
+   [
+    "o",
+    "u"
+   ],
+   [
+    "r",
+    "ite"
+   ],
+   [
+    "re",
+    "ad"
+   ],
+   [
+    "s",
+    "te"
+   ],
+   [
+    "se",
+    "r"
+   ],
+   [
+    "ste",
+    "m"
+   ],
+   [
+    "te",
+    "x"
+   ],
+   [
+    "tex",
+    "t"
+   ],
+   [
+    "u",
+    "n"
+   ],
+   [
+    "u",
+    "ser"
+   ],
+   [
+    "y",
+    "ou"
+   ],
+   [
+    "y",
+    "stem"
+   ],
+   [
+    "Ġ",
+    "?"
+   ],
+   [
+    "Ġ",
+    "box"
+   ]
+  ],
+  "type": "BPE",
+  "unk_token": null,
+  "vocab": {
+   "!": 33,
+   "\"": 34,
+   "#": 35,
+   "$": 36,
+   "%": 37,
+   "&": 38,
+   "'": 39,
+   "(": 40,
+   ")": 41,
+   "*": 42,
+   "+": 43,
+   ",": 44,
+   "-": 45,
+   ".": 46,
+   "/": 47,
+   "0": 48,
+   "1": 49,
+   "2": 50,
+   "3": 51,
+   "4": 52,
+   "5": 53,
+   "6": 54,
+   "7": 55,
+   "8": 56,
+   "9": 57,
+   ":": 58,
+   ";": 59,
+   "<": 60,
+   "<|box_end|>": 342,
+   "<|box_start|>": 341,
+   "<|endoftext|>": 336,
+   "<|im_end|>": 338,
+   "<|im_start|>": 337,
+   "<|image_pad|>": 348,
+   "<|object_ref_end|>": 340,
+   "<|object_ref_start|>": 339,
+   "<|quad_end|>": 344,
+   "<|quad_start|>": 343,
+   "<|video_pad|>": 349,
+   "<|vision_end|>": 346,
+   "<|vision_pad|>": 347,
+   "<|vision_start|>": 345,
+   "=": 61,
+   ">": 62,
+   "?": 63,
+   "@": 64,
+   "A": 65,
+   "B": 66,
+   "C": 67,
+   "D": 68,
+   "E": 69,
+   "F": 70,
+   "G": 71,
+   "H": 72,
+   "I": 73,
+   "J": 74,
+   "K": 75,
+   "L": 76,
+   "M": 77,
+   "N": 78,
+   "O": 79,
+   "P": 80,
+   "Q": 81,
+   "R": 82,
+   "S": 83,
+   "T": 84,
+   "U": 85,
+   "V": 86,
+   "W": 87,
+   "X": 88,
+   "Y": 89,
+   "Z": 90,
+   "[": 91,
+   "\\": 92,
+   "]": 93,
+   "^": 94,
+   "_": 95,
+   "`": 96,
+   "a": 97,
+   "ad": 293,
+   "ag": 263,
+   "age": 264,
+   "an": 261,
+   "ant": 279,
+   "at": 294,
+   "b": 98,
+   "bo": 280,
+   "bou": 295,
+   "bout": 297,
+   "box": 296,
+   "c": 99,
+   "can": 267,
+   "co": 298,
+   "cor": 300,
+   "corne": 301,
+   "corner": 302,
+   "ct": 299,
+   "ctu": 303,
+   "cture": 304,
+   "d": 100,
+   "e": 101,
+   "el": 305,
+   "elp": 306,
+   "elpf": 307,
+   "elpfu": 308,
+   "elpful": 309,
+   "f": 102,
+   "g": 103,
+   "gh": 310,
+   "ght": 311,
+   "h": 104,
+   "hat": 312,
+   "helpful": 313,
+   "i": 105,
+   "icture": 314,
+   "ight": 315,
+   "ine": 281,
+   "is": 268,
+   "ist": 282,
+   "istant": 283,
+   "ite": 316,
+   "ith": 317,
+   "j": 106,
+   "k": 107,
+   "l": 108,
+   "line": 284,
+   "m": 109,
+   "mage": 269,
+   "mo": 318,
+   "moo": 319,
+   "moon": 320,
+   "n": 110,
+   "nd": 270,
+   "ne": 265,
+   "night": 321,
+   "o": 111,
+   "ou": 322,
+   "p": 112,
+   "q": 113,
+   "r": 114,
+   "re": 271,
+   "read": 324,
+   "rite": 323,
+   "s": 115,
+   "se": 285,
+   "ser": 326,
+   "sistant": 286,
+   "ssistant": 287,
+   "ste": 325,
+   "stem": 327,
+   "t": 116,
+   "te": 272,
+   "tex": 328,
+   "text": 329,
+   "th": 257,
+   "u": 117,
+   "un": 330,
+   "user": 331,
+   "v": 118,
+   "w": 119,
+   "x": 120,
+   "y": 121,
+   "you": 332,
+   "ystem": 333,
+   "z": 122,
+   "{": 123,
+   "|": 124,
+   "}": 125,
+   "~": 126,
+   "¡": 161,
+   "¢": 162,
+   "£": 163,
+   "¤": 164,
+   "¥": 165,
+   "¦": 166,
+   "§": 167,
+   "¨": 168,
+   "©": 169,
+   "ª": 170,
+   "«": 171,
+   "¬": 172,
+   "®": 174,
+   "¯": 175,
+   "°": 176,
+   "±": 177,
+   "²": 178,
+   "³": 179,
+   "´": 180,
+   "µ": 181,
+   "¶": 182,
+   "·": 183,
+   "¸": 184,
+   "¹": 185,
+   "º": 186,
+   "»": 187,
+   "¼": 188,
+   "½": 189,
+   "¾": 190,
+   "¿": 191,
+   "À": 192,
+   "Á": 193,
+   "Â": 194,
+   "Ã": 195,
+   "Ä": 196,
+   "Å": 197,
+   "Æ": 198,
+   "Ç": 199,
+   "È": 200,
+   "É": 201,
+   "Ê": 202,
+   "Ë": 203,
+   "Ì": 204,
+   "Í": 205,
+   "Î": 206,
+   "Ï": 207,
+   "Ð": 208,
+   "Ñ": 209,
+   "Ò": 210,
+   "Ó": 211,
+   "Ô": 212,
+   "Õ": 213,
+   "Ö": 214,
+   "×": 215,
+   "Ø": 216,
+   "Ù": 217,
+   "Ú": 218,
+   "Û": 219,
+   "Ü": 220,
+   "Ý": 221,
+   "Þ": 222,
+   "ß": 223,
+   "à": 224,
+   "á": 225,
+   "â": 226,
+   "ã": 227,
+   "ä": 228,
+   "å": 229,
+   "æ": 230,
+   "ç": 231,
+   "è": 232,
+   "é": 233,
+   "ê": 234,
+   "ë": 235,
+   "ì": 236,
+   "í": 237,
+   "î": 238,
+   "ï": 239,
+   "ð": 240,
+   "ñ": 241,
+   "ò": 242,
+   "ó": 243,
+   "ô": 244,
+   "õ": 245,
+   "ö": 246,
+   "÷": 247,
+   "ø": 248,
+   "ù": 249,
+   "ú": 250,
+   "û": 251,
+   "ü": 252,
+   "ý": 253,
+   "þ": 254,
+   "ÿ": 255,
+   "Ā": 0,
+   "ā": 1,
+   "Ă": 2,
+   "ă": 3,
+   "Ą": 4,
+   "ą": 5,
+   "Ć": 6,
+   "ć": 7,
+   "Ĉ": 8,
+   "ĉ": 9,
+   "Ċ": 10,
+   "ċ": 11,
+   "Č": 12,
+   "č": 13,
+   "Ď": 14,
+   "ď": 15,
+   "Đ": 16,
+   "đ": 17,
+   "Ē": 18,
+   "ē": 19,
+   "Ĕ": 20,
+   "ĕ": 21,
+   "Ė": 22,
+   "ė": 23,
+   "Ę": 24,
+   "ę": 25,
+   "Ě": 26,
+   "ě": 27,
+   "Ĝ": 28,
+   "ĝ": 29,
+   "Ğ": 30,
+   "ğ": 31,
+   "Ġ": 32,
+   "Ġ.": 266,
+   "Ġ?": 334,
+   "Ġa": 256,
+   "Ġand": 275,
+   "Ġassistant": 290,
+   "Ġbox": 335,
+   "Ġi": 258,
+   "Ġimage": 276,
+   "Ġin": 277,
+   "Ġis": 291,
+   "Ġline": 288,
+   "Ġo": 273,
+   "Ġof": 292,
+   "Ġp": 289,
+   "Ġs": 262,
+   "Ġscan": 278,
+   "Ġth": 259,
+   "Ġthe": 260,
+   "Ġw": 274,
+   "ġ": 127,
+   "Ģ": 128,
+   "ģ": 129,
+   "Ĥ": 130,
+   "ĥ": 131,
+   "Ħ": 132,
+   "ħ": 133,
+   "Ĩ": 134,
+   "ĩ": 135,
+   "Ī": 136,
+   "ī": 137,
+   "Ĭ": 138,
+   "ĭ": 139,
+   "Į": 140,
+   "į": 141,
+   "İ": 142,
+   "ı": 143,
+   "Ĳ": 144,
+   "ĳ": 145,
+   "Ĵ": 146,
+   "ĵ": 147,
+   "Ķ": 148,
+   "ķ": 149,
+   "ĸ": 150,
+   "Ĺ": 151,
+   "ĺ": 152,
+   "Ļ": 153,
+   "ļ": 154,
+   "Ľ": 155,
+   "ľ": 156,
+   "Ŀ": 157,
+   "ŀ": 158,
+   "Ł": 159,
+   "ł": 160,
+   "Ń": 173
+  }
+ },
+ "normalizer": null,
+ "padding": null,
+ "post_processor": null,
+ "pre_tokenizer": {
+  "pretokenizers": [
+   {
+    "behavior": "Isolated",
+    "invert": false,
+    "pattern": {
+     "Regex": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+    },
+    "type": "Split"
+   },
+   {
+    "add_prefix_space": false,
+    "trim_offsets": false,
+    "type": "ByteLevel",
+    "use_regex": false
+   }
+  ],
+  "type": "Sequence"
+ },
+ "truncation": null,
+ "version": "1.0"
+}
