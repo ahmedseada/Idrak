@@ -88,6 +88,13 @@ public sealed class TuningAnswerScorer
     public IReadOnlyDictionary<string, string>? MetricOptions { get; init; }
 
     /// <summary>
+    /// The text of an answer and of its reference that the metric compares: null (the default) for both as they are, or a
+    /// name in <see cref="AnswerTexts"/> (<see cref="AnswerTexts.Values"/>: the values of their JSON, so a JSON answer's
+    /// keys and punctuation, matched almost for free, do not lower an error rate).
+    /// </summary>
+    public string? AnswerText { get; init; }
+
+    /// <summary>
     /// In <see cref="FineTuner.Train(PretrainedModel, IReadOnlyList{TrainingSequence}, IReadOnlyList{TrainingSequence}?, FineTuningOptions, string?, IProgress{FineTuningProgress}?, CancellationToken, Action{string}?)"/>:
     /// score every this many optimizer steps; 0 (the default): at the end of each epoch.
     /// </summary>
@@ -171,7 +178,10 @@ public sealed class TuningAnswerScorer
                     var request = new ChatRequest(prompt, tools.Count > 0 ? tools : null, think ?? Think, options) { VisionOptions = visionOptions };
                     var reply = chat.Chat(request, cancellationToken);
                     string answer = reply.Message?.Content ?? "";
-                    var scored = new TuningAnswer(prompt, reference, answer, _metric.Score(answer, reference, MetricOptions), reply.Stats?.GeneratedTokens ?? 0);
+                    var score = AnswerText is { } text
+                        ? _metric.Score(AnswerTexts.Of(answer, text), AnswerTexts.Of(reference, text), MetricOptions)
+                        : _metric.Score(answer, reference, MetricOptions);
+                    var scored = new TuningAnswer(prompt, reference, answer, score, reply.Stats?.GeneratedTokens ?? 0);
                     answers.Add(scored);
                     progress?.Report(scored);
                 }

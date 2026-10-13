@@ -305,4 +305,10 @@ public sealed record TuningDefaults
     /// stops with an error (0: stops at the first); see FineTuningOptions.NonFiniteSteps.
     /// </summary>
     public int NonFiniteSteps { get; init; } = 8;
+
+    /// <summary>
+    /// What tuning's CER compares, as the Read tab's evaluation does: "values" (the values of the JSON answers, the
+    /// default) or "raw" (the answers as they are, JSON keys and punctuation included, which lowers the rate).
+    /// </summary>
+    public string CerText { get; init; } = "values";
 }

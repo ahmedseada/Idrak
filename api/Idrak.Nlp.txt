@@ -281,6 +281,7 @@ public sealed record Idrak.Nlp.ConversationTuningOptions : System.IEquatable<Idr
   public string? FeatureFolder { get; init; }
   public string? Images { get; init; }
   public string? Metric { get; init; }
+  public string? MetricText { get; init; }
   public string? System { get; init; }
 
 public sealed record Idrak.Nlp.ConversationTuningResult : System.IEquatable<Idrak.Nlp.ConversationTuningResult>
@@ -934,6 +935,7 @@ public sealed class Idrak.Nlp.TuningAnswerScorer
   public int MaxNewTokens { get; init; }
   public int RepeatStop { get; init; }
   public string Metric { get; }
+  public string? AnswerText { get; init; }
 
 public sealed record Idrak.Nlp.TuningImages : System.IEquatable<Idrak.Nlp.TuningImages>
   public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image)

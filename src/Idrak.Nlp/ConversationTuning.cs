@@ -67,6 +67,13 @@ public sealed record ConversationTuningOptions
     public int MetricRepeatStop { get; init; }
 
     /// <summary>
+    /// The text of a scored answer and its reference that <see cref="Metric"/> compares (<see cref="TuningAnswerScorer.AnswerText"/>):
+    /// null (the default) for both as they are, or a name in <see cref="AnswerTexts"/>, such as <see cref="AnswerTexts.Values"/>
+    /// for the values of JSON answers.
+    /// </summary>
+    public string? MetricText { get; init; }
+
+    /// <summary>
     /// The evaluation loss over the first this many evaluation conversations (0, the default: all of them); the metric's
     /// own <see cref="MetricSamples"/> are counted apart. Each evaluation of the loss is a forward pass per conversation.
     /// </summary>
@@ -351,8 +358,14 @@ public sealed class ConversationTuning : IDisposable
                 throw new ArgumentException($"The metric {metric} scores answers on evaluation conversations: give an evaluation file or an evaluation fraction.");
             }
 
+            if (Options.MetricText is { } text)
+            {
+                _ = AnswerTexts.Get(text);                                    // not registered: said now, not after an epoch
+            }
+
             Scorer = new TuningAnswerScorer(evaluation, metric, Options.MetricSamples)
             {
+                AnswerText = Options.MetricText,
                 Every = Options.MetricEvery, MaxNewTokens = Options.MaxNewTokens, ContextLength = Math.Min(Model.MaxPositions, tuning.MaxLength + Options.MaxNewTokens),
                 Think = Options.Think, RepeatStop = Options.MetricRepeatStop,
             };
