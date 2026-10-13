@@ -18,10 +18,11 @@ dotnet add package Idrak.Imaging
 | Transforms | `PillowImageOps` (resize with Pillow's filters, rank filters, blur, blends, point maps), the named transforms of `ImageTransforms` ("grayscale", "max_width", "contrast", ...) |
 | Preprocessing | `ImagePreprocessor`: a model family's resize, crop, rescale and normalization from its preprocessor config, on the host or the device |
 | Chat images | `ChatImageDecoder`: the images of a chat request (data URLs, files, bytes) decoded once |
+| Fonts | `OpenTypeFormat` ("opentype": .ttf, .otf and .ttc with TrueType outlines, in C#; registered in `FontFormats`), `CoverageRasterizer` ("coverage": exact area coverage, unhinted; in `OutlineRasterizers`) |
 | Training | `ImageFolderSource` (class folders, and the "images" source of `SampleSources`), augmentations for the `DataLoader` (`RandomFlip`, `RandomShift`, `RandomRotation`, `GaussianNoise`; "flip" and "shift" in `Augmentations`) |
 
 ## Contracts
 
 The plug-in points only this package uses are in `Idrak.Imaging.Abstractions`: `ImageEncoders` and `IImageEncoder` (image
 file encoders by format). The shared contracts (`ImageCodecs`, `ImageTransforms`, `Augmentations`, `SampleSources`,
-`ImageData`) are in Idrak.Abstraction, and this package registers its built-ins into them.
+`ImageData`, `FontFormats`, `OutlineRasterizers`) are in Idrak.Abstraction, and this package registers its built-ins into them.
