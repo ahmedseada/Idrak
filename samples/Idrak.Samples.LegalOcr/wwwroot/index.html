@@ -192,7 +192,11 @@
         <select id="addStep"><option value="">+ Add a step…</option></select>
         <div class="note" style="margin-top:4px">Steps run top to bottom. Untick one to try the page without it; the preview follows every change.</div>
       </div>
-      <div class="note">Sent as: <span class="mono" id="pipelineText"></span></div>
+      <div>
+        <label for="pipelineText">Sent as (paste or type steps here: Enter, a paste or leaving the box sets the steps above; editing the steps rewrites it)</label>
+        <input type="text" class="mono" id="pipelineText" spellcheck="false" autocomplete="off" placeholder="none: the image as it is">
+        <div class="note" id="pipelineNote"></div>
+      </div>
       <h2>Model options</h2>
       <label class="check"><input type="checkbox" id="panAndScan"> Pan and scan (a tall or wide page is also read as 2 to 4 crops, each its own image: finer detail, more prompt tokens)</label>
       <label class="check"><input type="checkbox" id="addSpecialTokens"> Add the tokenizer's special tokens to the prompt (as a transformers pipeline that calls the processor on the rendered template: Gemma's prompt then starts with a second &lt;bos&gt;)</label>
@@ -311,7 +315,10 @@
         <div><label for="tName">Adapter name</label><input type="text" id="tName" spellcheck="false"></div>
         <div><label for="tBase">Tune on</label><select id="tBase"></select></div>
       </div>
-      <div><label for="tPre">Preprocessing of every page (saved with the adapter, used when reading with it) <button class="btn" id="tPreFromRead" type="button" style="padding:2px 8px;margin-left:6px">Use the Read tab's steps</button></label><input type="text" id="tPre" spellcheck="false"></div>
+      <div><label for="tPre">Preprocessing of every page (saved with the adapter, used when reading with it; paste or type steps: Enter, a paste or leaving the box sets the steps below) <button class="btn" id="tPreFromRead" type="button" style="padding:2px 8px;margin-left:6px">Use the Read tab's steps</button><button class="btn" id="tPreToRead" type="button" style="padding:2px 8px;margin-left:6px">Send them to the Read tab</button></label><input type="text" class="mono" id="tPre" spellcheck="false" autocomplete="off" placeholder="none: the image as it is">
+        <div class="note" id="tPreNote"></div>
+        <div class="steps" id="tSteps"></div>
+        <select id="tAddStep"><option value="">+ Add a step…</option></select></div>
       <div class="grid3">
         <div><label for="tWeights">Base weights</label><select id="tWeights"><option value="bf16">bf16</option><option value="int8">int8</option><option value="int4">int4 (QLoRA)</option></select></div>
         <div><label for="tEpochs">Epochs</label><input type="number" id="tEpochs" min="1" step="1"></div>
@@ -453,10 +460,11 @@ let transforms = [], byName = {}, steps = [];     // steps: { name, on, values: 
 async function loadTransforms() {
   transforms = await fetch("/api/transforms").then(r => r.json()).catch(() => []);
   byName = Object.fromEntries(transforms.map(t => [t.name, t]));
-  const add = $("addStep");
-  for (const t of [...transforms].sort((a, b) => a.label.localeCompare(b.label))) {
-    const o = document.createElement("option"); o.value = t.name; o.textContent = t.label; o.title = t.summary; add.appendChild(o);
-  }
+  for (const add of [$("addStep"), $("tAddStep")])
+    for (const t of [...transforms].sort((a, b) => a.label.localeCompare(b.label))) {
+      const o = document.createElement("option"); o.value = t.name; o.textContent = t.label; o.title = t.summary; add.appendChild(o);
+    }
+  setTuneSteps($("tPre").value);                                     // the Fine-tune defaults may have come first
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem("legal-ocr-steps") ?? "null"); } catch { }
   if (saved?.preset === "custom" && Array.isArray(saved.steps)) { $("preset").value = "custom"; steps = saved.steps.filter(s => byName[s.name]); renderSteps(); update(false); }
@@ -501,41 +509,43 @@ function setSteps(text, preset) {
 function changed() { $("preset").value = "custom"; update(true); }
 
 function update(save) {
-  $("pipelineText").textContent = pipelineOf(steps) || "none";
+  // The box shows what is sent, except while it is being typed in (applying it rewrites it).
+  if (document.activeElement !== $("pipelineText")) $("pipelineText").value = pipelineOf(steps);
   if (save !== false || $("preset").value === "custom") {
     try { localStorage.setItem("legal-ocr-steps", JSON.stringify({ preset: $("preset").value, steps })); } catch { }
   }
   schedulePreview();
 }
 
-function renderSteps() {
-  const box = $("steps"); box.innerHTML = "";
-  steps.forEach((step, i) => {
+function renderSteps(list = steps, box = $("steps"), onChange = changed) {
+  box.innerHTML = "";
+  const again = () => renderSteps(list, box, onChange);
+  list.forEach((step, i) => {
     const t = byName[step.name];
     const row = document.createElement("div"); row.className = "step" + (step.on ? "" : " off");
     const head = document.createElement("div"); head.className = "step-head";
     const on = document.createElement("input"); on.type = "checkbox"; on.checked = step.on; on.title = "Run this step";
-    on.onchange = () => { step.on = on.checked; row.classList.toggle("off", !step.on); changed(); };
+    on.onchange = () => { step.on = on.checked; row.classList.toggle("off", !step.on); onChange(); };
     const title = document.createElement("b"); title.textContent = t.label; title.title = t.summary;
     const button = (text, label, disabled, action) => { const b = document.createElement("button"); b.type = "button"; b.textContent = text; b.title = label; b.setAttribute("aria-label", label); b.disabled = disabled; b.onclick = action; return b; };
     head.append(on, title,
-      button("▲", "Move up", i === 0, () => { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; renderSteps(); changed(); }),
-      button("▼", "Move down", i === steps.length - 1, () => { [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]]; renderSteps(); changed(); }),
-      button("✕", "Remove", false, () => { steps.splice(i, 1); renderSteps(); changed(); }));
+      button("▲", "Move up", i === 0, () => { [list[i - 1], list[i]] = [list[i], list[i - 1]]; again(); onChange(); }),
+      button("▼", "Move down", i === list.length - 1, () => { [list[i + 1], list[i]] = [list[i], list[i + 1]]; again(); onChange(); }),
+      button("✕", "Remove", false, () => { list.splice(i, 1); again(); onChange(); }));
     const inputs = document.createElement("div"); inputs.className = "step-inputs";
-    for (const input of t.inputs) inputs.appendChild(control(step, input));
+    for (const input of t.inputs) inputs.appendChild(control(step, input, onChange));
     row.append(head, inputs);
     box.appendChild(row);
   });
 }
 
 // One input's control: a slider with a number for a number, a list for a choice; an optional one may stay empty.
-function control(step, input) {
+function control(step, input, onChange = changed) {
   const wrap = document.createElement("div");
   const label = document.createElement("label"); label.textContent = input.label + (input.optional ? " (optional)" : ""); if (input.help) label.title = input.help;
   wrap.appendChild(label);
   const value = step.values[input.key] ?? "";
-  const set = v => { if (v === "" || v == null) delete step.values[input.key]; else step.values[input.key] = String(v); changed(); };
+  const set = v => { if (v === "" || v == null) delete step.values[input.key]; else step.values[input.key] = String(v); onChange(); };
   if (input.input === "choice") {
     const select = document.createElement("select");
     if (input.optional) { const o = document.createElement("option"); o.value = ""; o.textContent = "(not set)"; select.appendChild(o); }
@@ -564,6 +574,65 @@ function control(step, input) {
   }
   return wrap;
 }
+
+// Steps typed or pasted as text: parsed into the rows above (the same parser as the presets), the box then rewritten as
+// sent; a part that is neither a step nor an option of the step before it is named, not dropped silently.
+function ignoredParts(text) {
+  const ignored = [];
+  let last = null;
+  for (const raw of (text ?? "").split(",")) {
+    const item = raw.trim(); if (!item) continue;
+    const at = item.indexOf("="), name = (at < 0 ? item : item.slice(0, at)).trim();
+    if (byName[name.toLowerCase()]) last = byName[name.toLowerCase()];
+    else if (!(last && at >= 0 && last.inputs.some(i => i.key === name))) ignored.push(item);
+  }
+  return ignored;
+}
+
+function applyPipelineText() {
+  const text = $("pipelineText").value;
+  if (!transforms.length || text.trim() === pipelineOf(steps)) { $("pipelineNote").textContent = ""; return; }
+  const ignored = ignoredParts(text);
+  $("pipelineNote").textContent = ignored.length ? `Not a step, or not an option of the step before it (left out): ${ignored.join(", ")}` : "";
+  steps = parse(text);
+  $("preset").value = "custom";
+  renderSteps();
+  $("pipelineText").blur();
+  update(true);
+}
+
+$("pipelineText").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); applyPipelineText(); } };
+$("pipelineText").onchange = applyPipelineText;
+$("pipelineText").onpaste = () => setTimeout(applyPipelineText, 0);
+
+// The Fine-tune tab's steps: the same rows and text box, its own list; the box holds what the run sends.
+let tSteps = [];
+
+function setTuneSteps(text) {
+  if (!transforms.length) { $("tPre").value = text ?? ""; return; }   // shown as rows once the steps are known
+  const ignored = ignoredParts(text);
+  $("tPreNote").textContent = ignored.length ? `Not a step, or not an option of the step before it (left out): ${ignored.join(", ")}` : "";
+  tSteps = parse(text);
+  renderSteps(tSteps, $("tSteps"), tuneChanged);
+  $("tPre").value = pipelineOf(tSteps);
+}
+
+function tuneChanged() { $("tPreNote").textContent = ""; $("tPre").value = pipelineOf(tSteps); }
+
+function applyTuneText() {
+  if ($("tPre").value.trim() !== pipelineOf(tSteps)) setTuneSteps($("tPre").value);
+}
+
+$("tPre").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); applyTuneText(); $("tPre").blur(); } };
+$("tPre").onchange = applyTuneText;
+$("tPre").onpaste = () => setTimeout(applyTuneText, 0);
+$("tAddStep").onchange = () => {
+  const name = $("tAddStep").value; $("tAddStep").value = "";
+  if (!name) return;
+  const jpeg = tSteps.length && tSteps[tSteps.length - 1].name === "jpeg" && name !== "jpeg" ? tSteps.length - 1 : tSteps.length;
+  tSteps.splice(jpeg, 0, newStep(name));
+  renderSteps(tSteps, $("tSteps"), tuneChanged); tuneChanged();
+};
 
 $("addStep").onchange = () => {
   const name = $("addStep").value; $("addStep").value = "";
@@ -600,7 +669,8 @@ async function dockerPreset() {
     + (t.found ? "the model's generation_config.json" : "transformers' defaults (the model's generation_config.json is not on disk yet: load the model, then pick the preset again)")
     + `. Weights: the container runs bf16; this app loaded ${t.weights}${/^(bf16|bfloat16)$/i.test(t.weights) ? "" : " (start the app with --LegalOcr:Weights=bf16 to match them too)"}.`;
 }
-$("tPreFromRead").onclick = () => { $("tPre").value = pipelineOf(steps); };
+$("tPreFromRead").onclick = () => setTuneSteps(pipelineOf(steps));
+$("tPreToRead").onclick = () => { $("pipelineText").value = $("tPre").value; applyPipelineText(); showView("read"); };
 
 // ---------------------------------------------------------------- generation (penalties and the loop stop)
 const generationInputs = [
@@ -1008,7 +1078,7 @@ async function loadTuning() {
     $("tBase").appendChild(o);
   }
   $("tBase").value = s.base;
-  $("tPre").value = s.preprocessing; $("tWeights").value = s.weights;
+  setTuneSteps(s.preprocessing); $("tWeights").value = s.weights;
   for (const [id, key] of Object.entries(fields)) $(id).value = s[key];
   $("tCerBefore").checked = s.cerBefore; $("tProjector").checked = s.trainProjector;
   $("tuneData").innerHTML = "";
@@ -1128,7 +1198,7 @@ async function loadAdapters() {
     const use = document.createElement("button"); use.className = "btn"; use.textContent = "Read with it";
     use.onclick = async () => { showView("read"); lastSeen = null; await loadModels(); const m = models.find(m => m.id === a.id); if (m) pick(m); };
     const more = document.createElement("button"); more.className = "btn"; more.textContent = "Continue tuning";
-    more.onclick = () => { $("tBase").value = a.id; $("tPre").value = r.preprocessing ?? $("tPre").value; $("tName").value = r.name + "-more"; };
+    more.onclick = () => { $("tBase").value = a.id; setTuneSteps(r.preprocessing ?? $("tPre").value); $("tName").value = r.name + "-more"; };
     div.append(b, use, more);
     box.appendChild(div);
   }
