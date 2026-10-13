@@ -5,8 +5,8 @@ keep Idrak family-agnostic: every vision-language family does the same jobs behi
 and a family is a plug-in. Qwen's text models (Qwen2, Qwen3) already load; an OCR base must read images, so the family
 to add is **Qwen-VL**: Qwen2.5-VL first (3B and 7B Instruct), Qwen2-VL on the same plug-in.
 
-**Status (2026-10-13):** the plug-in skeleton exists (see "Skeleton, as built"); steps 0 to 9 not started. CUDA first:
-Vulkan and HIP take each contract's default.
+**Status (2026-10-13):** steps 0, 1, 2, 3, 5, 6 and 8 built and checked on the CPU against transformers 5.19 (see "Built,
+2026-10-13"); step 4 (Gemma 3's text decoder into its plug-in) not done; steps 7 and 9 are the owner's runs on the card.
 
 ## The principle
 
@@ -113,17 +113,24 @@ with the decoder blocks to take them), in a later plan. Qwen2.5-VL and Qwen2-VL 
 **Order.** 0, then 1 and 2 (the contract and the capability; the bulk of the risk: every rotary path), 3, 4 (independent
 of Qwen: it can go first or beside 1-3), 5, 6, 7 beside 5 on the owner's card, 8 last.
 
-## Skeleton, as built (2026-10-13, `abstraction`)
+## Built, 2026-10-13 (`abstraction`)
 
-`samples/QwenVision/Idrak.QwenVision` exists as the plug-in's skeleton, in the solution, built like
-`samples/Gemma3Vision/Idrak.Gemma3Vision` (a library referencing `Idrak` and `Idrak.Imaging` as packages, from the clone
-through `IdrakFromSource`). Every class and both registrations are in place (`QwenVisionPlugin.Register()` registers a
-`QwenVisionFamily` in `VisionFamilies` and a `QwenTextDecoder` architecture in `PretrainedArchitectures` for each of
-Qwen2.5-VL and Qwen2-VL); every method that needs a step of this plan throws
-`NotSupportedException("Qwen-VL: … is not built yet (plan 16, step N)")`. The files and their steps are in the plug-in's
-README. Not built or run anywhere yet (no SDK in the cloud container): the owner's first build is
-`dotnet build -c Release samples\QwenVision\Idrak.QwenVision`. Nothing in the library changed; no test, fixture or app
-references the plug-in yet (step 0 brings the fixtures and tests, step 8 the app).
+| Step | State | What and where |
+|---|---|---|
+| 0 | Done | `tools/vlm/make_tiny_qwen_vl.py` (transformers 5.19, CPU): tiny random Qwen2.5-VL (tied, windows 0 and 2, full blocks 1 and 3) and Qwen2-VL (untied), each in transformers 5's config.json and the hub's flat 4.x one (reloaded by transformers to the same logits), three pages (shrunk 32 x 48, tall 56 x 32 with partial windows, enlarged 32 x 40 from 20 x 15), reference outputs for pixels, tower, features, positions and rope deltas, prompt and step logits, 20 greedy tokens, two pages, text only, a tuning example. Reruns give the same bytes. In `tests/Idrak.Tests/data/vlm-qwen` (3.9 MB) |
+| 1 | Done | `IImagePositionRule`, `ImageRun`, `ImagePositionRules` (SlotTable) with `grid` (transformers' `get_rope_index` for images) in `Idrak.Abstraction.Generation`; recorded in `shared-contracts.txt`. "Sequential" is images without axis positions, as before. `ImageFeatures.Positions` are relative to the image's start |
+| 2 | Done | `RopeSettings.Sections` (`RotarySections`, value-compared, kept in the spec's JSON). A prompt whose images carry axis positions gets per-token cos and sin rows built on the host once per pass and setting, read through an identity index by every existing rotary kernel (fused ones step aside for that pass); text tokens' rows equal the plain table's. `DecodingContext.RotaryOffsets` (per row, set by `ImagePrefill.ForwardCached`), `RotaryPositions` computed on the device from `Position` plus a device copy of a uniform offset, so recorded decode steps stay valid; per-row offsets fall back to host positions and are not recordable (`DecodingContext.Recordable`, which `TextGenerator` now checks). `Truncate` restores the offsets before a pass's images and refuses a cut inside them |
+| 3 | Done | `IVisionEncoder.AxisPositions(layout)` (default null) carried by `TrainingImage.AxisPositions` into the step's `PromptImage`s; packed rows place each sequence from 0; `ImagePrefillInputs` keeps fixed rotary buffers for recorded passes. `TuningVision` no longer refuses multi-axis families (its prefetch now also covers the first step) |
+| 4 | Not done | Gemma 3's text decoder still is a library built-in; independent of Qwen |
+| 5, 6 | Done | `samples/QwenVision/Idrak.QwenVision` (README there): both families, both config layouts, `visual.` and `model.visual.` tensors, the processor, the tower on span attention, the merger, the encoder with axis positions, tuning parts (merger, tower) with export and import under the checkpoint's names, the text decoder |
+| 7 | Owner | Speed and memory of a real page on the card |
+| 8 | Done | The legal OCR app registers the plug-in; Qwen2.5-VL 3B and 7B in the switch (`MaxPixels` 1,003,520 each, the page's "Most pixels" field per read); a read sends only the vision options the loaded family takes (Gemma's pan and scan is no longer sent to other families) |
+| 9 | Owner | CER on the evaluation pages against bakrianoo's model; a short tuning run |
+
+Checked on the CPU: `qwen vl` (6 tests): every reference output within 4.2e-5, the same greedy tokens, rotary offsets
+equal to transformers' rope deltas; the legal OCR app's tests (10, the new Qwen read, pixel budget and tuning run among
+them); and the groups the change touched (image prefill, vision contracts and tuning, conversation tuning, decoding,
+generation, pretrained, decoder, image reader, the API guard and inventory).
 
 ## Decisions for the owner (each with a default)
 

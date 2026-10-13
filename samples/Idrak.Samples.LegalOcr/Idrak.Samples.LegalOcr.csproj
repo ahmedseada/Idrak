@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <!-- Arabic legal documents read by vision-language models in the browser: bakrianoo's arabic-legal-documents-ocr-1.0
-       (Gemma 3 4B, with its own image preprocessing) and our own Gemma 3 LoRA. An application on Idrak's public API: the
-       packages (from this clone, IdrakFromSource in samples/Directory.Build.props) and the Gemma 3 plug-in, which the app
-       registers itself. -->
+       (Gemma 3 4B, with its own image preprocessing), Qwen2.5-VL and our own LoRA adapters. An application on Idrak's
+       public API: the packages (from this clone, IdrakFromSource in samples/Directory.Build.props) and the Gemma 3 and
+       Qwen-VL plug-ins, which the app registers itself. -->
   <PropertyGroup>
     <RootNamespace>Idrak.Samples.LegalOcr</RootNamespace>
   </PropertyGroup>
@@ -13,6 +13,7 @@
     <PackageReference Include="Idrak.Nlp" Version="$(IdrakVersion)" />
     <PackageReference Include="Idrak.Data" Version="$(IdrakVersion)" />
     <ProjectReference Include="..\Gemma3Vision\Idrak.Gemma3Vision\Idrak.Gemma3Vision.csproj" />
+    <ProjectReference Include="..\QwenVision\Idrak.QwenVision\Idrak.QwenVision.csproj" />
   </ItemGroup>
 
   <ItemGroup>

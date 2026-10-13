@@ -15,10 +15,12 @@
 
 using System.Text.Json.Serialization;
 using Idrak.Gemma3Vision;
+using Idrak.QwenVision;
 using Idrak.Samples.LegalOcr;
 
-// The app brings the family it reads with: the library's registries know nothing of it otherwise.
+// The app brings the families it reads with: the library's registries know nothing of them otherwise.
 Gemma3VisionPlugin.Register();
+QwenVisionPlugin.Register();
 
 var builder = WebApplication.CreateBuilder(args);
 var settings = builder.Configuration.GetSection("LegalOcr").Get<LegalOcrSettings>() ?? new LegalOcrSettings();

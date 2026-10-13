@@ -20,7 +20,7 @@ internal static partial class Tests
         ("vision contracts: a tiny LLaVA registered from outside the library (CLIP tower, vision_feature_layer, select strategy, MLP projector, causal image tokens) gives transformers' pixels, features, prompt logits and 20 greedy tokens, in both of its configurations", LlavaMatchesReference),
         ("vision contracts: the tiny LLaVA through the public chat API (ChatGenerator with the family's encoder, format and rule) answers with transformers' 20 greedy tokens; an encoder without room frees the kept KV cache and runs once more, a failed request keeps nothing", LlavaChat),
         ("vision contracts: the testing kit's vision-encoder suite passes for the Gemma 3 and LLaVA encoders (deterministic, token counts, batch equals single, device equals CPU)", VisionEncoderConformance),
-        ("vision contracts: the library registers no vision family; image token formats expand by each image's blocks (several with Join's text); images whose tokens touch are told apart by their counts; M-RoPE position ids are refused by the decoder", VisionContractRules),
+        ("vision contracts: the library registers no vision family; image token formats expand by each image's blocks (several with Join's text); images whose tokens touch are told apart by their counts; M-RoPE position ids are refused by a decoder without rotary sections", VisionContractRules),
     ];
 
     private static string LlavaData(string name) => TestData($"vlm-llava/{name}");
@@ -245,7 +245,7 @@ internal static partial class Tests
         Check(Fails(() => ImagePrefill.Locate(ids, image, [b, b])), "too few image tokens are refused");
         Check(Fails(() => _ = new ImageTokenLayout(6) { Grid = [2, 2] }), "a grid that does not hold the tokens is refused");
 
-        // The M-RoPE slot: position ids reach the decoder, which refuses them (no multi-axis rotary embedding yet).
+        // The M-RoPE slot: position ids reach the decoder; a decoder without rotary sections (LLaVA's) refuses them.
         Idrak.PluginTests.LlavaPlugin.Register();
         using var model = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
         using var features = new ImageFeatures(Tensor.From(new float[16 * 32], [16, 32], device), new ImageTokenLayout(16) { Grid = [4, 4] },

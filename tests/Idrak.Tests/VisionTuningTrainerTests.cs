@@ -58,8 +58,8 @@ internal static partial class Tests
     }
 
     // A step's images prefetched on a worker (decoded, transformed and made pixel values while the step before runs) give
-    // the features the step makes itself, bit for bit; nothing is prefetched before the first images went through the
-    // encoder, nor an image the cache holds; a prefetch no step took is dropped two prefetches later.
+    // the features the step makes itself, bit for bit, the first step's too; nothing is prefetched that the cache holds; a
+    // prefetch no step took is dropped two prefetches later.
     private static void VisionTuningPrefetch(Device device)
     {
         var (model, tuning) = LoadTuningModel("gemma3", device);
@@ -70,14 +70,14 @@ internal static partial class Tests
         Check(images.Count >= 2, $"{images.Count} distinct images in the fixture");
         using var scope = new TensorScope();
 
-        ahead.Prefetch([images[0]]);
-        Check(ahead.Prefetched == 0, "nothing prefetched before the first images went through the encoder");
+        ahead.Prefetch([images[0]]);                                         // the first step's images too
         var first = ahead.Features([images[0]])[0].ToArray();
+        Check(ahead.Prefetched == 1, $"the first step's image prefetched ({ahead.Prefetched})");
         Check(first.AsSpan().SequenceEqual(plain.Features([images[0]])[0].ToArray()), "the first image's features");
 
         ahead.Prefetch([images[0], images[1]]);                              // the first is cached: only the second is made
         var second = ahead.Features([images[1]])[0].ToArray();
-        Check(ahead.Prefetched == 1 && ahead.Encoded == 2, $"{ahead.Prefetched} prefetched, {ahead.Encoded} encoded (expected 1 and 2)");
+        Check(ahead.Prefetched == 2 && ahead.Encoded == 2, $"{ahead.Prefetched} prefetched, {ahead.Encoded} encoded (expected 2 and 2)");
         Check(second.AsSpan().SequenceEqual(plain.Features([images[1]])[0].ToArray()), "prefetched pixel values give the step's own features bit for bit");
 
         // A prefetch no step takes: kept through the next prefetch (its step runs after it), dropped by the one after.

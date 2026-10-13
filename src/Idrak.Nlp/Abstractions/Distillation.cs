@@ -66,6 +66,12 @@ public sealed record TrainingImage(ChatImage Image, Idrak.Nlp.TuningImages Prepa
 {
     /// <summary>The image tokens of all its blocks.</summary>
     public int Tokens => Blocks.Sum(b => b.Tokens);
+
+    /// <summary>
+    /// Each block's axis positions for a multi-axis rotary embedding ([axes · tokens], <see cref="IVisionEncoder.AxisPositions"/>),
+    /// in the order of <see cref="Blocks"/>; null for a family whose image tokens take the next positions as text does.
+    /// </summary>
+    public IReadOnlyList<float[]?>? AxisPositions { get; init; }
 }
 
 /// <summary>

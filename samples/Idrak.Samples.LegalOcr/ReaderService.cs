@@ -16,6 +16,7 @@ using Idrak.Models;
 using Idrak.Nlp;
 using Idrak.Nlp.Abstractions;
 using Idrak.Nlp.Generation;
+using Idrak.QwenVision;
 
 namespace Idrak.Samples.LegalOcr;
 
@@ -56,7 +57,7 @@ public sealed record ReaderStatus(ReaderState State, string Message, string? Mod
 
 /// <summary>A model of the switch as the page shows it.</summary>
 public sealed record ModelInfo(string Id, string Name, string? About, string Source, string? Adapter, bool Usable, string? Unusable, string Preprocessing,
-    string Prompt, int MaxTokens, bool Loaded, bool PanAndScan, string? FullText);
+    string Prompt, int MaxTokens, bool Loaded, bool PanAndScan, string? FullText, int? MaxPixels = null);
 
 /// <summary>
 /// How transformers' generate() reads with a model: its generation_config.json, with transformers' defaults for what the
@@ -84,9 +85,11 @@ public sealed record TransformersGeneration(bool Found, string? File, bool Sampl
 /// <param name="MinP">Drop words less than this fraction as likely as the best (0 = off); the settings' when null.</param>
 /// <param name="Seed">The sampling seed (a new one each read when null; the result reports it).</param>
 /// <param name="AddSpecialTokens">Encode the prompt with the tokenizer's special tokens added, as a transformers pipeline calling the processor on the rendered template does (Gemma's: a second &lt;bos&gt;); off when null.</param>
+/// <param name="MaxPixels">Qwen-VL's pixel budget for this page (<see cref="ReaderModel.MaxPixels"/>); the model's own when null; ignored by families without one.</param>
 public sealed record ReadRequest(string? Image = null, string? Prompt = null, string? Preprocessing = null, int? MaxTokens = null, bool? PanAndScan = null,
     float? RepeatPenalty = null, float? PresencePenalty = null, float? FrequencyPenalty = null, int? RepeatLastN = null, int? RepeatStop = null,
-    bool? Sample = null, float? Temperature = null, int? TopK = null, float? TopP = null, float? MinP = null, int? Seed = null, bool? AddSpecialTokens = null);
+    bool? Sample = null, float? Temperature = null, int? TopK = null, float? TopP = null, float? MinP = null, int? Seed = null, bool? AddSpecialTokens = null,
+    int? MaxPixels = null);
 
 /// <summary>
 /// The app's readers: the models of the settings, one on the device at a time (the library's
@@ -141,7 +144,7 @@ public sealed class ReaderService : IDisposable
     {
         string? unusable = Unusable(m);
         return new ModelInfo(m.Id, m.Name, m.About, m.Folder ?? m.Repo ?? "", m.Adapter, unusable is null, unusable, m.Preprocessing, m.Prompt, m.MaxTokens,
-            string.Equals(_loaded, m.Id, StringComparison.OrdinalIgnoreCase), m.PanAndScan, m.FullText);
+            string.Equals(_loaded, m.Id, StringComparison.OrdinalIgnoreCase), m.PanAndScan, m.FullText, m.MaxPixels);
     });
 
     /// <summary>Starts loading <paramref name="id"/> in the background (downloading it first when its files are missing); the status reports it.</summary>
@@ -631,10 +634,26 @@ public sealed class ReaderService : IDisposable
     // Pan and scan as the read asks, else the model's setting (null: an adapter's tuned vision options stand).
     private static bool? PanAndScan(ReaderModel model, ReadRequest request) => request.PanAndScan ?? (model.PanAndScan ? true : null);
 
-    // The vision options of pan and scan on and off, made once (pages read together share them, so their images go
-    // through the encoder in one call).
-    private static readonly VisionOptions PanOn = VisionOptions.Parse([$"{Gemma3PanAndScan.EnableKey}=true"]);
-    private static readonly VisionOptions PanOff = VisionOptions.Parse([$"{Gemma3PanAndScan.EnableKey}=false"]);
+    // A read's vision options, made once per value (pages read together share them, so their images go through the
+    // encoder in one call): only those the loaded family takes (Gemma 3's pan and scan, Qwen-VL's max_pixels).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, VisionOptions> Options = new(StringComparer.Ordinal);
+
+    private static VisionOptions? VisionOptionsFor(PretrainedVision vision, bool? pan, int? maxPixels)
+    {
+        var keys = vision.VisionOptionKeys;
+        var options = new List<string>(2);
+        if (pan is { } on && keys.Contains(Gemma3PanAndScan.EnableKey))
+        {
+            options.Add($"{Gemma3PanAndScan.EnableKey}={(on ? "true" : "false")}");
+        }
+
+        if (maxPixels is > 0 && keys.Contains(QwenImageProcessor.MaxPixelsKey))
+        {
+            options.Add($"{QwenImageProcessor.MaxPixelsKey}={maxPixels.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        }
+
+        return options.Count == 0 ? null : Options.GetOrAdd(string.Join(";", options), _ => VisionOptions.Parse(options));
+    }
 
     // The read of a page with the request's settings (the model's own where it gives none); a sampled read gets a seed.
     private ImageReadRequest PageRequest(LoadedReader loaded, ChatImage image, ReadRequest request)
@@ -643,7 +662,7 @@ public sealed class ReaderService : IDisposable
         var pipeline = ImageTransformPipeline.Parse(request.Preprocessing ?? model.Preprocessing);
         string prompt = string.IsNullOrWhiteSpace(request.Prompt) ? model.Prompt : request.Prompt;
         int maxTokens = Math.Clamp(request.MaxTokens ?? model.MaxTokens, 1, Math.Max(1, _settings.Context - 256));
-        var vision = PanAndScan(model, request) is { } on ? on ? PanOn : PanOff : null;
+        var vision = VisionOptionsFor(loaded.Reader.Vision, PanAndScan(model, request), request.MaxPixels ?? model.MaxPixels);
         var g = _settings.Generation;
         var read = new ImageReadRequest(image, prompt)
         {

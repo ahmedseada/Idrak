@@ -130,6 +130,7 @@ public sealed record Idrak.Nlp.Abstractions.TrainingImage : System.IEquatable<Id
   public Idrak.Abstraction.Generation.ChatImage Image { get; init; }
   public Idrak.Nlp.TuningImages Preparation { get; init; }
   public System.Collections.Generic.IReadOnlyList<(int, int)> Blocks { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float[]?>? AxisPositions { get; init; }
   public TrainingImage(Idrak.Abstraction.Generation.ChatImage Image, Idrak.Nlp.TuningImages Preparation, System.Collections.Generic.IReadOnlyList<(int, int)> Blocks)
   public int Tokens { get; }
 

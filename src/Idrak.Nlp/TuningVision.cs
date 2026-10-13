@@ -180,12 +180,11 @@ public sealed class TuningVision : IDisposable
     /// transformed and through the family's pixel values on the host), for the step that will need them: the host's share
     /// of a cache miss then runs while the device runs the step before, not inside it with the device waiting (rule 79).
     /// The step takes the same values it would have made. Prefetches two calls old that no step took are dropped.
-    /// Does nothing until the first step's images went through the encoder (its position check) or without the
-    /// family's stages.
+    /// Does nothing without the family's stages.
     /// </summary>
     internal void Prefetch(IEnumerable<TrainingImage> images)
     {
-        if (Encoder is not IVisionEncoderStages stages || !_positionsChecked)
+        if (Encoder is not IVisionEncoderStages stages)
         {
             return;
         }
@@ -489,31 +488,19 @@ public sealed class TuningVision : IDisposable
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
         var stages = Encoder as IVisionEncoderStages;
-        if (stages is null || !_positionsChecked)
+        if (stages is null)
         {
-            // The first image through the encoder's own Encode: a family that places image tokens by several axes (M-RoPE)
-            // says so there, and the tuner's decoder does not.
-            var first = images[0];
-            var blocks = Encoder.Encode([Read(first.Image, first.Preparation)], Options(first.Preparation));
-            if (blocks.Any(b => b.Positions is not null))
+            // No stages: each image through Encode (only the features can be kept; a multi-axis family's positions come
+            // from IVisionEncoder.AxisPositions when the images are located).
+            var all = new List<Tensor>();
+            foreach (var image in images)
             {
-                throw new NotSupportedException($"The vision family {Vision.Family} places image tokens by several axes (M-RoPE), which the tuner's decoder does not.");
+                var blocks = Encoder.Encode([Read(image.Image, image.Preparation)], Options(image.Preparation));
+                all.Add(blocks.Count == 1 ? blocks[0].Features : Tensor.Concat([.. blocks.Select(b => b.Features)], 0));
             }
 
-            _positionsChecked = true;
-            if (stages is null)
-            {
-                // No stages: each image through Encode (only the features can be kept).
-                var all = new List<Tensor> { blocks.Count == 1 ? blocks[0].Features : Tensor.Concat([.. blocks.Select(b => b.Features)], 0) };
-                foreach (var image in images.Skip(1))
-                {
-                    var more = Encoder.Encode([Read(image.Image, image.Preparation)], Options(image.Preparation));
-                    all.Add(more.Count == 1 ? more[0].Features : Tensor.Concat([.. more.Select(b => b.Features)], 0));
-                }
-
-                passes += images.Count;
-                return [.. all.Select(scope.Keep)];
-            }
+            passes += images.Count;
+            return [.. all.Select(scope.Keep)];
         }
 
         var pixels = images.Select(i => PixelsOnDevice(stages, i)).ToList();
@@ -539,8 +526,6 @@ public sealed class TuningVision : IDisposable
         passes = counted;
         return [.. outputs.Select(o => scope.Keep(_projector is not null || o.Rank != 3 ? o : o.Reshape(o.Shape[0] * o.Shape[1], o.Shape[2])))];
     }
-
-    private bool _positionsChecked;
 
     // Pixel values on the encoder's device (a family may make them on the host).
     private Tensor OnDevice(Tensor values) => values.Device == Encoder.Device ? values : Tensor.From(values.ToArray(), values.Shape.ToArray(), Encoder.Device);

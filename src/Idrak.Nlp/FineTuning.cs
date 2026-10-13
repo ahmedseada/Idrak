@@ -476,6 +476,7 @@ public sealed class ChatTranscriptEncoder
         for (int k = 0; k < images.Count; k++)
         {
             var blocks = new List<(int Position, int Tokens)>(layouts[k].Count);
+            var axes = new List<float[]?>(layouts[k].Count);
             foreach (var layout in layouts[k])
             {
                 while (at < tokens.Count && tokens[at] != imageToken)
@@ -504,10 +505,11 @@ public sealed class ChatTranscriptEncoder
                 }
 
                 blocks.Add((at, layout.Tokens));
+                axes.Add(vision.Encoder.AxisPositions(layout));
                 at = end;
             }
 
-            located.Add(new TrainingImage(images[k], vision.Images, blocks));
+            located.Add(new TrainingImage(images[k], vision.Images, blocks) { AxisPositions = axes.Any(a => a is not null) ? axes : null });
         }
 
         if (tokens.IndexOf(imageToken, at) is var extra and >= 0)
@@ -2163,12 +2165,17 @@ public static class FineTuner
                     foreach (var image in sequences[sequence].Images)
                     {
                         var all = features[index[(image.Image.Hash, image.Preparation)]];
-                        int at = 0;
+                        int at = 0, b = 0;
                         foreach (var (position, count) in image.Blocks)
                         {
                             var block = at == 0 && count == all.Shape[0] ? all : all.Narrow(0, at, count);
-                            images.Add(new PromptImage(offset + position, block) { Sequence = row });
+                            var axes = image.AxisPositions?[b];          // a multi-axis family's positions, read on the host
+                            images.Add(new PromptImage(offset + position, block)
+                            {
+                                Sequence = row, Positions = axes is null ? null : Tensor.From(axes, [axes.Length / count, count], Device.Cpu),
+                            });
                             at += count;
+                            b++;
                         }
                     }
 

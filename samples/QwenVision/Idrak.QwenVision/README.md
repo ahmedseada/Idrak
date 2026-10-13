@@ -2,14 +2,15 @@
 
 Qwen2.5-VL (`Qwen2_5_VLForConditionalGeneration`) and Qwen2-VL (`Qwen2VLForConditionalGeneration`) as one registration
 each of Idrak's vision-language contracts, outside the library ([plans/16-qwen-vl.md](../../../plans/16-qwen-vl.md)).
-The library holds the contracts, the generic decoder capabilities and the generic rules; this assembly brings what is
-Qwen's: its processor, tower, merger, position rule and text decoder. Built like
+`QwenVisionPlugin.Register()` adds, for both, the vision part (`VisionFamilies`) and the text decoder
+(`PretrainedArchitectures`); without it a Qwen-VL checkpoint is not registered. Built like
 [Idrak.Gemma3Vision](../../Gemma3Vision/Idrak.Gemma3Vision).
 
-**State: a skeleton (2026-10-13).** Every class and both registrations are in place; every method that needs a step of
-plan 16 throws `NotSupportedException("Qwen-VL: … is not built yet (plan 16, step N)")` until that step lands. Loading
-a Qwen-VL checkpoint with the plug-in registered fails with that message; without the plug-in it fails with
-"not registered", as every family does.
+Checked against transformers 5.19 on tiny random checkpoints of both families, in transformers 5's and the hub's
+config.json layouts (`tests/Idrak.Tests/data/vlm-qwen`, `tools/vlm/make_tiny_qwen_vl.py`; the `qwen vl` test group):
+pixels and grids for a shrunk, a tall and an enlarged page, the tower and the merged features, prompt logits in one pass
+and cached, 20 greedy tokens, two pages in one prompt, text only, the chat API, a tuning example's loss, and
+`FineTuner.Train` with the merger trained.
 
 ## Use
 
@@ -19,27 +20,29 @@ idrak -P .\samples\QwenVision\Idrak.QwenVision\bin\Release\net10.0\Idrak.QwenVis
 ```
 
 ```csharp
-// an app
-QwenVisionPlugin.Register();   // both families: the vision part and the text decoder of each
+// an app (the legal OCR sample registers it beside Gemma 3's)
+QwenVisionPlugin.Register();
 ```
 
-## Files, and the step of plan 16 that builds each
+A page's resolution is Qwen's pixel budget: the vision option `max_pixels` (and `min_pixels`), about 28 x 28 pixels per
+image token; the model folder's `preprocessor_config.json` gives the default.
 
-| File | Holds | Step |
-|---|---|---|
-| `QwenVision.cs` | `QwenVisionPlugin` (`Register`, the `-P` entry), `QwenVisionFamily` (`IVisionFamily`, one per variant), `QwenVision` (`PretrainedVision`, `IVisionTuningPart`: the prompt format `<\|vision_start\|><\|image_pad\|>…<\|vision_end\|>`, attention `causal`, positions `grid`, the options `min_pixels` and `max_pixels`, the tuning parts), `QwenImageTokens`, `QwenVisionConfig` | 0 (the keys), 5 |
-| `QwenImageProcessor.cs` | The smart resize within the pixel budget to multiples of patch × merge, the pixel patches `[t × h × w, channels × temporal × patch × patch]` and the grid (`QwenImageGrid`, whose merged grid is the token layout) | 5 |
-| `QwenPositions.cs` | The `grid` position rule (three rotary axes: time, height, width) and the rope delta, through the library's position-rule contract | 1, 2 |
-| `QwenVisionTower.cs` | The vision transformer: patch embedding, 2D rotary positions, window and full attention blocks on the library's span attention, several images of different sizes in one pass | 5, 6 |
-| `QwenPatchMerger.cs` | The norm, the merge² concatenation and the MLP to the text width (trains as the family's `projector`) | 5, 6 |
-| `QwenImageEncoder.cs` | `IVisionEncoder` and `IVisionEncoderStages`: images to features, one block per image with its own merged grid | 5 |
-| `QwenTextDecoder.cs` | The text decoder's registration under both architecture names: Qwen2 style with rotary sections, the old (`model.layers.*`) and new (`model.language_model.layers.*`) tensor names | 2, 5 |
+## Files
 
-What the library adds for it (not in this plug-in): the image position rule contract and its `sequential` default
-(step 1), the multi-axis rotary positions and their CUDA kernels (step 2), the same in training (step 3), one
-registration per family with Gemma 3's text decoder moved into its plug-in (step 4). Vulkan and HIP take each
-contract's default (CUDA first).
+| File | Holds |
+|---|---|
+| `QwenVision.cs` | `QwenVisionPlugin`; `QwenVisionFamily` (reads `vision_config` in either layout and the tensors under `visual.` or `model.visual.`, each shape checked); `QwenVision` (the descriptor: prompt format with one `<\|image_pad\|>` per token, causal attention, the options `min_pixels` and `max_pixels`, the tuning parts: the merger as `projector`, and the tower); `QwenImageTokens`; `QwenVisionConfig` |
+| `QwenImageProcessor.cs` | transformers' `smart_resize` (halves rounded to even, as Python), Pillow's bicubic resize and CLIP's normalization through the library's `ImagePreprocessor`, the patches in merge-block order; `QwenImageGrid` |
+| `QwenVisionTower.cs` | The tower: the patch embedding as one product, 2D rotary positions (half the pairs by row, half by column), blocks on the library's span attention (each image, or each window, its own keys; no score matrix stored), Qwen2.5-VL's windows and full-attention blocks, RMSNorm and SwiGLU; Qwen2-VL's LayerNorm and quick-GELU |
+| `QwenPatchMerger.cs` | `ln_q`, merge² patches joined, two layers with exact GELU to the text width |
+| `QwenImageEncoder.cs` | `IVisionEncoder` and `IVisionEncoderStages`: one block per image with its merged grid; each token's axis positions (`AxisPositions`: time 0, row, column), which the library places by `ImagePositionRules.Grid` |
+| `QwenTextDecoder.cs` | The text decoder: Qwen2's, its rotary embedding on three axes (`RopeSettings.Sections` from `mrope_section`), either config layout, `model.layers.*` or `model.language_model.layers.*` |
 
-Tests come with the fixtures of step 0 (`tools/vlm/make_tiny_qwen_vl.py`, `tests/Idrak.Tests/data/vlm`): pixels and
-grid, expanded ids, positions and rope deltas, each tower stage, the merger, logits in one pass and cached, 20 greedy
-tokens, a two-image prompt, a tuning fixture.
+What the library gives it, for any family with several rotary axes: the image position rule contract and its `grid`
+rule, per-token rotary rows for a prompt with images (every existing rotary kernel, no new one), the decoding context's
+rotary offsets after the prompt (recorded decode steps stay valid), the same in training (`IVisionEncoder.AxisPositions`
+through `TrainingImage`), and fixed rotary buffers for recorded training passes. Vulkan and HIP run all of it through
+the same operations.
+
+Left: the speed and memory of a real page on the owner's card (plan 16, step 7) and the CER comparison against
+bakrianoo's model (step 9).
