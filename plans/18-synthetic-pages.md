@@ -1,6 +1,7 @@
 # 18. Synthetic document pages: tuning data from text
 
-Status: planned 2026-10-13. Owner's choice: the library's own font engine (no dependency).
+Status: phase 1 done 2026-10-13 (fonts: reader and rasterizer, tests "fonts:"). Planned 2026-10-13. Owner's choice: the library's own font engine (no dependency). Arabic is the main goal; the
+engine serves any language (owner, 2026-10-13).
 
 ## Why
 
@@ -23,15 +24,26 @@ pages need no transcription.
 
 ## Phases
 
+Any language: the font reader and the rasterizer know nothing of scripts. Text is split into runs by Unicode script and
+direction; each run goes to the shaper registered for its script (`TextShapers`): a general one for scripts without
+reordering or joining (Latin, Cyrillic, Greek, Armenian, Georgian, Hebrew, CJK, ...: cmap, then the font's GSUB and GPOS for
+that script), the Arabic one for the Arabic script (Arabic, Persian, Urdu, ...; Syriac and N'Ko join the same way), and later
+others (Indic syllables and reordering, Thai, Khmer, Myanmar) as their own entries. A script with no shaper registered falls
+back to the general one, which is how a font without layout tables is drawn anyway. CFF outlines (most .otf, the CJK Noto
+fonts) come after TrueType outlines.
+
 1. **Fonts.** OpenType reader in C#: the table directory (and TrueType collections), `head`, `hhea`, `maxp`, `hmtx`,
    `cmap` (formats 4 and 12), `loca` / `glyf` with composite glyphs, `GDEF`. Glyph outlines flattened (quadratic
    curves) and filled by an anti-aliased scanline rasterizer (nonzero winding, exact area coverage per pixel), no
    hinting. Checked against FreeType (Pillow) renders of the same glyphs: ink masks agree within a small tolerance.
-2. **Shaping.** A reduced Unicode bidirectional algorithm (paragraph direction, strong and weak types, numbers kept left
+2. **Shaping.** Script runs (a Unicode script table made by a tool from the Unicode data, as .NET has none); a reduced Unicode bidirectional algorithm (paragraph direction, strong and weak types, numbers kept left
    to right inside right-to-left text, neutrals, reordering of a line); Arabic joining from the Unicode joining types;
    GSUB lookups 1, 2, 4, 5, 6, 7 (and 8) with lookup flags and mark filtering, the Arabic features in order (ccmp,
    isol, fina, medi, init, rlig, calt, liga); GPOS 1, 2, 3, 4, 5, 6, 7, 8, 9 (kerning, cursive attachment, marks).
-   Checked glyph for glyph against HarfBuzz (uharfbuzz) on fixed strings: glyph ids, advances and offsets equal.
+   Checked glyph for glyph against HarfBuzz (uharfbuzz) on fixed strings in several languages: glyph ids, advances and
+   offsets equal.
+2b. **CFF outlines** (Type 2 charstrings), so .otf fonts and the CJK fonts draw; **more shapers** (Indic, Thai, ...) as
+   their own registered entries.
 3. **Pages.** A page layout of blocks: header (two or three columns: the state and ministry lines, the number and date
    fields), subject line, body (wrapped right to left, justified or not, numbered items), signature block, footer; each
    block with its own font, size and spacing drawn from ranges; the page's text in reading order comes back with the

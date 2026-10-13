@@ -27,6 +27,11 @@ public static class Idrak.Imaging.ChatImageDecoder
   public static int Orientation(System.ReadOnlySpan<byte> file)
   public static string? FormatOf(Idrak.Abstraction.Generation.ChatImage image)
 
+public sealed class Idrak.Imaging.CoverageRasterizer : Idrak.Abstraction.Data.IOutlineRasterizer
+  public CoverageRasterizer()
+  public string Name { get; }
+  public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height)
+
 public sealed class Idrak.Imaging.GaussianNoise : Idrak.Abstraction.Data.ISampleTransform
   public GaussianNoise(float standardDeviation, bool clamp = false)
   public bool Clamp { get; }
@@ -91,6 +96,14 @@ public enum Idrak.Imaging.JpegSubsampling : int
   Full444 = 2
   Half420 = 0
   Half422 = 1
+
+public sealed class Idrak.Imaging.OpenTypeFormat : Idrak.Abstraction.Data.IFontFormat
+  public OpenTypeFormat()
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Read(System.ReadOnlyMemory<byte> file, string name)
+  public bool Accepts(System.ReadOnlySpan<byte> header)
+  public const string FormatName = "opentype"
+  public string Name { get; }
 
 public static class Idrak.Imaging.PillowImageOps
   public static Idrak.Abstraction.Data.ImageData Autocontrast(Idrak.Abstraction.Data.ImageData image, double cutoffLow = 0, double cutoffHigh = 0, int? ignore = null, bool preserveTone = false)

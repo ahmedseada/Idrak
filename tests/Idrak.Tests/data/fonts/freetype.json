@@ -1,0 +1,132 @@
+[
+ {
+  "text": "A",
+  "glyph": 34,
+  "ppem": 24,
+  "left": 0,
+  "top": 18,
+  "width": 17,
+  "rows": 18,
+  "file": "freetype/u0041-24.bin"
+ },
+ {
+  "text": "g",
+  "glyph": 72,
+  "ppem": 24,
+  "left": 1,
+  "top": 14,
+  "width": 13,
+  "rows": 19,
+  "file": "freetype/u0067-24.bin"
+ },
+ {
+  "text": "é",
+  "glyph": 98,
+  "ppem": 24,
+  "left": 1,
+  "top": 20,
+  "width": 13,
+  "rows": 21,
+  "file": "freetype/u00e9-24.bin"
+ },
+ {
+  "text": "0",
+  "glyph": 17,
+  "ppem": 48,
+  "left": 3,
+  "top": 36,
+  "width": 25,
+  "rows": 37,
+  "file": "freetype/u0030-48.bin"
+ },
+ {
+  "text": "&",
+  "glyph": 7,
+  "ppem": 48,
+  "left": 3,
+  "top": 36,
+  "width": 33,
+  "rows": 37,
+  "file": "freetype/u0026-48.bin"
+ },
+ {
+  "text": "ب",
+  "glyph": 110,
+  "ppem": 24,
+  "left": 1,
+  "top": 8,
+  "width": 20,
+  "rows": 13,
+  "file": "freetype/u0628-24.bin"
+ },
+ {
+  "text": "ج",
+  "glyph": 114,
+  "ppem": 48,
+  "left": 3,
+  "top": 21,
+  "width": 28,
+  "rows": 33,
+  "file": "freetype/u062c-48.bin"
+ },
+ {
+  "text": "س",
+  "glyph": 121,
+  "ppem": 48,
+  "left": 3,
+  "top": 18,
+  "width": 52,
+  "rows": 30,
+  "file": "freetype/u0633-48.bin"
+ },
+ {
+  "text": "ع",
+  "glyph": 127,
+  "ppem": 24,
+  "left": 1,
+  "top": 13,
+  "width": 14,
+  "rows": 19,
+  "file": "freetype/u0639-24.bin"
+ },
+ {
+  "text": "ه",
+  "glyph": 136,
+  "ppem": 48,
+  "left": 3,
+  "top": 18,
+  "width": 19,
+  "rows": 20,
+  "file": "freetype/u0647-48.bin"
+ },
+ {
+  "text": "أ",
+  "glyph": 105,
+  "ppem": 48,
+  "left": 2,
+  "top": 48,
+  "width": 9,
+  "rows": 48,
+  "file": "freetype/u0623-48.bin"
+ },
+ {
+  "text": "ك",
+  "glyph": 132,
+  "ppem": 24,
+  "left": 1,
+  "top": 19,
+  "width": 17,
+  "rows": 20,
+  "file": "freetype/u0643-24.bin"
+ },
+ {
+  "text": "٣",
+  "glyph": 154,
+  "ppem": 48,
+  "left": 1,
+  "top": 31,
+  "width": 24,
+  "rows": 31,
+  "file": "freetype/u0663-48.bin"
+ }
+]
