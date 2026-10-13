@@ -383,6 +383,7 @@ public sealed record Idrak.Nlp.FineTuningOptions : System.IEquatable<Idrak.Nlp.F
   public int GradientAccumulation { get; init; }
   public int LossChunkRows { get; init; }
   public int MaxLength { get; init; }
+  public int NonFiniteSteps { get; init; }
   public int Rank { get; init; }
   public int SaveEvery { get; init; }
   public int Seed { get; init; }

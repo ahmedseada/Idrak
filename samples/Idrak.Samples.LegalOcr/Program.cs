@@ -46,6 +46,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
     o.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+    FiniteNumbers.Add(o.SerializerOptions);                             // a diverged loss reaches the page as null
 });
 
 var app = builder.Build();

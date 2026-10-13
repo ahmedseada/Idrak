@@ -112,6 +112,43 @@ internal static partial class Tests
         }
     }
 
+    private static void NonFiniteLossSkipped(Device device)
+    {
+        string folder = WriteChatModel(TinyChatSpec());
+        try
+        {
+            var sequences = RandomSequences(24, 73);
+            var options = new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 3e-3f, BatchTokens = 160, Epochs = 1, Seed = 5, NonFiniteSteps = 1000 };
+
+            // A loss that is never finite: every step's update is skipped, so the adapters keep their starting values (those
+            // of a run whose learning rate is 0) and none of them is NaN.
+            FineTuningLoss nan = input => FineTuningLosses.TokenCrossEntropy(input) * float.NaN;
+            var skipped = TrainTiny(folder, device, sequences, options with { Loss = nan });
+            var still = TrainTiny(folder, device, sequences, options with { LearningRate = 0f, WeightDecay = 0f });
+            Check(skipped.Losses.Count >= 3 && skipped.Losses.All(float.IsNaN), $"every step's loss is NaN: {string.Join(", ", skipped.Losses)}");
+            Check(skipped.Adapters.All(float.IsFinite), "the adapters stay finite");
+            CloseByNorm(still.Adapters, skipped.Adapters, 1e-6f, "skipped steps leave the adapters as they started");
+            Check(skipped.Trace.Contains("not finite") && skipped.Trace.Contains("update is skipped"), $"the trace names the skipped steps:\n{skipped.Trace}");
+
+            // Past FineTuningOptions.NonFiniteSteps in a row the run stops, naming the step and the option.
+            string? stopped = null;
+            try
+            {
+                TrainTiny(folder, device, sequences, options with { Loss = nan, NonFiniteSteps = 2 });
+            }
+            catch (InvalidOperationException ex)
+            {
+                stopped = ex.Message;
+            }
+
+            Check(stopped is not null && stopped.Contains("step 3") && stopped.Contains("NonFiniteSteps = 2"), $"the error names the step and the limit: {stopped}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
     private static void LossHook(Device device)
     {
         string folder = WriteChatModel(TinyChatSpec());

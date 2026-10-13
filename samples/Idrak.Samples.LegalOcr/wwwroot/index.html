@@ -1084,27 +1084,27 @@ function appendLog(lines) {
 
 function drawChart() {
   const svg = $("chart"), W = 600, H = 220, L = 44, R = 44, T = 10, B = 22;
-  const pts = tune.points;
+  const all = tune.points, pts = all.filter(p => p.loss != null);    // a step whose loss was not finite (skipped) has no point
   if (!pts.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">The loss appears here once training starts.</text>`; return; }
   const every = Math.max(1, Math.ceil(pts.length / 600));
   const shown = pts.filter((_, i) => i % every === 0 || i === pts.length - 1);
-  const losses = pts.map(p => p.loss).concat(pts.filter(p => p.evaluationLoss != null).map(p => p.evaluationLoss));
+  const losses = pts.map(p => p.loss).concat(all.filter(p => p.evaluationLoss != null).map(p => p.evaluationLoss));
   let lo = Math.min(...losses), hi = Math.max(...losses); if (hi - lo < 1e-6) { hi += 0.5; lo = Math.max(0, lo - 0.5); }
   const last = pts[pts.length - 1].step, total = Math.max(last, tune.status?.totalSteps || last);
   const x = step => L + (W - L - R) * (step / Math.max(1, total));
   const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
-  const cers = pts.filter(p => p.cer != null).map(p => p.cer).concat(tune.status?.cerBefore != null ? [tune.status.cerBefore] : []);
+  const cers = all.filter(p => p.cer != null).map(p => p.cer).concat(tune.status?.cerBefore != null ? [tune.status.cerBefore] : []);
   const cerHi = cers.length ? Math.max(0.05, ...cers) : 1;
   const yc = v => T + (H - T - B) * (1 - v / cerHi);
   let out = `<line class="axis" x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}"/><line class="axis" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}"/>`;
   for (const v of [lo, (lo + hi) / 2, hi]) out += `<text x="${L - 4}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(2)}</text>`;
   out += `<text x="${W - R}" y="${H - 6}" text-anchor="end">step ${total}</text><text x="${L}" y="${H - 6}">0</text>`;
   out += `<polyline class="loss" points="${shown.map(p => `${x(p.step).toFixed(1)},${y(p.loss).toFixed(1)}`).join(" ")}"/>`;
-  for (const p of pts.filter(p => p.evaluationLoss != null)) out += `<circle class="eval" cx="${x(p.step).toFixed(1)}" cy="${y(p.evaluationLoss).toFixed(1)}" r="3.5"><title>step ${p.step}: evaluation loss ${p.evaluationLoss.toFixed(4)}</title></circle>`;
+  for (const p of all.filter(p => p.evaluationLoss != null)) out += `<circle class="eval" cx="${x(p.step).toFixed(1)}" cy="${y(p.evaluationLoss).toFixed(1)}" r="3.5"><title>step ${p.step}: evaluation loss ${p.evaluationLoss.toFixed(4)}</title></circle>`;
   if (cers.length) {
     out += `<line class="axis" x1="${W - R}" y1="${T}" x2="${W - R}" y2="${H - B}"/><text x="${W - R + 4}" y="${T + 10}">${(100 * cerHi).toFixed(0)}%</text><text x="${W - R + 4}" y="${H - B}">0%</text>`;
     if (tune.status?.cerBefore != null) out += `<rect class="cer" x="${L - 3}" y="${(yc(tune.status.cerBefore) - 3).toFixed(1)}" width="6" height="6"><title>before training: CER ${(100 * tune.status.cerBefore).toFixed(2)} %</title></rect>`;
-    for (const p of pts.filter(p => p.cer != null)) out += `<rect class="cer" x="${(x(p.step) - 3).toFixed(1)}" y="${(yc(p.cer) - 3).toFixed(1)}" width="6" height="6"><title>step ${p.step}: CER ${(100 * p.cer).toFixed(2)} %</title></rect>`;
+    for (const p of all.filter(p => p.cer != null)) out += `<rect class="cer" x="${(x(p.step) - 3).toFixed(1)}" y="${(yc(p.cer) - 3).toFixed(1)}" width="6" height="6"><title>step ${p.step}: CER ${(100 * p.cer).toFixed(2)} %</title></rect>`;
   }
   svg.innerHTML = out;
 }

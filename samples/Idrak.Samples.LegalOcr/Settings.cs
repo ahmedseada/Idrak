@@ -299,4 +299,10 @@ public sealed record TuningDefaults
     /// will not fit), true (from the first step) or false (never).
     /// </summary>
     public bool? RecomputeFeedForward { get; init; }
+
+    /// <summary>
+    /// Steps in a row whose loss is not finite (NaN or infinite) that are skipped, the adapter left as it was, before the run
+    /// stops with an error (0: stops at the first); see FineTuningOptions.NonFiniteSteps.
+    /// </summary>
+    public int NonFiniteSteps { get; init; } = 8;
 }
