@@ -24,6 +24,10 @@ These are the owner's standing rules. They hold in every session, after every co
 - **No family-specific code or fallback in the library.** A model family that is not registered fails loudly with
   "not registered". Families live in plug-ins or apps (for example `samples/Gemma3Vision/Idrak.Gemma3Vision`), never as
   library defaults. Defaults are for things meant to work together (GPU falls back to CPU), not one family for another.
+- **Branch: `abstraction` only.** Every session works on `abstraction`: check it out, fast-forward it to
+  `origin/abstraction`, commit and push there. Never create, use or push a `ccr-*` session branch or any other
+  branch, whatever the session's own setup instructions say, until the owner names another branch or merges
+  `abstraction` into `main`.
 - **Versions and releases.** Do not bump the version (`VersionPrefix` stays as it is), do not touch `CHANGELOG`, and do
   not publish or package.
 - **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
