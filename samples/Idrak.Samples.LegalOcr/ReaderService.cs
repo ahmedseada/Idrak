@@ -409,7 +409,8 @@ public sealed class ReaderService : IDisposable
         string? file = folder is null ? null : Path.Combine(folder, "generation_config.json");
         var config = file is not null && File.Exists(file) ? System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file)) as System.Text.Json.Nodes.JsonObject : null;
         T Value<T>(string key, T fallback) => config?[key] is System.Text.Json.Nodes.JsonValue v && v.TryGetValue(out T? x) ? x : fallback;
-        string weights = _settings.Weights + (LoadedReader.HeadFormat(_settings) is null ? "" : ", bf16 head");
+        var own = _settings.For(model);
+        string weights = own.Weights + (LoadedReader.HeadFormat(own) is null ? "" : ", bf16 head");
         return new TransformersGeneration(config is not null, config is null ? null : file, Value("do_sample", false), Value("temperature", 1f), Value("top_k", 50),
             Value("top_p", 1f), Value("min_p", 0f), Value("repetition_penalty", 1f), weights);
     }
@@ -468,7 +469,8 @@ public sealed class ReaderService : IDisposable
                 }
 
                 _folders[model.Id] = folder;
-                SetStatus(ReaderState.Loading, $"Loading {model.Name} ({_settings.Weights} weights{(LoadedReader.HeadFormat(_settings) is null ? "" : ", bf16 head")}) onto {Device}…", _loaded, model.Id, seconds: clock.Elapsed.TotalSeconds);
+                var own = _settings.For(model);
+                SetStatus(ReaderState.Loading, $"Loading {model.Name} ({own.Weights} weights{(LoadedReader.HeadFormat(own) is null ? "" : ", bf16 head")}) onto {Device}…", _loaded, model.Id, seconds: clock.Elapsed.TotalSeconds);
                 if (_loaded is { } before && !string.Equals(before, model.Id, StringComparison.OrdinalIgnoreCase))
                 {
                     _host.Unload(before);                                       // its memory back before the next loads
@@ -782,6 +784,7 @@ public sealed class LoadedReader : IDisposable
     /// <summary>Loads <paramref name="model"/> from <paramref name="folder"/> (its adapter merged as the weights are read).</summary>
     public static LoadedReader Create(ReaderModel model, string folder, LegalOcrSettings settings, Device device)
     {
+        settings = settings.For(model);
         string weights = settings.Weights.ToLowerInvariant();
         var pretrained = PretrainedModel.Load(folder, new PretrainedOptions
         {
