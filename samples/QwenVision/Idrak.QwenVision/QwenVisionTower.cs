@@ -83,26 +83,62 @@ public sealed class QwenVisionTower : Module
 
         var device = patches.Device;
         var layout = QwenTowerLayout.For(Config, grids);
-        var x = _patches.Forward(patches);                                                      // [patches, dim]
-        if (layout.Order is { } order)
-        {
-            x = x.EmbeddingLookup(Tensor.From(order, [order.Length], device));                 // into window order
-        }
-
         var cos = Tensor.From(layout.Cos, [count, Config.HeadDim / 2], device);
         var sin = Tensor.From(layout.Sin, [count, Config.HeadDim / 2], device);
         var index = Tensor.From(layout.Index, [count], device);
         var full = (Tensor.From(layout.FullStarts, [count], device), Tensor.From(layout.FullEnds, [count], device));
         var windows = layout.WindowStarts is null ? full : (Tensor.From(layout.WindowStarts, [count], device), Tensor.From(layout.WindowEnds!, [count], device));
+
+        // Without autograd (and not recording a graph), each step runs in a scope of its own and the step before's output
+        // is freed once used, as Sequential runs its layers: a pass holds one block's activations, not all of the tower's
+        // (a page of 5,000 patches would otherwise keep about 400 MB per block until the read ends).
+        bool freeing = !Autograd.IsEnabled && !ComputeGraph.IsCapturing;
+        bool owned = false;
+        Tensor Step(Tensor x, Func<Tensor, Tensor> step)
+        {
+            if (!freeing)
+            {
+                return step(x);
+            }
+
+            Tensor next;
+            bool created;
+            using (var scope = new TensorScope())
+            {
+                next = step(x);
+                created = scope.Owns(next);
+                scope.Keep(next);
+            }
+
+            if (!ReferenceEquals(next, x))
+            {
+                if (owned)
+                {
+                    x.Dispose();
+                }
+
+                owned = created;
+            }
+
+            return next;
+        }
+
+        var x = Step(patches, _patches.Forward);                                                // [patches, dim]
+        if (layout.Order is { } order)
+        {
+            x = Step(x, h => h.EmbeddingLookup(Tensor.From(order, [order.Length], device)));    // into window order
+        }
+
         for (int i = 0; i < _blocks.Length; i++)
         {
-            bool whole = Variant == QwenVlVariant.Qwen2Vl || Config.FullAttentionBlocks.Contains(i);
-            x = _blocks[i].Forward(x, cos, sin, index, whole ? full : windows);
+            var block = _blocks[i];
+            var spans = Variant == QwenVlVariant.Qwen2Vl || Config.FullAttentionBlocks.Contains(i) ? full : windows;
+            x = Step(x, h => block.Forward(h, cos, sin, index, spans));
         }
 
         if (layout.Reverse is { } reverse)
         {
-            x = x.EmbeddingLookup(Tensor.From(reverse, [reverse.Length], device));             // back into the patches' order
+            x = Step(x, h => h.EmbeddingLookup(Tensor.From(reverse, [reverse.Length], device)));   // back into the patches' order
         }
 
         return x;
