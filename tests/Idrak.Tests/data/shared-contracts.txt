@@ -15,3 +15,5 @@ Idrak.Abstraction.Data.IOutlineRasterizer | how glyph and shape outlines become 
 Idrak.Abstraction.Data.OutlineRasterizers | the outline rasterizers by name, overridable once for every package that draws outlines
 Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per script, for every package that draws text (Imaging draws, Nlp's synthetic pages lay out, Vision makes text samples); a script's shaper is registered once for all of them
 Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for every package that draws text
+Idrak.Abstraction.Data.IPageLayout | how a page's parts are arranged and drawn, for every package that makes page images (Imaging draws the built-in layouts, Nlp's synthetic pages pick them by name, Vision makes document samples)
+Idrak.Abstraction.Data.PageLayouts | the page layouts by name, overridable once for every package that makes page images

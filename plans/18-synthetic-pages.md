@@ -1,6 +1,6 @@
 # 18. Synthetic document pages: tuning data from text
 
-Status: phases 1 and 2 done 2026-10-13 (fonts: reader and rasterizer, tests "fonts:"; shaping: bidi, itemizer, the general and Arabic shapers, every GSUB and GPOS lookup kind, tests "shaping:", glyph for glyph as HarfBuzz 14 on 33 strings); 2b: CFF outlines (Type 2 charstrings, subroutines; CID-keyed read, no fixture yet). Planned 2026-10-13. Owner's choice: the library's own font engine (no dependency). Arabic is the main goal; the
+Status: phases 1 and 2 done 2026-10-13 (fonts: reader and rasterizer, tests "fonts:"; shaping: bidi, itemizer, the general and Arabic shapers, every GSUB and GPOS lookup kind, tests "shaping:", glyph for glyph as HarfBuzz 14 on 33 strings); 2b: CFF outlines (Type 2 charstrings, subroutines; CID-keyed read, no fixture yet); 3: pages (`TextLayout`: wrapping, bidi lines, alignment and justification, fallback fonts; `PageLayouts` "letter" and "plain", every choice from the page's seed and the style's ranges and chances; tests "pages:"). Planned 2026-10-13. Owner's choice: the library's own font engine (no dependency). Arabic is the main goal; the
 engine serves any language (owner, 2026-10-13).
 
 ## Why
