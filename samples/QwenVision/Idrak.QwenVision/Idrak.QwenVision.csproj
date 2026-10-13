@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Qwen-VL vision-language family (Qwen2.5-VL first, Qwen2-VL on the same plug-in) as a registration of Idrak's
+       vision contracts, outside the library (plan 16: one contract for every vision-language family, families as
+       plug-ins). Built like samples/Gemma3Vision/Idrak.Gemma3Vision: load it in the command line with -P
+       (idrak -P Idrak.QwenVision.dll run MODEL, image option), or reference it and call QwenVisionPlugin.Register() in an
+       app. It references Idrak as packages, as an outside plug-in does; in this repository they come from the clone
+       (IdrakFromSource, samples/Directory.Build.props).
+
+       Skeleton (2026-10-13): every class and registration is in place; every method that needs a step of plan 16 fails
+       with "not built yet (plan 16, step N)" until that step lands. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Imaging" Version="$(IdrakVersion)" />
+  </ItemGroup>
+
+</Project>

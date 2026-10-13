@@ -5,6 +5,9 @@ keep Idrak family-agnostic: every vision-language family does the same jobs behi
 and a family is a plug-in. Qwen's text models (Qwen2, Qwen3) already load; an OCR base must read images, so the family
 to add is **Qwen-VL**: Qwen2.5-VL first (3B and 7B Instruct), Qwen2-VL on the same plug-in.
 
+**Status (2026-10-13):** the plug-in skeleton exists (see "Skeleton, as built"); steps 0 to 9 not started. CUDA first:
+Vulkan and HIP take each contract's default.
+
 ## The principle
 
 The library holds **contracts, generic decoder capabilities and generic rules**. A **family** is one plug-in that
@@ -109,6 +112,18 @@ with the decoder blocks to take them), in a later plan. Qwen2.5-VL and Qwen2-VL 
 
 **Order.** 0, then 1 and 2 (the contract and the capability; the bulk of the risk: every rotary path), 3, 4 (independent
 of Qwen: it can go first or beside 1-3), 5, 6, 7 beside 5 on the owner's card, 8 last.
+
+## Skeleton, as built (2026-10-13, `abstraction`)
+
+`samples/QwenVision/Idrak.QwenVision` exists as the plug-in's skeleton, in the solution, built like
+`samples/Gemma3Vision/Idrak.Gemma3Vision` (a library referencing `Idrak` and `Idrak.Imaging` as packages, from the clone
+through `IdrakFromSource`). Every class and both registrations are in place (`QwenVisionPlugin.Register()` registers a
+`QwenVisionFamily` in `VisionFamilies` and a `QwenTextDecoder` architecture in `PretrainedArchitectures` for each of
+Qwen2.5-VL and Qwen2-VL); every method that needs a step of this plan throws
+`NotSupportedException("Qwen-VL: … is not built yet (plan 16, step N)")`. The files and their steps are in the plug-in's
+README. Not built or run anywhere yet (no SDK in the cloud container): the owner's first build is
+`dotnet build -c Release samples\QwenVision\Idrak.QwenVision`. Nothing in the library changed; no test, fixture or app
+references the plug-in yet (step 0 brings the fixtures and tests, step 8 the app).
 
 ## Decisions for the owner (each with a default)
 
