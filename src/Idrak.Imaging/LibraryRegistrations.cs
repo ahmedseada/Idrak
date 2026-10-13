@@ -23,6 +23,11 @@ internal static class LibraryRegistrations
         [typeof(FontFormats)] = () => FontFormats.Register(new OpenTypeFormat()),            // TrueType outlines, single fonts and collections
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),
         [typeof(TextShapers)] = RegisterShapers,                                 // general for every script, arabic for the joining scripts
+        [typeof(PageLayouts)] = () =>                                            // letter, plain
+        {
+            PageLayouts.Register(new LetterLayout());
+            PageLayouts.Register(new PlainLayout());
+        },
     };
 
     private static void RegisterImageCodecs()

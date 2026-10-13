@@ -126,6 +126,14 @@ public static class Idrak.Imaging.PillowImageOps
   public static Idrak.Abstraction.Data.ImageData Sharpness(Idrak.Abstraction.Data.ImageData image, double factor)
   public static Idrak.Abstraction.Data.ImageData UnsharpMask(Idrak.Abstraction.Data.ImageData image, double radius = 2, int percent = 150, int threshold = 3)
 
+public readonly record struct Idrak.Imaging.PlacedGlyph : System.IEquatable<Idrak.Imaging.PlacedGlyph>
+  public Idrak.Abstraction.Data.IFontFace Font { get; init; }
+  public PlacedGlyph(Idrak.Abstraction.Data.IFontFace Font, int Glyph, float X, float Y, float Scale)
+  public float Scale { get; init; }
+  public float X { get; init; }
+  public float Y { get; init; }
+  public int Glyph { get; init; }
+
 public sealed class Idrak.Imaging.RandomFlip : Idrak.Abstraction.Data.IAugmentation, Idrak.Abstraction.Data.ISampleTransform
   public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
   public RandomFlip(bool horizontal = true, bool vertical = false, double probability = 0.5)
@@ -148,3 +156,46 @@ public sealed class Idrak.Imaging.RandomShift : Idrak.Abstraction.Data.IAugmenta
   public int MaxPixels { get; }
   public string Name { get; }
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
+
+public enum Idrak.Imaging.TextAlignment : int
+  Center = 4
+  End = 1
+  Justify = 5
+  Left = 2
+  Right = 3
+  Start = 0
+
+public sealed class Idrak.Imaging.TextBlock
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public TextBlock()
+  public required Idrak.Imaging.TextStyle Style { get; init; }
+  public required System.Collections.Generic.IReadOnlyList<Idrak.Imaging.TextLine> Lines { get; init; }
+  public required float Height { get; init; }
+  public required float Width { get; init; }
+
+public static class Idrak.Imaging.TextLayout
+  public static Idrak.Imaging.TextBlock Layout(string text, Idrak.Imaging.TextStyle style, float maxWidth = Infinityf, Idrak.Imaging.TextAlignment alignment = (Idrak.Imaging.TextAlignment)0, bool? rightToLeft = null)
+  public static float Measure(string text, Idrak.Imaging.TextStyle style)
+
+public sealed class Idrak.Imaging.TextLine
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public TextLine()
+  public required System.Collections.Generic.IReadOnlyList<Idrak.Imaging.PlacedGlyph> Glyphs { get; init; }
+  public required bool RightToLeft { get; init; }
+  public required float Baseline { get; init; }
+  public required float Left { get; init; }
+  public required float Width { get; init; }
+  public required int Length { get; init; }
+  public required int Start { get; init; }
+  public required string Text { get; init; }
+
+public static class Idrak.Imaging.TextRenderer
+  public static void Draw(Idrak.Imaging.TextBlock block, float x, float y, System.Span<float> ink, int width, int height, string rasterizer = "coverage")
+
+public sealed record Idrak.Imaging.TextStyle : System.IEquatable<Idrak.Imaging.TextStyle>
+  public Idrak.Abstraction.Data.IFontFace Font { get; init; }
+  public System.Collections.Generic.IReadOnlyCollection<string>? Features { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fallbacks { get; init; }
+  public TextStyle(Idrak.Abstraction.Data.IFontFace Font, float Size)
+  public float LineSpacing { get; init; }
+  public float Scale(Idrak.Abstraction.Data.IFontFace font)
+  public float Size { get; init; }
+  public string? Language { get; init; }

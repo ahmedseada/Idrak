@@ -239,6 +239,11 @@ public interface Idrak.Abstraction.Data.IOutlineRasterizer
   public string Name { get; }
   public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height)
 
+public interface Idrak.Abstraction.Data.IPageLayout
+  public Idrak.Abstraction.Data.RenderedPage Render(Idrak.Abstraction.Data.PageContent content, Idrak.Abstraction.Data.PageStyle style, int seed)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Abstraction.Data.ISampleReader : System.IDisposable
   public bool Read(System.Span<float> features, System.Span<float> targets)
 
@@ -407,6 +412,56 @@ public enum Idrak.Abstraction.Data.OutlineVerb : byte
   Move = 0
   Quadratic = 2
 
+public readonly record struct Idrak.Abstraction.Data.PageBlock : System.IEquatable<Idrak.Abstraction.Data.PageBlock>
+  public PageBlock(string Kind, string Text, float X, float Y, float Width, float Height)
+  public float Height { get; init; }
+  public float Width { get; init; }
+  public float X { get; init; }
+  public float Y { get; init; }
+  public string Kind { get; init; }
+  public string Text { get; init; }
+
+public sealed record Idrak.Abstraction.Data.PageContent : System.IEquatable<Idrak.Abstraction.Data.PageContent>
+  public PageContent()
+  public System.Collections.Generic.IReadOnlyList<string> Body { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Footer { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> HeaderCenter { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> HeaderEnd { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> HeaderStart { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Signature { get; init; }
+  public bool? RightToLeft { get; init; }
+  public string ReadingOrder()
+  public string? Language { get; init; }
+  public string? Subject { get; init; }
+  public string? Title { get; init; }
+
+public static class Idrak.Abstraction.Data.PageLayouts
+  public static Idrak.Abstraction.Data.IPageLayout Get(string name)
+  public static Idrak.Abstraction.Data.IPageLayout? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IPageLayout layout)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.Abstraction.Data.PageStyle>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PageStyle()
+  public (float, float) BodySize { get; init; }
+  public (float, float) Ink { get; init; }
+  public (float, float) LineSpacing { get; init; }
+  public (float, float) Margin { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fallbacks { get; init; }
+  public bool Color { get; init; }
+  public float BlueSignature { get; init; }
+  public float Emblem { get; init; }
+  public float Justify { get; init; }
+  public float OtherHeaderFont { get; init; }
+  public float Rule { get; init; }
+  public float Stamp { get; init; }
+  public int Height { get; init; }
+  public int Width { get; init; }
+  public required System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fonts { get; init; }
+
 public readonly record struct Idrak.Abstraction.Data.PixelBox : System.IEquatable<Idrak.Abstraction.Data.PixelBox>
   public Idrak.Abstraction.Data.BoundingBox ToBoundingBox()
   public Idrak.Abstraction.Data.PixelBox Union(Idrak.Abstraction.Data.PixelBox other)
@@ -418,6 +473,13 @@ public readonly record struct Idrak.Abstraction.Data.PixelBox : System.IEquatabl
   public int Width { get; init; }
   public int X { get; init; }
   public int Y { get; init; }
+
+public sealed record Idrak.Abstraction.Data.RenderedPage : System.IEquatable<Idrak.Abstraction.Data.RenderedPage>
+  public Idrak.Abstraction.Data.ImageData Image { get; init; }
+  public RenderedPage(Idrak.Abstraction.Data.ImageData Image, string Text, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.PageBlock> Blocks, string Description)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.PageBlock> Blocks { get; init; }
+  public string Description { get; init; }
+  public string Text { get; init; }
 
 public delegate Idrak.Abstraction.Data.ISampleSource Idrak.Abstraction.Data.SampleSourceFactory(string path, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
