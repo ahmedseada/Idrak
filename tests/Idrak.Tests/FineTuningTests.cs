@@ -37,6 +37,7 @@ internal static partial class Tests
         ("fine-tuning: an adapter folder's manifest round-trips, names a local base model by its full path, and loads the model with the adapter merged", ManifestRoundTrip),
         ("fine-tuning options: AdamW and cosine given explicitly match the default; another optimizer's recorded steps match its ordinary ones; an optimizer that cannot be recorded runs ordinary steps; the built-in schedules", OptimizerAndSchedule),
         ("fine-tuning options: the token cross-entropy as a loss delegate trains as the fused default does (with gradient accumulation)", LossHook),
+        ("fine-tuning options: a step whose loss is not finite drops its gradients (the adapters keep their values); past NonFiniteSteps in a row the run stops", NonFiniteLossSkipped),
         ("fine-tuning options: DPO, conservative DPO, ORPO and SimPO match their formulas for fixed log-probabilities (and DPO its gradient)", PreferenceFormulas),
         ("fine-tuning options: DPO (reference: adapters disabled), ORPO and SimPO lower their loss on preference pairs; DPO starts at log 2; disabled adapters give the base model", PreferenceTraining),
         ("fine-tuning options: preference rows in TRL's layouts read as one shape; only the answers train", PreferenceRows),

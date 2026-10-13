@@ -115,6 +115,7 @@ public sealed record TuneRequest
         CerEvery = CerEvery ?? d.CerEvery, CerBefore = CerBefore ?? d.CerBefore, AnswerTokens = AnswerTokens ?? d.AnswerTokens, MaxPages = MaxPages ?? d.MaxPages,
         EvaluateEvery = EvaluateEvery ?? d.EvaluateEvery, SaveEvery = SaveEvery ?? d.SaveEvery, LossPages = LossPages ?? d.LossPages,
         Checkpointing = Checkpointing ?? d.Checkpointing, RecomputeFeedForward = RecomputeFeedForward ?? d.RecomputeFeedForward,
+        NonFiniteSteps = d.NonFiniteSteps,
     };
 }
 
@@ -379,7 +380,7 @@ public sealed class TuningService : IDisposable
                 {
                     Rank = settings.Rank, Alpha = settings.Alpha, LearningRate = settings.LearningRate, Epochs = settings.Epochs, MaxLength = settings.MaxLength,
                     BatchTokens = settings.BatchTokens, GradientAccumulation = settings.Accumulate, EvaluateEvery = settings.EvaluateEvery, SaveEvery = settings.SaveEvery,
-                    Checkpointing = settings.Checkpointing, RecomputeFeedForward = settings.RecomputeFeedForward,
+                    Checkpointing = settings.Checkpointing, RecomputeFeedForward = settings.RecomputeFeedForward, NonFiniteSteps = settings.NonFiniteSteps,
                 },
             }, new Relay<TuningStage>(stage => Update(s => s with { Stage = stage.Name, StageDone = stage.Done, StageTotal = stage.Total })), Add, cancellationToken);
             Update(s => s with { Stage = null });

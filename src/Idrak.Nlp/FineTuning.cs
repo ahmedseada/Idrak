@@ -714,6 +714,12 @@ public sealed record FineTuningOptions
     /// <summary>Gradients are scaled down to at most this norm (0: no clipping).</summary>
     public float MaxGradientNorm { get; init; } = 1f;
 
+    /// <summary>
+    /// Optimizer steps in a row whose loss is not a finite number (NaN or infinite) that are skipped (their gradients
+    /// dropped, the parameters left as they were) before the run stops with an error naming the step; 0 stops at the first.
+    /// </summary>
+    public int NonFiniteSteps { get; init; } = 8;
+
     /// <summary>Rows of the output head computed at once by the loss (see <see cref="Losses.TokenCrossEntropy"/>).</summary>
     public int LossChunkRows { get; init; } = 512;
 
@@ -1062,7 +1068,7 @@ public static class FineTuner
         var schedule = (options.Scheduler ?? FineTuningSchedules.Cosine(options.WarmupFraction, options.MinLearningRate))(optimizer, Math.Max(1, totalSteps))
             ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
         var evaluations = new List<float>();
-        int step = 0;
+        int step = 0, nonFinite = 0;
         using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), custom, trace,
             Largest(epochBatches.SelectMany(b => b)), MostImageTokens(epochBatches.SelectMany(b => b), train));
         for (int epoch = 0; epoch < options.Epochs; epoch++)
@@ -1084,6 +1090,22 @@ public static class FineTuner
                 var (loss, tokens) = runner.Run(group, cancellationToken,
                     b => $"step {step + 1}/{totalSteps}, batch {first + b + 1}/{batches.Count} of epoch {epoch + 1}");
                 float rate = optimizer.LearningRate;                     // the rate RunStep's update used
+                if (float.IsFinite(loss))
+                {
+                    nonFinite = 0;
+                }
+                else if (++nonFinite > options.NonFiniteSteps)
+                {
+                    throw new InvalidOperationException($"The loss of step {step + 1} is {loss}, the {nonFinite} step{(nonFinite == 1 ? "" : "s")} in a row not finite "
+                        + $"({runner.Settings}); the run stops (FineTuningOptions.NonFiniteSteps = {options.NonFiniteSteps}). The parameters keep the values of "
+                        + $"the last finite step.");
+                }
+                else
+                {
+                    trace?.Invoke($"step {step + 1}: the loss is {loss}, not finite ({runner.Settings}); the step's update is skipped and the parameters keep "
+                                  + $"their values ({nonFinite} in a row, the run stops after {options.NonFiniteSteps})");
+                }
+
                 schedule.Step();
                 step++;
                 float? evaluationLoss = null;
@@ -1189,6 +1211,10 @@ public static class FineTuner
 
         /// <summary>Whether steps run with activation checkpointing (it can turn on during training, see <see cref="FineTuningOptions.Checkpointing"/>).</summary>
         public bool Checkpointing => _options.Checkpointing == true;
+
+        /// <summary>The memory settings in effect and the recorded step graphs, as a log line says them.</summary>
+        public string Settings => (Checkpointing ? "checkpointing" : _options.RecomputeFeedForward == true ? Describe(_options) : "activations held")
+            + (_recorded.Count > 0 ? $", {_recorded.Count} recorded step graph{(_recorded.Count == 1 ? "" : "s")}" : "");
 
         // Choosing by speed after the first out-of-memory step: the lightest setting that fits (recomputed feed-forward
         // activations, then also bfloat16 ones) is timed over a step, then checkpointing is, and the faster is kept.
@@ -1422,7 +1448,7 @@ public static class FineTuner
                     model.Network.Train();
                     var (loss, tokens) = graph.Run(train, batch);
                     trace?.Invoke($"{label(0)}: {batch.Describe(train)}, replayed: loss {loss:F4}, {watch.Elapsed.TotalSeconds:F2} s");
-                    Update(model, optimizer, options);
+                    Update(model, optimizer, options, loss);
                     return (loss, tokens);
                 }
             }
@@ -1526,9 +1552,16 @@ public static class FineTuner
         return options.HostOptimizer ? new HostOptimizer(parameters, create) : create(parameters);
     }
 
-    // Clipping and the optimizer's update, after the gradients of a step.
-    private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options)
+    // Clipping and the optimizer's update, after the gradients of a step whose loss (read already) is finite; a NaN or
+    // infinite loss drops the step's gradients instead, so one bad step leaves the parameters as they were.
+    private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options, float loss)
     {
+        if (!float.IsFinite(loss))
+        {
+            optimizer.ZeroGrad();
+            return;
+        }
+
         // Clipping and the update of every adapter matrix in a few device passes (which also zero the gradients for the next
         // step), with no read of the norm and no wait: the next step's first read of the device orders everything, so the
         // host prepares the next batch while the device finishes this step.
@@ -1577,7 +1610,7 @@ public static class FineTuner
             trace?.Invoke($"  forward and backward {batchWatch.Elapsed.TotalSeconds:F2} s, loss {shown:F4}{imageCounts}");
         }
 
-        Update(model, optimizer, options);
+        Update(model, optimizer, options, loss);
         return (loss, tokens);
     }
 

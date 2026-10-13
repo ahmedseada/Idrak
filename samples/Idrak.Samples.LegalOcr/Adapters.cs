@@ -74,10 +74,10 @@ public sealed class AdapterStore(LegalOcrSettings settings, string contentRoot)
     /// <summary>The switch's prefix of an adapter's id.</summary>
     public const string Prefix = "adapter:";
 
-    private static readonly JsonSerializerOptions Json = new()
+    private static readonly JsonSerializerOptions Json = FiniteNumbers.Add(new()
     {
         WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-    };
+    });
 
     /// <summary>The adapters' folder (full path).</summary>
     public string Folder => Path.GetFullPath(settings.AdaptersFolder, contentRoot);
