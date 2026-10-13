@@ -256,6 +256,10 @@ public interface Idrak.Abstraction.Data.ISampleStream
 public interface Idrak.Abstraction.Data.ISampleTransform
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
 
+public interface Idrak.Abstraction.Data.ITextShaper
+  public Idrak.Abstraction.Data.ShapedGlyph[] Shape(Idrak.Abstraction.Data.IFontFace font, string text, Idrak.Abstraction.Data.TextRun run, System.Collections.Generic.IReadOnlyCollection<string>? features = null)
+  public string Name { get; }
+
 public sealed record Idrak.Abstraction.Data.ImageAnnotations : System.IEquatable<Idrak.Abstraction.Data.ImageAnnotations>
   public Idrak.Abstraction.Data.AnnotatedImage ToSample(Idrak.Abstraction.Data.ImageData pixels, bool masks = true, bool includeIgnored = false)
   public ImageAnnotations(string File, int Width, int Height, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ObjectAnnotation> Objects)
@@ -427,6 +431,34 @@ public static class Idrak.Abstraction.Data.SampleSources
   public static string? Origin(string name)
   public static void Register(string name, Idrak.Abstraction.Data.SampleSourceFactory factory)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.Data.ShapedGlyph : System.IEquatable<Idrak.Abstraction.Data.ShapedGlyph>
+  public ShapedGlyph(int Glyph, int Cluster, int XAdvance, int YAdvance, int XOffset, int YOffset)
+  public int Cluster { get; init; }
+  public int Glyph { get; init; }
+  public int XAdvance { get; init; }
+  public int XOffset { get; init; }
+  public int YAdvance { get; init; }
+  public int YOffset { get; init; }
+
+public readonly record struct Idrak.Abstraction.Data.TextRun : System.IEquatable<Idrak.Abstraction.Data.TextRun>
+  public TextRun(int Start, int Length, string Script, bool RightToLeft, string? Language = null)
+  public bool RightToLeft { get; init; }
+  public int Length { get; init; }
+  public int Start { get; init; }
+  public string Script { get; init; }
+  public string? Language { get; init; }
+
+public static class Idrak.Abstraction.Data.TextShapers
+  public const string AnyScript = "*"
+  public static Idrak.Abstraction.Data.ITextShaper Get(string script)
+  public static Idrak.Abstraction.Data.ITextShaper? Default(string script)
+  public static Idrak.Abstraction.Data.ShapedGlyph[] Shape(Idrak.Abstraction.Data.IFontFace font, string text, Idrak.Abstraction.Data.TextRun run, System.Collections.Generic.IReadOnlyCollection<string>? features = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Scripts { get; }
+  public static bool Unregister(string script)
+  public static string? Origin(string script)
+  public static void Register(string script, Idrak.Abstraction.Data.ITextShaper shaper)
+  public static void SetPolicy(string script, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed class Idrak.Abstraction.Device
   public Idrak.Abstraction.DeviceType Type { get; }
