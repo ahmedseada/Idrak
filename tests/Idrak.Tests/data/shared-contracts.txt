@@ -17,3 +17,5 @@ Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per scr
 Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for every package that draws text
 Idrak.Abstraction.Data.IPageLayout | how a page's parts are arranged and drawn, for every package that makes page images (Imaging draws the built-in layouts, Nlp's synthetic pages pick them by name, Vision makes document samples)
 Idrak.Abstraction.Data.PageLayouts | the page layouts by name, overridable once for every package that makes page images
+Idrak.Abstraction.Data.IScanProfile | how a page is made to look scanned (a mix of image transforms drawn from a seed), for every package that makes training images (Imaging registers the built-in profiles, Nlp's synthetic pages and the CLI pick them by name, Vision degrades its samples)
+Idrak.Abstraction.Data.ScanProfiles | the scan profiles by name, overridable once for every package that makes training images

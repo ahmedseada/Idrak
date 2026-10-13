@@ -16,7 +16,9 @@ namespace Idrak.Abstraction.Data;
 /// operations, byte for byte (core registers them): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>, <c>scale</c>,
 /// <c>pad</c>, <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>equalize</c>, <c>gamma</c>,
 /// <c>blur</c>, <c>unsharp</c>, <c>median</c>, <c>min_filter</c>, <c>max_filter</c>, <c>binarize</c>, <c>invert</c>,
-/// <c>jpeg</c>. Each describes its inputs (<see cref="Parameters"/>), so a program can offer them without knowing the
+/// <c>jpeg</c>; and scan degradations for pages made to look scanned (Idrak.Imaging): <c>rotate</c>, <c>perspective</c>,
+/// <c>noise</c>, <c>speckle</c>, <c>fade</c>, <c>tint</c>, <c>stain</c>, <c>lowres</c>, <c>bleed</c> (mixed by
+/// <see cref="ScanProfiles"/>). Each describes its inputs (<see cref="Parameters"/>), so a program can offer them without knowing the
 /// transform. A transform knows nothing of
 /// models: a fine-tune that wants its scans prepared a certain way is given a pipeline by the application.
 /// </summary>

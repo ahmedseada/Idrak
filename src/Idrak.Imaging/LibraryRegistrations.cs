@@ -16,7 +16,12 @@ internal static class LibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
-        [typeof(ImageTransforms)] = LibraryImageTransforms.RegisterDefaults,   // Pillow's operations, byte for byte
+        [typeof(ImageTransforms)] = () =>
+        {
+            LibraryImageTransforms.RegisterDefaults();   // Pillow's operations, byte for byte
+            ScanTransforms.RegisterDefaults();           // scan degradations (plan 18)
+        },
+        [typeof(ScanProfiles)] = ScanTransforms.RegisterProfiles,
         [typeof(Augmentations)] = LibraryAugmentations.RegisterDefaults,       // flip and shift (Idrak.Vision adds the others)
         [typeof(ImageCodecs)] = RegisterImageCodecs,                            // png, jpeg, bmp, netpbm (asked newest first)
         [typeof(SampleSources)] = () => SampleSources.Register("images", OpenImages),

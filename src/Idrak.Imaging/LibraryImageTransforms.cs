@@ -290,7 +290,7 @@ internal static class LibraryImageTransforms
         return t is >= 0 and <= 256 ? t : throw new ArgumentException($"binarize's threshold is a grey level from 0 to 256, not {t}.");
     }
 
-    private sealed class Transform(string name, string summary, string[] keys, Action<ImageTransformStep> check, Func<ImageData, ImageTransformStep, ImageData> apply)
+    internal sealed class Transform(string name, string summary, string[] keys, Action<ImageTransformStep> check, Func<ImageData, ImageTransformStep, ImageData> apply)
         : IImageTransform
     {
         public string Name => name;
