@@ -18,7 +18,7 @@ dotnet add package Idrak.Imaging
 | Transforms | `PillowImageOps` (resize with Pillow's filters, rank filters, blur, blends, point maps), the named transforms of `ImageTransforms` ("grayscale", "max_width", "contrast", ...) |
 | Preprocessing | `ImagePreprocessor`: a model family's resize, crop, rescale and normalization from its preprocessor config, on the host or the device |
 | Chat images | `ChatImageDecoder`: the images of a chat request (data URLs, files, bytes) decoded once |
-| Fonts | `OpenTypeFormat` ("opentype": .ttf, .otf and .ttc with TrueType outlines, in C#; registered in `FontFormats`), `CoverageRasterizer` ("coverage": exact area coverage, unhinted; in `OutlineRasterizers`); text shaping in `TextShapers` ("general" for every script, "arabic" for the joining scripts: HarfBuzz's OpenType path, every GSUB and GPOS lookup kind) with the Unicode bidirectional algorithm |
+| Fonts | `OpenTypeFormat` ("opentype": .ttf, .otf and .ttc with TrueType or CFF outlines, in C#; registered in `FontFormats`), `CoverageRasterizer` ("coverage": exact area coverage, unhinted; in `OutlineRasterizers`); text shaping in `TextShapers` ("general" for every script, "arabic" for the joining scripts: HarfBuzz's OpenType path, every GSUB and GPOS lookup kind) with the Unicode bidirectional algorithm |
 | Training | `ImageFolderSource` (class folders, and the "images" source of `SampleSources`), augmentations for the `DataLoader` (`RandomFlip`, `RandomShift`, `RandomRotation`, `GaussianNoise`; "flip" and "shift" in `Augmentations`) |
 
 ## Contracts

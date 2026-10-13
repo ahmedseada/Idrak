@@ -14,7 +14,8 @@ internal static partial class Tests
         ("fonts: the OpenType reader gives fontTools' names, metrics, character map, every advance and every glyph's bounds (composites resolved) for a DejaVu Sans subset; a collection gives its two fonts", FontReaderMatchesFontTools),
         ("fonts: glyphs drawn by the coverage rasterizer match FreeType's unhinted renders (Latin, a composite, Arabic, digits; 24 and 48 pixels per em)", FontRasterMatchesFreeType),
         ("fonts: exact coverage of a square at fractional positions, ink over ink where outlines overlap, clipping at the image's edges", FontRasterCoverage),
-        ("fonts: a CFF font, a damaged file and bytes that are no font are refused with the reason; the registries list opentype and coverage", FontRefusals),
+        ("fonts: CFF outlines (Type 2 charstrings with local and global subroutines) give fontTools' glyph bounds, the TrueType font's renders (and FreeType's within its coarser cubic flattening), and the same character map and shaping as the TrueType font", FontCffMatches),
+        ("fonts: a CFF2 font, a damaged file and bytes that are no font are refused with the reason; the registries list opentype and coverage", FontRefusals),
     ];
 
     private static string FontData(string name) => TestData($"fonts/{name}");
@@ -157,22 +158,99 @@ internal static partial class Tests
         Check(area > 100 && area < 600 && page.All(v => v is >= 0f and <= 1f), $"the letter o covers {area:F1} pixels, all in [0, 1]");
     }
 
+    private static void FontCffMatches(Device device)
+    {
+        var face = FontFormats.Read(FontData("dejavu-sans-cff.otf")).Single();
+        var expected = JsonNode.Parse(File.ReadAllText(FontData("cff.json")))!;
+        Check(face.GlyphCount == (int)expected["glyphCount"]! && (int)expected["globalSubrs"]! > 0 && (int)expected["localSubrs"]! > 0,
+            $"{face.GlyphCount} glyphs; the fixture has {expected["globalSubrs"]} global and {expected["localSubrs"]} local subroutines");
+        foreach (var pair in expected["cmap"]!.AsArray())
+        {
+            Check(face.Glyph((int)pair![0]!) == (int)pair[1]!, $"U+{(int)pair[0]!:X4}");
+        }
+
+        var bounds = expected["bounds"]!.AsArray();
+        for (int g = 0; g < face.GlyphCount; g++)
+        {
+            var outline = face.Outline(g);
+            if (bounds[g] is not JsonArray box)
+            {
+                Check(outline.IsEmpty, $"glyph {g}: no path in fontTools, an outline here");
+                continue;
+            }
+
+            var (minX, minY, maxX, maxY) = outline.Bounds();
+            Check(Math.Abs(minX - (double)box[0]!) <= 0.01 && Math.Abs(minY - (double)box[1]!) <= 0.01 && Math.Abs(maxX - (double)box[2]!) <= 0.01
+                  && Math.Abs(maxY - (double)box[3]!) <= 0.01, $"glyph {g}: control bounds ({minX}, {minY}, {maxX}, {maxY}), fontTools {box.ToJsonString()}");
+        }
+
+        var rasterizer = OutlineRasterizers.Get();
+        double worstMean = 0, worstMax = 0;
+        foreach (var render in expected["renders"]!.AsArray())
+        {
+            string text = (string)render!["text"]!;
+            int glyph = (int)render["glyph"]!, ppem = (int)render["ppem"]!, left = (int)render["left"]!, top = (int)render["top"]!;
+            int width = (int)render["width"]!, rows = (int)render["rows"]!;
+            byte[] reference = File.ReadAllBytes(FontData((string)render["file"]!));
+            var coverage = new float[width * rows];
+            rasterizer.Fill(face.Outline(glyph), ppem / (float)face.Metrics.UnitsPerEm, -left, top, coverage, width, rows);
+            double sum = 0, max = 0;
+            for (int i = 0; i < coverage.Length; i++)
+            {
+                double d = Math.Abs(coverage[i] - reference[i] / 255.0);
+                sum += d;
+                max = Math.Max(max, d);
+            }
+
+            double mean = sum / Math.Max(1, coverage.Length);
+            worstMean = Math.Max(worstMean, mean);
+            worstMax = Math.Max(worstMax, max);
+            // FreeType flattens cubic curves more coarsely than quadratic ones: a looser bound against it, and the tight one
+            // against the same glyph's TrueType outline drawn here (these cubics are the quadratics converted exactly;
+            // each outline is flattened within 1/32 px, so the two may differ by 2/32 of a pixel).
+            Check(mean < 0.025 && max < 0.2, $"{text} at {ppem} against FreeType: mean difference {mean:F4}, largest {max:F3}");
+            var trueTypeFace = SubsetFace();
+            var same = new float[width * rows];
+            rasterizer.Fill(trueTypeFace.Outline(trueTypeFace.Glyph(char.ConvertToUtf32(text, 0))), ppem / (float)face.Metrics.UnitsPerEm, -left, top, same, width, rows);
+            double sameMax = coverage.Zip(same).Max(p => Math.Abs(p.First - p.Second));
+            Check(sameMax < 0.0625, $"{text} at {ppem}: CFF and TrueType outlines drawn here differ by {sameMax:F4} at most");
+        }
+
+        Console.WriteLine($"    CFF against FreeType: mean difference at most {worstMean:F4}, largest pixel difference {worstMax:F3}");
+
+        // The same text shapes alike from the TrueType and the CFF font (the layout tables are the same).
+        var trueType = SubsetFace();
+        string arabic = "بسم الله الرحمن الرحيم";
+        var a = TextShapers.Shape(trueType, arabic, new TextRun(0, arabic.Length, "Arab", true));
+        var b = TextShapers.Shape(face, arabic, new TextRun(0, arabic.Length, "Arab", true));
+        Check(a.Select(x => (x.XAdvance, x.XOffset, x.YOffset)).SequenceEqual(b.Select(x => (x.XAdvance, x.XOffset, x.YOffset))), "shaping from the CFF font");
+    }
+
     private static void FontRefusals(Device device)
     {
         Check(FontFormats.Names.Contains("opentype", StringComparer.OrdinalIgnoreCase) && FontFormats.Extensions.Contains(".ttc")
               && OutlineRasterizers.Names.Contains("coverage", StringComparer.OrdinalIgnoreCase),
             $"formats {string.Join(", ", FontFormats.Names)}; rasterizers {string.Join(", ", OutlineRasterizers.Names)}");
 
-        byte[] cff = File.ReadAllBytes(FontData("dejavu-sans-subset.ttf"));
-        "OTTO"u8.CopyTo(cff);
+        // The CFF test font with its CFF table renamed CFF2: a variable font's outlines, refused.
+        byte[] cff2 = File.ReadAllBytes(FontData("dejavu-sans-cff.otf"));
+        int tables = cff2[4] << 8 | cff2[5];
+        for (int i = 0; i < tables; i++)
+        {
+            if (cff2.AsSpan(12 + 16 * i, 4).SequenceEqual("CFF "u8))
+            {
+                "CFF2"u8.CopyTo(cff2.AsSpan(12 + 16 * i));
+            }
+        }
+
         try
         {
-            FontFormats.Read(cff, "cff");
-            Check(false, "a CFF font must be refused");
+            FontFormats.Read(cff2, "cff2");
+            Check(false, "a CFF2 font must be refused");
         }
         catch (NotSupportedException ex)
         {
-            Check(ex.Message.Contains("CFF", StringComparison.Ordinal) && ex.Message.Contains("TrueType outlines", StringComparison.Ordinal), ex.Message);
+            Check(ex.Message.Contains("CFF2", StringComparison.Ordinal) && ex.Message.Contains("variable", StringComparison.Ordinal), ex.Message);
         }
 
         try

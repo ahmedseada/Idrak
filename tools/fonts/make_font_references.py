@@ -12,6 +12,8 @@ Writes under tests/Idrak.Tests/data/fonts:
   dejavu-sans-pair.ttc     a collection of the subset and DejaVu Sans Bold cut the same way
   dejavu-sans-nogsub.ttf   the subset without GSUB (Arabic is then shaped with Unicode's presentation forms)
   shaping.json             HarfBuzz's shaping of fixed strings in several scripts (glyph, cluster, advances, offsets)
+  dejavu-sans-cff.otf      the subset's Latin and Arabic glyphs as CFF (Type 2 charstrings), subroutinized (cffsubr)
+  cff.json                 fontTools' bounds of its glyphs and FreeType's renders of some (cff/*.bin)
   bidi.json                python-bidi's visual order of mixed paragraphs, each direction given and found
   features.ttf             DejaVu Sans' Latin letters with layout features of our own (FEATURES below) that use every
                            GSUB and GPOS lookup kind: contexts of every format, multiple and reverse chaining
@@ -240,6 +242,71 @@ BIDI = [
 ]
 
 
+CFF_RENDERS = [("A", 24), ("g", 24), ("é", 24), ("&", 48), ("ب", 24), ("ج", 48), ("س", 48), ("ه", 48), ("٣", 48)]
+
+
+def cff_font():
+    import cffsubr
+    from fontTools.fontBuilder import FontBuilder
+    from fontTools.pens.t2CharStringPen import T2CharStringPen
+    source = TTFont(FONT)
+    order = source.getGlyphOrder()
+    glyphs = source.getGlyphSet()
+    charstrings = {}
+    for name in order:
+        pen = T2CharStringPen(source["hmtx"][name][0], glyphs)
+        glyphs[name].draw(pen)
+        charstrings[name] = pen.getCharString()
+    builder = FontBuilder(source["head"].unitsPerEm, isTTF=False)
+    builder.setupGlyphOrder(order)
+    builder.setupCharacterMap(source.getBestCmap())
+    builder.setupCFF("DejaVuSansSubsetCFF", {"FullName": "DejaVu Sans CFF"}, charstrings, {})
+    builder.setupHorizontalMetrics({n: source["hmtx"][n] for n in order})
+    builder.setupHorizontalHeader(ascent=source["hhea"].ascent, descent=source["hhea"].descent, lineGap=source["hhea"].lineGap)
+    builder.setupNameTable({"familyName": "DejaVu Sans CFF", "styleName": "Book"})
+    builder.setupOS2()
+    builder.setupPost()
+    font = builder.font
+    for tag in ("GDEF", "GSUB", "GPOS"):
+        font[tag] = source[tag]
+    cffsubr.subroutinize(font)
+    font["head"].created = font["head"].modified = 3_000_000_000
+    font.recalcTimestamp = False
+    path = os.path.join(OUT, "dejavu-sans-cff.otf")
+    font.save(path)
+
+    font = TTFont(path)
+    glyph_set = font.getGlyphSet()
+    from fontTools.pens.boundsPen import ControlBoundsPen
+    bounds = []
+    for name in font.getGlyphOrder():
+        pen = ControlBoundsPen(glyph_set)
+        glyph_set[name].draw(pen)
+        bounds.append(list(pen.bounds) if pen.bounds else None)
+    face = freetype.Face(path)
+    cmap = font.getBestCmap()
+    folder = os.path.join(OUT, "cff")
+    os.makedirs(folder, exist_ok=True)
+    renders = []
+    for text, ppem in CFF_RENDERS:
+        glyph = face.get_char_index(ord(text))
+        face.set_pixel_sizes(0, ppem)
+        face.load_glyph(glyph, freetype.FT_LOAD_NO_HINTING | freetype.FT_LOAD_NO_BITMAP)
+        face.glyph.render(freetype.FT_RENDER_MODE_NORMAL)
+        bitmap = face.glyph.bitmap
+        name = f"u{ord(text):04x}-{ppem}.bin"
+        with open(os.path.join(folder, name), "wb") as f:
+            f.write(bytes(bitmap.buffer[r * bitmap.pitch + c] for r in range(bitmap.rows) for c in range(bitmap.width)))
+        renders.append({"text": text, "glyph": glyph, "ppem": ppem, "left": face.glyph.bitmap_left, "top": face.glyph.bitmap_top,
+                        "width": bitmap.width, "rows": bitmap.rows, "file": f"cff/{name}"})
+    cff = font["CFF "].cff
+    top = cff.topDictIndex[0]
+    with open(os.path.join(OUT, "cff.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump({"glyphCount": len(bounds), "globalSubrs": len(cff.GlobalSubrs), "localSubrs": len(top.Private.Subrs) if hasattr(top.Private, "Subrs") else 0,
+                   "cmap": sorted([cp, font.getGlyphID(n)] for cp, n in cmap.items()), "bounds": bounds, "renders": renders}, f, ensure_ascii=False)
+        f.write("\n")
+
+
 def bidi_references():
     from bidi import get_display
     rows = []
@@ -319,4 +386,5 @@ if __name__ == "__main__":
     features_font()
     shape()
     bidi_references()
+    cff_font()
     print(f"{FONT}: {os.path.getsize(FONT)} bytes")

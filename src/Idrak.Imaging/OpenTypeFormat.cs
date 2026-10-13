@@ -7,9 +7,9 @@ using System.Text;
 namespace Idrak.Imaging;
 
 /// <summary>
-/// "opentype": OpenType and TrueType fonts (.ttf, .otf, .ttc) with TrueType outlines (the glyf table), single fonts and
-/// collections, read in C#. A font whose outlines are CFF (an .otf starting "OTTO") is refused as not supported yet.
-/// Hinting instructions are not run: outlines are drawn as designed, at any size.
+/// "opentype": OpenType and TrueType fonts (.ttf, .otf, .ttc), single fonts and collections, read in C#, with TrueType
+/// outlines (glyf) or CFF outlines (Type 2 charstrings, CID-keyed fonts included). CFF2 (variable fonts' outlines) is
+/// refused as not supported yet. Hinting is not run: outlines are drawn as designed, at any size.
 /// </summary>
 public sealed class OpenTypeFormat : IFontFormat
 {
@@ -65,7 +65,8 @@ internal sealed class OpenTypeFace : IFontFace
     private readonly ReadOnlyMemory<byte> _file;
     private readonly Dictionary<string, (int Offset, int Length)> _tables = new(StringComparer.Ordinal);
     private readonly ushort[] _advances;
-    private readonly int[] _locations;
+    private readonly int[]? _locations;                                 // TrueType outlines
+    private readonly CffOutlines? _cff;                                 // or CFF outlines
     private readonly ushort[]? _basic;                                  // code point 0 to FFFF to glyph (cmap format 4)
     private readonly (uint Start, uint End, uint Glyph)[]? _groups;      // code point ranges to glyphs (cmap format 12)
     private readonly GlyphOutline?[] _outlines;                          // read once each, on first use
@@ -79,12 +80,6 @@ internal sealed class OpenTypeFace : IFontFace
         if (offset < 0 || offset + 12 > data.Length)
         {
             throw new InvalidDataException($"{name}: the table directory at {offset} lies outside the file.");
-        }
-
-        var tag = data.Slice(offset, 4);
-        if (tag.SequenceEqual("OTTO"u8))
-        {
-            throw new NotSupportedException($"{name}: its outlines are CFF (PostScript), which are not read yet; use a font with TrueType outlines (most .ttf files).");
         }
 
         int tables = BinaryPrimitives.ReadUInt16BigEndian(data[(offset + 4)..]);
@@ -109,9 +104,12 @@ internal sealed class OpenTypeFace : IFontFace
             }
         }
 
-        if (!_tables.ContainsKey("glyf") || !_tables.ContainsKey("loca"))
+        bool trueType = _tables.ContainsKey("glyf") && _tables.ContainsKey("loca");
+        if (!trueType && !_tables.ContainsKey("CFF "))
         {
-            throw new NotSupportedException($"{name}: no TrueType outlines (glyf and loca tables); its outlines are not read yet.");
+            throw new NotSupportedException(_tables.ContainsKey("CFF2")
+                ? $"{name}: its outlines are CFF2 (a variable font), which are not read yet; use a static .ttf or .otf."
+                : $"{name}: no outlines the library reads (glyf, or CFF).");
         }
 
         var head = Span("head");
@@ -134,11 +132,18 @@ internal sealed class OpenTypeFace : IFontFace
             _advances[g] = BinaryPrimitives.ReadUInt16BigEndian(hmtx[(4 * Math.Min(g, metrics - 1))..]);
         }
 
-        var loca = Span("loca");
-        _locations = new int[GlyphCount + 1];
-        for (int g = 0; g <= GlyphCount; g++)
+        if (trueType)
         {
-            _locations[g] = longOffsets ? (int)BinaryPrimitives.ReadUInt32BigEndian(loca[(4 * g)..]) : 2 * BinaryPrimitives.ReadUInt16BigEndian(loca[(2 * g)..]);
+            var loca = Span("loca");
+            _locations = new int[GlyphCount + 1];
+            for (int g = 0; g <= GlyphCount; g++)
+            {
+                _locations[g] = longOffsets ? (int)BinaryPrimitives.ReadUInt32BigEndian(loca[(4 * g)..]) : 2 * BinaryPrimitives.ReadUInt16BigEndian(loca[(2 * g)..]);
+            }
+        }
+        else
+        {
+            _cff = new CffOutlines(Table("CFF "), unitsPerEm, GlyphCount, name);
         }
 
         (_basic, _groups) = ReadCmap(Span("cmap"));
@@ -198,6 +203,13 @@ internal sealed class OpenTypeFace : IFontFace
         var outline = Volatile.Read(ref _outlines[glyph]);
         if (outline is null)
         {
+            if (_cff is not null)
+            {
+                outline = _cff.Outline(glyph);
+                Volatile.Write(ref _outlines[glyph], outline);
+                return outline;
+            }
+
             var contours = new List<Contour>();
             AddGlyph(glyph, 1, 0, 0, 1, 0, 0, contours, 0);
             outline = ToOutline(contours);
@@ -225,7 +237,7 @@ internal sealed class OpenTypeFace : IFontFace
             throw new InvalidDataException($"{_name}: glyph {glyph}'s components nest deeper than {MaxComponentDepth}.");
         }
 
-        int start = _locations[glyph], end = _locations[glyph + 1];
+        int start = _locations![glyph], end = _locations[glyph + 1];
         if (end <= start)
         {
             return;                                                             // no outline (a space)
