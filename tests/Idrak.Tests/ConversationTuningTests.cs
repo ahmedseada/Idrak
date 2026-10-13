@@ -65,10 +65,26 @@ internal static partial class Tests
             using (var capped = ConversationTuning.Prepare(model, [train], TinyConversationOptions(zip) with
                    {
                        EvaluationFraction = 0.67, Seed = 3, Metric = TuningMetrics.CharacterErrorRate, EvaluationSamples = 1, MetricRepeatStop = 4,
+                       MetricText = AnswerTexts.Values,
                    }))
             {
-                Check(capped.EvaluationConversations!.Count == 2 && capped.EvaluationSequences!.Count == 1 && capped.Scorer!.Count == 2 && capped.Scorer.RepeatStop == 4,
-                    $"{capped.EvaluationConversations.Count} held out, {capped.EvaluationSequences?.Count} for the loss, {capped.Scorer?.Count} scored, stop {capped.Scorer?.RepeatStop}");
+                Check(capped.EvaluationConversations!.Count == 2 && capped.EvaluationSequences!.Count == 1 && capped.Scorer!.Count == 2 && capped.Scorer.RepeatStop == 4
+                      && capped.Scorer.AnswerText == AnswerTexts.Values,
+                    $"{capped.EvaluationConversations.Count} held out, {capped.EvaluationSequences?.Count} for the loss, {capped.Scorer?.Count} scored, stop {capped.Scorer?.RepeatStop}, text {capped.Scorer?.AnswerText}");
+            }
+
+            // An answer text that is not registered is refused while preparing, not after the first epoch.
+            try
+            {
+                ConversationTuning.Prepare(model, [train], TinyConversationOptions(zip) with
+                {
+                    EvaluationFraction = 0.67, Metric = TuningMetrics.CharacterErrorRate, MetricText = "nope",
+                }).Dispose();
+                Check(false, "an unregistered metric text must be refused");
+            }
+            catch (NotSupportedException ex)
+            {
+                Check(ex.Message.Contains("'nope' is not registered"), ex.Message);
             }
 
             try
@@ -108,7 +124,10 @@ internal static partial class Tests
             var (_, zip) = WriteTuningImages(folder);
             string train = WriteShareGpt(folder, "gemma3", "train.json");
             string validation = WriteShareGpt(folder, "gemma3", "val.json", records: 2);
-            var options = TinyConversationOptions(zip) with { Evaluation = validation, Metric = TuningMetrics.CharacterErrorRate, MetricEvery = 2 };
+            var options = TinyConversationOptions(zip) with
+            {
+                Evaluation = validation, Metric = TuningMetrics.CharacterErrorRate, MetricEvery = 2, MetricText = AnswerTexts.Values,
+            };
             options = options with { Tuning = options.Tuning with { Epochs = 2 } };
 
             using (var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = device }))
@@ -122,6 +141,13 @@ internal static partial class Tests
                 Check(!result.Stopped && steps.Count > 0 && steps[^1].Step == steps[^1].TotalSteps && result.Last == steps[^1], $"{steps.Count} steps, stopped {result.Stopped}");
                 Check(result.EvaluationLosses.Count == 2 && result.Answers is { Answers.Count: 2 } && answered == 2 * (steps[^1].TotalSteps / 2),
                     $"{result.EvaluationLosses.Count} evaluations, {answered} answers scored");
+                // Scored over the values of the JSON answers, as the text the Read tab of an app scores.
+                var cer = TuningMetrics.Get(TuningMetrics.CharacterErrorRate);
+                foreach (var a in result.Answers!.Answers)
+                {
+                    var values = cer.Score(AnswerTexts.Of(a.Answer, AnswerTexts.Values), AnswerTexts.Of(a.Reference, AnswerTexts.Values));
+                    Check(a.Score == values, $"the answer's score {a.Score} is the CER of its values {values}");
+                }
                 Check(File.Exists(Path.Combine(adapter, "adapter_model.safetensors")) && TuningImages.Read(adapter) is { } images && images.Family is not null
                       && TuningManifest.Read(adapter)!.BaseModel == Path.GetFullPath(VlmModel) && result.Folder == Path.GetFullPath(adapter),
                     "the adapter, its preparation and manifest");

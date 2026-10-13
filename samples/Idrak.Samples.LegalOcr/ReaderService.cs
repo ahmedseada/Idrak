@@ -617,12 +617,14 @@ public sealed class ReaderService : IDisposable
         return [.. readings.Select((reading, i) => Scored(reading, reads[i], pages[i].Expected))];
     }
 
-    // A read's JSON and, given the expected answer, its CER (the library's metric over the JSON's values).
-    private static PageResult Scored(ImageReading reading, ImageReadRequest read, string? expected)
+    // A read's JSON and, given the expected answer, its CER (the library's metric over the text Tuning:CerText names, the
+    // JSON's values by default: the same text tuning's CER compares).
+    private PageResult Scored(ImageReading reading, ImageReadRequest read, string? expected)
     {
         var (json, repaired) = AnswerJson.Show(reading.Text);
+        string text = _settings.Tuning.CerText;
         double? cer = expected is null ? null
-            : TuningMetrics.Get(TuningMetrics.CharacterErrorRate).Score(AnswerTexts.Of(reading.Text, AnswerTexts.Values), AnswerTexts.Of(expected, AnswerTexts.Values)).Value;
+            : TuningMetrics.Get(TuningMetrics.CharacterErrorRate).Score(AnswerTexts.Of(reading.Text, text), AnswerTexts.Of(expected, text)).Value;
         return new PageResult(reading, json, repaired, cer, read.Sample ? read.Seed : null);
     }
 

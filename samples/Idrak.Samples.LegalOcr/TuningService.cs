@@ -115,7 +115,7 @@ public sealed record TuneRequest
         CerEvery = CerEvery ?? d.CerEvery, CerBefore = CerBefore ?? d.CerBefore, AnswerTokens = AnswerTokens ?? d.AnswerTokens, MaxPages = MaxPages ?? d.MaxPages,
         EvaluateEvery = EvaluateEvery ?? d.EvaluateEvery, SaveEvery = SaveEvery ?? d.SaveEvery, LossPages = LossPages ?? d.LossPages,
         Checkpointing = Checkpointing ?? d.Checkpointing, RecomputeFeedForward = RecomputeFeedForward ?? d.RecomputeFeedForward,
-        NonFiniteSteps = d.NonFiniteSteps,
+        NonFiniteSteps = d.NonFiniteSteps, CerText = d.CerText,
     };
 }
 
@@ -374,6 +374,7 @@ public sealed class TuningService : IDisposable
                 MetricEvery = settings.CerEvery,
                 MaxNewTokens = settings.AnswerTokens,
                 MetricRepeatStop = _settings.Generation.RepeatStop,              // a looping answer stops as on the Read tab
+                MetricText = settings.CerText,                                   // the values of the JSON answers, as the Read tab scores them
                 EvaluationSamples = settings.LossPages,
                 MaxConversations = settings.MaxPages,
                 Tuning = new FineTuningOptions
