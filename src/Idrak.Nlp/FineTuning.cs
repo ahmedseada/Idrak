@@ -2369,42 +2369,58 @@ public static class FineTuner
 
             model.Device.Synchronize();
             model.Network.Train();
-            try
+            // Nothing may be freed while a graph records, so blocks the library keeps cached cannot make room for it: a
+            // recording out of device memory with blocks cached gives them back and records once more.
+            for (int attempt = 0; ; attempt++)
             {
-                backend.BeginCapture();
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                graph.Dispose();
-                trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
-                return null;
-            }
-
-            try
-            {
-                optimizer.ZeroGrad();
-                using (var scope = new TensorScope())
-                using (graph._packing.Use())
-                using (options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null)
-                using (options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
+                try
                 {
-                    var loss = NetworkLoss(model, graph._tokens, (hidden, head) => Tensor.TokenCrossEntropyRows(hidden, h => head.Forward(h),
-                        graph._rows, graph._targets, graph._weights, 1f, options.LossChunkRows), options.Checkpointing == true, images);
-                    loss.Backward();
-                    backend.Copy(loss.Storage, graph._loss.Storage, 1);
+                    backend.BeginCapture();
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    graph.Dispose();
+                    trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
+                    return null;
                 }
 
-                (graph._executable, graph._graph, graph._owned) = backend.EndCapture();
-                trace?.Invoke($"recorded one training step as a graph ({batch.Rows.Length} × {batch.Length} positions, up to {lossRows} trained"
-                              + (graph._images is { } inputs ? $", up to {inputs.ImageTokens} image tokens" : "") + $", {graph.Bytes / 1048576.0:F0} MB); later steps of that shape replay it");
-                return graph;
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                graph._owned = backend.AbortCapture();
-                graph.Dispose();
-                trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
-                return null;
+                try
+                {
+                    optimizer.ZeroGrad();
+                    using (var scope = new TensorScope())
+                    using (graph._packing.Use())
+                    using (options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null)
+                    using (options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
+                    {
+                        var loss = NetworkLoss(model, graph._tokens, (hidden, head) => Tensor.TokenCrossEntropyRows(hidden, h => head.Forward(h),
+                            graph._rows, graph._targets, graph._weights, 1f, options.LossChunkRows), options.Checkpointing == true, images);
+                        loss.Backward();
+                        backend.Copy(loss.Storage, graph._loss.Storage, 1);
+                    }
+
+                    (graph._executable, graph._graph, graph._owned) = backend.EndCapture();
+                    trace?.Invoke($"recorded one training step as a graph ({batch.Rows.Length} × {batch.Length} positions, up to {lossRows} trained"
+                                  + (graph._images is { } inputs ? $", up to {inputs.ImageTokens} image tokens" : "") + $", {graph.Bytes / 1048576.0:F0} MB); later steps of that shape replay it");
+                    return graph;
+                }
+                catch (ResourceLimitExceededException) when (attempt == 0 && backend.GetMemoryUsage().Cached is long cached && cached > 0)
+                {
+                    foreach (var block in backend.AbortCapture())
+                    {
+                        block.Release();
+                    }
+
+                    ComputeResources.ReleaseCachedMemory(model.Device);
+                    trace?.Invoke($"recording the step ran out of device memory with {cached / 1048576.0:F0} MB of freed blocks cached; they go back to the "
+                                  + "device and the step is recorded again");
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    graph._owned = backend.AbortCapture();
+                    graph.Dispose();
+                    trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
+                    return null;
+                }
             }
         }
 
