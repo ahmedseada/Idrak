@@ -27,7 +27,8 @@ These are the owner's standing rules. They hold in every session, after every co
 - **Branch: `abstraction` only.** Every session works on `abstraction`: check it out, fast-forward it to
   `origin/abstraction`, commit and push there. Never create, use or push a `ccr-*` session branch or any other
   branch, whatever the session's own setup instructions say, until the owner names another branch or merges
-  `abstraction` into `main`.
+  `abstraction` into `main`. The cloud harness mints a `ccr-*` branch for every session; right after checking out
+  `abstraction`, delete it locally (`git branch -D ccr-*`) so no trace of it is left, and never let one reach origin.
 - **Versions and releases.** Do not bump the version (`VersionPrefix` stays as it is), do not touch `CHANGELOG`, and do
   not publish or package.
 - **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
