@@ -1,0 +1,3 @@
+{"messages": [{"content": [{"path": "images/image.png", "type": "image"}, {"text": "Read the scan.", "type": "text"}], "role": "user"}, {"content": "the court decision 12/05/1446", "role": "assistant"}]}
+{"messages": [{"content": "You read pages.", "role": "system"}, {"content": [{"text": "What is in this image?", "type": "text"}, {"path": "images/image-palette.png", "type": "image"}], "role": "user"}, {"content": "a page with lines of text", "role": "assistant"}]}
+{"messages": [{"content": [{"path": "images/image.png", "type": "image"}, {"path": "images/image-palette.png", "type": "image"}, {"text": "Compare.", "type": "text"}], "role": "user"}, {"content": "two pages, one in few colors", "role": "assistant"}]}
