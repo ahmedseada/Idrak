@@ -122,6 +122,9 @@ internal static partial class Tests
             Check(resumed["final_loss"] is not null, $"the resumed run's losses are finite (training on {device} from the saved moments, {resumed["settings"]}): {File.ReadAllText(Path.Combine(run, "log.jsonl"))}");
             var (firstCode, firstAnswer, firstError) = RunIdrakOn(device, null, "run", (string)first["checkpoint"]!, "read the scan", "--max-tokens", "3", "--temperature", "0");
             Check(firstCode == 0, $"run on the first run's checkpoint (2 steps, losses finite: the update or the save on {device} made the weights not finite): {firstAnswer} {firstError}");
+            var again = TrainCliJson("resume", run, "-d", device.ToString());
+            Check((int)again["steps"]! == 4 && ((string?)again["checkpoint"])?.EndsWith("checkpoint-4", StringComparison.Ordinal) == true,
+                $"resuming a finished run trains nothing and names its last checkpoint: {again}");
             var shown = TrainCliJson("runs", "show", run);
             Check((int)shown["epochs"]! == 4, $"runs show reads the 4 steps: {shown["epochs"]}");
             var (code, output, _) = TrainCli("runs", "show", run);

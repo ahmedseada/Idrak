@@ -282,7 +282,7 @@ public sealed record PretrainingProgress(string Stage, int StageIndex, int Stage
 /// <param name="Steps">Steps done in the run, the resumed ones included.</param>
 /// <param name="Losses">Each step's loss, from the run's first step (a resumed run's earlier ones included).</param>
 /// <param name="EvaluationLosses">Each evaluation's step and loss.</param>
-/// <param name="LastCheckpoint">The last checkpoint written, or null.</param>
+/// <param name="LastCheckpoint">The last checkpoint written (a resumed run with no step left: the one it resumed from), or null.</param>
 /// <param name="Elapsed">The time this call took.</param>
 /// <param name="Settings">The memory settings the steps settled on.</param>
 public sealed record PretrainingResult(int Steps, IReadOnlyList<float> Losses, IReadOnlyList<(int Step, float Loss)> EvaluationLosses, string? LastCheckpoint,
@@ -348,7 +348,7 @@ public static class Pretrainer
         var evaluations = new List<(int, float)>(resume?.EvaluationLosses ?? []);
         int totalSteps = options.Stages.Sum(s => s.Steps);
         int step = resume?.Step ?? 0;
-        string? last = null;
+        string? last = resume?.Folder;                                       // a finished run resumed: nothing is written
         string settings = "";
         double secondsPerStep = 0;
         int timedSteps = 0;
