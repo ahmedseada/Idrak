@@ -425,8 +425,9 @@ public static class SyntheticPages
         var skips = new List<string>();
         int skipped = 0, pages = 0, records = 0;
         string? firstSkip = null;
-        using var dataWriter = new StreamWriter(data, append: false, new UTF8Encoding(false));
-        using var manifestWriter = new StreamWriter(manifest, append: false, new UTF8Encoding(false));
+        // "\n" between records on every machine, so the same inputs give the same bytes everywhere (rule 70).
+        using var dataWriter = new StreamWriter(data, append: false, new UTF8Encoding(false)) { NewLine = "\n" };
+        using var manifestWriter = new StreamWriter(manifest, append: false, new UTF8Encoding(false)) { NewLine = "\n" };
         using var zip = options.Zip ? new ZipArchive(new FileStream(images, FileMode.Create, FileAccess.Write), ZipArchiveMode.Create) : null;
         if (!options.Zip)
         {
@@ -527,10 +528,10 @@ public static class SyntheticPages
 
     private static readonly JsonWriterOptions LineOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    internal static string Json(JsonNode node, bool indented = false, int indentSize = 2, char indentCharacter = ' ')
+    internal static string Json(JsonNode node, bool indented = false, int indentSize = 2, char indentCharacter = ' ', string newLine = "\n")
     {
         using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer, LineOptions with { Indented = indented, IndentSize = indentSize, IndentCharacter = indentCharacter }))
+        using (var writer = new Utf8JsonWriter(buffer, LineOptions with { Indented = indented, IndentSize = indentSize, IndentCharacter = indentCharacter, NewLine = newLine }))
         {
             node.WriteTo(writer);
         }
@@ -661,6 +662,7 @@ internal sealed class SyntheticAnswer
     private bool _indented;
     private int _indentSize = 2;
     private char _indentCharacter = ' ';
+    private string _newLine = "\n";              // the answer's own, never the machine's (rule 70)
     private string _comma = ",", _colon = ":";
 
     public string PageText { get; private set; } = "";
@@ -733,6 +735,7 @@ internal sealed class SyntheticAnswer
         _indented = newline >= 0;
         if (_indented)
         {
+            _newLine = newline > 0 && json[newline - 1] == '\r' ? "\r\n" : "\n";
             int at = newline + 1, size = 0;
             while (at + size < json.Length && json[at + size] is ' ' or '\t')
             {
@@ -796,7 +799,7 @@ internal sealed class SyntheticAnswer
         string json;
         if (_indented)
         {
-            json = SyntheticPages.Json(copy, indented: true, _indentSize, _indentCharacter);
+            json = SyntheticPages.Json(copy, indented: true, _indentSize, _indentCharacter, _newLine);
         }
         else
         {

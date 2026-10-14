@@ -21,7 +21,7 @@ internal static partial class Tests
         ("synthetic data: page parts fill their slots (digits, number, pick, field, date, hijri, line), drop a line whose field is missing, use the language's digits when drawn, keep a part out at chance 0; unknown keys and slots are refused", SyntheticParts),
         ("synthetic data: a record no font can draw, or with no text, is left out and said why; a font without a page's letters is not used for it; every record left out is an error", SyntheticSkips),
         ("synthetic data: the record formats and slots by name; an app's slot replaces the library's of its name only", SyntheticRegistries),
-        ("synthetic data: page settings text sets the style's sizes and chances, refusing unknown keys and values out of range", SyntheticStyle),
+        ("synthetic data: page settings text sets the style's sizes and chances, refusing unknown keys and values out of range; an indented answer keeps its own line ending (\\n or \\r\\n) on every machine", SyntheticStyle),
         ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans and page settings given; a missing font folder or a bad setting is a usage error", SyntheticCli),
     ];
 
@@ -330,6 +330,13 @@ internal static partial class Tests
         foreach (string bad in new[] { "nope=1", "size=30..20", "rule=2", "width=10", "color=maybe" })
         {
             Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
+        }
+
+        var options = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["none"] };
+        foreach (string newLine in new[] { "\n", "\r\n" })
+        {
+            string answer = "{" + newLine + "  \"full_text\": \"Body text.\"," + newLine + "  \"court\": \"General\"" + newLine + "}";
+            Check(SyntheticPages.Make(answer, options).Answer == answer, $"an answer with {(newLine.Length == 1 ? "\\n" : "\\r\\n")} comes back as it was, line endings included");
         }
 
     }
