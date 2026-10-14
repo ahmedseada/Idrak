@@ -9,11 +9,11 @@ namespace Idrak.Imaging;
 /// <summary>
 /// What happens to a paper between the printer and the scanner, as image transforms (plan 18): it is handled
 /// (<c>wrinkle</c>, <c>fold</c>, <c>smudge</c>, <c>blot</c>), marked with a pen (<c>strike</c>, <c>underline</c>,
-/// <c>cross</c>, <c>highlight</c>, <c>scribble</c>), damaged (<c>tear</c>, <c>holes</c>, <c>scratch</c>) and scanned
-/// (<c>shadow</c>, <c>streak</c>, <c>light</c>, <c>curl</c>). Every one takes a <c>seed</c>, and none takes away text a
-/// page's answer holds: tears and holes stay in the margins, pen marks are thin or see-through, smudges and blots are
-/// small, so a page's text can still be read under them. Tears and holes measure the page's blank margins (where its
-/// first ink is) and stay inside them.
+/// <c>cross</c>, <c>highlight</c>, <c>scribble</c>), damaged (<c>tear</c>, <c>holes</c>, <c>scratch</c>, <c>taped</c>)
+/// and scanned (<c>shadow</c>, <c>streak</c>, <c>light</c>, <c>curl</c>). Every one takes a <c>seed</c>, and none takes
+/// away text a page's answer holds: tears and holes stay in the margins, pen marks are thin or see-through, smudges and
+/// blots are small, a page ripped and taped back loses no more than a few pixels along its tear, so a page's text can
+/// still be read. Tears and holes measure the page's blank margins (where its first ink is) and stay inside them.
 /// </summary>
 internal static class PaperTransforms
 {
@@ -26,9 +26,9 @@ internal static class PaperTransforms
             Make("fold", "fold=N: N fold creases (a letter folded in thirds or halves): a sharp line, a highlight beside it and a soft shade; seed=N",
                 "Folds", "Creases", 0, 6, 1, ["seed"], (i, s, v) => PaperImageOps.Fold(i, (int)v, Seed(s)), whole: true),
             Make("smudge", "smudge=N: N smears of ink dragged over the text by a hand; length=L pixels (30); seed=N",
-                "Smudges", "Smudges", 0, 30, 1, ["seed", "length"], (i, s, v) => PaperImageOps.Smudge(i, (int)v, OptionNumber(s, "length", 30, 2, 200), Seed(s)), whole: true),
+                "Smudges", "Smudges", 0, 30, 1, ["seed", "length"], (i, s, v) => PaperImageOps.Smudge(i, (int)v, Option(s, "length"), Seed(s)), whole: true),
             Make("blot", "blot=N: N small ink blots and their splatter (up to size=R pixels, 5); seed=N",
-                "Ink blots", "Blots", 0, 30, 1, ["seed", "size"], (i, s, v) => PaperImageOps.Blot(i, (int)v, OptionNumber(s, "size", 5, 1, 30), Seed(s)), whole: true),
+                "Ink blots", "Blots", 0, 30, 1, ["seed", "size"], (i, s, v) => PaperImageOps.Blot(i, (int)v, Option(s, "size"), Seed(s)), whole: true),
             Make("strike", "strike=N: N pen lines through text lines (blue, black or red; color=blue|black|red|green|any); seed=N",
                 "Struck through", "Lines", 0, 20, 1, ["seed", "color"], (i, s, v) => PaperImageOps.Pen(i, PaperImageOps.PenMark.Strike, (int)v, PenColor(s), Seed(s)), whole: true),
             Make("underline", "underline=N: N pen lines under text lines; color as strike; seed=N",
@@ -45,6 +45,9 @@ internal static class PaperTransforms
                 "Punch holes", "Holes", 0, 4, 1, ["seed", "fill"], (i, s, v) => PaperImageOps.Holes(i, (int)v, Fill(s), Seed(s)), whole: true),
             Make("scratch", "scratch=N: N thin scratches, light or dark, a long way across the page; seed=N",
                 "Scratches", "Scratches", 0, 40, 1, ["seed"], (i, s, v) => PaperImageOps.Scratch(i, (int)v, Seed(s)), whole: true),
+            Make("taped", "taped=N: the page ripped right across N times (1 to 3) and taped back together: a jagged tear through the text, its pieces up to gap=G pixels apart (3) and shifted up to shift=S pixels along it (3), the background showing through, strips of clear, yellowed or matte tape over it; letters on the tear are split but readable; fill=V the background; seed=N",
+                "Ripped and taped", "Tears", 0, 3, 1, ["seed", "fill", "gap", "shift"],
+                (i, s, v) => PaperImageOps.Taped(i, (int)v, Option(s, "gap"), Option(s, "shift"), Fill(s), Seed(s)), whole: true),
             Make("shadow", "shadow=S: a shadow along one or two edges (a scanner lid or a book's gutter), S of the page wide (0 to 0.3); seed=N",
                 "Edge shadow", "Width", 0, 0.3, 0.01, ["seed"], (i, s, v) => PaperImageOps.Shadow(i, v, Seed(s))),
             Make("streak", "streak=N: N streaks down the page from a dirty scanner glass or roller; seed=N",
@@ -96,15 +99,27 @@ internal static class PaperTransforms
                     PenColor(s);
                 }
 
-                foreach (string key in keys.Where(k => k is "length" or "size"))
+                foreach (string key in keys.Where(Options.ContainsKey))
                 {
-                    _ = key == "length" ? OptionNumber(s, key, 30, 2, 200) : OptionNumber(s, key, 5, 1, 30);
+                    _ = Option(s, key);
                 }
             },
             (i, s) => apply(i, s, s.Number()))
         {
             Label = label, Parameters = parameters,
         };
+    }
+
+    // The number options the paper effects take: what each is when not given, and its range.
+    private static readonly Dictionary<string, (double Otherwise, double Min, double Max)> Options = new()
+    {
+        ["length"] = (30, 2, 200), ["size"] = (5, 1, 30), ["gap"] = (3, 0, 12), ["shift"] = (3, 0, 12),
+    };
+
+    private static double Option(ImageTransformStep step, string key)
+    {
+        var (otherwise, min, max) = Options[key];
+        return OptionNumber(step, key, otherwise, min, max);
     }
 
     private static string PenColor(ImageTransformStep step)
@@ -123,15 +138,15 @@ internal static class PaperTransforms
             "strike=1..3@0.5,underline=1..4@0.5,cross=1..1@0.25,highlight=1..4@0.5,scribble=1..4@0.4,rotate=-0.8..0.8@0.1,jpeg=60..95@0.5",
             "a page someone worked on: lines struck through, underlined, crossed out, highlighted, notes in the margins"));
         ScanProfiles.Register(new ScanProfile("damaged",
-            "stain=1..2@0.3,dropout=0.02..0.1@0.3,fold=1..2@0.4,tear=0.01..0.04@0.6,holes=2..3@0.35,scratch=2..12@0.5,rotate=-1.2..1.2@0.2,jpeg=50..90@0.5",
-            "a damaged paper: torn edges, punch holes, scratches, folds, stains, worn ink"));
+            "stain=1..2@0.3,dropout=0.02..0.1@0.3,fold=1..2@0.4,tear=0.01..0.04@0.6,holes=2..3@0.35,scratch=2..12@0.5,taped=1..2@0.35,rotate=-1.2..1.2@0.2,jpeg=50..90@0.5",
+            "a damaged paper: torn edges, punch holes, scratches, ripped and taped back, folds, stains, worn ink"));
         ScanProfiles.Register(new ScanProfile("scanner",
             "light=0.1..0.4@0.6,curl=0.2..0.8@0.3,shadow=0.04..0.2@0.6,streak=1..6@0.4,rotate=-1.0..1.0@0.2,noise=2..6@0.5,jpeg=45..90@0.6",
             "a hasty scan or photo: an edge shadow, uneven light, a curled edge, streaks from the glass"));
         ScanProfiles.Register(new ScanProfile("mixed",
             "tint=0.1..0.5@0.2,stain=1..3@0.1,strike=1..2@0.12,underline=1..3@0.15,cross=1..1@0.06,highlight=1..3@0.15,scribble=1..3@0.12,"
             + "fade=0.2..0.7@0.2,uneven=0..0.7,dropout=0.02..0.15@0.15,smudge=1..3@0.15,blot=1..2@0.1,bleed=0.05..0.2@0.1,wrinkle=0.1..0.6@0.2,"
-            + "fold=1..2@0.15,tear=0.01..0.035@0.12,holes=2..3@0.1,scratch=1..8@0.15,curl=0.2..0.6@0.08,shadow=0.04..0.15@0.15,light=0.1..0.35@0.2,"
+            + "fold=1..2@0.15,tear=0.01..0.035@0.12,holes=2..3@0.1,scratch=1..8@0.15,taped=1..1@0.06,curl=0.2..0.6@0.08,shadow=0.04..0.15@0.15,light=0.1..0.35@0.2,"
             + "streak=1..4@0.1,speckle=20..300@0.25,rotate=-1.5..1.5@0.15,perspective=0..0.012@0.05,blur=0.3..1.0@0.3,noise=2..7@0.3,"
             + "lowres=0.5..0.9@0.2,jpeg=40..92@0.5",
             "a shuffle of everything: each paper, pen, damage and scanner effect at a small chance of its own, so pages get every mix"));
@@ -730,6 +745,142 @@ internal static class PaperImageOps
         }
 
         return PillowImageOps.FromBytes(planes, h, w);
+    }
+
+    /// <summary>
+    /// A page ripped right across and taped back together: each tear a jagged line through the page (its text too), the
+    /// piece beyond it moved up to <paramref name="gap"/> pixels away and <paramref name="shift"/> along it, the
+    /// background through the gap (a light one grey, the edges' shadow), the torn edges a little lighter (the paper's fibres), then two to four strips of
+    /// tape over each tear, all clear, yellowed or matte, the text under them still seen.
+    /// </summary>
+    public static ImageData Taped(ImageData image, int count, double gap, double shift, int? fill, int seed)
+    {
+        if (count == 0)
+        {
+            return image;
+        }
+
+        var planes = PillowImageOps.Bytes(image);
+        int w = image.Width, h = image.Height, side = Math.Min(w, h);
+        var random = new Random(seed);
+        // Through the gap: the background, a light one seen grey (the shadow of the paper's edges), so the tear shows.
+        var background = Background(planes.Length, fill, random);
+        double shade = background[0] > 200 ? 0.55 + 0.2 * random.NextDouble() : 1;
+        background = [.. background.Select(b => (byte)(b * shade))];
+        var tears = new List<(bool Across, double[] Line, int Apart)>(count);
+        for (int k = 0; k < count; k++)
+        {
+            bool across = random.NextDouble() < 0.7;   // most pages are ripped across their height
+            int length = across ? w : h, extent = across ? h : w;
+
+            // A jagged line: a slow bend, a faster wave, a random walk and fibre-sized jitter.
+            double start = extent * (0.2 + 0.6 * random.NextDouble()), drift = extent * (random.NextDouble() - 0.5) * 0.12;
+            double a1 = side * (0.004 + 0.012 * random.NextDouble()), p1 = length * (0.25 + 0.5 * random.NextDouble()), f1 = random.NextDouble() * 6.3;
+            double a2 = side * (0.002 + 0.005 * random.NextDouble()), p2 = length * (0.06 + 0.1 * random.NextDouble()), f2 = random.NextDouble() * 6.3;
+            var line = new double[length];
+            double walk = 0;
+            for (int u = 0; u < length; u++)
+            {
+                walk = Math.Clamp(walk + (random.NextDouble() - 0.5) * 1.2, -3, 3);
+                line[u] = start + drift * u / length + a1 * Math.Sin(f1 + u * 6.283 / p1) + a2 * Math.Sin(f2 + u * 6.283 / p2) + walk + (random.NextDouble() - 0.5) * 0.8;
+            }
+
+            int along = (int)Math.Round((random.NextDouble() * 2 - 1) * shift), apart = (int)Math.Round(gap * (0.35 + 0.65 * random.NextDouble()));
+            var source = planes.Select(p => (byte[])p.Clone()).ToArray();
+            HostParallel.For(h, ScanImageOps.Grain(w), (first, last) =>
+            {
+                for (int y = first; y < last; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        int u = across ? x : y, v = across ? y : x, i = y * w + x;
+                        double rim = line[u] - v;   // the first piece: on or before the line
+                        int from = i;
+                        if (rim < 0)
+                        {
+                            // The second piece, moved: where it was, unless that is off the page or on the first piece's side.
+                            int su = u - along, sv = v - apart;
+                            rim = su >= 0 && su < length && sv >= 0 ? sv - line[su] : -1;
+                            if (rim <= 0)
+                            {
+                                for (int c = 0; c < planes.Length; c++)
+                                {
+                                    planes[c][i] = background[c];
+                                }
+
+                                continue;
+                            }
+
+                            from = across ? sv * w + su : su * w + sv;
+                        }
+
+                        for (int c = 0; c < planes.Length; c++)
+                        {
+                            byte value = source[c][from];
+                            planes[c][i] = rim < 1.5 ? (byte)Math.Min(255, value + 14) : value;
+                        }
+                    }
+                }
+            });
+            tears.Add((across, line, apart));
+        }
+
+        // The tape: one kind on the page; strips across each tear, now and then one along it.
+        double kind = random.NextDouble();
+        foreach (var (across, line, apart) in tears)
+        {
+            int strips = 2 + random.Next(3);
+            for (int s = 0; s < strips; s++)
+            {
+                double uc = line.Length * (s + 0.5 + (random.NextDouble() - 0.5) * 0.5) / strips;
+                double vc = line[Math.Clamp((int)uc, 0, line.Length - 1)] + apart / 2.0;
+                bool lengthwise = random.NextDouble() < 0.15;
+                double angle = (lengthwise ? 0 : Math.PI / 2) + (random.NextDouble() - 0.5) * 0.5;   // from the tear's direction
+                double tapeLength = side * (lengthwise ? 0.18 + 0.15 * random.NextDouble() : 0.07 + 0.07 * random.NextDouble());
+                double tapeWidth = side * (0.022 + 0.015 * random.NextDouble());
+                double du = Math.Cos(angle), dv = Math.Sin(angle);
+                Tape(planes, w, h, across ? uc : vc, across ? vc : uc, across ? du : dv, across ? dv : du, tapeLength, tapeWidth, kind);
+            }
+        }
+
+        return PillowImageOps.FromBytes(planes, h, w);
+    }
+
+    // A strip of tape centred on (cx, cy) along (ax, ay): clear (a faint sheen), yellowed (old tape) or matte (frosted),
+    // its long edges a little darker and its ends cut in teeth, as a dispenser leaves them.
+    private static void Tape(byte[][] planes, int w, int h, double cx, double cy, double ax, double ay, double length, double width, double kind)
+    {
+        float[] tint = kind < 0.45 ? [1f, 1f, 1f] : kind < 0.8 ? (planes.Length == 3 ? [0.98f, 0.94f, 0.8f] : [0.93f]) : [1f, 1f, 1f];
+        float lift = kind < 0.45 ? 0.05f : kind < 0.8 ? 0.02f : 0.16f;   // toward white: matte tape the most
+        double half = length / 2, across = width / 2, reach = Math.Sqrt((half + 3) * (half + 3) + across * across);
+        int x0 = Math.Max(0, (int)(cx - reach)), x1 = Math.Min(w - 1, (int)(cx + reach)), y0 = Math.Max(0, (int)(cy - reach)), y1 = Math.Min(h - 1, (int)(cy + reach));
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                double px = x + 0.5 - cx, py = y + 0.5 - cy;
+                double a = px * ax + py * ay, b = -px * ay + py * ax;
+                if (Math.Abs(b) > across)
+                {
+                    continue;
+                }
+
+                double teeth = Math.Abs((Math.Abs(b) / 2 % 2) - 1) * 2;   // a 4-pixel zigzag, 2 deep
+                double end = half - teeth;
+                if (Math.Abs(a) > end)
+                {
+                    continue;
+                }
+
+                bool edge = Math.Abs(b) > across - 1.2 || Math.Abs(a) > end - 1;
+                for (int c = 0; c < planes.Length; c++)
+                {
+                    ref byte v = ref planes[c][y * w + x];
+                    float value = (v + (255 - v) * lift) * tint[Math.Min(c, tint.Length - 1)] * (edge ? 0.92f : 1f);
+                    v = (byte)Math.Clamp(value + 0.5f, 0, 255);
+                }
+            }
+        }
     }
 
     // What is seen through a hole or past a torn edge: the given grey, else a dark or a white scanner lid.

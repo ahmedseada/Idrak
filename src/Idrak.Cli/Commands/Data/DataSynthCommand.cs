@@ -39,9 +39,10 @@ internal sealed class DataSynthCommand : Command
               --layout NAME       a page layout, again for more (letter and plain; a name twice is drawn twice as often)
               --scan PROFILE      a look, again for more, one drawn per page: a name (none: as drawn, clean, office, old,
                                   pale: faint ink, worn: broken strokes, fax, handled: wrinkles, folds, smudges, marked:
-                                  pen strikes, crosses, highlighter, damaged: tears, holes, scratches, scanner: shadows,
-                                  streaks, curl, mixed: every effect at a small chance) or one written as text,
-                                  "rotate=-1.5..1.5@0.2,fade=0.3..0.7@0.5,strike=1..2@0.3" (all of them, mixed three
+                                  pen strikes, crosses, highlighter, damaged: tears, holes, scratches, ripped and
+                                  taped, scanner: shadows, streaks, curl, mixed: every effect at a small chance), names
+                                  joined with + for several on one page ("damaged+marked"), or one written as text,
+                                  "rotate=-1.5..1.5@0.2,fade=0.3..0.7@0.5,taped=1..2@0.5" (all of them, mixed three
                                   times; a name twice, twice as often)
               --grey P            the share of pages in grey (0.3)
               --page SETTINGS     page settings, KEY=VALUE,...: width, height, size, spacing, margin, ink, justify,
