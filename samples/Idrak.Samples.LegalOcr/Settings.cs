@@ -342,7 +342,7 @@ public sealed record SyntheticSettings
     /// <summary>The page layouts drawn from ("letter", "plain"); empty: the library's (letter and plain). Empty by default, as configuration adds to a list rather than replacing it.</summary>
     public List<string> Layouts { get; init; } = [];
 
-    /// <summary>The scan profiles drawn from: names ("clean", "office", "old", "fax", "none") or profiles written as text; empty: the library's (clean, office, old).</summary>
+    /// <summary>The scan profiles drawn from: names ("none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "mixed") or profiles written as text, one drawn per page (a name twice, twice as often); empty: the library's (every look, "mixed" three times).</summary>
     public List<string> Scans { get; init; } = [];
 
     /// <summary>The share of pages drawn in grey.</summary>

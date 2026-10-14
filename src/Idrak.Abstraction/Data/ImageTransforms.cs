@@ -17,7 +17,9 @@ namespace Idrak.Abstraction.Data;
 /// <c>pad</c>, <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>equalize</c>, <c>gamma</c>,
 /// <c>blur</c>, <c>unsharp</c>, <c>median</c>, <c>min_filter</c>, <c>max_filter</c>, <c>binarize</c>, <c>invert</c>,
 /// <c>jpeg</c>; and scan degradations for pages made to look scanned (Idrak.Imaging): <c>rotate</c>, <c>perspective</c>,
-/// <c>noise</c>, <c>speckle</c>, <c>fade</c>, <c>tint</c>, <c>stain</c>, <c>lowres</c>, <c>bleed</c> (mixed by
+/// <c>noise</c>, <c>speckle</c>, <c>dropout</c>, <c>fade</c>, <c>tint</c>, <c>stain</c>, <c>lowres</c>, <c>bleed</c>, and what
+/// happens to a paper: <c>wrinkle</c>, <c>fold</c>, <c>smudge</c>, <c>blot</c>, <c>strike</c>, <c>underline</c>, <c>cross</c>, <c>scribble</c>,
+/// <c>highlight</c>, <c>tear</c>, <c>holes</c>, <c>scratch</c>, <c>shadow</c>, <c>streak</c>, <c>light</c>, <c>curl</c> (mixed by
 /// <see cref="ScanProfiles"/>). Each describes its inputs (<see cref="Parameters"/>), so a program can offer them without knowing the
 /// transform. A transform knows nothing of
 /// models: a fine-tune that wants its scans prepared a certain way is given a pipeline by the application.

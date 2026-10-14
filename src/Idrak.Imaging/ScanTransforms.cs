@@ -7,7 +7,7 @@ namespace Idrak.Imaging;
 
 /// <summary>
 /// The library's scan degradations as image transforms (<see cref="ImageTransforms"/>), for pages made to look scanned
-/// (plan 18, phase 4): <c>rotate</c>, <c>perspective</c>, <c>noise</c>, <c>speckle</c>, <c>fade</c>, <c>tint</c>,
+/// (plan 18, phase 4): <c>rotate</c>, <c>perspective</c>, <c>noise</c>, <c>speckle</c>, <c>dropout</c>, <c>fade</c>, <c>tint</c>,
 /// <c>stain</c>, <c>lowres</c> and <c>bleed</c>; with the Pillow ones (<c>blur</c>, <c>jpeg</c>, <c>binarize</c>, ...) they
 /// make the scan profiles (<see cref="ScanProfiles"/>). The random ones take a <c>seed</c> option: the same seed, the
 /// same pixels, on every machine and with any number of threads.
@@ -38,6 +38,13 @@ internal static class ScanTransforms
             {
                 Label = "Specks", Parameters = [Number("Specks a megapixel", 0, 100000, 10, "dust and toner"), SeedInput,
                     new ImageTransformParameter("size", "Largest speck radius, pixels", ImageTransformInput.Number) { Min = 0.3, Max = 20, Step = 0.1, Optional = true }],
+            },
+            new LibraryImageTransforms.Transform("dropout", "dropout=D: worn ink: patches over about D of the page (0 to 0.6) lose part of their ink, strength=S (0.85) at most, up to size=R pixels across (6), so strokes break and letters thin while staying readable; the paper is left as it is; seed=N",
+                ["seed", "size", "strength"], s => { Check(s, 0, 0.6); PatchSize(s); Strength(s); }, (i, s) => ScanImageOps.Dropout(i, s.Number(), PatchSize(s), Strength(s), Seed(s)))
+            {
+                Label = "Worn ink (dropout)", Parameters = [Number("Share of the page", 0, 0.6, 0.01, "0.05 to 0.25: broken strokes, thinned letters"), SeedInput,
+                    new ImageTransformParameter("size", "Largest patch, pixels", ImageTransformInput.Number) { Min = 1, Max = 60, Step = 0.5, Optional = true },
+                    new ImageTransformParameter("strength", "Ink taken at most", ImageTransformInput.Number) { Min = 0, Max = 1, Step = 0.05, Optional = true }],
             },
             new LibraryImageTransforms.Transform("fade", "fade=F: ink lightened toward the paper by F (0 to 0.95); uneven=U (0 to 1) varies it over the page, smoothly; seed=N",
                 ["seed", "uneven"], s => { Check(s, 0, 0.95); Uneven(s); }, (i, s) => ScanImageOps.Fade(i, s.Number(), Uneven(s), Seed(s)))
@@ -72,31 +79,42 @@ internal static class ScanTransforms
         {
             ImageTransforms.Register(transform);
         }
+
+        PaperTransforms.RegisterDefaults();   // what happens to a paper: handled, marked, damaged, scanned
     }
 
     /// <summary>The library's scan profiles (<see cref="ScanProfiles"/>).</summary>
     internal static void RegisterProfiles()
     {
-        ScanProfiles.Register(new ScanProfile("clean", "rotate=-0.5..0.5@0.7,jpeg=75..95@0.5", "a careful scan: a slight turn, light JPEG"));
+        // Each page draws one profile. Real scans are mostly straight: a page is turned in about one case in six over the
+        // seven looks (none never, clean and pale 10 %, worn 15 %, fax 25 %, office and old 30 %), and by little.
+        ScanProfiles.Register(new ScanProfile("clean", "rotate=-0.4..0.4@0.1,jpeg=75..95@0.5", "a careful scan: rarely a slight turn, light JPEG"));
         ScanProfiles.Register(new ScanProfile("office",
-            "rotate=-2..2@0.85,perspective=0..0.015@0.25,blur=0.3..1@0.5,noise=2..7@0.6,lowres=0.5..0.9@0.35,jpeg=40..90@0.7",
-            "an office scanner or a phone: turns, a little perspective, blur, grain, lower resolution, JPEG"));
+            "rotate=-1.5..1.5@0.3,perspective=0..0.015@0.1,blur=0.3..1@0.5,noise=2..7@0.6,lowres=0.5..0.9@0.35,jpeg=40..90@0.7",
+            "an office scanner or a phone: sometimes a turn, rarely perspective, blur, grain, lower resolution, JPEG"));
         ScanProfiles.Register(new ScanProfile("old",
-            "tint=0.2..0.6@0.8,stain=1..4@0.4,fade=0.2..0.6@0.8,uneven=0..0.6,bleed=0.05..0.25@0.35,rotate=-2.5..2.5@0.8,speckle=20..400@0.6,blur=0.4..1.2@0.6,noise=3..9@0.6,lowres=0.4..0.8@0.5,jpeg=35..80@0.7",
-            "an old letter: tinted, stained paper, faded and uneven ink, bleed-through, specks, turns, blur, grain, low resolution, JPEG"));
+            "tint=0.2..0.6@0.8,stain=1..4@0.4,fade=0.2..0.6@0.8,uneven=0..0.6,bleed=0.05..0.25@0.35,dropout=0.02..0.12@0.4,rotate=-2.0..2.0@0.3,speckle=20..400@0.6,blur=0.4..1.2@0.6,noise=3..9@0.6,lowres=0.4..0.8@0.5,jpeg=35..80@0.7",
+            "an old letter: tinted, stained paper, faded, uneven and worn ink, bleed-through, specks, sometimes a turn, blur, grain, low resolution, JPEG"));
+        ScanProfiles.Register(new ScanProfile("pale",
+            "fade=0.45..0.8,uneven=0.2..0.8,tint=0.1..0.4@0.5,blur=0.3..0.8@0.4,rotate=-0.8..0.8@0.1,noise=2..6@0.5,jpeg=50..90@0.6",
+            "faint ink over the whole page, lighter in places (a pale copy or a weak printer)"));
+        ScanProfiles.Register(new ScanProfile("worn",
+            "dropout=0.05..0.25,size=3..8,fade=0.15..0.5@0.6,uneven=0..0.6,speckle=50..300@0.5,blur=0.3..0.9@0.4,rotate=-1.0..1.0@0.15,jpeg=50..90@0.5",
+            "worn ink: broken strokes and thinned letters, patchy fading, specks"));
         ScanProfiles.Register(new ScanProfile("fax",
-            "rotate=-1.5..1.5@0.8,lowres=0.5..0.75,binarize=150..190,speckle=50..400@0.7",
-            "a fax: black and white at low resolution, turned, with specks"));
+            "rotate=-1.2..1.2@0.25,lowres=0.5..0.75,binarize=150..190,speckle=50..400@0.7",
+            "a fax: black and white at low resolution, with broken strokes and specks, now and then turned"));
+        PaperTransforms.RegisterProfiles();   // handled, marked, damaged, scanner, mixed
     }
 
-    private static readonly ImageTransformParameter SeedInput = new("seed", "Seed", ImageTransformInput.Integer) { Min = 0, Max = int.MaxValue, Step = 1, Optional = true };
+    internal static readonly ImageTransformParameter SeedInput = new("seed", "Seed", ImageTransformInput.Integer) { Min = 0, Max = int.MaxValue, Step = 1, Optional = true };
 
-    private static readonly ImageTransformParameter FillInput = new("fill", "Fill, grey level (empty: the paper's)", ImageTransformInput.Integer) { Min = 0, Max = 255, Step = 1, Optional = true };
+    internal static readonly ImageTransformParameter FillInput = new("fill", "Fill, grey level (empty: the paper's)", ImageTransformInput.Integer) { Min = 0, Max = 255, Step = 1, Optional = true };
 
-    private static ImageTransformParameter Number(string label, double min, double max, double step, string help) =>
+    internal static ImageTransformParameter Number(string label, double min, double max, double step, string help) =>
         new("", label, ImageTransformInput.Number) { Min = min, Max = max, Step = step, Help = help.Length == 0 ? null : help };
 
-    private static double Check(ImageTransformStep step, double min, double max, string? fill = null)
+    internal static double Check(ImageTransformStep step, double min, double max, string? fill = null)
     {
         double v = step.Number();
         if (!(v >= min && v <= max))
@@ -113,20 +131,24 @@ internal static class ScanTransforms
         return v;
     }
 
-    private static int Seed(ImageTransformStep step) => step.Option("seed") is not { } text ? 0
+    internal static int Seed(ImageTransformStep step) => step.Option("seed") is not { } text ? 0
         : int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int seed) ? seed
         : throw new ArgumentException($"{step.Name}'s seed is a whole number, not '{text}'.");
 
-    private static int? Fill(ImageTransformStep step) => step.Option("fill") is not { } text ? null
+    internal static int? Fill(ImageTransformStep step) => step.Option("fill") is not { } text ? null
         : int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v is >= 0 and <= 255 ? v
         : throw new ArgumentException($"{step.Name}'s fill is a grey level from 0 to 255, not '{text}'.");
 
-    private static double OptionNumber(ImageTransformStep step, string key, double otherwise, double min, double max) =>
+    internal static double OptionNumber(ImageTransformStep step, string key, double otherwise, double min, double max) =>
         step.Option(key) is not { } text ? otherwise
         : double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && v >= min && v <= max ? v
         : throw new ArgumentException($"{step.Name}'s {key} is from {min.ToString(CultureInfo.InvariantCulture)} to {max.ToString(CultureInfo.InvariantCulture)}, not '{text}'.");
 
     private static double Size(ImageTransformStep step) => OptionNumber(step, "size", 1.5, 0.3, 20);
+
+    private static double PatchSize(ImageTransformStep step) => OptionNumber(step, "size", 6, 1, 60);
+
+    private static double Strength(ImageTransformStep step) => OptionNumber(step, "strength", 0.85, 0, 1);
 
     private static double Uneven(ImageTransformStep step) => OptionNumber(step, "uneven", 0, 0, 1);
 
@@ -154,7 +176,7 @@ internal static class ScanTransforms
 internal static class ScanImageOps
 {
     // Rows a worker takes at least: about 32 thousand pixels.
-    private static int Grain(int width) => Math.Max(1, (1 << 15) / Math.Max(1, width));
+    internal static int Grain(int width) => Math.Max(1, (1 << 15) / Math.Max(1, width));
 
     /// <summary>Each plane's paper level: its 90th percentile (most of a page is paper), from a sample of the pixels.</summary>
     internal static byte[] PaperLevels(byte[][] planes, int size)
@@ -189,7 +211,7 @@ internal static class ScanImageOps
         return paper;
     }
 
-    private static byte[] Fills(byte[][] planes, int size, int? fill) =>
+    internal static byte[] Fills(byte[][] planes, int size, int? fill) =>
         fill is { } f ? [.. Enumerable.Repeat((byte)f, planes.Length)] : PaperLevels(planes, size);
 
     /// <summary>The image turned <paramref name="degrees"/> counterclockwise about its centre (bilinear, same size).</summary>
@@ -295,7 +317,21 @@ internal static class ScanImageOps
     }
 
     // Each output pixel sampled (bilinear) where `map` takes it in the input; outside the input, the fill.
-    private static ImageData Warp(ImageData image, double[] map, int? fill)
+    private static ImageData Warp(ImageData image, double[] map, int? fill) => WarpRows(image, (y, sxs, sys) =>
+    {
+        for (int x = 0; x < sxs.Length; x++)
+        {
+            double d = map[6] * x + map[7] * y + map[8];
+            sxs[x] = (map[0] * x + map[1] * y + map[2]) / d;
+            sys[x] = (map[3] * x + map[4] * y + map[5]) / d;
+        }
+    }, fill);
+
+    /// <summary>
+    /// Each output pixel sampled (bilinear) where <paramref name="map"/> says, row by row (it fills a row's source x and
+    /// y); outside the image, the fill (the paper's level unless given).
+    /// </summary>
+    internal static ImageData WarpRows(ImageData image, Action<int, double[], double[]> map, int? fill)
     {
         var planes = PillowImageOps.Bytes(image);
         int w = image.Width, h = image.Height, channels = planes.Length;
@@ -315,12 +351,14 @@ internal static class ScanImageOps
             var fys = new float[w];
             var xs = new int[w];
             var ys = new int[w];
+            var sxs = new double[w];
+            var sys = new double[w];
             for (int y = first; y < last; y++)
             {
+                map(y, sxs, sys);
                 for (int x = 0; x < w; x++)
                 {
-                    double d = map[6] * x + map[7] * y + map[8];
-                    double sx = (map[0] * x + map[1] * y + map[2]) / d, sy = (map[3] * x + map[4] * y + map[5]) / d;
+                    double sx = sxs[x], sy = sys[x];
                     int x0 = (int)Math.Floor(sx), y0 = (int)Math.Floor(sy);
                     fxs[x] = (float)(sx - x0);
                     fys[x] = (float)(sy - y0);
@@ -362,7 +400,7 @@ internal static class ScanImageOps
         return PillowImageOps.FromBytes(output, h, w);
     }
 
-    private static float At(byte[] plane, int w, int h, int x, int y, byte fill) =>
+    internal static float At(byte[] plane, int w, int h, int x, int y, byte fill) =>
         (uint)x < (uint)w && (uint)y < (uint)h ? plane[y * w + x] : fill;
 
     // 65536 quantiles of the standard normal distribution (the midpoints of equal-probability slices), made once: a
@@ -490,7 +528,7 @@ internal static class ScanImageOps
     }
 
     // A smooth field in [0, 1] over the page: a coarse grid of random values, bilinear between them.
-    private static float[] SmoothGrid(int seed, out int cells)
+    internal static float[] SmoothGrid(int seed, out int cells)
     {
         cells = 6;
         var random = new Random(seed);
@@ -503,7 +541,7 @@ internal static class ScanImageOps
         return grid;
     }
 
-    private static float Smooth(float[] grid, int cells, float u, float v)
+    internal static float Smooth(float[] grid, int cells, float u, float v)
     {
         float gx = u * cells, gy = v * cells;
         int ix = Math.Min(cells - 1, (int)gx), iy = Math.Min(cells - 1, (int)gy);
@@ -512,6 +550,60 @@ internal static class ScanImageOps
         float top = grid[iy * n + ix] + (grid[iy * n + ix + 1] - grid[iy * n + ix]) * fx;
         float bottom = grid[(iy + 1) * n + ix] + (grid[(iy + 1) * n + ix + 1] - grid[(iy + 1) * n + ix]) * fx;
         return top + (bottom - top) * fy;
+    }
+
+    /// <summary>
+    /// Worn ink: soft elliptical patches over about <paramref name="share"/> of the page, each taking up to
+    /// <paramref name="strength"/> of the ink under it toward the paper; the paper itself is left alone.
+    /// </summary>
+    public static ImageData Dropout(ImageData image, double share, double size, double strength, int seed)
+    {
+        if (share == 0 || strength == 0)
+        {
+            return image;
+        }
+
+        var planes = PillowImageOps.Bytes(image);
+        int w = image.Width, h = image.Height;
+        var paper = PaperLevels(planes, w * h);
+        var random = new Random(seed);
+        double meanArea = Math.PI * Math.Pow(size * 0.7, 2) * 0.7;
+        int count = (int)Math.Round(share * w * h / Math.Max(1, meanArea));
+        for (int k = 0; k < count; k++)
+        {
+            double cx = random.NextDouble() * w, cy = random.NextDouble() * h;
+            double rx = size * (0.4 + 0.6 * random.NextDouble()), ry = rx * (0.4 + 0.6 * random.NextDouble());
+            double angle = random.NextDouble() * Math.PI, ca = Math.Cos(angle), sa = Math.Sin(angle);
+            float take = (float)(strength * (0.5 + 0.5 * random.NextDouble()));
+            int reach = (int)Math.Ceiling(Math.Max(rx, ry)) + 1;
+            int x0 = Math.Max(0, (int)cx - reach), x1 = Math.Min(w - 1, (int)cx + reach);
+            int y0 = Math.Max(0, (int)cy - reach), y1 = Math.Min(h - 1, (int)cy + reach);
+            for (int y = y0; y <= y1; y++)
+            {
+                for (int x = x0; x <= x1; x++)
+                {
+                    double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+                    double u = (dx * ca + dy * sa) / rx, v = (-dx * sa + dy * ca) / ry;
+                    double d = Math.Sqrt(u * u + v * v);
+                    float cover = (float)Math.Clamp((1 - d) * Math.Min(rx, ry) + 0.5, 0, 1) * take;
+                    if (cover <= 0)
+                    {
+                        continue;
+                    }
+
+                    for (int c = 0; c < planes.Length; c++)
+                    {
+                        ref byte p = ref planes[c][y * w + x];
+                        if (p < paper[c])
+                        {
+                            p = (byte)(p + (paper[c] - p) * cover + 0.5f);
+                        }
+                    }
+                }
+            }
+        }
+
+        return PillowImageOps.FromBytes(planes, h, w);
     }
 
     /// <summary>Faded ink: every pixel darker than the paper brought toward it by <paramref name="amount"/>, varied over the page by <paramref name="uneven"/>.</summary>

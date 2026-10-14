@@ -219,10 +219,13 @@ public sealed class ScanProfile : IScanProfile
 }
 
 /// <summary>
-/// The scan profiles, by name. Built in (Idrak.Imaging): "clean" (a careful scan: a slight turn, light JPEG), "office"
-/// (an office scanner or a phone: turns, blur, noise, JPEG, some lower resolution), "old" (an old letter: faded and
-/// uneven ink, tinted and stained paper, specks, bleed-through, low resolution) and "fax" (black and white at low
-/// resolution, specks). Register another, or one of those names over the library's, with <see cref="Register"/>.
+/// The scan profiles, by name. Built in (Idrak.Imaging): "clean" (a careful scan: rarely a slight turn, light
+/// JPEG), "office" (an office scanner or a phone: sometimes a turn, blur, noise, JPEG, some lower resolution), "old" (an old letter:
+/// faded, uneven and worn ink, tinted and stained paper, specks, bleed-through, low resolution), "pale" (faint ink over
+/// the whole page), "worn" (broken strokes and thinned letters), "fax" (black and white at low resolution, specks),
+/// "handled" (wrinkles, folds, smudges, ink blots), "marked" (struck through, underlined, crossed out, highlighted,
+/// notes in the margins), "damaged" (torn edges, punch holes, scratches), "scanner" (an edge shadow, streaks, uneven
+/// light, a curled edge) and "mixed" (every effect at a small chance of its own). Register another, or one of those names over the library's, with <see cref="Register"/>.
 /// </summary>
 public static class ScanProfiles
 {
