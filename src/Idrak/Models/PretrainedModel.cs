@@ -9,6 +9,85 @@ using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 
+/// <summary>
+/// The files a model made from a spec carries beside its weights (<see cref="PretrainedModel.Create"/>): its tokenizer,
+/// chat template and the tokens that start, end and pad text.
+/// </summary>
+public sealed record ModelFiles
+{
+    /// <summary>
+    /// The template created models get when none is given: ChatML turns (<c>&lt;|im_start|&gt;role\n … &lt;|im_end|&gt;\n</c>),
+    /// content as a string or a list of parts, an image part written as <c>&lt;image&gt;</c> (a vision family's
+    /// marker), and the assistant's header when a generation prompt is asked for. The tokenizer needs
+    /// <c>&lt;|im_start|&gt;</c> and <c>&lt;|im_end|&gt;</c> as tokens.
+    /// </summary>
+    public const string ChatMLWithParts =
+        "{%- for message in messages -%}\n"
+        + "{{- '<|im_start|>' + message['role'] + '\\n' -}}\n"
+        + "{%- if message['content'] is string -%}\n"
+        + "{{- message['content'] -}}\n"
+        + "{%- else -%}\n"
+        + "{%- for item in message['content'] -%}\n"
+        + "{%- if item['type'] == 'image' -%}\n"
+        + "{{- '<image>' -}}\n"
+        + "{%- elif item['type'] == 'text' -%}\n"
+        + "{{- item['text'] -}}\n"
+        + "{%- endif -%}\n"
+        + "{%- endfor -%}\n"
+        + "{%- endif -%}\n"
+        + "{{- '<|im_end|>\\n' -}}\n"
+        + "{%- endfor -%}\n"
+        + "{%- if add_generation_prompt -%}\n"
+        + "{{- '<|im_start|>assistant\\n' -}}\n"
+        + "{%- endif -%}\n";
+
+    /// <summary>The tokenizer (one read from a tokenizer.json, or one a <see cref="TokenizerTrainers">trainer</see> learned).</summary>
+    public required BpeTokenizer Tokenizer { get; init; }
+
+    /// <summary>The Jinja chat template, or null for <see cref="ChatMLWithParts"/>.</summary>
+    public string? ChatTemplate { get; init; }
+
+    /// <summary>The token that begins a text (written as bos), or null for none.</summary>
+    public string? BosToken { get; init; }
+
+    /// <summary>The token that ends a turn: generation stops at it.</summary>
+    public string EosToken { get; init; } = "<|im_end|>";
+
+    /// <summary>More tokens generation stops at (a document's end, for example "&lt;/s&gt;"), when the tokenizer has them.</summary>
+    public IReadOnlyList<string> StopTokens { get; init; } = [];
+
+    /// <summary>The padding token, or null for none.</summary>
+    public string? PadToken { get; init; }
+
+    /// <summary>Whether the template's text is preceded by the bos token when encoded (tokenizer_config.json's add_bos_token).</summary>
+    public bool AddBosToken { get; init; }
+
+    /// <summary>More files to copy into the model folder, by the name they get there (preprocessor_config.json, for example).</summary>
+    public IReadOnlyDictionary<string, string> Extra { get; init; } = new Dictionary<string, string>();
+}
+
+/// <summary>Settings for <see cref="PretrainedModel.Create"/>.</summary>
+public sealed record CreateOptions
+{
+    /// <summary>Where the created model is loaded (the default device when null); its weights are drawn on the CPU and written first.</summary>
+    public Device? Device { get; init; }
+
+    /// <summary>The seed the weights are drawn from.</summary>
+    public int Seed { get; init; }
+
+    /// <summary>
+    /// The standard deviation of the normal draw of every weight matrix and embedding table (biases zero, norm gains one),
+    /// as GPT-2 and nanoGPT initialize; null for Xavier-uniform matrices and ±0.02 embeddings.
+    /// </summary>
+    public float? InitStd { get; init; } = 0.02f;
+
+    /// <summary>How the weights are stored in model.safetensors (float32 for a model that will train, the default).</summary>
+    public SafeTensorType Type { get; init; } = SafeTensorType.F32;
+
+    /// <summary>Write into a folder that already holds files (they are replaced); otherwise such a folder is refused.</summary>
+    public bool Overwrite { get; init; }
+}
+
 /// <summary>Settings for <see cref="PretrainedModel.Load"/>.</summary>
 public sealed record PretrainedOptions
 {
@@ -270,6 +349,109 @@ public sealed class PretrainedModel : IDisposable
         return model;
 
         static TimeSpan Max(TimeSpan time) => time > TimeSpan.Zero ? time : TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// Makes a model that did not exist: the network of <paramref name="spec"/> with weights drawn from
+    /// <see cref="CreateOptions.Seed"/>, written to <paramref name="folder"/> as a checkpoint of
+    /// <paramref name="architecture"/> (config.json in the family's keys, through its
+    /// <see cref="PretrainedArchitecture.Config"/>, with the spec kept as "idrak_spec"; model.safetensors; the tokenizer,
+    /// template and special-token files of <paramref name="files"/>), then loaded from there, so it is a model like any
+    /// other: it runs, chats, serves, tunes and trains (plan 19).
+    /// </summary>
+    /// <exception cref="NotSupportedException">The architecture is not registered, cannot be written from a spec, or cannot hold this spec.</exception>
+    /// <exception cref="ArgumentException">The tokenizer is larger than the vocabulary, or a named token is not in it.</exception>
+    /// <exception cref="IOException">The folder holds files and <see cref="CreateOptions.Overwrite"/> is off.</exception>
+    public static PretrainedModel Create(string folder, DecoderSpec spec, string architecture, ModelFiles files, CreateOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(files);
+        options ??= new CreateOptions();
+        var family = PretrainedArchitectures.Get(architecture);
+        var write = family.Config ?? throw new NotSupportedException(
+            $"Architecture '{architecture}' cannot be written from a spec (it reads checkpoints only); choose one that can "
+            + $"({string.Join(", ", PretrainedArchitectures.Names.Where(n => PretrainedArchitectures.Get(n).Config is not null))}).");
+        var tokenizer = files.Tokenizer;
+        if (tokenizer.VocabularySize > spec.Vocabulary)
+        {
+            throw new ArgumentException($"The tokenizer has {tokenizer.VocabularySize} tokens, more than the spec's vocabulary of {spec.Vocabulary}.", nameof(files));
+        }
+
+        int Id(string token, string what) => tokenizer.IdOf(token)
+            ?? throw new ArgumentException($"The tokenizer has no {what} token '{token}'.", nameof(files));
+        int eos = Id(files.EosToken, "end-of-turn");
+        int? bos = files.BosToken is { } b ? Id(b, "begin") : null;
+        int? pad = files.PadToken is { } p ? Id(p, "padding") : null;
+        var stops = new List<int> { eos };
+        stops.AddRange(files.StopTokens.Select(t => Id(t, "stop")).Where(t => !stops.Contains(t)));
+        string template = files.ChatTemplate ?? ModelFiles.ChatMLWithParts;
+        if (files.ChatTemplate is null)
+        {
+            _ = Id("<|im_start|>", "ChatML");
+            _ = Id("<|im_end|>", "ChatML");
+        }
+
+        var config = write(spec);
+        config["architectures"] = new JsonArray((JsonNode)architecture);
+        config["torch_dtype"] = options.Type switch { SafeTensorType.F32 => "float32", SafeTensorType.F16 => "float16", _ => "bfloat16" };
+        config["bos_token_id"] = bos;
+        config["eos_token_id"] = stops.Count == 1 ? eos : new JsonArray([.. stops.Select(i => (JsonNode)i)]);
+        config["pad_token_id"] = pad;
+        config["idrak_spec"] = spec.ToJson();
+
+        if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any() && !options.Overwrite)
+        {
+            throw new IOException($"{folder} already holds files; choose an empty folder or overwrite.");
+        }
+
+        Directory.CreateDirectory(folder);
+        var cpu = Idrak.Abstraction.Device.Cpu;
+        using (var drawn = new PretrainedModel(folder, config, spec,
+            spec.Build(options: new DecoderBuildOptions { Device = cpu, Seed = options.Seed, InitStd = options.InitStd }),
+            tokenizer, null, [], spec.MaxPositions, family, cpu, null))
+        {
+            drawn.WriteTensors(folder, options.Type);
+        }
+
+        var indented = new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        void Json(string name, JsonObject value) => File.WriteAllText(Path.Combine(folder, name), value.ToJsonString(indented) + "\n");
+        Json("config.json", config);
+        tokenizer.Save(Path.Combine(folder, "tokenizer.json"));
+        Json("tokenizer_config.json", new JsonObject
+        {
+            ["add_bos_token"] = files.AddBosToken,
+            ["bos_token"] = files.BosToken,
+            ["eos_token"] = files.EosToken,
+            ["pad_token"] = files.PadToken,
+            ["chat_template"] = template,
+            ["model_max_length"] = spec.MaxPositions,
+            ["tokenizer_class"] = "PreTrainedTokenizerFast",
+        });
+        var map = new JsonObject { ["eos_token"] = files.EosToken };
+        if (files.BosToken is not null)
+        {
+            map["bos_token"] = files.BosToken;
+        }
+
+        if (files.PadToken is not null)
+        {
+            map["pad_token"] = files.PadToken;
+        }
+
+        Json("special_tokens_map.json", map);
+        Json("generation_config.json", new JsonObject
+        {
+            ["bos_token_id"] = bos,
+            ["eos_token_id"] = new JsonArray([.. stops.Select(i => (JsonNode)i)]),
+            ["pad_token_id"] = pad,
+        });
+        foreach (var (name, source) in files.Extra)
+        {
+            File.Copy(source, Path.Combine(folder, name), overwrite: true);
+        }
+
+        return Load(folder, new PretrainedOptions { Device = options.Device });
     }
 
     /// <summary>
@@ -622,6 +804,26 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public void SaveHuggingFace(string folder, SafeTensorType type = SafeTensorType.BF16)
     {
+        WriteTensors(folder, type);
+        string target = Path.GetFullPath(folder);
+        foreach (string file in Directory.GetFiles(Folder))
+        {
+            string name = Path.GetFileName(file);
+            bool metadata = name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && name != "model.safetensors.index.json"
+                || name.EndsWith(".jinja", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".model", StringComparison.OrdinalIgnoreCase)
+                || name is "merges.txt" or "vocab.txt";
+            string destination = Path.Combine(target, name);
+            if (metadata && !name.StartsWith("adapter_", StringComparison.Ordinal)
+                && !string.Equals(Path.GetFullPath(file), destination, StringComparison.Ordinal))
+            {
+                File.Copy(file, destination, overwrite: true);
+            }
+        }
+    }
+
+    // model.safetensors of the network (LoRA merged first), each weight under its checkpoint name and layout.
+    private void WriteTensors(string folder, SafeTensorType type)
+    {
         if (Network.Descendants().OfType<Linear>().Any(l => l.Packed) || Network.Descendants().OfType<Embedding>().Any(e => e.BFloat16 is not null))
         {
             throw new InvalidOperationException("Exporting needs float32 weights: load the model without Int8, Int4 or BFloat16 (then LoadAdapter) to merge and save.");
@@ -661,26 +863,23 @@ public sealed class PretrainedModel : IDisposable
                 case Embedding embedding:
                     Add($"{path}.weight", embedding.Weight);
                     break;
+                case PositionEmbedding positions:
+                    Add($"{path}.weight", positions.Weight);
+                    break;
                 case RMSNorm norm:
                     Add($"{path}.weight", norm.Gain);
                     break;
-                case LayerNorm:
-                    throw new NotSupportedException("Exporting LayerNorm models is not supported yet.");
+                case LayerNorm norm:
+                    Add($"{path}.weight", norm.Gamma);
+                    Add($"{path}.bias", norm.Beta);
+                    break;
             }
         }
 
-        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors, type, new Dictionary<string, string> { ["format"] = "pt" });
-        foreach (string file in Directory.GetFiles(Folder))
-        {
-            string name = Path.GetFileName(file);
-            bool metadata = name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && name != "model.safetensors.index.json"
-                || name.EndsWith(".jinja", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".model", StringComparison.OrdinalIgnoreCase)
-                || name is "merges.txt" or "vocab.txt";
-            if (metadata && !name.StartsWith("adapter_", StringComparison.Ordinal))
-            {
-                File.Copy(file, Path.Combine(folder, name), overwrite: true);
-            }
-        }
+        string path2 = Path.Combine(folder, "model.safetensors");
+        string temporary = path2 + ".writing";
+        SafeTensorsWriter.Write(temporary, tensors, type, new Dictionary<string, string> { ["format"] = "pt" });
+        File.Move(temporary, path2, overwrite: true);                 // a model saved over its own file reads it to the end first
     }
 
     /// <inheritdoc />

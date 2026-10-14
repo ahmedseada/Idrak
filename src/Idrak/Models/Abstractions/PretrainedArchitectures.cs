@@ -35,6 +35,14 @@ public sealed class PretrainedArchitecture
     public required Func<string, string?> TensorName { get; init; }
 
     /// <summary>
+    /// The config.json of a spec in this family's keys (the inverse of <see cref="Spec"/>), for models made from a spec
+    /// (<c>PretrainedModel.Create</c>), or null (the default) when the family is read from checkpoints only. The result's
+    /// <see cref="Spec"/> must be the spec again; a spec the family's keys cannot say is refused
+    /// (<see cref="NotSupportedException"/>).
+    /// </summary>
+    public Func<DecoderSpec, JsonObject>? Config { get; init; }
+
+    /// <summary>
     /// For a family whose checkpoints come in several namings (Gemma 3's vision-language model is saved three ways): the
     /// architecture fitted to one checkpoint, from the names of the tensors it holds. Loading asks it before reading the
     /// spec and the weights, and keeps the one it returns (so adapters and exports use the checkpoint's naming). Null (the
