@@ -223,7 +223,7 @@ internal sealed class PretrainCommand : Command
             }
 
             context.Write(FormattableString.Invariant($"{result.Steps} steps in {result.Elapsed.TotalMinutes:F1} min, loss {(result.Losses.Count > 0 ? result.Losses[^1] : float.NaN):F4}")
-                + (result.EvaluationLosses.Count > 0 ? FormattableString.Invariant($", held-out {result.EvaluationLosses[^1].Loss:F4}") : "") + $" ({result.Settings})");
+                + (result.EvaluationLosses.Count > 0 ? FormattableString.Invariant($", held-out {result.EvaluationLosses[^1].Loss:F4}") : "") + (result.Settings.Length > 0 ? $" ({result.Settings})" : ""));
             context.Write($"model {result.LastCheckpoint}; next: idrak run \"{result.LastCheckpoint}\" \"...\", or idrak tune it");
             context.WriteJson(new JsonObject
             {
