@@ -12,7 +12,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 49 | 13 | 27 | 88 | 0 |
-| `Idrak` | 10 | 4 | 12 | 26 | 0 |
+| `Idrak` | 11 | 4 | 13 | 28 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 10 | 2 | 8 | 20 | 0 |
@@ -145,10 +145,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | TokenizerComponents.GuardedPreTokenizer, TokenizerComponents.PreTokenizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | — |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | Device | CheckpointWeights |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
+| `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe | — | Idrak |
 | `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.WeightCodec` | abstract class | public | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxExportOps` | registry | public | Module |  | — | Idrak | Idrak |
