@@ -468,8 +468,8 @@ public static class Pretrainer
 
                         if (stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0)
                         {
-                            last = SaveCheckpoint(model, optimizer, options, outputFolder, stageEnd ? stageIndex + 1 : stageIndex, stageEnd ? 0 : stageStep, step,
-                                stageEnd ? [] : positions, losses, evaluations);
+                            // The stage it is in and its steps done (a finished stage is skipped on resume, or goes on when its steps grew).
+                            last = SaveCheckpoint(model, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
                             trace?.Invoke($"checkpoint {last}");
                         }
 

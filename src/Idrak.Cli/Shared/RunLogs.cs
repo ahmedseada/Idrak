@@ -37,6 +37,9 @@ internal sealed class RunLog
 
     public required List<LoggedEpoch> Epochs { get; init; }
 
+    /// <summary>What <see cref="Epochs"/> counts: "epoch", or "step" for a log of steps only (a pretraining run's).</summary>
+    public string Unit { get; init; } = "epoch";
+
     public DateTimeOffset? Time { get; init; }
 
     /// <summary>The epoch with the lowest validation loss (the training loss without validation), or null.</summary>
@@ -87,6 +90,7 @@ internal sealed class RunLog
     {
         JsonObject? started = null, completed = null;
         var epochs = new List<LoggedEpoch>();
+        var steps = new List<LoggedEpoch>();
         DateTimeOffset? time = null;
         foreach (string line in File.ReadLines(path))
         {
@@ -114,6 +118,10 @@ internal sealed class RunLog
                 case "training_completed":
                     completed = record;
                     break;
+                case "batch":
+                    steps.Add(new LoggedEpoch((int?)record["step"] ?? steps.Count + 1, (double?)record["loss"], null, new Dictionary<string, double>(), new Dictionary<string, double>(), (double?)record["learning_rate"] ?? 0,
+                        (double?)record["compute_ms"] ?? 0, false));
+                    break;
                 case "epoch":
                     epochs.Add(new LoggedEpoch((int?)record["epoch"] ?? epochs.Count + 1, (double?)record["loss"], (double?)record["val_loss"],
                         Values(record["metrics"]), Values(record["val_metrics"]), (double?)record["learning_rate"] ?? 0,
@@ -132,7 +140,8 @@ internal sealed class RunLog
             Started = started,
             Completed = completed,
             Settings = File.Exists(runFile) ? JsonNode.Parse(File.ReadAllText(runFile)) as JsonObject : null,
-            Epochs = epochs,
+            Epochs = epochs.Count > 0 || steps.Count == 0 ? epochs : steps,
+            Unit = epochs.Count > 0 || steps.Count == 0 ? "epoch" : "step",
             Time = time,
         };
     }

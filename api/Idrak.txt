@@ -166,6 +166,18 @@ public sealed class Idrak.Datasets.StandardScaler : Idrak.Datasets.Abstractions.
   public void Save(string path)
   public void Transform(System.Span<float> data, int columns)
 
+public enum Idrak.Datasets.TokenDocuments : int
+  Blocks = 0
+  Files = 2
+  Lines = 1
+
+public sealed record Idrak.Datasets.TokenFileResult : System.IEquatable<Idrak.Datasets.TokenFileResult>
+  public TokenFileResult(string Path, long Documents, long Tokens, long Bytes)
+  public long Bytes { get; init; }
+  public long Documents { get; init; }
+  public long Tokens { get; init; }
+  public string Path { get; init; }
+
 public sealed class Idrak.Datasets.TokenFileSource : Idrak.Abstraction.Data.ISampleSource, System.IDisposable
   public System.Collections.Generic.IReadOnlyList<int> FeatureShape { get; }
   public System.Collections.Generic.IReadOnlyList<int> TargetShape { get; }
@@ -176,6 +188,16 @@ public sealed class Idrak.Datasets.TokenFileSource : Idrak.Abstraction.Data.ISam
   public long TokenCount { get; }
   public void Dispose()
   public void Read(int index, System.Span<float> features, System.Span<float> targets)
+
+public static class Idrak.Datasets.TokenFileWriter
+  public static Idrak.Datasets.TokenFileResult Write(string output, System.Collections.Generic.IReadOnlyList<string> inputs, Idrak.Abstraction.Generation.ITokenizer tokenizer, Idrak.Datasets.TokenFileWriterOptions? options = null, System.IProgress<long>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+
+public sealed record Idrak.Datasets.TokenFileWriterOptions : System.IEquatable<Idrak.Datasets.TokenFileWriterOptions>
+  public Idrak.Datasets.TokenDocuments Documents { get; init; }
+  public Idrak.Datasets.TokenType Type { get; init; }
+  public TokenFileWriterOptions()
+  public int Workers { get; init; }
+  public int? Separator { get; init; }
 
 public enum Idrak.Datasets.TokenType : int
   Int32 = 1

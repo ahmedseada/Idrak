@@ -20,5 +20,9 @@ internal static class TrainCommands
         new PredictCommand(),
         new PackageCommand(),
         new DistillCommand(),
+        new CreateCommand(),
+        new CreateInitCommand(),
+        new PretrainCommand(),
+        new PretrainInitCommand(),
     ];
 }
