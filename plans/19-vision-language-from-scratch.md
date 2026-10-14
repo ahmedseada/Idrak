@@ -1,7 +1,8 @@
 # Plan 19: language and vision-language models from scratch (made, not loaded)
 
 **Status:** planned 2026-10-14, detailed the same day against the code at `abstraction` e0b8d701. Track A built
-2026-10-14 (A0 to A4, CPU-checked; A5 is the owner's run, commands in "Track A, as built"); track B in progress. Decided by the owner 2026-10-14: the family is **IdrakVision**; the BPE trainer is built (A2);
+2026-10-14 (A0 to A4, CPU-checked; A5 is the owner's run, commands in "Track A, as built"); track B built the same day (B0 to B5, CPU-checked;
+B6 is the owner's run, commands in "Track B, as built"). Decided by the owner 2026-10-14: the family is **IdrakVision**; the BPE trainer is built (A2);
 image tokens attend in bidirectional blocks by default; distillation (B5) is built after B0 to B4, before the proof run. The
 owner's request (2026-10-14): "new vision language", then "complete both text and vision from scratch", the text
 model first because the vision model needs it.
@@ -656,6 +657,95 @@ The owner's run: `idrak data synth` pages from the owner's texts (plan 18), the 
 folder given as `"text"` in the create spec, weights copied, so the `text` stage is not repeated), `create` with the
 family, `pretrain` with `align` then `joint`, `tune evaluate --metric cer` against the tuned Qwen-VL adapter of plan 18's
 "Why". GPU filters: `"vlm scratch:"`, `"pretrain vision:"`, `"cli pretrain vision:"` on `cuda` and `vulkan`.
+
+---
+
+## Track B, as built (2026-10-14)
+
+Built on `abstraction` in six commits (B0, B1 and B2, B3, B4, B5, the decoder start), every phase checked on the CPU
+here against PyTorch.
+
+- **B0.** `tools/vlm/make_tiny_scratch_vlm.py` → `tests/Idrak.Tests/data/vlm-scratch` (README and manifest there; reruns
+  write the same bytes, the README kept): `tiny-idrak-vision/` (a 16-wide tower, 28-pixel images in 7-pixel patches,
+  three layers, pooled 2 x 2 to four image tokens; the decoder is A0's tiny Llama with 128 positions, since one image
+  record is 72 tokens), `records.jsonl` and `images/`, `tuning.json`, `reference/` (pixel values, tower outputs,
+  features, logits), and `joint/` and `align/` (SGD 0.05: step-1 gradients, losses, weights after three steps).
+- **B1.** `IVisionFamily.Create(vision, textDim, tokenizer, seed)` (a default that refuses, so a family that only reads
+  is unchanged) and `CreatedVision` (config, tensors, files) in `Idrak.Models.Abstractions`; `CreateOptions.Vision`.
+  `PretrainedModel.Create` asks the registered family and writes its config, tensors and files beside the decoder's;
+  `SaveHuggingFace(folder, type, vision)` writes a vision part's tensors back. The library holds the contract and no
+  family.
+- **B2.** `samples/IdrakVision/Idrak.IdrakVision` (in the solution and the test project): the
+  `IdrakVisionForConditionalGeneration` architecture (text from `text_config`, tensors under `language_model.`), the
+  family's `Read` and `Create`, the tower and encoder, the `idrak-image-blocks` attention rule, the `IdrakVisionPart`
+  tuning part. Every shape, the activations, the image tokens, the preprocessing and the attention rule are settings
+  (its README). Without the plug-in the architecture is "not registered".
+- **B3.** `Pretrainer.Train` with images: a `records` source reads tuning data with `images`, a stage's `trained`
+  names `tower` and `projector` too, and `KeepTrainedVision` carries the trained tower into the next stage (**found:**
+  without it a joint stage after align restarted from the untrained tower). A checkpoint holds the vision part;
+  `PretrainingProgress.ImagesPerSecond`.
+- **B4.** `idrak create init --vision`, `idrak create` with `"vision"` and `-P`, `idrak pretrain --data --images
+  --image-transform --vision --feature-cache`, `idrak resume` and `runs show` of such runs; without the plug-in the
+  command names `-P`.
+- **B5.** `Distillation.FromModel(teacher, topK, batchTokens, images)`: a vision-language teacher re-expands each image
+  run to its own token count and maps the trained positions back; `TeacherLogits.Write` with images (the hash covers
+  the images and their preparation); `PretrainingOptions.Teacher`, `DistillationTemperature`, `DistillationAlpha`;
+  `idrak pretrain --teacher --temperature --alpha --top-k --teacher-device`; `idrak distill` passes the image options
+  and the teacher's preparation.
+- **Decoder start.** `CreateOptions.Decoder` and `idrak create --decoder MODEL`: the new model's decoder is another
+  model folder's weights (A5's text model), the rest drawn; a spec that differs from that model's config is refused
+  naming each differing key (the position count may differ).
+- **Tests.** `"vlm scratch:"` 5 (the folder read, pixel values, tower outputs and features PyTorch's, the encoder
+  contract; records' ids, masks, image blocks and logits; a created model's tensors, load, answer and save; the
+  decoder start value for value and a wrong spec refused; refusals), `"pretrain vision:"` 3 (joint and align against
+  PyTorch's step-1 gradients and three steps' losses and weights; align then joint stopped and resumed giving the
+  uninterrupted losses, with text windows mixed in, then an answer about an image), `"distill vision:"` 3 (the teacher
+  scores the student's sequences as its own encoding within 1e-5; alpha 0 is the plain loss and stored top-k logits
+  read back; `idrak distill` with the plug-in), `"cli pretrain vision:"` 1. Fine-tuning, vision tuning, conversation
+  tuning, distillation and the vision groups pass unchanged.
+- **Not built.** Per-source losses in the progress record (images are counted per second, not scored apart). A teacher
+  that cuts an image into a different number of blocks than the student is refused, naming both counts; it is not
+  re-tiled.
+
+**For the owner (GPU, from `D:\Projects\Idrak`):**
+
+```powershell
+cd D:\Projects\Idrak
+git pull
+dotnet build -c Release tests\Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vlm scratch:|pretrain vision:|distill vision:|cli pretrain vision:"; dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vlm scratch:|pretrain vision:|distill vision:|cli pretrain vision:"; dotnet run -c Release --no-build --project tests\Idrak.Tests
+```
+
+B6, the vision model on A5's text model (after A5's commands above; `work\letters.txt` and `work\fonts` are your texts
+and fonts, `work\val.txt` held-out texts). Keep `"spec"` in `vision-spec.json` the same as A5's `spec.json`, since the
+decoder must match it, and point its `"tokenizer"` at A5's `tokenizer.json` (the default name is in the same folder):
+
+```powershell
+dotnet build -c Release samples\IdrakVision\Idrak.IdrakVision
+$plugin = "samples\IdrakVision\Idrak.IdrakVision\bin\Release\net10.0\Idrak.IdrakVision.dll"
+$text = (Get-ChildItem work\run -Directory -Filter checkpoint-* | Sort-Object { [int]($_.Name -replace 'checkpoint-', '') } | Select-Object -Last 1).FullName
+dotnet run -c Release --project src\Idrak.Cli -- data synth work\letters.txt -o work\pages\pages.jsonl --fonts work\fonts -n 3 --zip
+dotnet run -c Release --project src\Idrak.Cli -- data synth work\val.txt -o work\val\val.jsonl --fonts work\fonts -n 1 --zip --seed 1
+dotnet run -c Release --project src\Idrak.Cli -- create init --vision -o work\vision-spec.json
+dotnet run -c Release --project src\Idrak.Cli -- create work\vision-spec.json -o work\vlm --decoder $text -P $plugin
+dotnet run -c Release --project src\Idrak.Cli -- pretrain work\vlm --data work\pages\pages.jsonl --images work\pages\pages.zip --trained tower,projector --steps 1000 --lr 1e-3 -o work\align -d cuda:0 -P $plugin
+$aligned = (Get-ChildItem work\align -Directory -Filter checkpoint-* | Sort-Object { [int]($_.Name -replace 'checkpoint-', '') } | Select-Object -Last 1).FullName
+dotnet run -c Release --project src\Idrak.Cli -- pretrain $aligned --data work\pages\pages.jsonl --images work\pages\pages.zip --tokens work\tokens.bin --weight data=3 --trained all --steps 2000 --lr 1e-4 -o work\joint -d cuda:0 -P $plugin
+$joint = (Get-ChildItem work\joint -Directory -Filter checkpoint-* | Sort-Object { [int]($_.Name -replace 'checkpoint-', '') } | Select-Object -Last 1).FullName
+dotnet run -c Release --project src\Idrak.Cli -- tune evaluate $joint work\val\val.jsonl --images work\val\val.zip --metric cer -d cuda:0 -P $plugin
+```
+
+The comparison is the tuned Qwen-VL adapter of plan 18 on the same pages (`$base` and `$adapter` are yours):
+
+```powershell
+dotnet run -c Release --project src\Idrak.Cli -- tune evaluate $base work\val\val.jsonl --images work\val\val.zip --adapter $adapter --metric cer -d cuda:0
+```
+
+The two stages can also be one run: `idrak pretrain init -o work\vision-pretrain.json`, then set its stages to `align`
+(`"trained": ["tower", "projector"]`, a `records` source with `"images"`) and `joint` (`"trained": ["all"]`, the
+records and `tokens.bin`), and run `idrak pretrain work\vlm -C work\vision-pretrain.json -o work\vision -d cuda:0 -P
+$plugin`; `idrak resume work\vision` continues it.
 
 ---
 

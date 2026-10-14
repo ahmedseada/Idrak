@@ -80,10 +80,10 @@ internal sealed class PretrainCommand : Command
           -o, --out RUN            the run folder (a new one under the runs folder)
 
         Examples:
-          idrak data tokens corpus.txt -t tokenizer.json -o tokens.bin
+          idrak data tokens corpus.txt --tokenizer tokenizer.json -o tokens.bin
           idrak create spec.json -o my-model
           idrak pretrain my-model --tokens tokens.bin --steps 2000 --lr 6e-4 -o run -d cuda:0
-          idrak pretrain my-vlm --data pages.jsonl --images pages.zip --trained tower,projector -o align -P Idrak.IdrakVision.dll
+          idrak pretrain my-vlm --data pages.jsonl --images pages.zip --trained tower,projector -P Idrak.IdrakVision.dll
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
           idrak resume run
