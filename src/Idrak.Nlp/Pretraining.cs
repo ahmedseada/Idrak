@@ -431,7 +431,7 @@ public static class Pretrainer
                         catch (OperationCanceledException) when (done > 0)
                         {
                             // No update was made (a step is cancelled before its update): the checkpoint is the last finished step's.
-                            last = SaveCheckpoint(model, optimizer, options, outputFolder, stageIndex, stageStep, done, finished, losses, evaluations);
+                            last = SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, done, finished, losses, evaluations);
                             throw;
                         }
 
@@ -469,7 +469,7 @@ public static class Pretrainer
                         if (stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0)
                         {
                             // The stage it is in and its steps done (a finished stage is skipped on resume, or goes on when its steps grew).
-                            last = SaveCheckpoint(model, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
+                            last = SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
                             trace?.Invoke($"checkpoint {last}");
                         }
 
@@ -755,11 +755,36 @@ public static class Pretrainer
     }
 
     // A checkpoint: the model folder, the optimizer's state, and where the run is.
-    private static string SaveCheckpoint(PretrainedModel model, Optimizer optimizer, PretrainingOptions options, string outputFolder, int stage, int stageStep, int step,
-        (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
+    private static string SaveCheckpoint(PretrainedModel model, TuningVision? vision, Optimizer optimizer, PretrainingOptions options, string outputFolder, int stage,
+        int stageStep, int step, (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
     {
         string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
-        model.SaveHuggingFace(folder, Idrak.Models.SafeTensorType.F32);
+
+        // The trained vision parts as the checkpoint stores them (the rest of the vision part is copied as it was).
+        var exported = new Dictionary<string, Tensor>(StringComparer.Ordinal);
+        try
+        {
+            if (vision?.Tuning is { } tuning)
+            {
+                foreach (string part in vision.Parts)
+                {
+                    foreach (var (name, tensor) in tuning.Export(vision.Encoder, part))
+                    {
+                        exported[name] = tensor;
+                    }
+                }
+            }
+
+            model.SaveHuggingFace(folder, Idrak.Models.SafeTensorType.F32, exported);
+        }
+        finally
+        {
+            foreach (var tensor in exported.Values)
+            {
+                tensor.Dispose();
+            }
+        }
+
         var state = optimizer.SaveState();
         Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)),
             Idrak.Models.SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
