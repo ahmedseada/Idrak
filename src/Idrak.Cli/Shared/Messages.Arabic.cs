@@ -252,8 +252,8 @@ internal static partial class Messages
         ["Memory    process {0} MiB, managed {1} MiB"] = "الذاكرة   العملية {0} MiB، والمدارة {1} MiB",
 
         // Command summaries (idrak help, idrak help COMMAND).
-        ["Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, synth)"] =
-            "مجموعات البيانات: عرض وعد وتنزيل وبناء (ومعاينة وتحقق وإحصاءات وتحويل وإزالة تكرار وتقسيم وعينات ومزج وصفحات مصطنعة)",
+        ["Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, synth)"] =
+            "مجموعات البيانات: عرض وعد وتنزيل وبناء (ومعاينة وتحقق وإحصاءات وتحويل وإزالة تكرار وتقسيم وعينات ومزج ونص عشوائي وصفحات مصطنعة)",
         ["First rows, columns and their types of a data file (Parquet, JSON Lines, CSV)"] = "أول صفوف ملف بيانات وأعمدته وأنواعها (Parquet و JSON Lines و CSV)",
         ["Check rows against the shape a command expects (chat, preference or table), with the first bad rows"] =
             "فحص الصفوف مقابل الشكل الذي يتوقعه أمر (محادثة أو تفضيل أو جدول)، مع أول الصفوف الخاطئة",
@@ -267,6 +267,7 @@ internal static partial class Messages
             "تقسيم الصفوف إلى ملفات تدريب وتحقق واختبار ببذرة (مع طبقات حسب عمود بالخيار -t)",
         ["A random (or, with -t, stratified) sample of rows"] = "عينة عشوائية من الصفوف (أو عينة طبقية بالخيار -t)",
         ["Assemble a training set from several sources with weights (a dataset recipe)"] = "تجميع مجموعة تدريب من عدة مصادر بأوزان (وصفة مجموعة بيانات)",
+        ["Random text in a language (pages, lines or words) to draw training pages from"] = "نص عشوائي بلغة ما (صفحات أو أسطر أو كلمات) لرسم صفحات تدريب منه",
         ["Tuning pages drawn from text: each record's answer set as scanned-looking pages"] = "صفحات ضبط مرسومة من النص: نص إجابة كل سجل في صفحات تشبه المسح الضوئي",
         ["Layers, shapes, parameters, FLOPs and memory of a network.json"] = "طبقات ملف network.json وأشكالها ومعاملاتها و FLOPs والذاكرة",
         ["Design a network and its training setup for a data set"] = "تصميم شبكة وإعداد تدريبها لمجموعة بيانات",
