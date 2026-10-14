@@ -18,6 +18,8 @@ audience first.
 | 8 | [HIP](8-hip.md) | AMD GPUs through ROCm (Linux) and the HIP SDK (Windows): HIP runtime, hipRTC kernels | first slice on `backend/hip`, untested on real hardware | the third backend family (after CUDA and Vulkan): memory and copies on the device, a first kernel set, host fallbacks for the rest; input for the public backend API |
 
 Plug-in points that are still closed, and the dataset loader abstraction: [plug-in.md](plug-in.md).
+
+Optional plug-in packages (a dependency the library must not have, loaded by apps or with `-P`): [plugins/](plugins/README.md).
 Decisions and hardware checks waiting for the maintainer: [open-questions.md](open-questions.md).
 One command-line tool for everything (`idrak doctor`, `chat`, `serve`, `bench`, ...): [idrak-cli.md](idrak-cli.md).
 Images into language models, Gemma 3 first (to run Arabic document OCR models such as
