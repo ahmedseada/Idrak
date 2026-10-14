@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Idrak.Abstraction.Data;
+using Idrak.Nlp;
 
 // Plan 18, phase 4: scan degradations as image transforms, mixed by scan profiles drawn from a seed.
 internal static partial class Tests
@@ -15,7 +16,10 @@ internal static partial class Tests
         ("scans: fade lightens ink toward the paper by its share and leaves the paper; uneven varies it over the page; tint multiplies toward its colour; stain and bleed only darken; lowres keeps the size and softens", ScanTone),
         ("scans: every scan transform refuses values out of its range and leaves its input as it was", ScanRefusals),
         ("scans: a profile draws each step at its chance, its values within their ranges (whole where the transform takes whole numbers), the same steps for the same seed, and reads back from its own text; bad profiles are refused", ScanProfileSampling),
-        ("scans: the built-in profiles (clean, office, old, fax) degrade a drawn page and keep its size and its ink; an app's profile replaces the library's of its name only", ScanProfilesOnPages),
+        ("scans: the paper effects (wrinkle, fold, smudge, blot, strike, underline, cross, scribble, highlight, tear, holes, scratch, shadow, streak, light, curl) are seeded, keep the size and the input, refuse bad values; tears and holes stay out of the text, pen marks and highlighter only darken, scratches only lighten", PaperEffects),
+        ("scans: an app's own effect (an IImageTransform registered by name) is used in a profile's text, sampled with its seed, and drawn on synthetic pages, as the library's are", AppEffect),
+        ("scans: dropout breaks ink in patches (only ink lightened, the paper left, seeded); the default mix shuffles every look, turns about one page in six, and has straight clear pages, faint ink, broken strokes, pen marks and handled or damaged paper", ScanMix),
+        ("scans: the built-in profiles (clean, office, old, pale, worn, fax, handled, marked, damaged, scanner, mixed) degrade a drawn page and keep its size and its ink; an app's profile replaces the library's of its name only", ScanProfilesOnPages),
     ];
 
     private static ImageData Bytes8(int channels, int height, int width, Func<int, int, int, byte> value)
@@ -135,7 +139,7 @@ internal static partial class Tests
         {
             "rotate=200", "rotate=3,fill=300", "perspective=0.5", "noise=-1", "noise=3,seed=x", "speckle=200000", "speckle=10,size=50",
             "fade=1", "fade=0.3,uneven=2", "tint=2", "tint=0.5,color=zz0000", "stain=60", "stain=2,opacity=3", "lowres=0.05", "lowres=2",
-            "bleed=1.5", "bleed=0.2,spread=100",
+            "bleed=1.5", "bleed=0.2,spread=100", "dropout=0.9", "dropout=0.1,strength=2", "dropout=0.1,size=100",
         })
         {
             Throws<ArgumentException>(() => ImageTransformPipeline.Parse(bad), bad);
@@ -143,13 +147,13 @@ internal static partial class Tests
 
         var page = Bytes8(3, 50, 60, (c, y, x) => (byte)((x * 7 + y * 3 + c * 50) % 256));
         var copy = Planes(page);
-        foreach (string step in new[] { "rotate=2", "perspective=0.02,seed=1", "noise=5,seed=1", "speckle=5000,seed=1", "fade=0.5", "tint=0.5", "stain=2,seed=1", "lowres=0.5", "bleed=0.3" })
+        foreach (string step in new[] { "rotate=2", "dropout=0.2,seed=1", "perspective=0.02,seed=1", "noise=5,seed=1", "speckle=5000,seed=1", "fade=0.5", "tint=0.5", "stain=2,seed=1", "lowres=0.5", "bleed=0.3" })
         {
             var result = Scan(page, step);
             Check(Planes(page).Zip(copy).All(p => p.First.SequenceEqual(p.Second)) && result.Width == 60 && result.Height == 50, $"{step}: the input as it was, the size kept");
         }
 
-        foreach (string name in new[] { "rotate", "perspective", "noise", "speckle", "fade", "tint", "stain", "lowres", "bleed" })
+        foreach (string name in new[] { "rotate", "perspective", "noise", "speckle", "dropout", "fade", "tint", "stain", "lowres", "bleed" })
         {
             var transform = ImageTransforms.Get(name);
             Check(transform.Parameters.Count > 0 && transform.Parameters[0].Key == "" && transform.Label != name, $"{name} describes its inputs ({transform.Label})");
@@ -196,7 +200,7 @@ internal static partial class Tests
 
     private static void ScanProfilesOnPages(Device device)
     {
-        Check(new[] { "clean", "office", "old", "fax" }.All(ScanProfiles.Names.Contains), $"profiles {string.Join(", ", ScanProfiles.Names)}");
+        Check(new[] { "clean", "office", "old", "pale", "worn", "fax" }.All(ScanProfiles.Names.Contains), $"profiles {string.Join(", ", ScanProfiles.Names)}");
         var page = PageLayouts.Get("letter").Render(ArabicLetter, TestPageStyle(), 3).Image;
         int ink = Planes(page)[0].Count(v => v < 100);
         var watch = Stopwatch.StartNew();
@@ -228,5 +232,175 @@ internal static partial class Tests
         }
 
         Check(ScanProfiles.Get("office").Summary.StartsWith("an office scanner", StringComparison.Ordinal), "unregistered: the library's office again");
+    }
+
+    private static void ScanMix(Device device)
+    {
+        // Dropout: black strokes (columns 10-29) on paper 240.
+        var page = Bytes8(1, 200, 300, (_, _, x) => x is >= 10 and < 30 ? (byte)0 : (byte)240);
+        var worn = Planes(Scan(page, "dropout=0.3,size=6,seed=4"))[0];
+        var before = Planes(page)[0];
+        int lightened = 0;
+        bool paperKept = true, onlyLighter = true;
+        for (int i = 0; i < before.Length; i++)
+        {
+            paperKept &= before[i] != 240 || worn[i] == 240;
+            onlyLighter &= worn[i] >= before[i];
+            lightened += worn[i] > before[i] ? 1 : 0;
+        }
+
+        int ink = before.Count(v => v == 0);
+        Check(paperKept && onlyLighter && lightened > ink / 10 && lightened < ink, $"dropout: {lightened} of {ink} ink pixels lightened, the paper untouched");
+        Check(SamePixels(Scan(page, "dropout=0.3,size=6,seed=4"), Scan(page, "dropout=0.3,size=6,seed=4")) && !SamePixels(Scan(page, "dropout=0.3,size=6,seed=5"), Scan(page, "dropout=0.3,size=6,seed=4")),
+            "seeded");
+        Check(SamePixels(Scan(page, "dropout=0"), page), "dropout=0 changes nothing");
+
+        // The default mix: one look a page, as SyntheticPages draws it.
+        var looks = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()] } }.Scans;
+        Check(looks.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "mixed", "mixed", "mixed"]), string.Join(",", looks));
+        int pages = 0, turned = 0, faint = 0, broken = 0, untouched = 0, marked = 0, damaged = 0;
+        foreach (string look in looks)
+        {
+            for (int seed = 0; seed < 300; seed++)
+            {
+                var steps = SyntheticPages.Profile(look)?.Sample(seed) ?? ImageTransformPipeline.Empty;
+                pages++;
+                turned += steps.Contains("rotate") || steps.Contains("perspective") ? 1 : 0;
+                faint += steps.Steps.Any(x => x.Name == "fade" && x.Number() >= 0.45) ? 1 : 0;
+                broken += steps.Contains("dropout") || steps.Contains("binarize") ? 1 : 0;
+                marked += new[] { "strike", "underline", "cross", "scribble", "highlight" }.Any(steps.Contains) ? 1 : 0;
+                damaged += new[] { "tear", "holes", "scratch", "wrinkle", "fold", "smudge" }.Any(steps.Contains) ? 1 : 0;
+                untouched += steps.IsEmpty ? 1 : 0;
+            }
+        }
+
+        double Share(int n) => (double)n / pages;
+        Check(Share(turned) is > 0.10 and < 0.25, $"pages turned: {Share(turned):P0}");
+        Check(Share(faint) > 0.08 && Share(broken) > 0.12 && Share(untouched) > 0.07 && Share(marked) > 0.15 && Share(damaged) > 0.2,
+            $"faint ink {Share(faint):P0}, broken strokes {Share(broken):P0}, as drawn {Share(untouched):P0}, pen marks {Share(marked):P0}, handled or damaged paper {Share(damaged):P0}");
+    }
+
+    private static void PaperEffects(Device device)
+    {
+        var page = PageLayouts.Get("letter").Render(ArabicLetter, TestPageStyle() with { Rule = 0, Emblem = 0, Stamp = 0 }, 3).Image;
+        var before = Planes(page);
+        string[] effects =
+        [
+            "wrinkle=0.7", "fold=2", "smudge=3", "blot=3", "strike=2", "underline=2", "cross=1", "scribble=3", "highlight=2", "tear=0.04", "holes=3",
+            "scratch=8", "shadow=0.2", "streak=4", "light=0.4", "curl=0.7",
+        ];
+        foreach (string effect in effects)
+        {
+            string name = effect.Split('=')[0];
+            var transform = ImageTransforms.Get(name);
+            Check(transform.Parameters.Count > 1 && transform.Label != name, $"{name} describes its inputs ({transform.Label})");
+            var once = Scan(page, effect + ",seed=5");
+            Check(once.Width == page.Width && once.Height == page.Height && !SamePixels(once, page), $"{effect}: the size kept, the page changed");
+            Check(SamePixels(once, Scan(page, effect + ",seed=5")), $"{effect}: the same seed, the same page");
+            Check(Planes(page).Zip(before).All(p => p.First.SequenceEqual(p.Second)), $"{effect}: the input as it was");
+        }
+
+        // Tears and holes stay in the margins: the text's area (the page's middle) is as it was.
+        var blocks = PageLayouts.Get("letter").Render(ArabicLetter, TestPageStyle() with { Rule = 0, Emblem = 0, Stamp = 0 }, 3).Blocks.Where(b => b.Text.Length > 0).ToList();
+        int left = (int)blocks.Min(b => b.X), right = (int)Math.Ceiling(blocks.Max(b => b.X + b.Width)), top = (int)blocks.Min(b => b.Y), bottom = (int)Math.Ceiling(blocks.Max(b => b.Y + b.Height));
+        foreach (string effect in Enumerable.Range(1, 10).Select(k => $"tear=0.05,seed={k}").Concat(Enumerable.Range(1, 4).Select(k => $"holes=4,seed={k}")))
+        {
+            var after = Planes(Scan(page, effect));
+            bool kept = true;
+            for (int y = top; y < bottom; y++)
+            {
+                for (int x = left; x < right; x++)
+                {
+                    kept &= after[0][y * page.Width + x] == before[0][y * page.Width + x];
+                }
+            }
+
+            Check(kept, $"{effect}: the text's area untouched");
+        }
+
+        // Pen and highlighter only darken; scratches that lighten only lighten.
+        foreach (string effect in new[] { "strike=3,seed=1", "underline=3,seed=1", "cross=1,seed=1", "scribble=4,seed=1", "highlight=3,seed=1" })
+        {
+            var after = Planes(Scan(page, effect));
+            Check(Enumerable.Range(0, 3).All(c => after[c].Zip(before[c]).All(p => p.First <= p.Second)), $"{effect}: only darker");
+        }
+
+        foreach (string bad in new[] { "wrinkle=2", "fold=1.5", "fold=9", "strike=2,color=purple", "tear=0.2", "holes=7", "shadow=0.5", "light=1", "curl=2", "smudge=2,length=900", "blot=2,size=99" })
+        {
+            Throws<ArgumentException>(() => ImageTransformPipeline.Parse(bad), bad);
+        }
+    }
+
+    private static void AppEffect(Device device)
+    {
+        ImageTransforms.Register(new CoffeeRing());
+        try
+        {
+            var profile = new ScanProfile("cafe", "coffee=1..3@1,seed=0..1000,rotate=-0.5..0.5@0", "rings from a cup");
+            var steps = profile.Sample(4);
+            Check(steps.Steps[0].Name == "coffee" && steps.Steps[0].Integer() is >= 1 and <= 3 && steps.Steps[0].Option("seed") is not null, steps.ToString());
+            ScanProfiles.Register(profile);
+            var options = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["cafe", "coffee=2@1"] };
+            var plain = SyntheticPages.Make("نص الصفحة", options with { Scans = ["none"] });
+            foreach (int variant in new[] { 0, 1, 2, 3 })
+            {
+                var page = SyntheticPages.Make("نص الصفحة", options, variant: variant);
+                Check(page.Scan.StartsWith("coffee=", StringComparison.Ordinal) && page.Profile is "cafe" or "coffee=2@1" && page.Text == plain.Text,
+                    $"variant {variant}: {page.Profile}, {page.Scan}");
+                Check(Planes(page.Image)[0].Count(v => v < 200) > Planes(plain.Image)[0].Count(v => v < 200), "the rings drawn");
+            }
+        }
+        finally
+        {
+            ScanProfiles.Unregister("cafe");
+            ImageTransforms.Unregister("coffee");
+        }
+
+        Throws<ArgumentException>(() => _ = new ScanProfile("cafe", "coffee=1"), "unregistered: the profile is refused, naming the transforms there are");
+    }
+
+    // An app's effect: N dark rings (a cup's), placed by its seed.
+    private sealed class CoffeeRing : IImageTransform
+    {
+        public string Name => "coffee";
+
+        public string Summary => "coffee=N: N rings from a cup; seed=S";
+
+        public IReadOnlyCollection<string> Keys => ["seed"];
+
+        public void Check(ImageTransformStep step)
+        {
+            if (step.Integer() is < 0 or > 5)
+            {
+                throw new ArgumentException("coffee is 0 to 5 rings.");
+            }
+        }
+
+        public ImageData Apply(ImageData image, ImageTransformStep step)
+        {
+            image.TryGetPlanes(out var held, out var levels);
+            var planes = held.Select(p => p.ToArray()).ToArray();
+            var random = new Random(int.Parse(step.Option("seed") ?? "0", System.Globalization.CultureInfo.InvariantCulture));
+            for (int k = 0; k < step.Integer(); k++)
+            {
+                double cx = random.NextDouble() * image.Width, cy = random.NextDouble() * image.Height, r = 20 + random.NextDouble() * 30;
+                for (int y = 0; y < image.Height; y++)
+                {
+                    for (int x = 0; x < image.Width; x++)
+                    {
+                        double d = Math.Abs(Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) - r);
+                        if (d < 2)
+                        {
+                            foreach (var plane in planes)
+                            {
+                                plane[y * image.Width + x] = (byte)(plane[y * image.Width + x] * 0.6);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return new ImageData(planes, image.Height, image.Width, levels.ToArray());
+        }
     }
 }

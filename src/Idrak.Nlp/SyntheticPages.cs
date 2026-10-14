@@ -183,8 +183,12 @@ public sealed record SyntheticPageOptions
     /// <summary>The page layouts (<see cref="PageLayouts"/>), one drawn per page; a name given twice is drawn twice as often.</summary>
     public IReadOnlyList<string> Layouts { get; init; } = ["letter", "plain"];
 
-    /// <summary>The scan profiles (<see cref="ScanProfiles"/>: a name, or a profile written as text; "none" for a page as drawn), one drawn per page.</summary>
-    public IReadOnlyList<string> Scans { get; init; } = ["clean", "office", "old"];
+    /// <summary>
+    /// The scan profiles (<see cref="ScanProfiles"/>: a name, or a profile written as text; "none" for a page as drawn),
+    /// one drawn per page; a name given twice is drawn twice as often. By default every built-in look, "mixed" (every
+    /// effect at a small chance of its own) three times, so pages shuffle through all of them.
+    /// </summary>
+    public IReadOnlyList<string> Scans { get; init; } = ["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "mixed", "mixed", "mixed"];
 
     /// <summary>The share of pages drawn in grey (else as the style says).</summary>
     public double Grey { get; init; } = 0.3;
@@ -277,8 +281,9 @@ public sealed record SyntheticPageOptions
 /// <param name="Seed">The page's seed.</param>
 /// <param name="Layout">The layout's name.</param>
 /// <param name="Scan">The scan's steps ("" for none).</param>
+/// <param name="Profile">The scan profile drawn for it ("none", "clean", ..., or a profile's text).</param>
 /// <param name="Description">What the layout chose (font, sizes, ornaments).</param>
-public sealed record SyntheticPage(ImageData Image, string Text, string Answer, int Seed, string Layout, string Scan, string Description);
+public sealed record SyntheticPage(ImageData Image, string Text, string Answer, int Seed, string Layout, string Scan, string Description, string Profile);
 
 /// <summary>How far making synthetic pages has come.</summary>
 /// <param name="Pages">Pages made.</param>
@@ -462,7 +467,7 @@ public static class SyntheticPages
                         string about = Json(new JsonObject
                         {
                             ["image"] = name, ["record"] = index, ["variant"] = variant, ["where"] = record.Where, ["seed"] = page.Seed,
-                            ["layout"] = page.Layout, ["scan"] = page.Scan, ["page"] = page.Description,
+                            ["layout"] = page.Layout, ["profile"] = page.Profile, ["scan"] = page.Scan, ["page"] = page.Description,
                             ["width"] = page.Image.Width, ["height"] = page.Image.Height, ["channels"] = page.Image.Channels,
                         });
                         made[j] = (bytes, line, about);
@@ -594,7 +599,7 @@ public static class SyntheticPages
         var rendered = PageLayouts.Get(layoutName).Render(content, pageStyle, layoutSeed);
         var steps = Profile(scanName)?.Sample(scanSeed) ?? ImageTransformPipeline.Empty;
         var image = steps.IsEmpty ? rendered.Image : steps.Apply(rendered.Image);
-        return new SyntheticPage(image, rendered.Text, answer.With(rendered.Text), seed, layoutName, steps.ToString(), rendered.Description);
+        return new SyntheticPage(image, rendered.Text, answer.With(rendered.Text), seed, layoutName, steps.ToString(), rendered.Description, scanName);
     }
 
     private static IReadOnlyList<string> Fill(IReadOnlyList<string> lines, PagePartContext context, string? digits)

@@ -37,8 +37,12 @@ internal sealed class DataSynthCommand : Command
                                   "footers", "chances", "digits", "nativeDigits", "language"); none: the text alone
           -n, --variants N        pages per record (3)
               --layout NAME       a page layout, again for more (letter and plain; a name twice is drawn twice as often)
-              --scan PROFILE      a scan profile, again for more: a name (clean, office, old, fax; none for pages as
-                                  drawn) or one written as text, "rotate=-1.5..1.5@0.8,jpeg=40..90@0.6" (clean, office, old)
+              --scan PROFILE      a look, again for more, one drawn per page: a name (none: as drawn, clean, office, old,
+                                  pale: faint ink, worn: broken strokes, fax, handled: wrinkles, folds, smudges, marked:
+                                  pen strikes, crosses, highlighter, damaged: tears, holes, scratches, scanner: shadows,
+                                  streaks, curl, mixed: every effect at a small chance) or one written as text,
+                                  "rotate=-1.5..1.5@0.2,fade=0.3..0.7@0.5,strike=1..2@0.3" (all of them, mixed three
+                                  times; a name twice, twice as often)
               --grey P            the share of pages in grey (0.3)
               --page SETTINGS     page settings, KEY=VALUE,...: width, height, size, spacing, margin, ink, justify,
                                   color, rule, emblem, stamp, blue-signature, header-font (ranges as MIN..MAX)
@@ -133,6 +137,15 @@ internal sealed class DataSynthCommand : Command
 
         context.Write(string.Create(CultureInfo.InvariantCulture,
             $"{result.Pages:N0} pages from {result.Records:N0} records in {result.Elapsed.TotalSeconds:F1} s: {result.Data}, images in {result.Images}, manifest {result.Manifest}"));
+        // The mix the pages got, from the manifest: a line per look, its share of the pages.
+        var looks = File.ReadLines(result.Manifest).Select(l => (string?)JsonNode.Parse(l)?["profile"] ?? "?")
+            .GroupBy(p => p).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal).ToList();
+        if (looks.Count > 0)
+        {
+            context.Write("looks: " + string.Join(", ", looks.Select(g => string.Create(CultureInfo.InvariantCulture,
+                $"{(g.Key.Length > 24 ? g.Key[..24] + "…" : g.Key)} {100.0 * g.Count() / Math.Max(1, result.Pages):F0}%"))));
+        }
+
         foreach (string skip in result.Skips.Take(5))
         {
             context.Write($"left out: {skip}");

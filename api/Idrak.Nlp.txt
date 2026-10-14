@@ -963,11 +963,12 @@ public sealed class Idrak.Nlp.Retrieval.TextEncoder : Idrak.Abstraction.Retrieva
 
 public sealed record Idrak.Nlp.SyntheticPage : System.IEquatable<Idrak.Nlp.SyntheticPage>
   public Idrak.Abstraction.Data.ImageData Image { get; init; }
-  public SyntheticPage(Idrak.Abstraction.Data.ImageData Image, string Text, string Answer, int Seed, string Layout, string Scan, string Description)
+  public SyntheticPage(Idrak.Abstraction.Data.ImageData Image, string Text, string Answer, int Seed, string Layout, string Scan, string Description, string Profile)
   public int Seed { get; init; }
   public string Answer { get; init; }
   public string Description { get; init; }
   public string Layout { get; init; }
+  public string Profile { get; init; }
   public string Scan { get; init; }
   public string Text { get; init; }
 

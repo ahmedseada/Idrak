@@ -22,6 +22,21 @@ dotnet add package Idrak.Imaging
 | Pages | the page layouts of `PageLayouts` ("letter": an official letter with a three-place header, emblem, rule, subject, body, signature, stamp and footer; "plain"): a `PageContent` drawn in a `PageStyle`, every choice from the page's seed, with its text in reading order (plan 18) |
 | Training | `ImageFolderSource` (class folders, and the "images" source of `SampleSources`), augmentations for the `DataLoader` (`RandomFlip`, `RandomShift`, `RandomRotation`, `GaussianNoise`; "flip" and "shift" in `Augmentations`) |
 
+## Your own scan or paper effect
+
+Every effect a synthetic page gets is an `IImageTransform` in the `ImageTransforms` registry, the library's own
+included, so an effect of yours is one class and one registration. It is then usable by name wherever the library's
+are: in a scan profile's text (`ScanProfile`, `--scan "coffee=1..3@0.4"`), in `ScanProfiles` as a look of its own, and
+in any image pipeline.
+
+```csharp
+ImageTransforms.Register(new CoffeeRing());                    // Name "coffee", Keys ["seed"], Check, Apply
+ScanProfiles.Register(new ScanProfile("cafe", "coffee=1..3@0.5,blur=0.3..0.8@0.3", "rings from a cup"));
+```
+
+From the command line, put the registration in a public static `RegisterIdrakPlugin()` of an assembly and load it with
+`-P`: `idrak -P my-effects.dll data synth text.txt -o pages.jsonl --fonts DIR --scan cafe --scan mixed`.
+
 ## Contracts
 
 Every contract this package serves is shared, in Idrak.Abstraction (`ImageCodecs`, `ImageEncoders`, `ImageTransforms`,
