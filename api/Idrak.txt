@@ -1230,6 +1230,11 @@ public interface Idrak.Models.Abstractions.ITokenizerDecoder
 public interface Idrak.Models.Abstractions.ITokenizerNormalizer
   public string Normalize(string text)
 
+public interface Idrak.Models.Abstractions.ITokenizerTrainer
+  public Idrak.Models.BpeTokenizer Train(System.Collections.Generic.IReadOnlyList<string> files, Idrak.Models.Abstractions.TokenizerTrainingOptions options, System.IProgress<Idrak.Models.Abstractions.TokenizerTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Models.Abstractions.IVisionFamily
   public Idrak.Abstraction.Generation.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public string Name { get; }
@@ -1286,6 +1291,35 @@ public static class Idrak.Models.Abstractions.TokenizerComponents
   public static void SetNormalizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetPreTokenizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public static class Idrak.Models.Abstractions.TokenizerTrainers
+  public const string Bpe = "bpe"
+  public const string ByteLevel = "bytelevel"
+  public const string Metaspace = "metaspace"
+  public static Idrak.Models.Abstractions.ITokenizerTrainer Get(string name)
+  public static Idrak.Models.Abstractions.ITokenizerTrainer? Default(string name)
+  public static Idrak.Models.Abstractions.ITokenizerTrainer? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.ITokenizerTrainer trainer)
+
+public sealed record Idrak.Models.Abstractions.TokenizerTrainingOptions : System.IEquatable<Idrak.Models.Abstractions.TokenizerTrainingOptions>
+  public System.Collections.Generic.IReadOnlyList<string> SpecialTokens { get; init; }
+  public TokenizerTrainingOptions()
+  public bool AddPrefixSpace { get; init; }
+  public int MinFrequency { get; init; }
+  public int VocabularySize { get; init; }
+  public int Workers { get; init; }
+  public int? LimitAlphabet { get; init; }
+  public string PreTokenizer { get; init; }
+
+public readonly record struct Idrak.Models.Abstractions.TokenizerTrainingProgress : System.IEquatable<Idrak.Models.Abstractions.TokenizerTrainingProgress>
+  public TokenizerTrainingProgress(string Stage, long Done, long Total)
+  public long Done { get; init; }
+  public long Total { get; init; }
+  public string Stage { get; init; }
+
 public sealed record Idrak.Models.Abstractions.VisionCheckpoint : System.IEquatable<Idrak.Models.Abstractions.VisionCheckpoint>
   public Idrak.Abstraction.Formats.ITensorStore Tensors { get; init; }
   public System.Collections.Generic.List<string> Notes { get; init; }
@@ -1314,6 +1348,7 @@ public abstract class Idrak.Models.Abstractions.WeightCodec
 
 public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.ITokenizer
   public System.Collections.Generic.IReadOnlyList<int> Encode(string text)
+  public System.Text.Json.Nodes.JsonObject ToJson()
   public bool IsSpecial(int id)
   public int VocabularySize { get; }
   public int? IdOf(string token)
@@ -1324,6 +1359,8 @@ public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.ITo
   public string TokenOf(int id)
   public void EncodeRange(string text, int start, int length, System.Collections.Generic.List<int> ids)
   public void PadVocabulary(int size)
+  public void Save(string path)
+  public void WriteTo(System.IO.Stream stream)
 
 public sealed class Idrak.Models.GgufFile : System.IDisposable
   public System.Collections.Generic.Dictionary<string, object> Metadata { get; }

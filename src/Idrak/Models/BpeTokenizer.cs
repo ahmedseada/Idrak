@@ -78,6 +78,13 @@ public sealed class BpeTokenizer : ITokenizer
 
     private readonly bool _byteLevel;
     private readonly bool _byteFallback;
+
+    // The tokenizer.json this was read from (or built as), for Save; vocab and merges in it are not read again.
+    private readonly JsonObject _source;
+
+    // Added tokens that are not in the model's vocabulary (they are added to _vocabulary for lookups), so Save writes the
+    // model's vocabulary as it was.
+    private readonly HashSet<string> _outsideModel;
     private readonly bool _ignoreMerges;
     private readonly int? _unknown;
 
@@ -100,6 +107,8 @@ public sealed class BpeTokenizer : ITokenizer
         _added = [.. addedTokens.Select(t => ((string)t!["content"]!, (int)t["id"]!))];
         _special = [.. addedTokens.Where(t => (bool?)t!["special"] ?? false).Select(t => (int)t!["id"]!)];
         _addedIds = [.. _added.Select(a => a.Id)];
+        _source = json;
+        _outsideModel = [.. _added.Where(a => !_vocabulary.ContainsKey(a.Content)).Select(a => a.Content)];
         foreach (var (content, id) in _added)
         {
             _vocabulary[content] = id;
@@ -249,6 +258,136 @@ public sealed class BpeTokenizer : ITokenizer
         var merges = (model["merges"]?.AsArray() ?? [])
             .Select(m => m is JsonArray pair ? ((string)pair[0]!, (string)pair[1]!) : Split((string)m!)).ToArray();
         return new BpeTokenizer(json, vocabulary, merges);
+    }
+
+    // A tokenizer from its parts: rest is a tokenizer.json without the model's vocab and merges (the trainers build one).
+    internal static BpeTokenizer FromParts(JsonObject rest, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges)
+        => new(rest, vocabulary, merges);
+
+    // The byte-level alphabet: the character each byte is written as.
+    internal static IReadOnlyList<char> ByteLevelAlphabet => ByteToChar;
+
+    // Text as byte-level characters (its UTF-8 bytes, each as its character of the byte map).
+    internal static string ByteLevelText(string text)
+    {
+        int count = Encoding.UTF8.GetByteCount(text);
+        byte[]? rented = null;
+        Span<byte> bytes = count <= 1024 ? stackalloc byte[count] : (rented = System.Buffers.ArrayPool<byte>.Shared.Rent(count));
+        try
+        {
+            Encoding.UTF8.GetBytes(text, bytes);
+            return string.Create(count, bytes[..count].ToArray(), static (chars, b) =>
+            {
+                for (int i = 0; i < b.Length; i++)
+                {
+                    chars[i] = ByteToChar[b[i]];
+                }
+            });
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Writes the tokenizer as a tokenizer.json (UTF-8, indented as Hugging Face writes it): everything it was read with
+    /// (or trained with), the model's vocabulary in id order and the merges in rank order, so <see cref="Load"/> of the
+    /// file encodes every text to the same ids.
+    /// </summary>
+    /// <param name="path">A file, or a folder (then its tokenizer.json).</param>
+    public void Save(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            path = Path.Combine(path, "tokenizer.json");
+        }
+
+        string? folder = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (folder is not null)
+        {
+            Directory.CreateDirectory(folder);
+        }
+
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
+        WriteTo(stream);
+    }
+
+    /// <summary>The tokenizer as the JSON of a tokenizer.json (see <see cref="Save"/>).</summary>
+    public JsonObject ToJson()
+    {
+        using var stream = new MemoryStream();
+        WriteTo(stream);
+        return JsonNode.Parse(stream.ToArray())!.AsObject();
+    }
+
+    /// <summary>Writes the tokenizer.json (see <see cref="Save"/>) to <paramref name="stream"/>.</summary>
+    public void WriteTo(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        var options = new JsonWriterOptions { Indented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        using var writer = new Utf8JsonWriter(stream, options);
+        writer.WriteStartObject();
+        foreach (var (name, value) in _source)
+        {
+            writer.WritePropertyName(name);
+            if (name != "model" || value is not JsonObject model)
+            {
+                if (value is null)
+                {
+                    writer.WriteNullValue();
+                }
+                else
+                {
+                    value.WriteTo(writer);
+                }
+
+                continue;
+            }
+
+            writer.WriteStartObject();
+            foreach (var (field, fieldValue) in model)
+            {
+                if (field is "vocab" or "merges")
+                {
+                    continue;
+                }
+
+                writer.WritePropertyName(field);
+                if (fieldValue is null)
+                {
+                    writer.WriteNullValue();
+                }
+                else
+                {
+                    fieldValue.WriteTo(writer);
+                }
+            }
+
+            writer.WriteStartObject("vocab");
+            foreach (var (token, id) in _vocabulary.Where(p => !_outsideModel.Contains(p.Key)).OrderBy(p => p.Value))
+            {
+                writer.WriteNumber(token, id);
+            }
+
+            writer.WriteEndObject();
+            writer.WriteStartArray("merges");
+            foreach (var (left, right) in _merges)
+            {
+                writer.WriteStartArray();
+                writer.WriteStringValue(left);
+                writer.WriteStringValue(right);
+                writer.WriteEndArray();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndObject();
     }
 
     /// <inheritdoc />
