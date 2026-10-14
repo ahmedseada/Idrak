@@ -1400,6 +1400,7 @@ public sealed record Idrak.Models.CreateOptions : System.IEquatable<Idrak.Models
   public bool Overwrite { get; init; }
   public float? InitStd { get; init; }
   public int Seed { get; init; }
+  public string? Decoder { get; init; }
 
 public sealed class Idrak.Models.GgufFile : System.IDisposable
   public System.Collections.Generic.Dictionary<string, object> Metadata { get; }

@@ -49,6 +49,8 @@ internal sealed class CreateCommand : Command
                                    Xavier-uniform matrices
               --dtype T            how the weights are stored: f32 (the default, for training), bf16 or f16
               --vocab-multiple N   a spec without a vocabulary takes the tokenizer's, rounded up to a multiple of N (64)
+              --decoder MODEL      start the decoder from this model's weights (a text model pretrained first; its spec
+                                   must be SPEC's), the rest drawn
               --overwrite          write into a folder that already holds files
               --seed N             the seed the weights are drawn from (0)
           -o, --out FOLDER         the model folder to write
@@ -58,12 +60,13 @@ internal sealed class CreateCommand : Command
           idrak create spec.json -o my-model --seed 1
           idrak create spec.json -o my-model --tokenizer tokenizer.json --architecture Qwen3ForCausalLM
           idrak create init --vision -o vision-spec.json
+          idrak create vision-spec.json -o my-vlm --decoder my-model -P Idrak.IdrakVision.dll
           idrak create vision-spec.json -o my-vlm -P Idrak.IdrakVision.dll
           idrak pretrain my-model -o run --tokens tokens.bin --steps 2000
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--architecture", "--tokenizer", "--chat-template", "--bos", "--eos", "--pad", "--stop", "--init-std", "--dtype", "--vocab-multiple", "--out"];
+        ["--architecture", "--tokenizer", "--chat-template", "--bos", "--eos", "--pad", "--stop", "--init-std", "--dtype", "--vocab-multiple", "--decoder", "--out"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite"];
 
@@ -154,6 +157,7 @@ internal sealed class CreateCommand : Command
             {
                 Device = Idrak.Abstraction.Device.Cpu, Seed = seed, InitStd = initStd > 0 ? initStd : null, Type = type, Overwrite = context.Flag("--overwrite"),
                 Vision = (JsonObject?)vision?.DeepClone(),
+                Decoder = PathOf("--decoder", "decoder"),
             });
         }
         catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
@@ -263,6 +267,7 @@ internal sealed class CreateInitCommand : Command
           idrak create init -o spec.json
           idrak create spec.json -o my-model
           idrak create init --vision -o vision-spec.json
+          idrak create vision-spec.json -o my-vlm --decoder my-model -P Idrak.IdrakVision.dll
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out"];

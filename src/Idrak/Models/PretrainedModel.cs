@@ -92,6 +92,13 @@ public sealed record CreateOptions
     /// reads (<see cref="IVisionFamily.Create"/>); null for a text model.
     /// </summary>
     public JsonObject? Vision { get; init; }
+
+    /// <summary>
+    /// A model folder whose decoder weights the new model starts from instead of drawn ones (a text model pretrained
+    /// first, given to a vision-language model made around it); its spec must be the new one (the context length may
+    /// differ). Null draws every weight.
+    /// </summary>
+    public string? Decoder { get; init; }
 }
 
 /// <summary>Settings for <see cref="PretrainedModel.Load"/>.</summary>
@@ -424,9 +431,33 @@ public sealed class PretrainedModel : IDisposable
 
         Directory.CreateDirectory(folder);
         var cpu = Idrak.Abstraction.Device.Cpu;
-        using (var drawn = new PretrainedModel(folder, config, spec,
-            spec.Build(options: new DecoderBuildOptions { Device = cpu, Seed = options.Seed, InitStd = options.InitStd }),
-            tokenizer, null, [], spec.MaxPositions, family, cpu, null))
+        Sequential network;
+        if (options.Decoder is { } decoderFolder)
+        {
+            // The decoder of a model that exists (its spec the new one's but for the context length), read as Load reads it.
+            var format = CheckpointFormats.For(decoderFolder);
+            decoderFolder = format.Prepare(decoderFolder);
+            var decoderConfig = JsonNode.Parse(File.ReadAllText(Path.Combine(decoderFolder, "config.json")))!.AsObject();
+            var decoderFamily = PretrainedArchitectures.Get((string?)decoderConfig["architectures"]?[0] ?? throw new InvalidDataException($"{decoderFolder}/config.json names no architecture."));
+            var decoderSpec = decoderFamily.Spec(decoderConfig, []);
+            var mine = (spec with { MaxPositions = 0, Dropout = 0 }).ToJson();
+            var theirs = (decoderSpec with { MaxPositions = 0, Dropout = 0 }).ToJson();
+            if (!JsonNode.DeepEquals(mine, theirs))
+            {
+                throw new ArgumentException($"The decoder in {decoderFolder} is not this spec's: "
+                    + string.Join(", ", mine.Select(p => p.Key).Where(k => !JsonNode.DeepEquals(mine[k], theirs[k]))) + " differ.", nameof(options));
+            }
+
+            using var reader = format.Open(decoderFolder);
+            var fitted = decoderFamily.ForCheckpoint is { } fit ? fit(reader.Names.ToHashSet(StringComparer.Ordinal)) : decoderFamily;
+            network = spec.Build(new CheckpointWeights(reader, fitted), new DecoderBuildOptions { Device = cpu });
+        }
+        else
+        {
+            network = spec.Build(options: new DecoderBuildOptions { Device = cpu, Seed = options.Seed, InitStd = options.InitStd });
+        }
+
+        using (var drawn = new PretrainedModel(folder, config, spec, network, tokenizer, null, [], spec.MaxPositions, family, cpu, null))
         {
             drawn.WriteTensors(folder, options.Type, vision?.Tensors.Select(t => (t.Name, t.Shape, (Func<float[]>)(() => t.Values))));
         }
