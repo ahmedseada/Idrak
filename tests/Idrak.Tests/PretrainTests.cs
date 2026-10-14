@@ -6,6 +6,7 @@ using Idrak.Abstraction.Generation;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Abstractions;
 
 // Plan 19: language models made from scratch (phase A1: a model from a spec, saved as a folder; A3: the pretraining loop).
 internal static partial class Tests
@@ -16,7 +17,249 @@ internal static partial class Tests
         ("pretrain: a model made from a spec is a folder of the family's checkpoint (the tensors' names and shapes of transformers' own), seeded, loading and chatting like any model; the created template takes images", PretrainCreate),
         ("pretrain: making a model refuses an unknown architecture, a tokenizer larger than the vocabulary, a missing token and a folder that holds files", PretrainCreateRefusals),
         ("pretrain: a loaded model saved as a checkpoint writes transformers' tensors back value for value, LayerNorm and learned positions included, and saves over its own folder", PretrainSaveCheckpoint),
+        ("pretrain: every parameter trains: the first step's loss and gradients, three SGD steps' losses and weights, and three AdamW steps' are transformers'", PretrainReferenceSteps),
+        ("pretrain: a run stopped after its second step and resumed from the checkpoint gives the uninterrupted run's losses bit for bit (the optimizer's moments, the data order and the rate restored)", PretrainResume),
+        ("pretrain: a stage trains only its parts, sources are drawn by their weights, records train their answers, telemetry sees every step and the loss of the tiny model falls", PretrainStagesAndSources),
+        ("pretrain: options read back from JSON, and runs with no stage, no source, an unknown part, optimizer or schedule, or a packed model are refused", PretrainRefusals),
     ];
+
+    // A token file of the reference's first four 32-token windows (129 ids), so every step trains on exactly those.
+    private static string ReferenceWindows(string folder)
+    {
+        string path = Path.Combine(folder, "windows.bin");
+        var bytes = File.ReadAllBytes(PretrainData("tokens.bin"));
+        File.WriteAllBytes(path, bytes[..(129 * 2)]);
+        return path;
+    }
+
+    private static PretrainingOptions TextStage(string tokens, int steps, string optimizer, float rate) => new()
+    {
+        Stages = [new PretrainingStage("text") { Sources = [new PretrainingSource(PretrainingSources.Tokens, [tokens])], Steps = steps, LearningRate = rate, Schedule = "constant", WarmupFraction = 0 }],
+        MaxLength = 32, BatchTokens = 128, Optimizer = optimizer, WeightDecay = optimizer == "sgd" ? 0f : 0.1f, Beta1 = 0.9f, Beta2 = 0.95f, Momentum = 0f, MaxGradientNorm = 0f,
+        CudaGraphs = false, KeepCheckpoints = 0,
+    };
+
+    private static void PretrainReferenceSteps(Device device)
+    {
+        string folder = TempFolder("pretrain-reference");
+        try
+        {
+            string windows = ReferenceWindows(folder);
+            var step = JsonNode.Parse(File.ReadAllText(PretrainData("step/step.json")))!.AsObject();
+            var initial = ReadTensors(Path.Combine(TinyLlama, "model.safetensors"));
+
+            // One SGD step: the loss, and the gradients as the weights moved (w0 - w1) / rate.
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                var result = Pretrainer.Train(model, TextStage(windows, 1, "sgd", 0.2f), Path.Combine(folder, "one"));
+                float expected = (float)step["sgd"]!["losses"]![0]!;
+                Check(Math.Abs(result.Losses[0] - expected) < 1e-4f, $"step 1's loss {result.Losses[0]:F6}, transformers' {expected:F6}");
+                var after = ReadTensors(Path.Combine(result.LastCheckpoint!, "model.safetensors"));
+                var grads = ReadTensors(PretrainData("step/grads-step1.safetensors"));
+                float largest = grads.Values.Max(g => g.Values.Max(MathF.Abs));
+                foreach (var (name, (_, g)) in grads)
+                {
+                    var moved = initial[name].Values.Zip(after[name].Values, (a, b) => (a - b) / 0.2f).ToArray();
+                    AssertClose(g, moved, 1e-4f * largest, $"the gradient of {name}");
+                }
+            }
+
+            foreach (var (kind, rate, weightsFile, tolerance) in new[] { ("sgd", 0.2f, "step/weights-step3.safetensors", 5e-5f), ("adamw", 1e-3f, "step/adamw-folded/weights-step3.safetensors", 1e-5f) })
+            {
+                using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device });
+                var result = Pretrainer.Train(model, TextStage(windows, 3, kind, rate), Path.Combine(folder, kind));
+                var expected = step[kind]!["losses"]!.AsArray().Select(l => (float)l!).ToArray();
+                AssertClose(expected, [.. result.Losses], 1e-4f, $"{kind}: three steps' losses (torch's)");
+                // AdamW's weights against the reference computed with Idrak's formula (the bias corrections folded into the
+                // step size, so epsilon sits elsewhere than in torch's: see the fixture's README).
+                var after = ReadTensors(Path.Combine(result.LastCheckpoint!, "model.safetensors"));
+                foreach (var (name, (_, w)) in ReadTensors(PretrainData(weightsFile)))
+                {
+                    AssertClose(w, after[name].Values, tolerance, $"{kind}: {name} after three steps");
+                }
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void PretrainResume(Device device)
+    {
+        string folder = TempFolder("pretrain-resume");
+        try
+        {
+            var options = TextStage(PretrainData("tokens.bin"), 6, "adamw", 3e-3f) with { BatchTokens = 64, SaveEvery = 2, Seed = 5 };
+            options = options with { Stages = [options.Stages[0] with { Schedule = "cosine", WarmupFraction = 0.2f }] };
+            IReadOnlyList<float> whole;
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                whole = Pretrainer.Train(model, options, Path.Combine(folder, "whole")).Losses;
+            }
+
+            string run = Path.Combine(folder, "stopped");
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                using var stop = new CancellationTokenSource();
+                var progress = new SynchronousProgress<PretrainingProgress>(p =>
+                {
+                    if (p.Step == 2)
+                    {
+                        stop.Cancel();
+                    }
+                });
+                Throws<OperationCanceledException>(() => Pretrainer.Train(model, options, run, null, progress, stop.Token), "the run stops when cancelled");
+            }
+
+            string latest = Pretrainer.LatestCheckpoint(run)!;
+            Check(latest.EndsWith("checkpoint-2", StringComparison.Ordinal), $"the latest checkpoint is the second step's: {latest}");
+            var checkpoint = Pretrainer.ReadCheckpoint(latest);
+            Check(checkpoint.Step == 2 && checkpoint.StageStep == 2 && checkpoint.Losses.Count == 2 && checkpoint.Sources[0].Drawn == 4, $"the checkpoint says where the run was: step {checkpoint.Step}, drawn {checkpoint.Sources[0].Drawn}");
+            using (var model = PretrainedModel.Load(latest, new PretrainedOptions { Device = device }))
+            {
+                var resumed = Pretrainer.Train(model, checkpoint.Options, run, checkpoint);
+                Check(resumed.Steps == 6 && resumed.Losses.Count == 6, $"{resumed.Steps} steps, {resumed.Losses.Count} losses");
+                Check(resumed.Losses.SequenceEqual(whole), $"the resumed losses [{string.Join(", ", resumed.Losses.Select(l => l.ToString("R", System.Globalization.CultureInfo.InvariantCulture)))}] "
+                    + $"against [{string.Join(", ", whole.Select(l => l.ToString("R", System.Globalization.CultureInfo.InvariantCulture)))}]");
+            }
+
+            Check(Directory.GetDirectories(run, "checkpoint-*").Length == 3, "a checkpoint every second step");
+            using var last = PretrainedModel.Load(Pretrainer.LatestCheckpoint(run)!, new PretrainedOptions { Device = device });
+            Check(last.Tokenizer is not null && last.ChatTemplate is not null, "a checkpoint is a model folder");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private sealed class StepCounter : ITelemetryHook
+    {
+        public int Batches;
+        public int Started;
+
+        public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches;
+
+        public void OnTrainingStarted(in TrainingStarted e) => Started++;
+
+        public void OnBatchCompleted(in BatchCompleted e) => Batches++;
+    }
+
+    private static void PretrainStagesAndSources(Device device)
+    {
+        string folder = TempFolder("pretrain-stages");
+        try
+        {
+            string windows = ReferenceWindows(folder);
+            var initial = ReadTensors(Path.Combine(TinyLlama, "model.safetensors"));
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                var options = TextStage(windows, 1, "sgd", 0.2f);
+                options = options with { Stages = [options.Stages[0] with { Trained = ["embeddings"] }] };
+                var after = ReadTensors(Path.Combine(Pretrainer.Train(model, options, Path.Combine(folder, "embeddings")).LastCheckpoint!, "model.safetensors"));
+                Check(!after["model.embed_tokens.weight"].Values.SequenceEqual(initial["model.embed_tokens.weight"].Values), "the embeddings train");
+                Check(after.Where(t => t.Key != "model.embed_tokens.weight").All(t => t.Value.Values.SequenceEqual(initial[t.Key].Values)), "nothing else does");
+            }
+
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                var options = TextStage(windows, 1, "sgd", 0.2f);
+                options = options with { Stages = [options.Stages[0] with { Trained = ["decoder"] }] };
+                var after = ReadTensors(Path.Combine(Pretrainer.Train(model, options, Path.Combine(folder, "decoder")).LastCheckpoint!, "model.safetensors"));
+                Check(after["model.embed_tokens.weight"].Values.SequenceEqual(initial["model.embed_tokens.weight"].Values)
+                    && !after["model.layers.0.self_attn.q_proj.weight"].Values.SequenceEqual(initial["model.layers.0.self_attn.q_proj.weight"].Values)
+                    && !after["model.norm.weight"].Values.SequenceEqual(initial["model.norm.weight"].Values), "the decoder trains, the embeddings stay");
+            }
+
+            // Two sources weighted 3 to 1: drawn 3 to 1.
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                string tokens = PretrainData("tokens.bin");
+                var options = TextStage(tokens, 10, "adamw", 1e-3f) with { SaveEvery = 5 };
+                options = options with { Stages = [options.Stages[0] with
+                {
+                    Steps = 10, Sources = [new PretrainingSource(PretrainingSources.Tokens, [tokens]) { Weight = 3 }, new PretrainingSource(PretrainingSources.Tokens, [tokens])],
+                }] };
+                string run = Path.Combine(folder, "weights");
+                using var stop = new CancellationTokenSource();
+                Throws<OperationCanceledException>(() => Pretrainer.Train(model, options, run, null,
+                    new SynchronousProgress<PretrainingProgress>(p => { if (p.Step == 5) { stop.Cancel(); } }), stop.Token), "stopped mid-stage");
+                var drawn = Pretrainer.ReadCheckpoint(Pretrainer.LatestCheckpoint(run)!).Sources;
+                Check(drawn[0].Drawn == 15 && drawn[1].Drawn == 5, $"drawn {drawn[0].Drawn} and {drawn[1].Drawn} of 20 by weights 3 and 1");
+            }
+
+            // Records: conversations through the chat template, answers trained.
+            string records = Path.Combine(folder, "records.jsonl");
+            File.WriteAllLines(records,
+            [
+                """{"messages": [{"role": "user", "content": "read the scan"}, {"role": "assistant", "content": "the court decision 12/05/1446"}]}""",
+                """{"messages": [{"role": "user", "content": "اقرأ"}, {"role": "assistant", "content": "وزارة العدل المحكمة"}]}""",
+                """{"conversations": [{"from": "human", "value": "write"}, {"from": "gpt", "value": "a page with lines of text"}]}""",
+            ]);
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                var options = TextStage(windows, 3, "adamw", 1e-3f) with { BatchTokens = 128 };
+                options = options with { Stages = [options.Stages[0] with { Sources = [new PretrainingSource(PretrainingSources.Records, [records]) { Format = "messages" }] }] };
+                File.WriteAllLines(records, File.ReadAllLines(records).Take(2));
+                var result = Pretrainer.Train(model, options, Path.Combine(folder, "records"));
+                Check(result.Losses.Count == 3 && result.Losses.All(float.IsFinite), $"records train: {string.Join(", ", result.Losses)}");
+            }
+
+            // Telemetry, and the loss of 200 steps on the whole token file.
+            var counter = new StepCounter();
+            using (Telemetry.Subscribe(counter))
+            using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
+            {
+                var options = TextStage(PretrainData("tokens.bin"), 200, "adamw", 3e-3f) with { BatchTokens = 128, Seed = 1 };
+                options = options with { Stages = [options.Stages[0] with { Schedule = "cosine", WarmupFraction = 0.05f }] };
+                var result = Pretrainer.Train(model, options, Path.Combine(folder, "learn"));
+                Check(counter.Started == 1 && counter.Batches == 200, $"telemetry: {counter.Started} start, {counter.Batches} steps");
+                float first = result.Losses[0], end = result.Losses.TakeLast(10).Average();
+                Check(end < first / 2, $"the loss falls from {first:F3} to {end:F3}");
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void PretrainRefusals(Device device)
+    {
+        if (!FirstRun(nameof(PretrainRefusals)))
+        {
+            return;
+        }
+
+        string folder = TempFolder("pretrain-refusals-run");
+        try
+        {
+            var good = TextStage(PretrainData("tokens.bin"), 2, "adamw", 1e-3f);
+            var back = PretrainingOptions.FromJson(good.ToJson());
+            Check(JsonNode.DeepEquals(back.ToJson(), good.ToJson()), "options read back from JSON");
+            var withUnknown = good.ToJson();
+            withUnknown["epochs"] = 3;
+            Throws<InvalidDataException>(() => PretrainingOptions.FromJson(withUnknown), "an unknown option");
+
+            using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = Device.Cpu });
+            Throws<ArgumentException>(() => Pretrainer.Train(model, good with { Stages = [] }, folder), "no stages");
+            Throws<ArgumentException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Sources = [] }] }, folder), "no sources");
+            Throws<ArgumentException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Trained = ["wings"] }] }, folder), "an unknown part");
+            Throws<ArgumentException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Trained = ["tower"] }] }, folder), "a vision part of a text model");
+            Throws<ArgumentException>(() => Pretrainer.Train(model, good with { Optimizer = "lion" }, folder), "an unknown optimizer");
+            Throws<ArgumentException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Schedule = "steps" }] }, folder), "an unknown schedule");
+            Throws<NotSupportedException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Sources = [new PretrainingSource("parquet", ["x"])] }] }, folder), "an unregistered source");
+            Throws<FileNotFoundException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Sources = [new PretrainingSource("tokens", [PretrainData("missing.bin")])] }] }, folder), "a missing file");
+            using var packed = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = Device.Cpu, Int8 = true });
+            Throws<InvalidOperationException>(() => Pretrainer.Train(packed, good, folder), "int8 weights");
+            Check(PretrainingSources.Names.Contains("tokens") && PretrainingSources.Names.Contains("records") && PretrainingSources.Origin("tokens") == Idrak.Abstraction.Overrides.Library, "the library's source kinds");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
 
     private static string TinyLlama => PretrainData("tiny-llama");
 

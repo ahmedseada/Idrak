@@ -3632,8 +3632,10 @@ public class Idrak.Abstraction.Training.Adam : Idrak.Abstraction.Training.Optimi
   public float Beta2 { get; }
   public float Epsilon { get; }
   public float WeightDecay { get; }
+  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public override void ClipAndStep(float maxNorm)
   public override void Dispose()
+  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
 
 public sealed class Idrak.Abstraction.Training.AdamW : Idrak.Abstraction.Training.Adam
@@ -3663,6 +3665,10 @@ public abstract class Idrak.Abstraction.Training.Optimizer : System.IDisposable
   protected float GradientScale { get; set; }
   protected static Idrak.Abstraction.Tensor CreateState(Idrak.Abstraction.Tensor parameter)
   protected static Idrak.Abstraction.Tensor CreateState(System.ReadOnlySpan<int> shape, Idrak.Abstraction.Device device)
+  protected static Idrak.Abstraction.Tensor? LoadStateTensor(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state, string name, Idrak.Abstraction.Tensor? target, System.Func<Idrak.Abstraction.Tensor> create)
+  protected static Idrak.Abstraction.Training.OptimizerStateValue StateOf(Idrak.Abstraction.Tensor tensor)
+  protected static Idrak.Abstraction.Training.OptimizerStateValue StateOf(int step)
+  protected static int LoadStep(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state, string name = "step")
   protected virtual bool ScalesGradientsInStep { get; }
   protected void ApplyCoupledWeightDecay(float decay)
   protected void ApplyDecoupledWeightDecay(float decay)
@@ -3671,16 +3677,25 @@ public abstract class Idrak.Abstraction.Training.Optimizer : System.IDisposable
   public double ClipGradientNorm(float maxNorm)
   public double GradientNorm()
   public float LearningRate { get; set; }
+  public virtual System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public virtual void ClipAndStep(float maxNorm)
   public virtual void Dispose()
+  public virtual void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public void ClipGradientNormOnDevice(float maxNorm)
   public void ZeroGrad()
+
+public sealed record Idrak.Abstraction.Training.OptimizerStateValue : System.IEquatable<Idrak.Abstraction.Training.OptimizerStateValue>
+  public OptimizerStateValue(int[] Shape, float[] Values)
+  public float[] Values { get; init; }
+  public int[] Shape { get; init; }
 
 public sealed class Idrak.Abstraction.Training.Sgd : Idrak.Abstraction.Training.Optimizer
   public Sgd(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, float learningRate = 0.01f, float momentum = 0f, float weightDecay = 0f)
   public float Momentum { get; }
   public float WeightDecay { get; }
+  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public override void Dispose()
+  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
 
 public sealed class Idrak.Abstraction.Training.StepDecay : Idrak.Abstraction.Training.LearningRateScheduler

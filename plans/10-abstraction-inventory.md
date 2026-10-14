@@ -15,7 +15,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak` | 11 | 4 | 13 | 28 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Nlp` | 10 | 2 | 8 | 20 | 0 |
+| `Idrak.Nlp` | 12 | 2 | 9 | 23 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -80,7 +80,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, safetensors | Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, SafeTensorsCheckpointFormat |  | Abstraction, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
-| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, SafeTensorsReader |  | Abstraction, Idrak, Vision | Abstraction |
+| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, SafeTensorsReader |  | Abstraction, Idrak, Nlp, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ChatPart` | abstract class | public | — | ChatImage, ChatText, PendingImage |  | Abstraction, AspNetCore, Idrak, Imaging, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | image, text | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
@@ -170,12 +170,15 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Nlp.Abstractions.IFeatureCache` | interface | public | Device, Tensor | DiskFeatureCache, MemoryFeatureCache |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.IJsonRepair` | interface | public | — | JsonRepairs.GuardedRepair, LenientJsonRepair |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.IPagePartFiller` | interface | public | — | LibraryPagePartFillers.Filler |  | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.IPretrainingReader` | interface | public | — | RecordPretrainingSource.Reader, TokenPretrainingSource.Reader |  | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.IPretrainingSource` | interface | public | — | RecordPretrainingSource, TokenPretrainingSource |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.IRandomTextSource` | interface | public | — | PooledTextSource |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ISyntheticRecordFormat` | interface | public | — | MessagesSyntheticRecords, ShareGptSyntheticRecords, TextSyntheticRecords |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.PagePartFillers` | registry | public | — |  | date, digits, field, hijri, line, number, pick | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.PretrainingSources` | registry | public | — |  | records, tokens | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.RandomTextSources` | registry | public | — |  | ar, en | — | Nlp |
 | `Idrak.Nlp.Abstractions.SyntheticRecordFormats` | registry | public | — |  | messages, sharegpt, text | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |

@@ -1682,7 +1682,9 @@ public sealed class Idrak.Optimizers.AdamW8Bit : Idrak.Abstraction.Training.Opti
   public int MinimumSize { get; }
   public int StepCount { get; }
   public long StateBytes { get; }
+  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public override void Dispose()
+  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
   public static byte Nearest(System.ReadOnlySpan<float> map, float x)
   public static float[] DynamicMap(bool signed)
@@ -1690,14 +1692,18 @@ public sealed class Idrak.Optimizers.AdamW8Bit : Idrak.Abstraction.Training.Opti
 public sealed class Idrak.Optimizers.GroupedOptimizer : Idrak.Abstraction.Training.Optimizer
   public GroupedOptimizer(params Idrak.Abstraction.Training.Optimizer[] groups)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Training.Optimizer> Groups { get; }
+  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public override void Dispose()
+  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
 
 public sealed class Idrak.Optimizers.HostOptimizer : Idrak.Abstraction.Training.Optimizer
   public HostOptimizer(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> create)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Training.Optimizer> CpuOptimizers { get; }
+  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public override void ClipAndStep(float maxNorm)
   public override void Dispose()
+  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
 
 public interface Idrak.Training.Abstractions.ITrainerCallback

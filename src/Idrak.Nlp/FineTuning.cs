@@ -1176,9 +1176,20 @@ public static class FineTuner
     // custom: a loss of one's own (FineTuningOptions.Loss), or null for the token cross-entropy.
     // largest: the most positions any batch of the run holds (the first step's measured bytes per position say whether it fits).
     // imageTokens: the most image tokens any batch holds (a recorded step with images is made for them).
-    private sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
+    internal sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
         int lossRows, CustomLoss? custom, Action<string>? trace, long largest, int imageTokens) : IDisposable
     {
+        // The sequences the batches of the current step index (the run's, or one step's when sequences stream in, Run's
+        // overload with them).
+        private IReadOnlyList<TrainingSequence> _train = train;
+
+        /// <summary>Runs one optimizer step over <paramref name="group"/>, whose batches index <paramref name="sequences"/> (this step's own).</summary>
+        public (float Loss, long Tokens) Run(IReadOnlyList<Batch> group, IReadOnlyList<TrainingSequence> sequences, CancellationToken cancellationToken, Func<int, string> label)
+        {
+            _train = sequences;
+            return Run(group, cancellationToken, label);
+        }
+
         // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update. The recorded
         // pass is the token cross-entropy's; a loss of one's own runs ordinary steps. Experts' routing is read back to the
         // host on every pass, which a recording cannot.
@@ -1228,7 +1239,7 @@ public static class FineTuner
         public (float Loss, long Tokens) Run(IReadOnlyList<Batch> group, CancellationToken cancellationToken, Func<int, string> label, bool graphs = true)
         {
             // Every step with images whose vision side trains runs ordinarily (its features need gradients); said once.
-            if (!_toldImages && options.Vision is { Parameters.Count: > 0 } && _graphsAllowed && group.Any(b => b.HasImages(train)))
+            if (!_toldImages && options.Vision is { Parameters.Count: > 0 } && _graphsAllowed && group.Any(b => b.HasImages(_train)))
             {
                 _toldImages = true;
                 trace?.Invoke("steps with images run without graphs while a vision part trains (the features need gradients)");
@@ -1402,12 +1413,12 @@ public static class FineTuner
             var options = _options;
             _graphs ??= _graphsAllowed;
             var batch = group[0];
-            var shape = (batch.Rows.Length, batch.Length, batch.HasImages(train) ? Math.Max(imageTokens, batch.ImageTokens(train)) : 0);
+            var shape = (batch.Rows.Length, batch.Length, batch.HasImages(_train) ? Math.Max(imageTokens, batch.ImageTokens(_train)) : 0);
 
             // A batch with images replays only when its features are values (no vision part trains): they are copied in.
             if (graphs && _graphs == true && group.Count == 1 && batch.Packed && (shape.Item3 == 0 || options.Vision is { Parameters.Count: 0 }))
             {
-                var graph = _recorded.Where(g => g.Fits(batch, train)).MinBy(g => g.ImageTokens);
+                var graph = _recorded.Where(g => g.Fits(batch, _train)).MinBy(g => g.ImageTokens);
                 if (graph is null && _seen.GetValueOrDefault(shape) >= 2 && RoomForAnother(shape))
                 {
                     if (_checkGradients && optimizer.Parameters.Any(p => p.RequiresGrad && p.Grad is null))
@@ -1417,7 +1428,7 @@ public static class FineTuner
                         return Ordinary(group, shape, cancellationToken, label);
                     }
 
-                    graph = TrainingGraph.Record(model, train, optimizer, options, batch, (Math.Max(1, lossRows) + 63) / 64 * 64, shape.Item3, trace);
+                    graph = TrainingGraph.Record(model, _train, optimizer, options, batch, (Math.Max(1, lossRows) + 63) / 64 * 64, shape.Item3, trace);
                     if (graph is null)
                     {
                         _graphs = _recorded.Count > 0;                       // the first failed: none; a later one: not this shape
@@ -1446,8 +1457,8 @@ public static class FineTuner
                     cancellationToken.ThrowIfCancellationRequested();
                     var watch = Stopwatch.StartNew();
                     model.Network.Train();
-                    var (loss, tokens) = graph.Run(train, batch);
-                    trace?.Invoke($"{label(0)}: {batch.Describe(train)}, replayed: loss {loss:F4}, {watch.Elapsed.TotalSeconds:F2} s");
+                    var (loss, tokens) = graph.Run(_train, batch);
+                    trace?.Invoke($"{label(0)}: {batch.Describe(_train)}, replayed: loss {loss:F4}, {watch.Elapsed.TotalSeconds:F2} s");
                     Update(model, optimizer, options, loss);
                     return (loss, tokens);
                 }
@@ -1459,7 +1470,7 @@ public static class FineTuner
         private (float Loss, long Tokens) Ordinary(IReadOnlyList<Batch> group, (int, int, int) shape, CancellationToken cancellationToken, Func<int, string> label)
         {
             _seen[shape] = _seen.GetValueOrDefault(shape) + 1;
-            return RunStep(model, train, group, optimizer, _options, custom, cancellationToken, trace, label);
+            return RunStep(model, _train, group, optimizer, _options, custom, cancellationToken, trace, label);
         }
 
         // Whether another graph may be recorded: always the first; another while the device's free memory, measured now,
@@ -1809,7 +1820,7 @@ public static class FineTuner
     // are never stored. Reference log-probabilities (adapters disabled) are kept per sequence for the whole run.
     // A teacher's divergences (FineTuningLossInput.TeacherDivergence) go the same way: their values first, without
     // gradients, then the divergence over the same rows weighted by their gradient g (d loss / d θ = Σ_t g_t · d KL_t / d θ).
-    private sealed class CustomLoss(FineTuningLoss loss, bool pairs, DistillationTeacher? teacher = null)
+    internal sealed class CustomLoss(FineTuningLoss loss, bool pairs, DistillationTeacher? teacher = null)
     {
         private readonly Dictionary<TrainingSequence, float[]> _reference = [];
 
@@ -1924,7 +1935,7 @@ public static class FineTuner
     }
 
     // A batch: rows of sequences (one per row when padded, several when packed), each row Length positions.
-    private sealed record Batch(int[][] Rows, int Length, bool Packed)
+    internal sealed record Batch(int[][] Rows, int Length, bool Packed)
     {
         public IEnumerable<int> Sequences => Rows.SelectMany(r => r);
 
@@ -1956,7 +1967,7 @@ public static class FineTuner
     // The training batches: packed when asked and supported, else padded. Sequences with images pack like the others (each
     // keeps its images at its own positions and attends within itself by the family's rule); when every sequence holds
     // images under a rule that is not causal, every position attends by key ranges, so the span kernels decide.
-    private static List<Batch> MakeBatches(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Random random)
+    internal static List<Batch> MakeBatches(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Random random)
     {
         bool spans = options.Vision is { Attention.Causal: false } && train.Count > 0 && train.All(s => s.Images.Count > 0)
                      && PackedSequences.SupportsImages(model.Network);
@@ -2103,7 +2114,7 @@ public static class FineTuner
     // The summed weighted loss of one batch divided by normalizer (padding and untrained positions weigh 0), and the
     // number of tokens it covers. The network runs up to its final normalization; the head runs inside the loss.
     // The host side of a batch: inputs [rows · length], and the trained positions with their targets and weights.
-    private sealed record BatchData(float[] Inputs, int[] Trained, float[] Targets, float[] Weights, long Tokens);
+    internal sealed record BatchData(float[] Inputs, int[] Trained, float[] Targets, float[] Weights, long Tokens);
 
     private static BatchData Prepare(IReadOnlyList<TrainingSequence> sequences, Batch batch, float weight = 1f)
     {
@@ -2162,7 +2173,7 @@ public static class FineTuner
     // batch, all of them through the vision side together and its cache) at its blocks' positions in its row (after the
     // sequences before it, in a packed row), and the family's attention rule. With fixed inputs (a recorded step) the pass
     // reads the features from them.
-    private sealed record StepImages(IReadOnlyList<PromptImage> Images, IImageAttentionRule Attention)
+    internal sealed record StepImages(IReadOnlyList<PromptImage> Images, IImageAttentionRule Attention)
     {
         public ImagePrefillInputs? Inputs { get; init; }
 

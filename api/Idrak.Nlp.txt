@@ -86,6 +86,15 @@ public interface Idrak.Nlp.Abstractions.IPagePartFiller
   public string Summary { get; }
   public string? Fill(string? argument, Idrak.Nlp.Abstractions.PagePartContext context)
 
+public interface Idrak.Nlp.Abstractions.IPretrainingReader : System.IDisposable
+  public Idrak.Nlp.Abstractions.TrainingSequence? Read(long index)
+  public long Count { get; }
+
+public interface Idrak.Nlp.Abstractions.IPretrainingSource
+  public Idrak.Nlp.Abstractions.IPretrainingReader Open(Idrak.Nlp.Abstractions.PretrainingSource source, Idrak.Nlp.Abstractions.PretrainingContext context)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Nlp.Abstractions.IRandomTextSource
   public string Line(System.Random random, int words, Idrak.Nlp.RandomTextOptions options)
   public string Name { get; }
@@ -153,6 +162,34 @@ public sealed class Idrak.Nlp.Abstractions.PendingConversations : System.IDispos
   public int Count { get; }
   public int Images { get; }
   public void Dispose()
+
+public sealed record Idrak.Nlp.Abstractions.PretrainingContext : System.IEquatable<Idrak.Nlp.Abstractions.PretrainingContext>
+  public Idrak.Models.PretrainedModel Model { get; init; }
+  public Idrak.Nlp.ChatTranscriptEncoder? Encoder { get; init; }
+  public PretrainingContext(Idrak.Models.PretrainedModel Model, int MaxLength, Idrak.Nlp.ChatTranscriptEncoder? Encoder)
+  public int MaxLength { get; init; }
+
+public sealed record Idrak.Nlp.Abstractions.PretrainingSource : System.IEquatable<Idrak.Nlp.Abstractions.PretrainingSource>
+  public Idrak.Datasets.TokenType TokenType { get; init; }
+  public PretrainingSource(string Kind, System.Collections.Generic.IReadOnlyList<string> Paths)
+  public System.Collections.Generic.IReadOnlyList<string> Paths { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public double Weight { get; init; }
+  public static Idrak.Nlp.Abstractions.PretrainingSource FromJson(System.Text.Json.Nodes.JsonObject json)
+  public string Kind { get; init; }
+  public string? Format { get; init; }
+  public string? Images { get; init; }
+
+public static class Idrak.Nlp.Abstractions.PretrainingSources
+  public const string Records = "records"
+  public const string Tokens = "tokens"
+  public static Idrak.Nlp.Abstractions.IPretrainingSource Get(string name)
+  public static Idrak.Nlp.Abstractions.IPretrainingSource? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.IPretrainingSource source)
 
 public static class Idrak.Nlp.Abstractions.RandomTextSources
   public static Idrak.Nlp.Abstractions.IRandomTextSource Get(string name)
@@ -802,6 +839,93 @@ public static class Idrak.Nlp.PretrainedModelExtensions
   public static Idrak.Nlp.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0, int? contextLength = null)
   public static Idrak.Nlp.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueLayout cacheLayout, int? contextLength = null)
   public static Idrak.Nlp.JinjaChatTemplate? get_JinjaTemplate(Idrak.Models.PretrainedModel model)
+
+public static class Idrak.Nlp.Pretrainer
+  public const string Format = "idrak-pretrain/1"
+  public const string StateFormat = "idrak-pretrain-state/1"
+  public static Idrak.Nlp.PretrainingCheckpoint ReadCheckpoint(string folder)
+  public static Idrak.Nlp.PretrainingResult Train(Idrak.Models.PretrainedModel model, Idrak.Nlp.PretrainingOptions options, string outputFolder, Idrak.Nlp.PretrainingCheckpoint? resume = null, System.IProgress<Idrak.Nlp.PretrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
+  public static string? LatestCheckpoint(string outputFolder)
+
+public sealed record Idrak.Nlp.PretrainingCheckpoint : System.IEquatable<Idrak.Nlp.PretrainingCheckpoint>
+  public Idrak.Nlp.PretrainingOptions Options { get; init; }
+  public PretrainingCheckpoint(string Folder, Idrak.Nlp.PretrainingOptions Options, int Stage, int StageStep, int Step, System.Collections.Generic.IReadOnlyList<(long, long, long)> Sources, System.Collections.Generic.IReadOnlyList<float> Losses, System.Collections.Generic.IReadOnlyList<(int, float)> EvaluationLosses)
+  public System.Collections.Generic.IReadOnlyList<(int, float)> EvaluationLosses { get; init; }
+  public System.Collections.Generic.IReadOnlyList<(long, long, long)> Sources { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float> Losses { get; init; }
+  public int Stage { get; init; }
+  public int StageStep { get; init; }
+  public int Step { get; init; }
+  public string Folder { get; init; }
+
+public sealed record Idrak.Nlp.PretrainingOptions : System.IEquatable<Idrak.Nlp.PretrainingOptions>
+  public Idrak.Nlp.TuningImages Images { get; init; }
+  public PretrainingOptions()
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.PretrainingSource> Evaluation { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.PretrainingStage> Stages { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public bool CudaGraphs { get; init; }
+  public bool HostOptimizer { get; init; }
+  public bool Packing { get; init; }
+  public bool? BFloat16Activations { get; init; }
+  public bool? Checkpointing { get; init; }
+  public bool? RecomputeFeedForward { get; init; }
+  public float Beta1 { get; init; }
+  public float Beta2 { get; init; }
+  public float MaxGradientNorm { get; init; }
+  public float Momentum { get; init; }
+  public float WeightDecay { get; init; }
+  public int BatchTokens { get; init; }
+  public int EvaluateEvery { get; init; }
+  public int EvaluationSequences { get; init; }
+  public int GradientAccumulation { get; init; }
+  public int KeepCheckpoints { get; init; }
+  public int LossChunkRows { get; init; }
+  public int MaxLength { get; init; }
+  public int NonFiniteSteps { get; init; }
+  public int SaveEvery { get; init; }
+  public int Seed { get; init; }
+  public static Idrak.Nlp.PretrainingOptions FromJson(System.Text.Json.Nodes.JsonObject json)
+  public string FeatureCache { get; init; }
+  public string Optimizer { get; init; }
+
+public sealed record Idrak.Nlp.PretrainingProgress : System.IEquatable<Idrak.Nlp.PretrainingProgress>
+  public PretrainingProgress(string Stage, int StageIndex, int StageStep, int StageSteps, int Step, int TotalSteps, float Loss, float LearningRate, double TokensPerSecond, double ImagesPerSecond, long DeviceBytes, System.TimeSpan Remaining, float? EvaluationLoss)
+  public System.TimeSpan Remaining { get; init; }
+  public double ImagesPerSecond { get; init; }
+  public double TokensPerSecond { get; init; }
+  public float LearningRate { get; init; }
+  public float Loss { get; init; }
+  public float? EvaluationLoss { get; init; }
+  public int StageIndex { get; init; }
+  public int StageStep { get; init; }
+  public int StageSteps { get; init; }
+  public int Step { get; init; }
+  public int TotalSteps { get; init; }
+  public long DeviceBytes { get; init; }
+  public string Stage { get; init; }
+
+public sealed record Idrak.Nlp.PretrainingResult : System.IEquatable<Idrak.Nlp.PretrainingResult>
+  public PretrainingResult(int Steps, System.Collections.Generic.IReadOnlyList<float> Losses, System.Collections.Generic.IReadOnlyList<(int, float)> EvaluationLosses, string? LastCheckpoint, System.TimeSpan Elapsed, string Settings)
+  public System.Collections.Generic.IReadOnlyList<(int, float)> EvaluationLosses { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float> Losses { get; init; }
+  public System.TimeSpan Elapsed { get; init; }
+  public int Steps { get; init; }
+  public string Settings { get; init; }
+  public string? LastCheckpoint { get; init; }
+
+public sealed record Idrak.Nlp.PretrainingStage : System.IEquatable<Idrak.Nlp.PretrainingStage>
+  public PretrainingStage(string Name)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.PretrainingSource> Sources { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Trained { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public float LearningRate { get; init; }
+  public float MinLearningRate { get; init; }
+  public float WarmupFraction { get; init; }
+  public int Steps { get; init; }
+  public static Idrak.Nlp.PretrainingStage FromJson(System.Text.Json.Nodes.JsonObject json)
+  public string Name { get; init; }
+  public string Schedule { get; init; }
 
 public static class Idrak.Nlp.RandomText
   public static Idrak.Nlp.RandomTextResult Write(string path, Idrak.Nlp.Abstractions.IRandomTextSource source, Idrak.Nlp.RandomTextOptions options, System.IProgress<int>? progress = null)

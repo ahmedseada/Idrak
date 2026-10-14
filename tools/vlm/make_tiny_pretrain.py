@@ -16,7 +16,8 @@ Nothing is downloaded. The script writes, from fixed word lists and seeded gener
 - tokens.bin: every document of corpus.txt encoded and followed by </s>, as uint16 (what `idrak data tokens` writes);
 - step/: training on the first four 32-token windows of tokens.bin with every parameter trained, the mean token cross
   entropy over every position; plain SGD at 0.2 (step 1's loss and gradients, three steps' losses and the weights after
-  them) and AdamW (three steps' losses, the weights and the optimizer's moments after them).
+  them) and AdamW (three steps' losses, the weights and the optimizer's moments after them); adamw-folded/ the same with
+  the bias corrections folded into the step size, as Idrak's AdamW computes it.
 
 Reruns write the same bytes (fixed seeds, one thread, deterministic algorithms, sorted JSON) on the same machine and
 library versions; manifest.json records the versions and each file's SHA-256. README.md in the output folder (written by
@@ -183,6 +184,37 @@ def write_model(out, tokenizer_dir, ids):
     return model
 
 
+class FoldedAdamW:
+    """AdamW as Idrak computes it: decoupled decay, then p -= lr * sqrt(1 - b2^t) / (1 - b1^t) * m / (sqrt(v) + eps), the
+    bias corrections folded into the step size (so epsilon is eps / sqrt(1 - b2^t) of torch's). Only the epsilon's place
+    differs from torch.optim.AdamW; it shows where a second moment is near epsilon squared."""
+
+    def __init__(self, params, lr, betas, eps, weight_decay):
+        import torch
+        self.params, self.lr, (self.b1, self.b2), self.eps, self.wd = list(params), lr, betas, eps, weight_decay
+        self.m = [torch.zeros_like(p) for p in self.params]
+        self.v = [torch.zeros_like(p) for p in self.params]
+        self.t = 0
+        self.state = {}
+
+    def zero_grad(self, set_to_none=True):
+        for p in self.params:
+            p.grad = None
+
+    def step(self):
+        import torch
+        self.t += 1
+        size = self.lr * np.sqrt(1 - self.b2 ** self.t) / (1 - self.b1 ** self.t)
+        with torch.no_grad():
+            for p, m, v in zip(self.params, self.m, self.v):
+                if p.grad is None:
+                    continue
+                p.mul_(1 - self.lr * self.wd)
+                m.mul_(self.b1).add_(p.grad, alpha=1 - self.b1)
+                v.mul_(self.b2).addcmul_(p.grad, p.grad, value=1 - self.b2)
+                p.addcdiv_(m, v.sqrt().add_(self.eps), value=-float(size))
+
+
 def train_steps(model_dir, tokens, out, optimizer_kind):
     """STEPS steps on the first WINDOWS windows, every parameter trained; the loss before each update."""
     import torch
@@ -195,8 +227,10 @@ def train_steps(model_dir, tokens, out, optimizer_kind):
     params = [p for _, p in model.named_parameters()]
     if optimizer_kind == "sgd":
         opt = torch.optim.SGD(params, lr=SGD_RATE, momentum=0.0)
-    else:
+    elif optimizer_kind == "adamw":
         opt = torch.optim.AdamW(params, **ADAMW)
+    else:
+        opt = FoldedAdamW(params, **ADAMW)
     losses = []
     os.makedirs(out, exist_ok=True)
     for step in range(1, STEPS + 1):
@@ -236,9 +270,14 @@ def main():
     torch.use_deterministic_algorithms(True)
 
     out = os.path.abspath(args.out)
+    readme = os.path.join(out, "README.md")
+    kept = open(readme, encoding="utf-8").read() if os.path.exists(readme) else None   # written by hand, kept
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(out)
+    if kept is not None:
+        with open(readme, "w", encoding="utf-8", newline="\n") as f:
+            f.write(kept)
     docs = corpus()
     corpus_path = os.path.join(out, "corpus.txt")
     with open(corpus_path, "w", encoding="utf-8", newline="\n") as f:
@@ -263,6 +302,7 @@ def main():
     write_model(model_dir, os.path.join(out, "tokenizer"), ids)
     sgd, windows = train_steps(model_dir, tokens, os.path.join(out, "step"), "sgd")
     adamw, _ = train_steps(model_dir, tokens, os.path.join(out, "step", "adamw"), "adamw")
+    folded, _ = train_steps(model_dir, tokens, os.path.join(out, "step", "adamw-folded"), "folded")
     dump_json(os.path.join(out, "step", "step.json"), {
         "window": WINDOW, "windows": WINDOWS, "window_ids": windows.tolist(), "steps": STEPS,
         "loss": "mean cross entropy over every position of every window (targets: the next token)",
@@ -272,6 +312,8 @@ def main():
         "adamw": {**{k: (list(v) if isinstance(v, tuple) else v) for k, v in ADAMW.items()}, "max_gradient_norm": 0.0,
                   "losses": adamw["losses"], "files": {"weights_after": f"adamw/weights-step{STEPS}.safetensors",
                                                        "state_after": f"adamw/state-step{STEPS}.safetensors"}},
+        "adamw_folded": {"what": "AdamW with the bias corrections folded into the step size, as Idrak computes it (epsilon's place only differs)",
+                         "losses": folded["losses"], "files": {"weights_after": f"adamw-folded/weights-step{STEPS}.safetensors"}},
     })
 
     files = {}

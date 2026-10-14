@@ -13,6 +13,10 @@
    "bytes": 32061,
    "sha256": "3853222b9e931fa17e53d30af223e183261a0fbcc446427567579253b9748aab"
   },
+  "step/adamw-folded/weights-step3.safetensors": {
+   "bytes": 141952,
+   "sha256": "5d06fa140b299363b02309b9b739df44192562478e56a4c80350002d5b163347"
+  },
   "step/adamw/state-step3.safetensors": {
    "bytes": 284272,
    "sha256": "d619a1650d822320a6562e26b51ac8bdcf30d3a736c12adfda9dcefde3242b65"
@@ -26,8 +30,8 @@
    "sha256": "fd4a1c0b6ed5d0d0587b07bd967102360592f5041be1ec9f63550cf3ea677e2f"
   },
   "step/step.json": {
-   "bytes": 1879,
-   "sha256": "d95d6af847c1a201d2987a53e7968b3cb03918cd01aa50a0e243adb8ef10a3ef"
+   "bytes": 2189,
+   "sha256": "885402f99f418bdb7fe96b81038f130376c16f7178a888bad1cc9d4246ef5128"
   },
   "step/weights-step3.safetensors": {
    "bytes": 141952,
@@ -101,6 +105,143 @@
   ]
  },
  "tensors": {
+  "step/adamw-folded/weights-step3.safetensors": {
+   "model.embed_tokens.weight": {
+    "dtype": "F32",
+    "shape": [
+     512,
+     32
+    ]
+   },
+   "model.layers.0.input_layernorm.weight": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "model.layers.0.mlp.down_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     64
+    ]
+   },
+   "model.layers.0.mlp.gate_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     64,
+     32
+    ]
+   },
+   "model.layers.0.mlp.up_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     64,
+     32
+    ]
+   },
+   "model.layers.0.post_attention_layernorm.weight": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "model.layers.0.self_attn.k_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     32
+    ]
+   },
+   "model.layers.0.self_attn.o_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     32
+    ]
+   },
+   "model.layers.0.self_attn.q_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     32
+    ]
+   },
+   "model.layers.0.self_attn.v_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     32
+    ]
+   },
+   "model.layers.1.input_layernorm.weight": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "model.layers.1.mlp.down_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     64
+    ]
+   },
+   "model.layers.1.mlp.gate_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     64,
+     32
+    ]
+   },
+   "model.layers.1.mlp.up_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     64,
+     32
+    ]
+   },
+   "model.layers.1.post_attention_layernorm.weight": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "model.layers.1.self_attn.k_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     32
+    ]
+   },
+   "model.layers.1.self_attn.o_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     32
+    ]
+   },
+   "model.layers.1.self_attn.q_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     32
+    ]
+   },
+   "model.layers.1.self_attn.v_proj.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     32
+    ]
+   },
+   "model.norm.weight": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   }
+  },
   "step/adamw/state-step3.safetensors": {
    "model.embed_tokens.weight.exp_avg": {
     "dtype": "F32",
