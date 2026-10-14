@@ -12,7 +12,50 @@ internal static partial class Tests
         ("cli pretrain: data tokenizer learns the reference's tokenizer from the corpus, and data tokens writes the reference's token file", CliPretrainData),
         ("cli pretrain: create makes a model from a spec file (and create init's), pretrain trains it, Ctrl+C-like stops checkpoint, resume finishes, runs show reads the steps, run answers", CliPretrainRun),
         ("cli pretrain: an unknown architecture, a missing spec key, a missing tokenizer, no sources and a run folder in use are refused", CliPretrainRefusals),
+        ("cli pretrain vision: create init --vision, create and pretrain an IdrakVision model with its plug-in (-P), resume, run with an image; without the plug-in the family is refused naming -P", CliPretrainVision),
     ];
+
+    private static void CliPretrainVision(Device device)
+    {
+        string plugin = typeof(Idrak.IdrakVision.IdrakVisionPlugin).Assembly.Location;
+        string folder = TempFolder("cli-pretrain-vision");
+        Idrak.IdrakVision.IdrakVisionPlugin.Unregister();
+        try
+        {
+            string spec = Path.Combine(folder, "spec.json");
+            TrainCliJson("create", "init", "--vision", "-o", spec);
+            string text = File.ReadAllText(spec);
+            Check(text.Contains("IdrakVisionForConditionalGeneration", StringComparison.Ordinal) && text.Contains("\"vision\"", StringComparison.Ordinal), "create init --vision writes a vision part");
+            text = text.Replace("\"dim\": 256", "\"dim\": 32").Replace("\"layers\": 4", "\"layers\": 2").Replace("\"ffDim\": 768", "\"ffDim\": 64")
+                .Replace("\"maxPositions\": 1024", "\"maxPositions\": 128")
+                .Replace("\"tokenizer\": \"tokenizer.json\"", $"\"tokenizer\": {JsonValue.Create(PretrainData("tokenizer/tokenizer.json")).ToJsonString()}")
+                .Replace("\"hidden_size\": 192", "\"hidden_size\": 16").Replace("\"intermediate_size\": 768", "\"intermediate_size\": 32")
+                .Replace("\"num_hidden_layers\": 4", "\"num_hidden_layers\": 1").Replace("\"num_attention_heads\": 3", "\"num_attention_heads\": 2")
+                .Replace("\"image_size\": 224", "\"image_size\": 28").Replace("\"patch_size\": 14", "\"patch_size\": 7");
+            File.WriteAllText(spec, text);
+            string model = Path.Combine(folder, "model");
+            var (code, _, error) = TrainCli("create", spec, "-o", model);
+            Check(code == 1 && error.Contains("IdrakVisionForConditionalGeneration", StringComparison.Ordinal) && error.Contains("-P", StringComparison.Ordinal), $"without the plug-in: {error}");
+
+            var created = TrainCliJson("create", spec, "-o", model, "--seed", "2", "-P", plugin);
+            Check(File.Exists(Path.Combine(model, "preprocessor_config.json")) && JsonNode.Parse(File.ReadAllText(Path.Combine(model, "config.json")))!["vision_config"] is JsonObject,
+                $"a vision-language model made: {created["files"]}");
+            string run = Path.Combine(folder, "run");
+            var trained = TrainCliJson("pretrain", model, "-P", plugin, "--data", ScratchData("records.jsonl"), "--trained", "tower,projector", "--sequences", "3",
+                "--max-length", "128", "--batch-tokens", "384", "--steps", "2", "--lr", "1e-3", "-o", run, "-d", device.ToString());
+            Check((int)trained["steps"]! == 2, $"{trained}");
+            var resumed = TrainCliJson("resume", run, "-P", plugin, "--steps", "1", "-d", device.ToString());
+            Check((int)resumed["steps"]! == 3, $"resume: {resumed}");
+            var (runCode, answer, runError) = RunIdrakOn(device, null, "run", (string)resumed["checkpoint"]!, "-P", plugin, "--image", ScratchData("images/image.png"),
+                "read the scan", "--max-tokens", "3", "--temperature", "0");
+            Check(runCode == 0, $"run with an image: {answer} {runError}");
+        }
+        finally
+        {
+            Idrak.IdrakVision.IdrakVisionPlugin.Unregister();
+            Directory.Delete(folder, recursive: true);
+        }
+    }
 
     private static void CliPretrainData(Device device)
     {

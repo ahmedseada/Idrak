@@ -117,7 +117,8 @@ internal static class ImageModelFiles
     };
 
     /// <summary>Whether <paramref name="e"/> is a registry's refusal of a name it does not hold (a family, a decoder, a head).</summary>
-    public static bool NotRegistered(Exception e) => e is NotSupportedException && e.Message.Contains(" is not registered", StringComparison.Ordinal);
+    public static bool NotRegistered(Exception e) => e is NotSupportedException
+        && (e.Message.Contains(" is not registered", StringComparison.Ordinal) || e.Message.StartsWith("No architecture '", StringComparison.Ordinal));
 
     /// <summary>Prints a registry's refusal with the remedy on the command line, and gives the failure's exit code.</summary>
     public static int Refuse(CommandContext context, Exception e)

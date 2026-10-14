@@ -42,9 +42,9 @@ Every key is optional; `"preprocessing"` (a preprocessor_config.json) is too (th
 ## Use
 
 ```
-idrak -P Idrak.IdrakVision.dll create spec.json -o model
-idrak -P Idrak.IdrakVision.dll pretrain model -C pretrain.json -o run
-idrak -P Idrak.IdrakVision.dll run run/checkpoint-2000 --image page.png "Read the page."
+idrak create spec.json -o model -P Idrak.IdrakVision.dll
+idrak pretrain model -C pretrain.json -o run -P Idrak.IdrakVision.dll
+idrak run run/checkpoint-2000 --image page.png "Read the page." -P Idrak.IdrakVision.dll
 ```
 
 In an app: reference the project and call `IdrakVisionPlugin.Register()`.
