@@ -349,15 +349,21 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
                     return i + 1;
                 }
 
+                // As HarfBuzz: each part is numbered from 0 (a mark later attaches to the first), unless the glyph sits in a
+                // ligature, whose numbering it keeps; parts of a ligature are bases when the font gives no classes.
                 var source = G[i];
+                var kind = source.Kind == GlyphKind.Ligature ? GlyphKind.Base : GlyphKind.Unclassified;
                 G.RemoveAt(i);
                 for (int k = 0; k < count; k++)
                 {
                     var part = source;
-                    _c.SetGlyph(ref part, Bytes.U16(t, sequence + 2 + 2 * k), GlyphKind.Unclassified);
+                    _c.SetGlyph(ref part, Bytes.U16(t, sequence + 2 + 2 * k), kind);
                     part.Multiplied = true;
-                    part.LigatureId = 0;
-                    part.LigatureComponent = k + 1;
+                    if (source.LigatureId == 0)
+                    {
+                        part.LigatureComponent = k;
+                    }
+
                     G.Insert(i + k, part);
                 }
 
@@ -442,11 +448,9 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
             marksOnly &= span[p].IsMark;
         }
 
-        int cluster = int.MaxValue;
-        for (int k = first; k <= last; k++)
-        {
-            cluster = Math.Min(cluster, span[k].Cluster);
-        }
+        // The span's clusters merged, with the glyphs beside it that shared its ends' clusters (HarfBuzz's merge_clusters).
+        OpenTypeShaper.MergeClusters(span, first, last + 1);
+        int cluster = span[first].Cluster;
 
         int ligatureId = marksOnly ? 0 : _c.NextLigatureId();
         int componentsSoFar = span[first].Components;
@@ -1009,13 +1013,33 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
             return -1;
         }
 
-        int b = PreviousNonMark(i);
+        // The base: the nearest glyph before that is not a mark, passing over the later parts of a multiple substitution
+        // unless the table covers them (HarfBuzz's MarkBasePos: marks go on the first part of a sequence).
+        int baseCoverage = sub + Bytes.U16(t, sub + 4);
+        int b = -1;
+        for (int j = i - 1; j >= 0; j--)
+        {
+            var g = G[j];
+            if (g.IsMark || g.Ignorable)
+            {
+                continue;
+            }
+
+            if (!FirstOfSequence(j) && Bytes.Coverage(t, baseCoverage, g.Glyph) < 0)
+            {
+                continue;
+            }
+
+            b = j;
+            break;
+        }
+
         if (b < 0)
         {
             return -1;
         }
 
-        int baseIndex = Bytes.Coverage(t, sub + Bytes.U16(t, sub + 4), G[b].Glyph);
+        int baseIndex = Bytes.Coverage(t, baseCoverage, G[b].Glyph);
         if (baseIndex < 0)
         {
             return -1;
@@ -1028,6 +1052,20 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
         }
 
         return MarkWithAnchors(markArray, markIndex, baseArray, baseArray + 2 + 2 * classCount * baseIndex, classCount, b, i);
+    }
+
+    // Whether glyph j may take marks as a base: it is no part of a multiple substitution, or the first part, or a part
+    // whose sequence a mark or another glyph broke (HarfBuzz's MarkBasePos accept, issues 740 and 1020).
+    private bool FirstOfSequence(int j)
+    {
+        var g = G[j];
+        if (!g.Multiplied || g.LigatureComponent == 0 || j == 0)
+        {
+            return true;
+        }
+
+        var p = G[j - 1];
+        return p.IsMark || !p.Multiplied || g.LigatureId != p.LigatureId || g.LigatureComponent != p.LigatureComponent + 1;
     }
 
     private int MarkToLigature(int sub, int i)

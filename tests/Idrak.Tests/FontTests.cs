@@ -16,6 +16,7 @@ internal static partial class Tests
         ("fonts: exact coverage of a square at fractional positions, ink over ink where outlines overlap, clipping at the image's edges", FontRasterCoverage),
         ("fonts: CFF outlines (Type 2 charstrings with local and global subroutines) give fontTools' glyph bounds, the TrueType font's renders (and FreeType's within its coarser cubic flattening), and the same character map and shaping as the TrueType font", FontCffMatches),
         ("fonts: a CFF2 font, a damaged file and bytes that are no font are refused with the reason; the registries list opentype and coverage", FontRefusals),
+        ("fonts: a font's layout features for a script (Amiri's joining forms, rlig, mark); idrak data fonts checks characters, features and every line against HarfBuzz's references, and says what a font lacks or cannot read", FontCheckCommand),
     ];
 
     private static string FontData(string name) => TestData($"fonts/{name}");
@@ -272,6 +273,54 @@ internal static partial class Tests
         catch (InvalidDataException ex)
         {
             Check(ex.Message.StartsWith("cut:", StringComparison.Ordinal), ex.Message);
+        }
+    }
+
+    private static void FontCheckCommand(Device device)
+    {
+        var amiri = FontFormats.Read(FontData("arabic/amiri.ttf")).Single();
+        var (substitution, positioning) = Idrak.Imaging.OpenTypeFeatures.Of(amiri, "Arab", "ar");
+        Check(new[] { "init", "medi", "fina", "rlig" }.All(substitution.Contains) && new[] { "mark", "mkmk" }.All(positioning.Contains),
+            $"GSUB {string.Join(" ", substitution)}; GPOS {string.Join(" ", positioning)}");
+
+        string folder = SyntheticFolder("font-check");
+        try
+        {
+            // The Arabic fixtures and their HarfBuzz references (tools/fonts/make_arabic_font_references.py), every line.
+            var references = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(FontData("arabic/shaping.json")))!.AsArray();
+            string lines = Path.Combine(folder, "lines.txt");
+            // The sample leaves out the lines with ﷲ and ﷺ, which Cairo and Reem Kufi have no glyph for (a page with them would be left out).
+            File.WriteAllLines(lines, references.Select(r => (string)r!["text"]!).Distinct().Where(t => !t.Contains('\uFDF2') && !t.Contains('\uFDFA')),
+                new System.Text.UTF8Encoding(false));
+            var (code, output, error) = SynthCli(["data", "fonts", FontData("arabic"), "--lines", lines, "--harfbuzz", FontData("arabic/shaping.json"), "-j"]);
+            var fonts = System.Text.Json.Nodes.JsonNode.Parse(output)!["fonts"]!.AsArray();
+            Check(code == 0 && fonts.Count == 3, $"exit {code}, {fonts.Count} fonts: {error}");
+            foreach (var font in fonts)
+            {
+                Check((int)font!["harfbuzz"]!["identical"]! == 100 && (int)font["harfbuzz"]!["lines"]! == 100 && font["missing"]!.AsArray().Count == 0 && font["lacking"]!.AsArray().Count == 0,
+                    $"{font["font"]}: {font["harfbuzz"]!.ToJsonString()}, missing {font["missing"]!.ToJsonString()}, lacking {font["lacking"]!.ToJsonString()}");
+            }
+
+            // A font without Arabic letters or joining forms, and a file that is no font: said, and the exit is 1.
+            File.Copy(FontData("features.ttf"), Path.Combine(folder, "features.ttf"));
+            File.WriteAllBytes(Path.Combine(folder, "broken.ttf"), [1, 2, 3, 4]);
+            var (badCode, badOutput, _) = SynthCli(["data", "fonts", folder, "--lines", lines, "-j"]);
+            var bad = System.Text.Json.Nodes.JsonNode.Parse(badOutput)!["fonts"]!.AsArray();
+            var broken = bad.Single(f => (string)f!["font"]! == "broken.ttf");
+            var features = bad.Single(f => (string)f!["font"]! == "features.ttf");
+            Check(badCode == 1 && broken!["error"] is not null && features!["missing"]!.AsArray().Count > 10
+                  && features["lacking"]!.AsArray().Select(x => (string)x!).SequenceEqual(["init", "medi", "fina"]),
+                $"exit {badCode}: {badOutput}");
+
+            string empty = Path.Combine(folder, "empty");
+            Directory.CreateDirectory(empty);
+            Check(SynthCli(["data", "fonts", empty]).Code == 2 && SynthCli(["data", "fonts", Path.Combine(folder, "nope")]).Code == 2, "no fonts, no folder: usage errors");
+            var written = SynthCli(["data", "fonts", FontData("dejavu-sans-subset.ttf"), "--write-lines", Path.Combine(folder, "sample.txt"), "-j"]);
+            Check(written.Code == 0 && File.ReadAllLines(Path.Combine(folder, "sample.txt")).Length == 200, $"the sample's 200 lines written: {written.Err}");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
         }
     }
 }

@@ -25,7 +25,21 @@ public readonly record struct ShapedGlyph(int Glyph, int Cluster, int XAdvance, 
 /// <param name="Script">Its script, an ISO 15924 code ("Arab", "Latn", "Hebr", "Hani"; "Zyyy" for text of no script, such as digits and punctuation alone).</param>
 /// <param name="RightToLeft">Whether it reads right to left.</param>
 /// <param name="Language">Its language, a BCP 47 tag ("ar", "fa", "ur"), or null: the font's default rules for the script.</param>
-public readonly record struct TextRun(int Start, int Length, string Script, bool RightToLeft, string? Language = null);
+public readonly record struct TextRun(int Start, int Length, string Script, bool RightToLeft, string? Language = null)
+{
+    /// <summary>How characters share clusters (<see cref="TextClusters.Graphemes"/> unless set).</summary>
+    public TextClusters Clusters { get; init; }
+}
+
+/// <summary>How a shaper groups characters into clusters (HarfBuzz's monotone cluster levels).</summary>
+public enum TextClusters
+{
+    /// <summary>A letter and its marks are one cluster from the start (HarfBuzz's default, MONOTONE_GRAPHEMES).</summary>
+    Graphemes,
+
+    /// <summary>Each character is its own cluster until shaping joins them (MONOTONE_CHARACTERS).</summary>
+    Characters,
+}
 
 /// <summary>
 /// Turns a run of text into positioned glyphs of a font, for the scripts it is registered under in
