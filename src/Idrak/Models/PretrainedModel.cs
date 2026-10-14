@@ -86,6 +86,12 @@ public sealed record CreateOptions
 
     /// <summary>Write into a folder that already holds files (they are replaced); otherwise such a folder is refused.</summary>
     public bool Overwrite { get; init; }
+
+    /// <summary>
+    /// A vision part, for a vision-language model: the description the vision family registered under the architecture
+    /// reads (<see cref="IVisionFamily.Create"/>); null for a text model.
+    /// </summary>
+    public JsonObject? Vision { get; init; }
 }
 
 /// <summary>Settings for <see cref="PretrainedModel.Load"/>.</summary>
@@ -393,6 +399,17 @@ public sealed class PretrainedModel : IDisposable
         }
 
         var config = write(spec);
+        CreatedVision? vision = null;
+        if (options.Vision is { } description)
+        {
+            var visionFamily = VisionFamilies.Find(architecture) ?? throw VisionFamilies.NotRegistered(architecture);
+            vision = visionFamily.Create(description, spec.Dim, tokenizer, options.Seed);
+            foreach (var (key, value) in vision.Config)
+            {
+                config[key] = value?.DeepClone();
+            }
+        }
+
         config["architectures"] = new JsonArray((JsonNode)architecture);
         config["torch_dtype"] = options.Type switch { SafeTensorType.F32 => "float32", SafeTensorType.F16 => "float16", _ => "bfloat16" };
         config["bos_token_id"] = bos;
@@ -411,7 +428,12 @@ public sealed class PretrainedModel : IDisposable
             spec.Build(options: new DecoderBuildOptions { Device = cpu, Seed = options.Seed, InitStd = options.InitStd }),
             tokenizer, null, [], spec.MaxPositions, family, cpu, null))
         {
-            drawn.WriteTensors(folder, options.Type);
+            drawn.WriteTensors(folder, options.Type, vision?.Tensors.Select(t => (t.Name, t.Shape, (Func<float[]>)(() => t.Values))));
+        }
+
+        foreach (var (name, text) in vision?.Files ?? new Dictionary<string, string>())
+        {
+            File.WriteAllText(Path.Combine(folder, name), text);
         }
 
         var indented = new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -802,9 +824,22 @@ public sealed class PretrainedModel : IDisposable
     /// the tokenizer and chat template files copied from the original folder): LoRA adapters are merged into the
     /// weights first. The model must hold float32 weights (load it without Int8 / Int4 / BFloat16 to export).
     /// </summary>
-    public void SaveHuggingFace(string folder, SafeTensorType type = SafeTensorType.BF16)
+    public void SaveHuggingFace(string folder, SafeTensorType type = SafeTensorType.BF16) => SaveHuggingFace(folder, type, null);
+
+    /// <summary>
+    /// <see cref="SaveHuggingFace(string, SafeTensorType)"/> with the vision part's tensors: each of
+    /// <see cref="PretrainedVision.StoredTensors"/> from <paramref name="vision"/> when it holds that name (a trained
+    /// part's, from <see cref="IVisionTuningPart.Export"/>), else the model's trained vision tensors
+    /// (<see cref="TrainedVisionTensors"/>), else the checkpoint's own, as stored.
+    /// </summary>
+    public void SaveHuggingFace(string folder, SafeTensorType type, IReadOnlyDictionary<string, Tensor>? vision)
     {
-        WriteTensors(folder, type);
+        using var source = Vision is null ? null : CheckpointFormats.For(Folder).Open(Folder);
+        var visionTensors = Vision is null ? null : Vision.StoredTensors.Order(StringComparer.Ordinal).Select(name =>
+            vision is not null && vision.TryGetValue(name, out var trained) ? (name, [.. trained.Shape], (Func<float[]>)trained.ToArray)
+            : _vision.TryGetValue(name, out var kept) ? (name, kept.Shape, () => kept.Values)
+            : (name, source!.ShapeOf(name), (Func<float[]>)(() => source!.Read(name)))).ToList();
+        WriteTensors(folder, type, visionTensors);
         string target = Path.GetFullPath(folder);
         foreach (string file in Directory.GetFiles(Folder))
         {
@@ -822,7 +857,7 @@ public sealed class PretrainedModel : IDisposable
     }
 
     // model.safetensors of the network (LoRA merged first), each weight under its checkpoint name and layout.
-    private void WriteTensors(string folder, SafeTensorType type)
+    private void WriteTensors(string folder, SafeTensorType type, IEnumerable<(string Name, int[] Shape, Func<float[]> Values)>? extra = null)
     {
         if (Network.Descendants().OfType<Linear>().Any(l => l.Packed) || Network.Descendants().OfType<Embedding>().Any(e => e.BFloat16 is not null))
         {
@@ -874,6 +909,11 @@ public sealed class PretrainedModel : IDisposable
                     Add($"{path}.bias", norm.Beta);
                     break;
             }
+        }
+
+        foreach (var item in extra ?? [])
+        {
+            tensors.Add(item);
         }
 
         string path2 = Path.Combine(folder, "model.safetensors");

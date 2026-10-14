@@ -31,6 +31,7 @@
     <!-- The vision families, registrations from outside the library (plan 11, "Vision contracts"). -->
     <ProjectReference Include="..\..\samples\Gemma3Vision\Idrak.Gemma3Vision\Idrak.Gemma3Vision.csproj" />
     <ProjectReference Include="..\..\samples\QwenVision\Idrak.QwenVision\Idrak.QwenVision.csproj" />
+    <ProjectReference Include="..\..\samples\IdrakVision\Idrak.IdrakVision\Idrak.IdrakVision.csproj" />
   </ItemGroup>
 
 </Project>

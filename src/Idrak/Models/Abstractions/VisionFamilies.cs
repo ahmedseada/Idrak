@@ -31,7 +31,32 @@ public interface IVisionFamily
     /// </summary>
     /// <exception cref="InvalidDataException">A tensor is missing or its shape disagrees with the configuration.</exception>
     PretrainedVision? Read(VisionCheckpoint checkpoint);
+
+    /// <summary>
+    /// A vision part that did not exist, for a model made from a spec (<c>PretrainedModel.Create</c> with
+    /// <c>CreateOptions.Vision</c>): its checkpoint tensors drawn from <paramref name="seed"/>, the config.json keys that
+    /// describe it (<see cref="Read"/> reads them back) and its other files. <paramref name="vision"/> is the family's own
+    /// description of the part (sizes, token names, attention, preprocessing): the library does not read it. A family
+    /// read from checkpoints only keeps this default, which refuses.
+    /// </summary>
+    /// <param name="vision">The family's description of the part.</param>
+    /// <param name="textDim">The text decoder's width (each image token's embedding).</param>
+    /// <param name="tokenizer">The model's tokenizer (the family's image tokens are looked up in it).</param>
+    /// <param name="seed">The seed the weights are drawn from.</param>
+    /// <exception cref="NotSupportedException">The family cannot make a vision part from a description.</exception>
+    /// <exception cref="InvalidDataException">The description is wrong (a size, a token the tokenizer lacks, …).</exception>
+    CreatedVision Create(JsonObject vision, int textDim, ITokenizer tokenizer, int seed) =>
+        throw new NotSupportedException($"Vision family '{Name}' cannot make a vision part from a description (it reads checkpoints only).");
 }
+
+/// <summary>
+/// A vision part made by <see cref="IVisionFamily.Create"/>: what is written into the model folder so the family's
+/// <see cref="IVisionFamily.Read"/> reads it like any checkpoint.
+/// </summary>
+/// <param name="Config">Keys for config.json's top level (the family's vision configuration and image token ids).</param>
+/// <param name="Tensors">The part's tensors under the checkpoint's names, as the checkpoint stores them.</param>
+/// <param name="Files">Other files of the model folder by name, with their text (preprocessor_config.json, for example).</param>
+public sealed record CreatedVision(JsonObject Config, IReadOnlyList<(string Name, int[] Shape, float[] Values)> Tensors, IReadOnlyDictionary<string, string> Files);
 
 /// <summary>
 /// The vision-language families, by architecture name (config.json's "architectures"). The library registers none: a
