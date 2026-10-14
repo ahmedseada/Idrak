@@ -21,6 +21,7 @@ internal static partial class Tests
         ("vlm scratch: IdrakVision reads its folder; pixel values, tower outputs and features are PyTorch's, the encoder passes the contract", VlmScratchRead),
         ("vlm scratch: the chat encoder gives each record's ids, trained mask and image blocks, and the decoder with images gives PyTorch's logits", VlmScratchRecords),
         ("vlm scratch: a model made from a vision description has the family's tensors and shapes, loads, answers about an image, and saves its vision part back", VlmScratchCreate),
+        ("vlm scratch: a vision-language model made around a pretrained text model starts from its decoder value for value; a decoder of another spec is refused", VlmScratchDecoder),
         ("vlm scratch: without its plug-in the family is not registered; a description the family cannot make and a family that reads only are refused", VlmScratchRefusals),
     ];
 
@@ -160,6 +161,38 @@ internal static partial class Tests
             var written = ReadTensors(Path.Combine(saved, "model.safetensors"));
             Check(written.Count == original.Count && written.All(t => original[t.Key].Values.AsSpan().SequenceEqual(t.Value.Values)),
                 $"every tensor, the vision part's included, written back as read ({written.Count} of {original.Count})");
+        }
+        finally
+        {
+            IdrakVisionPlugin.Unregister();
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void VlmScratchDecoder(Device device)
+    {
+        IdrakVisionPlugin.Register();
+        string folder = TempFolder("vlm-scratch-decoder");
+        try
+        {
+            var config = JsonNode.Parse(File.ReadAllText(ScratchData("tiny-idrak-vision/config.json")))!.AsObject();
+            var spec = PretrainedArchitectures.Get(IdrakVisionFamily.Architecture).Spec(config, []);
+            var files = new ModelFiles { Tokenizer = BpeTokenizer.Load(PretrainData("tokenizer")) };
+            string made = Path.Combine(folder, "made");
+            using (PretrainedModel.Create(made, spec, IdrakVisionFamily.Architecture, files, new CreateOptions { Device = device, Vision = ScratchDescription(), Decoder = TinyLlama }))
+            {
+            }
+
+            var text = ReadTensors(Path.Combine(TinyLlama, "model.safetensors"));
+            var vlm = ReadTensors(Path.Combine(made, "model.safetensors"));
+            foreach (var (name, (_, values)) in text)
+            {
+                Check(vlm.TryGetValue("language_model." + name, out var copied) && copied.Values.AsSpan().SequenceEqual(values), $"{name} is the text model's");
+            }
+
+            Check(vlm.Keys.Any(k => k.StartsWith("vision_tower.", StringComparison.Ordinal)), "the vision part is drawn beside it");
+            Throws<ArgumentException>(() => PretrainedModel.Create(Path.Combine(folder, "other"), spec with { FfDim = 96 }, IdrakVisionFamily.Architecture, files,
+                new CreateOptions { Vision = ScratchDescription(), Decoder = TinyLlama }), "a decoder of another spec");
         }
         finally
         {
