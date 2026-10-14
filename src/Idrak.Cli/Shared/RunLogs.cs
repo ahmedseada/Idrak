@@ -215,12 +215,12 @@ internal sealed class RunLogWriter(string path, TrainingStarted started, int epo
     }
 }
 
-/// <summary>Curves as text: a few series of values against the epoch, on a character grid.</summary>
+/// <summary>Curves as text: a few series of values against the epoch (or another unit: a pretraining run's steps), on a character grid.</summary>
 internal static class TextPlot
 {
     private static readonly char[] Marks = ['*', 'o', 'x', '+', '#', '@'];
 
-    public static string Plot(IReadOnlyList<(string Name, IReadOnlyList<double?> Values)> series, int width = 60, int height = 12)
+    public static string Plot(IReadOnlyList<(string Name, IReadOnlyList<double?> Values)> series, int width = 60, int height = 12, string unit = "epoch")
     {
         var all = series.SelectMany(s => s.Values).OfType<double>().Where(double.IsFinite).ToList();
         int length = series.Count == 0 ? 0 : series.Max(s => s.Values.Count);
@@ -258,7 +258,8 @@ internal static class TextPlot
         }
 
         text.Append(new string(' ', 11)).Append('+').Append(new string('-', columns)).Append('\n');
-        text.Append(new string(' ', 12)).Append("epoch 1").Append($"epoch {length}".PadLeft(Math.Max(0, columns - 7))).Append('\n');
+        string first = $"{unit} 1";
+        text.Append(new string(' ', 12)).Append(first).Append($"{unit} {length}".PadLeft(Math.Max(0, columns - first.Length))).Append('\n');
         text.Append(new string(' ', 12)).Append(string.Join("   ", series.Select((s, i) => $"{Marks[i % Marks.Length]} {s.Name}"))).Append('\n');
         return text.ToString();
     }

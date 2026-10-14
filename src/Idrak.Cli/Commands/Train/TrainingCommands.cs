@@ -409,7 +409,7 @@ internal sealed class RunsShowCommand : Command
             }
 
             context.Write("");
-            foreach (string line in TextPlot.Plot(series).TrimEnd('\n').Split('\n'))
+            foreach (string line in TextPlot.Plot(series, unit: unit).TrimEnd('\n').Split('\n'))
             {
                 context.Write(line);
             }
@@ -461,8 +461,9 @@ internal sealed class RunsCompareCommand : Command
         }
 
         var runs = context.Positional.Select(r => RunLog.Find(context, r)).ToList();
+        string unit = runs.Count > 0 && runs.All(r => r.Unit == "step") ? "step" : "epoch";   // pretraining runs count steps
         string Setting(RunLog r, string key) => r.Settings?[key]?.ToString() ?? r.Started?[key]?.ToString() ?? "-";
-        context.Table(["Run", "Epochs", "Best", "Best loss", "Final loss", "LR", "Batch", "Optimizer", "Time"], runs.Select(r => (IReadOnlyList<string>)
+        context.Table(["Run", unit == "step" ? "Steps" : "Epochs", "Best", "Best loss", "Final loss", "LR", "Batch", "Optimizer", "Time"], runs.Select(r => (IReadOnlyList<string>)
         [
             r.Name, r.Epochs.Count.ToString(CultureInfo.InvariantCulture), r.Best?.Epoch.ToString(CultureInfo.InvariantCulture) ?? "-",
             RunLog.Format(r.Best is { } b ? b.ValidationLoss ?? b.Loss : null), RunLog.Format(r.Epochs.Count > 0 ? r.Epochs[^1].Loss : null),
@@ -471,14 +472,14 @@ internal sealed class RunsCompareCommand : Command
         var winner = runs.Where(r => r.Best is not null).MinBy(r => r.Best!.ValidationLoss ?? r.Best.Loss);
         if (winner is not null)
         {
-            context.Write($"\nLowest    {winner.Name} (epoch {winner.Best!.Epoch}, {RunLog.Format(winner.Best.ValidationLoss ?? winner.Best.Loss)})");
+            context.Write($"\nLowest    {winner.Name} ({unit} {winner.Best!.Epoch}, {RunLog.Format(winner.Best.ValidationLoss ?? winner.Best.Loss)})");
         }
 
         var series = runs.Select(r => (r.Name, (IReadOnlyList<double?>)[.. r.Epochs.Select(e => e.ValidationLoss ?? e.Loss)])).ToList();
         if (series.Any(s => s.Item2.Count > 0))
         {
             context.Write("");
-            foreach (string line in TextPlot.Plot(series).TrimEnd('\n').Split('\n'))
+            foreach (string line in TextPlot.Plot(series, unit: unit).TrimEnd('\n').Split('\n'))
             {
                 context.Write(line);
             }

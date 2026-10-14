@@ -129,6 +129,7 @@ internal static partial class Tests
             Check((int)shown["epochs"]! == 4, $"runs show reads the 4 steps: {shown["epochs"]}");
             var (code, output, _) = TrainCli("runs", "show", run);
             Check(code == 0 && output.Contains("Steps", StringComparison.Ordinal), output);
+            Check(output.Contains("step 1", StringComparison.Ordinal) && !output.Contains("epoch 1", StringComparison.Ordinal), $"the chart counts steps, not epochs: {output}");
             var (runCode, answer, runError) = RunIdrakOn(device, null, "run", (string)resumed["checkpoint"]!, "read the scan", "--max-tokens", "3", "--temperature", "0");
             Check(runCode == 0, $"run on the resumed run's checkpoint (4 steps; the first run's ran: the resumed steps on {device} made the weights not finite): {answer} {runError}");
 
