@@ -26,6 +26,12 @@ public sealed record ConversationTuningOptions
     /// <summary>Where relative image paths are found (a folder or a zip); null: each data file's folder.</summary>
     public string? Images { get; init; }
 
+    /// <summary>
+    /// Where each training data file's images are, by the file's path as given, over <see cref="Images"/> (a null root:
+    /// the file's own folder): real pages from a zip beside pages drawn into a folder (<see cref="SyntheticPages"/>).
+    /// </summary>
+    public IReadOnlyDictionary<string, string?>? ImagesByData { get; init; }
+
     /// <summary>Where the evaluation file's images are; null: <see cref="Images"/>.</summary>
     public string? EvaluationImages { get; init; }
 
@@ -314,7 +320,7 @@ public sealed class ConversationTuning : IDisposable
         // Every record read and checked first, its images left unread; the held-out share and the first N chosen by the
         // conversations' places; then only the chosen conversations' images read and hashed (rule 75: a page left out is
         // never inflated). The choice is the one made over the conversations themselves before.
-        using var trainingData = Read(data, Options.Images, "training", log, cancellationToken);
+        using var trainingData = Read(data, Options.Images, "training", log, cancellationToken, Options.ImagesByData);
         using var evaluationData = Options.Evaluation is { } file ? Read([file], Options.EvaluationImages ?? Options.Images, "evaluation", log, cancellationToken) : null;
         var trainAt = Enumerable.Range(0, trainingData.Count).ToList();
         List<int>? heldAt = null;
@@ -374,17 +380,19 @@ public sealed class ConversationTuning : IDisposable
         Tuning = tuning with { Vision = Vision, Answers = Scorer };
     }
 
-    // Conversations from data files through their format, their images not read yet (ITuningDataFormat.ReadPending).
-    private PendingData Read(IEnumerable<string> files, string? images, string what, Action<string>? log, CancellationToken cancellationToken)
+    // Conversations from data files through their format, their images not read yet (ITuningDataFormat.ReadPending);
+    // each file's images under `byFile`'s root for it, else `images`.
+    private PendingData Read(IEnumerable<string> files, string? images, string what, Action<string>? log, CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string?>? byFile = null)
     {
         var watch = Stopwatch.StartNew();
         var read = new PendingData();
-        var options = new TuningDataOptions { Images = images };
         try
         {
             foreach (string file in files)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var options = new TuningDataOptions { Images = byFile is not null && byFile.TryGetValue(file, out var root) ? root : images };
                 var format = Options.DataFormat is { } name && !name.Equals("auto", StringComparison.OrdinalIgnoreCase) ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
                 var pending = format.ReadPending(file, options);
                 read.Add(pending);

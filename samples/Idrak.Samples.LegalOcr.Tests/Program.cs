@@ -322,6 +322,69 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
             Check(ex.Message.Contains("exists", StringComparison.Ordinal), ex.Message);
         }
     }),
+    ("legal synthetic: the app's Arabic parts file reads with every slot registered; the Synthetic settings bind; a made page from it carries a header and its record's text", () =>
+    {
+        string app = Path.Combine(RepositoryRoot(), "samples", "Idrak.Samples.LegalOcr");
+        var parts = Idrak.Nlp.SyntheticPageParts.Read(Path.Combine(app, "synthetic-parts.ar.json"));
+        Check(parts.HeaderStart.Count > 0 && parts.HeaderEnd.Count > 0 && parts.Subjects.Count > 0 && parts.Footers.Count > 0 && parts.Language == "ar" && parts.Digits == "٠١٢٣٤٥٦٧٨٩",
+            "the parts and their language");
+        var configuration = new ConfigurationBuilder().AddJsonFile(Path.Combine(app, "appsettings.json")).Build();
+        var settings = configuration.GetSection("LegalOcr").Get<LegalOcrSettings>()!;
+        Check(settings.Synthetic is { PartsFile: "synthetic-parts.ar.json", Variants: 2, Output: "synthetic/pages.jsonl" } && settings.Synthetic.Scans.SequenceEqual(["clean", "office", "old"]) && settings.Synthetic.Layouts.SequenceEqual(["letter", "plain"])
+              && new SyntheticSettings().Effective().Scans.SequenceEqual(["clean", "office", "old"])
+              && settings.Tuning.Synthetic, $"layouts {string.Join(",", settings.Synthetic.Layouts)}, scans {string.Join(",", settings.Synthetic.Scans)}");
+        var options = new Idrak.Nlp.SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFont()], Width = 400, Height = 300, BodySize = (10, 12) }, Parts = parts, Variants = 1 };
+        var page = Idrak.Nlp.SyntheticPages.Make("{\"court\": \"محكمة النقض\", \"full_text_extract\": \"حكمت المحكمة بقبول الطعن.\"}", options, record: 4);
+        Check(page.Text.Contains("حكمت المحكمة بقبول الطعن.", StringComparison.Ordinal) && page.Text.Split('\n').Length > 1 && page.Answer.Contains("\"court\": \"محكمة النقض\"", StringComparison.Ordinal),
+            page.Text);
+    }),
+    ("legal synthetic: preview draws the first training records' pages; making them writes records and images with progress; a tuning run takes them beside the training pages", () =>
+    {
+        string fonts = Path.Combine(root, "fonts");
+        Directory.CreateDirectory(fonts);
+        File.Copy(Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "fonts", "dejavu-sans-subset.ttf"), Path.Combine(fonts, "dejavu.ttf"), overwrite: true);
+        var settings = TuningSettings("tune-s") with
+        {
+            Tuning = TuningSettings("tune-s").Tuning with { Epochs = 1, CerPages = 0, CerBefore = false },
+            Synthetic = new SyntheticSettings
+            {
+                FontsFolder = fonts, PartsFile = Path.Combine(RepositoryRoot(), "samples", "Idrak.Samples.LegalOcr", "synthetic-parts.ar.json"),
+                Output = Path.Combine(root, "made", "pages.jsonl"), Variants = 1, Page = "width=320,height=240,size=10..12", Scans = ["office", "none"], Workers = 2,
+            },
+        };
+        var adapters = Adapters(settings);
+        using var synthetic = new SyntheticService(settings, adapters);
+        Check(synthetic.Status.State == SyntheticState.Idle, synthetic.Status.Message);
+        var previews = synthetic.Preview(new SyntheticRequest { Count = 2 });
+        Check(previews.Count == 2 && previews.All(p => p.Image.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal) && p.Width == 320 && p.Text.Contains("محكمة النقض", StringComparison.Ordinal)),
+            string.Join(" | ", previews.Select(p => p.Text)));
+        try
+        {
+            synthetic.Preview(new SyntheticRequest { FontsFolder = Path.Combine(root, "no-fonts") });
+            Check(false, "a missing fonts folder is refused");
+        }
+        catch (ArgumentException e)
+        {
+            Check(e.Message.Contains("no-fonts", StringComparison.Ordinal), e.Message);
+        }
+
+        synthetic.Start(new SyntheticRequest());
+        synthetic.WaitAsync().GetAwaiter().GetResult();
+        var made = synthetic.Status;
+        Check(made.State == SyntheticState.Finished && made.Pages == 3 && made.Total == 3, $"{made.State}: {made.Message}");
+        Check(File.ReadAllLines(Path.Combine(root, "made", "pages.jsonl")).Length == 3 && Directory.GetFiles(Path.Combine(root, "made", "pages")).Length == 3, "the records and their images");
+
+        using var readers = Service(settings);
+        using var tuning = new TuningService(settings, readers, adapters, NullLogger<TuningService>.Instance);
+        tuning.Start(new TuneRequest { Name = "with-made", Base = "a" });
+        tuning.WaitAsync().GetAwaiter().GetResult();
+        Check(tuning.Status.State == TuningState.Finished && tuning.Log().Any(l => l.Contains("with the made pages", StringComparison.Ordinal))
+              && tuning.Log().Count(l => l.Contains("training: 3 conversations (", StringComparison.Ordinal)) == 2,
+            $"{tuning.Status.State}: {tuning.Status.Message}\n{string.Join("\n", tuning.Log())}");
+        tuning.Start(new TuneRequest { Name = "without-made", Base = "a", Synthetic = false });
+        tuning.WaitAsync().GetAwaiter().GetResult();
+        Check(tuning.Status.State == TuningState.Finished && !tuning.Log().Any(l => l.Contains("with the made pages", StringComparison.Ordinal)), "and without them when asked");
+    }),
     ("legal api: status, models, pages, a page's image, a read, an evaluation (two pages read together) and the tuning endpoints over HTTP, with the JSON the page reads", () =>
     {
         string data = EvaluationData(2);
@@ -337,6 +400,7 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
         builder.Services.AddSingleton(Adapters(settings));
         builder.Services.AddSingleton<ReaderService>();
         builder.Services.AddSingleton<TuningService>();
+        builder.Services.AddSingleton<SyntheticService>();
         builder.Services.AddSingleton<EvaluationPages>();
         builder.Services.AddSingleton<Preprocessing>();
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
@@ -406,6 +470,14 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
             Check(run["status"]!["state"]!.GetValue<string>() == "Idle" && run["points"]!.AsArray().Count == 0, run.ToJsonString());
             var adapters = http.GetFromJsonAsync<JsonObject>("/api/adapters").GetAwaiter().GetResult()!;
             Check(adapters["adapters"]!.AsArray().Count == 0, adapters.ToJsonString());
+            var synthetic = http.GetFromJsonAsync<JsonObject>("/api/synthetic/defaults").GetAwaiter().GetResult()!;
+            Check(synthetic["layouts"]!.AsArray().Any(l => (string)l!["name"]! == "letter") && synthetic["scans"]!.AsArray().Any(l => (string)l!["name"]! == "none")
+                  && synthetic["settings"]!["variants"]!.GetValue<int>() == 2 && synthetic["fontsFound"]!.GetValue<int>() == 0, synthetic.ToJsonString());
+            var made = http.GetFromJsonAsync<JsonObject>("/api/synthetic").GetAwaiter().GetResult()!;
+            Check(made["state"]!.GetValue<string>() == "Idle", made.ToJsonString());
+            var noFonts = http.PostAsJsonAsync("/api/synthetic/preview", new { count = 1 }).GetAwaiter().GetResult();
+            Check(noFonts.StatusCode == System.Net.HttpStatusCode.BadRequest && noFonts.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("fonts folder", StringComparison.Ordinal),
+                $"no fonts folder: {noFonts.StatusCode}");
             var start = http.PostAsJsonAsync("/api/tuning/start", new { @base = "a" }).GetAwaiter().GetResult();
             Check(start.StatusCode == System.Net.HttpStatusCode.Conflict && start.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("training data", StringComparison.Ordinal),
                 $"no training data: {start.StatusCode}");
@@ -525,6 +597,9 @@ List<(string Event, JsonObject Data)> Read(ReaderService service, ChatImage imag
 
     return events;
 }
+
+// The repository's DejaVu Sans subset (Arabic, Latin, digits), for made pages.
+IFontFace SubsetFont() => FontFormats.Read(Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "fonts", "dejavu-sans-subset.ttf")).Single();
 
 // A generated page: a grey gradient with a darker band, as PNG.
 ChatImage Page(int height, int width) => ChatImage.FromBytes(PageBytes(height, width, 0), "image/png");

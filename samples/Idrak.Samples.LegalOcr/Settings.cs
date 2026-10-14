@@ -182,6 +182,9 @@ public sealed record LegalOcrSettings
     /// <summary>The Fine-tune tab's defaults.</summary>
     public TuningDefaults Tuning { get; init; } = new();
 
+    /// <summary>The Fine-tune tab's "Make training pages": the training records' text drawn as new pages (plan 18).</summary>
+    public SyntheticSettings Synthetic { get; init; } = new();
+
     /// <summary>The Read tab's generation settings to start from (repetition penalties, the loop stop).</summary>
     public GenerationDefaults Generation { get; init; } = new();
 
@@ -311,4 +314,59 @@ public sealed record TuningDefaults
     /// default) or "raw" (the answers as they are, JSON keys and punctuation included, which lowers the rate).
     /// </summary>
     public string CerText { get; init; } = "values";
+
+    /// <summary>Train on the made pages (<see cref="SyntheticSettings.Output"/>) beside the training pages when they are there.</summary>
+    public bool Synthetic { get; init; } = true;
+}
+
+/// <summary>
+/// How the Fine-tune tab makes training pages from the training records' text (Idrak.Nlp's SyntheticPages): every record's
+/// answer text drawn as new pages in the fonts given, with header, subject, signature and footer parts, made to look
+/// scanned; each one written back as a record with its page and the drawn text as its answer's full text. Relative paths
+/// are from the app's folder.
+/// </summary>
+public sealed record SyntheticSettings
+{
+    /// <summary>A folder of .ttf, .otf or .ttc fonts with the pages' script (none by default: set it).</summary>
+    public string? FontsFolder { get; init; }
+
+    /// <summary>The header, subject, signature and footer parts (JSON; the app ships Arabic ones); null or empty for none.</summary>
+    public string? PartsFile { get; init; } = "synthetic-parts.ar.json";
+
+    /// <summary>The made records (.jsonl); their images go to the folder of its name beside it.</summary>
+    public string Output { get; init; } = "synthetic/pages.jsonl";
+
+    /// <summary>Pages made from each training record.</summary>
+    public int Variants { get; init; } = 2;
+
+    /// <summary>The page layouts drawn from ("letter", "plain"); empty: the library's (letter and plain). Empty by default, as configuration adds to a list rather than replacing it.</summary>
+    public List<string> Layouts { get; init; } = [];
+
+    /// <summary>The scan profiles drawn from: names ("clean", "office", "old", "fax", "none") or profiles written as text; empty: the library's (clean, office, old).</summary>
+    public List<string> Scans { get; init; } = [];
+
+    /// <summary>The share of pages drawn in grey.</summary>
+    public double Grey { get; init; } = 0.3;
+
+    /// <summary>Page settings, KEY=VALUE,... (width, height, size, spacing, margin, ink, justify, color, rule, emblem, stamp, blue-signature, header-font).</summary>
+    public string Page { get; init; } = "";
+
+    /// <summary>The data set's seed (the same seed, the same pages).</summary>
+    public int Seed { get; init; } = 1;
+
+    /// <summary>The JPEG quality of the pages.</summary>
+    public int Quality { get; init; } = 90;
+
+    /// <summary>Pages made at once (0: one per processor).</summary>
+    public int Workers { get; init; }
+
+    /// <summary>Records read at most (0: all).</summary>
+    public int Limit { get; init; }
+
+    /// <summary>These settings with the library's layouts and scans where none are given.</summary>
+    public SyntheticSettings Effective()
+    {
+        var library = new Idrak.Nlp.SyntheticPageOptions { Style = new PageStyle { Fonts = [] } };
+        return this with { Layouts = Layouts.Count > 0 ? Layouts : [.. library.Layouts], Scans = Scans.Count > 0 ? Scans : [.. library.Scans] };
+    }
 }

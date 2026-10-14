@@ -106,6 +106,9 @@ public sealed record TuneRequest
     /// <summary>See <see cref="TuningDefaults"/>.</summary>
     public bool? RecomputeFeedForward { get; init; }
 
+    /// <summary>See <see cref="TuningDefaults"/>.</summary>
+    public bool? Synthetic { get; init; }
+
     /// <summary>The defaults with this request's values over them.</summary>
     public TuningDefaults Over(TuningDefaults d) => new()
     {
@@ -115,7 +118,7 @@ public sealed record TuneRequest
         CerEvery = CerEvery ?? d.CerEvery, CerBefore = CerBefore ?? d.CerBefore, AnswerTokens = AnswerTokens ?? d.AnswerTokens, MaxPages = MaxPages ?? d.MaxPages,
         EvaluateEvery = EvaluateEvery ?? d.EvaluateEvery, SaveEvery = SaveEvery ?? d.SaveEvery, LossPages = LossPages ?? d.LossPages,
         Checkpointing = Checkpointing ?? d.Checkpointing, RecomputeFeedForward = RecomputeFeedForward ?? d.RecomputeFeedForward,
-        NonFiniteSteps = d.NonFiniteSteps, CerText = d.CerText,
+        Synthetic = Synthetic ?? d.Synthetic, NonFiniteSteps = d.NonFiniteSteps, CerText = d.CerText,
     };
 }
 
@@ -208,6 +211,8 @@ public sealed class TuningService : IDisposable
         trainingImages = _settings.TrainingImages ?? _settings.EvaluationImages,
         evaluationData = _settings.EvaluationData,
         evaluationDataFound = _settings.EvaluationData is { } e && File.Exists(e),
+        syntheticData = SyntheticService.DataPath(_settings, _adapters.ContentRoot),
+        syntheticDataFound = File.Exists(SyntheticService.DataPath(_settings, _adapters.ContentRoot)),
         adaptersFolder = _adapters.Folder,
         name = $"legal-{DateTime.Now:yyyyMMdd-HHmm}",
     };
@@ -361,8 +366,17 @@ public sealed class TuningService : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             Update(s => s with { Message = "Reading the training data and its images…" });
             var images = model.Adapter is { } a && settings.Preprocessing.Length == 0 ? TuningImages.Read(a) ?? TuningImages.None : TuningImages.Parse(settings.Preprocessing);
-            run = ConversationTuning.Prepare(pretrained, [_settings.TrainingData!], new ConversationTuningOptions
+            // The made pages beside the training pages, their images from their own folder (the training pages' from theirs).
+            string made = SyntheticService.DataPath(_settings, _adapters.ContentRoot);
+            bool withMade = settings.Synthetic && File.Exists(made);
+            if (withMade)
             {
+                Add($"with the made pages: {made}");
+            }
+
+            run = ConversationTuning.Prepare(pretrained, withMade ? [_settings.TrainingData!, made] : [_settings.TrainingData!], new ConversationTuningOptions
+            {
+                ImagesByData = withMade ? new Dictionary<string, string?> { [made] = null } : null,
                 Evaluation = _settings.EvaluationData is { } e && File.Exists(e) ? e : null,
                 EvaluationFraction = _settings.EvaluationData is { } f && File.Exists(f) ? 0 : 0.05,
                 Images = _settings.TrainingImages ?? _settings.EvaluationImages,
