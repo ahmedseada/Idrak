@@ -391,6 +391,7 @@ public sealed record Idrak.Nlp.ConversationTuningResult : System.IEquatable<Idra
 public static class Idrak.Nlp.DistillationTeachers
   public static Idrak.Nlp.Abstractions.DistillationTeacher FromFile(string path)
   public static Idrak.Nlp.Abstractions.DistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK = 0, int batchTokens = 4096)
+  public static Idrak.Nlp.Abstractions.DistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK, int batchTokens, Idrak.Nlp.TuningImages images)
 
 public sealed record Idrak.Nlp.EvaluatedAnswer : System.IEquatable<Idrak.Nlp.EvaluatedAnswer>
   public EvaluatedAnswer(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt, string Reference, string Answer, double Score, int Tokens)
@@ -859,6 +860,7 @@ public sealed record Idrak.Nlp.PretrainingCheckpoint : System.IEquatable<Idrak.N
   public string Folder { get; init; }
 
 public sealed record Idrak.Nlp.PretrainingOptions : System.IEquatable<Idrak.Nlp.PretrainingOptions>
+  public Idrak.Nlp.Abstractions.DistillationTeacher? Teacher { get; init; }
   public Idrak.Nlp.TuningImages Images { get; init; }
   public PretrainingOptions()
   public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.PretrainingSource> Evaluation { get; init; }
@@ -872,6 +874,8 @@ public sealed record Idrak.Nlp.PretrainingOptions : System.IEquatable<Idrak.Nlp.
   public bool? RecomputeFeedForward { get; init; }
   public float Beta1 { get; init; }
   public float Beta2 { get; init; }
+  public float DistillationAlpha { get; init; }
+  public float DistillationTemperature { get; init; }
   public float MaxGradientNorm { get; init; }
   public float Momentum { get; init; }
   public float WeightDecay { get; init; }
@@ -1199,6 +1203,7 @@ public sealed class Idrak.Nlp.TeacherLogitsWriter : System.IDisposable
   public int TopK { get; }
   public int Vocabulary { get; }
   public static int Write(string path, Idrak.Models.PretrainedModel teacher, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int topK = 16, System.Action<int>? progress = null, int batchTokens = 4096)
+  public static int Write(string path, Idrak.Models.PretrainedModel teacher, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int topK, System.Action<int>? progress, int batchTokens, Idrak.Nlp.TuningImages images)
   public void Dispose()
 
 public sealed record Idrak.Nlp.TuningAnswer : System.IEquatable<Idrak.Nlp.TuningAnswer>
