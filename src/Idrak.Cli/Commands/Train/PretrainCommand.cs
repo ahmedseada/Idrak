@@ -41,6 +41,10 @@ internal sealed class PretrainCommand : Command
               --tokens FILE        a token file to train on (repeat for several; one stage)
               --data FILE          conversation records to train on (messages or sharegpt JSON Lines; repeat)
               --images DIR|ZIP     where the records' images are
+              --image-transform T  how record images are prepared (grayscale, max_width=1024, …; the vision families')
+              --vision K=V         a vision option of the model's family (repeat)
+              --feature-cache NAME where image features of frozen stages are kept: memory or disk (memory)
+              --sequences N        exactly N sequences a step (by default a step's rows are filled)
               --weight NAME=W      a source's share of each step: tokens=3, data=1 (1 each)
               --steps N            the stage's optimizer steps (1000)
               --trained PARTS      what trains: decoder, embeddings, head, tower, projector, all (decoder,embeddings,head)
@@ -73,6 +77,7 @@ internal sealed class PretrainCommand : Command
           idrak data tokens corpus.txt -t tokenizer.json -o tokens.bin
           idrak create spec.json -o my-model
           idrak pretrain my-model --tokens tokens.bin --steps 2000 --lr 6e-4 -o run -d cuda:0
+          idrak pretrain my-vlm --data pages.jsonl --images pages.zip --trained tower,projector -o align -P Idrak.IdrakVision.dll
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
           idrak resume run
@@ -83,6 +88,7 @@ internal sealed class PretrainCommand : Command
     [
         "--tokens", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
         "--batch-tokens", "--accumulate", "--optimizer", "--weight-decay", "--clip", "--save-every", "--keep", "--eval", "--eval-every", "--log-every", "--out",
+        "--image-transform", "--vision", "--feature-cache", "--sequences",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
@@ -307,6 +313,11 @@ internal sealed class PretrainCommand : Command
             Packing = !context.Flag("--no-packing") && options.Packing,
             CudaGraphs = !context.Flag("--no-graphs") && options.CudaGraphs,
             Seed = context.Seed ?? options.Seed,
+            SequencesPerStep = context.IntOption("--sequences", options.SequencesPerStep),
+            FeatureCache = context.Option("--feature-cache") ?? options.FeatureCache,
+            Images = context.Option("--image-transform") is not null || context.Options("--vision").Count > 0
+                ? TuningImages.Parse(context.Option("--image-transform"), context.Options("--vision"))
+                : options.Images,
         };
     }
 

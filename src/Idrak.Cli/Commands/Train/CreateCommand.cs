@@ -57,6 +57,8 @@ internal sealed class CreateCommand : Command
           idrak create init -o spec.json
           idrak create spec.json -o my-model --seed 1
           idrak create spec.json -o my-model --tokenizer tokenizer.json --architecture Qwen3ForCausalLM
+          idrak create init --vision -o vision-spec.json
+          idrak create vision-spec.json -o my-vlm -P Idrak.IdrakVision.dll
           idrak pretrain my-model -o run --tokens tokens.bin --steps 2000
         """;
 
@@ -93,11 +95,7 @@ internal sealed class CreateCommand : Command
             throw new UsageException($"{specPath} is in format '{format}', not {Format}.");
         }
 
-        if (wrapped && file["vision"] is not null)
-        {
-            throw new UsageException($"{specPath} describes a vision part: making vision-language models from a spec comes with the vision family's plug-in (plan 19, track B).");
-        }
-
+        var vision = wrapped ? file["vision"] as JsonObject : null;
         string folder = Path.GetDirectoryName(Path.GetFullPath(specPath))!;
         string? Text(string option, string key) => context.Option(option) ?? (wrapped ? (string?)file[key] : null);
         string? PathOf(string option, string key) => context.Option(option) ?? (wrapped && (string?)file[key] is { } p ? Path.Combine(folder, p) : null);
@@ -155,13 +153,14 @@ internal sealed class CreateCommand : Command
             model = PretrainedModel.Create(output, spec, architecture, files, new CreateOptions
             {
                 Device = Idrak.Abstraction.Device.Cpu, Seed = seed, InitStd = initStd > 0 ? initStd : null, Type = type, Overwrite = context.Flag("--overwrite"),
+                Vision = (JsonObject?)vision?.DeepClone(),
             });
         }
         catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
         {
             return ImageModelFiles.Refuse(context, e);
         }
-        catch (Exception e) when (e is NotSupportedException or ArgumentException or IOException)
+        catch (Exception e) when (e is NotSupportedException or ArgumentException or IOException or InvalidDataException)
         {
             context.Error(e.Message);
             return ExitCodes.Failed;
@@ -226,26 +225,49 @@ internal sealed class CreateCommand : Command
 /// <summary><c>idrak create init</c>: a commented spec file to start a new model from.</summary>
 internal sealed class CreateInitCommand : Command
 {
+    // The vision part of create init --vision's file (IdrakVision's description; every key optional).
+    private const string VisionPart = """
+          "seed": 0,
+          // The vision part: the description the vision family reads (IdrakVision here). Every key is optional.
+          "vision": {
+            "vision_config": {
+              "hidden_size": 192, "intermediate_size": 768, "num_hidden_layers": 4, "num_attention_heads": 3,
+              "image_size": 224, "patch_size": 14,
+              "pool_size": 2           // the patch grid pooled 2 x 2: (224 / 14 / 2)² = 64 image tokens
+            },
+            "projector_config": { "depth": 2, "hidden_act": "gelu_pytorch_tanh" },
+            "image_attention": "image-blocks",   // or "causal"
+            "image_token": "<image>", "begin_image": "<start_of_image>", "end_image": "<end_of_image>",
+            "init_std": 0.02
+          }
+        }
+        """;
+
     public override string Name => "create init";
 
     public override string Summary => "Write a spec file to make a new model from (idrak create), every setting explained";
 
     public override string Usage => """
-        [-o SPEC.json]
+        [-o SPEC.json] [--vision]
 
         Writes a spec file for idrak create: the family, the network's sizes (small ones to change: nothing in Idrak
-        prefers a size), the tokenizer and the special tokens, every key with a comment. Comments and trailing commas are
-        allowed in the file.
+        prefers a size), the tokenizer and the special tokens, every key with a comment. With --vision, a
+        vision-language model of the IdrakVision family (its plug-in, samples/IdrakVision, with -P). Comments and
+        trailing commas are allowed in the file.
 
         Options:
           -o, --out FILE  the file to write (spec.json)
+              --vision    a vision-language model (IdrakVision): the tower, projector and image settings too
 
         Examples:
           idrak create init -o spec.json
           idrak create spec.json -o my-model
+          idrak create init --vision -o vision-spec.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out"];
+
+    public override IReadOnlyCollection<string> Flags { get; } = ["--vision"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
@@ -294,7 +316,10 @@ internal sealed class CreateInitCommand : Command
               "seed": 0
             }
 
-            """);
+            """.Replace("\"architecture\": \"LlamaForCausalLM\",", context.Flag("--vision")
+                ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // load its plug-in: idrak create ... -P Idrak.IdrakVision.dll"
+                : "\"architecture\": \"LlamaForCausalLM\",", StringComparison.Ordinal)
+            .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart : "  \"seed\": 0\n}", StringComparison.Ordinal));
         context.Write($"wrote {output}; next: idrak create {output} -o my-model");
         context.WriteJson(new JsonObject { ["path"] = Path.GetFullPath(output) });
         return ExitCodes.Ok;
