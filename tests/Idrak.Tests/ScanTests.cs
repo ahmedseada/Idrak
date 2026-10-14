@@ -16,10 +16,10 @@ internal static partial class Tests
         ("scans: fade lightens ink toward the paper by its share and leaves the paper; uneven varies it over the page; tint multiplies toward its colour; stain and bleed only darken; lowres keeps the size and softens", ScanTone),
         ("scans: every scan transform refuses values out of its range and leaves its input as it was", ScanRefusals),
         ("scans: a profile draws each step at its chance, its values within their ranges (whole where the transform takes whole numbers), the same steps for the same seed, and reads back from its own text; bad profiles are refused", ScanProfileSampling),
-        ("scans: the paper effects (wrinkle, fold, smudge, blot, strike, underline, cross, scribble, highlight, tear, holes, scratch, taped, shadow, streak, light, curl) are seeded, keep the size and the input, refuse bad values; tears and holes stay out of the text, pen marks and highlighter only darken, scratches only lighten; a page ripped and taped shows the background along its tear, tape over it, and keeps its ink", PaperEffects),
+        ("scans: the paper effects (wrinkle, fold, smudge, blot, strike, underline, cross, scribble, highlight, tear, holes, scratch, taped, shadow, streak, light, curl; water, burn, foxing, staple, dogear, clip, residue, wormholes, sunfade, piece, whiteout, sticky, burnhole, cutoff; photocopy, carbon, lowtoner, banding, ghost, feather, misregister; desk, glare, vignette, motion, moire, handshadow, fingerprint; lined, grid, guilloche, recycled) are seeded, keep the size and the input, refuse bad values; what removes paper (tears, holes, pieces, burns, cut-off, dog-ears, sticky notes, staples, clips) stays out of the text and correction fluid leaves the ink, pen marks and highlighter only darken, scratches only lighten; a page ripped and taped shows the background along its tear, tape over it, and keeps its ink", PaperEffects),
         ("scans: an app's own effect (an IImageTransform registered by name) is used in a profile's text, sampled with its seed, and drawn on synthetic pages, as the library's are", AppEffect),
         ("scans: dropout breaks ink in patches (only ink lightened, the paper left, seeded); the default mix shuffles every look, turns about one page in six, and has straight clear pages, faint ink, broken strokes, pen marks and handled or damaged paper; looks joined with + take each one's effects on a page, a turn or the JPEG once and last", ScanMix),
-        ("scans: the built-in profiles (clean, office, old, pale, worn, fax, handled, marked, damaged, scanner, mixed) degrade a drawn page and keep its size and its ink; an app's profile replaces the library's of its name only", ScanProfilesOnPages),
+        ("scans: the built-in profiles (clean, office, old, pale, worn, fax, handled, marked, damaged, scanner, aged, copied, photo, wrecked, mixed) degrade a drawn page and keep its size and its ink; an app's profile replaces the library's of its name only", ScanProfilesOnPages),
     ];
 
     private static ImageData Bytes8(int channels, int height, int width, Func<int, int, int, byte> value)
@@ -257,7 +257,7 @@ internal static partial class Tests
 
         // The default mix: one look a page, as SyntheticPages draws it.
         var looks = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()] } }.Scans;
-        Check(looks.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "mixed", "mixed", "mixed"]), string.Join(",", looks));
+        Check(looks.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "aged", "copied", "photo", "wrecked", "mixed", "mixed", "mixed"]), string.Join(",", looks));
         int pages = 0, turned = 0, faint = 0, broken = 0, untouched = 0, marked = 0, damaged = 0;
         foreach (string look in looks)
         {
@@ -293,7 +293,7 @@ internal static partial class Tests
 
         double Share(int n) => (double)n / pages;
         Check(Share(turned) is > 0.10 and < 0.25, $"pages turned: {Share(turned):P0}");
-        Check(Share(faint) > 0.08 && Share(broken) > 0.12 && Share(untouched) > 0.07 && Share(marked) > 0.15 && Share(damaged) > 0.2,
+        Check(Share(faint) > 0.08 && Share(broken) > 0.12 && Share(untouched) > 0.07 && Share(marked) > 0.1 && Share(damaged) > 0.2,
             $"faint ink {Share(faint):P0}, broken strokes {Share(broken):P0}, as drawn {Share(untouched):P0}, pen marks {Share(marked):P0}, handled or damaged paper {Share(damaged):P0}");
     }
 
@@ -304,7 +304,10 @@ internal static partial class Tests
         string[] effects =
         [
             "wrinkle=0.7", "fold=2", "smudge=3", "blot=3", "strike=2", "underline=2", "cross=1", "scribble=3", "highlight=2", "tear=0.04", "holes=3",
-            "scratch=8", "taped=2", "shadow=0.2", "streak=4", "light=0.4", "curl=0.7",
+            "scratch=8", "taped=2", "taped=1,tape=clear", "water=2", "burn=0.04", "foxing=150", "staple=1", "dogear=0.08", "clip=1", "residue=2", "wormholes=8",
+            "sunfade=0.5", "piece=2", "whiteout=3", "sticky=1", "burnhole=2", "cutoff=0.04", "photocopy=2", "carbon=0.8", "lowtoner=0.6", "banding=0.3",
+            "ghost=0.3", "feather=0.8", "misregister=3", "desk=0.1", "glare=0.5", "vignette=0.5", "motion=4", "moire=0.15", "handshadow=0.4", "fingerprint=2",
+            "lined=0.8", "grid=0.8", "guilloche=0.8", "recycled=0.8", "shadow=0.2", "streak=4", "light=0.4", "curl=0.7",
         ];
         foreach (string effect in effects)
         {
@@ -320,7 +323,8 @@ internal static partial class Tests
         // Tears and holes stay in the margins: the text's area (the page's middle) is as it was.
         var blocks = PageLayouts.Get("letter").Render(ArabicLetter, TestPageStyle() with { Rule = 0, Emblem = 0, Stamp = 0 }, 3).Blocks.Where(b => b.Text.Length > 0).ToList();
         int left = (int)blocks.Min(b => b.X), right = (int)Math.Ceiling(blocks.Max(b => b.X + b.Width)), top = (int)blocks.Min(b => b.Y), bottom = (int)Math.Ceiling(blocks.Max(b => b.Y + b.Height));
-        foreach (string effect in Enumerable.Range(1, 10).Select(k => $"tear=0.05,seed={k}").Concat(Enumerable.Range(1, 4).Select(k => $"holes=4,seed={k}")))
+        string[] margins = ["holes=4", "burn=0.05", "piece=3", "wormholes=20", "burnhole=4", "cutoff=0.05", "sticky=2", "staple=2", "clip=2", "dogear=0.15"];
+        foreach (string effect in Enumerable.Range(1, 10).Select(k => $"tear=0.05,seed={k}").Concat(margins.SelectMany(m => Enumerable.Range(1, 4).Select(k => $"{m},seed={k}"))))
         {
             var after = Planes(Scan(page, effect));
             bool kept = true;
@@ -352,6 +356,14 @@ internal static partial class Tests
             Check(inkAfter > inkBefore * 0.9, $"taped=2, seed {seed}: {inkAfter} of {inkBefore} ink pixels left");
         }
 
+        // Correction fluid goes on blank paper only: every ink pixel as it was.
+        foreach (int seed in new[] { 1, 2, 3, 4 })
+        {
+            var after = Planes(Scan(page, $"whiteout=8,seed={seed}"));
+            Check(Enumerable.Range(0, before[0].Length).All(i => before[0][i] >= 200 || after[0][i] == before[0][i]) && !SamePixels(Scan(page, $"whiteout=8,seed={seed}"), page),
+                $"whiteout, seed {seed}: the ink untouched");
+        }
+
         // Pen and highlighter only darken; scratches that lighten only lighten.
         foreach (string effect in new[] { "strike=3,seed=1", "underline=3,seed=1", "cross=1,seed=1", "scribble=4,seed=1", "highlight=3,seed=1" })
         {
@@ -359,7 +371,8 @@ internal static partial class Tests
             Check(Enumerable.Range(0, 3).All(c => after[c].Zip(before[c]).All(p => p.First <= p.Second)), $"{effect}: only darker");
         }
 
-        foreach (string bad in new[] { "wrinkle=2", "fold=1.5", "fold=9", "strike=2,color=purple", "tear=0.2", "holes=7", "shadow=0.5", "light=1", "curl=2", "smudge=2,length=900", "blot=2,size=99", "taped=4", "taped=1.5", "taped=1,gap=40", "taped=1,shift=-1" })
+        foreach (string bad in new[] { "wrinkle=2", "fold=1.5", "fold=9", "strike=2,color=purple", "tear=0.2", "holes=7", "shadow=0.5", "light=1", "curl=2", "smudge=2,length=900", "blot=2,size=99", "taped=4", "taped=1.5", "taped=1,gap=40", "taped=1,shift=-1", "taped=1,tape=pink",
+            "water=9", "burn=0.2", "foxing=-1", "dogear=0.5", "photocopy=4", "photocopy=1.5", "carbon=2", "glare=0.9", "motion=20", "desk=0.5", "lined=2", "misregister=9" })
         {
             Throws<ArgumentException>(() => ImageTransformPipeline.Parse(bad), bad);
         }

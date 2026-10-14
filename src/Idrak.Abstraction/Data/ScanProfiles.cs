@@ -223,9 +223,13 @@ public sealed class ScanProfile : IScanProfile
 /// JPEG), "office" (an office scanner or a phone: sometimes a turn, blur, noise, JPEG, some lower resolution), "old" (an old letter:
 /// faded, uneven and worn ink, tinted and stained paper, specks, bleed-through, low resolution), "pale" (faint ink over
 /// the whole page), "worn" (broken strokes and thinned letters), "fax" (black and white at low resolution, specks),
-/// "handled" (wrinkles, folds, smudges, ink blots), "marked" (struck through, underlined, crossed out, highlighted,
-/// notes in the margins), "damaged" (torn edges, punch holes, scratches, ripped and taped back), "scanner" (an edge
-/// shadow, streaks, uneven light, a curled edge) and "mixed" (every effect at a small chance of its own); several are
+/// "handled" (wrinkles, folds, a dog-ear, staples, clips, smudges, ink blots, fingerprints, correction fluid, a sticky
+/// note), "marked" (struck through, underlined, crossed out, highlighted, notes in the margins), "damaged" (torn edges
+/// and pieces, punch, worm and burn holes, scorched edges, scratches, ripped and taped back, water), "scanner" (an edge
+/// shadow, streaks, uneven light, a curled edge, the page cut off), "aged" (yellowed, sun-faded, foxed, tape glue),
+/// "copied" (photocopied, carbon, low toner, banding, a ghost image), "photo" (a phone photo on a desk: glare, a hand's
+/// shadow, darker corners), "wrecked" (many kinds of damage at once) and "mixed" (every effect at a small chance of
+/// its own); several are
 /// taken together on one page when joined with '+' ("damaged+marked", see <see cref="Resolve"/>). Register another, or
 /// one of those names over the library's, with <see cref="Register"/>.
 /// </summary>

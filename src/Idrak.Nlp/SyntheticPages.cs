@@ -188,7 +188,7 @@ public sealed record SyntheticPageOptions
     /// one drawn per page; a name given twice is drawn twice as often. By default every built-in look, "mixed" (every
     /// effect at a small chance of its own) three times, so pages shuffle through all of them.
     /// </summary>
-    public IReadOnlyList<string> Scans { get; init; } = ["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "mixed", "mixed", "mixed"];
+    public IReadOnlyList<string> Scans { get; init; } = ["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "aged", "copied", "photo", "wrecked", "mixed", "mixed", "mixed"];
 
     /// <summary>The share of pages drawn in grey (else as the style says).</summary>
     public double Grey { get; init; } = 0.3;
