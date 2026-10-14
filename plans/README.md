@@ -35,6 +35,10 @@ run), in one list for the refactor: [14-refactor-backlog.md](14-refactor-backlog
 Speed and memory for vision and OCR (the library first, the legal OCR app as the measuring ground: image attention at
 head size 256 on CUDA, a read that does each thing once, bytes through the image pipeline, the encoder's launches, a cache
 that fits the page, tuning once per image; the test process every lane follows): [17-vision-ocr-speed.md](17-vision-ocr-speed.md).
+Synthetic document pages as tuning data from text (the library's own font engine, shaping, page layouts, scan and
+paper effects, `idrak data synth`; built): [18-synthetic-pages.md](18-synthetic-pages.md).
+Creating vision-language models from scratch (a spec, random weights, a tokenizer trainer, a staged pretraining loop
+with every parameter trained, the family as a plug-in, `idrak create` / `pretrain`; planned): [19-vision-language-from-scratch.md](19-vision-language-from-scratch.md).
 
 ## Not supported yet
 
