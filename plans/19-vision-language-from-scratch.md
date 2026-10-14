@@ -1,7 +1,7 @@
 # Plan 19: language and vision-language models from scratch (made, not loaded)
 
-**Status:** planned 2026-10-14, detailed the same day against the code at `abstraction` e0b8d701. Building started
-2026-10-14 (track A first). Decided by the owner 2026-10-14: the family is **IdrakVision**; the BPE trainer is built (A2);
+**Status:** planned 2026-10-14, detailed the same day against the code at `abstraction` e0b8d701. Track A built
+2026-10-14 (A0 to A4, CPU-checked; A5 is the owner's run, commands in "Track A, as built"); track B in progress. Decided by the owner 2026-10-14: the family is **IdrakVision**; the BPE trainer is built (A2);
 image tokens attend in bidirectional blocks by default; distillation (B5) is built after B0 to B4, before the proof run. The
 owner's request (2026-10-14): "new vision language", then "complete both text and vision from scratch", the text
 model first because the vision model needs it.
@@ -407,6 +407,78 @@ hint; `help` for each passes the polish tests.
 The owner's run, from `D:\Projects\Idrak`, with the owner's corpus (or `idrak data text --unit pages --count N` to
 start): `data tokenizer`, `data tokens`, `create` (a spec of the owner's sizes; nothing in the library prefers one),
 `pretrain` one `text` stage, `run`. The GPU filters: `"pretrain:"`, `"cli pretrain:"` on `cuda` and `vulkan`.
+
+---
+
+## Track A, as built (2026-10-14)
+
+Built on `abstraction` in four commits (A0 and A2, A1, A3, A4), every phase checked on the CPU here.
+
+- **A0.** `tools/vlm/make_tiny_pretrain.py` → `tests/Idrak.Tests/data/pretrain` (about 1.5 MB; README and manifest there;
+  reruns write the same bytes, the hand-written README kept). transformers 5.19.0, tokenizers 0.23.3, torch 2.14.1.
+  Beside the plan: `tokenizer-full/` (merging until no pair is left, 1,628 merges through many ties) and
+  `step/adamw-folded/` (AdamW as Idrak computes it, see A3).
+- **A2.** `ITokenizerTrainer`, `TokenizerTrainingOptions`, `TokenizerTrainingProgress` and the `TokenizerTrainers`
+  registry ("bpe", unguarded) in `Idrak.Models.Abstractions`; `BpeTrainer` (`src/Idrak/Models/BpeTrainer.cs`) follows
+  tokenizers 0.23's `trainer.rs` and `word.rs` line by line (the queue's order, stale counts, a pair queued twice merged
+  twice with its later rank written), words counted from UTF-8 blocks on every processor; pre-tokenizers "bytelevel"
+  and "metaspace". `BpeTokenizer.Save`, `ToJson`, `WriteTo` (the model's vocabulary as read, added tokens outside it
+  kept outside). Tests `"tokenizer training:"` 5: the vocabulary, merges and sample ids exactly Hugging Face's for both
+  pre-tokenizers and the full run; save round trip, the tokenizer contract suite, one worker against four.
+- **A1.** `PretrainedArchitecture.Config`; `PretrainedFamilies.CommonConfig` and `LlamaStyle(adjust, modelType)` give
+  Llama, Mistral, Qwen2, Qwen3 and Gemma a writer, read back and refused with each differing value; numbers written as
+  a file holds them. `PretrainedModel.Create(folder, spec, architecture, ModelFiles, CreateOptions)`, `ModelFiles`
+  (`ChatMLWithParts`, the template created models get), `CreateOptions`. `SaveHuggingFace` writes `LayerNorm` and
+  `PositionEmbedding` and replaces model.safetensors through a temporary file (it can save over its own folder). Tests
+  `"pretrain:"` 4 of 8. Not built: a contract suite for trainers (the kit cannot name core's `BpeTokenizer`; the
+  trained tokenizer goes through `TokenizerSuite` instead).
+- **A3.** `Pretrainer.Train(model, options, output, resume, progress, cancel, trace)`, `PretrainingOptions` (JSON,
+  "idrak-pretrain/1"), `PretrainingStage`, `PretrainingProgress`, `PretrainingResult`, `PretrainingCheckpoint`,
+  `ReadCheckpoint`, `LatestCheckpoint`; `PretrainingSource`, `PretrainingContext`, `IPretrainingReader`,
+  `IPretrainingSource` and `PretrainingSources` ("tokens", "records") in `Idrak.Nlp.Abstractions`. The fine-tuner's
+  `StepRunner`, `Batch`, `MakeBatches`, `CustomLoss`, `BatchData` and `StepImages` are internal now; the runner takes
+  each step's sequences (`Run(group, sequences, …)`), so data streams. `Optimizer.SaveState` / `LoadState` and
+  `OptimizerStateValue` (Abstraction) on Adam, AdamW, Sgd, AdamW8Bit, HostOptimizer and GroupedOptimizer. A checkpoint
+  is `checkpoint-STEP/`: a model folder, `optimizer.safetensors`, `pretrain-state.json` (stage, its steps, every
+  source's pass, next item and draws, losses, options); `KeepCheckpoints` removes the oldest. Telemetry
+  `TrainingStarted`, `BatchCompleted` per step, `TrainingCompleted`. **Found:** Idrak's AdamW folds both bias
+  corrections into the step size, so its epsilon is ε/√(1−β2^t) of torch's; losses agree with torch's AdamW within
+  1e-4, weights within 1e-5 of the same formula (`adamw-folded`), and differ from torch's in the fifth digit where a
+  second moment is near ε². Not changed (it would change every fine-tune's numbers). Not built: per-source losses in
+  the progress record. Tests `"pretrain:"` 8: transformers' step-1 loss and every gradient, SGD's three steps, AdamW's,
+  a run stopped after step 2 and resumed giving the uninterrupted losses bit for bit, trained parts, 3:1 source
+  weights, records, telemetry, the tiny model's loss falling by half in 200 steps, refusals. Fine-tuning, vision
+  tuning, conversation tuning and distillation (56 tests) pass unchanged.
+- **A4.** `idrak data tokenizer`, `idrak data tokens` (core `TokenFileWriter`), `idrak create`, `idrak create init`,
+  `idrak pretrain` (common `-C, --config` for pretrain.json, as tune does), `idrak pretrain init`; `idrak resume`
+  continues a pretraining run (`--steps N` more in its last stage); `runs show` reads a log of steps. Shared
+  `TextFiles.Expand` (files, folders, wildcards, so PowerShell patterns work). Tests `"cli pretrain:"` 3; `"cli
+  health"` passes. Three CLI checks fail exactly as they do on the base before this session (`"cli train data: help"`:
+  `-n` means three things; `"cli polish: help lists"`: `--head-weights` undescribed, `data` and `data fonts` help lines
+  too wide; `"cli arabic"`: the `data fonts` summary's tatweel), none of their lines naming these commands.
+
+**For the owner (GPU and the proof run, from `D:\Projects\Idrak`):**
+
+```powershell
+cd D:\Projects\Idrak
+git pull
+dotnet build -c Release tests\Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="pretrain:|cli pretrain:"; dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="pretrain:|cli pretrain:"; dotnet run -c Release --no-build --project tests\Idrak.Tests
+```
+
+A5, a first model of your own (sizes in `spec.json` are yours to set; the corpus is yours, or random text to start):
+
+```powershell
+dotnet run -c Release --project src\Idrak.Cli -- data text -n 20000 --unit pages -o work\corpus.txt
+dotnet run -c Release --project src\Idrak.Cli -- data tokenizer work\corpus.txt --vocab 32000 -o work\tokenizer.json
+dotnet run -c Release --project src\Idrak.Cli -- data tokens work\corpus.txt --tokenizer work\tokenizer.json -o work\tokens.bin
+dotnet run -c Release --project src\Idrak.Cli -- create init -o work\spec.json
+dotnet run -c Release --project src\Idrak.Cli -- create work\spec.json -o work\model
+dotnet run -c Release --project src\Idrak.Cli -- pretrain work\model --tokens work\tokens.bin --steps 2000 --lr 6e-4 -o work\run -d cuda:0
+dotnet run -c Release --project src\Idrak.Cli -- resume work\run
+dotnet run -c Release --project src\Idrak.Cli -- runs show work\run
+```
 
 ---
 
