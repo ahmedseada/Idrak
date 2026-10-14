@@ -330,8 +330,8 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
             "the parts and their language");
         var configuration = new ConfigurationBuilder().AddJsonFile(Path.Combine(app, "appsettings.json")).Build();
         var settings = configuration.GetSection("LegalOcr").Get<LegalOcrSettings>()!;
-        Check(settings.Synthetic is { PartsFile: "synthetic-parts.ar.json", Variants: 2, Output: "synthetic/pages.jsonl" } && settings.Synthetic.Scans.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "mixed", "mixed", "mixed"]) && settings.Synthetic.Layouts.SequenceEqual(["letter", "plain"])
-              && new SyntheticSettings().Effective().Scans.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "mixed", "mixed", "mixed"])
+        Check(settings.Synthetic is { PartsFile: "synthetic-parts.ar.json", Variants: 2, Output: "synthetic/pages.jsonl" } && settings.Synthetic.Scans.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "aged", "copied", "photo", "wrecked", "mixed", "mixed", "mixed"]) && settings.Synthetic.Layouts.SequenceEqual(["letter", "plain"])
+              && new SyntheticSettings().Effective().Scans.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "aged", "copied", "photo", "wrecked", "mixed", "mixed", "mixed"])
               && settings.Tuning.Synthetic, $"layouts {string.Join(",", settings.Synthetic.Layouts)}, scans {string.Join(",", settings.Synthetic.Scans)}");
         var options = new Idrak.Nlp.SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFont()], Width = 400, Height = 300, BodySize = (10, 12) }, Parts = parts, Variants = 1 };
         var page = Idrak.Nlp.SyntheticPages.Make("{\"court\": \"محكمة النقض\", \"full_text_extract\": \"حكمت المحكمة بقبول الطعن.\"}", options, record: 4);

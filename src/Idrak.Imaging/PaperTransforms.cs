@@ -10,7 +10,8 @@ namespace Idrak.Imaging;
 /// What happens to a paper between the printer and the scanner, as image transforms (plan 18): it is handled
 /// (<c>wrinkle</c>, <c>fold</c>, <c>smudge</c>, <c>blot</c>), marked with a pen (<c>strike</c>, <c>underline</c>,
 /// <c>cross</c>, <c>highlight</c>, <c>scribble</c>), damaged (<c>tear</c>, <c>holes</c>, <c>scratch</c>, <c>taped</c>)
-/// and scanned (<c>shadow</c>, <c>streak</c>, <c>light</c>, <c>curl</c>). Every one takes a <c>seed</c>, and none takes
+/// and scanned (<c>shadow</c>, <c>streak</c>, <c>light</c>, <c>curl</c>); PaperEffects.cs adds age, damage, copiers,
+/// cameras and paper kinds. Every one takes a <c>seed</c>, and none takes
 /// away text a page's answer holds: tears and holes stay in the margins, pen marks are thin or see-through, smudges and
 /// blots are small, a page ripped and taped back loses no more than a few pixels along its tear, so a page's text can
 /// still be read. Tears and holes measure the page's blank margins (where its first ink is) and stay inside them.
@@ -45,9 +46,73 @@ internal static class PaperTransforms
                 "Punch holes", "Holes", 0, 4, 1, ["seed", "fill"], (i, s, v) => PaperImageOps.Holes(i, (int)v, Fill(s), Seed(s)), whole: true),
             Make("scratch", "scratch=N: N thin scratches, light or dark, a long way across the page; seed=N",
                 "Scratches", "Scratches", 0, 40, 1, ["seed"], (i, s, v) => PaperImageOps.Scratch(i, (int)v, Seed(s)), whole: true),
-            Make("taped", "taped=N: the page ripped right across N times (1 to 3) and taped back together: a jagged tear through the text, its pieces up to gap=G pixels apart (3) and shifted up to shift=S pixels along it (3), the background showing through, strips of clear, yellowed or matte tape over it; letters on the tear are split but readable; fill=V the background; seed=N",
-                "Ripped and taped", "Tears", 0, 3, 1, ["seed", "fill", "gap", "shift"],
-                (i, s, v) => PaperImageOps.Taped(i, (int)v, Option(s, "gap"), Option(s, "shift"), Fill(s), Seed(s)), whole: true),
+            Make("taped", "taped=N: the page ripped right across N times (1 to 3) and taped back together: a jagged tear through the text, its pieces up to gap=G pixels apart (3) and shifted up to shift=S pixels along it (3), the background showing through, strips of tape over it, tape=clear|yellowed|matte|any (any: clear the most, transparent with a sheen and visible edges); letters on the tear are split but readable; fill=V the background; seed=N",
+                "Ripped and taped", "Tears", 0, 3, 1, ["seed", "fill", "gap", "shift", "tape"],
+                (i, s, v) => PaperImageOps.Taped(i, (int)v, Option(s, "gap"), Option(s, "shift"), TapeKind(s), Fill(s), Seed(s)), whole: true),
+            Make("water", "water=N: N water marks: a wavy tide line, the paper inside stained and its ink run a little (still readable); seed=N",
+                "Water marks", "Marks", 0, 4, 1, ["seed"], (i, s, v) => PaperImageOps.Water(i, (int)v, Seed(s)), whole: true),
+            Make("burn", "burn=D: scorched edges burnt away up to D of the page's shorter side (0 to 0.05), charred and browned, inside the margins; fill=V the background; seed=N",
+                "Burnt edges", "Depth", 0, 0.05, 0.005, ["seed", "fill"], (i, s, v) => PaperImageOps.Burn(i, v, Fill(s), Seed(s))),
+            Make("foxing", "foxing=N: N rust-brown spots of old paper (0 to 600), alone or in clusters; seed=N",
+                "Foxing", "Spots", 0, 600, 1, ["seed"], (i, s, v) => PaperImageOps.Foxing(i, (int)v, Seed(s)), whole: true),
+            Make("staple", "staple=N: N staples in a top corner's margin (0 to 2), or the holes and rust a removed one leaves; fill=V; seed=N",
+                "Staples", "Staples", 0, 2, 1, ["seed", "fill"], (i, s, v) => PaperImageOps.Staple(i, (int)v, Fill(s), Seed(s)), whole: true),
+            Make("dogear", "dogear=S: a corner folded over, S of the page's shorter side (0 to 0.15, as the margins allow); fill=V; seed=N",
+                "Dog-ear", "Size", 0, 0.15, 0.01, ["seed", "fill"], (i, s, v) => PaperImageOps.DogEar(i, v, Fill(s), Seed(s))),
+            Make("clip", "clip=N: N paper clips over the top edge (0 to 2), or the dents a removed one leaves; in the top margin; seed=N",
+                "Paper clips", "Clips", 0, 2, 1, ["seed"], (i, s, v) => PaperImageOps.Clip(i, (int)v, Seed(s)), whole: true),
+            Make("residue", "residue=N: N patches of old tape's yellowed glue where tape was pulled off (0 to 6), see-through; seed=N",
+                "Tape residue", "Patches", 0, 6, 1, ["seed"], (i, s, v) => PaperImageOps.Residue(i, (int)v, Seed(s)), whole: true),
+            Make("wormholes", "wormholes=N: N small ragged holes (0 to 30), some in runs, in the margins; fill=V; seed=N",
+                "Worm holes", "Holes", 0, 30, 1, ["seed", "fill"], (i, s, v) => PaperImageOps.Wormholes(i, (int)v, Fill(s), Seed(s)), whole: true),
+            Make("sunfade", "sunfade=A: a band along one edge faded by the sun, its ink paler and its paper yellower, by up to A (0 to 0.6); seed=N",
+                "Sun-faded", "Strength", 0, 0.6, 0.05, ["seed"], (i, s, v) => PaperImageOps.Sunfade(i, v, Seed(s))),
+            Make("piece", "piece=N: N pieces torn out of the page's edge (0 to 3), deep ragged bites inside the margins; fill=V; seed=N",
+                "Torn-out pieces", "Pieces", 0, 3, 1, ["seed", "fill"], (i, s, v) => PaperImageOps.Piece(i, (int)v, Fill(s), Seed(s)), whole: true),
+            Make("whiteout", "whiteout=N: N dried patches of correction fluid (0 to 8), only on blank paper; seed=N",
+                "Correction fluid", "Patches", 0, 8, 1, ["seed"], (i, s, v) => PaperImageOps.Whiteout(i, (int)v, Seed(s)), whole: true),
+            Make("sticky", "sticky=N: N sticky notes stuck on an edge (0 to 2), the part on the page in the margin; seed=N",
+                "Sticky notes", "Notes", 0, 2, 1, ["seed"], (i, s, v) => PaperImageOps.Sticky(i, (int)v, Seed(s)), whole: true),
+            Make("burnhole", "burnhole=N: N burn holes with a charred ring and a scorch (0 to 4), in the margins; fill=V; seed=N",
+                "Burn holes", "Holes", 0, 4, 1, ["seed", "fill"], (i, s, v) => PaperImageOps.BurnHole(i, (int)v, Fill(s), Seed(s)), whole: true),
+            Make("cutoff", "cutoff=D: the page cut off by the scanner along one or two sides, up to D of its shorter side (0 to 0.05, inside the margins); fill=V the scanner bed; seed=N",
+                "Cut off", "Depth", 0, 0.05, 0.005, ["seed", "fill"], (i, s, v) => PaperImageOps.Cutoff(i, v, Fill(s), Seed(s))),
+            Make("photocopy", "photocopy=N: a photocopy N times over (0 to 3): grey, harder contrast, bolder strokes, toner dust; seed=N",
+                "Photocopy", "Generations", 0, 3, 1, ["seed"], (i, s, v) => PaperImageOps.Photocopy(i, (int)v, Seed(s)), whole: true),
+            Make("carbon", "carbon=A: a carbon copy: the ink turned carbon blue or violet by A (0 to 1), soft, its edge doubled faintly; seed=N",
+                "Carbon copy", "Strength", 0, 1, 0.05, ["seed"], (i, s, v) => PaperImageOps.Carbon(i, v, Seed(s))),
+            Make("lowtoner", "lowtoner=A: low toner: the ink faded in streaks down the page by up to A (0 to 0.8); seed=N",
+                "Low toner", "Strength", 0, 0.8, 0.05, ["seed"], (i, s, v) => PaperImageOps.LowToner(i, v, Seed(s))),
+            Make("banding", "banding=A: printer banding: the ink lighter in bands across the page, by up to A (0 to 0.4); seed=N",
+                "Printer banding", "Strength", 0, 0.4, 0.02, ["seed"], (i, s, v) => PaperImageOps.Banding(i, v, Seed(s))),
+            Make("ghost", "ghost=A: a faint copy of the page's ink a little way off (a double image), A as dark (0 to 0.4); seed=N",
+                "Ghost image", "Strength", 0, 0.4, 0.02, ["seed"], (i, s, v) => PaperImageOps.Ghost(i, v, Seed(s))),
+            Make("feather", "feather=A: ink spread into soft paper, strokes fuzzier and bolder by A (0 to 1); seed=N",
+                "Ink feathering", "Strength", 0, 1, 0.05, ["seed"], (i, s, v) => PaperImageOps.Feather(i, v, Seed(s))),
+            Make("misregister", "misregister=P: a colour print's red and blue shifted up to P pixels apart (0 to 4; a grey page unchanged); seed=N",
+                "Misregistration", "Pixels", 0, 4, 0.5, ["seed"], (i, s, v) => PaperImageOps.Misregister(i, v, Seed(s))),
+            Make("desk", "desk=S: a page photographed on a desk: up to S smaller (0 to 0.2), on wood, a grey table or a dark cloth, with its shadow; seed=N",
+                "On a desk", "Shrink", 0, 0.2, 0.01, ["seed"], (i, s, v) => PaperImageOps.Desk(i, v, Seed(s))),
+            Make("glare", "glare=A: a soft bright reflection washing part of the page toward white by up to A (0 to 0.6); seed=N",
+                "Glare", "Strength", 0, 0.6, 0.05, ["seed"], (i, s, v) => PaperImageOps.Glare(i, v, Seed(s))),
+            Make("vignette", "vignette=A: the corners darker than the middle by up to A (0 to 0.6), as a camera lens; seed=N",
+                "Vignetting", "Strength", 0, 0.6, 0.05, ["seed"], (i, s, v) => PaperImageOps.Vignette(i, v, Seed(s))),
+            Make("motion", "motion=L: a camera moving L pixels in one direction while taking the photo (0 to 6); seed=N",
+                "Motion blur", "Pixels", 0, 6, 0.5, ["seed"], (i, s, v) => PaperImageOps.Motion(i, v, Seed(s))),
+            Make("moire", "moire=A: faint interference waves of a page photographed off a screen or a halftone, A strong (0 to 0.25); seed=N",
+                "Moire", "Strength", 0, 0.25, 0.01, ["seed"], (i, s, v) => PaperImageOps.Moire(i, v, Seed(s))),
+            Make("handshadow", "handshadow=A: a hand's or a phone's soft shadow reaching in from an edge, up to A darker (0 to 0.5); seed=N",
+                "Hand shadow", "Strength", 0, 0.5, 0.05, ["seed"], (i, s, v) => PaperImageOps.HandShadow(i, v, Seed(s))),
+            Make("fingerprint", "fingerprint=N: N faint greasy fingerprints (0 to 4); seed=N",
+                "Fingerprints", "Prints", 0, 4, 1, ["seed"], (i, s, v) => PaperImageOps.Fingerprint(i, (int)v, Seed(s)), whole: true),
+            Make("lined", "lined=A: ruled paper: faint blue lines (and now and then a red margin) under the ink, A strong (0 to 1); seed=N",
+                "Ruled paper", "Strength", 0, 1, 0.05, ["seed"], (i, s, v) => PaperImageOps.Lined(i, v, Seed(s))),
+            Make("grid", "grid=A: graph paper: a faint grid under the ink, A strong (0 to 1); seed=N",
+                "Graph paper", "Strength", 0, 1, 0.05, ["seed"], (i, s, v) => PaperImageOps.Grid(i, v, Seed(s))),
+            Make("guilloche", "guilloche=A: a security background of fine wavy lines in a light colour, A strong (0 to 1); seed=N",
+                "Security pattern", "Strength", 0, 1, 0.05, ["seed"], (i, s, v) => PaperImageOps.Guilloche(i, v, Seed(s))),
+            Make("recycled", "recycled=A: recycled paper: fibres and a fine grain, A strong (0 to 1); seed=N",
+                "Recycled paper", "Strength", 0, 1, 0.05, ["seed"], (i, s, v) => PaperImageOps.Recycled(i, v, Seed(s))),
             Make("shadow", "shadow=S: a shadow along one or two edges (a scanner lid or a book's gutter), S of the page wide (0 to 0.3); seed=N",
                 "Edge shadow", "Width", 0, 0.3, 0.01, ["seed"], (i, s, v) => PaperImageOps.Shadow(i, v, Seed(s))),
             Make("streak", "streak=N: N streaks down the page from a dirty scanner glass or roller; seed=N",
@@ -80,6 +145,11 @@ internal static class PaperTransforms
             parameters.Add(FillInput);
         }
 
+        if (keys.Contains("tape"))
+        {
+            parameters.Add(new ImageTransformParameter("tape", "Tape", ImageTransformInput.Choice) { Choices = ["any", "clear", "yellowed", "matte"], Optional = true });
+        }
+
         if (keys.Contains("color"))
         {
             parameters.Add(new ImageTransformParameter("color", "Pen", ImageTransformInput.Choice) { Choices = ["any", "blue", "black", "red", "green"], Optional = true });
@@ -97,6 +167,11 @@ internal static class PaperTransforms
                 if (keys.Contains("color"))
                 {
                     PenColor(s);
+                }
+
+                if (keys.Contains("tape"))
+                {
+                    TapeKind(s);
                 }
 
                 foreach (string key in keys.Where(Options.ContainsKey))
@@ -122,39 +197,68 @@ internal static class PaperTransforms
         return OptionNumber(step, key, otherwise, min, max);
     }
 
+    private static string TapeKind(ImageTransformStep step)
+    {
+        string kind = (step.Option("tape") ?? "any").ToLowerInvariant();
+        return kind is "any" or "clear" or "yellowed" or "matte" ? kind : throw new ArgumentException($"{step.Name}'s tape is any, clear, yellowed or matte, not '{kind}'.");
+    }
+
     private static string PenColor(ImageTransformStep step)
     {
         string color = (step.Option("color") ?? "any").ToLowerInvariant();
         return color is "any" or "blue" or "black" or "red" or "green" ? color : throw new ArgumentException($"{step.Name}'s color is any, blue, black, red or green, not '{color}'.");
     }
 
-    /// <summary>The library's paper scan profiles: handled, marked, damaged, scanner, and mixed (every effect at a small chance).</summary>
+    /// <summary>The library's paper scan profiles: handled, marked, damaged, scanner, aged, copied, photo, wrecked, and mixed (every effect at a small chance).</summary>
     internal static void RegisterProfiles()
     {
         ScanProfiles.Register(new ScanProfile("handled",
-            "wrinkle=0.2..0.7@0.6,fold=1..3@0.5,smudge=1..4@0.5,blot=1..3@0.3,rotate=-1.0..1.0@0.15,blur=0.3..0.8@0.3,noise=2..6@0.4,jpeg=50..90@0.5",
-            "a paper that went through hands: wrinkles, folds, smudges, ink blots"));
+            "wrinkle=0.2..0.7@0.6,fold=1..3@0.5,dogear=0.03..0.08@0.25,staple=1..1@0.25,clip=1..1@0.2,smudge=1..4@0.5,blot=1..3@0.3,fingerprint=1..2@0.25,"
+            + "residue=1..2@0.15,whiteout=1..2@0.15,sticky=1..1@0.15,rotate=-1.0..1.0@0.15,blur=0.3..0.8@0.3,noise=2..6@0.4,jpeg=50..90@0.5",
+            "a paper that went through hands: wrinkles, folds, a dog-ear, staples, clips, smudges, ink blots, fingerprints, correction fluid, a sticky note"));
         ScanProfiles.Register(new ScanProfile("marked",
             "strike=1..3@0.5,underline=1..4@0.5,cross=1..1@0.25,highlight=1..4@0.5,scribble=1..4@0.4,rotate=-0.8..0.8@0.1,jpeg=60..95@0.5",
             "a page someone worked on: lines struck through, underlined, crossed out, highlighted, notes in the margins"));
         ScanProfiles.Register(new ScanProfile("damaged",
-            "stain=1..2@0.3,dropout=0.02..0.1@0.3,fold=1..2@0.4,tear=0.01..0.04@0.6,holes=2..3@0.35,scratch=2..12@0.5,taped=1..2@0.35,rotate=-1.2..1.2@0.2,jpeg=50..90@0.5",
-            "a damaged paper: torn edges, punch holes, scratches, ripped and taped back, folds, stains, worn ink"));
+            "stain=1..2@0.3,water=1..2@0.2,dropout=0.02..0.1@0.3,fold=1..2@0.4,tear=0.01..0.04@0.5,piece=1..1@0.25,holes=2..3@0.3,wormholes=2..10@0.15,"
+            + "burnhole=1..2@0.1,burn=0.01..0.03@0.1,scratch=2..12@0.5,taped=1..2@0.35,rotate=-1.2..1.2@0.2,jpeg=50..90@0.5",
+            "a damaged paper: torn edges, torn-out pieces, punch holes, worm and burn holes, scorched edges, scratches, ripped and taped back, water, stains, worn ink"));
         ScanProfiles.Register(new ScanProfile("scanner",
-            "light=0.1..0.4@0.6,curl=0.2..0.8@0.3,shadow=0.04..0.2@0.6,streak=1..6@0.4,rotate=-1.0..1.0@0.2,noise=2..6@0.5,jpeg=45..90@0.6",
-            "a hasty scan or photo: an edge shadow, uneven light, a curled edge, streaks from the glass"));
+            "light=0.1..0.4@0.6,curl=0.2..0.8@0.3,shadow=0.04..0.2@0.6,streak=1..6@0.4,cutoff=0.005..0.03@0.2,rotate=-1.0..1.0@0.2,noise=2..6@0.5,jpeg=45..90@0.6",
+            "a hasty scan: an edge shadow, uneven light, a curled edge, streaks from the glass, the page cut off"));
+        ScanProfiles.Register(new ScanProfile("aged",
+            "tint=0.2..0.55@0.8,recycled=0.2..0.7@0.3,sunfade=0.2..0.5@0.4,foxing=20..200@0.6,water=1..2@0.3,residue=1..3@0.3,staple=1..1@0.3,dogear=0.03..0.1@0.3,"
+            + "wormholes=2..12@0.25,fade=0.1..0.4@0.4,dropout=0.02..0.1@0.3,rotate=-1.0..1.0@0.15,jpeg=50..90@0.5",
+            "an old paper: yellowed, sun-faded, foxed, water-marked, tape glue, an old staple, a dog-ear, worm holes, faded ink"));
+        ScanProfiles.Register(new ScanProfile("copied",
+            "carbon=0.5..1@0.2,lowtoner=0.2..0.6@0.3,banding=0.05..0.25@0.3,ghost=0.05..0.25@0.2,feather=0.3..0.9@0.25,misregister=1..3@0.15,photocopy=1..3@0.7,"
+            + "speckle=50..300@0.5,cutoff=0.005..0.03@0.25,streak=1..3@0.3,rotate=-1.0..1.0@0.2,jpeg=50..90@0.5",
+            "a copy or a poor print: photocopied once or more, carbon, low toner, banding, a ghost image, feathered ink, colours out of register"));
+        ScanProfiles.Register(new ScanProfile("photo",
+            "desk=0.03..0.12@0.4,perspective=0..0.02@0.3,glare=0.1..0.45@0.35,handshadow=0.1..0.4@0.3,fingerprint=1..2@0.1,vignette=0.1..0.45@0.5,light=0.1..0.3@0.4,"
+            + "motion=1..3@0.2,blur=0.3..1.0@0.4,moire=0.03..0.12@0.1,noise=3..8@0.6,rotate=-1.5..1.5@0.15,jpeg=45..85@0.7",
+            "a page photographed with a phone: on a desk, at an angle, glare, a hand's shadow, darker corners, a little motion, moire"));
+        ScanProfiles.Register(new ScanProfile("wrecked",
+            "foxing=20..150@0.4,water=1..3@0.5,stain=1..3@0.5,wrinkle=0.3..0.8@0.6,fold=1..3@0.6,dogear=0.03..0.1@0.3,smudge=1..4@0.4,dropout=0.05..0.15@0.5,"
+            + "tear=0.01..0.04@0.5,piece=1..2@0.5,burn=0.01..0.04@0.4,holes=2..3@0.3,burnhole=1..3@0.3,wormholes=2..10@0.3,scratch=4..16@0.6,taped=1..2@0.5,"
+            + "rotate=-1.0..1.0@0.2,jpeg=50..90@0.6",
+            "a wrecked paper: many kinds of damage at once, the text still readable"));
         ScanProfiles.Register(new ScanProfile("mixed",
-            "tint=0.1..0.5@0.2,stain=1..3@0.1,strike=1..2@0.12,underline=1..3@0.15,cross=1..1@0.06,highlight=1..3@0.15,scribble=1..3@0.12,"
-            + "fade=0.2..0.7@0.2,uneven=0..0.7,dropout=0.02..0.15@0.15,smudge=1..3@0.15,blot=1..2@0.1,bleed=0.05..0.2@0.1,wrinkle=0.1..0.6@0.2,"
-            + "fold=1..2@0.15,tear=0.01..0.035@0.12,holes=2..3@0.1,scratch=1..8@0.15,taped=1..1@0.06,curl=0.2..0.6@0.08,shadow=0.04..0.15@0.15,light=0.1..0.35@0.2,"
-            + "streak=1..4@0.1,speckle=20..300@0.25,rotate=-1.5..1.5@0.15,perspective=0..0.012@0.05,blur=0.3..1.0@0.3,noise=2..7@0.3,"
-            + "lowres=0.5..0.9@0.2,jpeg=40..92@0.5",
-            "a shuffle of everything: each paper, pen, damage and scanner effect at a small chance of its own, so pages get every mix"));
+            "lined=0.3..0.8@0.04,grid=0.3..0.8@0.03,guilloche=0.2..0.6@0.04,recycled=0.2..0.7@0.06,tint=0.1..0.5@0.2,sunfade=0.2..0.5@0.06,foxing=20..150@0.06,"
+            + "carbon=0.5..1@0.03,lowtoner=0.2..0.6@0.05,banding=0.05..0.25@0.05,ghost=0.05..0.25@0.04,feather=0.3..0.9@0.05,misregister=1..3@0.03,"
+            + "stain=1..3@0.1,water=1..2@0.06,strike=1..2@0.12,underline=1..3@0.15,cross=1..1@0.06,highlight=1..3@0.15,scribble=1..3@0.12,"
+            + "fade=0.2..0.7@0.2,uneven=0..0.7,dropout=0.02..0.15@0.15,smudge=1..3@0.15,blot=1..2@0.1,fingerprint=1..2@0.05,bleed=0.05..0.2@0.1,"
+            + "wrinkle=0.1..0.6@0.2,fold=1..2@0.15,dogear=0.03..0.08@0.05,staple=1..1@0.05,clip=1..1@0.04,residue=1..2@0.04,whiteout=1..2@0.04,sticky=1..1@0.03,"
+            + "tear=0.01..0.035@0.12,piece=1..1@0.04,holes=2..3@0.1,wormholes=2..8@0.04,burnhole=1..2@0.02,burn=0.01..0.03@0.02,scratch=1..8@0.15,taped=1..1@0.06,"
+            + "photocopy=1..2@0.05,curl=0.2..0.6@0.08,shadow=0.04..0.15@0.15,light=0.1..0.35@0.2,streak=1..4@0.1,cutoff=0.005..0.03@0.04,"
+            + "desk=0.03..0.1@0.03,glare=0.1..0.4@0.04,handshadow=0.1..0.35@0.03,vignette=0.1..0.4@0.05,motion=1..2.5@0.03,moire=0.03..0.1@0.02,"
+            + "speckle=20..300@0.25,rotate=-1.5..1.5@0.15,perspective=0..0.012@0.05,blur=0.3..1.0@0.3,noise=2..7@0.3,lowres=0.5..0.9@0.2,jpeg=40..92@0.5",
+            "a shuffle of everything: each paper, pen, damage, copier, camera and scanner effect at a small chance of its own, so pages get every mix"));
     }
 }
 
 /// <summary>The paper effects on 8-bit planes; each returns a new image and leaves its input alone.</summary>
-internal static class PaperImageOps
+internal static partial class PaperImageOps
 {
     internal enum PenMark
     {
@@ -171,8 +275,7 @@ internal static class PaperImageOps
     // the span of its ink.
     private static List<TextBand> Bands(byte[][] planes, int w, int h, byte[] paper)
     {
-        var grey = planes.Length == 1 ? planes[0] : PillowImageOps.Grey(planes);
-        int dark = (int)(paper.Average(p => p) * 0.66);
+        var ink = InkMask(planes, w, h, paper);
         var bands = new List<TextBand>();
         int top = -1, left = w, right = -1;
         for (int y = 0; y <= h; y++)
@@ -180,10 +283,10 @@ internal static class PaperImageOps
             int count = 0, l = w, r = -1;
             if (y < h)
             {
-                var row = grey.AsSpan(y * w, w);
+                var row = ink.AsSpan(y * w, w);
                 for (int x = 0; x < w; x++)
                 {
-                    if (row[x] < dark)
+                    if (row[x])
                     {
                         count++;
                         l = Math.Min(l, x);
@@ -212,20 +315,79 @@ internal static class PaperImageOps
         return bands;
     }
 
+    // The page's ink: the pixels darker than the paper by a third, less the dark regions that touch the page's border (the
+    // background through a tear or a missing piece, a burnt edge, a scanner bed, a desk), which are not text.
+    private static bool[] InkMask(byte[][] planes, int w, int h, byte[] paper)
+    {
+        var grey = planes.Length == 1 ? planes[0] : PillowImageOps.Grey(planes);
+        int dark = (int)(paper.Average(p => p) * 0.66);
+        var ink = new bool[w * h];
+        for (int i = 0; i < ink.Length; i++)
+        {
+            ink[i] = grey[i] < dark;
+        }
+
+        var stack = new Stack<int>();
+        void Clear(int i)
+        {
+            if (ink[i])
+            {
+                ink[i] = false;
+                stack.Push(i);
+            }
+        }
+
+        for (int x = 0; x < w; x++)
+        {
+            Clear(x);
+            Clear((h - 1) * w + x);
+        }
+
+        for (int y = 0; y < h; y++)
+        {
+            Clear(y * w);
+            Clear(y * w + w - 1);
+        }
+
+        while (stack.Count > 0)
+        {
+            int i = stack.Pop(), x = i % w;
+            if (x > 0)
+            {
+                Clear(i - 1);
+            }
+
+            if (x < w - 1)
+            {
+                Clear(i + 1);
+            }
+
+            if (i >= w)
+            {
+                Clear(i - w);
+            }
+
+            if (i < ink.Length - w)
+            {
+                Clear(i + w);
+            }
+        }
+
+        return ink;
+    }
+
     // The box holding the page's ink (darker than the paper by a third): its left, top, right and bottom; the whole page
     // when there is none. Tears and holes stay outside it, so no text a page's answer holds is cut.
     private static (int Left, int Top, int Right, int Bottom) InkBox(byte[][] planes, int w, int h)
     {
-        var paper = ScanImageOps.PaperLevels(planes, w * h);
-        var grey = planes.Length == 1 ? planes[0] : PillowImageOps.Grey(planes);
-        int dark = (int)(paper.Average(p => p) * 0.66);
+        var ink = InkMask(planes, w, h, ScanImageOps.PaperLevels(planes, w * h));
         int left = w, top = h, right = -1, bottom = -1;
         for (int y = 0; y < h; y++)
         {
-            var row = grey.AsSpan(y * w, w);
+            var row = ink.AsSpan(y * w, w);
             for (int x = 0; x < w; x++)
             {
-                if (row[x] < dark)
+                if (row[x])
                 {
                     left = Math.Min(left, x);
                     right = Math.Max(right, x);
@@ -753,7 +915,7 @@ internal static class PaperImageOps
     /// background through the gap (a light one grey, the edges' shadow), the torn edges a little lighter (the paper's fibres), then two to four strips of
     /// tape over each tear, all clear, yellowed or matte, the text under them still seen.
     /// </summary>
-    public static ImageData Taped(ImageData image, int count, double gap, double shift, int? fill, int seed)
+    public static ImageData Taped(ImageData image, int count, double gap, double shift, string tape, int? fill, int seed)
     {
         if (count == 0)
         {
@@ -825,8 +987,10 @@ internal static class PaperImageOps
             tears.Add((across, line, apart));
         }
 
-        // The tape: one kind on the page; strips across each tear, now and then one along it.
-        double kind = random.NextDouble();
+        // The tape: one kind on the page (clear the most when any); strips across each tear, now and then one along it.
+        double pick = random.NextDouble();
+        string kind = tape != "any" ? tape : pick < 0.6 ? "clear" : pick < 0.85 ? "yellowed" : "matte";
+        var sheen = new Random(random.Next());
         foreach (var (across, line, apart) in tears)
         {
             int strips = 2 + random.Next(3);
@@ -839,48 +1003,43 @@ internal static class PaperImageOps
                 double tapeLength = side * (lengthwise ? 0.18 + 0.15 * random.NextDouble() : 0.07 + 0.07 * random.NextDouble());
                 double tapeWidth = side * (0.022 + 0.015 * random.NextDouble());
                 double du = Math.Cos(angle), dv = Math.Sin(angle);
-                Tape(planes, w, h, across ? uc : vc, across ? vc : uc, across ? du : dv, across ? dv : du, tapeLength, tapeWidth, kind);
+                Tape(planes, w, h, across ? uc : vc, across ? vc : uc, across ? du : dv, across ? dv : du, tapeLength, tapeWidth, kind, sheen);
             }
         }
 
         return PillowImageOps.FromBytes(planes, h, w);
     }
 
-    // A strip of tape centred on (cx, cy) along (ax, ay): clear (a faint sheen), yellowed (old tape) or matte (frosted),
-    // its long edges a little darker and its ends cut in teeth, as a dispenser leaves them.
-    private static void Tape(byte[][] planes, int w, int h, double cx, double cy, double ax, double ay, double length, double width, double kind)
+    // A strip of tape centred on (cx, cy) along (ax, ay), its ends cut in teeth as a dispenser leaves them. Clear tape is
+    // transparent: a faint haze, a glossy streak along it, its edges seen as a dark line with a light one inside, now and
+    // then a trapped bubble. Yellowed tape tints what is under it; matte tape frosts it lighter. The text stays readable.
+    private static void Tape(byte[][] planes, int w, int h, double cx, double cy, double ax, double ay, double length, double width, string kind, Random random)
     {
-        float[] tint = kind < 0.45 ? [1f, 1f, 1f] : kind < 0.8 ? (planes.Length == 3 ? [0.98f, 0.94f, 0.8f] : [0.93f]) : [1f, 1f, 1f];
-        float lift = kind < 0.45 ? 0.05f : kind < 0.8 ? 0.02f : 0.16f;   // toward white: matte tape the most
-        double half = length / 2, across = width / 2, reach = Math.Sqrt((half + 3) * (half + 3) + across * across);
-        int x0 = Math.Max(0, (int)(cx - reach)), x1 = Math.Min(w - 1, (int)(cx + reach)), y0 = Math.Max(0, (int)(cy - reach)), y1 = Math.Min(h - 1, (int)(cy + reach));
-        for (int y = y0; y <= y1; y++)
+        float[] tint = kind == "yellowed" ? Tint(planes.Length, 0.98f, 0.93f, 0.78f) : [.. Enumerable.Repeat(1f, planes.Length)];
+        float lift = kind switch { "clear" => 0.04f, "yellowed" => 0.02f, _ => 0.16f };   // toward white: matte tape the most
+        double streak = (random.NextDouble() - 0.5) * 1.2, streakWidth = 0.15 + 0.2 * random.NextDouble();
+        float gloss = kind == "clear" ? (float)(0.12 + 0.12 * random.NextDouble()) : kind == "yellowed" ? 0.05f : 0f;
+        var bubbles = Enumerable.Range(0, kind == "clear" && random.NextDouble() < 0.4 ? 1 + random.Next(3) : 0)
+            .Select(_ => (A: (random.NextDouble() - 0.5) * 1.6, B: (random.NextDouble() - 0.5) * 1.4, R: 0.08 + 0.12 * random.NextDouble())).ToArray();
+        Strip(w, h, cx, cy, ax, ay, length, width, true, (x, y, a, b, edge) =>
         {
-            for (int x = x0; x <= x1; x++)
+            float shine = gloss * (float)Math.Max(0, 1 - Math.Abs(b - streak) / streakWidth);
+            bool rim = false;
+            foreach (var bubble in bubbles)
             {
-                double px = x + 0.5 - cx, py = y + 0.5 - cy;
-                double a = px * ax + py * ay, b = -px * ay + py * ax;
-                if (Math.Abs(b) > across)
-                {
-                    continue;
-                }
-
-                double teeth = Math.Abs((Math.Abs(b) / 2 % 2) - 1) * 2;   // a 4-pixel zigzag, 2 deep
-                double end = half - teeth;
-                if (Math.Abs(a) > end)
-                {
-                    continue;
-                }
-
-                bool edge = Math.Abs(b) > across - 1.2 || Math.Abs(a) > end - 1;
-                for (int c = 0; c < planes.Length; c++)
-                {
-                    ref byte v = ref planes[c][y * w + x];
-                    float value = (v + (255 - v) * lift) * tint[Math.Min(c, tint.Length - 1)] * (edge ? 0.92f : 1f);
-                    v = (byte)Math.Clamp(value + 0.5f, 0, 255);
-                }
+                double d = Math.Sqrt((a - bubble.A) * (a - bubble.A) * 9 + (b - bubble.B) * (b - bubble.B));
+                rim |= Math.Abs(d - bubble.R) < 0.04;
+                shine += d < bubble.R ? 0.15f : 0f;
             }
-        }
+
+            for (int c = 0; c < planes.Length; c++)
+            {
+                ref byte v = ref planes[c][y * w + x];
+                float value = (v + (255 - v) * (lift + shine)) * tint[c];
+                value *= edge ? 0.86f : rim ? 0.9f : 1f;
+                v = (byte)Math.Clamp(value + 0.5f, 0, 255);
+            }
+        });
     }
 
     // What is seen through a hole or past a torn edge: the given grey, else a dark or a white scanner lid.
