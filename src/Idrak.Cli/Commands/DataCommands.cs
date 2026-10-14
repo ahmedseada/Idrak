@@ -22,5 +22,7 @@ internal static class DataCommands
         new DataTextCommand(),
         new DataFontsCommand(),
         new DataSynthCommand(),
+        new DataTokenizerCommand(),
+        new DataTokensCommand(),
     ];
 }

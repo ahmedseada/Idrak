@@ -30,7 +30,7 @@ internal static class EnvironmentVariables
     [
         "doctor", "devices", "version", "report", "init", "chat", "run", "batch", "compare", "complete", "embed", "agent", "serve", "ui",
         "memory", "quantize", "merge", "convert", "bench", "eval", "perplexity", "profile", "check", "tuning show", "tune", "train", "resume", "predict",
-        "distill", "suggest", "explain", "rag index", "rag ask", "rag search", "rag eval", "test", "trace", "demo", "onnx import", "onnx export",
+        "distill", "create", "pretrain", "suggest", "explain", "rag index", "rag ask", "rag search", "rag eval", "test", "trace", "demo", "onnx import", "onnx export",
         "onnx check", "vlm check",
     ];
 
@@ -39,7 +39,7 @@ internal static class EnvironmentVariables
     [
         "pull", "list", "rm", "show", "search", "verify", "convert", "diff", "inspect", "chat", "run", "batch", "compare", "complete", "embed",
         "tokenize", "template", "agent", "serve", "ui", "memory", "quantize", "merge", "bench", "eval", "perplexity", "profile", "check", "tune",
-        "distill", "data stats", "rag index", "rag ask", "rag search", "rag eval", "suggest", "vlm check",
+        "distill", "create", "pretrain", "data stats", "data tokenizer", "data tokens", "rag index", "rag ask", "rag search", "rag eval", "suggest", "vlm check",
     ];
 
     // Commands that read datasets from remote sources (the others read local files only).

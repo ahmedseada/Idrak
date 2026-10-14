@@ -241,25 +241,28 @@ internal sealed class ResumeCommand : Command
     public override string Summary => "Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more)";
 
     public override string Usage => """
-        RUN [--epochs N] [-o MODEL.ikm]
+        RUN [--epochs N] [--steps N] [-o MODEL.ikm]
 
         Arguments:
           RUN  a run folder, its log.jsonl, or a name from idrak runs list
 
         Options:
               --epochs N  train N more epochs (default: what is left of the run's epochs)
+              --steps N   a pretraining run: N more steps in its last stage (default: what is left of its stages)
           -o, --out FILE  the model package (default: the run's)
 
         The run's data, split, scalers and settings are reused and its log continues. The checkpoint holds the weights
-        only: the optimizer's moments and the learning-rate schedule start again (the library does not save them). An
-        image run that fine-tunes a model needs its family's plug-in again (-P).
+        only: the optimizer's moments and the learning-rate schedule start again. An image run that fine-tunes a model
+        needs its family's plug-in again (-P). A pretraining run (idrak pretrain) goes on from its latest checkpoint with
+        its optimizer's state, data order and rate, as if it had not stopped.
 
         Examples:
           idrak resume 20261003-101500-houses
           idrak resume ./runs/houses --epochs 50 -d cuda:0
+          idrak resume run --steps 1000
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--out"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--steps", "--out"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
@@ -270,6 +273,11 @@ internal sealed class ResumeCommand : Command
         {
             context.Error($"{run.Path} is a log without its run folder (run.json); only runs written by idrak train can be resumed.");
             return ExitCodes.Failed;
+        }
+
+        if ((string?)run.Settings["format"] == PretrainCommand.RunFormat)
+        {
+            return PretrainCommand.Resume(context, run.Folder, run.Settings);
         }
 
         string checkpoint = Path.Combine(run.Folder, "last.ikw");
@@ -371,7 +379,12 @@ internal sealed class RunsShowCommand : Command
         var best = run.Best;
         context.Write($"Run       {run.Name} ({run.Status}){(run.Time is { } t ? $", started {t.ToLocalTime():yyyy-MM-dd HH:mm}" : "")}");
         var started = run.Started;
-        if (run.Settings is { } s)
+        if (run.Settings is { } p && (string?)p["format"] == PretrainCommand.RunFormat)
+        {
+            var o = p["options"];
+            context.Write($"Settings  model {p["model"]} · {o?["stages"]?.AsArray().Count} stages · {o?["optimizer"]} · max length {o?["max_length"]} · batch tokens {o?["batch_tokens"]} · seed {o?["seed"]}");
+        }
+        else if (run.Settings is { } s)
         {
             context.Write($"Settings  data {s["data"]} · task {(string?)s["task"] ?? "auto"} · {s["optimizer"]} {s["learning_rate"]} · batch {s["batch"]} · epochs {s["epochs"]} · validation {s["validation"]} · seed {s["seed"]}");
         }
@@ -382,7 +395,8 @@ internal sealed class RunsShowCommand : Command
                           + (started["validation_samples"] is { } v ? $" / {v} validation samples" : " samples"));
         }
 
-        context.Write($"Epochs    {run.Epochs.Count} in {run.TotalSeconds:F1} s · best epoch {best?.Epoch.ToString(CultureInfo.InvariantCulture) ?? "-"} "
+        string unit = run.Unit;
+        context.Write($"{(unit == "step" ? "Steps     " : "Epochs    ")}{run.Epochs.Count} in {run.TotalSeconds:F1} s · best {unit} {best?.Epoch.ToString(CultureInfo.InvariantCulture) ?? "-"} "
                       + $"(loss {RunLog.Format(best?.Loss)}{(best?.ValidationLoss is { } bv ? $", val_loss {RunLog.Format(bv)}" : "")})");
         if (run.Epochs.Count > 0)
         {
@@ -401,7 +415,7 @@ internal sealed class RunsShowCommand : Command
             context.Write("");
             var metrics = run.Epochs.SelectMany(e => e.ValidationMetrics.Keys.Select(k => "val_" + k).Concat(e.Metrics.Keys)).Distinct().ToList();
             var shown = context.Verbose || run.Epochs.Count <= 12 ? run.Epochs : [.. run.Epochs.Take(5), .. run.Epochs.TakeLast(5)];
-            context.Table(["Epoch", "Loss", "Validation loss", .. metrics, "LR", "ms", ""], shown.Select(e => (IReadOnlyList<string>)
+            context.Table([unit == "step" ? "Step" : "Epoch", "Loss", "Validation loss", .. metrics, "LR", "ms", ""], shown.Select(e => (IReadOnlyList<string>)
             [
                 e.Epoch.ToString(CultureInfo.InvariantCulture), RunLog.Format(e.Loss), RunLog.Format(e.ValidationLoss),
                 .. metrics.Select(m => RunLog.Format(m.StartsWith("val_", StringComparison.Ordinal) && e.ValidationMetrics.TryGetValue(m[4..], out double vm) ? vm
@@ -410,7 +424,7 @@ internal sealed class RunsShowCommand : Command
             ]));
             if (shown.Count < run.Epochs.Count)
             {
-                context.Write($"({run.Epochs.Count - shown.Count} epochs not shown; -v shows every one)");
+                context.Write($"({run.Epochs.Count - shown.Count} {unit}s not shown; -v shows every one)");
             }
         }
 
