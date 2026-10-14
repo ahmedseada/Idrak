@@ -3,7 +3,7 @@
 
 using System.Runtime.CompilerServices;
 
-namespace Idrak.Imaging.Abstractions;
+namespace Idrak.Abstraction.Data;
 
 /// <summary>
 /// Writes one image format; register it with <see cref="ImageEncoders.Register"/>. The reading side of a format is its
@@ -25,22 +25,17 @@ public interface IImageEncoder
 }
 
 /// <summary>
-/// The image formats files are written in, by name (ignoring case): "png" (8-bit grey or RGB, deflated with the zlib in
+/// The image formats files are written in, by name (ignoring case). Built in (Idrak.Imaging): "png" (8-bit grey or RGB, deflated with the zlib in
 /// .NET) and "netpbm" (binary PGM for grey, PPM for colour). A segmentation mask, for example, is an 8-bit grey image whose
 /// level is the class (<c>idrak predict --out</c> writes them). Register another format, or replace these, with
 /// <see cref="Register"/>; an app's encoder over a library one falls back on it or is compared with it by its policy.
 /// </summary>
 public static class ImageEncoders
 {
-    private static readonly SlotTable<string, IImageEncoder> Registry = BuiltIn();
+    private static readonly SlotTable<string, IImageEncoder> Registry =
+        new(nameof(ImageEncoders), (slot, app, library) => new GuardedEncoder(slot, app, library), StringComparer.OrdinalIgnoreCase);
 
-    private static SlotTable<string, IImageEncoder> BuiltIn()
-    {
-        var table = new SlotTable<string, IImageEncoder>(nameof(ImageEncoders), (slot, app, library) => new GuardedEncoder(slot, app, library), StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault("png", new PngEncoder());
-        table.RegisterDefault("netpbm", new NetpbmEncoder());
-        return table;
-    }
+    static ImageEncoders() => LibraryDefaults.Ensure(typeof(ImageEncoders));
 
     /// <summary>Registers <paramref name="encoder"/> under its name; under a library name it takes that encoder's place, which stays behind it (see <see cref="SetPolicy"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)

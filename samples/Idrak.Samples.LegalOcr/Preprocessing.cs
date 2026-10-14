@@ -6,7 +6,6 @@ using Idrak.Data;
 using Idrak.Data.Abstractions;
 using Idrak.Gemma3Vision;
 using Idrak.Imaging;
-using Idrak.Imaging.Abstractions;
 
 namespace Idrak.Samples.LegalOcr;
 

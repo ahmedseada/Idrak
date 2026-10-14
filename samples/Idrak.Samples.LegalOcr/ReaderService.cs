@@ -11,7 +11,6 @@ using Idrak.Data.Abstractions;
 using Idrak.Gemma3Vision;
 using Idrak.Generation;
 using Idrak.Imaging;
-using Idrak.Imaging.Abstractions;
 using Idrak.Models;
 using Idrak.Nlp;
 using Idrak.Nlp.Abstractions;
