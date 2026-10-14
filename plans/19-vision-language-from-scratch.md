@@ -1,6 +1,8 @@
 # Plan 19: language and vision-language models from scratch (made, not loaded)
 
-**Status:** planned 2026-10-14, detailed the same day against the code at `abstraction` e0b8d701. Nothing built. The
+**Status:** planned 2026-10-14, detailed the same day against the code at `abstraction` e0b8d701. Building started
+2026-10-14 (track A first). Decided by the owner 2026-10-14: the family is **IdrakVision**; the BPE trainer is built (A2);
+image tokens attend in bidirectional blocks by default; distillation (B5) is built after B0 to B4, before the proof run. The
 owner's request (2026-10-14): "new vision language", then "complete both text and vision from scratch", the text
 model first because the vision model needs it.
 
@@ -75,7 +77,7 @@ Every row names the code the phases build on (file: line at e0b8d701).
 | `Pretrainer`, `PretrainingOptions`, `PretrainingStage`, `PretrainingSource` kinds and their registry `PretrainingSources` ("tokens", "records"), `PretrainingProgress`, `PretrainingCheckpoint` | `Idrak.Nlp` (loop and sources) and `Idrak.Nlp.Abstractions` (the source contract and registry) | training with images is Nlp's; reuses `FineTuner`'s step |
 | Images in `ModelTeacher` and `idrak distill` (phase B5) | `Idrak.Nlp`, `Idrak.Cli` | distillation is Nlp's |
 | `idrak create`, `idrak pretrain` (+ `resume`, `runs show`), `idrak data tokenizer` | `Idrak.Cli` (`Commands/Train`, `Commands/Data`) | the surface |
-| The created vision family (`Create` and `Read`, tower, projector, prompt format, attention rule, preprocessing) | `samples/ScratchVision/Idrak.ScratchVision` (the name is the owner's; placeholder below) | a family is a plug-in, never the library |
+| The created vision family (`Create` and `Read`, tower, projector, prompt format, attention rule, preprocessing) | `samples/IdrakVision/Idrak.IdrakVision` (decided: IdrakVision) | a family is a plug-in, never the library |
 | References and fixtures | `tools/vlm/make_tiny_pretrain.py`, `tools/vlm/make_tiny_scratch_vlm.py`; `tests/Idrak.Tests/data/pretrain/`, `tests/Idrak.Tests/data/vlm-scratch/` | as plans 11 and 12 did |
 
 ## Conventions every phase follows (read before coding)
@@ -414,8 +416,8 @@ start): `data tokenizer`, `data tokens`, `create` (a spec of the owner's sizes; 
 
 `tools/vlm/make_tiny_scratch_vlm.py` writes `tests/Idrak.Tests/data/vlm-scratch/`:
 
-- `tiny-scratch/`: a model folder in the new family's layout (placeholder architecture name
-  `ScratchVlmForConditionalGeneration`; the owner names it): config.json with `architectures`, `text_config` (the
+- `tiny-scratch/`: a model folder in the new family's layout (architecture name
+  `IdrakVisionForConditionalGeneration`, decided): config.json with `architectures`, `text_config` (the
   tiny Llama of A0, same tokenizer with the three image special tokens), `vision_config` (`hidden_size 16, image_size
   28, patch_size 7, num_hidden_layers 3, num_attention_heads 2, intermediate_size 32, layer_norm_eps 1e-6, hidden_act
   gelu_pytorch_tanh, pool_size 2` → 16 patches pooled to 4 image tokens), `projector` (`hidden_act gelu, bias true`),
@@ -488,38 +490,38 @@ round trip. Inventory and API regenerated (Abstraction +1 record, core +0 regist
 
 ## Phase B2: the family plug-in
 
-`samples/ScratchVision/Idrak.ScratchVision/` (a Library, `PackageReference Idrak` and `Idrak.Imaging` as the Gemma 3
+`samples/IdrakVision/Idrak.IdrakVision/` (a Library, `PackageReference Idrak` and `Idrak.Imaging` as the Gemma 3
 sample; referenced by `tests/Idrak.Tests` as the Gemma 3 and Qwen samples are), files:
 
-- `ScratchVisionPlugin.cs`: `Register()` → `ImageAttentionRules.Register(new ImageBlockRule())` under
+- `IdrakVisionPlugin.cs`: `Register()` → `ImageAttentionRules.Register(new ImageBlockRule())` under
   `"scratch-image-blocks"` (`KeySpans.ImageBlocks`, as Gemma 3's; the plug-in owns its copy) and
-  `VisionFamilies.Register(new ScratchVisionFamily())`; `RegisterIdrakPlugin()`; `Unregister()`. The text side is the
+  `VisionFamilies.Register(new IdrakVisionFamily())`; `RegisterIdrakPlugin()`; `Unregister()`. The text side is the
   library's Llama architecture read from `text_config` (registered once under the family's architecture name through
   `PretrainedArchitectures.Register(Architecture, Llama with text_config)` as `LlavaText` does, `Llava.cs:42-113`).
-- `ScratchVisionConfig.cs`: `Dim, FfDim, Layers, Heads, ImageSize, PatchSize, Channels, LayerNormEpsilon, Activation,
-  PoolSize, ProjectorActivation, ProjectorBias`, `FromJson`, `ToJson`; `ScratchImageTokens(BeginImage?, EndImage?,
+- `IdrakVisionConfig.cs`: `Dim, FfDim, Layers, Heads, ImageSize, PatchSize, Channels, LayerNormEpsilon, Activation,
+  PoolSize, ProjectorActivation, ProjectorBias`, `FromJson`, `ToJson`; `IdrakVisionImageTokens(BeginImage?, EndImage?,
   ImageToken, TokensPerImage)`.
-- `ScratchVisionTower.cs`: `Module` from core layers: `Conv2d(channels, dim, patch, stride: patch)`, a position
+- `IdrakVisionTower.cs`: `Module` from core layers: `Conv2d(channels, dim, patch, stride: patch)`, a position
   parameter `[patches, dim]`, `TransformerEncoderLayer(dim, heads, ffDim, dropout: 0f)` × layers (its `LayerNorm`s
   replaced by `LayerNorm(dim, epsilon)` through `FromLayers`), a final `LayerNorm`, pooling by reshape and mean
   (as `Gemma3Projector` pools). Two constructors: `Random(config, device, Random)` (uniform ±sqrt(6/fanIn) for
   convolutions, Xavier for linears, positions normal 0.02, norms 1 and 0) and `FromTensors(config, store, prefix,
   device, weights)`; `ForwardTraining(x, checkpointed)` with `ForwardCheckpointed` per block; `Export(prefix)`.
-- `ScratchProjector.cs`: Linear–activation–Linear; `Random` and `FromTensors`; `Export`.
-- `ScratchVisionFamily.cs`: `IVisionFamily` with `Read` (the one layout `vision_tower.` / `multi_modal_projector.` /
+- `IdrakVisionProjector.cs`: Linear–activation–Linear; `Random` and `FromTensors`; `Export`.
+- `IdrakVisionFamily.cs`: `IVisionFamily` with `Read` (the one layout `vision_tower.` / `multi_modal_projector.` /
   `language_model.model.`; shapes checked as `LlavaVisionFamily.Read` does), `Create`, `Config`.
-- `ScratchVision.cs`: `PretrainedVision, IVisionTuningPart`: `PromptFormat = new ImageTokenFormat("scratch", marker:
+- `IdrakVision.cs`: `PretrainedVision, IVisionTuningPart`: `PromptFormat = new ImageTokenFormat("scratch", marker:
   ImageToken, ImageToken, BeginImage, EndImage)` (the template writes `<image>` once per image; `Expand` replaces it by
   begin + N soft tokens + end), `Attention = ImageAttentionRules.Get("scratch-image-blocks")`, `Preprocessor` from
   `preprocessor_config.json` (`ImagePreprocessor.FromConfig`), `CreateEncoder(options)` with `Trains(part)` → float32,
   `TrainableParts = [Tower, Projector]`, `Parameters`, `Tower`, `Features`, `Export`, `Import`, `PartsOf`.
-- `ScratchImageEncoder.cs`: `Module, IVisionEncoder, IVisionEncoderStages` (one block per image, `Blocks`, `Encode`,
+- `IdrakVisionImageEncoder.cs`: `Module, IVisionEncoder, IVisionEncoderStages` (one block per image, `Blocks`, `Encode`,
   `PixelValues`, `Tower`, `Features`), as `Gemma3ImageEncoder` without pan and scan.
 - `README.md`: the family's layout, how to create one, how to register it.
 
 **Tests** (`"vlm scratch:"`): `Conformance.CheckVisionEncoder` on the created encoder; `pixel_values`, `tower` and
 `features` of the fixture's images within 1e-5 of `reference/`; the logits of the fixture prompt; `idrak run -P
-Idrak.ScratchVision.dll tiny-scratch --image image.png "..."` answers through the CLI; `idrak tune -P ... --parts
+Idrak.IdrakVision.dll tiny-scratch --image image.png "..."` answers through the CLI; `idrak tune -P ... --parts
 projector` runs one LoRA step (the family is tunable like any other); an outside family test as
 `VisionFamilyPluginTests.OutsideFamily` does (`Origin` is the sample's assembly, `Default` null).
 
@@ -604,13 +606,16 @@ left, the owner's GPU commands), as plans 11 to 13 did.
 - **Distillation (B5) is the lever** that lets a small created model learn from a large loaded one on the owner's own
   pages, which is why it is in the plan though it is optional.
 
-## Decisions for the owner
+## Decisions (taken by the owner, 2026-10-14)
 
-1. The vision family's name (`ScratchVision` / `ScratchVlmForConditionalGeneration` are placeholders) and the sample's
-   folder.
-2. The tokenizer: train one on the owner's corpus (A2), or start from an existing tokenizer.json file (then A2 is later
-   work, and B5's teacher must share it).
-3. The image attention rule for the created family: bidirectional image blocks (the plan's default, Gemma 3's rule) or
-   plain causal (Qwen-VL's, simpler kernels).
-4. The first text corpus for the `text` stage (`idrak data text` can make Arabic and English; a real corpus is better).
-5. Whether B5 (distillation from Qwen-VL on the owner's pages) comes before or after B6.
+1. **The family is IdrakVision**: `samples/IdrakVision/Idrak.IdrakVision`, architecture
+   `IdrakVisionForConditionalGeneration`, the plug-in `Idrak.IdrakVision.dll`. The owner's condition: anyone can create
+   any model. So `IVisionFamily.Create` is an open contract every family plug-in may implement (the library holds the
+   contract, never a family), and IdrakVision's own config exposes every shape choice as a setting: image size, patch
+   size, channels, tower width, layers, heads, feed-forward size, activation, norm epsilon, pooling size, projector
+   depth, width and activation, the image tokens' ids, the preprocessing, and the image attention rule.
+2. **The tokenizer trainer is built** (A2). A tokenizer.json file can still be given to `idrak create --tokenizer`.
+3. **Image tokens attend in bidirectional blocks** by default (Gemma 3's rule); plain causal is IdrakVision's
+   `attention: "causal"` setting.
+4. The first text corpus is the owner's (`idrak data text` until one is chosen).
+5. **Distillation (B5) is built after B0 to B4**, before the proof run (B6).
