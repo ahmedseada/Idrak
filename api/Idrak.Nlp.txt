@@ -86,6 +86,11 @@ public interface Idrak.Nlp.Abstractions.IPagePartFiller
   public string Summary { get; }
   public string? Fill(string? argument, Idrak.Nlp.Abstractions.PagePartContext context)
 
+public interface Idrak.Nlp.Abstractions.IRandomTextSource
+  public string Line(System.Random random, int words, Idrak.Nlp.RandomTextOptions options)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Nlp.Abstractions.ISyntheticRecordFormat
   public System.Collections.Generic.IEnumerable<Idrak.Nlp.Abstractions.SyntheticRecord> Read(string path, string prompt, string? answerKey)
   public bool Recognizes(string path)
@@ -148,6 +153,15 @@ public sealed class Idrak.Nlp.Abstractions.PendingConversations : System.IDispos
   public int Count { get; }
   public int Images { get; }
   public void Dispose()
+
+public static class Idrak.Nlp.Abstractions.RandomTextSources
+  public static Idrak.Nlp.Abstractions.IRandomTextSource Get(string name)
+  public static Idrak.Nlp.Abstractions.IRandomTextSource? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.IRandomTextSource source)
 
 public sealed class Idrak.Nlp.Abstractions.SyntheticRecord
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public SyntheticRecord()
@@ -768,6 +782,15 @@ public sealed class Idrak.Nlp.JinjaTemplate.Undefined
   public override string ToString()
   public static readonly Idrak.Nlp.JinjaTemplate.Undefined Value
 
+public sealed class Idrak.Nlp.PooledTextSource : Idrak.Nlp.Abstractions.IRandomTextSource
+  public System.Collections.Generic.IReadOnlyCollection<string> Pools { get; }
+  public static Idrak.Nlp.PooledTextSource FromJson(System.Text.Json.Nodes.JsonObject json, string where = "text pools", string? name = null)
+  public static Idrak.Nlp.PooledTextSource FromWords(string name, System.Collections.Generic.IEnumerable<string> words, string? summary = null)
+  public static Idrak.Nlp.PooledTextSource Read(string path)
+  public string Line(System.Random random, int words, Idrak.Nlp.RandomTextOptions options)
+  public string Name { get; }
+  public string Summary { get; }
+
 public sealed record Idrak.Nlp.PreferencePair : System.IEquatable<Idrak.Nlp.PreferencePair>
   public Idrak.Nlp.Abstractions.TrainingSequence Chosen { get; init; }
   public Idrak.Nlp.Abstractions.TrainingSequence Rejected { get; init; }
@@ -779,6 +802,34 @@ public static class Idrak.Nlp.PretrainedModelExtensions
   public static Idrak.Nlp.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0, int? contextLength = null)
   public static Idrak.Nlp.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueLayout cacheLayout, int? contextLength = null)
   public static Idrak.Nlp.JinjaChatTemplate? get_JinjaTemplate(Idrak.Models.PretrainedModel model)
+
+public static class Idrak.Nlp.RandomText
+  public static Idrak.Nlp.RandomTextResult Write(string path, Idrak.Nlp.Abstractions.IRandomTextSource source, Idrak.Nlp.RandomTextOptions options, System.IProgress<int>? progress = null)
+  public static System.Collections.Generic.IEnumerable<string> Documents(Idrak.Nlp.Abstractions.IRandomTextSource source, Idrak.Nlp.RandomTextOptions options)
+
+public sealed record Idrak.Nlp.RandomTextOptions : System.IEquatable<Idrak.Nlp.RandomTextOptions>
+  public (int, int) LineWords { get; init; }
+  public (int, int) PageLines { get; init; }
+  public Idrak.Nlp.RandomTextUnit Unit { get; init; }
+  public RandomTextOptions()
+  public double Diacritics { get; init; }
+  public double NativeDigits { get; init; }
+  public double Punctuation { get; init; }
+  public int Count { get; init; }
+  public int Seed { get; init; }
+
+public sealed record Idrak.Nlp.RandomTextResult : System.IEquatable<Idrak.Nlp.RandomTextResult>
+  public RandomTextResult(int Documents, int Lines, int Words, int Characters, string Path)
+  public int Characters { get; init; }
+  public int Documents { get; init; }
+  public int Lines { get; init; }
+  public int Words { get; init; }
+  public string Path { get; init; }
+
+public enum Idrak.Nlp.RandomTextUnit : int
+  Lines = 1
+  Pages = 0
+  Words = 2
 
 public sealed record Idrak.Nlp.Retrieval.Abstractions.Chunk : System.IEquatable<Idrak.Nlp.Retrieval.Abstractions.Chunk>
   public Chunk(int Id, string DocumentId, int Position, string Text)

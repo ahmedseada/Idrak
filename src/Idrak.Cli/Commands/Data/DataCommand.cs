@@ -14,7 +14,7 @@ internal sealed class DataCommand : Command
 {
     public override string Name => "data";
 
-    public override string Summary => "Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, synth)";
+    public override string Summary => "Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, synth)";
 
     public override string Usage => "show|count|download|build|cache SPEC... [options]\n\n"
         + DataTool.Usage + """
@@ -25,6 +25,7 @@ internal sealed class DataCommand : Command
           idrak data stats FILE [-m MODEL]              lengths in characters, words and tokens
           idrak data convert IN OUT                     between CSV, JSON Lines and Parquet (read), chat layouts to chat rows
           idrak data dedupe FILE / data split FILE / data sample FILE -n N / data mix RECIPE.json
+          idrak data text -n N --unit pages -o OUT.txt  random text in a language (-l ar, en, ...) to draw pages from
           idrak data synth IN -o OUT --fonts DIR        tuning pages drawn from text, made to look scanned
 
         Examples:

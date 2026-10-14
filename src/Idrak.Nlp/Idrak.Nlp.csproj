@@ -20,4 +20,10 @@
     <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The built-in random text sources' word pools (RandomTextSources); not cultures, whatever their names' ".ar." says. -->
+    <EmbeddedResource Include="Resources\random-text.ar.json" LogicalName="Idrak.Nlp.random-text.ar.json" WithCulture="false" />
+    <EmbeddedResource Include="Resources\random-text.en.json" LogicalName="Idrak.Nlp.random-text.en.json" WithCulture="false" />
+  </ItemGroup>
+
 </Project>
