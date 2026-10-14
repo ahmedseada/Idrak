@@ -545,7 +545,12 @@ public readonly record struct Idrak.Abstraction.Data.ShapedGlyph : System.IEquat
   public int YAdvance { get; init; }
   public int YOffset { get; init; }
 
+public enum Idrak.Abstraction.Data.TextClusters : int
+  Characters = 1
+  Graphemes = 0
+
 public readonly record struct Idrak.Abstraction.Data.TextRun : System.IEquatable<Idrak.Abstraction.Data.TextRun>
+  public Idrak.Abstraction.Data.TextClusters Clusters { get; init; }
   public TextRun(int Start, int Length, string Script, bool RightToLeft, string? Language = null)
   public bool RightToLeft { get; init; }
   public int Length { get; init; }

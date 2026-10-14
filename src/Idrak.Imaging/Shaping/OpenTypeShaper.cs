@@ -321,6 +321,21 @@ internal class OpenTypeShaper : ITextShaper
             i += width;
         }
 
+        // A letter and what continues it (marks, ZWJ, emoji modifiers, tag characters) are one cluster, the letter's, as
+        // HarfBuzz forms them before shaping (hb_form_clusters) at its default level; at character level each keeps its own.
+        for (int k = 1, start = 0; run.Clusters == TextClusters.Graphemes && k < chars.Count; k++)
+        {
+            int c = chars[k].CodePoint;
+            if (UnicodeText.IsMark(c) || c == 0x200D || c is >= 0x1F3FB and <= 0x1F3FF or 0xFF9E or 0xFF9F or >= 0xE0020 and <= 0xE007F)
+            {
+                chars[k] = (c, chars[start].Cluster);
+            }
+            else
+            {
+                start = k;
+            }
+        }
+
         // Decompose what the font has no glyph for, when it has the parts.
         var decomposed = new List<(int CodePoint, int Cluster)>(chars.Count);
         foreach (var (cp, cluster) in chars)
@@ -455,7 +470,10 @@ internal class OpenTypeShaper : ITextShaper
         }
     }
 
-    /// <summary>Gives the glyphs [start, end) their smallest cluster.</summary>
+    /// <summary>
+    /// Gives the glyphs [start, end) their smallest cluster, and the glyphs on either side that shared a cluster with
+    /// the span's ends too (HarfBuzz's merge_clusters: a mark that shared its letter's cluster follows the letter).
+    /// </summary>
     internal static void MergeClusters(Span<ShapingGlyph> g, int start, int end)
     {
         if (end - start < 2)
@@ -467,6 +485,22 @@ internal class OpenTypeShaper : ITextShaper
         for (int k = start; k < end; k++)
         {
             cluster = Math.Min(cluster, g[k].Cluster);
+        }
+
+        if (cluster != g[end - 1].Cluster)
+        {
+            while (end < g.Length && g[end - 1].Cluster == g[end].Cluster)
+            {
+                end++;
+            }
+        }
+
+        if (cluster != g[start].Cluster)
+        {
+            while (start > 0 && g[start - 1].Cluster == g[start].Cluster)
+            {
+                start--;
+            }
         }
 
         for (int k = start; k < end; k++)
@@ -643,6 +677,23 @@ internal class OpenTypeShaper : ITextShaper
                     }
                 }
 
+                // A positioning feature the font has in GSUB too is applied there, in the last stage (HarfBuzz looks every
+                // feature of its plan up in both tables).
+                if (stage == lastStage)
+                {
+                    foreach (string tag in positionTags.Where(t => !requests.ContainsKey(t)))
+                    {
+                        int feature = FirstFeature(gsub, indices, tag);
+                        foreach (int l in feature < 0 ? [] : gsub.FeatureLookups(feature))
+                        {
+                            if (l < gsub.Lookups.Length && !byLookup.ContainsKey(l))
+                            {
+                                byLookup[l] = (gsub.Lookups[l], global, true, true);
+                            }
+                        }
+                    }
+                }
+
                 stages.Add([.. byLookup.Values.Select(v => (v.Lookup, v.Mask, v.AutoZwj, v.AutoZwnj))]);
             }
         }
@@ -652,37 +703,45 @@ internal class OpenTypeShaper : ITextShaper
         var gpos = layout.Positions;
         if (gpos.LanguageSystem(scriptTags, languageTag) is var (posIndices, posRequired))
         {
-            var byLookup = new SortedDictionary<int, Lookup>();
-            if (posRequired >= 0)
+            var byLookup = new SortedDictionary<int, (Lookup Lookup, uint Mask)>();
+            void Add(int feature, uint mask)
             {
-                foreach (int l in gpos.FeatureLookups(posRequired))
+                foreach (int l in gpos.FeatureLookups(feature))
                 {
                     if (l < gpos.Lookups.Length)
                     {
-                        byLookup[l] = gpos.Lookups[l];
+                        byLookup[l] = byLookup.TryGetValue(l, out var old) ? (old.Lookup, old.Mask | mask) : (gpos.Lookups[l], mask);
                     }
                 }
+            }
+
+            if (posRequired >= 0)
+            {
+                Add(posRequired, global);
             }
 
             foreach (string tag in positionTags)
             {
                 int feature = FirstFeature(gpos, posIndices, tag);
-                if (feature < 0)
+                if (feature >= 0)
                 {
-                    continue;
-                }
-
-                hasMark |= tag is "mark" or "mkmk";
-                foreach (int l in gpos.FeatureLookups(feature))
-                {
-                    if (l < gpos.Lookups.Length)
-                    {
-                        byLookup[l] = gpos.Lookups[l];
-                    }
+                    hasMark |= tag is "mark" or "mkmk";
+                    Add(feature, global);
                 }
             }
 
-            positionLookups.AddRange(byLookup.Values.Select(l => (l, global)));
+            // A substitution feature the font has in GPOS too (Reem Kufi's rclt kerning) is applied there, with its mask
+            // (HarfBuzz looks every feature of its plan up in both tables).
+            foreach (var f in requests.Values.Where(f => !positionTags.Contains(f.Tag)))
+            {
+                int feature = FirstFeature(gpos, posIndices, f.Tag);
+                if (feature >= 0)
+                {
+                    Add(feature, masks[f.Tag]);
+                }
+            }
+
+            positionLookups.AddRange(byLookup.Values.Select(v => (v.Lookup, v.Mask)));
         }
 
         return new ShapingPlan

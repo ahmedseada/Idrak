@@ -20,6 +20,7 @@ internal static class DataCommands
         new DataSampleCommand(),
         new DataMixCommand(),
         new DataTextCommand(),
+        new DataFontsCommand(),
         new DataSynthCommand(),
     ];
 }

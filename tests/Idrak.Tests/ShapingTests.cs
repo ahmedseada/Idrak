@@ -11,14 +11,18 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] ShapingGroup =
     [
         ("shaping: every fixed string (Arabic joining, lam-alef, diacritics and shadda, tatweel, mirrored brackets, Persian with ZWNJ, Arabic digits, Hebrew points, Latin kerning, Greek, Cyrillic, a font without GSUB) gives HarfBuzz's glyphs, clusters, advances and offsets", ShapingMatchesHarfBuzz),
+        ("shaping: real Arabic fonts with large layout tables (Amiri, Cairo and Reem Kufi, variable ones included) give HarfBuzz's glyphs, clusters, advances and offsets on 100 lines with and without harakat: marks on ligature components and on the first glyph of a multiple substitution, marks in their letter's cluster, substitution features' GPOS lookups", d => ShapingAgainst("arabic/shaping.json", TextClusters.Graphemes)),
         ("shaping: the bidirectional algorithm gives python-bidi's visual order for mixed paragraphs (Arabic with Latin, European and Arabic digits, separators, brackets, a URL, Hebrew, trailing spaces, RLM), each direction given and found", BidiMatchesReference),
         ("shaping: a paragraph is cut into runs of one script and one direction, spaces and punctuation taking their neighbours' script", ItemizerRuns),
         ("shaping: the shapers by script: arabic for the joining scripts, general for the others and for scripts with none of their own; an app's shaper replaces the library's for its script only", ShapingRegistry),
     ];
 
-    private static void ShapingMatchesHarfBuzz(Device device)
+    private static void ShapingMatchesHarfBuzz(Device device) => ShapingAgainst("shaping.json", TextClusters.Characters);   // made at HarfBuzz's character level
+
+    // Every reference of the file (tools/fonts) shaped as HarfBuzz shapes it.
+    private static void ShapingAgainst(string referenceFile, TextClusters clusters)
     {
-        var references = JsonNode.Parse(File.ReadAllText(FontData("shaping.json")))!.AsArray();
+        var references = JsonNode.Parse(File.ReadAllText(FontData(referenceFile)))!.AsArray();
         var faces = new Dictionary<string, IFontFace>();
         int glyphs = 0;
         foreach (var reference in references)
@@ -30,7 +34,7 @@ internal static partial class Tests
             }
 
             var features = reference["features"] is JsonArray f ? f.Select(x => (string)x!).ToArray() : null;
-            var run = new TextRun(0, text.Length, (string)reference["script"]!, (string)reference["direction"]! == "rtl", (string?)reference["language"]);
+            var run = new TextRun(0, text.Length, (string)reference["script"]!, (string)reference["direction"]! == "rtl", (string?)reference["language"]) { Clusters = clusters };
             var shaped = TextShapers.Shape(face, text, run, features);
             var expected = reference["glyphs"]!.AsArray().Select(g => new ShapedGlyph((int)g![0]!, (int)g[1]!, (int)g[2]!, (int)g[3]!, (int)g[4]!, (int)g[5]!)).ToArray();
             string Show(IEnumerable<ShapedGlyph> list) => string.Join(" ", list.Select(g => $"{g.Glyph}@{g.Cluster}+{g.XAdvance}({g.XOffset},{g.YOffset})"));

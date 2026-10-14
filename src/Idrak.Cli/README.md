@@ -376,7 +376,7 @@ subcommands work on local files.
 
 | Command | What it does |
 |---|---|
-| `idrak data` | Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, synth) |
+| `idrak data` | Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, fonts, synth) |
 | `idrak data preview` | First rows, columns and their types of a data file (Parquet, JSON Lines, CSV) |
 | `idrak data validate` | Check rows against the shape a command expects (chat, preference or table), with the first bad rows |
 | `idrak data stats` | Row lengths in characters, words and tokens, a length histogram, and the rows over a context length |
@@ -386,6 +386,7 @@ subcommands work on local files.
 | `idrak data sample` | A random (or, with -t, stratified) sample of rows |
 | `idrak data mix` | Assemble a training set from several sources with weights (a dataset recipe) |
 | `idrak data text` | Random text in a language (pages, lines or words) to draw training pages from |
+| `idrak data fonts` | Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz |
 | `idrak data synth` (`idrak synth`) | Tuning pages drawn from text: each record's answer set as scanned-looking pages |
 
 ```bash

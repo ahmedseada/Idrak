@@ -80,6 +80,9 @@ public enum Idrak.Imaging.JpegSubsampling : int
   Half420 = 0
   Half422 = 1
 
+public static class Idrak.Imaging.OpenTypeFeatures
+  public static (System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.IReadOnlyList<string>) Of(Idrak.Abstraction.Data.IFontFace font, string script, string? language = null)
+
 public sealed class Idrak.Imaging.OpenTypeFormat : Idrak.Abstraction.Data.IFontFormat
   public OpenTypeFormat()
   public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
