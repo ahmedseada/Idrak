@@ -106,20 +106,28 @@ internal static partial class Tests
             Check((long)created["parameters"]! > 0 && (string?)created["architecture"] == "LlamaForCausalLM", $"{created}");
             Check(created["spec"]!["vocabulary"]!.GetValue<int>() == 512 && created["spec"]!["kvHeads"]!.GetValue<int>() == 2 && created["spec"]!["headDim"]!.GetValue<int>() == 8,
                 "the vocabulary from the tokenizer, kvHeads from the file, headDim from dim / heads");
+            // The made model generates before any training: a failure here is the device's inference on this shape
+            // (dim 32, heads 4 of 8, 2 key/value heads, vocabulary 512), not the training.
+            var (madeCode, madeAnswer, madeError) = RunIdrakOn(device, null, "run", model, "read the scan", "--max-tokens", "3", "--temperature", "0");
+            Check(madeCode == 0, $"run on the made model, before training (inference on {device}): {madeAnswer} {madeError}");
 
             // pretrain 6 steps, stopped by --timeout's interrupt? A run is stopped after 2 steps with --steps 2 and resumed with --steps 4.
             string run = Path.Combine(folder, "run");
             var first = TrainCliJson("pretrain", model, "--tokens", PretrainData("tokens.bin"), "--steps", "2", "--max-length", "32", "--batch-tokens", "64",
                 "--lr", "3e-3", "--warmup", "0", "--schedule", "constant", "-o", run, "-d", device.ToString(), "--log-every", "1");
             Check((int)first["steps"]! == 2 && File.Exists(Path.Combine(run, "run.json")) && File.Exists(Path.Combine(run, "log.jsonl")), $"{first}");
+            Check(first["final_loss"] is not null, $"the first run's losses are finite (training on {device}, {first["settings"]}): {File.ReadAllText(Path.Combine(run, "log.jsonl"))}");
             var resumed = TrainCliJson("resume", run, "--steps", "2", "-d", device.ToString());
             Check((int)resumed["steps"]! == 4 && ((string)resumed["checkpoint"]!).EndsWith("checkpoint-4", StringComparison.Ordinal), $"resume: {resumed}");
+            Check(resumed["final_loss"] is not null, $"the resumed run's losses are finite (training on {device} from the saved moments, {resumed["settings"]}): {File.ReadAllText(Path.Combine(run, "log.jsonl"))}");
+            var (firstCode, firstAnswer, firstError) = RunIdrakOn(device, null, "run", (string)first["checkpoint"]!, "read the scan", "--max-tokens", "3", "--temperature", "0");
+            Check(firstCode == 0, $"run on the first run's checkpoint (2 steps, losses finite: the update or the save on {device} made the weights not finite): {firstAnswer} {firstError}");
             var shown = TrainCliJson("runs", "show", run);
             Check((int)shown["epochs"]! == 4, $"runs show reads the 4 steps: {shown["epochs"]}");
             var (code, output, _) = TrainCli("runs", "show", run);
             Check(code == 0 && output.Contains("Steps", StringComparison.Ordinal), output);
             var (runCode, answer, runError) = RunIdrakOn(device, null, "run", (string)resumed["checkpoint"]!, "read the scan", "--max-tokens", "3", "--temperature", "0");
-            Check(runCode == 0, $"run on the pretrained model: {answer} {runError}");
+            Check(runCode == 0, $"run on the resumed run's checkpoint (4 steps; the first run's ran: the resumed steps on {device} made the weights not finite): {answer} {runError}");
 
             // A config with two stages.
             string config = Path.Combine(folder, "pretrain.json");

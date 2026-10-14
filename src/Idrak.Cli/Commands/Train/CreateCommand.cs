@@ -321,10 +321,10 @@ internal sealed class CreateInitCommand : Command
               "seed": 0
             }
 
-            """.Replace("\"architecture\": \"LlamaForCausalLM\",", context.Flag("--vision")
+            """.ReplaceLineEndings("\n").Replace("\"architecture\": \"LlamaForCausalLM\",", context.Flag("--vision")
                 ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // load its plug-in: idrak create ... -P Idrak.IdrakVision.dll"
                 : "\"architecture\": \"LlamaForCausalLM\",", StringComparison.Ordinal)
-            .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart : "  \"seed\": 0\n}", StringComparison.Ordinal));
+            .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart.ReplaceLineEndings("\n") : "  \"seed\": 0\n}", StringComparison.Ordinal));
         context.Write($"wrote {output}; next: idrak create {output} -o my-model");
         context.WriteJson(new JsonObject { ["path"] = Path.GetFullPath(output) });
         return ExitCodes.Ok;
