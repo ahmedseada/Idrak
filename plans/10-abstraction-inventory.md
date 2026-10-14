@@ -52,11 +52,11 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | Abstraction, Data, Idrak, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleTransform` | interface | public | — | ContentFrame.ReframeTransform, GaussianNoise, RandomFlip, RandomRotation, RandomShift |  | Idrak, Imaging, Vision | Abstraction |
-| `Idrak.Abstraction.Data.IScanProfile` | interface | public | — | ScanProfile, ScanProfiles.GuardedProfile |  | Abstraction, Imaging, Nlp | Abstraction |
+| `Idrak.Abstraction.Data.IScanProfile` | interface | public | — | ScanProfile, ScanProfiles.GuardedProfile, ScanProfiles.JoinedProfile |  | Abstraction, Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.ITextShaper` | interface | public | — | ArabicShaper, OpenTypeShaper, TextShapers.GuardedShaper |  | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Data, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ImageEncoders` | registry | public | — |  | netpbm, png | Imaging, Nlp | Abstraction |
-| `Idrak.Abstraction.Data.ImageTransforms` | registry | public | — |  | autocontrast, binarize, bleed, blot, blur, brightness, contrast, cross, +37 | Abstraction, AspNetCore, Idrak, Imaging, Mcp, Nlp | Abstraction |
+| `Idrak.Abstraction.Data.ImageTransforms` | registry | public | — |  | autocontrast, binarize, bleed, blot, blur, brightness, contrast, cross, +38 | Abstraction, AspNetCore, Idrak, Imaging, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.OutlineRasterizers` | registry | public | — |  | coverage | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.PageLayouts` | registry | public | — |  | letter, plain | Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak, Imaging | Abstraction |

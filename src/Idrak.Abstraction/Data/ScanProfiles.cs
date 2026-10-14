@@ -224,8 +224,10 @@ public sealed class ScanProfile : IScanProfile
 /// faded, uneven and worn ink, tinted and stained paper, specks, bleed-through, low resolution), "pale" (faint ink over
 /// the whole page), "worn" (broken strokes and thinned letters), "fax" (black and white at low resolution, specks),
 /// "handled" (wrinkles, folds, smudges, ink blots), "marked" (struck through, underlined, crossed out, highlighted,
-/// notes in the margins), "damaged" (torn edges, punch holes, scratches), "scanner" (an edge shadow, streaks, uneven
-/// light, a curled edge) and "mixed" (every effect at a small chance of its own). Register another, or one of those names over the library's, with <see cref="Register"/>.
+/// notes in the margins), "damaged" (torn edges, punch holes, scratches, ripped and taped back), "scanner" (an edge
+/// shadow, streaks, uneven light, a curled edge) and "mixed" (every effect at a small chance of its own); several are
+/// taken together on one page when joined with '+' ("damaged+marked", see <see cref="Resolve"/>). Register another, or
+/// one of those names over the library's, with <see cref="Register"/>.
 /// </summary>
 public static class ScanProfiles
 {
@@ -255,9 +257,12 @@ public static class ScanProfiles
         ?? throw new NotSupportedException($"No scan profile '{name}' is registered ({string.Join(", ", Names)}); add it with ScanProfiles.Register, or write one as text (ScanProfile).");
 
     /// <summary>
-    /// The profile <paramref name="nameOrText"/> names, or, when it names none and has a step in it (an '=' or a
-    /// registered transform's name), a profile written as that text (see <see cref="ScanProfile"/>).
+    /// The profile <paramref name="nameOrText"/> names; profiles joined with '+' ("damaged+marked"), each drawing its
+    /// own steps for the page, in that order, a step two of them took (a turn, the JPEG) taken once, where the later
+    /// one puts it; or, when it names none and has a step in it (an '=' or a registered transform's name), a profile
+    /// written as that text (see <see cref="ScanProfile"/>).
     /// </summary>
+    /// <exception cref="NotSupportedException">A name that is not registered.</exception>
     public static IScanProfile Resolve(string nameOrText)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(nameOrText);
@@ -265,6 +270,14 @@ public static class ScanProfiles
         if (Registry.Find(text) is { } named)
         {
             return named;
+        }
+
+        if (text.Contains('+') && !text.Contains('=') && !text.Contains(','))
+        {
+            var looks = text.Split('+', StringSplitOptions.TrimEntries);
+            return looks.Any(l => l.Length == 0)
+                ? throw new ArgumentException($"'{text}' joins scan profiles with '+', a name on each side.")
+                : new JoinedProfile(string.Join("+", looks), [.. looks.Select(Get)]);
         }
 
         return text.Contains('=') || text.Contains(',') || ImageTransforms.Find(text.Split('@')[0]) is not null
@@ -283,6 +296,43 @@ public static class ScanProfiles
 
     /// <summary>Each profile's name and summary, one a line.</summary>
     public static string Describe() => string.Join("\n", Names.Select(n => $"{n}: {Get(n).Summary}"));
+
+    // Profiles taken together: each samples the page from its own seed. A transform a later one names too is left to
+    // the later one, at its chance and place (so the capture steps, a turn or the JPEG, stay last and are not done twice);
+    // for a profile that is not written as text, a transform two of them took runs once, where the later one puts it.
+    private sealed class JoinedProfile : IScanProfile
+    {
+        private readonly IScanProfile[] _looks;
+        private readonly HashSet<string>[] _later;
+
+        public JoinedProfile(string name, IScanProfile[] looks)
+        {
+            Name = name;
+            _looks = looks;
+            _later = new HashSet<string>[looks.Length];
+            var named = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = looks.Length - 1; i >= 0; i--)
+            {
+                _later[i] = [.. named];
+                if (looks[i] is ScanProfile written)
+                {
+                    named.UnionWith(written.Transforms);
+                }
+            }
+        }
+
+        public string Name { get; }
+
+        public string Summary => string.Join("; then ", _looks.Select(l => l.Summary));
+
+        public ImageTransformPipeline Sample(int seed)
+        {
+            var random = new Random(seed);
+            var steps = _looks.SelectMany((look, index) => look.Sample(random.Next()).Steps.Where(step => !_later[index].Contains(step.Name)).Select(step => (index, step))).ToList();
+            return new ImageTransformPipeline(steps.Where((s, at) => !steps.Skip(at + 1)
+                .Any(t => t.index != s.index && t.step.Name.Equals(s.step.Name, StringComparison.OrdinalIgnoreCase))).Select(s => s.step));
+        }
+    }
 
     private sealed class GuardedProfile(Slot slot, IScanProfile app, IScanProfile library) : IScanProfile
     {
