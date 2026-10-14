@@ -318,6 +318,61 @@ public static class SyntheticPages
     public static IScanProfile? Profile(string nameOrText) =>
         nameOrText.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ? null : ScanProfiles.Resolve(nameOrText);
 
+    /// <summary>The keys <see cref="Style"/> reads.</summary>
+    public static IReadOnlyList<string> StyleKeys { get; } =
+        ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font"];
+
+    /// <summary>
+    /// <paramref name="style"/> with the settings of <paramref name="settings"/> over it, written
+    /// <c>KEY=VALUE,...</c>: width and height (pixels), size (the body's pixels per em), spacing (line height
+    /// multiples), margin (a share of the width) and ink (darkness, 0 to 1) as ranges <c>MIN..MAX</c> or one value;
+    /// justify, rule, emblem, stamp, blue-signature and header-font as chances (0 to 1); color as true or false.
+    /// </summary>
+    /// <exception cref="ArgumentException">A key not known, or a value out of its range; the message names them.</exception>
+    public static PageStyle Style(PageStyle style, string? settings)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        foreach (string raw in (settings ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int eq = raw.IndexOf('=');
+            string key = (eq < 0 ? raw : raw[..eq]).Trim().ToLowerInvariant(), value = eq < 0 ? "" : raw[(eq + 1)..].Trim();
+            (float Min, float Max) Range(float least, float most)
+            {
+                int dots = value.IndexOf("..", StringComparison.Ordinal);
+                string a = dots < 0 ? value : value[..dots], b = dots < 0 ? value : value[(dots + 2)..];
+                return float.TryParse(a, NumberStyles.Float, CultureInfo.InvariantCulture, out float min) && float.TryParse(b, NumberStyles.Float, CultureInfo.InvariantCulture, out float max)
+                    && min >= least && max <= most && min <= max
+                    ? (min, max)
+                    : throw new ArgumentException($"Page setting {key} is a value or a range MIN..MAX from {least.ToString(CultureInfo.InvariantCulture)} to {most.ToString(CultureInfo.InvariantCulture)}, not '{value}'.");
+            }
+
+            float Chance() => Range(0, 1).Min;
+            int Pixels() => (int)Range(64, 20000).Min;
+            style = key switch
+            {
+                "width" => style with { Width = Pixels() },
+                "height" => style with { Height = Pixels() },
+                "size" => style with { BodySize = Range(4, 400) },
+                "spacing" => style with { LineSpacing = Range(0.5f, 4) },
+                "margin" => style with { Margin = Range(0, 0.4f) },
+                "ink" => style with { Ink = Range(0, 1) },
+                "justify" => style with { Justify = Chance() },
+                "rule" => style with { Rule = Chance() },
+                "emblem" => style with { Emblem = Chance() },
+                "stamp" => style with { Stamp = Chance() },
+                "blue-signature" => style with { BlueSignature = Chance() },
+                "header-font" => style with { OtherHeaderFont = Chance() },
+                "color" => style with
+                {
+                    Color = bool.TryParse(value, out bool color) ? color : throw new ArgumentException($"Page setting color is true or false, not '{value}'."),
+                },
+                _ => throw new ArgumentException($"Unknown page setting '{key}' (known: {string.Join(", ", StyleKeys)})."),
+            };
+        }
+
+        return style;
+    }
+
     /// <summary>The fonts in <paramref name="folder"/> (.ttf, .otf, .ttc; every face of a collection).</summary>
     public static IReadOnlyList<IFontFace> Fonts(string folder) => FontFormats.ReadFolder(folder);
 
@@ -472,10 +527,10 @@ public static class SyntheticPages
 
     private static readonly JsonWriterOptions LineOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    internal static string Json(JsonNode node, bool indented = false)
+    internal static string Json(JsonNode node, bool indented = false, int indentSize = 2, char indentCharacter = ' ')
     {
         using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer, LineOptions with { Indented = indented }))
+        using (var writer = new Utf8JsonWriter(buffer, LineOptions with { Indented = indented, IndentSize = indentSize, IndentCharacter = indentCharacter }))
         {
             node.WriteTo(writer);
         }
@@ -604,6 +659,9 @@ internal sealed class SyntheticAnswer
     private JsonObject? _json;
     private string? _key;
     private bool _indented;
+    private int _indentSize = 2;
+    private char _indentCharacter = ' ';
+    private string _comma = ",", _colon = ":";
 
     public string PageText { get; private set; } = "";
 
@@ -660,14 +718,72 @@ internal sealed class SyntheticAnswer
 
         parsed._json = json;
         parsed._key = key;
-        parsed._indented = body.Contains('\n');
+        parsed.Layout(body);
         parsed.PageText = value.GetValue<string>();
         parsed.Fields = json.Where(p => p.Value is JsonValue v && v.GetValueKind() is JsonValueKind.String or JsonValueKind.Number)
             .ToDictionary(p => p.Key, p => p.Value is JsonValue v && v.GetValueKind() == JsonValueKind.String ? v.GetValue<string>() : p.Value!.ToJsonString(), StringComparer.Ordinal);
         return parsed;
     }
 
-    // The answer with its page text replaced, written as it was (fence, indentation, key order).
+    // How the JSON was laid out: indented (its indent's size and character), or on one line with or without a space
+    // after its commas and colons (Python's json.dumps writes ", " and ": "), found outside its strings.
+    private void Layout(string json)
+    {
+        int newline = json.IndexOf('\n');
+        _indented = newline >= 0;
+        if (_indented)
+        {
+            int at = newline + 1, size = 0;
+            while (at + size < json.Length && json[at + size] is ' ' or '\t')
+            {
+                size++;
+            }
+
+            if (size > 0)
+            {
+                _indentSize = Math.Min(size, 127);
+                _indentCharacter = json[at];
+            }
+
+            return;
+        }
+
+        bool inString = false, comma = false, colon = false;
+        for (int i = 0; i < json.Length - 1 && !(comma && colon); i++)
+        {
+            char c = json[i];
+            if (inString)
+            {
+                if (c == '\\')
+                {
+                    i++;
+                }
+                else if (c == '"')
+                {
+                    inString = false;
+                }
+
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = true;
+            }
+            else if (c == ',' && !comma)
+            {
+                comma = true;
+                _comma = json[i + 1] == ' ' ? ", " : ",";
+            }
+            else if (c == ':' && !colon)
+            {
+                colon = true;
+                _colon = json[i + 1] == ' ' ? ": " : ":";
+            }
+        }
+    }
+
+    // The answer with its page text replaced, written as it was (fence, layout, key order).
     public string With(string pageText)
     {
         if (_json is null)
@@ -677,7 +793,54 @@ internal sealed class SyntheticAnswer
 
         var copy = (JsonObject)_json.DeepClone();
         copy[_key!] = pageText;
-        return _fenceOpen + SyntheticPages.Json(copy, _indented) + _fenceClose;
+        string json;
+        if (_indented)
+        {
+            json = SyntheticPages.Json(copy, indented: true, _indentSize, _indentCharacter);
+        }
+        else
+        {
+            var sb = new StringBuilder();
+            OneLine(sb, copy);
+            json = sb.ToString();
+        }
+
+        return _fenceOpen + json + _fenceClose;
+    }
+
+    private void OneLine(StringBuilder sb, JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                sb.Append('{');
+                bool first = true;
+                foreach (var (key, value) in o)
+                {
+                    sb.Append(first ? "" : _comma).Append(SyntheticPages.Json(JsonValue.Create(key))).Append(_colon);
+                    OneLine(sb, value);
+                    first = false;
+                }
+
+                sb.Append('}');
+                break;
+            case JsonArray a:
+                sb.Append('[');
+                for (int i = 0; i < a.Count; i++)
+                {
+                    sb.Append(i == 0 ? "" : _comma);
+                    OneLine(sb, a[i]);
+                }
+
+                sb.Append(']');
+                break;
+            case null:
+                sb.Append("null");
+                break;
+            default:
+                sb.Append(SyntheticPages.Json(node));
+                break;
+        }
     }
 }
 

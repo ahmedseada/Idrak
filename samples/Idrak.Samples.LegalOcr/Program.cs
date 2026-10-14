@@ -38,6 +38,7 @@ builder.Services.AddSingleton(settings);
 builder.Services.AddSingleton(new AdapterStore(settings, builder.Environment.ContentRootPath));
 builder.Services.AddSingleton<ReaderService>();
 builder.Services.AddSingleton<TuningService>();
+builder.Services.AddSingleton<SyntheticService>();
 builder.Services.AddSingleton<EvaluationPages>();
 builder.Services.AddSingleton<Preprocessing>();
 // Open streams end when the app stops (see UntilStopped); anything else gets a few seconds, not the default half minute.
@@ -261,6 +262,41 @@ public static class LegalOcrApi
         });
 
         api.MapPost("/tuning/stop", (TuningService tuning) => tuning.Stop());
+
+        // Make training pages: the training records' text drawn as new pages (plan 18).
+        api.MapGet("/synthetic/defaults", (SyntheticService synthetic) => synthetic.Defaults());
+
+        api.MapGet("/synthetic", (SyntheticService synthetic) => synthetic.Status);
+
+        api.MapPost("/synthetic/preview", IResult (SyntheticRequest request, SyntheticService synthetic) =>
+        {
+            try
+            {
+                return TypedResults.Ok(synthetic.Preview(request));
+            }
+            catch (ArgumentException ex)
+            {
+                return TypedResults.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+            }
+        });
+
+        api.MapPost("/synthetic/start", IResult (SyntheticRequest request, SyntheticService synthetic) =>
+        {
+            try
+            {
+                return TypedResults.Accepted("/api/synthetic", synthetic.Start(request));
+            }
+            catch (ArgumentException ex)
+            {
+                return TypedResults.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return TypedResults.Problem(ex.Message, statusCode: StatusCodes.Status409Conflict);
+            }
+        });
+
+        api.MapPost("/synthetic/stop", (SyntheticService synthetic) => synthetic.Stop());
 
         api.MapGet("/adapters", (AdapterStore adapters) => new
         {

@@ -79,6 +79,9 @@ public sealed class AdapterStore(LegalOcrSettings settings, string contentRoot)
         WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     });
 
+    /// <summary>The app's folder, which relative paths in the settings are from.</summary>
+    public string ContentRoot => contentRoot;
+
     /// <summary>The adapters' folder (full path).</summary>
     public string Folder => Path.GetFullPath(settings.AdaptersFolder, contentRoot);
 

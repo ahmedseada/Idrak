@@ -307,6 +307,7 @@ public sealed record Idrak.Nlp.ConversationTuningOptions : System.IEquatable<Idr
   public ConversationTuningOptions()
   public Idrak.Nlp.FineTuningOptions Tuning { get; init; }
   public Idrak.Nlp.TuningImages Preparation { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string?>? ImagesByData { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> VisionParts { get; init; }
   public bool? Think { get; init; }
   public double EvaluationFraction { get; init; }
@@ -960,9 +961,11 @@ public sealed record Idrak.Nlp.SyntheticPageParts : System.IEquatable<Idrak.Nlp.
 
 public static class Idrak.Nlp.SyntheticPages
   public static Idrak.Abstraction.Data.IScanProfile? Profile(string nameOrText)
+  public static Idrak.Abstraction.Data.PageStyle Style(Idrak.Abstraction.Data.PageStyle style, string? settings)
   public static Idrak.Nlp.SyntheticPage Make(string answer, Idrak.Nlp.SyntheticPageOptions options, int record = 0, int variant = 0, string where = "the answer")
   public static Idrak.Nlp.SyntheticPagesResult Write(string input, string output, Idrak.Nlp.SyntheticPageOptions options, System.IProgress<Idrak.Nlp.SyntheticPagesProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fonts(string folder)
+  public static System.Collections.Generic.IReadOnlyList<string> StyleKeys { get; }
   public static int Count(string input, Idrak.Nlp.SyntheticPageOptions options)
 
 public sealed record Idrak.Nlp.SyntheticPagesProgress : System.IEquatable<Idrak.Nlp.SyntheticPagesProgress>

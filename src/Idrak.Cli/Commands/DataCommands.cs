@@ -19,5 +19,6 @@ internal static class DataCommands
         new DataSplitCommand(),
         new DataSampleCommand(),
         new DataMixCommand(),
+        new DataSynthCommand(),
     ];
 }

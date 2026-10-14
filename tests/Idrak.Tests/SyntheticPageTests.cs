@@ -21,6 +21,8 @@ internal static partial class Tests
         ("synthetic data: page parts fill their slots (digits, number, pick, field, date, hijri, line), drop a line whose field is missing, use the language's digits when drawn, keep a part out at chance 0; unknown keys and slots are refused", SyntheticParts),
         ("synthetic data: a record no font can draw, or with no text, is left out and said why; a font without a page's letters is not used for it; every record left out is an error", SyntheticSkips),
         ("synthetic data: the record formats and slots by name; an app's slot replaces the library's of its name only", SyntheticRegistries),
+        ("synthetic data: page settings text sets the style's sizes and chances, refusing unknown keys and values out of range", SyntheticStyle),
+        ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans and page settings given; a missing font folder or a bad setting is a usage error", SyntheticCli),
     ];
 
     private static string SyntheticFolder(string name)
@@ -61,8 +63,8 @@ internal static partial class Tests
         });
 
         string fenced = "```json\n" + SyntheticPages.Json(new JsonObject { ["subject"] = "طلب نسخة", ["document_number"] = "4521", ["full_text_extract"] = "سعادة رئيس المحكمة المحترم\nنفيدكم بأن المدعي تقدم بطلب نسخة من الحكم رقم 4521." }) + "\n```";
-        string indented = SyntheticPages.Json(new JsonObject { ["full_text_extract"] = "قرار رقم 77 لعام 1446\nيعتمد ما يلي.", ["date"] = "1446/05/02" }, indented: true);
-        string plain = SyntheticPages.Json(new JsonObject { ["full_text_extract"] = "The court met on 3 May 2025 and heard the claim.", ["court"] = "General" });
+        string indented = "{\n    \"full_text_extract\": \"قرار رقم 77 لعام 1446\\nيعتمد ما يلي.\",\n    \"date\": \"1446/05/02\"\n}";
+        string plain = "{\"full_text_extract\": \"The court met on 3 May 2025 and heard the claim.\", \"court\": \"General\", \"pages\": [1, 2]}";
         string path = Path.Combine(folder, "train.jsonl");
         File.WriteAllLines(path, [Record(0, fenced), Record(1, indented), Record(2, plain)], new UTF8Encoding(false));
         return path;
@@ -104,10 +106,12 @@ internal static partial class Tests
                             "the fenced answer stays fenced, its fields kept, its subject drawn from its field");
                         break;
                     case 1:
-                        Check(json.Contains('\n') && (string)fields["date"]! == "1446/05/02" && !text.Contains("الموضوع", StringComparison.Ordinal), "the indented answer stays indented; no subject field, no subject line");
+                        Check(json.StartsWith("{\n    \"full_text_extract\": ", StringComparison.Ordinal) && json.EndsWith("\",\n    \"date\": \"1446/05/02\"\n}", StringComparison.Ordinal)
+                              && !text.Contains("الموضوع", StringComparison.Ordinal), $"the answer indented by four spaces stays so; no subject field, no subject line: {json}");
                         break;
                     default:
-                        Check(!json.Contains('\n') && fields.Select(f => f.Key).SequenceEqual(["full_text_extract", "court"]), "the one-line answer stays one line, its keys in order");
+                        Check(json.StartsWith("{\"full_text_extract\": \"", StringComparison.Ordinal) && json.EndsWith("\", \"court\": \"General\", \"pages\": [1, 2]}", StringComparison.Ordinal),
+                            $"the one-line answer keeps its spaces after commas and colons, its keys in order: {json}");
                         break;
                 }
 
@@ -316,5 +320,69 @@ internal static partial class Tests
         public string Summary => "always PICKED";
 
         public string? Fill(string? argument, PagePartContext context) => "PICKED";
+    }
+
+    private static void SyntheticStyle(Device device)
+    {
+        var style = SyntheticPages.Style(new PageStyle { Fonts = [SubsetFace()] }, "width=800, size=20..30, spacing=1.2, rule=0, stamp=1, color=false");
+        Check(style.Width == 800 && style.BodySize == (20, 30) && style.LineSpacing == (1.2f, 1.2f) && style.Rule == 0 && style.Stamp == 1 && !style.Color && style.Height == 1754,
+            "the settings given, the others as they were");
+        foreach (string bad in new[] { "nope=1", "size=30..20", "rule=2", "width=10", "color=maybe" })
+        {
+            Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
+        }
+
+    }
+
+    private static (int Code, string Out, string Err) SynthCli(params string[] args)
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        int code = Idrak.Cli.CommandLine.Run([.. args, "-C", Path.Combine(Path.GetTempPath(), "idrak-cli-synth-no-config.json")], output, error);
+        return (code, output.ToString(), error.ToString());
+    }
+
+    private static void SyntheticCli(Device device)
+    {
+        string folder = SyntheticFolder("cli");
+        try
+        {
+            string input = ShareGptInput(folder);
+            string fonts = Path.Combine(folder, "fonts");
+            Directory.CreateDirectory(fonts);
+            File.Copy(FontData("dejavu-sans-subset.ttf"), Path.Combine(fonts, "dejavu.ttf"));
+            string parts = Path.Combine(folder, "parts.json");
+            File.WriteAllText(parts, PartsJson, new UTF8Encoding(false));
+            string[] common = ["--fonts", fonts, "--parts", parts, "--page", "width=620,height=877,size=14..18", "--seed", "3", "-j"];
+            var (code, output, error) = SynthCli(["data", "synth", input, "-o", Path.Combine(folder, "a", "pages.jsonl"), "-n", "2", "--scan", "office", "--scan", "none", .. common]);
+            Check(code == 0, $"exit {code}: {error}");
+            var json = JsonNode.Parse(output)!;
+            Check((int)json["pages"]! == 6 && (int)json["records"]! == 3 && File.ReadAllLines((string)json["data"]!).Length == 6 && Directory.GetFiles((string)json["images"]!).Length == 6,
+                $"6 pages written: {output}");
+            var manifest = File.ReadAllLines((string)json["manifest"]!).Select(l => JsonNode.Parse(l)!).ToList();
+            Check(manifest.All(m => (int)m["width"]! == 620) && manifest.Select(m => (string)m["scan"]!).Any(s => s.Length == 0),
+                "the page settings and the scans given (none among them)");
+
+            var alias = SynthCli(["synth", input, "-o", Path.Combine(folder, "b", "pages.jsonl"), "-n", "2", "--scan", "office", "--scan", "none", .. common]);
+            Check(alias.Code == 0, $"synth is data synth: exit {alias.Code} {alias.Err}");
+            Check(File.ReadAllLines(Path.Combine(folder, "b", "pages.jsonl")).SequenceEqual(File.ReadAllLines(Path.Combine(folder, "a", "pages.jsonl"))),
+                "the same seed, the same records");
+
+            foreach (var (args, why) in new (string[], string)[]
+            {
+                (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl")], "no --fonts"),
+                (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", Path.Combine(folder, "nope")], "a missing fonts folder"),
+                (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--page", "nope=1"], "an unknown page setting"),
+                (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--scan", "nope"], "an unknown scan profile"),
+            })
+            {
+                var bad = SynthCli(args);
+                Check(bad.Code == 2 && bad.Err.Length > 0, $"{why}: exit {bad.Code}, {bad.Err.Trim()}");
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     }
 }

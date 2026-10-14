@@ -14,7 +14,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ConversationTuningGroup =
     [
-        ("conversation tuning: prepare reads ShareGPT with images from a zip, holds out a seeded share, limits the conversations, builds the image side and the cer scorer; nothing to train on and a metric without evaluation data are refused", ConversationTuningPrepares),
+        ("conversation tuning: prepare reads ShareGPT with images from a zip (and each data file from its own root when given), holds out a seeded share, limits the conversations, builds the image side and the cer scorer; nothing to train on and a metric without evaluation data are refused", ConversationTuningPrepares),
         ("conversation tuning: train reports every step and each scored answer, writes the adapter, tuning_images.json and idrak-tuning.json; a stopped run saves the adapter so far", ConversationTuningTrains),
     ];
 
@@ -48,6 +48,38 @@ internal static partial class Tests
                 Check(stages.Count > 0 && stages[^1].Done == stages[^1].Total, $"{stages.Count} stages");
                 Check(run.EvaluationLoss() is > 0, "an evaluation loss");
             }
+
+            // Several data files, each from its own images root (ImagesByData): a copy of the records naming images that
+            // are only in a folder beside it (as synthetic pages are written), read with the zip's records in one run.
+            string beside = Path.Combine(folder, "beside");
+            Directory.CreateDirectory(beside);
+            foreach (string name in new[] { "image.png", "image-palette.png" })
+            {
+                File.Copy(TestData($"vlm/{name}"), Path.Combine(beside, "beside-" + name));
+            }
+
+            string copy = Path.Combine(beside, "train.json");
+            File.WriteAllText(copy, File.ReadAllText(train).Replace("image-palette.png", "beside-image-palette.png", StringComparison.Ordinal)
+                .Replace("\"image.png", "\"beside-image.png", StringComparison.Ordinal));
+            var bothLines = new List<string>();
+            using (var both = ConversationTuning.Prepare(model, [train, copy], TinyConversationOptions(zip) with { ImagesByData = new Dictionary<string, string?> { [copy] = null } },
+                       null, bothLines.Add))
+            {
+                Check(both.TrainingConversations.Count + (both.EvaluationConversations?.Count ?? 0) == 6 && both.TrainingSequences.All(t => t.Images.Count > 0),
+                    $"two files, six conversations with their images: {string.Join(" | ", bothLines)}");
+            }
+
+            bool missing = false;
+            try
+            {
+                ConversationTuning.Prepare(model, [train, copy], TinyConversationOptions(zip)).Dispose();
+            }
+            catch (Exception e) when (e is FileNotFoundException or InvalidDataException)
+            {
+                missing = true;
+            }
+
+            Check(missing, "without its own root, the copy's images are looked for in the zip and not found");
 
             // The conversations left out never have their images read: every record is read and checked, the first one's
             // images alone are read (the same first conversation as reading them all).
