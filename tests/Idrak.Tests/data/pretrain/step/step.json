@@ -18,6 +18,17 @@
   "max_gradient_norm": 0.0,
   "weight_decay": 0.1
  },
+ "adamw_folded": {
+  "files": {
+   "weights_after": "adamw-folded/weights-step3.safetensors"
+  },
+  "losses": [
+   10.123273849487305,
+   9.620140075683594,
+   9.139145851135254
+  ],
+  "what": "AdamW with the bias corrections folded into the step size, as Idrak computes it (epsilon's place only differs)"
+ },
  "loss": "mean cross entropy over every position of every window (targets: the next token)",
  "sgd": {
   "files": {

@@ -110,6 +110,39 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
     }
 
     /// <inheritdoc />
+    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    {
+        var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal) { ["step"] = StateOf(_step) };
+        for (int i = 0; i < Parameters.Count; i++)
+        {
+            if (_m?[i] is { } m && _v?[i] is { } v)
+            {
+                state[$"m.{i}"] = StateOf(m);
+                state[$"v.{i}"] = StateOf(v);
+            }
+        }
+
+        return state;
+    }
+
+    /// <inheritdoc />
+    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        _fused?.Dispose();                                                   // it holds the old moments' buffers
+        _fused = null;
+        _step = LoadStep(state);
+        _m ??= new Tensor?[Parameters.Count];
+        _v ??= new Tensor?[Parameters.Count];
+        for (int i = 0; i < Parameters.Count; i++)
+        {
+            var p = Parameters[i];
+            _m[i] = LoadStateTensor(state, $"m.{i}", _m[i], () => CreateState(p));
+            _v[i] = LoadStateTensor(state, $"v.{i}", _v[i], () => CreateState(p));
+        }
+    }
+
+    /// <inheritdoc />
     public override void Dispose()
     {
         _fused?.Dispose();

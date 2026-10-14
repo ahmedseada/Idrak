@@ -62,6 +62,58 @@ public abstract class Optimizer : IDisposable
         Step();
     }
 
+    /// <summary>
+    /// The optimizer's state (its moments, step count, …) by name, copied to the host, for a checkpoint that resumes
+    /// training where it stopped (<see cref="LoadState"/>). Names are the optimizer's own; a parameter's state is named
+    /// by its index in <see cref="Parameters"/>.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The optimizer cannot save its state.</exception>
+    public virtual IReadOnlyDictionary<string, OptimizerStateValue> SaveState() =>
+        throw new NotSupportedException($"{GetType().Name} cannot save its state; a resumed run would start its moments again.");
+
+    /// <summary>
+    /// Restores a state <see cref="SaveState"/> gave (by an optimizer of the same kind over parameters of the same shapes,
+    /// in the same order).
+    /// </summary>
+    /// <exception cref="NotSupportedException">The optimizer cannot restore a state.</exception>
+    /// <exception cref="ArgumentException">A value's shape is not the one this optimizer holds, or a required value is missing.</exception>
+    public virtual void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state) =>
+        throw new NotSupportedException($"{GetType().Name} cannot restore a saved state.");
+
+    /// <summary>A state tensor's values as a saved value.</summary>
+    protected static OptimizerStateValue StateOf(Tensor tensor) => new([.. tensor.Shape], tensor.ToArray());
+
+    /// <summary>The step count as a saved value.</summary>
+    protected static OptimizerStateValue StateOf(int step) => new([1], [step]);
+
+    /// <summary>
+    /// The state tensor <paramref name="name"/> of <paramref name="state"/> loaded into <paramref name="target"/> (made by
+    /// <paramref name="create"/> when null), or <paramref name="target"/> disposed and null when the state has none.
+    /// </summary>
+    protected static Tensor? LoadStateTensor(IReadOnlyDictionary<string, OptimizerStateValue> state, string name, Tensor? target, Func<Tensor> create)
+    {
+        if (!state.TryGetValue(name, out var value))
+        {
+            target?.Dispose();
+            return null;
+        }
+
+        target ??= create();
+        if (!target.Shape.SequenceEqual(value.Shape) || value.Values.Length != target.Size)
+        {
+            throw new ArgumentException($"The saved optimizer state '{name}' has shape [{string.Join(", ", value.Shape)}], not [{string.Join(", ", target.Shape.ToArray())}].", nameof(state));
+        }
+
+        target.Load(value.Values);
+        return target;
+    }
+
+    /// <summary>The saved step count <paramref name="name"/>.</summary>
+    protected static int LoadStep(IReadOnlyDictionary<string, OptimizerStateValue> state, string name = "step") =>
+        state.TryGetValue(name, out var value) && value.Values.Length == 1
+            ? (int)value.Values[0]
+            : throw new ArgumentException($"The saved optimizer state has no '{name}'.", nameof(state));
+
     /// <summary>Set by a <see cref="ClipAndStep"/> that zeroed the gradients: the next <see cref="ZeroGrad"/> skips its pass.</summary>
     protected bool GradientsZeroed { get; set; }
 
@@ -201,3 +253,9 @@ public abstract class Optimizer : IDisposable
     /// <summary>Releases optimizer state (moment buffers).</summary>
     public virtual void Dispose() => GC.SuppressFinalize(this);
 }
+
+/// <summary>One value of an optimizer's saved state (<see cref="Optimizer.SaveState"/>): a tensor's shape and values.</summary>
+/// <param name="Shape">The tensor's shape.</param>
+/// <param name="Values">Its values (packed state, such as 8-bit moments, as the float32 words that hold it).</param>
+public sealed record OptimizerStateValue(int[] Shape, float[] Values);
+

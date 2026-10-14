@@ -40,6 +40,32 @@ public sealed class GroupedOptimizer : Optimizer
         _initialRate = groups[0].LearningRate;
     }
 
+    /// <inheritdoc />
+    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    {
+        var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
+        for (int g = 0; g < _groups.Length; g++)
+        {
+            foreach (var (name, value) in _groups[g].SaveState())
+            {
+                state[$"group{g}.{name}"] = value;
+            }
+        }
+
+        return state;
+    }
+
+    /// <inheritdoc />
+    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        for (int g = 0; g < _groups.Length; g++)
+        {
+            string prefix = $"group{g}.";
+            _groups[g].LoadState(state.Where(p => p.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(p => p.Key[prefix.Length..], p => p.Value, StringComparer.Ordinal));
+        }
+    }
+
     /// <summary>The combined optimizers, in order.</summary>
     public IReadOnlyList<Optimizer> Groups => _groups;
 

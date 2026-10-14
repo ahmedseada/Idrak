@@ -139,6 +139,43 @@ public sealed class AdamW8Bit : Optimizer
     public static byte Nearest(ReadOnlySpan<float> map, float x) => EightBitMoments.Nearest(map, x);
 
     /// <inheritdoc />
+    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    {
+        var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal) { ["step"] = StateOf(_step) };
+        for (int i = 0; i < Parameters.Count; i++)
+        {
+            if (_m[i] is { } m && _v[i] is { } v)
+            {
+                state[$"m.{i}"] = StateOf(m);
+                state[$"v.{i}"] = StateOf(v);
+            }
+
+            if (_scales[i] is { } scales)
+            {
+                state[$"scales.{i}"] = StateOf(scales);
+            }
+        }
+
+        return state;
+    }
+
+    /// <inheritdoc />
+    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        _step = LoadStep(state);
+        for (int i = 0; i < Parameters.Count; i++)
+        {
+            var p = Parameters[i];
+            int blocks = (p.Size + BlockSize - 1) / BlockSize;
+            bool small = p.Size < MinimumSize;
+            _m[i] = LoadStateTensor(state, $"m.{i}", _m[i], () => small ? CreateState(p) : CreateState([(p.Size + 3) / 4], p.Device));
+            _v[i] = LoadStateTensor(state, $"v.{i}", _v[i], () => small ? CreateState(p) : CreateState([(p.Size + 3) / 4], p.Device));
+            _scales[i] = LoadStateTensor(state, $"scales.{i}", _scales[i], () => CreateState([2 * blocks], p.Device));
+        }
+    }
+
+    /// <inheritdoc />
     public override void Dispose()
     {
         foreach (var t in _m.Concat(_v).Concat(_scales))

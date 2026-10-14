@@ -38,6 +38,33 @@ public sealed class Sgd(IEnumerable<Tensor> parameters, float learningRate = 0.0
     }
 
     /// <inheritdoc />
+    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    {
+        var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
+        for (int i = 0; i < Parameters.Count; i++)
+        {
+            if (_velocity?[i] is { } v)
+            {
+                state[$"velocity.{i}"] = StateOf(v);
+            }
+        }
+
+        return state;
+    }
+
+    /// <inheritdoc />
+    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        _velocity ??= new Tensor?[Parameters.Count];
+        for (int i = 0; i < Parameters.Count; i++)
+        {
+            var p = Parameters[i];
+            _velocity[i] = LoadStateTensor(state, $"velocity.{i}", _velocity[i], () => CreateState(p));
+        }
+    }
+
+    /// <inheritdoc />
     public override void Dispose()
     {
         foreach (var v in _velocity ?? [])

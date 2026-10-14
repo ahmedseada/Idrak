@@ -166,6 +166,32 @@ public sealed class HostOptimizer : Optimizer
     }
 
     /// <inheritdoc />
+    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    {
+        var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
+        for (int i = 0; i < _cpu.Length; i++)
+        {
+            foreach (var (name, value) in _cpu[i].SaveState())
+            {
+                state[$"{i}.{name}"] = value;
+            }
+        }
+
+        return state;
+    }
+
+    /// <inheritdoc />
+    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        for (int i = 0; i < _cpu.Length; i++)
+        {
+            string prefix = $"{i}.";
+            _cpu[i].LoadState(state.Where(p => p.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(p => p.Key[prefix.Length..], p => p.Value, StringComparer.Ordinal));
+        }
+    }
+
+    /// <inheritdoc />
     public override void Dispose()
     {
         _staging?.Dispose();                                               // waits for the last uploads

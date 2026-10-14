@@ -1,0 +1,965 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json.Nodes;
+using Idrak.Datasets;
+using Idrak.Layers;
+using Idrak.Models;
+using Idrak.Nlp.Abstractions;
+using Idrak.Optimizers;
+
+namespace Idrak.Nlp;
+
+/// <summary>
+/// One stage of a pretraining run (<see cref="PretrainingOptions.Stages"/>): which parts of the model train, on which
+/// sources, for how many steps, at which rate. A run of stages trains, for example, the decoder on text first, then the
+/// vision tower and projector alone ("align"), then everything together ("joint").
+/// </summary>
+/// <param name="Name">The stage's name (shown in progress and kept in checkpoints).</param>
+public sealed record PretrainingStage(string Name)
+{
+    /// <summary>The parts trained, every other parameter frozen: "decoder" (blocks and the final norm), "embeddings" (token and learned position embeddings), "head" (the output head, unless tied to the embeddings), "tower" and "projector" (a vision part's, <see cref="VisionTuningParts"/>), or "all".</summary>
+    public IReadOnlyList<string> Trained { get; init; } = ["decoder", "embeddings", "head"];
+
+    /// <summary>What it reads.</summary>
+    public IReadOnlyList<PretrainingSource> Sources { get; init; } = [];
+
+    /// <summary>Optimizer steps in the stage.</summary>
+    public int Steps { get; init; }
+
+    /// <summary>The peak learning rate (after the warm-up).</summary>
+    public float LearningRate { get; init; } = 3e-4f;
+
+    /// <summary>The rate at the stage's end.</summary>
+    public float MinLearningRate { get; init; }
+
+    /// <summary>The share of the stage's steps spent warming up.</summary>
+    public float WarmupFraction { get; init; } = 0.03f;
+
+    /// <summary>The rate over the stage's steps: a <see cref="FineTuningSchedules"/> name.</summary>
+    public string Schedule { get; init; } = "cosine";
+
+    /// <summary>The stage as JSON.</summary>
+    public JsonObject ToJson() => new()
+    {
+        ["name"] = Name,
+        ["trained"] = new JsonArray([.. Trained.Select(t => (JsonNode)t)]),
+        ["sources"] = new JsonArray([.. Sources.Select(s => (JsonNode)s.ToJson())]),
+        ["steps"] = Steps,
+        ["learning_rate"] = LearningRate,
+        ["min_learning_rate"] = MinLearningRate,
+        ["warmup"] = WarmupFraction,
+        ["schedule"] = Schedule,
+    };
+
+    /// <summary>A stage from its JSON (<see cref="ToJson"/>).</summary>
+    /// <exception cref="InvalidDataException">A key is missing or wrong.</exception>
+    public static PretrainingStage FromJson(JsonObject json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        var defaults = new PretrainingStage("");
+        return new PretrainingStage((string?)json["name"] ?? throw new InvalidDataException("A pretraining stage has no \"name\"."))
+        {
+            Trained = json["trained"] is JsonArray trained ? [.. trained.Select(t => (string)t!)] : defaults.Trained,
+            Sources = json["sources"] is JsonArray sources ? [.. sources.Select(s => PretrainingSource.FromJson(s!.AsObject()))] : [],
+            Steps = (int?)json["steps"] ?? throw new InvalidDataException($"Stage {json["name"]} has no \"steps\"."),
+            LearningRate = (float?)json["learning_rate"] ?? defaults.LearningRate,
+            MinLearningRate = (float?)json["min_learning_rate"] ?? 0f,
+            WarmupFraction = (float?)json["warmup"] ?? defaults.WarmupFraction,
+            Schedule = (string?)json["schedule"] ?? defaults.Schedule,
+        };
+    }
+}
+
+/// <summary>Settings for <see cref="Pretrainer.Train"/>.</summary>
+public sealed record PretrainingOptions
+{
+    /// <summary>The stages, run in order.</summary>
+    public IReadOnlyList<PretrainingStage> Stages { get; init; } = [];
+
+    /// <summary>The longest sequence in tokens: token files are cut into windows of this many (plus the next token as the last target).</summary>
+    public int MaxLength { get; init; } = 2048;
+
+    /// <summary>Positions per micro-batch (rows of <see cref="MaxLength"/>, sequences packed into them when the model supports it).</summary>
+    public int BatchTokens { get; init; } = 4096;
+
+    /// <summary>Micro-batches per optimizer step (their gradients add up).</summary>
+    public int GradientAccumulation { get; init; } = 1;
+
+    /// <summary>The gradient norm clipped to (0: no clipping).</summary>
+    public float MaxGradientNorm { get; init; } = 1f;
+
+    /// <summary>Weight decay (decoupled, for the AdamW kinds).</summary>
+    public float WeightDecay { get; init; } = 0.1f;
+
+    /// <summary>The optimizer: a <see cref="FineTuningOptimizers"/> name ("adamw", "adam", "adamw8bit", "sgd").</summary>
+    public string Optimizer { get; init; } = "adamw";
+
+    /// <summary>The optimizer's first moment decay (AdamW kinds).</summary>
+    public float Beta1 { get; init; } = 0.9f;
+
+    /// <summary>The optimizer's second moment decay (AdamW kinds).</summary>
+    public float Beta2 { get; init; } = 0.95f;
+
+    /// <summary>SGD's momentum.</summary>
+    public float Momentum { get; init; }
+
+    /// <summary>Run the optimizer's update on the CPU with its state in system memory (<see cref="HostOptimizer"/>), for parameters whose state the device has no room for.</summary>
+    public bool HostOptimizer { get; init; }
+
+    /// <summary>Recompute each block's activations in the backward pass; null: measured (off, turned on when the device runs out of memory), as <see cref="FineTuningOptions.Checkpointing"/>.</summary>
+    public bool? Checkpointing { get; init; }
+
+    /// <summary>Recompute the feed-forward activations; null: measured, as <see cref="FineTuningOptions.RecomputeFeedForward"/>.</summary>
+    public bool? RecomputeFeedForward { get; init; }
+
+    /// <summary>Hold activations as bfloat16 between the passes; null: measured, as <see cref="FineTuningOptions.BFloat16Activations"/>.</summary>
+    public bool? BFloat16Activations { get; init; }
+
+    /// <summary>Record steps as graphs where the device can (<see cref="FineTuningOptions.CudaGraphs"/>).</summary>
+    public bool CudaGraphs { get; init; } = true;
+
+    /// <summary>Pack sequences into rows when the model supports it.</summary>
+    public bool Packing { get; init; } = true;
+
+    /// <summary>The seed of the data order.</summary>
+    public int Seed { get; init; }
+
+    /// <summary>Steps between checkpoints (0: at each stage's end only).</summary>
+    public int SaveEvery { get; init; }
+
+    /// <summary>Checkpoints kept (the oldest removed past it; 0: every one).</summary>
+    public int KeepCheckpoints { get; init; } = 3;
+
+    /// <summary>Steps between evaluations (0: at each stage's end only).</summary>
+    public int EvaluateEvery { get; init; }
+
+    /// <summary>The held-out sources, scored by their mean token loss.</summary>
+    public IReadOnlyList<PretrainingSource> Evaluation { get; init; } = [];
+
+    /// <summary>Sequences read from each held-out source.</summary>
+    public int EvaluationSequences { get; init; } = 256;
+
+    /// <summary>Steps in a row whose loss is not finite (their updates skipped) before the run stops.</summary>
+    public int NonFiniteSteps { get; init; } = 8;
+
+    /// <summary>Rows of the output head per chunk of the loss.</summary>
+    public int LossChunkRows { get; init; } = 512;
+
+    /// <summary>How record images are prepared (transforms and vision options).</summary>
+    public TuningImages Images { get; init; } = TuningImages.None;
+
+    /// <summary>Where image features of frozen vision stages are cached: a <see cref="FeatureCaches"/> name.</summary>
+    public string FeatureCache { get; init; } = FeatureCaches.Memory;
+
+    /// <summary>The options as JSON ("format": "idrak-pretrain/1").</summary>
+    public JsonObject ToJson() => new()
+    {
+        ["format"] = Pretrainer.Format,
+        ["stages"] = new JsonArray([.. Stages.Select(s => (JsonNode)s.ToJson())]),
+        ["max_length"] = MaxLength,
+        ["batch_tokens"] = BatchTokens,
+        ["accumulate"] = GradientAccumulation,
+        ["clip"] = MaxGradientNorm,
+        ["weight_decay"] = WeightDecay,
+        ["optimizer"] = Optimizer,
+        ["beta1"] = Beta1,
+        ["beta2"] = Beta2,
+        ["momentum"] = Momentum,
+        ["host_optimizer"] = HostOptimizer,
+        ["checkpointing"] = Checkpointing,
+        ["recompute"] = RecomputeFeedForward,
+        ["bf16_activations"] = BFloat16Activations,
+        ["graphs"] = CudaGraphs,
+        ["packing"] = Packing,
+        ["seed"] = Seed,
+        ["save_every"] = SaveEvery,
+        ["keep_checkpoints"] = KeepCheckpoints,
+        ["eval_every"] = EvaluateEvery,
+        ["eval"] = new JsonArray([.. Evaluation.Select(s => (JsonNode)s.ToJson())]),
+        ["eval_sequences"] = EvaluationSequences,
+        ["non_finite_steps"] = NonFiniteSteps,
+        ["loss_chunk_rows"] = LossChunkRows,
+        ["images"] = Images.ToJson(),
+        ["feature_cache"] = FeatureCache,
+    };
+
+    /// <summary>Options from their JSON (<see cref="ToJson"/>); keys left out keep their defaults, unknown keys are refused.</summary>
+    /// <exception cref="InvalidDataException">The format, a key or a value is wrong.</exception>
+    public static PretrainingOptions FromJson(JsonObject json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        if ((string?)json["format"] is { } format && format != Pretrainer.Format)
+        {
+            throw new InvalidDataException($"Pretraining options in format '{format}', not {Pretrainer.Format}.");
+        }
+
+        var known = new HashSet<string>(new PretrainingOptions().ToJson().Select(p => p.Key), StringComparer.Ordinal);
+        if (json.Select(p => p.Key).FirstOrDefault(k => !known.Contains(k)) is { } unknown)
+        {
+            throw new InvalidDataException($"Unknown pretraining option \"{unknown}\" (known: {string.Join(", ", known.Order(StringComparer.Ordinal))}).");
+        }
+
+        var d = new PretrainingOptions();
+        return new PretrainingOptions
+        {
+            Stages = json["stages"] is JsonArray stages ? [.. stages.Select(s => PretrainingStage.FromJson(s!.AsObject()))] : [],
+            MaxLength = (int?)json["max_length"] ?? d.MaxLength,
+            BatchTokens = (int?)json["batch_tokens"] ?? d.BatchTokens,
+            GradientAccumulation = (int?)json["accumulate"] ?? d.GradientAccumulation,
+            MaxGradientNorm = (float?)json["clip"] ?? d.MaxGradientNorm,
+            WeightDecay = (float?)json["weight_decay"] ?? d.WeightDecay,
+            Optimizer = (string?)json["optimizer"] ?? d.Optimizer,
+            Beta1 = (float?)json["beta1"] ?? d.Beta1,
+            Beta2 = (float?)json["beta2"] ?? d.Beta2,
+            Momentum = (float?)json["momentum"] ?? d.Momentum,
+            HostOptimizer = (bool?)json["host_optimizer"] ?? d.HostOptimizer,
+            Checkpointing = (bool?)json["checkpointing"],
+            RecomputeFeedForward = (bool?)json["recompute"],
+            BFloat16Activations = (bool?)json["bf16_activations"],
+            CudaGraphs = (bool?)json["graphs"] ?? d.CudaGraphs,
+            Packing = (bool?)json["packing"] ?? d.Packing,
+            Seed = (int?)json["seed"] ?? d.Seed,
+            SaveEvery = (int?)json["save_every"] ?? d.SaveEvery,
+            KeepCheckpoints = (int?)json["keep_checkpoints"] ?? d.KeepCheckpoints,
+            EvaluateEvery = (int?)json["eval_every"] ?? d.EvaluateEvery,
+            Evaluation = json["eval"] is JsonArray eval ? [.. eval.Select(s => PretrainingSource.FromJson(s!.AsObject()))] : [],
+            EvaluationSequences = (int?)json["eval_sequences"] ?? d.EvaluationSequences,
+            NonFiniteSteps = (int?)json["non_finite_steps"] ?? d.NonFiniteSteps,
+            LossChunkRows = (int?)json["loss_chunk_rows"] ?? d.LossChunkRows,
+            Images = json["images"] is JsonObject images ? TuningImages.FromJson(images) : d.Images,
+            FeatureCache = (string?)json["feature_cache"] ?? d.FeatureCache,
+        };
+    }
+}
+
+/// <summary>A pretraining step's report.</summary>
+/// <param name="Stage">The stage's name.</param>
+/// <param name="StageIndex">Its index in <see cref="PretrainingOptions.Stages"/>.</param>
+/// <param name="StageStep">Steps done in the stage.</param>
+/// <param name="StageSteps">The stage's steps.</param>
+/// <param name="Step">Steps done in the run (every stage).</param>
+/// <param name="TotalSteps">The run's steps.</param>
+/// <param name="Loss">The step's mean loss per trained token.</param>
+/// <param name="LearningRate">The rate the step used.</param>
+/// <param name="TokensPerSecond">Trained tokens per second of the step.</param>
+/// <param name="ImagesPerSecond">Images per second of the step.</param>
+/// <param name="DeviceBytes">The device's peak memory in use, as its backend reports it (0 when it reports none).</param>
+/// <param name="Remaining">The time the run's steps left take at the speed so far.</param>
+/// <param name="EvaluationLoss">The held-out loss, when this step evaluated.</param>
+public sealed record PretrainingProgress(string Stage, int StageIndex, int StageStep, int StageSteps, int Step, int TotalSteps, float Loss, float LearningRate,
+    double TokensPerSecond, double ImagesPerSecond, long DeviceBytes, TimeSpan Remaining, float? EvaluationLoss);
+
+/// <summary>What <see cref="Pretrainer.Train"/> did.</summary>
+/// <param name="Steps">Steps done in the run, the resumed ones included.</param>
+/// <param name="Losses">Each step's loss, from the run's first step (a resumed run's earlier ones included).</param>
+/// <param name="EvaluationLosses">Each evaluation's step and loss.</param>
+/// <param name="LastCheckpoint">The last checkpoint written, or null.</param>
+/// <param name="Elapsed">The time this call took.</param>
+/// <param name="Settings">The memory settings the steps settled on.</param>
+public sealed record PretrainingResult(int Steps, IReadOnlyList<float> Losses, IReadOnlyList<(int Step, float Loss)> EvaluationLosses, string? LastCheckpoint,
+    TimeSpan Elapsed, string Settings);
+
+/// <summary>Where a run stopped, read from a checkpoint folder (<see cref="Pretrainer.ReadCheckpoint"/>), to go on from (<see cref="Pretrainer.Train"/>).</summary>
+/// <param name="Folder">The checkpoint folder (a model folder: <c>PretrainedModel.Load</c> reads it).</param>
+/// <param name="Options">The run's options.</param>
+/// <param name="Stage">The stage to go on in.</param>
+/// <param name="StageStep">Steps done in that stage.</param>
+/// <param name="Step">Steps done in the run.</param>
+/// <param name="Sources">Each of the stage's sources: passes done, the next item of the pass, items drawn in the stage.</param>
+/// <param name="Losses">The losses so far.</param>
+/// <param name="EvaluationLosses">The evaluations so far.</param>
+public sealed record PretrainingCheckpoint(string Folder, PretrainingOptions Options, int Stage, int StageStep, int Step,
+    IReadOnlyList<(long Pass, long Next, long Drawn)> Sources, IReadOnlyList<float> Losses, IReadOnlyList<(int Step, float Loss)> EvaluationLosses);
+
+/// <summary>
+/// Trains every parameter of a model (one made with <c>PretrainedModel.Create</c>, or any float32 model) on token files
+/// and conversation records, in stages (plan 19). Each optimizer step draws sequences from the stage's sources by their
+/// weights (in a pass order shuffled from the seed), packs them into rows and runs the fine-tuner's step: the same loss
+/// over trained tokens only, out-of-memory ladder, recorded graphs and image handling. Checkpoints hold the weights
+/// (a model folder), the optimizer's state and where every source is, so a run stopped and resumed continues as if it
+/// had not stopped.
+/// </summary>
+public static class Pretrainer
+{
+    /// <summary>The options' format.</summary>
+    public const string Format = "idrak-pretrain/1";
+
+    /// <summary>The checkpoint state file's format.</summary>
+    public const string StateFormat = "idrak-pretrain-state/1";
+
+    private const string StateFile = "pretrain-state.json";
+    private const string OptimizerFile = "optimizer.safetensors";
+
+    /// <summary>
+    /// Runs <paramref name="options"/>' stages on <paramref name="model"/>, writing checkpoints to
+    /// <paramref name="outputFolder"/> (<c>checkpoint-STEP</c>), or goes on from <paramref name="resume"/> (the model then
+    /// loaded from its folder).
+    /// </summary>
+    /// <exception cref="ArgumentException">An option is wrong (no stages, no sources, an unknown part, …).</exception>
+    /// <exception cref="InvalidOperationException">The model cannot train every parameter (packed weights, adapters), or the loss stayed not finite.</exception>
+    /// <exception cref="OperationCanceledException">Cancelled: a checkpoint of the last finished step is written first.</exception>
+    public static PretrainingResult Train(PretrainedModel model, PretrainingOptions options, string outputFolder, PretrainingCheckpoint? resume = null,
+        IProgress<PretrainingProgress>? progress = null, CancellationToken cancellationToken = default, Action<string>? trace = null)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
+        Check(options);
+        if (model.Network.Descendants().OfType<Idrak.Layers.Linear>().Any(l => l.PackedWeight is not null || l.Adapter is not null))
+        {
+            throw new InvalidOperationException("Pretraining trains every weight: load the model with float32 weights and without adapters (merge them first).");
+        }
+
+        Directory.CreateDirectory(outputFolder);
+        var started = Stopwatch.StartNew();
+        var losses = new List<float>(resume?.Losses ?? []);
+        var evaluations = new List<(int, float)>(resume?.EvaluationLosses ?? []);
+        int totalSteps = options.Stages.Sum(s => s.Steps);
+        int step = resume?.Step ?? 0;
+        string? last = null;
+        string settings = "";
+        double secondsPerStep = 0;
+        int timedSteps = 0;
+        bool startedTelemetry = false;
+
+        for (int stageIndex = resume?.Stage ?? 0; stageIndex < options.Stages.Count; stageIndex++)
+        {
+            var stage = options.Stages[stageIndex];
+            int stageStep = resume is { } r && r.Stage == stageIndex ? r.StageStep : 0;
+            if (stageStep >= stage.Steps)
+            {
+                continue;
+            }
+
+            var visionParts = stage.Trained.Contains("all", StringComparer.OrdinalIgnoreCase)
+                ? (model.Vision is { } v ? VisionTuningParts.Offered(v) : [])
+                : [.. stage.Trained.Where(t => t.Equals(VisionTuningParts.Tower, StringComparison.OrdinalIgnoreCase) || t.Equals(VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase))];
+            bool records = stage.Sources.Concat(options.Evaluation).Any(s => s.Kind.Equals(PretrainingSources.Records, StringComparison.OrdinalIgnoreCase));
+            if (visionParts.Count > 0 && model.Vision is null)
+            {
+                throw new ArgumentException($"Stage {stage.Name} trains {string.Join(", ", visionParts)}, but the model has no vision part.");
+            }
+
+            using var vision = model.Vision is not null && (records || visionParts.Count > 0)
+                ? TuningVision.Create(model, options.Images, visionParts, FeatureCaches.Create(options.FeatureCache)) : null;
+            var encoder = records && model.JinjaTemplate is { } template && model.Tokenizer is { } tokenizer
+                ? new ChatTranscriptEncoder(template, tokenizer) { Vision = vision } : null;
+            var context = new PretrainingContext(model, options.MaxLength, encoder);
+            var readers = new List<SourceState>();
+            try
+            {
+                for (int s = 0; s < stage.Sources.Count; s++)
+                {
+                    var source = stage.Sources[s];
+                    var reader = PretrainingSources.Get(source.Kind).Open(source, context);
+                    var position = resume is { } rr && rr.Stage == stageIndex && s < rr.Sources.Count ? rr.Sources[s] : (0L, 0L, 0L);
+                    readers.Add(new SourceState(reader, source.Weight, options.Seed, stageIndex, s) { Pass = position.Item1, Next = position.Item2, Drawn = position.Item3 });
+                }
+
+                if (readers.All(rd => rd.Reader.Count == 0))
+                {
+                    throw new ArgumentException($"Stage {stage.Name}'s sources hold no sequences.");
+                }
+
+                var evaluation = ReadEvaluation(options, context);
+                var parameters = Trainable(model, stage, vision);
+                using var optimizer = CreateOptimizer(parameters, options, stage);
+                if (resume is { } rs && rs.Stage == stageIndex)
+                {
+                    optimizer.LoadState(ReadOptimizerState(rs.Folder));
+                }
+
+                var schedule = FineTuningSchedules.Create(stage.Schedule, stage.WarmupFraction, stage.MinLearningRate)(optimizer, stage.Steps);
+                for (int i = 0; i < stageStep; i++)
+                {
+                    schedule.Step();                                         // the resumed stage's rate where it was
+                }
+
+                var tuning = new FineTuningOptions
+                {
+                    Checkpointing = options.Checkpointing,
+                    RecomputeFeedForward = options.RecomputeFeedForward,
+                    BFloat16Activations = options.BFloat16Activations,
+                    CudaGraphs = options.CudaGraphs,
+                    GradientAccumulation = options.GradientAccumulation,
+                    MaxGradientNorm = options.MaxGradientNorm,
+                    HostOptimizer = options.HostOptimizer,
+                    LossChunkRows = options.LossChunkRows,
+                    Packing = options.Packing,
+                    BatchTokens = options.BatchTokens,
+                    MaxLength = options.MaxLength,
+                    Vision = vision,
+                    // An optimizer other than the built-in AdamW: the recorded step checks it keeps its gradient buffers.
+                    Optimizer = optimizer is AdamW && !options.HostOptimizer ? null : _ => optimizer,
+                };
+
+                if (!startedTelemetry)
+                {
+                    startedTelemetry = true;
+                    Telemetry.TrainingStarted(new TrainingStarted((string?)model.Config["architectures"]?[0] ?? "model", options.Optimizer, model.Device, options.Stages.Count,
+                        (int)Math.Min(int.MaxValue, readers.Sum(rd => rd.Reader.Count)), evaluation.Count, Rows(options), stage.Steps,
+                        parameters.Sum(p => (long)p.Size), stage.LearningRate, Environment.ProcessorCount));
+                }
+
+                FineTuner.StepRunner? runner = null;
+                try
+                {
+                    // Where the sources are after the last finished step (a cancelled step's checkpoint goes back to it).
+                    (long, long, long)[] finished = [.. readers.Select(rd => (rd.Pass, rd.Next, rd.Drawn))];
+                    var next = Task.Run(() => Draw(readers, options, model));
+                    while (stageStep < stage.Steps)
+                    {
+                        var (sequences, positions) = next.GetAwaiter().GetResult();
+                        next = stageStep + 1 < stage.Steps ? Task.Run(() => Draw(readers, options, model)) : Task.FromResult<(List<TrainingSequence>, (long, long, long)[])>(([], []));
+                        var batches = Batches(model, sequences, options);
+                        int imageTokens = sequences.Sum(q => q.Images.Sum(im => im.Tokens));
+                        runner ??= new FineTuner.StepRunner(model, sequences, optimizer, tuning, Rows(options) * options.MaxLength, null, trace,
+                            (long)Rows(options) * options.MaxLength, imageTokens);
+                        float rate = optimizer.LearningRate;
+                        var watch = Stopwatch.StartNew();
+                        int done = step;
+                        float loss;
+                        long tokens;
+                        try
+                        {
+                            (loss, tokens) = runner.Run(batches, sequences, cancellationToken,
+                                b => $"{stage.Name} step {stageStep + 1}/{stage.Steps}, batch {b + 1}/{batches.Count}");
+                        }
+                        catch (OperationCanceledException) when (done > 0)
+                        {
+                            // No update was made (a step is cancelled before its update): the checkpoint is the last finished step's.
+                            last = SaveCheckpoint(model, optimizer, options, outputFolder, stageIndex, stageStep, done, finished, losses, evaluations);
+                            throw;
+                        }
+
+                        if (!float.IsFinite(loss) && losses.Skip(Math.Max(0, losses.Count - options.NonFiniteSteps)).Count(l => !float.IsFinite(l)) >= options.NonFiniteSteps)
+                        {
+                            throw new InvalidOperationException($"The loss of step {step + 1} is {loss}, the last {options.NonFiniteSteps + 1} steps not finite ({runner.Settings}); "
+                                + "the run stops (PretrainingOptions.NonFiniteSteps).");
+                        }
+
+                        schedule.Step();
+                        finished = positions;
+                        losses.Add(loss);
+                        step++;
+                        stageStep++;
+                        settings = runner.Settings;
+                        double seconds = watch.Elapsed.TotalSeconds;
+                        if (step > (resume?.Step ?? 0) + 1)
+                        {
+                            secondsPerStep = (secondsPerStep * timedSteps + seconds) / ++timedSteps;   // the first step (compiling, allocating) aside
+                        }
+
+                        float? evaluationLoss = null;
+                        bool stageEnd = stageStep == stage.Steps;
+                        if (evaluation.Count > 0 && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : stageEnd))
+                        {
+                            evaluationLoss = FineTuner.Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision);
+                            evaluations.Add((step, evaluationLoss.Value));
+                        }
+
+                        if (Telemetry.IsEnabled(TelemetryLevel.Batches))
+                        {
+                            Telemetry.BatchCompleted(new BatchCompleted(stageIndex + 1, stageStep, stage.Steps, step, sequences.Count, loss, rate, null, TimeSpan.Zero, watch.Elapsed));
+                        }
+
+                        if (stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0)
+                        {
+                            last = SaveCheckpoint(model, optimizer, options, outputFolder, stageEnd ? stageIndex + 1 : stageIndex, stageEnd ? 0 : stageStep, step,
+                                stageEnd ? [] : positions, losses, evaluations);
+                            trace?.Invoke($"checkpoint {last}");
+                        }
+
+                        long peak = model.Device.Backend.GetMemoryUsage().Peak;
+                        var remaining = TimeSpan.FromSeconds(secondsPerStep * (totalSteps - step));
+                        int images = sequences.Sum(q => q.Images.Count);
+                        progress?.Report(new PretrainingProgress(stage.Name, stageIndex, stageStep, stage.Steps, step, totalSteps, loss, rate,
+                            tokens / Math.Max(1e-9, seconds), images / Math.Max(1e-9, seconds), peak, remaining, evaluationLoss));
+                    }
+                }
+                finally
+                {
+                    runner?.Dispose();
+                }
+            }
+            finally
+            {
+                readers.ForEach(rd => rd.Reader.Dispose());
+            }
+
+            resume = null;
+        }
+
+        model.Network.Eval();
+        Telemetry.TrainingCompleted(new TrainingCompleted(options.Stages.Count, started.Elapsed, losses.Count > 0 ? losses[^1] : double.NaN,
+            options.Stages.Count, evaluations.Count > 0 ? evaluations.Min(e => e.Item2) : double.NaN, false, false));
+        return new PretrainingResult(step, losses, evaluations, last, started.Elapsed, settings);
+    }
+
+    // Rows of a micro-batch.
+    private static int Rows(PretrainingOptions options) => Math.Max(1, options.BatchTokens / options.MaxLength);
+
+    private static void Check(PretrainingOptions options)
+    {
+        if (options.Stages.Count == 0)
+        {
+            throw new ArgumentException("Give at least one pretraining stage.", nameof(options));
+        }
+
+        if (options.MaxLength < 1 || options.BatchTokens < 1 || options.GradientAccumulation < 1)
+        {
+            throw new ArgumentException($"MaxLength ({options.MaxLength}), BatchTokens ({options.BatchTokens}) and GradientAccumulation ({options.GradientAccumulation}) must be positive.", nameof(options));
+        }
+
+        if (!FineTuningOptimizers.Names.Contains(options.Optimizer, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"Optimizer '{options.Optimizer}' is not one of {string.Join(", ", FineTuningOptimizers.Names)}.", nameof(options));
+        }
+
+        string[] parts = ["decoder", "embeddings", "head", VisionTuningParts.Tower, VisionTuningParts.Projector, "all"];
+        foreach (var stage in options.Stages)
+        {
+            if (stage.Steps < 1)
+            {
+                throw new ArgumentException($"Stage {stage.Name} has {stage.Steps} steps; give at least one.", nameof(options));
+            }
+
+            if (stage.Sources.Count == 0)
+            {
+                throw new ArgumentException($"Stage {stage.Name} reads no sources.", nameof(options));
+            }
+
+            if (stage.Trained.Count == 0 || stage.Trained.FirstOrDefault(t => !parts.Contains(t, StringComparer.OrdinalIgnoreCase)) is { } unknown && unknown is not null)
+            {
+                throw new ArgumentException($"Stage {stage.Name} trains '{string.Join(", ", stage.Trained)}': the parts are {string.Join(", ", parts)}.", nameof(options));
+            }
+
+            if (stage.Sources.Any(s => s.Weight <= 0 || !double.IsFinite(s.Weight)))
+            {
+                throw new ArgumentException($"Stage {stage.Name}: every source's weight must be positive.", nameof(options));
+            }
+
+            if (!FineTuningSchedules.Names.Contains(stage.Schedule, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException($"Stage {stage.Name}: schedule '{stage.Schedule}' is not one of {string.Join(", ", FineTuningSchedules.Names)}.", nameof(options));
+            }
+        }
+    }
+
+    // The parameters a stage trains, in the network's order (then the vision parts'), every other one frozen.
+    private static List<Tensor> Trainable(PretrainedModel model, PretrainingStage stage, TuningVision? vision)
+    {
+        bool all = stage.Trained.Contains("all", StringComparer.OrdinalIgnoreCase);
+        bool Trains(string part) => all || stage.Trained.Contains(part, StringComparer.OrdinalIgnoreCase);
+        foreach (var p in model.Network.Parameters())
+        {
+            p.RequiresGrad = false;
+        }
+
+        var chosen = new List<Tensor>();
+        var seen = new HashSet<Tensor>(ReferenceEqualityComparer.Instance);
+        foreach (var (path, module) in model.NamedModules())
+        {
+            if (module is Idrak.Layers.Linear { TiedTo: not null })
+            {
+                continue;
+            }
+
+            string top = path.Split('.')[0];
+            string part = top is "embed" or "pos" ? "embeddings" : top == "head" ? "head" : "decoder";
+            var own = module.Parameters().Except(module.Children().SelectMany(c => c.Parameters()), ReferenceEqualityComparer.Instance).Cast<Tensor>();
+            foreach (var p in own)
+            {
+                if (Trains(part) && seen.Add(p))
+                {
+                    p.RequiresGrad = true;
+                    chosen.Add(p);
+                }
+            }
+        }
+
+        foreach (var p in vision?.Parameters ?? [])
+        {
+            if (seen.Add(p))
+            {
+                chosen.Add(p);
+            }
+        }
+
+        return chosen.Count > 0 ? chosen : throw new ArgumentException($"Stage {stage.Name} trains nothing of this model ({string.Join(", ", stage.Trained)}).");
+    }
+
+    private static Optimizer CreateOptimizer(List<Tensor> parameters, PretrainingOptions options, PretrainingStage stage)
+    {
+        Func<IReadOnlyList<Tensor>, Optimizer> make = options.Optimizer.ToLowerInvariant() switch
+        {
+            "adamw" => ps => new AdamW(ps, stage.LearningRate, options.Beta1, options.Beta2, 1e-8f, options.WeightDecay),
+            "adam" => ps => new Adam(ps, stage.LearningRate, options.Beta1, options.Beta2, 1e-8f, options.WeightDecay),
+            "adamw8bit" => ps => new AdamW8Bit(ps, stage.LearningRate, options.Beta1, options.Beta2, 1e-8f, options.WeightDecay),
+            _ => FineTuningOptimizers.Create(options.Optimizer, stage.LearningRate, options.WeightDecay, options.Momentum),
+        };
+        return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
+    }
+
+    // The step's sequences, drawn source by source (the one furthest behind its share next), each source in a pass order
+    // shuffled from the seed; and every source's position after them.
+    private static (List<TrainingSequence>, (long, long, long)[]) Draw(List<SourceState> readers, PretrainingOptions options, PretrainedModel model)
+    {
+        long capacity = (long)Rows(options) * options.MaxLength * options.GradientAccumulation;
+        var sequences = new List<TrainingSequence>();
+        long positions = 0;
+        double total = readers.Where(r => r.Reader.Count > 0).Sum(r => r.Weight);
+        int misses = 0;
+        while (positions < capacity)
+        {
+            long drawn = readers.Sum(r => r.Drawn);
+            var source = readers.Where(r => r.Reader.Count > 0).MaxBy(r => r.Weight / total * (drawn + 1) - r.Drawn)!;
+            var sequence = source.Take();
+            if (sequence is null || sequence.Tokens.Length < 2)
+            {
+                if (++misses > readers.Sum(r => r.Reader.Count))
+                {
+                    throw new InvalidDataException("The stage's sources give no sequence to train on (every record has nothing to learn).");
+                }
+
+                continue;
+            }
+
+            if (sequence.Tokens.Length - 1 > options.MaxLength)
+            {
+                throw new InvalidDataException($"A sequence of {sequence.Tokens.Length - 1} positions is longer than MaxLength {options.MaxLength}.");
+            }
+
+            long length = sequence.Tokens.Length - 1;
+            if (sequences.Count > 0 && positions + length > capacity)
+            {
+                source.Undo();
+                break;
+            }
+
+            sequences.Add(sequence);
+            positions += length;
+        }
+
+        return (sequences, [.. readers.Select(r => (r.Pass, r.Next, r.Drawn))]);
+    }
+
+    // The micro-batches of a step: packed rows of MaxLength when the model supports it, else one sequence a row.
+    private static List<FineTuner.Batch> Batches(PretrainedModel model, List<TrainingSequence> sequences, PretrainingOptions options)
+    {
+        int rows = Rows(options);
+        bool packs = options.Packing && Idrak.Layers.PackedSequences.Supports(model.Network);
+        if (packs)
+        {
+            return [.. FineTuner.PackedBatches(sequences, options.MaxLength, rows, null).Select(b => new FineTuner.Batch(b, options.MaxLength, true))];
+        }
+
+        var batches = new List<FineTuner.Batch>();
+        for (int first = 0; first < sequences.Count; first += rows)
+        {
+            batches.Add(FineTuner.Batch.Padded([.. Enumerable.Range(first, Math.Min(rows, sequences.Count - first))], sequences));
+        }
+
+        return batches;
+    }
+
+    private static List<TrainingSequence> ReadEvaluation(PretrainingOptions options, PretrainingContext context)
+    {
+        var sequences = new List<TrainingSequence>();
+        foreach (var source in options.Evaluation)
+        {
+            using var reader = PretrainingSources.Get(source.Kind).Open(source, context);
+            for (long i = 0; i < reader.Count && sequences.Count < options.EvaluationSequences * (options.Evaluation.Count); i++)
+            {
+                if (reader.Read(i) is { } sequence && sequence.Tokens.Length >= 2)
+                {
+                    sequences.Add(sequence);
+                }
+            }
+        }
+
+        return sequences;
+    }
+
+    // A source being drawn from: its reader, its pass order (shuffled from the seed, the stage and the pass), and where it is.
+    private sealed class SourceState(IPretrainingReader reader, double weight, int seed, int stage, int index)
+    {
+        private int[]? _order;
+        private long _orderPass = -1;
+
+        public IPretrainingReader Reader { get; } = reader;
+
+        public double Weight { get; } = weight;
+
+        public long Pass { get; set; }
+
+        public long Next { get; set; }
+
+        public long Drawn { get; set; }
+
+        public TrainingSequence? Take()
+        {
+            if (Next >= Reader.Count)
+            {
+                (Pass, Next) = (Pass + 1, 0);
+            }
+
+            long item = Order()[Next];
+            Next++;
+            Drawn++;
+            return Reader.Read(item);
+        }
+
+        public void Undo()
+        {
+            Next--;
+            Drawn--;
+            if (Next < 0)
+            {
+                (Pass, Next) = (Pass - 1, Reader.Count - 1);
+            }
+        }
+
+        private int[] Order()
+        {
+            if (_orderPass == Pass && _order is not null)
+            {
+                return _order;
+            }
+
+            if (Reader.Count > int.MaxValue)
+            {
+                throw new NotSupportedException($"A source of {Reader.Count} sequences is more than one pass order holds; split it into several sources.");
+            }
+
+            var order = new int[Reader.Count];
+            for (int i = 0; i < order.Length; i++)
+            {
+                order[i] = i;
+            }
+
+            // Fisher-Yates from a seed of the run's seed, the stage, the source and the pass (the same order on every run and resume).
+            var random = new Random(unchecked(seed * 1_000_003 + stage * 10_007 + index * 101 + (int)Pass));
+            for (int i = order.Length - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                (order[i], order[j]) = (order[j], order[i]);
+            }
+
+            (_order, _orderPass) = (order, Pass);
+            return order;
+        }
+    }
+
+    // A checkpoint: the model folder, the optimizer's state, and where the run is.
+    private static string SaveCheckpoint(PretrainedModel model, Optimizer optimizer, PretrainingOptions options, string outputFolder, int stage, int stageStep, int step,
+        (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
+    {
+        string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
+        model.SaveHuggingFace(folder, Idrak.Models.SafeTensorType.F32);
+        var state = optimizer.SaveState();
+        Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)),
+            Idrak.Models.SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
+        var json = new JsonObject
+        {
+            ["format"] = StateFormat,
+            ["stage"] = stage,
+            ["stage_step"] = stageStep,
+            ["step"] = step,
+            ["sources"] = new JsonArray([.. positions.Select(p => (JsonNode)new JsonObject { ["pass"] = p.Item1, ["next"] = p.Item2, ["drawn"] = p.Item3 })]),
+            ["losses"] = new JsonArray([.. losses.Select(l => (JsonNode)(float.IsFinite(l) ? l : float.NaN.ToString(CultureInfo.InvariantCulture)))]),
+            ["evaluations"] = new JsonArray([.. evaluations.Select(e => (JsonNode)new JsonObject { ["step"] = e.Item1, ["loss"] = e.Item2 })]),
+            ["options"] = options.ToJson(),
+        };
+        File.WriteAllText(Path.Combine(folder, StateFile), json.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n");
+        if (options.KeepCheckpoints > 0)
+        {
+            foreach (var old in Checkpoints(outputFolder).SkipLast(options.KeepCheckpoints))
+            {
+                Directory.Delete(old.Folder, recursive: true);
+            }
+        }
+
+        return folder;
+    }
+
+    private static IEnumerable<(int Step, string Folder)> Checkpoints(string outputFolder) =>
+        Directory.Exists(outputFolder)
+            ? Directory.GetDirectories(outputFolder, "checkpoint-*")
+                .Select(f => (Ok: int.TryParse(Path.GetFileName(f)["checkpoint-".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out int s), Step: s, Folder: f))
+                .Where(c => c.Ok && File.Exists(Path.Combine(c.Folder, StateFile))).OrderBy(c => c.Step).Select(c => (c.Step, c.Folder))
+            : [];
+
+    /// <summary>The latest checkpoint a run wrote into <paramref name="outputFolder"/>, or null.</summary>
+    public static string? LatestCheckpoint(string outputFolder) => Checkpoints(outputFolder).Select(c => c.Folder).LastOrDefault();
+
+    /// <summary>Reads where a run stopped from a checkpoint folder <see cref="Train"/> wrote.</summary>
+    /// <exception cref="FileNotFoundException">The folder holds no pretraining state.</exception>
+    /// <exception cref="InvalidDataException">The state is not this format.</exception>
+    public static PretrainingCheckpoint ReadCheckpoint(string folder)
+    {
+        string path = Path.Combine(folder, StateFile);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"{folder} holds no pretraining state ({StateFile}); give a checkpoint-STEP folder a run wrote.", path);
+        }
+
+        var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        if ((string?)json["format"] != StateFormat)
+        {
+            throw new InvalidDataException($"{path} is in format '{json["format"]}', not {StateFormat}.");
+        }
+
+        return new PretrainingCheckpoint(folder, PretrainingOptions.FromJson(json["options"]!.AsObject()), (int)json["stage"]!, (int)json["stage_step"]!, (int)json["step"]!,
+            [.. json["sources"]!.AsArray().Select(s => ((long)s!["pass"]!, (long)s["next"]!, (long)s["drawn"]!))],
+            [.. json["losses"]!.AsArray().Select(l => l is JsonValue v && v.TryGetValue(out float f) ? f : float.NaN)],
+            [.. json["evaluations"]!.AsArray().Select(e => ((int)e!["step"]!, (float)e["loss"]!))]);
+    }
+
+    private static Dictionary<string, OptimizerStateValue> ReadOptimizerState(string folder)
+    {
+        string path = Path.Combine(folder, OptimizerFile);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"{folder} holds no optimizer state ({OptimizerFile}).", path);
+        }
+
+        using var reader = Idrak.Models.SafeTensorsReader.Open(path);
+        ITensorStore store = reader;
+        return store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
+    }
+}
+
+// Token files cut into windows of the maximum length (and the next token as the last target), every token trained.
+internal sealed class TokenPretrainingSource : IPretrainingSource
+{
+    public string Name => PretrainingSources.Tokens;
+
+    public string Summary => "token files (uint16, int32, uint32 or .npy, as idrak data tokens writes them), cut into windows of the maximum length, every token trained";
+
+    public IPretrainingReader Open(PretrainingSource source, PretrainingContext context)
+    {
+        var files = new List<TokenFileSource>();
+        try
+        {
+            foreach (string path in source.Paths)
+            {
+                if (!File.Exists(path))
+                {
+                    throw new FileNotFoundException($"{path} not found.", path);
+                }
+
+                files.Add(new TokenFileSource(path, context.MaxLength, type: source.TokenType));
+            }
+
+            return new Reader(files, context.MaxLength);
+        }
+        catch
+        {
+            files.ForEach(f => f.Dispose());
+            throw;
+        }
+    }
+
+    private sealed class Reader(List<TokenFileSource> files, int length) : IPretrainingReader
+    {
+        private readonly long[] _starts = Starts(files);
+        private readonly float[] _features = new float[length], _targets = new float[length];
+
+        public long Count => _starts[^1];
+
+        private static long[] Starts(List<TokenFileSource> files)
+        {
+            var starts = new long[files.Count + 1];
+            for (int i = 0; i < files.Count; i++)
+            {
+                starts[i + 1] = starts[i] + files[i].Count;
+            }
+
+            return starts;
+        }
+
+        public TrainingSequence? Read(long index)
+        {
+            int file = Array.BinarySearch(_starts, index);
+            file = file >= 0 ? file : ~file - 1;
+            while (file + 1 < _starts.Length - 1 && _starts[file + 1] <= index)
+            {
+                file++;
+            }
+
+            files[file].Read((int)(index - _starts[file]), _features, _targets);
+            var tokens = new int[length + 1];
+            for (int i = 0; i < length; i++)
+            {
+                tokens[i] = (int)_features[i];
+            }
+
+            tokens[length] = (int)_targets[length - 1];
+            var trained = new bool[length + 1];
+            Array.Fill(trained, true);
+            return new TrainingSequence(tokens, trained);
+        }
+
+        public void Dispose() => files.ForEach(f => f.Dispose());
+    }
+}
+
+// Conversations in a tuning data format, encoded through the model's chat template (answers trained), with images.
+internal sealed class RecordPretrainingSource : IPretrainingSource
+{
+    public string Name => PretrainingSources.Records;
+
+    public string Summary => "conversations in a tuning data format (messages, sharegpt), with images when the model has a vision part; the answers trained";
+
+    public IPretrainingReader Open(PretrainingSource source, PretrainingContext context)
+    {
+        var encoder = context.Encoder ?? throw new InvalidOperationException("Records are encoded through the model's chat template; this model has none (give it a chat_template).");
+        var files = new List<PendingConversations>();
+        try
+        {
+            foreach (string path in source.Paths)
+            {
+                if (!File.Exists(path))
+                {
+                    throw new FileNotFoundException($"{path} not found.", path);
+                }
+
+                var format = source.Format is { } name ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(path);
+                files.Add(format.ReadPending(path, new TuningDataOptions { Images = source.Images }));
+            }
+
+            return new Reader(files, encoder, context.MaxLength);
+        }
+        catch
+        {
+            files.ForEach(f => f.Dispose());
+            throw;
+        }
+    }
+
+    private sealed class Reader(List<PendingConversations> files, ChatTranscriptEncoder encoder, int length) : IPretrainingReader
+    {
+        public long Count => files.Sum(f => (long)f.Count);
+
+        public TrainingSequence? Read(long index)
+        {
+            foreach (var file in files)
+            {
+                if (index < file.Count)
+                {
+                    return encoder.Encode(file.Read((int)index), length);
+                }
+
+                index -= file.Count;
+            }
+
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        public void Dispose() => files.ForEach(f => f.Dispose());
+    }
+}
