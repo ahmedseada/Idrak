@@ -37,8 +37,10 @@ head size 256 on CUDA, a read that does each thing once, bytes through the image
 that fits the page, tuning once per image; the test process every lane follows): [17-vision-ocr-speed.md](17-vision-ocr-speed.md).
 Synthetic document pages as tuning data from text (the library's own font engine, shaping, page layouts, scan and
 paper effects, `idrak data synth`; built): [18-synthetic-pages.md](18-synthetic-pages.md).
-Creating vision-language models from scratch (a spec, random weights, a tokenizer trainer, a staged pretraining loop
-with every parameter trained, the family as a plug-in, `idrak create` / `pretrain`; planned): [19-vision-language-from-scratch.md](19-vision-language-from-scratch.md).
+Language and vision-language models from scratch, two tracks (A: a decoder from a spec, a byte-level BPE trainer, a
+pretraining loop with every parameter trained, checkpoints with resume, `idrak create` / `pretrain` / `data tokenizer`;
+B: a vision tower and projector made by a family plug-in through `IVisionFamily.Create`, align and joint stages, images
+in distillation; detailed per phase with files, signatures and tests; planned): [19-vision-language-from-scratch.md](19-vision-language-from-scratch.md).
 
 ## Not supported yet
 
