@@ -17,7 +17,7 @@ namespace Idrak.Nlp;
 /// <see cref="FineTuningLossInput.TeacherDivergence"/> compares with the student's (and
 /// <see cref="FineTuningLosses.Distillation"/> trains on). Set one as <see cref="FineTuningOptions.Teacher"/>. Two kinds:
 /// <list type="bullet">
-/// <item><see cref="FromModel"/>: a loaded model computes its distributions on the fly, in inference mode, batch by batch
+/// <item><see cref="FromModel(PretrainedModel, int, int)"/>: a loaded model computes its distributions on the fly, in inference mode, batch by batch
 /// (any weight format, on any device: the student's or another; only its hidden states at the trained positions are kept
 /// between the passes of a step, and the head runs on a chunk of rows at a time).</item>
 /// <item><see cref="FromFile"/>: the top-k logits per token stored by <see cref="TeacherLogitsWriter"/>, so the teacher need
@@ -37,12 +37,22 @@ public static class DistillationTeachers
     /// <paramref name="topK"/> &gt; 0 only the k most likely tokens of each position are kept and renormalized (as stored
     /// logits are); 0 uses the full distribution. The model is not disposed with the teacher.
     /// </summary>
-    public static DistillationTeacher FromModel(PretrainedModel teacher, int topK = 0, int batchTokens = 4096)
+    public static DistillationTeacher FromModel(PretrainedModel teacher, int topK = 0, int batchTokens = 4096) => FromModel(teacher, topK, batchTokens, TuningImages.None);
+
+    /// <summary>
+    /// <see cref="FromModel(PretrainedModel, int, int)"/> for sequences with images too: a vision-language teacher reads
+    /// each image itself, prepared as <paramref name="images"/> says (the student's preparation), through its own vision
+    /// part (made on first use, disposed with the teacher). Each of the student's image blocks becomes the teacher's run of
+    /// image tokens for that image (the text around it, its begin and end tokens included, as the student has it), and the
+    /// trained positions follow; a teacher that cuts an image into another number of blocks is refused.
+    /// </summary>
+    public static DistillationTeacher FromModel(PretrainedModel teacher, int topK, int batchTokens, TuningImages images)
     {
         ArgumentNullException.ThrowIfNull(teacher);
+        ArgumentNullException.ThrowIfNull(images);
         ArgumentOutOfRangeException.ThrowIfNegative(topK);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchTokens);
-        return new ModelTeacher(teacher, topK, batchTokens);
+        return new ModelTeacher(teacher, topK, batchTokens, images);
     }
 
     /// <summary>A teacher that reads the top-k logits stored in <paramref name="path"/> (see <see cref="TeacherLogitsWriter"/>); disposing it closes the file.</summary>
@@ -127,10 +137,27 @@ internal static class TopKLogits
 }
 
 // A loaded model as the teacher: its hidden states at the batch's trained positions, the head run per chunk on demand.
-internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTokens) : DistillationTeacher
+internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTokens, TuningImages images) : DistillationTeacher
 {
     private string? _fingerprint;
     private Linear? _head;
+    private TuningVision? _vision;
+
+    // The teacher's own vision side, made when the first sequence with images comes.
+    private TuningVision Vision() => _vision ??= model.Vision is null
+        ? throw new NotSupportedException("The sequences hold images and the teacher reads none (it has no vision part): distil from a vision-language teacher.")
+        : TuningVision.Create(model, images);
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _vision?.Dispose();
+            _vision = null;
+        }
+
+        base.Dispose(disposing);
+    }
 
     public override int Vocabulary => model.Spec.Vocabulary;
 
@@ -163,8 +190,21 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         {
             for (int first = 0; first < sequences.Count;)
             {
+                if (sequences[first].Images.Count > 0)
+                {
+                    // A sequence with images alone: the teacher's image tokens in place of the student's, its features in them.
+                    if (WithImages(sequences[first], modules) is { } rowsOfImages)
+                    {
+                        parts.Add(rowsOfImages);
+                    }
+
+                    first++;
+                    continue;
+                }
+
                 int last = first, longest = Math.Max(1, sequences[first].Tokens.Length - 1);
-                while (last + 1 < sequences.Count && (last + 2 - first) * Math.Max(longest, sequences[last + 1].Tokens.Length - 1) <= batchTokens)
+                while (last + 1 < sequences.Count && sequences[last + 1].Images.Count == 0
+                       && (last + 2 - first) * Math.Max(longest, sequences[last + 1].Tokens.Length - 1) <= batchTokens)
                 {
                     longest = Math.Max(longest, sequences[++last].Tokens.Length - 1);
                 }
@@ -235,6 +275,104 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         var all = Tensor.Concat(parts, 0);
         parts.ForEach(p => p.Dispose());
         return TensorScope.Untrack(all);
+    }
+
+    // The teacher's final hidden states at the trained positions of one sequence with images (untracked), or null when
+    // none of its positions trains.
+    private Tensor? WithImages(TrainingSequence sequence, List<Module> modules)
+    {
+        var vision = Vision();
+        int imageToken = vision.Format.ImageToken;
+        var tokens = new List<int>(sequence.Tokens.Length);
+        var trained = new List<bool>(sequence.Tokens.Length);
+        var teacherImages = new List<TrainingImage>();
+        var runs = sequence.Images.SelectMany((image, k) => image.Blocks.Select((b, j) => (Image: k, Block: j, b.Position, b.Tokens))).OrderBy(r => r.Position).ToList();
+        var layouts = sequence.Images.Select(image => vision.Blocks(image.Image, vision.Images)).ToList();
+        for (int k = 0; k < sequence.Images.Count; k++)
+        {
+            if (layouts[k].Count != sequence.Images[k].Blocks.Count)
+            {
+                throw new NotSupportedException($"The teacher cuts an image into {layouts[k].Count} blocks, the student into {sequence.Images[k].Blocks.Count}: "
+                    + "distil between families that read an image as the same number of blocks.");
+            }
+        }
+
+        var blocks = sequence.Images.Select(_ => new List<(int, int)>()).ToList();
+        int cursor = 0;
+        foreach (var run in runs)
+        {
+            for (; cursor < run.Position; cursor++)
+            {
+                tokens.Add(sequence.Tokens[cursor]);
+                trained.Add(sequence.Trained[cursor]);
+            }
+
+            int count = layouts[run.Image][run.Block].Tokens;
+            blocks[run.Image].Add((tokens.Count, count));
+            for (int i = 0; i < count; i++)
+            {
+                tokens.Add(imageToken);
+                trained.Add(false);
+            }
+
+            cursor = run.Position + run.Tokens;
+        }
+
+        for (; cursor < sequence.Tokens.Length; cursor++)
+        {
+            tokens.Add(sequence.Tokens[cursor]);
+            trained.Add(sequence.Trained[cursor]);
+        }
+
+        if (tokens.Count - 1 > model.MaxPositions)
+        {
+            throw new InvalidOperationException($"A sequence of {tokens.Count} tokens with the teacher's image tokens is longer than its context of {model.MaxPositions} positions.");
+        }
+
+        for (int k = 0; k < sequence.Images.Count; k++)
+        {
+            teacherImages.Add(new TrainingImage(sequence.Images[k].Image, vision.Images, blocks[k])
+            {
+                AxisPositions = layouts[k].Select(l => vision.Encoder.AxisPositions(l)).ToList() is var axes && axes.Any(a => a is not null) ? axes : null,
+            });
+        }
+
+        var rows = Enumerable.Range(0, tokens.Count - 1).Where(t => trained[t + 1]).ToArray();
+        if (rows.Length == 0)
+        {
+            return null;
+        }
+
+        using var scope = new TensorScope();
+        var features = vision.Features(teacherImages);
+        var prompt = new List<PromptImage>();
+        for (int k = 0; k < teacherImages.Count; k++)
+        {
+            int at = 0, b = 0;
+            foreach (var (position, count) in teacherImages[k].Blocks)
+            {
+                var block = at == 0 && count == features[k].Shape[0] ? features[k] : features[k].Narrow(0, at, count);
+                var axes = teacherImages[k].AxisPositions?[b];
+                prompt.Add(new PromptImage(position, block) { Positions = axes is null ? null : Tensor.From(axes, [axes.Length / count, count], Device.Cpu) });
+                at += count;
+                b++;
+            }
+        }
+
+        var ids = Tensor.From(tokens.Take(tokens.Count - 1).Select(t => (float)t).ToArray(), [1, tokens.Count - 1], model.Device);
+        using var images = model.Network.Begin(ids, prompt, vision.Attention);
+        var hidden = ids;
+        for (int i = 0; i < modules.Count - 1; i++)
+        {
+            if (i == images.FirstBlock)
+            {
+                hidden = images.Substitute(hidden);
+            }
+
+            hidden = modules[i].Forward(hidden);
+        }
+
+        return TensorScope.Untrack(scope.Keep(Tensor.GatherRows(hidden.Reshape(tokens.Count - 1, hidden.Shape[^1]), rows)));
     }
 
     // The head's logits of trained positions start … start + count − 1, [count, teacher vocabulary] on the teacher's device.
@@ -413,6 +551,14 @@ internal static class Hash
         foreach (bool trained in sequence.Trained)
         {
             hash = (hash ^ (trained ? 1UL : 2UL)) * 1099511628211UL;
+        }
+
+        // The images too (their content hashes and preparation): the same text over other pages is another record. A
+        // sequence without images keeps the key it always had.
+        foreach (var image in sequence.Images)
+        {
+            hash = Add(hash, System.Text.Encoding.UTF8.GetBytes(image.Image.Hash));
+            hash = Add(hash, System.Text.Encoding.UTF8.GetBytes(image.Preparation.ToJson().ToJsonString()));
         }
 
         return hash;

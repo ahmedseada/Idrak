@@ -803,7 +803,7 @@ public sealed record FineTuningOptions
     public FineTuningLoss? Loss { get; init; }
 
     /// <summary>
-    /// The teacher for knowledge distillation (<see cref="DistillationTeachers.FromModel"/> or
+    /// The teacher for knowledge distillation (<see cref="DistillationTeachers.FromModel(PretrainedModel, int, int)"/> or
     /// <see cref="DistillationTeachers.FromFile"/>), whose distributions a loss reads through
     /// <see cref="FineTuningLossInput.TeacherDivergence"/> (see <see cref="FineTuningLosses.Distillation"/>). It must share the
     /// student's vocabulary (<see cref="DistillationTeacher.Check"/>, which training runs first). Null: no teacher. Not

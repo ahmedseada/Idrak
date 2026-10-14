@@ -156,11 +156,19 @@ public sealed class TeacherLogitsWriter : IDisposable
     /// (repeats are stored once).
     /// </summary>
     public static int Write(string path, PretrainedModel teacher, IReadOnlyList<TrainingSequence> sequences, int topK = 16, Action<int>? progress = null,
-        int batchTokens = 4096)
+        int batchTokens = 4096) => Write(path, teacher, sequences, topK, progress, batchTokens, TuningImages.None);
+
+    /// <summary>
+    /// <see cref="Write(string, PretrainedModel, IReadOnlyList{TrainingSequence}, int, Action{int}?, int)"/> for sequences
+    /// with images: the teacher reads them prepared as <paramref name="images"/> says (see
+    /// <see cref="DistillationTeachers.FromModel(PretrainedModel, int, int, TuningImages)"/>).
+    /// </summary>
+    public static int Write(string path, PretrainedModel teacher, IReadOnlyList<TrainingSequence> sequences, int topK, Action<int>? progress,
+        int batchTokens, TuningImages images)
     {
         ArgumentNullException.ThrowIfNull(teacher);
         ArgumentNullException.ThrowIfNull(sequences);
-        var source = new ModelTeacher(teacher, 0, batchTokens);
+        using var source = new ModelTeacher(teacher, 0, batchTokens, images);
         int k = Math.Min(topK, source.Vocabulary);
         using var writer = new TeacherLogitsWriter(path, source.Vocabulary, k, source.Fingerprint);
         for (int first = 0; first < sequences.Count;)

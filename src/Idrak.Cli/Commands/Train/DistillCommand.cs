@@ -29,6 +29,7 @@ internal sealed class DistillCommand : Command
     [
         "--rank", "--lora-alpha", "--lr", "--epochs", "--max-length", "--batch-tokens", "--accumulate", "--targets", "--optimizer", "--weight-decay",
         "--schedule", "--warmup", "--min-lr", "--eval", "--eval-fraction", "--eval-every", "--save-every", "--system", "--max-rows", "--adapter-type", "--context",
+        "--data-format", "--images", "--image-transform", "--vision", "--parts", "--feature-cache",
     ];
 
     private static readonly string[] TuneFlags = ["--no-packing", "--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--no-dedup", "--offload"];
@@ -73,8 +74,10 @@ internal sealed class DistillCommand : Command
           and these options of idrak tune train: --rank, --lora-alpha (tune's --alpha), --lr, --epochs, --max-length,
           --batch-tokens, --accumulate, --targets, --optimizer, --weight-decay, --schedule, --warmup, --min-lr, --eval,
           --eval-fraction, --eval-every, --save-every, --system, --max-rows, --adapter-type, --context, --no-packing,
-          --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-dedup, --offload. --json prints one
-          JSON document at the end with the output lines.
+          --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-dedup, --offload, and for image
+          records --data-format, --images, --image-transform, --vision, --parts and --feature-cache (a vision-language
+          teacher reads the student's images as they are prepared; its family's plug-in with -P). --json prints one JSON
+          document at the end with the output lines.
 
         Examples:
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
@@ -247,7 +250,8 @@ internal sealed class DistillCommand : Command
                     int k = topK is > 0 ? topK.Value : 16;
                     var clock = Stopwatch.StartNew();
                     precomputed = TeacherLogitsWriter.Write(precompute, teacherModel, sequences, k,
-                        done => console.Progress("teacher logits", done, sequences.Count, clock.Elapsed, unit: "sequences"), tuning.BatchTokens);
+                        done => console.Progress("teacher logits", done, sequences.Count, clock.Elapsed, unit: "sequences"), tuning.BatchTokens,
+                        tuning.Vision?.Images ?? TuningImages.None);
                     console.Finish();
                     console.Out.WriteLine($"teacher logits for {precomputed:N0} sequences ({sequences.Sum(s => (long)s.TrainedTokens):N0} trained tokens, top {k}) written to "
                                           + $"{Path.GetFullPath(precompute)} ({Downloader.Size(new FileInfo(precompute).Length)})");
@@ -255,7 +259,9 @@ internal sealed class DistillCommand : Command
                     return null;
                 }
 
-                source = stored ? DistillationTeachers.FromFile(teacher) : DistillationTeachers.FromModel(teacherModel!, topK ?? 0, tuning.BatchTokens);
+                // A vision-language teacher reads the student's images as the student's run prepares them.
+                source = stored ? DistillationTeachers.FromFile(teacher)
+                    : DistillationTeachers.FromModel(teacherModel!, topK ?? 0, tuning.BatchTokens, tuning.Vision?.Images ?? TuningImages.None);
                 source.Check(model.Tokenizer ?? throw new InvalidOperationException("The student has no tokenizer: its vocabulary cannot be compared with the teacher's."));
                 console.Out.WriteLine($"distilling: temperature {temperature.ToString(CultureInfo.InvariantCulture)}, alpha {alpha.ToString(CultureInfo.InvariantCulture)}, "
                                       + (source.TopK > 0 ? $"the teacher's top {source.TopK} tokens per position (renormalized)" : "the teacher's full distributions"));

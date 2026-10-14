@@ -45,6 +45,12 @@ internal sealed class PretrainCommand : Command
               --vision K=V         a vision option of the model's family (repeat)
               --feature-cache NAME where image features of frozen stages are kept: memory or disk (memory)
               --sequences N        exactly N sequences a step (by default a step's rows are filled)
+              --teacher MODEL      learn a teacher's token distributions too (a model of the same vocabulary; one that
+                                   reads images for image records)
+              --temperature T      the distillation temperature (1)
+              --alpha A            the teacher's share of the loss, 0 to 1 (0.5)
+              --top-k K            keep the teacher's K most likely tokens per position (all)
+              --teacher-device D   the teacher's device (the model's)
               --weight NAME=W      a source's share of each step: tokens=3, data=1 (1 each)
               --steps N            the stage's optimizer steps (1000)
               --trained PARTS      what trains: decoder, embeddings, head, tower, projector, all (decoder,embeddings,head)
@@ -88,7 +94,7 @@ internal sealed class PretrainCommand : Command
     [
         "--tokens", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
         "--batch-tokens", "--accumulate", "--optimizer", "--weight-decay", "--clip", "--save-every", "--keep", "--eval", "--eval-every", "--log-every", "--out",
-        "--image-transform", "--vision", "--feature-cache", "--sequences",
+        "--image-transform", "--vision", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
@@ -160,6 +166,24 @@ internal sealed class PretrainCommand : Command
             {
                 options = options with { MaxLength = model.MaxPositions };
                 context.Write($"--max-length is the model's {model.MaxPositions} positions");
+            }
+
+            // A teacher (not kept in checkpoints: given again on resume).
+            using var teacherModel = context.Option("--teacher") is { } teacherPath
+                ? PretrainedModel.Load(teacherPath, new PretrainedOptions { Device = context.Option("--teacher-device") is { } td ? Idrak.Abstraction.Device.Parse(td) : context.Device })
+                : null;
+            using var teacher = teacherModel is null ? null : DistillationTeachers.FromModel(teacherModel, context.IntOption("--top-k", 0), options.BatchTokens, options.Images);
+            if (teacher is not null)
+            {
+                float Real(string option, float otherwise) => context.Option(option) is not { } text ? otherwise
+                    : float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : throw new UsageException($"{option} is a number, not '{text}'.");
+                options = options with
+                {
+                    Teacher = teacher,
+                    DistillationTemperature = Real("--temperature", options.DistillationTemperature),
+                    DistillationAlpha = Real("--alpha", options.DistillationAlpha),
+                };
+                context.Write($"teacher {context.Option("--teacher")}: {teacherModel!.Spec.ParameterCount / 1e6:F1}M parameters, temperature {options.DistillationTemperature}, alpha {options.DistillationAlpha}");
             }
 
             int total = options.Stages.Sum(s => s.Steps);

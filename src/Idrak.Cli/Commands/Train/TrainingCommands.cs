@@ -250,6 +250,8 @@ internal sealed class ResumeCommand : Command
               --epochs N  train N more epochs (default: what is left of the run's epochs)
               --steps N   a pretraining run: N more steps in its last stage (default: what is left of its stages)
           -o, --out FILE  the model package (default: the run's)
+              --teacher MODEL, --temperature T, --alpha A, --top-k K, --teacher-device D
+                          a pretraining run's teacher, given again (a checkpoint does not keep it)
 
         The run's data, split, scalers and settings are reused and its log continues. The checkpoint holds the weights
         only: the optimizer's moments and the learning-rate schedule start again. An image run that fine-tunes a model
@@ -262,7 +264,7 @@ internal sealed class ResumeCommand : Command
           idrak resume run --steps 1000
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--steps", "--out"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--steps", "--out", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 

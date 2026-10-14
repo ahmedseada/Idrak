@@ -160,6 +160,20 @@ public sealed record PretrainingOptions
     /// <summary>Where image features of frozen vision stages are cached: a <see cref="FeatureCaches"/> name.</summary>
     public string FeatureCache { get; init; } = FeatureCaches.Memory;
 
+    /// <summary>
+    /// A teacher whose token distributions the model learns beside the token loss (<see cref="FineTuningLosses.Distillation"/>),
+    /// or null: <see cref="DistillationTeachers.FromModel(PretrainedModel, int, int, TuningImages)"/> for a loaded model
+    /// (one that reads images, for image records). It shares the model's vocabulary. Not saved in checkpoints: give it
+    /// again on resume.
+    /// </summary>
+    public DistillationTeacher? Teacher { get; init; }
+
+    /// <summary>The distillation temperature (with <see cref="Teacher"/>).</summary>
+    public float DistillationTemperature { get; init; } = 1f;
+
+    /// <summary>The teacher's share of the loss, 0 to 1 (with <see cref="Teacher"/>).</summary>
+    public float DistillationAlpha { get; init; } = 0.5f;
+
     /// <summary>The options as JSON ("format": "idrak-pretrain/1").</summary>
     public JsonObject ToJson() => new()
     {
@@ -191,6 +205,8 @@ public sealed record PretrainingOptions
         ["loss_chunk_rows"] = LossChunkRows,
         ["images"] = Images.ToJson(),
         ["feature_cache"] = FeatureCache,
+        ["distillation_temperature"] = DistillationTemperature,
+        ["distillation_alpha"] = DistillationAlpha,
     };
 
     /// <summary>Options from their JSON (<see cref="ToJson"/>); keys left out keep their defaults, unknown keys are refused.</summary>
@@ -239,6 +255,8 @@ public sealed record PretrainingOptions
             LossChunkRows = (int?)json["loss_chunk_rows"] ?? d.LossChunkRows,
             Images = json["images"] is JsonObject images ? TuningImages.FromJson(images) : d.Images,
             FeatureCache = (string?)json["feature_cache"] ?? d.FeatureCache,
+            DistillationTemperature = (float?)json["distillation_temperature"] ?? d.DistillationTemperature,
+            DistillationAlpha = (float?)json["distillation_alpha"] ?? d.DistillationAlpha,
         };
     }
 }
@@ -321,6 +339,9 @@ public static class Pretrainer
             throw new InvalidOperationException("Pretraining trains every weight: load the model with float32 weights and without adapters (merge them first).");
         }
 
+        options.Teacher?.Check(model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer: its vocabulary cannot be compared with the teacher's."));
+        var distillation = options.Teacher is { } teacher
+            ? new FineTuner.CustomLoss(FineTuningLosses.Distillation(options.DistillationTemperature, options.DistillationAlpha), pairs: false, teacher) : null;
         Directory.CreateDirectory(outputFolder);
         var started = Stopwatch.StartNew();
         var losses = new List<float>(resume?.Losses ?? []);
@@ -424,7 +445,7 @@ public static class Pretrainer
                         next = stageStep + 1 < stage.Steps ? Task.Run(() => Draw(readers, options, model)) : Task.FromResult<(List<TrainingSequence>, (long, long, long)[])>(([], []));
                         var batches = Batches(model, sequences, options);
                         int imageTokens = sequences.Sum(q => q.Images.Sum(im => im.Tokens));
-                        runner ??= new FineTuner.StepRunner(model, sequences, optimizer, tuning, Rows(options) * options.MaxLength, null, trace,
+                        runner ??= new FineTuner.StepRunner(model, sequences, optimizer, tuning, Rows(options) * options.MaxLength, distillation, trace,
                             (long)Rows(options) * options.MaxLength, imageTokens);
                         float rate = optimizer.LearningRate;
                         var watch = Stopwatch.StartNew();
@@ -522,6 +543,11 @@ public static class Pretrainer
         if (options.Stages.Count == 0)
         {
             throw new ArgumentException("Give at least one pretraining stage.", nameof(options));
+        }
+
+        if (options.DistillationAlpha is < 0 or > 1 || options.DistillationTemperature <= 0)
+        {
+            throw new ArgumentException($"DistillationAlpha must be 0 to 1 ({options.DistillationAlpha}) and DistillationTemperature positive ({options.DistillationTemperature}).", nameof(options));
         }
 
         if (options.MaxLength < 1 || options.BatchTokens < 1 || options.GradientAccumulation < 1 || options.SequencesPerStep < 0)
