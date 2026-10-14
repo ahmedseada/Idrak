@@ -92,9 +92,11 @@ public static class SyntheticRecordFormats
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>The first registered format that reads <paramref name="path"/>.</summary>
+    /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
     /// <exception cref="InvalidDataException">None does; the message names them.</exception>
-    public static ISyntheticRecordFormat Detect(string path) => Table.Values.FirstOrDefault(f => f.Recognizes(path))
-        ?? throw new InvalidDataException($"No synthetic record format reads {path} (registered: {string.Join(", ", Table.Keys)}); name one, or register one with SyntheticRecordFormats.Register.");
+    public static ISyntheticRecordFormat Detect(string path) => !File.Exists(path)
+        ? throw new FileNotFoundException($"The records file {path} is not there.", path)
+        : Table.Values.FirstOrDefault(f => f.Recognizes(path)) ?? throw new InvalidDataException($"No synthetic record format reads {path} (registered: {string.Join(", ", Table.Keys)}); name one, or register one with SyntheticRecordFormats.Register.");
 }
 
 /// <summary>What a page part's slot is filled from: the page's random numbers, its date, and its record's answer fields.</summary>

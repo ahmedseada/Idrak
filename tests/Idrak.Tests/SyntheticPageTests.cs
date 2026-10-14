@@ -22,7 +22,7 @@ internal static partial class Tests
         ("synthetic data: a record no font can draw, or with no text, is left out and said why; a font without a page's letters is not used for it; every record left out is an error", SyntheticSkips),
         ("synthetic data: the record formats and slots by name; an app's slot replaces the library's of its name only", SyntheticRegistries),
         ("synthetic data: page settings text sets the style's sizes and chances, refusing unknown keys and values out of range; an indented answer keeps its own line ending (\\n or \\r\\n) on every machine", SyntheticStyle),
-        ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans and page settings given; a missing font folder or a bad setting is a usage error", SyntheticCli),
+        ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans and page settings given; a missing records file or font folder, or a bad setting, is a usage error", SyntheticCli),
     ];
 
     private static string SyntheticFolder(string name)
@@ -378,14 +378,18 @@ internal static partial class Tests
             foreach (var (args, why) in new (string[], string)[]
             {
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl")], "no --fonts"),
+                (["data", "synth", Path.Combine(folder, "gone.txt"), "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts], "a missing records file"),
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", Path.Combine(folder, "nope")], "a missing fonts folder"),
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--page", "nope=1"], "an unknown page setting"),
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--scan", "nope"], "an unknown scan profile"),
             })
             {
                 var bad = SynthCli(args);
-                Check(bad.Code == 2 && bad.Err.Length > 0, $"{why}: exit {bad.Code}, {bad.Err.Trim()}");
+                Check(bad.Code == 2 && bad.Err.Length > 0 && (why != "a missing records file" || bad.Err.Contains("is not there", StringComparison.Ordinal)),
+                    $"{why}: exit {bad.Code}, {bad.Err.Trim()}");
             }
+
+            Throws<FileNotFoundException>(() => SyntheticRecordFormats.Detect(Path.Combine(folder, "gone.txt")), "the library says a missing file is missing");
         }
         finally
         {

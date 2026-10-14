@@ -76,6 +76,11 @@ internal sealed class DataSynthCommand : Command
         string input = context.Argument(0, "INPUT");
         string output = context.Option("--out") ?? throw new UsageException("Give -o, --out FILE for the records to write (.jsonl).");
         string fontsFolder = context.Option("--fonts") ?? throw new UsageException("Give --fonts DIR, a folder of .ttf, .otf or .ttc fonts.");
+        if (!File.Exists(input))
+        {
+            throw new UsageException($"The records file {input} is not there (idrak data text writes one).");
+        }
+
         if (!Directory.Exists(fontsFolder))
         {
             throw new UsageException($"The fonts folder {fontsFolder} is not there.");
@@ -127,7 +132,7 @@ internal sealed class DataSynthCommand : Command
             {
                 result = SyntheticPages.Write(input, output, options, new ReportPages(line));
             }
-            catch (Exception e) when (e is ArgumentException or InvalidDataException or NotSupportedException)
+            catch (Exception e) when (e is ArgumentException or InvalidDataException or NotSupportedException or FileNotFoundException)
             {
                 throw new UsageException(e.Message);
             }
