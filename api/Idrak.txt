@@ -1245,6 +1245,7 @@ public interface Idrak.Models.Abstractions.IWeightSource
 
 public sealed class Idrak.Models.Abstractions.PretrainedArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PretrainedArchitecture()
+  public System.Func<Idrak.Abstraction.Generation.DecoderSpec, System.Text.Json.Nodes.JsonObject>? Config { get; init; }
   public System.Func<Idrak.Models.Abstractions.PretrainedBuildContext, System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module>>? Build { get; init; }
   public System.Func<System.Collections.Generic.IReadOnlySet<string>, Idrak.Models.Abstractions.PretrainedArchitecture>? ForCheckpoint { get; init; }
   public System.Func<string, bool> Transposed { get; init; }
@@ -1362,6 +1363,14 @@ public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.ITo
   public void Save(string path)
   public void WriteTo(System.IO.Stream stream)
 
+public sealed record Idrak.Models.CreateOptions : System.IEquatable<Idrak.Models.CreateOptions>
+  public CreateOptions()
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Models.SafeTensorType Type { get; init; }
+  public bool Overwrite { get; init; }
+  public float? InitStd { get; init; }
+  public int Seed { get; init; }
+
 public sealed class Idrak.Models.GgufFile : System.IDisposable
   public System.Collections.Generic.Dictionary<string, object> Metadata { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.GgufTensorInfo> Tensors { get; }
@@ -1389,6 +1398,36 @@ public sealed record Idrak.Models.GgufTensorInfo : System.IEquatable<Idrak.Model
   public long[] Dimensions { get; init; }
   public string Name { get; init; }
 
+public sealed record Idrak.Models.ModelFiles : System.IEquatable<Idrak.Models.ModelFiles>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public ModelFiles()
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Extra { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> StopTokens { get; init; }
+  public bool AddBosToken { get; init; }
+  public const string ChatMLWithParts = "{%- for message in messages -%}
+{{- '<|im_start|>' + message['role'] + '\\n' -}}
+{%- if message['content'] is string -%}
+{{- message['content'] -}}
+{%- else -%}
+{%- for item in message['content'] -%}
+{%- if item['type'] == 'image' -%}
+{{- '<image>' -}}
+{%- elif item['type'] == 'text' -%}
+{{- item['text'] -}}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{{- '<|im_end|>\\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+{{- '<|im_start|>assistant\\n' -}}
+{%- endif -%}
+"
+  public required Idrak.Models.BpeTokenizer Tokenizer { get; init; }
+  public string EosToken { get; init; }
+  public string? BosToken { get; init; }
+  public string? ChatTemplate { get; init; }
+  public string? PadToken { get; init; }
+
 public static class Idrak.Models.ModelSource
   public static Idrak.Abstraction.Formats.ModelSourceOptions Options(string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, bool download = true)
   public static bool IsModelId(string model)
@@ -1399,6 +1438,8 @@ public static class Idrak.Models.PretrainedFamilies
   public static Idrak.Abstraction.Generation.DecoderSpec CommonSpec(System.Text.Json.Nodes.JsonObject c, System.Collections.Generic.List<string> notes)
   public static Idrak.Abstraction.Generation.DecoderSpec ExpertSpec(System.Text.Json.Nodes.JsonObject c, System.Collections.Generic.List<string> notes, bool normalizeTopK)
   public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
+  public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
+  public static System.Text.Json.Nodes.JsonObject CommonConfig(Idrak.Abstraction.Generation.DecoderSpec spec, string modelType)
   public static string? GemmaTensorName(string name)
   public static string? LlamaTensorName(string name)
   public static string? MixtralTensorName(string name)
@@ -1437,6 +1478,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public int KeepTrainedVision(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IEnumerable<string> parts)
   public int LoadAdapter(string folder)
   public int MaxPositions { get; }
+  public static Idrak.Models.PretrainedModel Create(string folder, Idrak.Abstraction.Generation.DecoderSpec spec, string architecture, Idrak.Models.ModelFiles files, Idrak.Models.CreateOptions? options = null)
   public static Idrak.Models.PretrainedModel Load(string folder, Idrak.Models.PretrainedOptions? options = null)
   public string Folder { get; }
   public void Dispose()

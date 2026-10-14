@@ -11,7 +11,7 @@ namespace Idrak.Models;
 /// <summary>
 /// The model families this assembly reads (registered in <see cref="PretrainedArchitectures"/>, Idrak.Abstraction, when
 /// the registry is first used), and the pieces they are made of, for families of your own:
-/// <see cref="LlamaStyle"/> for those sharing the Llama naming, the specs read from the common configuration keys
+/// <see cref="LlamaStyle(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/> for those sharing the Llama naming, the specs read from the common configuration keys
 /// (<see cref="CommonSpec"/>, <see cref="ExpertSpec"/>) and the checkpoint names of each family.
 /// </summary>
 public static class PretrainedFamilies
@@ -20,16 +20,16 @@ public static class PretrainedFamilies
     // vision part is a VisionFamilies registration the library does not make), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE.
     internal static IEnumerable<(string Name, PretrainedArchitecture Architecture)> BuiltIns() =>
     [
-        ("LlamaForCausalLM", LlamaStyle((config, spec, _) => spec)),
-        ("MistralForCausalLM", LlamaStyle((config, spec, _) => spec)),
-        ("Qwen2ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkvBias = true })),
-        ("Qwen3ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkNorm = true })),
+        ("LlamaForCausalLM", LlamaStyle((config, spec, _) => spec, "llama")),
+        ("MistralForCausalLM", LlamaStyle((config, spec, _) => spec, "mistral")),
+        ("Qwen2ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkvBias = true }, "qwen2")),
+        ("Qwen3ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkNorm = true }, "qwen3")),
         ("GemmaForCausalLM", LlamaStyle((config, spec, _) => spec with
         {
             NormOffset = 1f,                                                  // Gemma scales by (1 + weight)
             EmbeddingScale = MathF.Sqrt(spec.Dim),
             TieEmbeddings = true,
-        })),
+        }, "gemma")),
         ("Gemma2ForCausalLM", new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 2), TensorName = GemmaTensorName }),
         ("Gemma3ForCausalLM", new() { Spec = (config, notes) => Gemma3Spec(Gemma3Keys(config), notes), TensorName = GemmaTensorName }),
         ("Gemma3ForConditionalGeneration", Gemma3VisionLanguage(Gemma3Layouts[0])),
@@ -48,6 +48,128 @@ public static class PretrainedFamilies
         Spec = (config, notes) => adjust(config, CommonSpec(config, notes), notes),
         TensorName = LlamaTensorName,
     };
+
+    /// <summary>
+    /// <see cref="LlamaStyle(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/> that can also write a spec as
+    /// config.json (<see cref="PretrainedArchitecture.Config"/>, through <see cref="CommonConfig"/> with
+    /// <paramref name="modelType"/>), so models of the family can be made from a spec.
+    /// </summary>
+    public static PretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelType);
+        var architecture = LlamaStyle(adjust);
+        return new PretrainedArchitecture
+        {
+            Spec = architecture.Spec,
+            TensorName = architecture.TensorName,
+            Config = spec => CheckedConfig(spec, CommonConfig(spec, modelType), architecture.Spec, modelType),
+        };
+    }
+
+    /// <summary>
+    /// A spec as the common configuration keys (the inverse of <see cref="CommonSpec"/>): hidden_size,
+    /// num_hidden_layers, num_attention_heads, num_key_value_heads, head_dim, intermediate_size, vocab_size,
+    /// max_position_embeddings, rms_norm_eps, rope_theta (and partial_rotary_factor, rope_scaling), hidden_act,
+    /// attention_bias, mlp_bias, tie_word_embeddings and the sliding window (sliding_window, layer_types), with
+    /// <paramref name="modelType"/> as "model_type". What the keys cannot say (a norm other than RMS, learned positions,
+    /// experts, …) is the caller's to check (a family's <see cref="PretrainedArchitecture.Config"/> reads the result back).
+    /// </summary>
+    public static JsonObject CommonConfig(DecoderSpec spec, string modelType)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        var c = new JsonObject
+        {
+            ["model_type"] = modelType,
+            ["vocab_size"] = spec.Vocabulary,
+            ["hidden_size"] = spec.Dim,
+            ["num_hidden_layers"] = spec.Layers,
+            ["num_attention_heads"] = spec.Heads,
+            ["num_key_value_heads"] = spec.KvHeads,
+            ["head_dim"] = spec.HeadDim,
+            ["intermediate_size"] = spec.FfDim,
+            ["max_position_embeddings"] = spec.MaxPositions,
+            ["rms_norm_eps"] = spec.NormEpsilon,
+            ["hidden_act"] = spec.Activation switch
+            {
+                FeedForwardActivation.Silu => "silu",
+                FeedForwardActivation.Gelu => "gelu_pytorch_tanh",
+                FeedForwardActivation.Relu => "relu",
+                _ => throw new NotSupportedException($"Activation {spec.Activation} has no configuration name."),
+            },
+            ["attention_bias"] = spec.OutputBias,
+            ["mlp_bias"] = spec.FeedForwardBias,
+            ["tie_word_embeddings"] = spec.TieEmbeddings,
+        };
+        if (spec.Rope is { } rope)
+        {
+            c["rope_theta"] = rope.Theta;
+            if (rope.RotaryDim is int rotary)
+            {
+                c["partial_rotary_factor"] = (double)rotary / spec.HeadDim;
+            }
+
+            if (rope.Scaling is { } scaling)
+            {
+                var parameters = scaling.Parameters;
+                if ((int?)parameters["max_position_embeddings"] == spec.MaxPositions)
+                {
+                    parameters.Remove("max_position_embeddings");     // the reader puts the context length back
+                }
+
+                parameters["rope_type"] = scaling.Type;
+                c["rope_scaling"] = parameters;
+            }
+        }
+
+        if (spec.SlidingWindow is int window)
+        {
+            c["sliding_window"] = window;
+            if (spec.SlidingWindowLayers is { } layers)
+            {
+                var types = new JsonArray();
+                foreach (bool windowed in layers)
+                {
+                    types.Add((JsonNode)JsonValue.Create(windowed ? "sliding_attention" : "full_attention"));
+                }
+
+                c["layer_types"] = types;
+            }
+        }
+
+        // As a config.json read from disk is: numbers that read as any numeric type (a float written here reads as a double there).
+        return JsonNode.Parse(c.ToJsonString())!.AsObject();
+    }
+
+    // A family's configuration of a spec, read back by the family and refused when it does not say the same spec (the
+    // dropout, a training setting no configuration key holds, aside).
+    private static JsonObject CheckedConfig(DecoderSpec spec, JsonObject config, Func<JsonObject, List<string>, DecoderSpec> read, string family)
+    {
+        DecoderSpec back;
+        try
+        {
+            back = read(config, []);
+        }
+        catch (Exception e) when (e is NotSupportedException or InvalidDataException)
+        {
+            throw new NotSupportedException($"The {family} configuration cannot hold this spec: {e.Message}", e);
+        }
+
+        var expected = (spec with { Dropout = 0f }).ToJson();
+        var actual = (back with { Dropout = 0f }).ToJson();
+        if (expected["rope"]?["scaling"]?["parameters"] is JsonObject parameters)
+        {
+            parameters["max_position_embeddings"] ??= spec.MaxPositions;   // what the reader adds, and the scalings fall back on
+        }
+
+        if (!JsonNode.DeepEquals(expected, actual))
+        {
+            var differ = expected.Select(p => p.Key).Union(actual.Select(p => p.Key)).Where(k => !JsonNode.DeepEquals(expected[k], actual[k]));
+            throw new NotSupportedException($"The {family} configuration cannot hold this spec: "
+                + string.Join("; ", differ.Select(k => $"{k} would read back as {actual[k]?.ToJsonString() ?? "nothing"}, not {expected[k]?.ToJsonString() ?? "nothing"}")) + ".");
+        }
+
+        return config;
+    }
 
     /// <summary>
     /// The spec from the configuration keys most families share (hidden_size, num_attention_heads, rope_theta, …). A
