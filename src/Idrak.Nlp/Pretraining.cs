@@ -88,6 +88,12 @@ public sealed record PretrainingOptions
     /// <summary>Micro-batches per optimizer step (their gradients add up).</summary>
     public int GradientAccumulation { get; init; } = 1;
 
+    /// <summary>
+    /// Sequences per optimizer step: 0 (the default) draws until the step's positions (rows of <see cref="MaxLength"/>
+    /// times <see cref="GradientAccumulation"/>) are full; N draws exactly N, packed into as many micro-batches as they need.
+    /// </summary>
+    public int SequencesPerStep { get; init; }
+
     /// <summary>The gradient norm clipped to (0: no clipping).</summary>
     public float MaxGradientNorm { get; init; } = 1f;
 
@@ -162,6 +168,7 @@ public sealed record PretrainingOptions
         ["max_length"] = MaxLength,
         ["batch_tokens"] = BatchTokens,
         ["accumulate"] = GradientAccumulation,
+        ["sequences_per_step"] = SequencesPerStep,
         ["clip"] = MaxGradientNorm,
         ["weight_decay"] = WeightDecay,
         ["optimizer"] = Optimizer,
@@ -209,6 +216,7 @@ public sealed record PretrainingOptions
             MaxLength = (int?)json["max_length"] ?? d.MaxLength,
             BatchTokens = (int?)json["batch_tokens"] ?? d.BatchTokens,
             GradientAccumulation = (int?)json["accumulate"] ?? d.GradientAccumulation,
+            SequencesPerStep = (int?)json["sequences_per_step"] ?? d.SequencesPerStep,
             MaxGradientNorm = (float?)json["clip"] ?? d.MaxGradientNorm,
             WeightDecay = (float?)json["weight_decay"] ?? d.WeightDecay,
             Optimizer = (string?)json["optimizer"] ?? d.Optimizer,
@@ -479,6 +487,13 @@ public static class Pretrainer
                         progress?.Report(new PretrainingProgress(stage.Name, stageIndex, stageStep, stage.Steps, step, totalSteps, loss, rate,
                             tokens / Math.Max(1e-9, seconds), images / Math.Max(1e-9, seconds), peak, remaining, evaluationLoss));
                     }
+
+                    // The vision parts this stage trained live in its encoder: the model keeps them, so the next stage's encoder
+                    // (and every save) starts from them.
+                    if (vision is { Parts.Count: > 0 })
+                    {
+                        model.KeepTrainedVision(vision.Encoder, vision.Parts);
+                    }
                 }
                 finally
                 {
@@ -509,7 +524,7 @@ public static class Pretrainer
             throw new ArgumentException("Give at least one pretraining stage.", nameof(options));
         }
 
-        if (options.MaxLength < 1 || options.BatchTokens < 1 || options.GradientAccumulation < 1)
+        if (options.MaxLength < 1 || options.BatchTokens < 1 || options.GradientAccumulation < 1 || options.SequencesPerStep < 0)
         {
             throw new ArgumentException($"MaxLength ({options.MaxLength}), BatchTokens ({options.BatchTokens}) and GradientAccumulation ({options.GradientAccumulation}) must be positive.", nameof(options));
         }
@@ -613,7 +628,8 @@ public static class Pretrainer
         long positions = 0;
         double total = readers.Where(r => r.Reader.Count > 0).Sum(r => r.Weight);
         int misses = 0;
-        while (positions < capacity)
+        int wanted = options.SequencesPerStep;
+        while (wanted > 0 ? sequences.Count < wanted : positions < capacity)
         {
             long drawn = readers.Sum(r => r.Drawn);
             var source = readers.Where(r => r.Reader.Count > 0).MaxBy(r => r.Weight / total * (drawn + 1) - r.Drawn)!;
@@ -634,7 +650,7 @@ public static class Pretrainer
             }
 
             long length = sequence.Tokens.Length - 1;
-            if (sequences.Count > 0 && positions + length > capacity)
+            if (wanted == 0 && sequences.Count > 0 && positions + length > capacity)
             {
                 source.Undo();
                 break;

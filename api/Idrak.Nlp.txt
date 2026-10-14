@@ -885,6 +885,7 @@ public sealed record Idrak.Nlp.PretrainingOptions : System.IEquatable<Idrak.Nlp.
   public int NonFiniteSteps { get; init; }
   public int SaveEvery { get; init; }
   public int Seed { get; init; }
+  public int SequencesPerStep { get; init; }
   public static Idrak.Nlp.PretrainingOptions FromJson(System.Text.Json.Nodes.JsonObject json)
   public string FeatureCache { get; init; }
   public string Optimizer { get; init; }
