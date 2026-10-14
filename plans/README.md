@@ -40,7 +40,7 @@ paper effects, `idrak data synth`; built): [18-synthetic-pages.md](18-synthetic-
 Language and vision-language models from scratch, two tracks (A: a decoder from a spec, a byte-level BPE trainer, a
 pretraining loop with every parameter trained, checkpoints with resume, `idrak create` / `pretrain` / `data tokenizer`;
 B: a vision tower and projector made by a family plug-in through `IVisionFamily.Create`, align and joint stages, images
-in distillation; detailed per phase with files, signatures and tests; planned): [19-vision-language-from-scratch.md](19-vision-language-from-scratch.md).
+in distillation; detailed per phase with files, signatures and tests; tracks A and B built and CPU-checked, the proof runs the owner's): [19-vision-language-from-scratch.md](19-vision-language-from-scratch.md).
 
 ## Not supported yet
 
