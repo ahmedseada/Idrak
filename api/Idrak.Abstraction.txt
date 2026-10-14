@@ -226,6 +226,11 @@ public interface Idrak.Abstraction.Data.IImageCodec
   public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
   public string Name { get; }
 
+public interface Idrak.Abstraction.Data.IImageEncoder
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public byte[] Encode(Idrak.Abstraction.Data.ImageData image)
+  public string Name { get; }
+
 public interface Idrak.Abstraction.Data.IImageTransform
   public (default) System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageTransformParameter> Parameters { get; }
   public (default) string Label { get; }
@@ -306,6 +311,18 @@ public sealed class Idrak.Abstraction.Data.ImageData
   public int Height { get; }
   public int Width { get; }
   public void Resize(int channels, int height, int width, System.Span<float> destination)
+
+public static class Idrak.Abstraction.Data.ImageEncoders
+  public static Idrak.Abstraction.Data.IImageEncoder For(string path)
+  public static Idrak.Abstraction.Data.IImageEncoder Get(string name)
+  public static Idrak.Abstraction.Data.IImageEncoder? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IImageEncoder encoder)
+  public static void Save(string path, Idrak.Abstraction.Data.ImageData image)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public readonly record struct Idrak.Abstraction.Data.ImageInfo : System.IEquatable<Idrak.Abstraction.Data.ImageInfo>
   public ImageInfo(int Width, int Height, int Channels, string Format)

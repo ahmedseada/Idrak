@@ -9,7 +9,6 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Text.Json;
 using Idrak.Abstraction.Devices;
-using Idrak.Imaging.Abstractions;
 
 namespace Idrak.Imaging;
 

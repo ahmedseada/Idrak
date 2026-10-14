@@ -3,7 +3,6 @@
 
 using System.Buffers.Binary;
 using System.Text;
-using Idrak.Imaging.Abstractions;
 
 namespace Idrak.Imaging;
 

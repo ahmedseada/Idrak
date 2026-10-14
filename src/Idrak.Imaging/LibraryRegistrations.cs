@@ -7,10 +7,9 @@ namespace Idrak.Imaging;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
-/// netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
+/// netpbm) and encoders (png, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
 /// the "images" sample source, the "opentype" font format and the "coverage" outline rasterizer. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
-/// per registry, before that registry is first used. The registries that live here (image encoders) register their
-/// built-ins themselves.
+/// per registry, before that registry is first used.
 /// </summary>
 internal static class LibraryRegistrations
 {
@@ -23,7 +22,12 @@ internal static class LibraryRegistrations
         },
         [typeof(ScanProfiles)] = ScanTransforms.RegisterProfiles,
         [typeof(Augmentations)] = LibraryAugmentations.RegisterDefaults,       // flip and shift (Idrak.Vision adds the others)
-        [typeof(ImageCodecs)] = RegisterImageCodecs,                            // png, jpeg, bmp, netpbm (asked newest first)
+        [typeof(ImageCodecs)] = RegisterImageCodecs,
+        [typeof(ImageEncoders)] = () =>                                          // png, netpbm
+        {
+            ImageEncoders.Register(new PngEncoder());
+            ImageEncoders.Register(new NetpbmEncoder());
+        },                            // png, jpeg, bmp, netpbm (asked newest first)
         [typeof(SampleSources)] = () => SampleSources.Register("images", OpenImages),
         [typeof(FontFormats)] = () => FontFormats.Register(new OpenTypeFormat()),            // TrueType outlines, single fonts and collections
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),

@@ -3,7 +3,6 @@
 
 using Idrak;
 using Idrak.Data.Abstractions;
-using Idrak.Imaging.Abstractions;
 
 namespace Idrak.Samples.ArabicOcr.Tests;
 

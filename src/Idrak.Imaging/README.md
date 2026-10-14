@@ -24,6 +24,5 @@ dotnet add package Idrak.Imaging
 
 ## Contracts
 
-The plug-in points only this package uses are in `Idrak.Imaging.Abstractions`: `ImageEncoders` and `IImageEncoder` (image
-file encoders by format). The shared contracts (`ImageCodecs`, `ImageTransforms`, `Augmentations`, `SampleSources`,
-`ImageData`, `FontFormats`, `OutlineRasterizers`, `TextShapers`, `PageLayouts`, `ScanProfiles`) are in Idrak.Abstraction, and this package registers its built-ins into them.
+Every contract this package serves is shared, in Idrak.Abstraction (`ImageCodecs`, `ImageEncoders`, `ImageTransforms`,
+`Augmentations`, `SampleSources`, `ImageData`, `FontFormats`, `OutlineRasterizers`, `TextShapers`, `PageLayouts`, `ScanProfiles`), and this package registers its built-ins into them.

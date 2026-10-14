@@ -11,11 +11,11 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 48 | 13 | 26 | 86 | 0 |
+| `Idrak.Abstraction` | 49 | 13 | 27 | 88 | 0 |
 | `Idrak` | 10 | 4 | 12 | 26 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Imaging` | 1 | 0 | 1 | 2 | 0 |
-| `Idrak.Nlp` | 7 | 2 | 5 | 14 | 0 |
+| `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
+| `Idrak.Nlp` | 9 | 2 | 7 | 18 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -38,27 +38,29 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, resize, resized-crop, +2 | Imaging, Vision | Abstraction |
-| `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging | Abstraction |
+| `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, RandomAffine, +4 |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Data.IFontFace` | interface | public | — | OpenTypeFace |  | Imaging | Abstraction |
-| `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Imaging | Abstraction |
+| `Idrak.Abstraction.Data.IFontFace` | interface | public | — | OpenTypeFace |  | Abstraction, Imaging, Nlp | Abstraction |
+| `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Abstraction, Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Abstraction, Data, Imaging, Vision | Abstraction |
+| `Idrak.Abstraction.Data.IImageEncoder` | interface | public | — | ImageEncoders.GuardedEncoder, NetpbmEncoder, PngEncoder |  | Abstraction, Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.IImageTransform` | interface | public | — | ImageTransforms.GuardedTransform, LibraryImageTransforms.Transform |  | Abstraction, AspNetCore, Idrak, Imaging, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.IOutlineRasterizer` | interface | public | — | CoverageRasterizer, OutlineRasterizers.GuardedRasterizer |  | Imaging | Abstraction |
-| `Idrak.Abstraction.Data.IPageLayout` | interface | public | — | LetterLayout, PageLayouts.GuardedLayout, PlainLayout |  | Imaging | Abstraction |
+| `Idrak.Abstraction.Data.IPageLayout` | interface | public | — | LetterLayout, PageLayouts.GuardedLayout, PlainLayout |  | Abstraction, Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.ISampleReader` | interface | public | — | CsvSource.Reader, TableSamples.Reader |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | Abstraction, Data, Idrak, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleTransform` | interface | public | — | ContentFrame.ReframeTransform, GaussianNoise, RandomFlip, RandomRotation, RandomShift |  | Idrak, Imaging, Vision | Abstraction |
-| `Idrak.Abstraction.Data.IScanProfile` | interface | public | — | ScanProfile, ScanProfiles.GuardedProfile |  | Imaging | Abstraction |
+| `Idrak.Abstraction.Data.IScanProfile` | interface | public | — | ScanProfile, ScanProfiles.GuardedProfile |  | Abstraction, Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.ITextShaper` | interface | public | — | ArabicShaper, OpenTypeShaper, TextShapers.GuardedShaper |  | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Data, Imaging, Vision | Abstraction |
+| `Idrak.Abstraction.Data.ImageEncoders` | registry | public | — |  | netpbm, png | Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.ImageTransforms` | registry | public | — |  | autocontrast, binarize, bleed, blur, brightness, contrast, equalize, fade, +20 | Abstraction, AspNetCore, Idrak, Imaging, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.OutlineRasterizers` | registry | public | — |  | coverage | Imaging | Abstraction |
-| `Idrak.Abstraction.Data.PageLayouts` | registry | public | — |  | letter, plain | Imaging | Abstraction |
+| `Idrak.Abstraction.Data.PageLayouts` | registry | public | — |  | letter, plain | Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak, Imaging | Abstraction |
-| `Idrak.Abstraction.Data.ScanProfiles` | registry | public | — |  | clean, fax, office, old | Imaging | Abstraction |
+| `Idrak.Abstraction.Data.ScanProfiles` | registry | public | — |  | clean, fax, office, old | Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.TextShapers` | registry | public | — |  | — | Imaging | Abstraction |
 | `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +33 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
@@ -155,13 +157,6 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Onnx.Abstractions.OnnxImportOps` | registry | public | — |  | Add, AveragePool, BatchNormalization, Cast, Conv, ConvTranspose, Dropout, Flatten, +15 | Idrak | Idrak |
 | `Idrak.Training.Abstractions.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | Idrak | Idrak |
 
-### Idrak.Imaging
-
-| Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
-|---|---|---|---|---|---|---|---|
-| `Idrak.Imaging.Abstractions.IImageEncoder` | interface | public | — | ImageEncoders.GuardedEncoder, NetpbmEncoder, PngEncoder |  | Imaging | Imaging |
-| `Idrak.Imaging.Abstractions.ImageEncoders` | registry | public | — |  | netpbm, png | — | Imaging |
-
 ### Idrak.Nlp
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
@@ -172,9 +167,13 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Nlp.Abstractions.IAnswerText` | interface | public | — | AnswerTexts.GuardedText, JsonValuesAnswerText, RawAnswerText |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.IFeatureCache` | interface | public | Device, Tensor | DiskFeatureCache, MemoryFeatureCache |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.IJsonRepair` | interface | public | — | JsonRepairs.GuardedRepair, LenientJsonRepair |  | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.IPagePartFiller` | interface | public | — | LibraryPagePartFillers.Filler |  | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.ISyntheticRecordFormat` | interface | public | — | MessagesSyntheticRecords, ShareGptSyntheticRecords, TextSyntheticRecords |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.PagePartFillers` | registry | public | — |  | date, digits, field, hijri, line, number, pick | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.SyntheticRecordFormats` | registry | public | — |  | messages, sharegpt, text | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TuningMetrics` | registry | public | — |  | cer, wer | Nlp | Nlp |

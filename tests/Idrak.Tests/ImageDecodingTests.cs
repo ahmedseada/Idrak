@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
 using Idrak.Imaging;
-using Idrak.Imaging.Abstractions;
 
 // The JPEG codec against Pillow's (libjpeg-turbo's) pixels, and the image preprocessing of vision-language models against
 // transformers' Gemma3ImageProcessorPil; the files come from tools/jpeg/make_fixtures.py.

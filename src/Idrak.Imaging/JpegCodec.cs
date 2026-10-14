@@ -8,7 +8,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using Idrak.Abstraction.Devices;
-using Idrak.Imaging.Abstractions;
 
 namespace Idrak.Imaging;
 

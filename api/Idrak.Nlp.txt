@@ -81,6 +81,17 @@ public interface Idrak.Nlp.Abstractions.IJsonRepair
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Nlp.Abstractions.IPagePartFiller
+  public string Name { get; }
+  public string Summary { get; }
+  public string? Fill(string? argument, Idrak.Nlp.Abstractions.PagePartContext context)
+
+public interface Idrak.Nlp.Abstractions.ISyntheticRecordFormat
+  public System.Collections.Generic.IEnumerable<Idrak.Nlp.Abstractions.SyntheticRecord> Read(string path, string prompt, string? answerKey)
+  public bool Recognizes(string path)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Nlp.Abstractions.ITuningDataFormat
   public (default) Idrak.Nlp.Abstractions.PendingConversations ReadPending(string path, Idrak.Nlp.Abstractions.TuningDataOptions? options = null)
   public System.Collections.Generic.IEnumerable<Idrak.Nlp.ChatTranscript> Read(string path, Idrak.Nlp.Abstractions.TuningDataOptions? options = null)
@@ -113,6 +124,23 @@ public static class Idrak.Nlp.Abstractions.JsonRepairs
   public static void Register(Idrak.Nlp.Abstractions.IJsonRepair repair)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed class Idrak.Nlp.Abstractions.PagePartContext
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PagePartContext()
+  public required System.Collections.Generic.IReadOnlyDictionary<string, string> Fields { get; init; }
+  public required System.DateTime Date { get; init; }
+  public required System.Random Random { get; init; }
+  public string? Folder { get; init; }
+
+public static class Idrak.Nlp.Abstractions.PagePartFillers
+  public static Idrak.Nlp.Abstractions.IPagePartFiller Get(string name)
+  public static Idrak.Nlp.Abstractions.IPagePartFiller? Default(string name)
+  public static Idrak.Nlp.Abstractions.IPagePartFiller? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.IPagePartFiller filler)
+
 public sealed class Idrak.Nlp.Abstractions.PendingConversations : System.IDisposable
   public Idrak.Nlp.ChatTranscript Read(int index)
   public PendingConversations(System.Collections.Generic.IReadOnlyList<Idrak.Nlp.ChatTranscript> transcripts)
@@ -120,6 +148,21 @@ public sealed class Idrak.Nlp.Abstractions.PendingConversations : System.IDispos
   public int Count { get; }
   public int Images { get; }
   public void Dispose()
+
+public sealed class Idrak.Nlp.Abstractions.SyntheticRecord
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public SyntheticRecord()
+  public required System.Func<string, string, System.Text.Json.Nodes.JsonObject> Write { get; init; }
+  public required string Answer { get; init; }
+  public required string Where { get; init; }
+
+public static class Idrak.Nlp.Abstractions.SyntheticRecordFormats
+  public static Idrak.Nlp.Abstractions.ISyntheticRecordFormat Detect(string path)
+  public static Idrak.Nlp.Abstractions.ISyntheticRecordFormat Get(string name)
+  public static Idrak.Nlp.Abstractions.ISyntheticRecordFormat? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.ISyntheticRecordFormat format)
 
 public abstract class Idrak.Nlp.Abstractions.TeacherDistributions : System.IDisposable
   protected TeacherDistributions()
@@ -865,6 +908,82 @@ public sealed class Idrak.Nlp.Retrieval.TextEncoder : Idrak.Abstraction.Retrieva
   public float[][] Encode(System.Collections.Generic.IReadOnlyList<string> texts, int batchSize = 256)
   public int MaxLength { get; }
   public int PadId { get; }
+
+public sealed record Idrak.Nlp.SyntheticPage : System.IEquatable<Idrak.Nlp.SyntheticPage>
+  public Idrak.Abstraction.Data.ImageData Image { get; init; }
+  public SyntheticPage(Idrak.Abstraction.Data.ImageData Image, string Text, string Answer, int Seed, string Layout, string Scan, string Description)
+  public int Seed { get; init; }
+  public string Answer { get; init; }
+  public string Description { get; init; }
+  public string Layout { get; init; }
+  public string Scan { get; init; }
+  public string Text { get; init; }
+
+public sealed record Idrak.Nlp.SyntheticPageOptions : System.IEquatable<Idrak.Nlp.SyntheticPageOptions>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public SyntheticPageOptions()
+  public Idrak.Nlp.SyntheticPageParts Parts { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Layouts { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Scans { get; init; }
+  public System.DateTime DateFrom { get; init; }
+  public System.DateTime DateTo { get; init; }
+  public bool Zip { get; init; }
+  public double Grey { get; init; }
+  public int Limit { get; init; }
+  public int Quality { get; init; }
+  public int Seed { get; init; }
+  public int Variants { get; init; }
+  public int Workers { get; init; }
+  public required Idrak.Abstraction.Data.PageStyle Style { get; init; }
+  public string ImageFormat { get; init; }
+  public string Prompt { get; init; }
+  public string? AnswerKey { get; init; }
+  public string? Format { get; init; }
+  public string? FullTextKey { get; init; }
+
+public sealed record Idrak.Nlp.SyntheticPageParts : System.IEquatable<Idrak.Nlp.SyntheticPageParts>
+  public SyntheticPageParts()
+  public System.Collections.Generic.IReadOnlyDictionary<string, double> Chances { get; init; }
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> Footers { get; init; }
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> HeaderCenter { get; init; }
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> HeaderEnd { get; init; }
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> HeaderStart { get; init; }
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> Signatures { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Subjects { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Titles { get; init; }
+  public double NativeDigits { get; init; }
+  public static Idrak.Nlp.SyntheticPageParts Empty { get; }
+  public static Idrak.Nlp.SyntheticPageParts FromJson(System.Text.Json.Nodes.JsonObject json, string? folder = null, string where = "page parts")
+  public static Idrak.Nlp.SyntheticPageParts Read(string path)
+  public string? Digits { get; init; }
+  public string? Folder { get; init; }
+  public string? Language { get; init; }
+
+public static class Idrak.Nlp.SyntheticPages
+  public static Idrak.Abstraction.Data.IScanProfile? Profile(string nameOrText)
+  public static Idrak.Nlp.SyntheticPage Make(string answer, Idrak.Nlp.SyntheticPageOptions options, int record = 0, int variant = 0, string where = "the answer")
+  public static Idrak.Nlp.SyntheticPagesResult Write(string input, string output, Idrak.Nlp.SyntheticPageOptions options, System.IProgress<Idrak.Nlp.SyntheticPagesProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fonts(string folder)
+  public static int Count(string input, Idrak.Nlp.SyntheticPageOptions options)
+
+public sealed record Idrak.Nlp.SyntheticPagesProgress : System.IEquatable<Idrak.Nlp.SyntheticPagesProgress>
+  public SyntheticPagesProgress(int Pages, int Total, int Skipped, System.TimeSpan Elapsed, string? LastSkip)
+  public System.TimeSpan Elapsed { get; init; }
+  public System.TimeSpan Remaining { get; }
+  public double PagesPerSecond { get; }
+  public int Pages { get; init; }
+  public int Skipped { get; init; }
+  public int Total { get; init; }
+  public string? LastSkip { get; init; }
+
+public sealed record Idrak.Nlp.SyntheticPagesResult : System.IEquatable<Idrak.Nlp.SyntheticPagesResult>
+  public SyntheticPagesResult(int Records, int Pages, System.Collections.Generic.IReadOnlyList<string> Skips, string Data, string Images, string Manifest, System.TimeSpan Elapsed)
+  public System.Collections.Generic.IReadOnlyList<string> Skips { get; init; }
+  public System.TimeSpan Elapsed { get; init; }
+  public int Pages { get; init; }
+  public int Records { get; init; }
+  public string Data { get; init; }
+  public string Images { get; init; }
+  public string Manifest { get; init; }
 
 public static class Idrak.Nlp.TeacherData
   public static System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> Generate(Idrak.Nlp.Generation.ChatGenerator teacher, System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> rows, Idrak.Nlp.TeacherDataOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
