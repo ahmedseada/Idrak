@@ -142,11 +142,26 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
     private string? _fingerprint;
     private Linear? _head;
     private TuningVision? _vision;
+    private readonly Dictionary<string, ISoftPartSource> _parts = new(StringComparer.Ordinal);
 
     // The teacher's own vision side, made when the first sequence with images comes.
     private TuningVision Vision() => _vision ??= model.Vision is null
         ? throw new NotSupportedException("The sequences hold images and the teacher reads none (it has no vision part): distil from a vision-language teacher.")
         : TuningVision.Create(model, images);
+
+    // The teacher's own source of a kind of soft part (its audio part), opened when the first sequence with one comes.
+    private ISoftPartSource Part(string kind)
+    {
+        if (!_parts.TryGetValue(kind, out var source))
+        {
+            source = model.Parts.Contains(kind)
+                ? model.OpenPart(kind)
+                : throw new NotSupportedException($"The sequences hold '{kind}' parts and the teacher reads none (it has no such part): distil from a teacher that has one.");
+            _parts[kind] = source;
+        }
+
+        return source;
+    }
 
     protected override void Dispose(bool disposing)
     {
@@ -154,6 +169,12 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         {
             _vision?.Dispose();
             _vision = null;
+            foreach (var source in _parts.Values)
+            {
+                (source as IDisposable)?.Dispose();
+            }
+
+            _parts.Clear();
         }
 
         base.Dispose(disposing);
@@ -190,9 +211,9 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         {
             for (int first = 0; first < sequences.Count;)
             {
-                if (sequences[first].Images.Count > 0)
+                if (sequences[first].Images.Count > 0 || sequences[first].Parts.Count > 0)
                 {
-                    // A sequence with images alone: the teacher's image tokens in place of the student's, its features in them.
+                    // A sequence with images (or other soft parts) alone: the teacher's soft tokens in place of the student's, its features in them.
                     if (WithImages(sequences[first], modules) is { } rowsOfImages)
                     {
                         parts.Add(rowsOfImages);
@@ -203,7 +224,7 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
                 }
 
                 int last = first, longest = Math.Max(1, sequences[first].Tokens.Length - 1);
-                while (last + 1 < sequences.Count && sequences[last + 1].Images.Count == 0
+                while (last + 1 < sequences.Count && sequences[last + 1].Images.Count == 0 && sequences[last + 1].Parts.Count == 0
                        && (last + 2 - first) * Math.Max(longest, sequences[last + 1].Tokens.Length - 1) <= batchTokens)
                 {
                     longest = Math.Max(longest, sequences[++last].Tokens.Length - 1);
@@ -277,17 +298,20 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         return TensorScope.Untrack(all);
     }
 
-    // The teacher's final hidden states at the trained positions of one sequence with images (untracked), or null when
-    // none of its positions trains.
+    // The teacher's final hidden states at the trained positions of one sequence with images or other soft parts
+    // (untracked), or null when none of its positions trains. Each run of the student's soft tokens becomes the teacher's
+    // own (its soft token, as many as its family reads the image or part as), its features in them.
     private Tensor? WithImages(TrainingSequence sequence, List<Module> modules)
     {
-        var vision = Vision();
-        int imageToken = vision.Format.ImageToken;
+        var vision = sequence.Images.Count > 0 ? Vision() : null;
         var tokens = new List<int>(sequence.Tokens.Length);
         var trained = new List<bool>(sequence.Tokens.Length);
         var teacherImages = new List<TrainingImage>();
-        var runs = sequence.Images.SelectMany((image, k) => image.Blocks.Select((b, j) => (Image: k, Block: j, b.Position, b.Tokens))).OrderBy(r => r.Position).ToList();
-        var layouts = sequence.Images.Select(image => vision.Blocks(image.Image, vision.Images)).ToList();
+        // Runs of soft tokens in prompt order: an image's block (Part -1) or a soft part's (Part its index).
+        var runs = sequence.Images.SelectMany((image, k) => image.Blocks.Select((b, j) => (Image: k, Part: -1, Block: j, b.Position, b.Tokens)))
+            .Concat(sequence.Parts.SelectMany((part, k) => part.Blocks.Select((b, j) => (Image: -1, Part: k, Block: j, b.Position, b.Tokens))))
+            .OrderBy(r => r.Position).ToList();
+        var layouts = sequence.Images.Select(image => vision!.Blocks(image.Image, vision.Images)).ToList();
         for (int k = 0; k < sequence.Images.Count; k++)
         {
             if (layouts[k].Count != sequence.Images[k].Blocks.Count)
@@ -297,7 +321,19 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
             }
         }
 
+        var partSources = sequence.Parts.Select(p => Part(p.Kind)).ToList();
+        var partLayouts = sequence.Parts.Select((p, k) => partSources[k].Blocks(p.Part)).ToList();
+        for (int k = 0; k < sequence.Parts.Count; k++)
+        {
+            if (partLayouts[k].Count != sequence.Parts[k].Blocks.Count)
+            {
+                throw new NotSupportedException($"The teacher reads a '{sequence.Parts[k].Kind}' part as {partLayouts[k].Count} blocks, the student as {sequence.Parts[k].Blocks.Count}: "
+                    + "distil between families that read it as the same number of blocks.");
+            }
+        }
+
         var blocks = sequence.Images.Select(_ => new List<(int, int)>()).ToList();
+        var partBlocks = sequence.Parts.Select(_ => new List<(int Position, int Tokens)>()).ToList();
         int cursor = 0;
         foreach (var run in runs)
         {
@@ -307,11 +343,23 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
                 trained.Add(sequence.Trained[cursor]);
             }
 
-            int count = layouts[run.Image][run.Block].Tokens;
-            blocks[run.Image].Add((tokens.Count, count));
+            int count, soft;
+            if (run.Image >= 0)
+            {
+                count = layouts[run.Image][run.Block].Tokens;
+                soft = vision!.Format.ImageToken;
+                blocks[run.Image].Add((tokens.Count, count));
+            }
+            else
+            {
+                count = partLayouts[run.Part][run.Block].Tokens;
+                soft = partSources[run.Part].Format.ImageToken;
+                partBlocks[run.Part].Add((tokens.Count, count));
+            }
+
             for (int i = 0; i < count; i++)
             {
-                tokens.Add(imageToken);
+                tokens.Add(soft);
                 trained.Add(false);
             }
 
@@ -331,7 +379,7 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
 
         for (int k = 0; k < sequence.Images.Count; k++)
         {
-            teacherImages.Add(new TrainingImage(sequence.Images[k].Image, vision.Images, blocks[k])
+            teacherImages.Add(new TrainingImage(sequence.Images[k].Image, vision!.Images, blocks[k])
             {
                 AxisPositions = layouts[k].Select(l => vision.Encoder.AxisPositions(l)).ToList() is var axes && axes.Any(a => a is not null) ? axes : null,
             });
@@ -344,8 +392,25 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         }
 
         using var scope = new TensorScope();
-        var features = vision.Features(teacherImages);
+        var features = vision is null ? [] : vision.Features(teacherImages);
         var prompt = new List<PromptImage>();
+        IImageAttentionRule? attention = vision?.Attention;
+        for (int k = 0; k < sequence.Parts.Count; k++)
+        {
+            var source = partSources[k];
+            if (attention is not null && attention.Name != source.Attention.Name)
+            {
+                throw new NotSupportedException($"The teacher's '{source.Kind}' parts attend by '{source.Attention.Name}' and its other soft tokens by '{attention.Name}': one rule per sequence.");
+            }
+
+            attention ??= source.Attention;
+            var encoded = source.Encode([sequence.Parts[k].Part]);
+            for (int b = 0; b < partBlocks[k].Count; b++)
+            {
+                prompt.Add(new PromptImage(partBlocks[k][b].Position, encoded[b].Features));
+            }
+        }
+
         for (int k = 0; k < teacherImages.Count; k++)
         {
             int at = 0, b = 0;
@@ -359,8 +424,9 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
             }
         }
 
+        prompt.Sort((x, y) => x.Position.CompareTo(y.Position));
         var ids = Tensor.From(tokens.Take(tokens.Count - 1).Select(t => (float)t).ToArray(), [1, tokens.Count - 1], model.Device);
-        using var images = model.Network.Begin(ids, prompt, vision.Attention);
+        using var images = model.Network.Begin(ids, prompt, attention!);
         var hidden = ids;
         for (int i = 0; i < modules.Count - 1; i++)
         {

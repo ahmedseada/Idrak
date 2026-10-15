@@ -7,6 +7,7 @@ using Idrak.Abstraction.Generation;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.IdrakAudio;
+using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Nlp;
@@ -23,6 +24,7 @@ internal static partial class Tests
         ("audio language: the IdrakAudio plug-in reads audio-language/model (its audio part claimed, nothing unused): each sound's log-mel within 1e-4 of torch's, its soft tokens and the records' ids and blocks the fixture's; joint pretraining (every parameter) gives PyTorch's step-1 loss and gradients and its losses and weights after three steps", AudioLanguageJoint),
         ("audio language: align pretraining (audio-encoder and audio-projector; the decoder stays) gives PyTorch's losses, gradients and weights; the decoder's tensors are as they were", AudioLanguageAlign),
         ("audio language: the \"transcripts\" tuning format reads the fixture's train.jsonl as conversations of the sound and the prompt answered by the text (NeMo's keys too, the prompt a setting, an empty one the sound alone; a row without text refused naming it) and passes the kit's CheckTuningDataFormat; FineTuner trains the audio-language model's projector on them through FineTuningOptions.Parts", AudioLanguageTranscripts),
+        ("audio language: distillation: an audio-language teacher scores a student's sequences (other soft-token counts per sound) as it scores its own encoding of the same records; pretraining with it, alpha 0 is the plain loss and alpha 0.5 another; a text teacher is refused naming the part", AudioLanguageDistill),
         ("audio language: PretrainedModel.Create with CreateOptions.Parts[\"audio\"] gives the fixture's tensor names and shapes and reads back with its part; align then joint stages stopped between them and resumed give the uninterrupted losses; the trained model answers about a sound through ChatGenerator with its part", AudioLanguageStages),
     ];
 
@@ -174,6 +176,111 @@ internal static partial class Tests
             float after = FineTuner.Evaluate(model, sequences, 384, 512, parts: [source]);
             var moved = source.Export([IdrakAudioLanguageFamily.ProjectorPart]);
             Check(moved.Any(t => !t.Values.AsSpan().SequenceEqual(before[t.Name])) && after < initial, $"the projector trained on transcripts: loss {initial} then {after}");
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // A student made from the fixture's spec with another projector stack (twice as many soft tokens per sound).
+    private static PretrainedModel AudioLanguageStudent(string folder, Device device, int stack)
+    {
+        var config = JsonNode.Parse(File.ReadAllText(AudioLanguageData("model/config.json")))!.AsObject();
+        var spec = PretrainedArchitectures.Get(IdrakAudioLanguageFamily.Architecture).Spec(config, []);
+        var template = JsonNode.Parse(File.ReadAllText(AudioLanguageData("model/tokenizer_config.json")))!["chat_template"]!.GetValue<string>();
+        var description = new JsonObject
+        {
+            ["audio_config"] = config["audio_config"]!.DeepClone(), ["audio_projector"] = new JsonObject { ["stack"] = stack, ["type"] = "mlp" },
+            ["audio_token"] = "<image>", ["begin_audio"] = "<start_of_image>", ["end_audio"] = "<end_of_image>",
+        };
+        return PretrainedModel.Create(folder, spec, IdrakAudioLanguageFamily.Architecture,
+            new ModelFiles { Tokenizer = BpeTokenizer.Load(PretrainData("tokenizer")), ChatTemplate = template, BosToken = "<s>", PadToken = "<pad>", StopTokens = ["</s>"] },
+            new CreateOptions { Device = device, Seed = 9, Parts = new Dictionary<string, JsonObject> { [ChatParts.Audio] = description } });
+    }
+
+    private static List<TrainingSequence> AudioLanguageSequences(PretrainedModel model, ISoftPartSource source)
+    {
+        var encoder = new ChatTranscriptEncoder(model.JinjaTemplate!, model.Tokenizer!) { Parts = [source] };
+        using var records = TuningDataFormats.Get("messages").ReadPending(AudioLanguageData("records.jsonl"));
+        return [.. Enumerable.Range(0, (int)records.Count).Select(i => encoder.Encode(records.Read(i), 128)!)];
+    }
+
+    private static void AudioLanguageDistill(Device device)
+    {
+        IdrakAudioPlugin.Register();
+        string folder = TempFolder("audio-language-distill");
+        try
+        {
+            using var teacherModel = PretrainedModel.Load(AudioLanguageData("model"), new PretrainedOptions { Device = device });
+            using var student = AudioLanguageStudent(Path.Combine(folder, "student"), device, stack: 2);
+            using var studentSource = student.OpenPart(ChatParts.Audio, device);
+            var studentSequences = AudioLanguageSequences(student, studentSource);
+            Check(studentSequences.All(s => s.Parts.All(p => p.Blocks.All(b => b.Tokens == 19))), $"the student's sounds are 19 tokens: {string.Join(", ", studentSequences.SelectMany(s => s.Parts).SelectMany(p => p.Blocks))}");
+
+            // The teacher's own reading of the same records: its sounds' 10 soft tokens, softmax of its logits at its trained positions.
+            using var teacherSource = teacherModel.OpenPart(ChatParts.Audio, device);
+            var own = AudioLanguageSequences(teacherModel, teacherSource);
+            var expected = new List<float>();
+            int vocabulary = teacherModel.Spec.Vocabulary;
+            foreach (var sequence in own)
+            {
+                using var scope = new TensorScope();
+                var features = teacherSource.Encode([.. sequence.Parts.Select(p => p.Part)]);
+                var prompt = sequence.Parts.Select((p, k) => new PromptImage(p.Blocks[0].Position, features[k].Features)).ToList();
+                var ids = Tensor.From(sequence.Tokens[..^1].Select(t => (float)t).ToArray(), [1, sequence.Tokens.Length - 1], device);
+                var logits = teacherModel.Network.Forward(ids, prompt, teacherSource.Attention).ToArray();
+                for (int t = 0; t + 1 < sequence.Tokens.Length; t++)
+                {
+                    if (sequence.Trained[t + 1])
+                    {
+                        var row = logits.AsSpan(t * vocabulary, vocabulary);
+                        float max = float.MinValue, sum = 0;
+                        foreach (float v in row) { max = Math.Max(max, v); }
+                        foreach (float v in row) { sum += MathF.Exp(v - max); }
+                        foreach (float v in row) { expected.Add(MathF.Exp(v - max) / sum); }
+                    }
+                }
+            }
+
+            using (var teacher = DistillationTeachers.FromModel(teacherModel, 0, 4096))
+            {
+                teacher.Check(student.Tokenizer!);
+                using var distributions = teacher.Distributions(studentSequences);
+                int trained = studentSequences.Sum(s => s.TrainedTokens);
+                Check(trained * vocabulary == expected.Count, $"{trained} trained positions of the student, {expected.Count / vocabulary} of the teacher's own");
+                using var probabilities = distributions.Probabilities(0, trained, 1f, vocabulary, device);
+                AssertClose([.. expected], probabilities.ToArray(), 1e-5f, "the teacher's distributions on the student's sequences against its own reading");
+            }
+
+            // Pretraining with the teacher: alpha 0 is the plain loss, alpha 0.5 another.
+            float plain, none, half;
+            using (var model = PretrainedModel.Load(Path.Combine(folder, "student"), new PretrainedOptions { Device = device }))
+            {
+                plain = Pretrainer.Train(model, AudioLanguageStage("plain", ["all"], 1), Path.Combine(folder, "plain")).Losses[0];
+            }
+
+            using (var teacher = DistillationTeachers.FromModel(teacherModel, 0, 4096))
+            using (var model = PretrainedModel.Load(Path.Combine(folder, "student"), new PretrainedOptions { Device = device }))
+            {
+                none = Pretrainer.Train(model, AudioLanguageStage("none", ["all"], 1) with { Teacher = teacher, DistillationAlpha = 0 }, Path.Combine(folder, "none")).Losses[0];
+            }
+
+            using (var teacher = DistillationTeachers.FromModel(teacherModel, 0, 4096))
+            using (var model = PretrainedModel.Load(Path.Combine(folder, "student"), new PretrainedOptions { Device = device }))
+            {
+                half = Pretrainer.Train(model, AudioLanguageStage("half", ["all"], 1) with { Teacher = teacher, DistillationAlpha = 0.5f }, Path.Combine(folder, "half")).Losses[0];
+            }
+
+            Check(MathF.Abs(none - plain) <= 1e-5f * MathF.Max(1, plain) && float.IsFinite(half) && MathF.Abs(half - plain) > 1e-4f,
+                $"alpha 0 gives the plain loss ({none} against {plain}); alpha 0.5 another ({half})");
+
+            using (var text = PretrainedModel.Load(PretrainData("tiny-llama"), new PretrainedOptions { Device = device }))
+            using (var teacher = DistillationTeachers.FromModel(text, 0, 4096))
+            {
+                ThrowsNaming<NotSupportedException>(() => teacher.Distributions(studentSequences).Dispose(), "a text teacher", "'audio' parts", "the teacher reads none");
+            }
         }
         finally
         {
