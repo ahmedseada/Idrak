@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
+using Idrak.Cli;
 using Idrak.VitsSpeech;
 
 // Plan 21, phase S9 route C: a voice trained on a person's recordings by fine-tuning a VITS checkpoint against
@@ -18,6 +19,8 @@ internal static partial class Tests
         ("audio voice train: a tiny VITS model loaded for training gives torch's step-1 discriminator loss and generator terms (mel, KL, duration, adversarial, feature matching) within 1e-4, every discriminator and generator gradient (weight-normed and transposed convolutions included) within 1e-4 of its tensor's largest (of a thousandth of the largest of any, for the key biases' zero gradients), the alignment search's durations exactly, and three SGD steps' losses and both models' weights within 1e-4", AudioVoiceTrainFixture),
         ("audio voice train: the training rows of a clip are VITS's spectrogram (within 1e-4 of torch's) and its samples, a frame a hop; the differentiable log-mel of a segment's sound equals the log-mel of its spectrogram rows within 1e-4; the generator's pass without kept graphs gives the kept pass's losses exactly; a speaking-only model, a multi-speaker one and discriminators unlike the folder's refused", AudioVoiceTrainUnits),
         ("audio voice train: AdversarialSynthesisTrainer fine-tunes the tiny VITS model on tone speech: a run stopped after step 2 and resumed from checkpoint-2 gives the whole run's losses, generator and discriminators bit for bit (its state naming the adversarial objective and options); a run that does not keep the generator's pass gives the same losses; the checkpoint speaks as a VITS model; a feature augmentation refused", AudioVoiceTrainResume),
+        ("audio voice train: a trained folder installs as a voice of kind checkpoint (consent required, a folder without config.json refused, the training files left out, an installed name kept unless overwritten); VoicedSynthesizer speaks it with its own model, the samples the folder's own; export and import give it back, a checkpoint voice without its model refused", AudioVoiceTrainInstall),
+        ("audio voice train: idrak voice train on the CPU fine-tunes the tiny VITS model on tone speech and installs the voice (refused without consent or a trainable base), voice show names its base and steps, speak --voice gives the checkpoint's samples; --resume and idrak resume add steps and install again; its help has examples, every option and lines under 120 characters", AudioVoiceTrainCli),
         ("audio voice train: a short CPU run of the tiny VITS model on tone speech lowers its mel L1 (the mean of the last 5 steps under 0.8 of the first 5; step time printed)", AudioVoiceTrainSmoke),
     ];
 
@@ -353,6 +356,140 @@ internal static partial class Tests
         finally
         {
             VitsSpeechPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void AudioVoiceTrainInstall(Device device)
+    {
+        string root = TempFolder("vits-voice");
+        VitsSpeechPlugin.Register();
+        try
+        {
+            var store = new FolderVoiceStore(Path.Combine(root, "voices"), "test-checkpoint-store");
+            string model = VitsTrainData("model");
+            var consent = new VoiceConsent("A tester", "I agree that this test voice is trained and installed.", DateTimeOffset.UtcNow);
+            var options = new VoiceCheckpointOptions
+            {
+                Consent = consent, Languages = ["en"], Base = "vits-train/model", Training = new JsonObject { ["steps"] = 3, ["utterances"] = 2 },
+                Exclude = [.. AdversarialSynthesisTrainer.StateFiles, "discriminator.safetensors", "discriminator.json"],
+            };
+            ThrowsNaming<ArgumentException>(() => store.AddCheckpoint("tester", model, options with { Consent = null }), "no consent", "has no consent", "VoiceCheckpointOptions.Consent");
+            ThrowsNaming<FileNotFoundException>(() => store.AddCheckpoint("tester", root, options), "a folder without config.json", "holds no config.json");
+            var voice = store.AddCheckpoint("tester", model, options);
+            Check(voice.Kind == VoiceKinds.Checkpoint && voice.Base == "vits-train/model" && voice.Consent?.Speaker == "A tester" && voice.Languages.SequenceEqual(["en"])
+                && File.Exists(Path.Combine(voice.CheckpointFolder!, "model.safetensors")) && File.Exists(Path.Combine(voice.CheckpointFolder!, "vocab.json"))
+                && !File.Exists(Path.Combine(voice.CheckpointFolder!, "discriminator.safetensors")) && (int?)voice.Manifest["training"]!["steps"] == 3,
+                $"the checkpoint voice: {voice.Manifest.ToJsonString()}");
+            ThrowsNaming<IOException>(() => store.AddCheckpoint("tester", model, options), "a second voice of the name", "installed already", "Overwrite");
+            Check(store.AddCheckpoint("tester", model, options with { Overwrite = true }).Kind == VoiceKinds.Checkpoint && store.List().Count == 1, "overwritten");
+            Check(((IVoiceStore)new NoModelStore()).Name == "no-models", "a store of its own");
+            ThrowsNaming<NotSupportedException>(() => ((IVoiceStore)new NoModelStore()).AddCheckpoint("x", model, options), "a store that keeps no models", "keeps no model folders");
+
+            // Spoken through VoicedSynthesizer: the voice's own model speaks, whatever the synthesizer given.
+            var speak = new SpeechSynthesisOptions { Voice = "tester", NoiseScale = 0, DurationNoiseScale = 0 };
+            using var other = SpeechSynthesisModels.Load(AudioData("tiny-vits"), new SpeechSynthesisLoadOptions { Device = device });
+            using var voiced = new VoicedSynthesizer(other, store, ownsSynthesizer: false);
+            var (speaker, inner, converter, _) = voiced.Resolve(speak);
+            Check(speaker is VitsSynthesizer && !ReferenceEquals(speaker, other) && converter is null && inner.Voice is null, "the voice resolves to its own model");
+            var spoken = voiced.Speak("abc ab", speak).Audio;
+            using (var own = SpeechSynthesisModels.Load(store.Find("tester")!.CheckpointFolder!, new SpeechSynthesisLoadOptions { Device = device }))
+            {
+                var expected = own.Speak("abc ab", speak with { Voice = null }).Audio;
+                Check(spoken.Length > 0 && spoken.Samples.AsSpan().SequenceEqual(expected.Samples), $"VoicedSynthesizer's {spoken.Length} samples are the checkpoint's own {expected.Length}");
+            }
+
+            string zip = Path.Combine(root, "tester.zip");
+            store.Export("tester", zip);
+            var elsewhere = new FolderVoiceStore(Path.Combine(root, "elsewhere"), "test-elsewhere");
+            var imported = elsewhere.Import(zip);
+            Check(imported.Kind == VoiceKinds.Checkpoint && File.ReadAllBytes(Path.Combine(imported.CheckpointFolder!, "model.safetensors")).AsSpan()
+                .SequenceEqual(File.ReadAllBytes(Path.Combine(voice.CheckpointFolder!, "model.safetensors"))), "export and import give the voice and its model back");
+            string broken = Path.Combine(root, "broken");
+            Directory.CreateDirectory(broken);
+            File.Copy(Path.Combine(imported.Folder, FolderVoiceStore.ManifestFile), Path.Combine(broken, FolderVoiceStore.ManifestFile));
+            ThrowsNaming<InvalidDataException>(() => elsewhere.Import(broken, overwrite: true), "a checkpoint voice without its model", "holds no model");
+        }
+        finally
+        {
+            VitsSpeechPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // A store that keeps no model folders: the contract's default refuses a checkpoint voice.
+    private sealed class NoModelStore : IVoiceStore
+    {
+        public string Name => "no-models";
+
+        public string Location => "nowhere";
+
+        public IReadOnlyList<VoiceProfile> List() => [];
+
+        public VoiceProfile? Find(string name) => null;
+
+        public VoiceProfile Add(string name, IReadOnlyList<string> clips, ISpeakerEncoder encoder, VoiceAddOptions options, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public float[] ReadEmbedding(VoiceProfile voice) => throw new NotSupportedException();
+
+        public VoiceProfile Import(string folderOrZip, bool overwrite = false) => throw new NotSupportedException();
+
+        public void Export(string name, string zip) => throw new NotSupportedException();
+
+        public bool Remove(string name) => false;
+    }
+
+    private static void AudioVoiceTrainCli(Device device)
+    {
+        string root = TempFolder("vits-cli"), d = device.ToString();
+        try
+        {
+            var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 41, maxLetters: 4);
+            string store = Path.Combine(root, "voices"), run = Path.Combine(root, "run");
+            const string Consent = "I agree that this test voice is trained and installed.";
+            string[] train = ["voice", "train", "tester", "--from", transcripts, "--base", VitsTrainData("model"), "-P", VitsPlugin, "--steps", "2", "--batch-seconds", "2",
+                "--segment-frames", "8", "--mels", "16", "--save-every", "1", "--log-every", "1", "--feature-cache", "none", "-o", run, "--voices", store, "-d", d];
+            var noConsent = AudioCli(train);
+            Check(noConsent.Code == 2 && noConsent.Err.Contains("--consent", StringComparison.Ordinal), $"no consent: {noConsent.Err}");
+            var notTrainable = AudioCli([.. train.Select(a => a == VitsTrainData("model") ? AudioData("tiny-whisper") : a), "--consent", Consent]);
+            Check(notTrainable.Code != 0, $"a base that is not a synthesizer: {notTrainable.Err}");
+            var printed = AudioCli([.. train, "--consent", Consent]);
+            Check(printed.Code == 0 && printed.Out.Contains("step 2/2", StringComparison.Ordinal) && printed.Out.Contains(" mel ", StringComparison.Ordinal)
+                && printed.Out.Contains(" left", StringComparison.Ordinal) && printed.Out.Contains("installed 'tester'", StringComparison.Ordinal), $"voice train: {printed.Out}\n{printed.Err}");
+            var shown = AudioCliJson("voice", "show", "tester", "--voices", store);
+            Check((string?)shown["kind"] == VoiceKinds.Checkpoint && (int?)shown["training"]!["steps"] == 2 && (string?)shown["base"] == VitsTrainData("model")
+                && (string?)shown["consent"]!["statement"] == Consent, $"voice show: {shown}");
+
+            string wav = Path.Combine(root, "tester.wav");
+            var spoken = AudioCli("speak", "-P", VitsPlugin, AudioData("tiny-vits"), "abc ab", "--voice", "tester", "--voices", store, "--noise", "0", "--duration-noise", "0", "-o", wav, "-d", d);
+            Check(spoken.Code == 0, $"speak --voice tester: {spoken.Err}");
+            VitsSpeechPlugin.Register();
+            try
+            {
+                using var own = SpeechSynthesisModels.Load(Path.Combine(store, "tester", "model"), new SpeechSynthesisLoadOptions { Device = device });
+                var expected = own.Speak("abc ab", new SpeechSynthesisOptions { NoiseScale = 0, DurationNoiseScale = 0 }).Audio;
+                var written = AudioCodecs.Decode(wav);
+                Check(written.Length == expected.Length && written.SampleRate == expected.SampleRate, $"the checkpoint voice spoke {written.Length} samples, the checkpoint {expected.Length}");
+            }
+            finally
+            {
+                VitsSpeechPlugin.Unregister();
+            }
+
+            var resumed = AudioCliJson("voice", "train", "--resume", run, "--steps", "1", "-P", VitsPlugin, "--voices", store, "-d", d);
+            Check((int?)resumed["steps"] == 3 && (string?)resumed["voice"]!["name"] == "tester" && (int?)resumed["voice"]!["training"]!["steps"] == 3, $"--resume: {resumed}");
+            var again = AudioCliJson("resume", run, "--steps", "1", "-P", VitsPlugin, "--voices", store, "-d", d);
+            Check((int?)again["steps"] == 4 && Directory.Exists(Path.Combine(run, "checkpoint-4")), $"idrak resume: {again}");
+
+            var (code, help, _) = AudioCli("voice", "train", "--help");
+            var command = CommandTable.All.First(c => c.Name == "voice train");
+            Check(code == 0 && help.Contains("\nExamples:\n", StringComparison.Ordinal) && help.Contains("idrak voice train", StringComparison.Ordinal)
+                && help.TrimEnd().Split('\n').All(l => l.Length <= 120) && command.ValueOptions.All(o => help.Contains(o, StringComparison.Ordinal))
+                && Idrak.Cli.Shared.Messages.Arabic.ContainsKey(command.Summary), $"idrak voice train --help: {help}");
+        }
+        finally
+        {
             Directory.Delete(root, recursive: true);
         }
     }

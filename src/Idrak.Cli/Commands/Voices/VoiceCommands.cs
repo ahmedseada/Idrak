@@ -27,6 +27,13 @@ internal static class VoiceText
         yield return voice.Consent is { } consent
             ? string.Create(CultureInfo.InvariantCulture, $"  consent: {consent.Speaker} agreed {consent.Agreed:u}: \"{consent.Statement}\"")
             : "  consent: none recorded";
+        if (voice.CheckpointFolder is { } model)
+        {
+            var training = voice.Manifest["training"];
+            yield return $"  model: {model} (fine-tuned from {voice.Base ?? "?"}"
+                         + (training?["steps"] is { } steps ? string.Create(CultureInfo.InvariantCulture, $", {steps} steps on {training["utterances"]} utterances") : "") + ")";
+        }
+
         foreach (var clip in voice.Clips)
         {
             yield return string.Create(CultureInfo.InvariantCulture, $"  clip {clip.File}: {clip.Seconds:0.0} s, agreement {clip.Agreement:0.000}")
@@ -51,6 +58,9 @@ internal static class VoiceText
             ["file"] = c.File, ["sha256"] = c.Sha256, ["seconds"] = c.Seconds, ["agreement"] = c.Agreement, ["flagged"] = c.Agreement < warn,
         })]),
         ["folder"] = voice.Folder,
+        ["checkpoint"] = voice.CheckpointFolder,
+        ["base"] = voice.Base,
+        ["training"] = voice.Manifest["training"]?.DeepClone(),
     };
 
     /// <summary>The voice of <paramref name="name"/> in the store, or a failure naming the store and its voices.</summary>

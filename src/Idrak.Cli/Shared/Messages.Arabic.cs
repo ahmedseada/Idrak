@@ -271,6 +271,8 @@ internal static partial class Messages
         ["Remove an installed voice (its folder: manifest, embedding and kept clips)"] = "إزالة صوت مثبت (مجلده: البيان والتضمين والمقاطع المحفوظة)",
         ["Write an installed voice to a zip (manifest, consent, embedding) for idrak voice import"] =
             "كتابة صوت مثبت في ملف zip (البيان والموافقة والتضمين) للأمر idrak voice import",
+        ["Train a voice on a person's recordings (fine-tune a synthesizer, with their consent) and install it"] =
+            "تدريب صوت على تسجيلات شخص (ضبط نموذج نطق، بموافقته) وتثبيته",
         ["Install a voice from a zip idrak voice export wrote, or from a voice folder"] = "تثبيت صوت من ملف zip كتبه idrak voice export، أو من مجلد صوت",
         ["Download a voice folder published on the Hugging Face hub and install it"] = "تنزيل مجلد صوت منشور على Hugging Face وتثبيته",
         ["First rows, columns and their types of a data file (Parquet, JSON Lines, CSV)"] = "أول صفوف ملف بيانات وأعمدته وأنواعها (Parquet و JSON Lines و CSV)",
