@@ -23,7 +23,9 @@ internal sealed class PullCommand : Command
         MODEL [--file NAME] [--revision REV] [--token TOKEN] [-f] [--dry-run]
 
         Arguments:
-          MODEL  owner/name (a transformers model: config, tokenizer, chat template, safetensors weights),
+          MODEL  owner/name (a transformers model: config, tokenizer, chat template, safetensors weights,
+                 else one PyTorch checkpoint, read without running it), owner/name/FOLDER (a model kept
+                 below the top level, e.g. myshell-ai/OpenVoiceV2/converter),
                  owner/name:TAG or owner/name/FILE.gguf (one GGUF file of a repository), a URL of a .gguf
                  file, or an alias; a local folder or .gguf file needs no download (a GGUF file's
                  description is prepared in the cache)
@@ -124,10 +126,14 @@ internal sealed class PullCommand : Command
     {
         string? file = context.Option("--file");
         string? tag = null;
-        string repo = model;
+        string repo = model, subfolder = "";
         if (PullTarget.SplitFile(model) is var (r, f))
         {
             (repo, file) = (r, f);
+        }
+        else if (PullTarget.SplitFolder(model) is var (fr, ff))
+        {
+            (repo, subfolder) = (fr, ff);
         }
         else
         {
@@ -144,7 +150,12 @@ internal sealed class PullCommand : Command
         string commit = await HuggingFace.ResolveRevisionAsync(repo, "models", revision, token, downloader).ConfigureAwait(false);
         var files = await Shared.Hub.FilesAsync(repo, commit, token, downloader).ConfigureAwait(false);
         string folder = downloader.PathFor($"huggingface/models/{repo}/{commit[..Math.Min(12, commit.Length)]}");
-        var wanted = file is null && tag is null ? Shared.Hub.TransformersFiles(repo, files) : null;
+        var wanted = file is null && tag is null ? Shared.Hub.TransformersFiles(repo, files, subfolder) : null;
+        if (wanted is null && subfolder.Length > 0)
+        {
+            throw new InvalidOperationException($"{repo}/{subfolder} has no config.json; it is not a model folder.");
+        }
+
         bool gguf = wanted is null;
         wanted ??= GgufFiles(repo, files, file, tag);
 
@@ -172,7 +183,7 @@ internal sealed class PullCommand : Command
         if (!gguf)
         {
             // The library's own download, so a pull fetches exactly what loading reads, into the folder loading looks in.
-            folder = await HuggingFaceModels.DownloadAsync(repo, commit, token, downloader).ConfigureAwait(false);
+            folder = await HuggingFaceModels.DownloadFolderAsync(repo, subfolder, commit, token, downloader).ConfigureAwait(false);
         }
         else
         {
@@ -185,7 +196,7 @@ internal sealed class PullCommand : Command
         }
 
         ModelCache.Touch(context.CacheFolder, gguf ? Path.Combine(folder, wanted[0].Path) : folder);
-        Report(context, repo, commit, folder, [.. wanted.Select(w => (w.Path, w.Size, missing.Contains(w)))], clock.Elapsed, prepared);
+        Report(context, subfolder.Length == 0 ? repo : $"{repo}/{subfolder}", commit, folder, [.. wanted.Select(w => (w.Path, w.Size, missing.Contains(w)))], clock.Elapsed, prepared);
         return ExitCodes.Ok;
     }
 

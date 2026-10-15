@@ -300,6 +300,10 @@
    "bytes": 269,
    "sha256": "04a3f63a65cf91025cc93d66526d3099415fb053b72c15d1cc65e54d36341942"
   },
+  "tiny-openvoice/checkpoint.pth": {
+   "bytes": 2183933,
+   "sha256": "77ea9e5b6a6bf86b30fe6553217634988c5320beaed516006634e5d957ca6283"
+  },
   "tiny-openvoice/config.json": {
    "bytes": 587,
    "sha256": "39e11c3779db4b08a44eef981f0a8e354284197693ed137b31410c4f22844dbd"

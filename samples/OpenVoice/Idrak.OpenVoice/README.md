@@ -49,15 +49,19 @@ and `VoiceStoreSuite`. The owner runs the real converter on the GPUs.
 
 ## Getting the converter (once)
 
-OpenVoice ships the converter as a PyTorch pickle; Idrak reads no pickles, so `tools/audio/convert_openvoice.py` writes
-safetensors once (`torch.load` with `weights_only=True`, on a checkpoint you trust):
+OpenVoice ships the converter as a PyTorch checkpoint (`converter/checkpoint.pth`) in a subfolder of its repository.
+`idrak pull` takes a subfolder, and Idrak's `PyTorchCheckpointReader` (the "pytorch" checkpoint format) reads the
+checkpoint without running anything in it, so no Python is needed:
 
 ```powershell
 cd D:\Projects\Idrak
-pip install -U huggingface_hub torch safetensors
-hf download myshell-ai/OpenVoiceV2 converter/checkpoint.pth converter/config.json --local-dir D:\Models\OpenVoiceV2
-python tools\audio\convert_openvoice.py D:\Models\OpenVoiceV2\converter -o D:\Models\openvoice-v2
+dotnet run --project src\Idrak.Cli -c Release -- pull myshell-ai/OpenVoiceV2/converter
+$converter = "$env:USERPROFILE\.cache\idrak\downloads\huggingface\models\myshell-ai\OpenVoiceV2"
+$converter = (Get-ChildItem $converter -Directory | Sort-Object LastWriteTime | Select-Object -Last 1).FullName + "\converter"
 ```
+
+`VoiceConverters.Load($converter)` (and `voice.cs add --converter $converter`) then reads it as it is. To keep a
+safetensors copy instead, `tools/audio/convert_openvoice.py` still writes one (it needs torch).
 
 ## Installing a voice and speaking with it
 
@@ -66,7 +70,7 @@ imports voices, and speaks with one (both cold and warm timings are printed).
 
 ```powershell
 cd D:\Projects\Idrak
-dotnet run samples\OpenVoice\voice.cs -c Release -- add ahmed --converter D:\Models\openvoice-v2 --speaker "Ahmed Seada" --consent "I, Ahmed Seada, agree that this voice is used for speech made with Idrak." --language ar --language en --device cuda D:\Recordings\ahmed
+dotnet run samples\OpenVoice\voice.cs -c Release -- add ahmed --converter $converter --speaker "Ahmed Seada" --consent "I, Ahmed Seada, agree that this voice is used for speech made with Idrak." --language ar --language en --device cuda D:\Recordings\ahmed
 dotnet run samples\OpenVoice\voice.cs -c Release -- show ahmed
 dotnet run samples\OpenVoice\voice.cs -c Release -- speak D:\Models\mms-tts-ara "مرحبا، أنا إدراك" --voice ahmed --device cuda -o ahmed-ar.wav
 dotnet run samples\OpenVoice\voice.cs -c Release -- export ahmed ahmed-voice.zip
