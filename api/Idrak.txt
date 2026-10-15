@@ -746,6 +746,7 @@ public sealed class Idrak.Layers.CrossAttention : Idrak.Abstraction.Module, Idra
   public CrossAttention(Idrak.Layers.Linear query, Idrak.Layers.Linear key, Idrak.Layers.Linear value, Idrak.Layers.Linear output, int heads)
   public CrossAttention(int dim, int heads, int? memoryDim = null, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor memory)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor memory, System.Collections.Generic.IReadOnlyList<int>? lengths)
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Layers.Linear Key { get; }
   public Idrak.Layers.Linear Output { get; }
@@ -802,8 +803,11 @@ public sealed class Idrak.Layers.Embedding : Idrak.Abstraction.Module
 
 public sealed class Idrak.Layers.EncoderMemory : System.IDisposable
   public Idrak.Abstraction.Tensor Memory { get; }
+  public System.Collections.Generic.IReadOnlyList<int>? Lengths { get; }
   public static Idrak.Abstraction.Tensor? Current { get; }
   public static Idrak.Layers.EncoderMemory Use(Idrak.Abstraction.Tensor memory)
+  public static Idrak.Layers.EncoderMemory Use(Idrak.Abstraction.Tensor memory, System.Collections.Generic.IReadOnlyList<int>? lengths)
+  public static System.Collections.Generic.IReadOnlyList<int>? CurrentLengths { get; }
   public void Dispose()
 
 public sealed class Idrak.Layers.ExactGELU : Idrak.Abstraction.Module

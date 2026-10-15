@@ -8,7 +8,8 @@ namespace Idrak.Layers;
 /// <summary>
 /// Multi-head attention of a decoder's rows over an encoder's output (the memory): queries from the decoder's
 /// [batch, time, dim], keys and values from the memory [batch, memory, memoryDim], every query seeing every memory
-/// position (no mask, no rotary positions: encoder-decoder families use learned or sinusoidal positions). The scores are
+/// position of its sequence (no rotary positions: encoder-decoder families use learned or sinusoidal positions); a padded
+/// batch of memories gives each sequence's length, and its padding is not attended to. The scores are
 /// never stored whole (<see cref="Tensor.AttentionFastest"/>: tiled over the keys, or the composed scores where the device
 /// measured them faster); gradients flow to the queries, the memory and the projections for training.
 /// <para>
@@ -22,7 +23,7 @@ namespace Idrak.Layers;
 public sealed class CrossAttention : Module, ICachedModule
 {
     private readonly Linear[] _keyValue;
-    private (Tensor Starts, Tensor Ends, int Rows, int Keys, Device Device)? _spans;
+    private (Tensor Starts, Tensor Ends, int Rows, int Keys, Device Device, int[]? Lengths)? _spans;
 
     /// <summary>Creates the layer with random projections.</summary>
     /// <param name="dim">The decoder's width (the queries' and the output's).</param>
@@ -151,28 +152,68 @@ public sealed class CrossAttention : Module, ICachedModule
     }
 
     /// <summary>Attention of <paramref name="input"/> [batch, time, dim] over <paramref name="memory"/> [batch, memory, memoryDim] → [batch, time, dim].</summary>
-    public Tensor Forward(Tensor input, Tensor memory)
+    public Tensor Forward(Tensor input, Tensor memory) => Forward(input, memory, null);
+
+    /// <summary>
+    /// Attention of <paramref name="input"/> [batch, time, dim] over a padded batch of memories [batch, memory, memoryDim]
+    /// → [batch, time, dim]: sequence b attends to its first <paramref name="lengths"/>[b] memory positions only (all when
+    /// null), so a sequence gives the same output in any batch and its padding gets no gradient.
+    /// </summary>
+    /// <exception cref="ArgumentException">There is not one length per sequence, or one is outside 1 to the memory's positions.</exception>
+    public Tensor Forward(Tensor input, Tensor memory, IReadOnlyList<int>? lengths)
     {
         ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(memory);
+        var own = Lengths(lengths, memory);
         var (keys, values) = Project(memory);
-        return Attend(input, keys, values);
+        return Attend(input, keys, values, own);
     }
 
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) =>
         Forward(input, EncoderMemory.Current ?? throw new InvalidOperationException(
-            "CrossAttention needs the encoder's output: call Forward(input, memory), open an EncoderMemory scope around the pass, or decode with a context given the memory (SetMemory)."));
+            "CrossAttention needs the encoder's output: call Forward(input, memory), open an EncoderMemory scope around the pass, or decode with a context given the memory (SetMemory)."),
+            EncoderMemory.CurrentLengths);
 
     /// <inheritdoc />
     public Tensor ForwardCached(Tensor input, DecodingContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         var memory = context.MemoryOf(this) ?? throw new InvalidOperationException("The decoding context holds no memory for this CrossAttention: call SetMemory(memory, context) before the first step.");
-        return Attend(input, memory.Keys, memory.Values);
+        return Attend(input, memory.Keys, memory.Values, null);
     }
 
-    // q from the input, [n·heads, t, d]; attention over keys and values [n·heads, m, d], every query seeing every key.
-    private Tensor Attend(Tensor input, Tensor keys, Tensor values)
+    // The lengths checked against the memory [n, m, memoryDim]: null when every sequence has all m positions.
+    private static int[]? Lengths(IReadOnlyList<int>? lengths, Tensor memory)
+    {
+        if (lengths is null)
+        {
+            return null;
+        }
+
+        int n = memory.Rank == 3 ? memory.Shape[0] : -1, m = memory.Rank == 3 ? memory.Shape[1] : -1;
+        if (lengths.Count != n)
+        {
+            throw new ArgumentException($"{lengths.Count} memory lengths for a memory of {n} sequences ({Tensor.FormatShape(memory.Shape)}).", nameof(lengths));
+        }
+
+        bool full = true;
+        for (int b = 0; b < n; b++)
+        {
+            if (lengths[b] < 1 || lengths[b] > m)
+            {
+                throw new ArgumentException($"Sequence {b}'s memory length {lengths[b]} is outside 1 to {m}, the memory's positions.", nameof(lengths));
+            }
+
+            full &= lengths[b] == m;
+        }
+
+        return full ? null : [.. lengths];
+    }
+
+    // q from the input, [n·heads, t, d]; attention over keys and values [n·heads, m, d], each query seeing its sequence's
+    // keys (all of them, or its first lengths[b]).
+    private Tensor Attend(Tensor input, Tensor keys, Tensor values, int[]? lengths)
     {
         if (input.Rank != 3 || input.Shape[2] != Dim)
         {
@@ -186,8 +227,8 @@ public sealed class CrossAttention : Module, ICachedModule
         }
 
         var q = Heads4(Query.Forward(input), n, t);
-        var (starts, ends) = Spans(t, m, input.Device);
-        var context = Tensor.AttentionFastest(q, keys, values, starts, ends, ScoreScale, everyKey: true);   // [n·heads, t, d]
+        var (starts, ends) = Spans(t, m, input.Device, lengths);
+        var context = Tensor.AttentionFastest(q, keys, values, starts, ends, ScoreScale, everyKey: lengths is null);   // [n·heads, t, d]
         var merged = context.Reshape(n, Heads, t, HeadDim).Permute(0, 2, 1, 3).Reshape(n, t, Heads * HeadDim);
         return Output.Forward(merged);
     }
@@ -196,21 +237,30 @@ public sealed class CrossAttention : Module, ICachedModule
     private Tensor Heads4(Tensor projected, int n, int rows) =>
         projected.Reshape(n, rows, Heads, HeadDim).Permute(0, 2, 1, 3).Reshape(n * Heads, rows, HeadDim);
 
-    // Every query row's range of keys: all of them (cached per shape and device).
-    private (Tensor Starts, Tensor Ends) Spans(int rows, int keys, Device device)
+    // Every query row's range of keys: all of them (one table), or sequence b's first lengths[b] (a table per sequence, its
+    // heads' rows; AttentionFastest gives a table each run of heads). Cached per shape, device and lengths: a training
+    // pass's backward, and a checkpointed block's second forward, read the same tables.
+    private (Tensor Starts, Tensor Ends) Spans(int rows, int keys, Device device, int[]? lengths)
     {
-        if (_spans is { } cached && cached.Rows == rows && cached.Keys == keys && cached.Device == device)
+        if (_spans is { } cached && cached.Rows == rows && cached.Keys == keys && cached.Device == device
+            && (cached.Lengths is null ? lengths is null : lengths is not null && cached.Lengths.AsSpan().SequenceEqual(lengths)))
         {
             return (cached.Starts, cached.Ends);
         }
 
         _spans?.Starts.Dispose();
         _spans?.Ends.Dispose();
-        var spans = KeySpans.Bidirectional(rows, keys);
-        var starts = CreateBuffer(new float[rows], [rows], device);
-        var ends = CreateBuffer([.. spans.Ends.Select(e => (float)e)], [rows], device);
-        _spans = (starts, ends, rows, keys, device);
-        return (starts, ends);
+        int tables = lengths?.Length ?? 1;
+        var ends = new float[tables * rows];
+        for (int b = 0; b < tables; b++)
+        {
+            ends.AsSpan(b * rows, rows).Fill(lengths?[b] ?? keys);
+        }
+
+        var starts = CreateBuffer(new float[tables * rows], [tables * rows], device);
+        var endsBuffer = CreateBuffer(ends, [tables * rows], device);
+        _spans = (starts, endsBuffer, rows, keys, device, lengths);
+        return (starts, endsBuffer);
     }
 
     /// <inheritdoc />
@@ -246,9 +296,10 @@ public sealed class EncoderMemory : IDisposable
 
     private readonly EncoderMemory? _previous;
 
-    private EncoderMemory(Tensor memory)
+    private EncoderMemory(Tensor memory, IReadOnlyList<int>? lengths)
     {
         Memory = memory;
+        Lengths = lengths;
         _previous = t_current;
         t_current = this;
     }
@@ -256,14 +307,26 @@ public sealed class EncoderMemory : IDisposable
     /// <summary>The memory the current scope holds, [batch, memory, memoryDim], or null outside one.</summary>
     public static Tensor? Current => t_current?.Memory;
 
+    /// <summary>The current scope's memory lengths (each sequence's own positions), or null: every position of every sequence.</summary>
+    public static IReadOnlyList<int>? CurrentLengths => t_current?.Lengths;
+
     /// <summary>The scope's memory.</summary>
     public Tensor Memory { get; }
 
+    /// <summary>Each sequence's memory positions (the first ones; padding after them), or null for all of them.</summary>
+    public IReadOnlyList<int>? Lengths { get; }
+
     /// <summary>Opens a scope over <paramref name="memory"/> (not owned: the caller keeps and disposes it).</summary>
-    public static EncoderMemory Use(Tensor memory)
+    public static EncoderMemory Use(Tensor memory) => Use(memory, null);
+
+    /// <summary>
+    /// Opens a scope over a padded batch of memories (not owned): sequence b's first <paramref name="lengths"/>[b]
+    /// positions are its own, the rest padding no <see cref="CrossAttention"/> attends to (all of them when null).
+    /// </summary>
+    public static EncoderMemory Use(Tensor memory, IReadOnlyList<int>? lengths)
     {
         ArgumentNullException.ThrowIfNull(memory);
-        return new EncoderMemory(memory);
+        return new EncoderMemory(memory, lengths is null ? null : [.. lengths]);
     }
 
     /// <inheritdoc />
