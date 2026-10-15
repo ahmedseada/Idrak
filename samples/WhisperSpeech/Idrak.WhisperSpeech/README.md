@@ -50,7 +50,8 @@ foreach (var segment in result.Segments)
 
 `tests/Idrak.Tests/AudioAsrTests.cs` ("audio asr:") checks the plug-in on the fixture `tests/Idrak.Tests/data/audio/tiny-whisper`
 (a seeded tiny model whose references came from transformers): the encoder output and the first step's logits within
-1e-4, the greedy, beam-of-4 and timestamp ids exactly. On the CPU:
+1e-4, the greedy, beam-of-4 and timestamp ids (greedy and beam-of-4) exactly, Transcribe's chunks and streaming, a batch
+through the encoder, and the testing kit's `SpeechRecognizerSuite`. On the CPU:
 
 ```
 IDRAK_DEVICES=cpu IDRAK_FILTER="audio asr" dotnet run -c Release --no-build --project tests/Idrak.Tests

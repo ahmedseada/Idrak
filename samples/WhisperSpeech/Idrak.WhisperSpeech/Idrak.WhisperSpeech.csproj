@@ -9,6 +9,7 @@
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +18,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Using Include="Idrak.Abstraction" />
+    <Using Include="Idrak.Abstraction.Devices" />
     <Using Include="Idrak.Audio.Abstractions" />
   </ItemGroup>
 

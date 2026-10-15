@@ -124,6 +124,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckSpeechRecognizer(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTuningDataFormat(System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>> read, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckVisionEncoder(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f, Idrak.Abstraction.Testing.ContractCheckOptions? options = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null)
@@ -283,6 +284,17 @@ public readonly record struct Idrak.Abstraction.Testing.PowerSpectra : System.IE
   public int Bins { get; init; }
   public int Frames { get; init; }
 
+public readonly record struct Idrak.Abstraction.Testing.RecognizedSegment : System.IEquatable<Idrak.Abstraction.Testing.RecognizedSegment>
+  public RecognizedSegment(double Start, double End, string Text)
+  public double End { get; init; }
+  public double Start { get; init; }
+  public string Text { get; init; }
+
+public sealed record Idrak.Abstraction.Testing.RecognizedSpeech : System.IEquatable<Idrak.Abstraction.Testing.RecognizedSpeech>
+  public RecognizedSpeech(string Text, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.RecognizedSegment> Segments)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.RecognizedSegment> Segments { get; init; }
+  public string Text { get; init; }
+
 public static class Idrak.Abstraction.Testing.Regression
   public const string OperationKind = "operation"
   public static Idrak.Abstraction.Testing.ConformanceReport Replay(string path, Idrak.Abstraction.Device device, Idrak.Abstraction.Testing.DeviceCheckOptions? options = null)
@@ -360,6 +372,18 @@ public sealed class Idrak.Abstraction.Testing.SegmentationMetricSuite : Idrak.Ab
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.SegmentationImage>, double> implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.SpeechRecognizerSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.SpeechRecognizerUnderTest>
+  public SpeechRecognizerSuite(int? silenceMaxChars = null)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.SpeechRecognizerUnderTest : System.IEquatable<Idrak.Abstraction.Testing.SpeechRecognizerUnderTest>
+  public SpeechRecognizerUnderTest(int SampleRate, System.Func<float[], Idrak.Abstraction.Testing.RecognizedSpeech> Transcribe)
+  public System.Func<float[], Idrak.Abstraction.Testing.RecognizedSpeech> Transcribe { get; init; }
+  public int SampleRate { get; init; }
 
 public sealed record Idrak.Abstraction.Testing.StftUnderTest : System.IEquatable<Idrak.Abstraction.Testing.StftUnderTest>
   public StftUnderTest(int WindowSize, int HopSize, bool Center, System.Func<int, float> Window, System.Func<float[], Idrak.Abstraction.Testing.PowerSpectra> Power)

@@ -120,6 +120,7 @@ public static class BeamSearch
 
         var finished = new List<(List<int> Tokens, double Score, double LogProb)>();
         var next = new (int Beam, int Token, double Score)[beams];
+        var nextRank = new int[beams];
         var sources = new int[beams];
         var ids = new float[beams];
         context.Reset();
@@ -175,6 +176,7 @@ public static class BeamSearch
                         continue;
                     }
 
+                    nextRank[kept] = rank;
                     next[kept++] = (beam, token, score);
                 }
 
@@ -188,10 +190,11 @@ public static class BeamSearch
                 done = finished.Count >= beams && (options.EarlyStopping || Finished(finished, candidates[0].Score, s + 1, options.LengthPenalty));
                 if (done || s + 1 == options.MaxTokens)
                 {
-                    // The live beams as they stand (transformers adds them at the end when the search is not done).
+                    // The live beams as they stand at the last step, those among the first beams of the candidates (transformers
+                    // finalises only those when the length runs out).
                     if (!done)
                     {
-                        for (int k = 0; k < kept; k++)
+                        for (int k = 0; k < kept && nextRank[k] < beams; k++)
                         {
                             var (beam, token, score) = next[k];
                             AddFinished(finished, new List<int>(sequences[beam]) { token }, score, s + 1, options.LengthPenalty, beams);
@@ -269,9 +272,11 @@ public static class BeamSearch
         }
     }
 
-    // The suppressions, the least length, the n-gram rule and the caller's filter on one row, then log-softmax in place.
+    // Log-softmax of the row in place, then the suppressions, the least length, the n-gram rule and the caller's filter on
+    // the log-probabilities (as transformers' beam search applies its processors: what they forbid is not renormalized away).
     private static void Filter(Span<float> row, int step, IReadOnlyList<int> prompt, List<int> generated, BeamOptions options, LogitsFilter? filter)
     {
+        LogSoftmax(row);
         foreach (int token in options.SuppressTokens)
         {
             if ((uint)token < (uint)row.Length)
@@ -302,8 +307,11 @@ public static class BeamSearch
         }
 
         filter?.Invoke(step, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated), row);
+    }
 
-        // log-softmax: the max and the sum of exponentials in double (the ranking of close scores holds on every device).
+    // log-softmax: the max and the sum of exponentials in double (the ranking of close scores holds on every device).
+    private static void LogSoftmax(Span<float> row)
+    {
         float max = float.NegativeInfinity;
         foreach (float x in row)
         {
@@ -315,7 +323,7 @@ public static class BeamSearch
 
         if (float.IsNegativeInfinity(max))
         {
-            return;                                                             // every token forbidden: no candidate from this row
+            return;                                                             // no finite logit: no candidate from this row
         }
 
         double sum = 0;

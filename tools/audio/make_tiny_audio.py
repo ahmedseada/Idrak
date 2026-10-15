@@ -337,38 +337,46 @@ def train_tokenizer(folder):
     return tok, ids
 
 
-def randomize(model, torch, seed):
+def randomize(model, torch, seed, std=0.02):
     gen = torch.Generator().manual_seed(seed)
     with torch.no_grad():
         for name, p in model.named_parameters():
             if p.dim() == 1 and ("norm" in name.lower() or name.endswith("bias")):
                 p.fill_(1.0 if "weight" in name else 0.0)
             else:
-                p.copy_(torch.randn(p.shape, generator=gen) * 0.02)
+                p.copy_(torch.randn(p.shape, generator=gen) * std)
 
 
 def write_whisper(out, extractor):
-    from transformers import WhisperConfig, WhisperForConditionalGeneration
-    from safetensors.torch import save_file
+    """A tiny random Whisper and transformers' outputs for it. The weights are drawn at std 0.5: at the usual 0.02 the
+    tied head makes the model repeat its last input token, and greedy, beam and timestamp decoding all give one token
+    over and over (references that cannot tell a right decoder from a wrong one). The decodings are transformers' plain
+    generate with Whisper's processors passed in (the suppressed first tokens; with timestamps, the timestamp rules), as
+    the plug-in applies them."""
+    from transformers import WhisperConfig, WhisperForConditionalGeneration, GenerationConfig, LogitsProcessorList
+    from transformers.generation.logits_process import SuppressTokensAtBeginLogitsProcessor, WhisperTimeStampLogitsProcessor
+    from transformers.generation.utils import GenerationMixin
     torch = torch_setup()
     folder = os.path.join(out, "tiny-whisper")
     tok, ids = train_tokenizer(folder)
+    eos = ids["<|endoftext|>"]
     config = WhisperConfig(vocab_size=VOCAB, d_model=32, encoder_layers=2, decoder_layers=2, encoder_attention_heads=4,
                            decoder_attention_heads=4, encoder_ffn_dim=64, decoder_ffn_dim=64, num_mel_bins=MELS,
                            max_source_positions=1500, max_target_positions=448,
-                           bos_token_id=ids["<|endoftext|>"], eos_token_id=ids["<|endoftext|>"], pad_token_id=ids["<|endoftext|>"],
-                           decoder_start_token_id=ids["<|startoftranscript|>"], dropout=0.0, attention_dropout=0.0, activation_dropout=0.0)
+                           bos_token_id=eos, eos_token_id=eos, pad_token_id=eos,
+                           decoder_start_token_id=ids["<|startoftranscript|>"], dropout=0.0, attention_dropout=0.0, activation_dropout=0.0,
+                           begin_suppress_tokens=[eos], suppress_tokens=[])
     model = WhisperForConditionalGeneration(config)
-    randomize(model, torch, 2028)
+    randomize(model, torch, 2028, std=0.5)
     model.eval()
     model.save_pretrained(folder, safe_serialization=True)
     extractor.save_pretrained(folder)
     gen = {
-        "decoder_start_token_id": ids["<|startoftranscript|>"], "eos_token_id": ids["<|endoftext|>"], "pad_token_id": ids["<|endoftext|>"],
-        "bos_token_id": ids["<|endoftext|>"], "lang_to_id": {"<|en|>": ids["<|en|>"], "<|ar|>": ids["<|ar|>"]},
+        "decoder_start_token_id": ids["<|startoftranscript|>"], "eos_token_id": eos, "pad_token_id": eos,
+        "bos_token_id": eos, "lang_to_id": {"<|en|>": ids["<|en|>"], "<|ar|>": ids["<|ar|>"]},
         "task_to_id": {"transcribe": ids["<|transcribe|>"], "translate": ids["<|translate|>"]},
-        "no_timestamps_token_id": ids["<|notimestamps|>"], "max_length": 448, "is_multilingual": True,
-        "suppress_tokens": [], "begin_suppress_tokens": [ids["<|endoftext|>"]],
+        "no_timestamps_token_id": ids["<|notimestamps|>"], "max_initial_timestamp_index": 5, "max_length": 448, "is_multilingual": True,
+        "suppress_tokens": [], "begin_suppress_tokens": [eos],
     }
     dump_json(os.path.join(folder, "generation_config.json"), gen)
     dump_json(os.path.join(folder, "special_tokens.json"), ids)
@@ -377,18 +385,37 @@ def write_whisper(out, extractor):
     os.makedirs(ref, exist_ok=True)
     features = torch.from_numpy(np.load(os.path.join(out, "features", "log-mel.npy")))[None]
     prompt = [ids["<|startoftranscript|>"], ids["<|ar|>"], ids["<|transcribe|>"], ids["<|notimestamps|>"]]
+    new_tokens = 12
+
+    def generate(prompt, beams, timestamps):
+        settings = GenerationConfig(decoder_start_token_id=ids["<|startoftranscript|>"], eos_token_id=eos, pad_token_id=eos, bos_token_id=eos,
+                                    max_new_tokens=new_tokens, num_beams=beams, length_penalty=1.0, early_stopping=True, do_sample=False,
+                                    no_timestamps_token_id=ids["<|notimestamps|>"], max_initial_timestamp_index=5)
+        model.generation_config = settings
+        processors = [SuppressTokensAtBeginLogitsProcessor([eos], len(prompt))]
+        if timestamps:
+            processors.append(WhisperTimeStampLogitsProcessor(settings, begin_index=len(prompt)))
+        out = GenerationMixin.generate(model, input_features=features, decoder_input_ids=torch.tensor([prompt]),
+                                       logits_processor=LogitsProcessorList(processors))
+        return out[0, len(prompt):].tolist()
+
     with torch.no_grad():
         encoded = model.model.encoder(features).last_hidden_state
         save_npy(ref, "encoder-output.npy", encoded[0].numpy().astype(np.float32))
         logits = model(input_features=features, decoder_input_ids=torch.tensor([prompt])).logits
         save_npy(ref, "logits-step1.npy", logits[0, -1].numpy().astype(np.float32))
-        greedy = model.generate(features, decoder_input_ids=torch.tensor([prompt]), max_new_tokens=8, min_new_tokens=8, do_sample=False, num_beams=1)
-        beam = model.generate(features, decoder_input_ids=torch.tensor([prompt]), max_new_tokens=8, min_new_tokens=8, do_sample=False,
-                              num_beams=4, length_penalty=1.0, early_stopping=True)
-        stamped = model.generate(features, decoder_input_ids=torch.tensor([prompt[:3]]), max_new_tokens=8, min_new_tokens=8, do_sample=False, num_beams=1)
-    dump_json(os.path.join(ref, "greedy-ids.json"), {"prompt": prompt, "ids": greedy[0].tolist()})
-    dump_json(os.path.join(ref, "beam4-ids.json"), {"prompt": prompt, "ids": beam[0].tolist(), "num_beams": 4, "length_penalty": 1.0, "early_stopping": True})
-    dump_json(os.path.join(ref, "timestamps-ids.json"), {"prompt": prompt[:3], "ids": stamped[0].tolist()})
+        start = model(input_features=features, decoder_input_ids=torch.tensor([prompt[:1]])).logits[0, -1]
+        languages = {code: float(start[i]) for code, i in [("en", ids["<|en|>"]), ("ar", ids["<|ar|>"])]}
+        greedy = generate(prompt, 1, False)
+        beam = generate(prompt, 4, False)
+        stamped = generate(prompt[:3], 1, True)
+        stamped_beam = generate(prompt[:3], 4, True)
+    assert greedy != beam, "beam search should differ from greedy on the fixture"
+    dump_json(os.path.join(ref, "greedy-ids.json"), {"prompt": prompt, "ids": greedy, "max_new_tokens": new_tokens})
+    dump_json(os.path.join(ref, "beam4-ids.json"), {"prompt": prompt, "ids": beam, "num_beams": 4, "length_penalty": 1.0, "early_stopping": True, "max_new_tokens": new_tokens})
+    dump_json(os.path.join(ref, "timestamps-ids.json"), {"prompt": prompt[:3], "ids": stamped, "max_new_tokens": new_tokens})
+    dump_json(os.path.join(ref, "timestamps-beam4-ids.json"), {"prompt": prompt[:3], "ids": stamped_beam, "num_beams": 4, "max_new_tokens": new_tokens})
+    dump_json(os.path.join(ref, "language.json"), {"logits": languages, "detected": max(languages, key=languages.get)})
     index, _ = safetensors_index(os.path.join(folder, "model.safetensors"))
     dump_json(os.path.join(folder, "tensors.json"), index)
 
