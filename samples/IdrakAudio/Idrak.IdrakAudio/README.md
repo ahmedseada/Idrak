@@ -2,7 +2,7 @@
 
 Idrak's own audio family (decision 1 of plan 21), registered in `SpeechFamilies` by `IdrakAudioPlugin.Register()` (or
 `-P Idrak.IdrakAudio.dll` in the command line). Built so far: the **"ctc"** task, a speech recognizer trained from
-scratch with `CtcTrainer` (src/Idrak.Audio). The "seq2seq", "audio-language" and "tts" tasks of the plan come later; a
+scratch with `SpeechTrainer` (src/Idrak.Audio). The "seq2seq", "audio-language" and "tts" tasks of the plan come later; a
 spec asking for one is refused by name.
 
 ```csharp
@@ -10,7 +10,7 @@ IdrakAudioPlugin.Register();
 var created = SpeechModels.Create("models/my-asr", spec, tokenizer);          // a folder SpeechModels.Load reads
 using var model = (ICtcSpeechModel)SpeechModels.Load("models/my-asr", new SpeechModelOptions { Device = device });
 var train = SpeechSources.Create(new SpeechSourceOptions { Kind = "transcripts", Path = "data/train.jsonl" });
-var result = CtcTrainer.Train(model, train, evaluation: null, new CtcTrainingOptions { Steps = 2000, Augmentations = ["speed", "spec-mask"] }, "runs/asr");
+var result = SpeechTrainer.Train(model, train, evaluation: null, new SpeechTrainingOptions { Steps = 2000, Augmentations = ["speed", "spec-mask"] }, "runs/asr");
 ```
 
 ## The "ctc" model
@@ -23,15 +23,15 @@ Conformer-style depthwise convolution module (`convolution_module`, `convolution
 the initial weights and `max_seconds` bounds one utterance. Read back, it is an `ISpeechRecognizer` decoding through
 `CtcDecoders` ("greedy" or "beam", a setting), batched, chunked and streamed alike.
 
-## Training (CtcTrainer)
+## Training (SpeechTrainer)
 
-`CtcTrainingOptions`, all settings: steps, `BatchSeconds` (audio seconds per micro-batch, length-bucketed; halved and the
+`SpeechTrainingOptions`, all settings: steps, `BatchSeconds` (audio seconds per micro-batch, length-bucketed; halved and the
 step repeated when the device runs out of memory), gradient accumulation, learning rate with warmup and the schedule
 (`FineTuningSchedules`), the optimizer (`FineTuningOptimizers`, host optimizer optional), weight decay, gradient
 clipping, bfloat16 activations, checkpointing, `SaveEvery` / `KeepCheckpoints`, `EvaluateEvery` with a `TuningMetrics`
 metric (CER by default, WER too) and the decoder, augmentations (`AudioAugmentations`: speed, noise, spec-mask, seeded
 per utterance and pass) and the seed. Checkpoints are `checkpoint-STEP/` folders (the model, the optimizer state,
-train-state.json) that `CtcTrainer.Resume` continues bit for bit on the CPU and `SpeechModels.Load` reads as models.
+train-state.json) that `SpeechTrainer.Resume` continues bit for bit on the CPU and `SpeechModels.Load` reads as models.
 Features are extracted ahead of each step and cached (`FeatureCaches`), so a second pass extracts nothing; utterances
 with fewer frames than labels are counted and left out.
 
