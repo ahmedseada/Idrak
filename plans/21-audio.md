@@ -1077,6 +1077,56 @@ them. OpenVoice's converter was trained mostly on English and Chinese: Arabic ti
 (conversion is language-agnostic) but is measured, not promised. Voice cloning can be misused: the consent record, the
 README's statement and never shipping anyone's voice by default are the library's part; the rest is the user's.
 
+**S9 route C as built (2026-10-15).** A voice trained on a person's recordings by fine-tuning a VITS checkpoint.
+
+- **The contract** (`src/Idrak.Audio/Abstractions/AdversarialSynthesisTraining.cs`): `IAdversarialSpeechSynthesizer`
+  (the generator's parameters, the training rows it reads, `Discriminators(options, seed)`, `Begin` a micro-batch's
+  `IAdversarialSynthesisStep` with `Discriminate` and `Generate`, `MelError`, `Save`, `TrainingFiles`),
+  `AdversarialSynthesisBatch` (the rows, frames, labels, utterance indices and the whole step's sizes, so micro-batches'
+  shares add up to VITS's batch losses: the KL over the step's frames, the duration over its labels, the rest averaged over
+  its utterances), `AdversarialSynthesisOptions` (segment frames, the five weights, the mel bands and range, the
+  discriminators' rate, Adam's betas and epsilon, whether the generator's pass is kept between the halves, a
+  discriminator description), carried in `SpeechTrainingOptions.Adversarial`; `SpeechSynthesisLoadOptions.Training`.
+  Models come from `SpeechSynthesisFamilies` as before: no new registry.
+- **The loop** (`AdversarialSynthesisTrainer`): the speech trainer's own (`SpeechTrainer.Run`), whose trainee now owns
+  the step, its extra optimizers and schedules, their checkpoint state and the width of its rows (the recognizers' and the
+  "durations" synthesizer's steps are the old body, unchanged). A step: the discriminators' half of every micro-batch and
+  their step, then the generator's half with the stepped discriminators and its step; a step run again after running out
+  of memory in the generator's half does not step the discriminators twice. Draws are seeded per (seed, step, utterance),
+  so splitting a step changes nothing. Checkpoints add `discriminator-optimizer.safetensors`; resume is bit for bit on the CPU.
+- **The plug-in** (samples/VitsSpeech): loaded with `Training`, every tensor read is a parameter under its stored name
+  (`VitsWeights.Trained`), weight norms stay gains and directions folded per pass (`VitsOps.WeightNorm`; decoder
+  convolutions and transposed convolutions read either layout), the relative attention embeddings are gathered per pass;
+  `VitsTraining`: the posterior encoder on the linear spectrogram, the latents drawn and taken through the flow, the
+  monotonic alignment search on the host in float (`MonotonicAlignment`, VITS's Cython recursion), the prior expanded by
+  a gather, the KL, the stochastic duration predictor's training direction (the posterior flows, the element-wise
+  affine, the rational-quadratic spline composed from tensor operations with the bin found on the host), the decoder on a
+  random segment of `SegmentFrames`, the mel loss of a differentiable log-mel (reflect padding as a gather, the DFT as a
+  convolution); `VitsDiscriminators` (VITS's multi-period discriminator and HiFi-GAN's pooled scales, weight-normed,
+  `discriminator.json` and `discriminator.safetensors` under VITS's names; read from the base folder when present, else
+  drawn as PyTorch's defaults); the training rows `"vits-frames"` (VITS's spectrogram and each frame's samples, cached by
+  the trainer). Saves back to the checkpoint's own layout. Single-speaker checkpoints only (a multi-speaker one is refused).
+- **No library gap**: every layer VITS uses already had its backward (convolutions with groups and dilation, transposed
+  convolutions, average pooling, gathers, layer norm); nothing new in the kernels. Left as before: the CUDA
+  convolution's `col2im_f32` sums are not in a fixed order (the queued task), so CUDA runs are not bit for bit.
+- **The voice**: `IVoiceStore.AddCheckpoint` (a default that refuses), `FolderVoiceStore` copies the folder to `model/`
+  without the training files, voice.json records the consent, base, training and size; import checks the model;
+  `VoiceProfile.CheckpointFolder` and `Base`; `VoicedSynthesizer` speaks it with its own model (as planned).
+- **The command line**: `idrak voice train NAME --from DATA --base MODEL -P Idrak.VitsSpeech.dll --consent TEXT`, every
+  setting an option, a run folder with run.json, log.jsonl and checkpoints, `--resume RUN` and `idrak resume RUN`,
+  then the voice installed; `voice show` names its base and steps.
+- **Tests** ("audio voice train:", 6 of 6 on the CPU): torch's step-1 losses and every gradient (268 generator tensors,
+  every discriminator tensor) within 1e-4, the alignment paths exactly, three SGD steps' losses and both models' weights
+  within 1e-4 (`make_tiny_audio.py --sections vits-train`); the rows, the log-mel, the pass run again; resume bit for bit,
+  a run without the kept pass the same; a 60-step CPU smoke run (about 100 ms a step) lowers the mel term from 168 to 61;
+  the voice installed, spoken, exported and imported; the command line.
+- **Quality to expect, plainly**: the CPU fixture proves the training is VITS's, not that a voice sounds good; nothing
+  here has been listened to. MMS-TTS checkpoints ship no discriminators, so they start new: the adversarial terms are
+  noisy for the first thousand steps or so and the sound can get worse before it gets better. From 30 to 60 minutes of
+  clean, accurately transcribed speech of one person, a few thousand steps should give a voice recognisably theirs with
+  the base model's pronunciation; Arabic is spoken through uroman romanisation without diacritics, as MMS was trained,
+  so its pronunciation errors stay. No dropout during fine-tuning (a later setting). The owner's listening decides.
+
 ## Order and parallelism
 
 S0 → S1 → S2 (one agent: S2 needs S1's `AudioData`) and S3 (a second agent: it needs S1's part type only) → S4 (the core
