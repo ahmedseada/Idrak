@@ -49,7 +49,7 @@ ADAMW = dict(lr=1e-3, betas=(0.9, 0.95), eps=1e-8, weight_decay=0.1)
 INIT_SEED = 2026
 
 # The template plan 19 gives created models (src/Idrak.Nlp/Resources/chatml-parts.jinja): ChatML turns, content as a
-# string or a list of parts, an image part written as the family's marker (<image> here).
+# string or a list of parts, an image part written as the family's marker (<image> here) and an audio part as <audio>.
 CHAT_TEMPLATE = (
     "{%- for message in messages -%}\n"
     "{{- '<|im_start|>' + message['role'] + '\\n' -}}\n"
@@ -59,6 +59,8 @@ CHAT_TEMPLATE = (
     "{%- for item in message['content'] -%}\n"
     "{%- if item['type'] == 'image' -%}\n"
     "{{- '<image>' -}}\n"
+    "{%- elif item['type'] == 'audio' -%}\n"
+    "{{- '<audio>' -}}\n"
     "{%- elif item['type'] == 'text' -%}\n"
     "{{- item['text'] -}}\n"
     "{%- endif -%}\n"

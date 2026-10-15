@@ -1,7 +1,7 @@
 {
  "add_bos_token": false,
  "bos_token": "<s>",
- "chat_template": "{%- for message in messages -%}\n{{- '<|im_start|>' + message['role'] + '\\n' -}}\n{%- if message['content'] is string -%}\n{{- message['content'] -}}\n{%- else -%}\n{%- for item in message['content'] -%}\n{%- if item['type'] == 'image' -%}\n{{- '<image>' -}}\n{%- elif item['type'] == 'text' -%}\n{{- item['text'] -}}\n{%- endif -%}\n{%- endfor -%}\n{%- endif -%}\n{{- '<|im_end|>\\n' -}}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n{{- '<|im_start|>assistant\\n' -}}\n{%- endif -%}\n",
+ "chat_template": "{%- for message in messages -%}\n{{- '<|im_start|>' + message['role'] + '\\n' -}}\n{%- if message['content'] is string -%}\n{{- message['content'] -}}\n{%- else -%}\n{%- for item in message['content'] -%}\n{%- if item['type'] == 'image' -%}\n{{- '<image>' -}}\n{%- elif item['type'] == 'audio' -%}\n{{- '<audio>' -}}\n{%- elif item['type'] == 'text' -%}\n{{- item['text'] -}}\n{%- endif -%}\n{%- endfor -%}\n{%- endif -%}\n{{- '<|im_end|>\\n' -}}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n{{- '<|im_start|>assistant\\n' -}}\n{%- endif -%}\n",
  "eos_token": "<|im_end|>",
  "model_max_length": 64,
  "pad_token": "<pad>",

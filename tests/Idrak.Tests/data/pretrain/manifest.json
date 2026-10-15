@@ -58,8 +58,8 @@
    "sha256": "2bd463e6f4b65548dcc250fbe5ac5354d21b096cb3e8085f4fbc2402c3a055a4"
   },
   "tiny-llama/tokenizer_config.json": {
-   "bytes": 686,
-   "sha256": "321e32424ce67d775b4327a5d116e6c7e8a8fa86fff63f0f025506ea958e7472"
+   "bytes": 743,
+   "sha256": "8df23a8456782cd1c6f82c8464280b7eb5c085e87257ece98e45feee3b828ca6"
   },
   "tokenizer-full/tokenizer.json": {
    "bytes": 119369,

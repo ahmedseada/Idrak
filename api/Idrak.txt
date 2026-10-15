@@ -1425,6 +1425,7 @@ public sealed record Idrak.Models.CreateOptions : System.IEquatable<Idrak.Models
   public CreateOptions()
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Models.SafeTensorType Type { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, System.Text.Json.Nodes.JsonObject>? Parts { get; init; }
   public System.Text.Json.Nodes.JsonObject? Vision { get; init; }
   public bool Overwrite { get; init; }
   public float? InitStd { get; init; }
@@ -1471,6 +1472,8 @@ public sealed record Idrak.Models.ModelFiles : System.IEquatable<Idrak.Models.Mo
 {%- for item in message['content'] -%}
 {%- if item['type'] == 'image' -%}
 {{- '<image>' -}}
+{%- elif item['type'] == 'audio' -%}
+{{- '<audio>' -}}
 {%- elif item['type'] == 'text' -%}
 {{- item['text'] -}}
 {%- endif -%}
@@ -1525,16 +1528,20 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.ChatTemplate? ChatTemplate { get; }
   public Idrak.Abstraction.Generation.DecoderSpec Spec { get; }
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
+  public Idrak.Abstraction.Generation.ITrainableSoftParts OpenPart(string kind, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Generation.IFeatureCache? cache = null)
   public Idrak.Abstraction.Generation.IVisionEncoder CreateVisionEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
   public Idrak.Abstraction.Generation.PretrainedVision? Vision { get; }
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.PretrainedArchitecture Architecture { get; }
   public Idrak.Models.PretrainedLoadTimes LoadTimes { get; }
   public System.Collections.Generic.IEnumerable<(string, Idrak.Abstraction.Module)> NamedModules()
+  public System.Collections.Generic.IReadOnlyCollection<string> Parts { get; }
+  public System.Collections.Generic.IReadOnlyCollection<string> TrainedPartTensors { get; }
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedVisionTensors { get; }
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Text.Json.Nodes.JsonObject Config { get; }
   public int AddAdapters(int rank, float alpha, System.Collections.Generic.IEnumerable<string> targets, int seed = 0, bool dora = false)
+  public int KeepTrainedParts(System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors)
   public int KeepTrainedVision(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IEnumerable<string> parts)
   public int LoadAdapter(string folder)
   public int MaxPositions { get; }

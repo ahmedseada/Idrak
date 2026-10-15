@@ -130,6 +130,7 @@ public sealed record Idrak.Nlp.Abstractions.PretrainingSource : System.IEquatabl
   public double Weight { get; init; }
   public static Idrak.Nlp.Abstractions.PretrainingSource FromJson(System.Text.Json.Nodes.JsonObject json)
   public string Kind { get; init; }
+  public string? Audios { get; init; }
   public string? Format { get; init; }
   public string? Images { get; init; }
 
@@ -357,7 +358,7 @@ public static class Idrak.Nlp.FineTuner
   public static System.Collections.Generic.IReadOnlyList<float> Train(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.PreferencePair> train, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.PreferencePair>? evaluation, Idrak.Nlp.FineTuningOptions options, string? outputFolder = null, System.IProgress<Idrak.Nlp.FineTuningProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
   public static System.Collections.Generic.List<int[]> Batches(System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int batchTokens, System.Random? random)
   public static System.Collections.Generic.List<int[][]> PackedBatches(System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int length, int rows, System.Random? random)
-  public static float Evaluate(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512, System.Action<string>? trace = null, Idrak.Nlp.TuningVision? vision = null)
+  public static float Evaluate(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512, System.Action<string>? trace = null, Idrak.Nlp.TuningVision? vision = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource>? parts = null)
 
 public delegate Idrak.Abstraction.Tensor Idrak.Nlp.FineTuningLoss(Idrak.Nlp.FineTuningLossInput input)
 
@@ -394,6 +395,7 @@ public sealed record Idrak.Nlp.FineTuningOptions : System.IEquatable<Idrak.Nlp.F
   public Idrak.Nlp.FineTuningLoss? Loss { get; init; }
   public Idrak.Nlp.TuningAnswerScorer? Answers { get; init; }
   public Idrak.Nlp.TuningVision? Vision { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Targets { get; init; }
   public System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler>? Scheduler { get; init; }
   public System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer>? Optimizer { get; init; }

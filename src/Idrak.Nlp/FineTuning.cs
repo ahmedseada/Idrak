@@ -951,6 +951,15 @@ public sealed record FineTuningOptions
     public TuningVision? Vision { get; init; }
 
     /// <summary>
+    /// The sources of the sequences' soft parts other than images (an audio part's: <see cref="ChatTranscriptEncoder.Parts"/>),
+    /// one per kind: each step encodes the batch's parts through them (each distinct part once) and lays their features
+    /// out at the soft tokens, as images'. A trainable source (<see cref="ITrainableSoftParts"/>) is read with gradients
+    /// and its trained parameters (<see cref="ITrainableSoftParts.Parameters"/>) join the optimizer's. Steps with parts
+    /// run as ordinary steps (not recorded as graphs). Empty (the default): a sequence with such parts is refused.
+    /// </summary>
+    public IReadOnlyList<ISoftPartSource> Parts { get; init; } = [];
+
+    /// <summary>
     /// Answers generated on held-out conversations and scored by a metric (<see cref="TuningAnswerScorer"/>: character or
     /// word error rate), every <see cref="TuningAnswerScorer.Every"/> steps (at the end of each epoch when 0), with their
     /// images through <see cref="Vision"/>; each report comes with that step's <see cref="FineTuningProgress.Answers"/>.
@@ -1168,7 +1177,7 @@ public static class FineTuner
             model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
 
-        var parameters = network.TrainableParameters().Concat(vision?.Parameters ?? []).ToList();
+        var parameters = network.TrainableParameters().Concat(vision?.Parameters ?? []).Concat(TrainedParts(options.Parts)).ToList();
         void Save(string folder)
         {
             if (vision is not null)
@@ -1263,6 +1272,9 @@ public static class FineTuner
 
         return evaluations;
     }
+
+    // The trained parameters of the trainable part sources, for the optimizer.
+    private static IEnumerable<Tensor> TrainedParts(IReadOnlyList<ISoftPartSource> parts) => parts.OfType<ITrainableSoftParts>().SelectMany(p => p.Parameters);
 
     // The image side of a run: the one given (checked against the model), else one made from the model when the sequences
     // hold images (returned as Owned too: the caller disposes it), else none.
@@ -1539,7 +1551,7 @@ public static class FineTuner
             var shape = (batch.Rows.Length, batch.Length, batch.HasImages(_train) ? Math.Max(imageTokens, batch.ImageTokens(_train)) : 0);
 
             // A batch with images replays only when its features are values (no vision part trains): they are copied in.
-            if (graphs && _graphs == true && group.Count == 1 && batch.Packed && (shape.Item3 == 0 || options.Vision is { Parameters.Count: 0 }))
+            if (graphs && _graphs == true && group.Count == 1 && batch.Packed && (shape.Item3 == 0 || options.Vision is { Parameters.Count: 0 }) && !batch.HasParts(_train))
             {
                 var graph = _recorded.Where(g => g.Fits(batch, _train)).MinBy(g => g.ImageTokens);
                 if (graph is null && _seen.GetValueOrDefault(shape) >= 2 && RoomForAnother(shape))
@@ -1726,7 +1738,7 @@ public static class FineTuner
             using var recompute = options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
             using var compress = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
             long hits = options.Vision?.CacheHits ?? 0, encoded = options.Vision?.Encoded ?? 0;
-            var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true, custom, sequences, options.Vision);
+            var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true, custom, sequences, options.Vision, options.Parts);
             if (options.LoadBalancingWeight > 0f && LoadBalancing(network) is { } balance)
             {
                 lossTensor += (balance * (options.LoadBalancingWeight / group.Count)).Reshape(lossTensor.Shape);
@@ -1786,7 +1798,7 @@ public static class FineTuner
         }
 
         using var float8 = PrepareFloat8(model, train, options, trace);
-        using var optimizer = CreateOptimizer(model.Network.TrainableParameters().Concat(vision?.Parameters ?? []).ToList(), options);
+        using var optimizer = CreateOptimizer(model.Network.TrainableParameters().Concat(vision?.Parameters ?? []).Concat(TrainedParts(options.Parts)).ToList(), options);
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int next = 0;
@@ -1839,7 +1851,7 @@ public static class FineTuner
     /// features through <paramref name="vision"/> (one made from the model for this call when null).
     /// </summary>
     public static float Evaluate(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512,
-        Action<string>? trace = null, TuningVision? vision = null)
+        Action<string>? trace = null, TuningVision? vision = null, IReadOnlyList<ISoftPartSource>? parts = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(sequences);
@@ -1857,7 +1869,7 @@ public static class FineTuner
                 var watch = Stopwatch.StartNew();
                 using var scope = new TensorScope();
                 int count = batch.Sum(i => sequences[i].TrainedTokens);
-                var (loss, _) = BatchLoss(model, sequences, Batch.Padded(batch, sequences), 1f, chunkRows, vision: images);
+                var (loss, _) = BatchLoss(model, sequences, Batch.Padded(batch, sequences), 1f, chunkRows, vision: images, parts: parts);
                 total += loss.Item();
                 trained += count;
                 trace?.Invoke($"evaluation batch {b + 1}/{batches.Count}: {batch.Length} sequences × {batch.Max(i => sequences[i].Tokens.Length) - 1} tokens, {watch.Elapsed.TotalSeconds:F2} s");
@@ -1884,7 +1896,7 @@ public static class FineTuner
             {
                 var watch = Stopwatch.StartNew();
                 using var scope = new TensorScope();
-                var (loss, _) = BatchLoss(model, sequences, batches[b], tokens, options.LossChunkRows, custom: custom, stepSequences: count, vision: options.Vision);
+                var (loss, _) = BatchLoss(model, sequences, batches[b], tokens, options.LossChunkRows, custom: custom, stepSequences: count, vision: options.Vision, parts: options.Parts);
                 total += loss.Item();
                 trace?.Invoke($"evaluation batch {b + 1}/{batches.Count}: {batches[b].Describe(sequences)}, {watch.Elapsed.TotalSeconds:F2} s");
             }
@@ -2074,6 +2086,9 @@ public static class FineTuner
 
         // The image tokens of the batch's sequences.
         public int ImageTokens(IReadOnlyList<TrainingSequence> all) => Sequences.Sum(i => all[i].Images.Sum(image => image.Tokens));
+
+        // Whether a sequence of the batch holds soft parts other than images (an audio part).
+        public bool HasParts(IReadOnlyList<TrainingSequence> all) => Rows.Any(r => r.Any(i => all[i].Parts.Count > 0));
 
         private string DescribeImages(IReadOnlyList<TrainingSequence> all)
         {
@@ -2279,10 +2294,10 @@ public static class FineTuner
     // With a loss of one's own (custom), normalizer is the step's trained tokens and stepSequences its sequences.
     // With images, their features come through `vision` (made in the caller's tensor scope, released with the batch).
     private static (Tensor Loss, long Tokens) BatchLoss(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, Batch batch, float normalizer,
-        int chunkRows, bool checkpointing = false, CustomLoss? custom = null, int stepSequences = 0, TuningVision? vision = null)
+        int chunkRows, bool checkpointing = false, CustomLoss? custom = null, int stepSequences = 0, TuningVision? vision = null, IReadOnlyList<ISoftPartSource>? parts = null)
     {
         var data = Prepare(sequences, batch);
-        var images = StepImages.Of(sequences, batch, vision, checkpointing);
+        var images = StepImages.Of(sequences, batch, vision, checkpointing, parts);
         var tokens = Tensor.From(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
         var loss = custom is null
             ? NetworkLoss(model, tokens, (hidden, head) => Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets,
@@ -2300,20 +2315,40 @@ public static class FineTuner
     {
         public ImagePrefillInputs? Inputs { get; init; }
 
-        public static StepImages? Of(IReadOnlyList<TrainingSequence> sequences, Batch batch, TuningVision? vision, bool checkpointing = false)
+        public static StepImages? Of(IReadOnlyList<TrainingSequence> sequences, Batch batch, TuningVision? vision, bool checkpointing = false,
+            IReadOnlyList<ISoftPartSource>? parts = null)
         {
-            if (!batch.HasImages(sequences))
+            bool hasImages = batch.HasImages(sequences), hasParts = batch.HasParts(sequences);
+            if (!hasImages && !hasParts)
             {
-                ThrowIfParts(sequences, batch);
                 return null;
             }
 
-            if (vision is null)
+            var images = new List<PromptImage>();
+            IImageAttentionRule? attention = null;
+            if (hasImages)
             {
-                throw new InvalidOperationException("The sequences hold images and no vision side is given (FineTuningOptions.Vision, TuningVision.Create).");
+                if (vision is null)
+                {
+                    throw new InvalidOperationException("The sequences hold images and no vision side is given (FineTuningOptions.Vision, TuningVision.Create).");
+                }
+
+                PlaceImages(sequences, batch, vision, checkpointing, images);
+                attention = vision.Attention;
             }
 
-            ThrowIfParts(sequences, batch);
+            if (hasParts)
+            {
+                attention = PlaceParts(sequences, batch, parts ?? [], checkpointing, images, attention);
+                images.Sort((x, y) => x.Sequence != y.Sequence ? x.Sequence.CompareTo(y.Sequence) : x.Position.CompareTo(y.Position));   // the prompt's order, images and parts together
+            }
+
+            return new StepImages(images, attention!);
+        }
+
+        // Each image's features (once per distinct image and preparation) at its blocks' positions.
+        private static void PlaceImages(IReadOnlyList<TrainingSequence> sequences, Batch batch, TuningVision vision, bool checkpointing, List<PromptImage> images)
+        {
             var distinct = new List<TrainingImage>();
             var index = new Dictionary<(string, TuningImages), int>();
             foreach (var image in batch.Sequences.SelectMany(i => sequences[i].Images))
@@ -2325,7 +2360,6 @@ public static class FineTuner
             }
 
             var features = vision.Features(distinct, checkpointing);
-            var images = new List<PromptImage>();
             for (int row = 0; row < batch.Rows.Length; row++)
             {
                 int offset = 0;
@@ -2351,22 +2385,88 @@ public static class FineTuner
                     offset += sequences[sequence].Tokens.Length - 1;
                 }
             }
-
-            return new StepImages(images, vision.Attention);
         }
 
-        // Sequences with parts of other kinds (audio) carry their soft tokens as plain ids until the training step reads
-        // their sources (plan 21, S6): training on them silently would train the soft tokens as text, so it is refused.
-        private static void ThrowIfParts(IReadOnlyList<TrainingSequence> sequences, Batch batch)
+        // The soft parts other than images (an audio part's): each kind's distinct parts encoded together through its source
+        // (with gradients when the source trains), each block's features at its position. The parts and the images must
+        // attend by one rule; it is returned.
+        private static IImageAttentionRule PlaceParts(IReadOnlyList<TrainingSequence> sequences, Batch batch, IReadOnlyList<ISoftPartSource> sources, bool checkpointing,
+            List<PromptImage> images, IImageAttentionRule? attention)
         {
+            var kinds = new Dictionary<string, (ISoftPartSource Source, List<ChatPart> Distinct, Dictionary<ChatPart, int> Index)>(StringComparer.Ordinal);
             foreach (int i in batch.Sequences)
             {
-                if (sequences[i].Parts.Count > 0)
+                foreach (var part in sequences[i].Parts)
                 {
-                    throw new NotSupportedException($"Sequence {i} holds {sequences[i].Parts.Count} '{sequences[i].Parts[0].Kind}' part(s): the training step does not read "
-                        + "soft parts other than images yet (plan 21, S6 wires the parts' sources into the step); train on text and images, or wait for S6.");
+                    if (!kinds.TryGetValue(part.Kind, out var entry))
+                    {
+                        var source = sources.FirstOrDefault(s => s.Kind == part.Kind) ?? throw new InvalidOperationException(
+                            $"Sequence {i} holds a '{part.Kind}' part and the step has no source for it: give it in FineTuningOptions.Parts (the Pretrainer opens the model's parts itself).");
+                        entry = (source, [], []);
+                        kinds[part.Kind] = entry;
+                    }
+
+                    if (entry.Index.TryAdd(part.Part, entry.Distinct.Count))
+                    {
+                        entry.Distinct.Add(part.Part);
+                    }
                 }
             }
+
+            var features = new Dictionary<(string Kind, int Part), List<Tensor>>();
+            foreach (var (kind, (source, distinct, _)) in kinds)
+            {
+                if (attention is not null && attention.Name != source.Attention.Name)
+                {
+                    throw new NotSupportedException($"The batch's '{kind}' parts attend by '{source.Attention.Name}' and its other soft tokens by '{attention.Name}': one rule per step.");
+                }
+
+                attention ??= source.Attention;
+                var encoded = source is ITrainableSoftParts { Parameters.Count: > 0 } trainable ? trainable.EncodeTraining(distinct, checkpointing) : source.Encode(distinct);
+                int at = 0;
+                for (int p = 0; p < distinct.Count; p++)
+                {
+                    int blocks = source.Blocks(distinct[p]).Count;
+                    features[(kind, p)] = [.. encoded.Skip(at).Take(blocks).Select(f => f.Features)];
+                    at += blocks;
+                }
+
+                if (at != encoded.Count)
+                {
+                    throw new InvalidOperationException($"The '{kind}' source gave {encoded.Count} blocks of features for {distinct.Count} parts of {at} blocks.");
+                }
+            }
+
+            for (int row = 0; row < batch.Rows.Length; row++)
+            {
+                int offset = 0;
+                foreach (int sequence in batch.Rows[row])
+                {
+                    foreach (var part in sequences[sequence].Parts)
+                    {
+                        var blocks = features[(part.Kind, kinds[part.Kind].Index[part.Part])];
+                        if (blocks.Count != part.Blocks.Count)
+                        {
+                            throw new InvalidOperationException($"A '{part.Kind}' part was laid out in {part.Blocks.Count} blocks and its source encodes {blocks.Count}.");
+                        }
+
+                        for (int b = 0; b < blocks.Count; b++)
+                        {
+                            var (position, count) = part.Blocks[b];
+                            if (blocks[b].Shape[0] != count)
+                            {
+                                throw new InvalidOperationException($"A '{part.Kind}' part's block {b} takes {count} soft tokens and its source gave {blocks[b].Shape[0]} rows of features.");
+                            }
+
+                            images.Add(new PromptImage(offset + position, blocks[b]) { Sequence = row });
+                        }
+                    }
+
+                    offset += sequences[sequence].Tokens.Length - 1;
+                }
+            }
+
+            return attention!;
         }
     }
 

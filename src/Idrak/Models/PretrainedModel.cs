@@ -17,7 +17,7 @@ public sealed record ModelFiles
 {
     /// <summary>
     /// The template created models get when none is given: ChatML turns (<c>&lt;|im_start|&gt;role\n … &lt;|im_end|&gt;\n</c>),
-    /// content as a string or a list of parts, an image part written as <c>&lt;image&gt;</c> (a vision family's
+    /// content as a string or a list of parts, an image part written as <c>&lt;image&gt;</c> and an audio part as <c>&lt;audio&gt;</c> (a family's
     /// marker), and the assistant's header when a generation prompt is asked for. The tokenizer needs
     /// <c>&lt;|im_start|&gt;</c> and <c>&lt;|im_end|&gt;</c> as tokens.
     /// </summary>
@@ -30,6 +30,8 @@ public sealed record ModelFiles
         + "{%- for item in message['content'] -%}\n"
         + "{%- if item['type'] == 'image' -%}\n"
         + "{{- '<image>' -}}\n"
+        + "{%- elif item['type'] == 'audio' -%}\n"
+        + "{{- '<audio>' -}}\n"
         + "{%- elif item['type'] == 'text' -%}\n"
         + "{{- item['text'] -}}\n"
         + "{%- endif -%}\n"
@@ -99,6 +101,13 @@ public sealed record CreateOptions
     /// differ). Null draws every weight.
     /// </summary>
     public string? Decoder { get; init; }
+
+    /// <summary>
+    /// Parts stored beside the decoder, by kind ("audio"): each description read by the part registered in
+    /// <see cref="ModelParts"/> (<see cref="IModelPart.Create"/>), its tensors, config keys and files written with the
+    /// model's; null or empty for none.
+    /// </summary>
+    public IReadOnlyDictionary<string, JsonObject>? Parts { get; init; }
 }
 
 /// <summary>Settings for <see cref="PretrainedModel.Load"/>.</summary>
@@ -307,6 +316,15 @@ public sealed class PretrainedModel : IDisposable
             weights.Used.UnionWith(vision.StoredTensors);
         }
 
+        // The parts stored beside the decoder (an audio encoder), read by the packages that registered them.
+        var partTensors = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+        foreach (var part in ModelParts.In(config))
+        {
+            var owned = part.StoredTensors(new ModelPartCheckpoint(name, config, reader, folder, () => format.Open(folder), notes));
+            partTensors[part.Kind] = owned;
+            weights.Used.UnionWith(owned);
+        }
+
         var unused = reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
         if (unused.Count > 0)
         {
@@ -338,6 +356,11 @@ public sealed class PretrainedModel : IDisposable
         foreach (var (stored, value) in visionTensors ?? [])
         {
             model._vision[stored] = value;
+        }
+
+        foreach (var (kind, owned) in partTensors)
+        {
+            model._partTensors[kind] = owned;
         }
 
         model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
@@ -406,6 +429,18 @@ public sealed class PretrainedModel : IDisposable
         }
 
         var config = write(spec);
+        var parts = new List<CreatedModelPart>();
+        foreach (var (kind, partDescription) in options.Parts ?? new Dictionary<string, JsonObject>())
+        {
+            var made = ModelParts.Get(kind).Create(new ModelPartRequest(architecture, partDescription, spec.Dim, tokenizer, options.Seed));
+            foreach (var (key, value) in made.Config)
+            {
+                config[key] = value?.DeepClone();
+            }
+
+            parts.Add(made);
+        }
+
         CreatedVision? vision = null;
         if (options.Vision is { } description)
         {
@@ -459,10 +494,11 @@ public sealed class PretrainedModel : IDisposable
 
         using (var drawn = new PretrainedModel(folder, config, spec, network, tokenizer, null, [], spec.MaxPositions, family, cpu, null))
         {
-            drawn.WriteTensors(folder, options.Type, vision?.Tensors.Select(t => (t.Name, t.Shape, (Func<float[]>)(() => t.Values))));
+            var extra = (vision?.Tensors ?? []).Concat(parts.SelectMany(p => p.Tensors));
+            drawn.WriteTensors(folder, options.Type, extra.Select(t => (t.Name, t.Shape, (Func<float[]>)(() => t.Values))));
         }
 
-        foreach (var (name, text) in vision?.Files ?? new Dictionary<string, string>())
+        foreach (var (name, text) in (vision?.Files ?? new Dictionary<string, string>()).Concat(parts.SelectMany(p => p.Files)))
         {
             File.WriteAllText(Path.Combine(folder, name), text);
         }
@@ -518,6 +554,68 @@ public sealed class PretrainedModel : IDisposable
 
     // The trained vision tensors (a vision part's fine-tuned modules), by their checkpoint names, in the checkpoint's layout.
     private readonly Dictionary<string, (int[] Shape, float[] Values)> _vision = new(StringComparer.Ordinal);
+
+    // The parts stored beside the decoder (ModelParts), by kind: the checkpoint tensors each owns.
+    private readonly Dictionary<string, IReadOnlySet<string>> _partTensors = new(StringComparer.Ordinal);
+
+    // The parts' trained tensors (a training run's kept encoder and projector), by their checkpoint names and layout.
+    private readonly Dictionary<string, (int[] Shape, float[] Values)> _parts = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The kinds of the parts stored beside the decoder that a registered <see cref="IModelPart"/> read ("audio"): their
+    /// tensors count as used, every save carries them, and <see cref="OpenPart"/> opens each as a soft-part source.
+    /// </summary>
+    public IReadOnlyCollection<string> Parts => _partTensors.Keys;
+
+    /// <summary>The names (as the checkpoint stores them) of the parts' trained tensors the model carries (<see cref="KeepTrainedParts"/>).</summary>
+    public IReadOnlyCollection<string> TrainedPartTensors => _parts.Keys;
+
+    /// <summary>
+    /// Keeps <paramref name="tensors"/> (a part's trained tensors, from <see cref="ITrainableSoftParts.Export"/>) as the
+    /// model's, replacing those of the same names: <see cref="OpenPart"/> puts them into every source it opens and every
+    /// save writes them in place of the checkpoint's. Returns how many were kept.
+    /// </summary>
+    /// <exception cref="ArgumentException">A tensor is not one of the model's parts' (<see cref="Parts"/>).</exception>
+    public int KeepTrainedParts(IEnumerable<(string Name, int[] Shape, float[] Values)> tensors)
+    {
+        ArgumentNullException.ThrowIfNull(tensors);
+        int kept = 0;
+        foreach (var (name, shape, values) in tensors)
+        {
+            if (!_partTensors.Values.Any(owned => owned.Contains(name)))
+            {
+                throw new ArgumentException($"'{name}' is not a tensor of the model's parts ({(_partTensors.Count == 0 ? "it has none" : string.Join(", ", _partTensors.Keys))}).", nameof(tensors));
+            }
+
+            _parts[name] = ([.. shape], values);
+            kept++;
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// The part <paramref name="kind"/> (one of <see cref="Parts"/>) as a soft-part source on <paramref name="device"/>
+    /// (the model's when null), read from the model's checkpoint with its trained tensors put in
+    /// (<see cref="TrainedPartTensors"/>). Dispose it when done.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The model has no such part.</exception>
+    /// <exception cref="NotSupportedException">The part's kind is no longer registered (the message names the registry).</exception>
+    public ITrainableSoftParts OpenPart(string kind, Device? device = null, IFeatureCache? cache = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(kind);
+        if (!_partTensors.ContainsKey(kind))
+        {
+            throw new InvalidOperationException($"The model has no '{kind}' part ({(_partTensors.Count == 0 ? "none" : string.Join(", ", _partTensors.Keys))}).");
+        }
+
+        var part = ModelParts.Get(kind);
+        var format = CheckpointFormats.For(Folder);
+        using var tensors = format.Open(Folder);
+        string architecture = (string?)Config["architectures"]?[0] ?? throw new InvalidDataException($"{Folder}/config.json names no architecture.");
+        return part.Open(new ModelPartCheckpoint(architecture, Config, tensors, Folder, () => format.Open(Folder), []),
+            new ModelPartOptions { Device = device ?? Device, Trained = _parts, Cache = cache });
+    }
 
     /// <summary>
     /// The names (as the checkpoint stores them) of the trained vision tensors the model carries: those an adapter folder
@@ -865,12 +963,16 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public void SaveHuggingFace(string folder, SafeTensorType type, IReadOnlyDictionary<string, Tensor>? vision)
     {
-        using var source = Vision is null ? null : CheckpointFormats.For(Folder).Open(Folder);
-        var visionTensors = Vision is null ? null : Vision.StoredTensors.Order(StringComparer.Ordinal).Select(name =>
+        using var source = Vision is null && _partTensors.Count == 0 ? null : CheckpointFormats.For(Folder).Open(Folder);
+        var visionTensors = Vision is null ? [] : Vision.StoredTensors.Order(StringComparer.Ordinal).Select(name =>
             vision is not null && vision.TryGetValue(name, out var trained) ? (name, [.. trained.Shape], (Func<float[]>)trained.ToArray)
             : _vision.TryGetValue(name, out var kept) ? (name, kept.Shape, () => kept.Values)
             : (name, source!.ShapeOf(name), (Func<float[]>)(() => source!.Read(name)))).ToList();
-        WriteTensors(folder, type, visionTensors);
+        // The parts' tensors: the kept trained ones (KeepTrainedParts), else the checkpoint's, as stored.
+        var partTensors = _partTensors.Values.SelectMany(owned => owned).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Select(name =>
+            _parts.TryGetValue(name, out var kept) ? (name, kept.Shape, (Func<float[]>)(() => kept.Values))
+            : (name, source!.ShapeOf(name), (Func<float[]>)(() => source!.Read(name)))).ToList();
+        WriteTensors(folder, type, [.. visionTensors, .. partTensors]);
         string target = Path.GetFullPath(folder);
         foreach (string file in Directory.GetFiles(Folder))
         {
