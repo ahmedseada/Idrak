@@ -7,8 +7,8 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Diagnostics;
-using Idrak.Inference.Abstractions;
 using Idrak.Nlp;
+using Idrak.Abstraction.Generation;
 
 namespace Idrak.Samples.ArabicOcr;
 

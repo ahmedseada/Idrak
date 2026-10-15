@@ -3,7 +3,7 @@
 
 using System.Runtime.CompilerServices;
 
-namespace Idrak.Inference.Abstractions;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>One reading of a sequence: its labels (repeats collapsed, blanks dropped) and their log-probability.</summary>
 /// <param name="Labels">The labels, in order.</param>

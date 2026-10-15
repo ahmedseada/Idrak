@@ -181,6 +181,10 @@ public sealed record Idrak.Audio.Abstractions.CreatedSpeechModel : System.IEquat
   public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Tensors { get; init; }
   public System.Text.Json.Nodes.JsonObject Config { get; init; }
 
+public sealed record Idrak.Audio.Abstractions.CtcForwardOptions : System.IEquatable<Idrak.Audio.Abstractions.CtcForwardOptions>
+  public CtcForwardOptions()
+  public bool Checkpointing { get; init; }
+
 public interface Idrak.Audio.Abstractions.IAudioAugmentation
   public (default) Idrak.Audio.Abstractions.AudioData Augment(Idrak.Audio.Abstractions.AudioData audio, System.Random random, Idrak.Audio.Abstractions.AudioAugmentationOptions options)
   public (default) void Augment(System.Span<float> features, int frames, int mels, System.Random random, Idrak.Audio.Abstractions.AudioAugmentationOptions options)
@@ -214,6 +218,18 @@ public interface Idrak.Audio.Abstractions.IAudioLanguageEncoder : System.IDispos
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Audio.Abstractions.AudioData audio)
   public int Width { get; }
+
+public interface Idrak.Audio.Abstractions.ICtcSpeechModel : Idrak.Audio.Abstractions.ISpeechRecognizer, System.IDisposable
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Logits(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, Idrak.Audio.Abstractions.CtcForwardOptions? options = null)
+  public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
+  public int Blank { get; }
+  public int Classes { get; }
+  public int StepsFor(int frames)
+  public int[] Labels(string text)
+  public string Architecture { get; }
+  public string Text(System.ReadOnlySpan<int> labels)
+  public void Save(string folder)
 
 public interface Idrak.Audio.Abstractions.ISpeakerEncoder : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
@@ -582,6 +598,92 @@ public sealed record Idrak.Audio.CtcPath : System.IEquatable<Idrak.Audio.CtcPath
   public int[] Lengths { get; init; }
   public int[] Starts { get; init; }
 
+public static class Idrak.Audio.CtcTrainer
+  public const string StateFile = "train-state.json"
+  public const string StateFormat = "idrak-ctc-train-state/1"
+  public static Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ICtcSpeechModel model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, Idrak.Audio.Abstractions.CtcForwardOptions? forward = null)
+  public static Idrak.Audio.CtcTrainingCheckpoint ReadCheckpoint(string folder)
+  public static Idrak.Audio.CtcTrainingResult Resume(string checkpointFolder, Idrak.Audio.CtcTrainingOptions? overrides = null, Idrak.Abstraction.Device? device = null, System.IProgress<Idrak.Audio.CtcTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
+  public static Idrak.Audio.CtcTrainingResult Train(Idrak.Audio.Abstractions.ICtcSpeechModel model, Idrak.Audio.Abstractions.SpeechSource train, Idrak.Audio.Abstractions.SpeechSource? evaluation, Idrak.Audio.CtcTrainingOptions options, string outputFolder, Idrak.Audio.CtcTrainingCheckpoint? resume = null, System.IProgress<Idrak.Audio.CtcTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
+  public static string? LatestCheckpoint(string outputFolder)
+
+public sealed record Idrak.Audio.CtcTrainingCheckpoint : System.IEquatable<Idrak.Audio.CtcTrainingCheckpoint>
+  public CtcTrainingCheckpoint(string Folder, Idrak.Audio.CtcTrainingOptions Options, Idrak.Audio.Abstractions.SpeechSource Train, Idrak.Audio.Abstractions.SpeechSource? Evaluation, int Step, int Epoch, int Batch, double MicroBatchSeconds, System.Collections.Generic.IReadOnlyList<float> Losses, System.Collections.Generic.IReadOnlyList<(int, double)> Evaluations)
+  public Idrak.Audio.Abstractions.SpeechSource Train { get; init; }
+  public Idrak.Audio.Abstractions.SpeechSource? Evaluation { get; init; }
+  public Idrak.Audio.CtcTrainingOptions Options { get; init; }
+  public System.Collections.Generic.IReadOnlyList<(int, double)> Evaluations { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float> Losses { get; init; }
+  public double MicroBatchSeconds { get; init; }
+  public int Batch { get; init; }
+  public int Epoch { get; init; }
+  public int Step { get; init; }
+  public string Folder { get; init; }
+
+public sealed record Idrak.Audio.CtcTrainingOptions : System.IEquatable<Idrak.Audio.CtcTrainingOptions>
+  public CtcTrainingOptions()
+  public Idrak.Audio.Abstractions.AudioAugmentationOptions AugmentationOptions { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Augmentations { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public bool Checkpointing { get; init; }
+  public bool HostOptimizer { get; init; }
+  public bool? BFloat16Activations { get; init; }
+  public double BatchSeconds { get; init; }
+  public float LearningRate { get; init; }
+  public float MaxGradientNorm { get; init; }
+  public float MinLearningRate { get; init; }
+  public float Momentum { get; init; }
+  public float WarmupFraction { get; init; }
+  public float WeightDecay { get; init; }
+  public int BeamWidth { get; init; }
+  public int BucketUtterances { get; init; }
+  public int EvaluateEvery { get; init; }
+  public int GradientAccumulation { get; init; }
+  public int KeepCheckpoints { get; init; }
+  public int NonFiniteSteps { get; init; }
+  public int SaveEvery { get; init; }
+  public int Seed { get; init; }
+  public int Steps { get; init; }
+  public int Workers { get; init; }
+  public static Idrak.Audio.CtcTrainingOptions FromJson(System.Text.Json.Nodes.JsonObject json)
+  public string Decoder { get; init; }
+  public string Metric { get; init; }
+  public string Optimizer { get; init; }
+  public string Schedule { get; init; }
+  public string? FeatureCache { get; init; }
+  public string? FeatureCacheFolder { get; init; }
+
+public sealed record Idrak.Audio.CtcTrainingProgress : System.IEquatable<Idrak.Audio.CtcTrainingProgress>
+  public CtcTrainingProgress(string Stage, int Step, int Steps, int Epoch, double EpochFraction, float Loss, float LearningRate, double UtterancesPerSecond, double AudioSecondsPerSecond, System.TimeSpan Elapsed, System.TimeSpan Remaining, long PeakDeviceBytes, double MicroBatchSeconds, double? Evaluation)
+  public System.TimeSpan Elapsed { get; init; }
+  public System.TimeSpan Remaining { get; init; }
+  public double AudioSecondsPerSecond { get; init; }
+  public double EpochFraction { get; init; }
+  public double MicroBatchSeconds { get; init; }
+  public double UtterancesPerSecond { get; init; }
+  public double? Evaluation { get; init; }
+  public float LearningRate { get; init; }
+  public float Loss { get; init; }
+  public int Epoch { get; init; }
+  public int Step { get; init; }
+  public int Steps { get; init; }
+  public long PeakDeviceBytes { get; init; }
+  public string Stage { get; init; }
+
+public sealed record Idrak.Audio.CtcTrainingResult : System.IEquatable<Idrak.Audio.CtcTrainingResult>
+  public CtcTrainingResult(int Steps, System.Collections.Generic.IReadOnlyList<float> Losses, System.Collections.Generic.IReadOnlyList<(int, double)> Evaluations, string? Checkpoint, System.TimeSpan Elapsed, int Utterances, int Dropped, double MicroBatchSeconds, int FeaturesExtracted, int FeaturesCached, System.Collections.Generic.IReadOnlyList<string> Notes)
+  public System.Collections.Generic.IReadOnlyList<(int, double)> Evaluations { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float> Losses { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; init; }
+  public System.TimeSpan Elapsed { get; init; }
+  public double MicroBatchSeconds { get; init; }
+  public int Dropped { get; init; }
+  public int FeaturesCached { get; init; }
+  public int FeaturesExtracted { get; init; }
+  public int Steps { get; init; }
+  public int Utterances { get; init; }
+  public string? Checkpoint { get; init; }
+
 public sealed class Idrak.Audio.FlacCodec : Idrak.Audio.Abstractions.IAudioCodec
   public FlacCodec(Idrak.Audio.FlacOptions? options = null)
   public Idrak.Audio.Abstractions.AudioData Decode(System.ReadOnlySpan<byte> file)
@@ -663,7 +765,15 @@ public static class Idrak.Audio.Resampler
   public static Idrak.Audio.Abstractions.AudioData Resample(Idrak.Audio.Abstractions.AudioData audio, int sampleRate, Idrak.Audio.ResampleOptions? options = null)
   public static long OutputLength(long samples, int from, int to)
 
+public sealed record Idrak.Audio.SpeechCreateOptions : System.IEquatable<Idrak.Audio.SpeechCreateOptions>
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public SpeechCreateOptions()
+  public bool Overwrite { get; init; }
+  public int Seed { get; init; }
+  public string? Architecture { get; init; }
+
 public static class Idrak.Audio.SpeechModels
+  public static Idrak.Audio.Abstractions.ISpeechRecognizer Create(string folder, System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, Idrak.Audio.SpeechCreateOptions? options = null)
   public static Idrak.Audio.Abstractions.ISpeechRecognizer Load(string path, Idrak.Audio.Abstractions.SpeechModelOptions? options = null)
 
 public static class Idrak.Audio.Stft

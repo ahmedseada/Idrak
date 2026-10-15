@@ -1,0 +1,197 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace Idrak.IdrakAudio;
+
+/// <summary>
+/// An IdrakAudio model's settings, as its config.json holds them (and as a spec gives them to <c>SpeechModels.Create</c>,
+/// a missing key taking the default below). Every shape is a setting; nothing is tied to a device.
+/// </summary>
+public sealed record IdrakAudioConfig
+{
+    /// <summary>What the model does: "ctc" (a recognizer with a CTC head). "seq2seq", "audio-language" and "tts" are later tasks.</summary>
+    public string Task { get; init; } = IdrakAudioFamily.CtcTask;
+
+    /// <summary>Mel bands of the features (the subsampler's input channels).</summary>
+    public int Mels { get; init; } = 80;
+
+    /// <summary>The encoder's width.</summary>
+    public int Dim { get; init; } = 256;
+
+    /// <summary>Encoder blocks.</summary>
+    public int Layers { get; init; } = 6;
+
+    /// <summary>Attention heads (a divisor of <see cref="Dim"/>).</summary>
+    public int Heads { get; init; } = 4;
+
+    /// <summary>The feed-forward's hidden width.</summary>
+    public int FfnDim { get; init; } = 1024;
+
+    /// <summary>Convolutions of stride 2 over time before the blocks (each halves the steps; 0 for none).</summary>
+    public int SubsampleLayers { get; init; } = 2;
+
+    /// <summary>Their kernel over time (odd: padded by half on each side).</summary>
+    public int SubsampleKernel { get; init; } = 3;
+
+    /// <summary>"sinusoidal" positions added after the subsampler, or "none".</summary>
+    public string Positions { get; init; } = "sinusoidal";
+
+    /// <summary>A Conformer-style convolution module in each block, between attention and feed-forward.</summary>
+    public bool ConvolutionModule { get; init; }
+
+    /// <summary>The convolution module's depthwise kernel over time (odd).</summary>
+    public int ConvolutionKernel { get; init; } = 15;
+
+    /// <summary>"gelu_tanh" (the fused GELU) or "gelu" (exact).</summary>
+    public string Activation { get; init; } = "gelu_tanh";
+
+    /// <summary>The layer normalizations' epsilon.</summary>
+    public float NormEpsilon { get; init; } = 1e-5f;
+
+    /// <summary>Dropout after attention, the convolution module and the feed-forward while training (0: none, and resumed runs bit for bit).</summary>
+    public float Dropout { get; init; }
+
+    /// <summary>The weights drawn at creation: a normal draw of this over the square root of each matrix's inputs (biases 0, norms 1).</summary>
+    public float InitScale { get; init; } = 1f;
+
+    /// <summary>The head's classes: the tokenizer's tokens and the blank.</summary>
+    public int Classes { get; init; }
+
+    /// <summary>The blank class; token i is class i below it and i + 1 from it on.</summary>
+    public int BlankId { get; init; }
+
+    /// <summary>The feature extractor (an <see cref="AudioFeatureExtractors"/> name).</summary>
+    public string FeatureExtractor { get; init; } = "log-mel";
+
+    /// <summary>The features: a family's rate, window, hop and mels; no padding to a segment (each utterance's own length).</summary>
+    public AudioFeatureOptions Features { get; init; } = new() { PadSeconds = null };
+
+    /// <summary>Seconds of sound transcribed at a time when the transcription's options give no chunk length.</summary>
+    public double MaxSeconds { get; init; } = 30;
+
+    /// <summary>The steps the head gives for <paramref name="frames"/> feature frames.</summary>
+    public int StepsFor(int frames)
+    {
+        int steps = frames;
+        for (int i = 0; i < SubsampleLayers; i++)
+        {
+            steps = (steps + 2 * (SubsampleKernel / 2) - SubsampleKernel) / 2 + 1;
+        }
+
+        return Math.Max(steps, 0);
+    }
+
+    /// <summary>The settings of a config.json or a spec; <paramref name="vocabulary"/> (a created model's tokenizer) sets the classes when the JSON has none.</summary>
+    /// <exception cref="InvalidDataException">A value is out of range or of the wrong kind.</exception>
+    public static IdrakAudioConfig FromJson(JsonObject json, int? vocabulary = null)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        var d = new IdrakAudioConfig();
+        try
+        {
+            int mels = (int?)json["mels"] ?? d.Mels;
+            var features = json["features"] is JsonObject f ? ReadFeatures(f, mels) : d.Features with { Mels = mels };
+            var config = new IdrakAudioConfig
+            {
+                Task = (string?)json["task"] ?? d.Task,
+                Mels = mels,
+                Dim = (int?)json["dim"] ?? d.Dim,
+                Layers = (int?)json["layers"] ?? d.Layers,
+                Heads = (int?)json["heads"] ?? d.Heads,
+                FfnDim = (int?)json["ffn_dim"] ?? d.FfnDim,
+                SubsampleLayers = (int?)json["subsample_layers"] ?? d.SubsampleLayers,
+                SubsampleKernel = (int?)json["subsample_kernel"] ?? d.SubsampleKernel,
+                Positions = (string?)json["positions"] ?? d.Positions,
+                ConvolutionModule = (bool?)json["convolution_module"] ?? d.ConvolutionModule,
+                ConvolutionKernel = (int?)json["convolution_kernel"] ?? d.ConvolutionKernel,
+                Activation = (string?)json["activation"] ?? d.Activation,
+                NormEpsilon = (float?)json["norm_epsilon"] ?? d.NormEpsilon,
+                Dropout = (float?)json["dropout"] ?? d.Dropout,
+                InitScale = (float?)json["init_scale"] ?? d.InitScale,
+                Classes = (int?)json["classes"] ?? (vocabulary is { } v ? v + 1 : 0),
+                BlankId = (int?)json["blank_id"] ?? d.BlankId,
+                FeatureExtractor = (string?)json["feature_extractor"] ?? d.FeatureExtractor,
+                Features = features,
+                MaxSeconds = (double?)json["max_seconds"] ?? d.MaxSeconds,
+            };
+            config.Check();
+            return config;
+        }
+        catch (Exception e) when (e is InvalidOperationException or FormatException or ArgumentException)
+        {
+            throw new InvalidDataException($"An IdrakAudio config is not valid: {e.Message}", e);
+        }
+    }
+
+    private static AudioFeatureOptions ReadFeatures(JsonObject json, int mels)
+    {
+        var d = new AudioFeatureOptions { PadSeconds = null };
+        return new AudioFeatureOptions
+        {
+            SampleRate = (int?)json["sample_rate"] ?? d.SampleRate,
+            WindowSize = (int?)json["window_size"] ?? d.WindowSize,
+            HopSize = (int?)json["hop_size"] ?? d.HopSize,
+            Window = (string?)json["window"] ?? d.Window,
+            Center = (bool?)json["center"] ?? d.Center,
+            Mels = (int?)json["mels"] ?? mels,
+            MinFrequency = (float?)json["min_frequency"] ?? d.MinFrequency,
+            MaxFrequency = json.ContainsKey("max_frequency") ? (float?)json["max_frequency"] : d.MaxFrequency,
+            MelScale = (string?)json["mel_scale"] ?? d.MelScale,
+            MelNorm = (string?)json["mel_norm"] ?? d.MelNorm,
+            LogFloor = (float?)json["log_floor"] ?? d.LogFloor,
+            DynamicRange = json.ContainsKey("dynamic_range") ? (float?)json["dynamic_range"] : d.DynamicRange,
+            Normalize = json.ContainsKey("normalize")
+                ? json["normalize"] is JsonArray { Count: 2 } n ? ((float)n[0]!, (float)n[1]!) : null
+                : d.Normalize,
+            PadSeconds = json.ContainsKey("pad_seconds") ? (double?)json["pad_seconds"] : d.PadSeconds,
+            Path = (string?)json["path"] ?? d.Path,
+        };
+    }
+
+    private void Check()
+    {
+        if (Mels < 1 || Dim < 1 || Layers < 0 || Heads < 1 || Dim % Heads != 0 || FfnDim < 1 || SubsampleLayers < 0 || SubsampleKernel < 1 || SubsampleKernel % 2 == 0
+            || ConvolutionKernel < 1 || ConvolutionKernel % 2 == 0 || !(NormEpsilon > 0) || Dropout is < 0 or >= 1 || !(InitScale > 0) || !(MaxSeconds > 0))
+        {
+            throw new ArgumentException($"mels, dim, heads and ffn_dim are positive, dim a multiple of heads ({Dim}, {Heads}), the kernels odd ({SubsampleKernel}, {ConvolutionKernel}), "
+                + "layers and subsample_layers not negative, dropout in [0, 1), norm_epsilon, init_scale and max_seconds positive.");
+        }
+
+        if (Positions is not ("sinusoidal" or "none") || Activation is not ("gelu_tanh" or "gelu"))
+        {
+            throw new ArgumentException($"positions is sinusoidal or none ({Positions}); activation gelu_tanh or gelu ({Activation}).");
+        }
+
+        if (Classes < 2 || (uint)BlankId >= (uint)Classes)
+        {
+            throw new ArgumentException($"The head has {Classes} classes with the blank {BlankId}: at least a label and the blank, the blank one of them.");
+        }
+
+        if (Features.Mels != Mels)
+        {
+            throw new ArgumentException($"The features give {Features.Mels} mels; the model reads {Mels}.");
+        }
+    }
+
+    /// <summary>The settings as config.json holds them (with "architectures" and "model_type").</summary>
+    public JsonObject ToJson() => new()
+    {
+        ["architectures"] = new JsonArray((JsonNode)IdrakAudioFamily.Architecture),
+        ["model_type"] = "idrak-audio",
+        ["task"] = Task,
+        ["mels"] = Mels, ["dim"] = Dim, ["layers"] = Layers, ["heads"] = Heads, ["ffn_dim"] = FfnDim,
+        ["subsample_layers"] = SubsampleLayers, ["subsample_kernel"] = SubsampleKernel, ["positions"] = Positions,
+        ["convolution_module"] = ConvolutionModule, ["convolution_kernel"] = ConvolutionKernel, ["activation"] = Activation,
+        ["norm_epsilon"] = NormEpsilon, ["dropout"] = Dropout, ["init_scale"] = InitScale, ["classes"] = Classes, ["blank_id"] = BlankId,
+        ["feature_extractor"] = FeatureExtractor, ["features"] = Features.ToJson(), ["max_seconds"] = MaxSeconds,
+    };
+
+    /// <inheritdoc />
+    public override string ToString() => ToJson().ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+
+    internal static string Invariant(FormattableString text) => text.ToString(CultureInfo.InvariantCulture);
+}

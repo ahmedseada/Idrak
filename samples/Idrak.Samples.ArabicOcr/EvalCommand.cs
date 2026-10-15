@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Nlp;
+using Idrak.Abstraction.Generation;
 
 namespace Idrak.Samples.ArabicOcr;
 

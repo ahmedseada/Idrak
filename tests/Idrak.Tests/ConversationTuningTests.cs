@@ -5,6 +5,7 @@ using Idrak;
 using Idrak.Models;
 using Idrak.Nlp;
 using Idrak.Nlp.Abstractions;
+using Idrak.Abstraction.Generation;
 
 // The library's conversation tuning (ConversationTuning: what idrak tune and the legal OCR app train with) on the tiny
 // Gemma 3 and LlamaFactory's ShareGPT records: the data and its images read, a held-out share, the image side, the

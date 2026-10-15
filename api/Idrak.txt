@@ -316,34 +316,6 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public int ContextLength { get; }
   public void ReleaseCache()
 
-public sealed record Idrak.Inference.Abstractions.CtcDecodeOptions : System.IEquatable<Idrak.Inference.Abstractions.CtcDecodeOptions>
-  public CtcDecodeOptions()
-  public float? MinLogProbability { get; init; }
-  public int BeamWidth { get; init; }
-  public int Blank { get; init; }
-  public int Results { get; init; }
-  public int? TopClasses { get; init; }
-
-public delegate System.Collections.Generic.IReadOnlyList<Idrak.Inference.Abstractions.CtcHypothesis> Idrak.Inference.Abstractions.CtcDecoder(System.ReadOnlyMemory<float> logProbs, int steps, int classes, Idrak.Inference.Abstractions.CtcDecodeOptions options)
-
-public static class Idrak.Inference.Abstractions.CtcDecoders
-  public const string Beam = "beam"
-  public const string Greedy = "greedy"
-  public static Idrak.Inference.Abstractions.CtcDecoder Get(string name)
-  public static Idrak.Inference.Abstractions.CtcDecoder? Default(string name)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Collections.Generic.IReadOnlyList<Idrak.Inference.Abstractions.CtcHypothesis> Decode(System.ReadOnlyMemory<float> logProbs, int steps, int classes, string name = "greedy", Idrak.Inference.Abstractions.CtcDecodeOptions? options = null)
-  public static System.Collections.Generic.IReadOnlyList<Idrak.Inference.Abstractions.CtcHypothesis>[] Decode(Idrak.Abstraction.Tensor logProbs, System.Collections.Generic.IReadOnlyList<int>? lengths = null, string name = "greedy", Idrak.Inference.Abstractions.CtcDecodeOptions? options = null, bool batchFirst = false)
-  public static bool Unregister(string name)
-  public static string? Origin(string name)
-  public static void Register(string name, Idrak.Inference.Abstractions.CtcDecoder decoder)
-  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
-
-public sealed record Idrak.Inference.Abstractions.CtcHypothesis : System.IEquatable<Idrak.Inference.Abstractions.CtcHypothesis>
-  public CtcHypothesis(int[] Labels, float LogProbability)
-  public float LogProbability { get; init; }
-  public int[] Labels { get; init; }
-
 public sealed record Idrak.Inference.ClassPrediction : System.IEquatable<Idrak.Inference.ClassPrediction>
   public ClassPrediction(string Class, int Index, float Probability, System.Collections.Generic.IReadOnlyList<Idrak.Inference.ClassScore> Scores)
   public System.Collections.Generic.IReadOnlyList<Idrak.Inference.ClassScore> Scores { get; init; }

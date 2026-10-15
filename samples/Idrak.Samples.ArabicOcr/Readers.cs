@@ -4,10 +4,10 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Generation;
-using Idrak.Inference.Abstractions;
 using Idrak.Models;
 using Idrak.Nlp;
 using Idrak.Nlp.Generation;
+using Idrak.Abstraction.Generation;
 
 namespace Idrak.Samples.ArabicOcr;
 

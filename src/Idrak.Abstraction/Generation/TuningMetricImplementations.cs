@@ -4,9 +4,8 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
-using Idrak.Nlp.Abstractions;
 
-namespace Idrak.Nlp;
+namespace Idrak.Abstraction.Generation;
 
 // The library's error rates ("cer", "wer"): both texts NFC-normalized (optionally without nonspacing marks, optionally
 // lower-cased invariantly), then the edit distance over Unicode scalar values or over white-space-separated words, over
