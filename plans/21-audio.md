@@ -1,6 +1,6 @@
 # Plan 21: Idrak.Audio (sound in and out: codecs, features, speech recognition and synthesis)
 
-**Status:** planned 2026-10-15 against the code at `abstraction` 82d84937; S0 (the reference fixture) and S1 (AudioData, the codec and encoder registries, the WAV codec and encoder) built the same day, CPU-checked; S1's FLAC decoder (decision 6) built after, its fixture in flac/ from libFLAC through soundfile, "audio codecs: flac:" passing on the CPU (ten minutes of 16-bit FLAC in about 130 ms); MP3 and MP2 as the plug-in samples/Mp3Audio (an IAudioCodec through AudioCodecs.Register, minimp3 ported, frames decoded in parallel with the in-order samples), ffmpeg's samples within 1e-4 and its lengths on 15 files, "audio codecs: mp3:" passing on the CPU (three minutes of 44.1 kHz stereo in about 320 ms on 4 threads). **Built and CPU-checked 2026-10-15 (after the 09:25 UTC snapshot):** S2 (Resampler, Stft host FFT and composed path, MelFilterbank, LogMelFeatures, AudioFeatureOptions/Extractors, AudioFeatureSuite, "audio features:" tests); S3 (ChatAudio part and AudioPartKind, SoftParts contract, the tuning encoder and readers with "audios" lists, "audio chat:" tests); S5 (SpeechSynthesis and Vocoders contracts, Stft.Inverse, GriffinLim, samples/VitsSpeech, "audio tts:" tests). IDRAK_FILTER="audio" passes 19 of 19 on the CPU. S4 built and CPU-checked the same day ("audio asr:", 6 tests): the Whisper plug-in (samples/WhisperSpeech, referenced by the tests) gives transformers' encoder output and logits within 1e-4 and its greedy, beam-4 and timestamp ids exactly on tiny-whisper/ (regenerated with weights at std 0.5 so the references vary, through transformers' generate with Whisper's processors), BeamSearch matches a reference search and applies its rules to log-probabilities as transformers does, CrossAttention matches a loop and its gradients, and the kit's SpeechRecognizerSuite passes; IDRAK_FILTER="audio" passes 29 of 29 on the CPU and on CUDA (the owner's run: Transcribe of 1.5 s warm in about 24 ms, 30 s of log-mel in about 9 ms). Not in S4 yet: sampling with the temperature fallback, segment batches through Transcribe (the encoder takes a batch), the ctc/ fixture (S6's). S5's Arabic romanisation (decision 3) built after: the VITS plug-in's TextRomanizers with "uroman-arabic", uroman's output exactly on 218 cases (tools/audio/make_uroman_table.py). Next: S6 and S7. The package name
+**Status:** planned 2026-10-15 against the code at `abstraction` 82d84937; S0 (the reference fixture) and S1 (AudioData, the codec and encoder registries, the WAV codec and encoder) built the same day, CPU-checked; S1's FLAC decoder (decision 6) built after, its fixture in flac/ from libFLAC through soundfile, "audio codecs: flac:" passing on the CPU (ten minutes of 16-bit FLAC in about 130 ms); MP3 and MP2 as the plug-in samples/Mp3Audio (an IAudioCodec through AudioCodecs.Register, minimp3 ported, frames decoded in parallel with the in-order samples), ffmpeg's samples within 1e-4 and its lengths on 15 files, "audio codecs: mp3:" passing on the CPU (three minutes of 44.1 kHz stereo in about 320 ms on 4 threads). **Built and CPU-checked 2026-10-15 (after the 09:25 UTC snapshot):** S2 (Resampler, Stft host FFT and composed path, MelFilterbank, LogMelFeatures, AudioFeatureOptions/Extractors, AudioFeatureSuite, "audio features:" tests); S3 (ChatAudio part and AudioPartKind, SoftParts contract, the tuning encoder and readers with "audios" lists, "audio chat:" tests); S5 (SpeechSynthesis and Vocoders contracts, Stft.Inverse, GriffinLim, samples/VitsSpeech, "audio tts:" tests). IDRAK_FILTER="audio" passes 19 of 19 on the CPU. S4 built and CPU-checked the same day ("audio asr:", 6 tests): the Whisper plug-in (samples/WhisperSpeech, referenced by the tests) gives transformers' encoder output and logits within 1e-4 and its greedy, beam-4 and timestamp ids exactly on tiny-whisper/ (regenerated with weights at std 0.5 so the references vary, through transformers' generate with Whisper's processors), BeamSearch matches a reference search and applies its rules to log-probabilities as transformers does, CrossAttention matches a loop and its gradients, and the kit's SpeechRecognizerSuite passes; IDRAK_FILTER="audio" passes 29 of 29 on the CPU and on CUDA (the owner's run: Transcribe of 1.5 s warm in about 24 ms, 30 s of log-mel in about 9 ms). Not in S4 yet: sampling with the temperature fallback, segment batches through Transcribe (the encoder takes a batch), the ctc/ fixture (S6's). S9 (voices: a real person's voice installed by name, three routes) planned 2026-10-15. S5's Arabic romanisation (decision 3) built after: the VITS plug-in's TextRomanizers with "uroman-arabic", uroman's output exactly on 218 cases (tools/audio/make_uroman_table.py). Next: S6 and S7. The package name
 `Idrak.Audio` is reserved in the library (`src/Idrak.Abstraction/LibraryDefaults.cs:29-30`, with a
 `DynamicDependency` on `Idrak.Audio.LibraryRegistrations` at line 43), so the day the assembly exists its
 registrations are found without a change to Idrak.Abstraction.
@@ -842,11 +842,133 @@ The comparison is `tune evaluate` style: `idrak transcribe` of the loaded model 
 with `--metric cer` (`transcribe --truth work\val\manifest.jsonl --metric cer` prints both), recorded in the "as
 built" section with the stage times and peak bytes.
 
+## Phase S9: voices (a real person's voice, installed by name)
+
+**Why.** MMS-TTS gives one synthetic voice per language. The owner wants speech in a natural voice: a real person's,
+chosen by name, installed the way a model is, and in Arabic as well as English. Three routes reach it; each is a contract
+with its implementations as plug-ins, and `SpeechSynthesisOptions.Voice` (S5) names the voice whatever the route.
+
+**Route A, recorded speakers (multi-speaker checkpoints).** A VITS checkpoint trained on many recorded speakers (VCTK:
+109 English speakers, `kakao-enterprise/vits-vctk`; LJSpeech is one recorded woman's voice) speaks each of them by a
+speaker embedding the checkpoint holds. The VITS plug-in reads `num_speakers` and `speaker_embedding_size`, applies the
+speaker embedding (`embed_speaker`) to the duration predictor, the flow and the decoder as transformers does, and lists
+the speakers in `ISpeechSynthesizer.Voices` (`p225`, ... or the indices). Nothing to install: the voice is the
+checkpoint's. The cheapest route; English only today (no open multi-speaker Arabic VITS is known).
+
+**Route B, voice conversion (recommended first, decision 8).** Any synthesizer speaks (MMS-TTS Arabic included), then a
+**voice converter** changes the timbre to a target speaker's, taken from a few clips of that speaker (30 s to 3 min).
+Conversion works on sound, not text, so it is language-agnostic: Arabic synthesis converted to the owner's voice works
+without an Arabic voice model. The planned implementation is OpenVoice v2's tone colour converter (MIT licence; a
+reference encoder over linear spectrograms gives a 256-wide speaker embedding; the converter is VITS-shaped: a posterior
+encoder, flows conditioned on the source and target embeddings, a HiFi-GAN decoder), so the plug-in reuses the VITS
+plug-in's layers. Its checkpoint ships as PyTorch pickles: `tools/audio/convert_openvoice.py` writes safetensors once (the
+library reads no pickles), or the hub copy the owner publishes. Zero-shot cloning synthesizers (XTTS-v2, F5-TTS,
+Fish-Speech) speak from a reference clip directly but their weights are non-commercial; they fit the same contracts
+as user plug-ins and are not planned here.
+
+**Route C, a voice trained on the person's recordings (after S6).** Fine-tuning a VITS checkpoint (MMS-TTS Arabic, say)
+on 30 to 60 minutes of one speaker gives the most natural single voice. It needs S6's training loop plus VITS's
+adversarial losses (multi-period and multi-scale discriminators, the feature-matching and KL terms): its own piece of
+work, written as S9's last step so the routes before it do not wait for it. The result installs as a voice of kind
+`checkpoint` (a fine-tuned folder) and is used as any other.
+
+**The contracts** (`src/Idrak.Audio/Abstractions/Voices.cs`):
+
+```csharp
+public sealed record VoiceProfile(string Name, string Kind, IReadOnlyList<string> Languages, string Folder, JsonObject Manifest);
+    // Kind: "speaker" (a checkpoint's speaker: route A), "embedding" (a speaker embedding for a converter or a cloning
+    // family: route B), "checkpoint" (a fine-tuned synthesizer: route C). Manifest: voice.json as read.
+public interface ISpeakerEncoder { string Name { get; } int SampleRate { get; } float[] Embed(IReadOnlyList<AudioData> clips, Device device); }
+public static class SpeakerEncoders           // registry (SlotTable), plug-ins register theirs
+public interface IVoiceConverter
+{
+    string Name { get; } int SampleRate { get; } string Encoder { get; }    // the speaker encoder its embeddings come from
+    AudioData Convert(AudioData speech, VoiceProfile target, VoiceConversionOptions? options = null, Device? device = null);
+}
+public sealed record VoiceConversionOptions { float Tau { get; init; } = 0.3f; int MaxSeconds { get; init; } = 30; }   // the converter's own knobs, settings
+public static class VoiceConverters           // registry
+public interface IVoiceStore
+{
+    IReadOnlyList<VoiceProfile> List(); VoiceProfile? Find(string name);
+    VoiceProfile Add(string name, IReadOnlyList<string> clips, VoiceAddOptions options);   // embeds the clips, writes the folder
+    VoiceProfile Import(string folderOrZip); void Export(string name, string zip); bool Remove(string name);
+}
+public static class VoiceStores               // "folder" built in: IDRAK_VOICES, else voices/ under IDRAK_CACHE
+```
+
+**A voice folder** (what installing writes): `voice.json` (name, kind, languages, the encoder and converter names and
+versions, the embedding's width, the clips' SHA-256s and seconds, the date, and a `consent` object: who is speaking,
+the statement they agreed to, when), `embedding.safetensors` (route B), and optionally `clips/` (the reference
+recordings, kept only with `--keep-clips`). A voice is a person's likeness: `voice add` requires `--consent` text (or
+`--consent-file`), stores it in the manifest and prints it on `voice show`; the library cannot verify it, and the
+README says so plainly.
+
+**How `Voice` resolves** (in `SpeechSynthesis`, one helper every synthesizer calls): a speaker of the loaded checkpoint
+(route A) first; else an installed voice: kind `checkpoint` loads that folder instead, kind `embedding` speaks with the
+synthesizer's own voice and converts the result with the voice's converter (`SpeechSynthesisOptions.VoiceConversion`:
+"auto", "off", or a converter's name; a setting carried to the CLI and the apps). An unknown name is refused listing
+the checkpoint's speakers and the installed voices.
+
+**The command line (added to S7).**
+
+- `idrak voice add NAME --from CLIP... [--encoder NAME] [-P plugin.dll] [--language ar] --consent TEXT|--consent-file F
+  [--keep-clips] [--trim-silence]`: decodes the clips through `AudioCodecs` (WAV, FLAC, MP3), resamples, trims silence,
+  embeds, and installs; prints the clips' agreement (the cosine of each clip's embedding with the mean: a clip far from
+  the others is named, a sign of another speaker or noise).
+- `idrak voice list | show NAME | remove NAME | export NAME -o voice.zip | import voice.zip|DIR | pull OWNER/NAME`
+  (`pull` takes a voice folder published on the hub, as `idrak pull` takes a model).
+- `idrak speak MODEL TEXT --voice NAME [--voice-conversion auto|off|NAME] [--tau T] -o out.wav`, and
+  `idrak speak MODEL --list-voices` (the checkpoint's speakers and the installed voices).
+
+**Installing a voice: the owner's steps** (as they will run once S9 is built; written for Windows PowerShell):
+
+1. Record the speaker, with their consent: 1 to 3 minutes of normal speech in a quiet room, any format AudioCodecs reads
+   (WAV, FLAC, MP3), one or several files. Clean it: `idrak data audio rec\ -o voice-clips --rate 22050 --mono --split
+   silence --min-seconds 3`.
+2. Fetch the converter and its plug-in: `idrak pull <owner>/openvoice-v2-safetensors` (or convert the official
+   checkpoint once with `python tools/audio/convert_openvoice.py`), and keep `Idrak.OpenVoice.dll` at hand for `-P`.
+3. Install the voice: `idrak voice add ahmed --from voice-clips -P Idrak.OpenVoice.dll --language ar --consent "I, Ahmed
+   Seada, agree that this voice is used for speech made with Idrak."`
+4. Check it: `idrak voice show ahmed` (the clips' agreement, the consent, the folder).
+5. Speak with it: `idrak speak facebook/mms-tts-ara "مرحبا، أنا إدراك" --voice ahmed -P Idrak.VitsSpeech.dll -P
+   Idrak.OpenVoice.dll -o ahmed.wav`, and the same for English with `facebook/mms-tts-eng`.
+6. Move it to another machine: `idrak voice export ahmed -o ahmed-voice.zip`, then `idrak voice import ahmed-voice.zip`
+   there.
+
+For route A no install is needed: `idrak speak kakao-enterprise/vits-vctk "Hello" --voice p225 -o p225.wav`.
+
+**The plug-in** `samples/OpenVoice/Idrak.OpenVoice`: `OpenVoiceSpeakerEncoder` (the reference encoder: a linear
+spectrogram through `Stft.Magnitude`, convolutions, a GRU, the 256-wide embedding), `OpenVoiceConverter` (the
+posterior encoder over the source's spectrogram, the flows forward with the source embedding and backward with the
+target's, the HiFi-GAN decoder; the VITS plug-in's `VitsLayers` reused), registered in `SpeakerEncoders` and
+`VoiceConverters` as "openvoice-v2".
+
+**Tests** (`"audio voices:"`): a tiny random converter and speaker encoder built from OpenVoice's model code in the
+fixture tool (`tools/audio/make_tiny_audio.py --sections voices`) give its embedding and converted samples within 1e-4;
+converting with the source's own embedding returns the source within a stated tolerance; a voice folder written by
+`Add` reads back equal, exports and imports to the same profile, and refuses a missing consent; `Voice` resolution in
+the order above (a speaker, a checkpoint voice, an embedding voice converted, an unknown name refused listing both);
+the VITS plug-in's speaker embedding on a tiny multi-speaker fixture equal to transformers'; the `VoiceStoreSuite` and
+`VoiceConverterSuite` (the same output twice, the length kept, finite samples) in the testing kit.
+
+**Measured, not asserted** (`-v` and the README): speaker similarity (the cosine of the converted speech's embedding
+with the target's, against the unconverted speech's), and intelligibility kept (the Whisper plug-in's character error
+rate on converted against unconverted Arabic and English sentences); the owner's listening on real voices is the last
+word.
+
+**Done when** routes A and B pass on the CPU fixture and the owner installs a voice on a GPU and speaks Arabic and
+English with it; route C follows S6.
+
+**Risks.** Conversion quality depends on the reference clips (noise, a second speaker); the clips' agreement check names
+them. OpenVoice's converter was trained mostly on English and Chinese: Arabic timbre transfer is expected to work
+(conversion is language-agnostic) but is measured, not promised. Voice cloning can be misused: the consent record, the
+README's statement and never shipping anyone's voice by default are the library's part; the rest is the user's.
+
 ## Order and parallelism
 
 S0 → S1 → S2 (one agent: S2 needs S1's `AudioData`) and S3 (a second agent: it needs S1's part type only) → S4 (the core
 layers first, then the plug-in) and S5 (a second agent; it needs S2's `Stft.Inverse` for Griffin-Lim) → S6 → S7 → S8
-(the owner). At most two agents at a time. Each phase is one commit series on `abstraction` with its "as built"
+(the owner) → S9 (voices: routes A and B after S5 and S7's commands; route C after S6). At most two agents at a time. Each phase is one commit series on `abstraction` with its "as built"
 section appended to this plan (what was built, filter names and counts, what is left, the owner's GPU commands), as
 plans 11 to 19 did.
 
@@ -889,3 +1011,7 @@ plans 11 to 19 did.
 7. **The first data.** The owner's own recordings segmented by `data audio` and transcribed by the loaded model, then
    corrected; or a public corpus. **Recommended: the owner's recordings** (one voice, 1 to 3 hours to start), the proof
    run's CER against the loaded model on held-out clips as the measure.
+8. **The first route to a natural voice (S9).** Recorded speakers of a multi-speaker checkpoint (English only today),
+   voice conversion from a few clips of the person (any language, Arabic included), or a voice fine-tuned on the
+   person's recordings (the best single voice, after S6's training). **Recommended: conversion first** (OpenVoice v2's
+   converter, MIT licence, as a plug-in), route A alongside (small), route C after S6.
