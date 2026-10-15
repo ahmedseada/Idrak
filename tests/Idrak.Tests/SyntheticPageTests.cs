@@ -343,13 +343,15 @@ internal static partial class Tests
 
         // A page cut to its drawn parts: smaller, the same text, and every bit of ink kept (nothing drawn is outside the box).
         const string Short = "{\"full_text\": \"Body text.\"}";
-        var whole = SyntheticPages.Make(Short, options);
-        var cut = SyntheticPages.Make(Short, options with { Style = options.Style with { Crop = 1, CropPadding = (4, 4) } });
+        var plain = options with { Layouts = ["plain"], Parts = SyntheticPageParts.Empty };              // only the line: no rule or header
+        var whole = SyntheticPages.Make(Short, plain);
+        var cut = SyntheticPages.Make(Short, plain with { Style = plain.Style with { Crop = 1, CropPadding = (4, 4) } });
         static int Ink(ImageData image) => image.Pixels.Count(v => v < 0.5f);       // the strokes' pixels, not the paper's tint
         Check(cut.Image.Width < whole.Image.Width && cut.Image.Height < whole.Image.Height && cut.Text == whole.Text && cut.Description.Contains("cut to", StringComparison.Ordinal),
             $"the cut page is {cut.Image.Width} x {cut.Image.Height} of {whole.Image.Width} x {whole.Image.Height}, its text {cut.Text}");
         Check(Ink(whole.Image) > 0 && Ink(cut.Image) == Ink(whole.Image), $"the cut page keeps every stroke: {Ink(cut.Image)} of {Ink(whole.Image)} dark pixels");
-        Check(SyntheticPages.Make(Short, options with { Style = options.Style with { CropPadding = (1, 2) } }).Image.Pixels.SequenceEqual(whole.Image.Pixels), "without crop, the padding changes nothing");
+        Check(cut.Image.Width < whole.Image.Width / 2, $"a short line is cut to its ink, not to its column: {cut.Image.Width} of {whole.Image.Width} pixels wide");
+        Check(SyntheticPages.Make(Short, plain with { Style = plain.Style with { CropPadding = (1, 2) } }).Image.Pixels.SequenceEqual(whole.Image.Pixels), "without crop, the padding changes nothing");
 
     }
 
