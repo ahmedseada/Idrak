@@ -327,7 +327,9 @@ internal static partial class Tests
         var style = SyntheticPages.Style(new PageStyle { Fonts = [SubsetFace()] }, "width=800, size=20..30, spacing=1.2, rule=0, stamp=1, color=false");
         Check(style.Width == 800 && style.BodySize == (20, 30) && style.LineSpacing == (1.2f, 1.2f) && style.Rule == 0 && style.Stamp == 1 && !style.Color && style.Height == 1754,
             "the settings given, the others as they were");
-        foreach (string bad in new[] { "nope=1", "size=30..20", "rule=2", "width=10", "color=maybe" })
+        var cropping = SyntheticPages.Style(style, "crop=1, crop-padding=4..6");
+        Check(cropping.Crop == 1 && cropping.CropPadding == (4, 6) && style.Crop == 0, "crop and crop-padding are read; pages are whole by default");
+        foreach (string bad in new[] { "nope=1", "size=30..20", "rule=2", "width=10", "color=maybe", "crop=2", "crop-padding=5..1" })
         {
             Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
         }
@@ -338,6 +340,16 @@ internal static partial class Tests
             string answer = "{" + newLine + "  \"full_text\": \"Body text.\"," + newLine + "  \"court\": \"General\"" + newLine + "}";
             Check(SyntheticPages.Make(answer, options).Answer == answer, $"an answer with {(newLine.Length == 1 ? "\\n" : "\\r\\n")} comes back as it was, line endings included");
         }
+
+        // A page cut to its drawn parts: smaller, the same text, and every bit of ink kept (nothing drawn is outside the box).
+        const string Short = "{\"full_text\": \"Body text.\"}";
+        var whole = SyntheticPages.Make(Short, options);
+        var cut = SyntheticPages.Make(Short, options with { Style = options.Style with { Crop = 1, CropPadding = (4, 4) } });
+        static int Ink(ImageData image) => image.Pixels.Count(v => v < 0.5f);       // the strokes' pixels, not the paper's tint
+        Check(cut.Image.Width < whole.Image.Width && cut.Image.Height < whole.Image.Height && cut.Text == whole.Text && cut.Description.Contains("cut to", StringComparison.Ordinal),
+            $"the cut page is {cut.Image.Width} x {cut.Image.Height} of {whole.Image.Width} x {whole.Image.Height}, its text {cut.Text}");
+        Check(Ink(whole.Image) > 0 && Ink(cut.Image) == Ink(whole.Image), $"the cut page keeps every stroke: {Ink(cut.Image)} of {Ink(whole.Image)} dark pixels");
+        Check(SyntheticPages.Make(Short, options with { Style = options.Style with { CropPadding = (1, 2) } }).Image.Pixels.SequenceEqual(whole.Image.Pixels), "without crop, the padding changes nothing");
 
     }
 

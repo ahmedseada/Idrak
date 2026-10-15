@@ -469,12 +469,14 @@ public static class Idrak.Abstraction.Data.PageLayouts
 public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.Abstraction.Data.PageStyle>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PageStyle()
   public (float, float) BodySize { get; init; }
+  public (float, float) CropPadding { get; init; }
   public (float, float) Ink { get; init; }
   public (float, float) LineSpacing { get; init; }
   public (float, float) Margin { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fallbacks { get; init; }
   public bool Color { get; init; }
   public float BlueSignature { get; init; }
+  public float Crop { get; init; }
   public float Emblem { get; init; }
   public float Justify { get; init; }
   public float OtherHeaderFont { get; init; }

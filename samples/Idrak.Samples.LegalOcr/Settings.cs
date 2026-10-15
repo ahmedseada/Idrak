@@ -348,7 +348,7 @@ public sealed record SyntheticSettings
     /// <summary>The share of pages drawn in grey.</summary>
     public double Grey { get; init; } = 0.3;
 
-    /// <summary>Page settings, KEY=VALUE,... (width, height, size, spacing, margin, ink, justify, color, rule, emblem, stamp, blue-signature, header-font).</summary>
+    /// <summary>Page settings, KEY=VALUE,... (width, height, size, spacing, margin, ink, justify, color, rule, emblem, stamp, blue-signature, header-font, crop, crop-padding).</summary>
     public string Page { get; init; } = "";
 
     /// <summary>The data set's seed (the same seed, the same pages).</summary>

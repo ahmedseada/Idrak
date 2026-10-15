@@ -252,6 +252,11 @@ public sealed record SyntheticPageOptions
             _ = SyntheticPages.Profile(scan);
         }
 
+        if (Style.Crop is < 0 or > 1 || !(Style.CropPadding.Min >= 0 && Style.CropPadding.Min <= Style.CropPadding.Max))
+        {
+            throw new ArgumentOutOfRangeException(nameof(Style), $"Crop is a chance from 0 to 1 ({Style.Crop}) and its padding a range of pixels from 0 ({Style.CropPadding}).");
+        }
+
         if (Grey is < 0 or > 1)
         {
             throw new ArgumentOutOfRangeException(nameof(Grey), Grey, "Grey is a share from 0 to 1.");
@@ -325,13 +330,14 @@ public static class SyntheticPages
 
     /// <summary>The keys <see cref="Style"/> reads.</summary>
     public static IReadOnlyList<string> StyleKeys { get; } =
-        ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font"];
+        ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding"];
 
     /// <summary>
     /// <paramref name="style"/> with the settings of <paramref name="settings"/> over it, written
     /// <c>KEY=VALUE,...</c>: width and height (pixels), size (the body's pixels per em), spacing (line height
-    /// multiples), margin (a share of the width) and ink (darkness, 0 to 1) as ranges <c>MIN..MAX</c> or one value;
-    /// justify, rule, emblem, stamp, blue-signature and header-font as chances (0 to 1); color as true or false.
+    /// multiples), margin (a share of the width), ink (darkness, 0 to 1) and crop-padding (pixels) as ranges
+    /// <c>MIN..MAX</c> or one value; justify, rule, emblem, stamp, blue-signature, header-font and crop (a page cut to
+    /// its drawn parts, <see cref="PageStyle.Crop"/>) as chances (0 to 1); color as true or false.
     /// </summary>
     /// <exception cref="ArgumentException">A key not known, or a value out of its range; the message names them.</exception>
     public static PageStyle Style(PageStyle style, string? settings)
@@ -367,6 +373,8 @@ public static class SyntheticPages
                 "stamp" => style with { Stamp = Chance() },
                 "blue-signature" => style with { BlueSignature = Chance() },
                 "header-font" => style with { OtherHeaderFont = Chance() },
+                "crop" => style with { Crop = Chance() },
+                "crop-padding" => style with { CropPadding = Range(0, 2000) },
                 "color" => style with
                 {
                     Color = bool.TryParse(value, out bool color) ? color : throw new ArgumentException($"Page setting color is true or false, not '{value}'."),
@@ -597,9 +605,59 @@ public static class SyntheticPages
         var fonts = FontsFor(style.Fonts, content.ReadingOrder(), where);
         var pageStyle = style with { Fonts = fonts, Fallbacks = [.. style.Fallbacks, .. style.Fonts], Color = style.Color && !grey };
         var rendered = PageLayouts.Get(layoutName).Render(content, pageStyle, layoutSeed);
+        var drawn = rendered.Image;
+        string description = rendered.Description;
+        // Cut to the drawn parts (PageStyle.Crop), before the scan so its look lands on the cut page. Drawn last and only
+        // when asked, so every other choice, and a page that is not cut, stays as it was.
+        if (style.Crop > 0f && random.NextDouble() < style.Crop && Bounds(rendered, style.CropPadding, random) is { } box)
+        {
+            drawn = Cut(drawn, box);
+            description += string.Create(CultureInfo.InvariantCulture, $", cut to {box.Width} x {box.Height}");
+        }
+
         var steps = Profile(scanName)?.Sample(scanSeed) ?? ImageTransformPipeline.Empty;
-        var image = steps.IsEmpty ? rendered.Image : steps.Apply(rendered.Image);
-        return new SyntheticPage(image, rendered.Text, answer.With(rendered.Text), seed, layoutName, steps.ToString(), rendered.Description, scanName);
+        var image = steps.IsEmpty ? drawn : steps.Apply(drawn);
+        return new SyntheticPage(image, rendered.Text, answer.With(rendered.Text), seed, layoutName, steps.ToString(), description, scanName);
+    }
+
+    // The box around a page's drawn parts with padding drawn from its range, within the page; null when nothing was drawn.
+    private static (int X, int Y, int Width, int Height)? Bounds(RenderedPage page, (float Min, float Max) padding, Random random)
+    {
+        float left = float.MaxValue, top = float.MaxValue, right = float.MinValue, bottom = float.MinValue;
+        foreach (var block in page.Blocks)
+        {
+            if (block.Width > 0 && block.Height > 0)
+            {
+                (left, top) = (Math.Min(left, block.X), Math.Min(top, block.Y));
+                (right, bottom) = (Math.Max(right, block.X + block.Width), Math.Max(bottom, block.Y + block.Height));
+            }
+        }
+
+        if (left > right)
+        {
+            return null;
+        }
+
+        float pad = padding.Min + (float)random.NextDouble() * (padding.Max - padding.Min);
+        int x0 = Math.Clamp((int)MathF.Floor(left - pad), 0, page.Image.Width - 1), y0 = Math.Clamp((int)MathF.Floor(top - pad), 0, page.Image.Height - 1);
+        int x1 = Math.Clamp((int)MathF.Ceiling(right + pad), x0 + 1, page.Image.Width), y1 = Math.Clamp((int)MathF.Ceiling(bottom + pad), y0 + 1, page.Image.Height);
+        return (x0, y0, x1 - x0, y1 - y0);
+    }
+
+    // The pixels of `box`, each channel's rows copied in memory order.
+    private static ImageData Cut(ImageData image, (int X, int Y, int Width, int Height) box)
+    {
+        var source = image.Pixels;
+        var pixels = new float[image.Channels * box.Height * box.Width];
+        for (int c = 0; c < image.Channels; c++)
+        {
+            for (int row = 0; row < box.Height; row++)
+            {
+                Array.Copy(source, ((long)c * image.Height + box.Y + row) * image.Width + box.X, pixels, ((long)c * box.Height + row) * box.Width, box.Width);
+            }
+        }
+
+        return new ImageData(pixels, image.Channels, box.Height, box.Width);
     }
 
     private static IReadOnlyList<string> Fill(IReadOnlyList<string> lines, PagePartContext context, string? digits)
