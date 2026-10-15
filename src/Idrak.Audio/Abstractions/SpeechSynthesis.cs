@@ -54,6 +54,12 @@ public sealed record SpeechSynthesisOptions
 
     /// <summary>0: the text is spoken in one pass; otherwise it is split at sentence ends into pieces of at most this many characters, spoken one by one and joined.</summary>
     public int MaxCharacters { get; init; }
+
+    /// <summary>
+    /// The seconds of sound a family's decoder makes in one piece (each piece with its context, so the samples are a
+    /// whole pass's): the device's memory follows the piece, not the text's length. 0: one pass; null: the model's own setting.
+    /// </summary>
+    public double? DecoderSeconds { get; init; }
 }
 
 /// <summary>What a synthesis took.</summary>

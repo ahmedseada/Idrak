@@ -71,11 +71,15 @@ public sealed class VitsSynthesizer : ISpeechSynthesizer
     /// <summary>
     /// The seconds of sound the decoder makes in one piece (each piece with its context, so the samples are a whole
     /// pass's): the device's memory follows the piece, not the text's length. 0: the whole utterance in one pass.
+    /// <see cref="SpeechSynthesisOptions.DecoderSeconds"/> sets it for one call.
     /// </summary>
     public double DecoderChunkSeconds { get; set; } = 10;
 
     /// <summary>The decoder's piece in latent frames for <see cref="DecoderChunkSeconds"/> (0: one pass).</summary>
-    internal int DecoderChunkFrames => DecoderChunkSeconds <= 0 ? 0 : Math.Max(1, (int)(DecoderChunkSeconds * Config.SamplingRate / Config.HopLength));
+    internal int DecoderChunkFrames => ChunkFrames(DecoderChunkSeconds);
+
+    // The decoder's piece in latent frames for pieces of this many seconds (0: one pass).
+    private int ChunkFrames(double seconds) => seconds <= 0 ? 0 : Math.Max(1, (int)(seconds * Config.SamplingRate / Config.HopLength));
 
     /// <summary>The HiFi-GAN decoder as a vocoder over the flow's latents [frames, flow_size] (what a model trained to produce them can use).</summary>
     public IVocoder Vocoder { get; }
@@ -315,7 +319,7 @@ public sealed class VitsSynthesizer : ISpeechSynthesizer
         Telemetry.InferenceStage(InferenceStageKind.Encoder, Device, telemetryStart, ids.Length, (long)frames * Config.FlowSize * sizeof(float));
         var modelTime = Stopwatch.GetElapsedTime(started);
         long decoderStart = Stopwatch.GetTimestamp();
-        var samples = _decoder.Samples(latents, speaker, DecoderChunkFrames);              // [1, frames · hop]
+        var samples = _decoder.Samples(latents, speaker, ChunkFrames(options.DecoderSeconds ?? DecoderChunkSeconds));   // [1, frames · hop]
         return (samples, durations, modelTime, Stopwatch.GetElapsedTime(decoderStart));
     }
 

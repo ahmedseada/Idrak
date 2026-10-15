@@ -101,6 +101,9 @@ public sealed record VoiceConversionOptions
 
     /// <summary>Speech longer than this is converted in pieces cut at the quietest point before each limit (memory stays bounded); 0: in one pass.</summary>
     public double MaxSeconds { get; init; } = 30;
+
+    /// <summary>The seconds of sound the converter's decoder makes in one piece, with its context (the same samples as one pass); 0: each piece in one pass; null: the converter's own setting.</summary>
+    public double? DecoderSeconds { get; init; }
 }
 
 /// <summary>

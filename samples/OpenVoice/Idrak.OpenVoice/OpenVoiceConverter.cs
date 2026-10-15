@@ -95,7 +95,7 @@ public sealed class OpenVoiceConverter : IVoiceConverter
     /// </summary>
     public double EmbedSeconds { get; set; } = 10;
 
-    /// <summary>The seconds of sound the decoder makes in one piece, with its context (the same samples as one pass); 0: each conversion piece in one pass.</summary>
+    /// <summary>The seconds of sound the decoder makes in one piece, with its context (the same samples as one pass); 0: each conversion piece in one pass. <see cref="VoiceConversionOptions.DecoderSeconds"/> sets it for one call.</summary>
     public double DecoderChunkSeconds { get; set; } = 10;
 
     /// <inheritdoc />
@@ -168,7 +168,7 @@ public sealed class OpenVoiceConverter : IVoiceConverter
         foreach (var (from, count) in Pieces(samples, options.MaxSeconds))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var piece = ConvertPiece(samples.AsSpan(from, count), source, targetValues, options.Tau, random);
+            var piece = ConvertPiece(samples.AsSpan(from, count), source, targetValues, options.Tau, random, options.DecoderSeconds ?? DecoderChunkSeconds);
             piece.CopyTo(output.AsSpan(written));
             written += piece.Length;
         }
@@ -192,7 +192,7 @@ public sealed class OpenVoiceConverter : IVoiceConverter
     }
 
     // One piece: [samples / hop · hop] samples of it in the target's voice.
-    private float[] ConvertPiece(ReadOnlySpan<float> samples, float[] source, float[] target, float tau, Random random)
+    private float[] ConvertPiece(ReadOnlySpan<float> samples, float[] source, float[] target, float tau, Random random, double decoderSeconds)
     {
         long started = Telemetry.Start(TelemetryLevel.Inference);
         using var noGrad = Autograd.NoGrad();
@@ -205,7 +205,7 @@ public sealed class OpenVoiceConverter : IVoiceConverter
         var prior = _flow.Forward(latents, sourceColumn);
         var converted = _flow.Reverse(prior, targetColumn);
         Telemetry.InferenceStage(InferenceStageKind.Encoder, Device, started, spectrogram.Shape[1], (long)latents.Shape[0] * latents.Shape[1] * sizeof(float));
-        return _decoder.Samples(converted, zero ?? targetColumn, DecoderChunkSeconds <= 0 ? 0 : Math.Max(1, (int)(DecoderChunkSeconds * SampleRate / Config.HopLength)));
+        return _decoder.Samples(converted, zero ?? targetColumn, decoderSeconds <= 0 ? 0 : Math.Max(1, (int)(decoderSeconds * SampleRate / Config.HopLength)));
     }
 
     // The speech mixed to one channel at the converter's rate.
