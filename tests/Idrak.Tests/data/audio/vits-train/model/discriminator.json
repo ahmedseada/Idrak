@@ -1,0 +1,39 @@
+{
+ "leaky_relu_slope": 0.1,
+ "period_channels": [
+  4,
+  8,
+  8
+ ],
+ "period_kernel": 5,
+ "period_stride": 3,
+ "periods": [
+  2,
+  3
+ ],
+ "pool_kernel": 4,
+ "pool_padding": 2,
+ "pool_stride": 2,
+ "post_kernel": 3,
+ "scale_channels": [
+  4,
+  8,
+  8
+ ],
+ "scale_groups": [
+  1,
+  2,
+  1
+ ],
+ "scale_kernels": [
+  5,
+  9,
+  3
+ ],
+ "scale_strides": [
+  1,
+  4,
+  1
+ ],
+ "scales": 2
+}

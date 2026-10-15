@@ -19,7 +19,10 @@ public static class VitsSpeechPlugin
     public static void Unregister() => SpeechSynthesisFamilies.Unregister(VitsSpeechFamily.Architecture);
 }
 
-/// <summary>The family: reads a VITS checkpoint folder (config.json, vocab.json, the safetensors) into a <see cref="VitsSynthesizer"/>.</summary>
+/// <summary>
+/// The family: reads a VITS checkpoint folder (config.json, vocab.json, the safetensors) into a <see cref="VitsSynthesizer"/>;
+/// with <see cref="SpeechSynthesisLoadOptions.Training"/>, one the adversarial trainer fine-tunes (plan 21, S9 route C).
+/// </summary>
 public sealed class VitsSpeechFamily : ISpeechSynthesisFamily
 {
     /// <summary>The architecture name the checkpoints give, "VitsModel".</summary>
@@ -40,7 +43,12 @@ public sealed class VitsSpeechFamily : ISpeechSynthesisFamily
             throw new InvalidDataException($"vocab.json has ids up to {tokenizer.Size - 1}, config.json's vocab_size is {config.VocabSize}.");
         }
 
-        var weights = new VitsWeights(checkpoint.Tensors, options.Device ?? Device.Default);
-        return new VitsSynthesizer(weights, config, tokenizer, checkpoint.Notes);
+        if (options.Training && config.Speakers > 1)
+        {
+            throw new NotSupportedException($"Training fine-tunes a single-speaker checkpoint (route C: one person's voice); this one has {config.Speakers} speakers.");
+        }
+
+        var weights = new VitsWeights(checkpoint.Tensors, options.Device ?? Device.Default, options.Training);
+        return new VitsSynthesizer(weights, config, tokenizer, checkpoint.Notes, checkpoint.Folder, checkpoint.Open);
     }
 }

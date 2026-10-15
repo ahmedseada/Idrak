@@ -644,6 +644,78 @@
    "bytes": 17706,
    "sha256": "b46493a0f2bdd41a7cdb3d485e6868f15059ccbd628e39f8a045dbded5bd819a"
   },
+  "vits-train/audio-0.npy": {
+   "bytes": 1408,
+   "sha256": "e00167c8f562114ea88d6221ff2e1293d0b9cfab759e8e6ca38585385e00b310"
+  },
+  "vits-train/audio-1.npy": {
+   "bytes": 1920,
+   "sha256": "bfda4ebf01e36a93ae45f5cb89f7a23ab69848500edf23c215c10107fc3696f4"
+  },
+  "vits-train/model/config.json": {
+   "bytes": 1529,
+   "sha256": "5bf2c70a9e7e17e45b862ff4d23555412a993642197950d75908574bd25f1d5e"
+  },
+  "vits-train/model/discriminator.json": {
+   "bytes": 381,
+   "sha256": "25684fdaa29b33cab1be2d3bc6295e3f2926e980181ab596ec97d23467e9aaa4"
+  },
+  "vits-train/model/discriminator.safetensors": {
+   "bytes": 13168,
+   "sha256": "0cdf17da6cbe8357718c798f54e4e29f457f04bc2b28cc23524f68d645a5a14d"
+  },
+  "vits-train/model/model.safetensors": {
+   "bytes": 170792,
+   "sha256": "de1271909adf2df6044aa8afaf5a5fa0225e89d587b6db25d3b4b5e43ebcbec4"
+  },
+  "vits-train/model/tensors.json": {
+   "bytes": 29057,
+   "sha256": "d55240763375402474849b68539a1d06814b9e8b551bebd8afdf7681453f115e"
+  },
+  "vits-train/model/vocab.json": {
+   "bytes": 193,
+   "sha256": "a8c335b3edf501e0c9032930ca7c08d289c7741a8fd855504d9e447920cbfdc0"
+  },
+  "vits-train/reference/discriminator-step3.safetensors": {
+   "bytes": 13168,
+   "sha256": "5c4700040ae6c266571c3723d497c64c2d9ab125cca4631acfa4b730fe6014e3"
+  },
+  "vits-train/reference/draws.safetensors": {
+   "bytes": 5896,
+   "sha256": "58b54fddbc209b47836bb8e58c7986eb4bf24467b178825ffb4d9248c6d29049"
+  },
+  "vits-train/reference/grads-discriminator-step1.safetensors": {
+   "bytes": 13168,
+   "sha256": "11d5368953edbfc7e8ef9f4548cded450b8a2c2b0d410adaf35a18c5efc6d845"
+  },
+  "vits-train/reference/grads-generator-step1.safetensors": {
+   "bytes": 170792,
+   "sha256": "f234c117b2d24d4c182d09c3ded83d353cd5d60e997b7a0b99a5c766648177ec"
+  },
+  "vits-train/reference/neg-cent-0.npy": {
+   "bytes": 608,
+   "sha256": "76caad3d8eaa0458b35a5f1432a53ec69e7a1aca47ea5d8e824d642c27f74a40"
+  },
+  "vits-train/reference/neg-cent-1.npy": {
+   "bytes": 1136,
+   "sha256": "b3a95bf52f53be1ed3bd29c22b6b0b744c9254550c6051ef40e0dc94f70ef87d"
+  },
+  "vits-train/reference/spectrogram-0.npy": {
+   "bytes": 5328,
+   "sha256": "a17ccabb249b4b0fd05753fde847b909597368abe8cdf88652313e6377d9d9c9"
+  },
+  "vits-train/reference/spectrogram-1.npy": {
+   "bytes": 7408,
+   "sha256": "ebb96e7bc5a513bccb0f986df54b4f5a2e337d4f269d4453d1a99fe74fa23d43"
+  },
+  "vits-train/reference/steps.json": {
+   "bytes": 1724,
+   "sha256": "a49f389821cbe297e92478368b4a378d3e4779648df486e0a9a43b36e297f7e3"
+  },
+  "vits-train/reference/weights-step3.safetensors": {
+   "bytes": 170792,
+   "sha256": "4ff6ca0cff54ef1564561b6ba02d31541ca7e90d3d5b7bdb0e7a11649008f24d"
+  },
   "wav/bad-no-fmt.wav": {
    "bytes": 48020,
    "sha256": "406969804ffe6dd92dea35266e5e16edb64132b8b89c07f2361132a8bc46efa0"
@@ -766,6 +838,7 @@
   "tts",
   "vits",
   "voices",
+  "vits-train",
   "transcripts"
  ],
  "versions": {

@@ -10,6 +10,9 @@ internal interface IVitsDurationPredictor : IDisposable
 {
     /// <summary>The log-durations [T] of <paramref name="hidden"/> [C, T], with the speaker's embedding [E, 1] (null for one speaker) and the noise scale (the stochastic predictor draws from <paramref name="random"/>).</summary>
     float[] LogDurations(Tensor hidden, Tensor? speaker, float noiseScale, Random random);
+
+    /// <summary>The training loss of the tokens' frames <paramref name="durations"/> [1, T] given the hidden states [C, T] (detached by the caller) and the noise [2, T] a stochastic predictor draws: a scalar summed over the tokens.</summary>
+    Tensor Loss(Tensor hidden, Tensor durations, Tensor noise);
 }
 
 /// <summary>
@@ -26,7 +29,9 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     private readonly Conv1d? _cond;
     private readonly VitsDilatedDepthSeparableConv _dds;
     private readonly float[] _logScale, _translate;                              // the element-wise affine flow, [channels]
+    private readonly Tensor? _logScaleParameter, _translateParameter;            // training: the same as parameters [channels, 1]
     private readonly ConvFlow[] _flows;
+    private readonly Posterior? _posterior;                                      // training: the posterior flows over the durations
 
     public VitsStochasticDurationPredictor(VitsWeights weights, VitsConfig config)
     {
@@ -53,11 +58,98 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         {
             _flows[i] = new ConvFlow(weights, $"duration_predictor.flows.{i + 1}", config);
         }
+
+        if (weights.Trainable)
+        {
+            if (channels != 2)
+            {
+                throw new NotSupportedException($"Training reads the stochastic duration predictor's two channels (the duration and its pair); depth_separable_channels is {channels}.");
+            }
+
+            if (!weights.Contains("duration_predictor.post_conv_pre.weight"))
+            {
+                throw new InvalidDataException("The checkpoint has no duration_predictor.post_* tensors (the posterior flows over the durations, which training needs and "
+                    + "transformers' VitsModel holds); train from a checkpoint that keeps them.");
+            }
+
+            _logScaleParameter = weights.Parameter("duration_predictor.flows.0.log_scale", _logScale, [channels, 1], weights.Shape("duration_predictor.flows.0.log_scale"));
+            _translateParameter = weights.Parameter("duration_predictor.flows.0.translate", _translate, [channels, 1], weights.Shape("duration_predictor.flows.0.translate"));
+            _posterior = new Posterior(weights, config);
+        }
     }
+
+    /// <summary>
+    /// The training loss of the durations (transformers' forward direction, reverse false): the negative log-likelihood
+    /// of each token's frames <paramref name="durations"/> [1, T] under the flows conditioned on <paramref name="hidden"/>
+    /// [C, T] (detached: the text encoder gets no gradient from it, as in VITS), dequantized by the posterior flows over
+    /// <paramref name="noise"/> [2, T], plus the posterior's log-density: a scalar, summed over the tokens.
+    /// </summary>
+    public Tensor Loss(Tensor hidden, Tensor durations, Tensor noise) => Nll(hidden, durations, noise);
+
+    public Tensor Nll(Tensor hidden, Tensor durations, Tensor noise)
+    {
+        var posterior = _posterior ?? throw new InvalidOperationException("The duration predictor was loaded to speak; load the model with SpeechSynthesisLoadOptions.Training to train it.");
+        int t = hidden.Shape[1];
+        var x = _proj.Forward(_dds.Forward(_pre.Forward(hidden), null));               // the conditioning of every flow, [C, T]
+        var h = posterior.Proj.Forward(posterior.Dds.Forward(posterior.Pre.Forward(durations), null));
+
+        // The posterior: the noise through its flows (each after which the channels flip), conditioned on both.
+        var conditioning = x + h;
+        var latents = Affine(noise, posterior.LogScale, posterior.Translate, t, out var logDetQ);
+        latents = Flip(latents);
+        foreach (var flow in posterior.Flows)
+        {
+            latents = flow.Forward(latents, conditioning, out var logDet);
+            latents = Flip(latents);
+            logDetQ = logDetQ + logDet;
+        }
+
+        var first = latents.Narrow(0, 0, 1);
+        var second = latents.Narrow(0, 1, 1);
+        var magnitude = first.Abs();
+        logDetQ = logDetQ - (magnitude + ((magnitude * -1f).Exp() + 1f).Log() * 2f).Sum();   // + logsigmoid(u) + logsigmoid(-u)
+        var noiseValues = noise.ToArray();
+        double noiseSquares = 0;
+        foreach (float v in noiseValues)
+        {
+            noiseSquares += (double)v * v;
+        }
+
+        float logQ0 = (float)(-0.5 * (noiseValues.Length * Math.Log(2 * Math.PI) + noiseSquares));
+        var logQ = logDetQ * -1f + logQ0;
+
+        // The durations dequantized by the posterior's first channel, through the flows to the prior.
+        var dequantized = (durations - first.Sigmoid()).Clamp(1e-5f, float.PositiveInfinity).Log();
+        var logDetSum = dequantized.Sum() * -1f;
+        latents = Affine(Tensor.Concat([dequantized, second], 0), _logScaleParameter!, _translateParameter!, t, out var affineDet);
+        latents = Flip(latents);
+        logDetSum = logDetSum + affineDet;
+        foreach (var flow in _flows)
+        {
+            latents = flow.Forward(latents, x, out var logDet);
+            latents = Flip(latents);
+            logDetSum = logDetSum + logDet;
+        }
+
+        var nll = (latents.Square() * 0.5f).Sum() + (float)(0.5 * latents.Size * Math.Log(2 * Math.PI)) - logDetSum;
+        return nll + logQ;
+    }
+
+    // transformers' VitsElementwiseAffine forward: translate + exp(log_scale) · x per channel, its log-determinant T · Σ log_scale.
+    private static Tensor Affine(Tensor x, Tensor logScale, Tensor translate, int t, out Tensor logDet)
+    {
+        logDet = logScale.Sum() * t;
+        return VitsOps.ExpandColumns(translate, t) + VitsOps.ExpandColumns(logScale.Exp(), t) * x;
+    }
+
+    // torch.flip over the two channels of [2, T].
+    private static Tensor Flip(Tensor x) => Tensor.Concat([x.Narrow(0, 1, 1), x.Narrow(0, 0, 1)], 0);
 
     public float[] LogDurations(Tensor hidden, Tensor? speaker, float noiseScale, Random random)
     {
         int t = hidden.Shape[1], channels = _config.DepthSeparableChannels;
+        var logScale = _logScaleParameter?.ToArray() ?? _logScale;               // a model in training speaks with its weights as they are now
+        var translate = _translateParameter?.ToArray() ?? _translate;
         var x = _pre.Forward(hidden);
         if (speaker is not null && _cond is not null)
         {
@@ -87,7 +179,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         var logDurations = new float[t];
         for (int n = 0; n < t; n++)
         {
-            logDurations[n] = (float)((latents[n] - _translate[0]) * Math.Exp(-_logScale[0]));
+            logDurations[n] = (float)((latents[n] - translate[0]) * Math.Exp(-logScale[0]));
         }
 
         return logDurations;
@@ -114,6 +206,50 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         _cond?.Dispose();
         _dds.Dispose();
         foreach (var flow in _flows) flow.Dispose();
+        _logScaleParameter?.Dispose();
+        _translateParameter?.Dispose();
+        _posterior?.Dispose();
+    }
+
+    // The posterior flows over the durations (transformers' post_conv_pre, post_conv_dds, post_conv_proj, post_flows): training only.
+    private sealed class Posterior : IDisposable
+    {
+        public Posterior(VitsWeights weights, VitsConfig config)
+        {
+            int c = config.HiddenSize, channels = config.DepthSeparableChannels;
+            Pre = weights.Conv("duration_predictor.post_conv_pre", 1, c, 1, 0);
+            Proj = weights.Conv("duration_predictor.post_conv_proj", c, c, 1, 0);
+            Dds = new VitsDilatedDepthSeparableConv(weights, "duration_predictor.post_conv_dds", config);
+            LogScale = weights.Tensor("duration_predictor.post_flows.0.log_scale", channels, 1);
+            Translate = weights.Tensor("duration_predictor.post_flows.0.translate", channels, 1);
+            Flows = new ConvFlow[config.DurationFlows];
+            for (int i = 0; i < Flows.Length; i++)
+            {
+                Flows[i] = new ConvFlow(weights, $"duration_predictor.post_flows.{i + 1}", config);
+            }
+        }
+
+        public Conv1d Pre { get; }
+
+        public Conv1d Proj { get; }
+
+        public VitsDilatedDepthSeparableConv Dds { get; }
+
+        public Tensor LogScale { get; }
+
+        public Tensor Translate { get; }
+
+        public ConvFlow[] Flows { get; }
+
+        public void Dispose()
+        {
+            Pre.Dispose();
+            Proj.Dispose();
+            Dds.Dispose();
+            LogScale.Dispose();
+            Translate.Dispose();
+            foreach (var flow in Flows) flow.Dispose();
+        }
     }
 
     // transformers' VitsConvFlow in reverse: the first half of the channels conditions a rational-quadratic spline that
@@ -133,6 +269,24 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
             _pre = weights.Conv($"{prefix}.conv_pre", _half, c, 1, 0);
             _dds = new VitsDilatedDepthSeparableConv(weights, $"{prefix}.conv_dds", config);
             _proj = weights.Conv($"{prefix}.conv_proj", c, _half * (3 * bins - 1), 1, 0);
+        }
+
+        /// <summary>
+        /// The flow forward (training) on latents [2, T]: the second channel through the spline the first one conditions
+        /// (with <paramref name="conditioning"/> [C, T]), composed from tensor operations so its gradients reach every
+        /// input; the log-determinant summed over the tokens.
+        /// </summary>
+        public Tensor Forward(Tensor latents, Tensor conditioning, out Tensor logDet)
+        {
+            int t = latents.Shape[1], bins = _config.DurationFlowBins;
+            var first = latents.Narrow(0, 0, _half);
+            var second = latents.Narrow(0, _half, _half);
+            var h = _proj.Forward(_dds.Forward(_pre.Forward(first), conditioning)).Transpose();   // [T, 3 bins - 1] (one channel)
+            float scale = 1f / MathF.Sqrt(_config.HiddenSize);
+            var (outputs, logAbsDet) = VitsSpline.Forward(second.Reshape(t, 1), h.Narrow(1, 0, bins) * scale, h.Narrow(1, bins, bins) * scale,
+                h.Narrow(1, 2 * bins, bins - 1), _config.DurationTailBound);
+            logDet = logAbsDet.Sum();
+            return Tensor.Concat([first, outputs.Reshape(1, t)], 0);
         }
 
         /// <summary>latents [channels, T] on the host: the second half replaced by the spline's inverse, conditioned on the first half and <paramref name="conditioning"/> [C, T].</summary>
@@ -215,9 +369,21 @@ internal sealed class VitsDeterministicDurationPredictor : IVitsDurationPredicto
             x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), hidden.Shape[1]);
         }
 
+        return Predict(x).ToArray();                                             // [1, T]
+    }
+
+    /// <summary>VITS's deterministic duration loss: Σ (log-duration predicted - log(frames + 1e-6))² over the tokens.</summary>
+    public Tensor Loss(Tensor hidden, Tensor durations, Tensor noise)
+    {
+        _ = noise;
+        return (Predict(hidden) - (durations + 1e-6f).Log()).Square().Sum();
+    }
+
+    private Tensor Predict(Tensor x)
+    {
         x = _norm1.Forward(_conv1.Forward(x).Relu().Transpose()).Transpose();
         x = _norm2.Forward(_conv2.Forward(x).Relu().Transpose()).Transpose();
-        return _proj.Forward(x).ToArray();                                       // [1, T]
+        return _proj.Forward(x);
     }
 
     public void Dispose()
@@ -239,6 +405,107 @@ internal sealed class VitsDeterministicDurationPredictor : IVitsDurationPredicto
 internal static class VitsSpline
 {
     private const double MinBinWidth = 1e-3, MinBinHeight = 1e-3, MinDerivative = 1e-3;
+
+    /// <summary>
+    /// The spline forward (training, transformers' <c>_unconstrained_rational_quadratic_spline</c> with reverse false):
+    /// the inputs <paramref name="x"/> [N, 1] through the splines of the unnormalized widths and heights [N, bins] and
+    /// inner derivatives [N, bins - 1], and the log of each one's derivative, from tensor operations so their gradients
+    /// reach every input: the widths' softmax cumulated by a product with a triangle of ones, each input's bin found on
+    /// the host (from the cumulative widths) and its values picked by one-hot rows. Inputs outside ±tail pass unchanged
+    /// (their log-derivative 0), as transformers', and the spline is evaluated at 0 for them so nothing there is not finite.
+    /// </summary>
+    public static (Tensor Outputs, Tensor LogAbsDet) Forward(Tensor x, Tensor widths, Tensor heights, Tensor derivatives, float tail)
+    {
+        int n = widths.Shape[0], bins = widths.Shape[1];
+        var device = x.Device;
+        var inputs = x.ToArray();
+        var inside = new float[n];
+        var outside = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            bool within = inputs[i] >= -tail && inputs[i] <= tail;
+            (inside[i], outside[i]) = within ? (1f, 0f) : (0f, 1f);
+        }
+
+        var keep = Tensor.From(inside, [n, 1], device);
+        var pass = Tensor.From(outside, [n, 1], device);
+        var at = x * keep;                                                        // outside inputs read at 0, a point inside
+        var (cumWidths, binWidths) = Cumulative(widths, (float)MinBinWidth, tail);
+        var (cumHeights, binHeights) = Cumulative(heights, (float)MinBinHeight, tail);
+        var ones = Tensor.Ones([n, 1], device);
+        var inner = derivatives.Relu() + ((derivatives.Abs() * -1f).Exp() + 1f).Log() + (float)MinDerivative;   // min + softplus
+        var slopes = Tensor.Concat([ones, inner, ones], 1);                       // [N, bins + 1]; the edge derivatives are 1 (softplus of the constant + min)
+
+        // Each input's bin: the cumulative widths it reaches (the top one nudged up), counted on the host.
+        var cum = cumWidths.ToArray();
+        var pickBin = new float[n * bins];
+        var pickEdge = new float[n * (bins + 1)];
+        var pickNext = new float[n * (bins + 1)];
+        for (int i = 0; i < n; i++)
+        {
+            float v = inside[i] == 1f ? inputs[i] : 0f;
+            int bin = -1;
+            for (int k = 0; k <= bins; k++)
+            {
+                float edge = cum[i * (bins + 1) + k] + (k == bins ? 1e-6f : 0f);
+                if (v >= edge)
+                {
+                    bin++;
+                }
+            }
+
+            bin = Math.Clamp(bin, 0, bins - 1);
+            pickBin[i * bins + bin] = 1f;
+            pickEdge[i * (bins + 1) + bin] = 1f;
+            pickNext[i * (bins + 1) + bin + 1] = 1f;
+        }
+
+        var inBin = Tensor.From(pickBin, [n, bins], device);
+        var atEdge = Tensor.From(pickEdge, [n, bins + 1], device);
+        var atNext = Tensor.From(pickNext, [n, bins + 1], device);
+        Tensor Pick(Tensor values, Tensor rows) => (values * rows).Sum(1, keepDim: true);   // [N, 1]
+
+        var inputCumWidth = Pick(cumWidths, atEdge);
+        var inputBinWidth = Pick(binWidths, inBin);
+        var inputCumHeight = Pick(cumHeights, atEdge);
+        var inputHeight = Pick(binHeights, inBin);
+        var inputDelta = Pick(binHeights * binWidths.Pow(-1f), inBin);
+        var d0 = Pick(slopes, atEdge);
+        var d1 = Pick(slopes, atNext);
+
+        var theta = (at - inputCumWidth) * inputBinWidth.Pow(-1f);
+        var rest = theta * -1f + 1f;
+        var thetaRest = theta * rest;
+        var numerator = inputHeight * (inputDelta * theta.Square() + d0 * thetaRest);
+        var denominator = inputDelta + (d0 + d1 - inputDelta * 2f) * thetaRest;
+        var outputs = inputCumHeight + numerator * denominator.Pow(-1f);
+        var derivativeNumerator = inputDelta.Square() * (d1 * theta.Square() + inputDelta * 2f * thetaRest + d0 * rest.Square());
+        var logAbsDet = derivativeNumerator.Log() - denominator.Log() * 2f;
+        return (outputs * keep + x * pass, logAbsDet * keep);
+    }
+
+    // softmax, the minimum added, cumulated (a product with the upper triangle of ones), stretched to [-tail, tail] with
+    // exact ends: the cumulative edges [N, bins + 1] and the bins' sizes [N, bins].
+    private static (Tensor Cumulative, Tensor Sizes) Cumulative(Tensor unnormalized, float minimum, float tail)
+    {
+        int n = unnormalized.Shape[0], bins = unnormalized.Shape[1];
+        var device = unnormalized.Device;
+        var sizes = unnormalized.Softmax() * (1f - minimum * bins) + minimum;
+        var triangle = new float[bins * (bins - 1)];
+        for (int i = 0; i < bins; i++)
+        {
+            for (int j = i; j < bins - 1; j++)
+            {
+                triangle[i * (bins - 1) + j] = 1f;
+            }
+        }
+
+        var running = sizes.MatMul(Tensor.From(triangle, [bins, bins - 1], device));   // [N, bins - 1]: the sums up to each inner edge
+        var lower = Tensor.From(Enumerable.Repeat(-tail, n).ToArray(), [n, 1], device);
+        var upper = Tensor.From(Enumerable.Repeat(tail, n).ToArray(), [n, 1], device);
+        var cumulative = Tensor.Concat([lower, running * (2f * tail) - tail, upper], 1);
+        return (cumulative, cumulative.Narrow(1, 1, bins) - cumulative.Narrow(1, 0, bins));
+    }
 
     /// <summary>
     /// The input whose spline value is <paramref name="y"/>. <paramref name="derivatives"/> holds bins + 1 values whose

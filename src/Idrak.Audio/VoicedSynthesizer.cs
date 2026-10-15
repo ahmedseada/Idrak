@@ -216,7 +216,7 @@ public sealed class VoicedSynthesizer : ISpeechSynthesizer
 
     private ISpeechSynthesizer Checkpoint(VoiceProfile voice)
     {
-        string folder = Path.Combine(voice.Folder, voice.Manifest["checkpoint"]?.GetValue<string>() ?? "model");
+        string folder = voice.CheckpointFolder!;
         lock (_gate)
         {
             if (!_checkpoints.TryGetValue(folder, out var model))

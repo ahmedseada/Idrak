@@ -138,6 +138,13 @@ public sealed record SpeechTrainingOptions
     /// <summary>The temperature both distributions are softened by (1: as they are; 2 to 4 is usual).</summary>
     public float DistillationTemperature { get; init; } = 2f;
 
+    /// <summary>
+    /// A synthesizer trained against discriminators (<see cref="AdversarialSynthesisTrainer"/>): the loss weights, the
+    /// decoder's segment, the discriminators' rate and optimizer settings; null: their defaults. Recognizers and the
+    /// "durations" objective ignore it.
+    /// </summary>
+    public AdversarialSynthesisOptions? Adversarial { get; init; }
+
     /// <summary>The options as JSON (<see cref="FromJson"/> reads it back).</summary>
     public JsonObject ToJson() => new()
     {
@@ -150,7 +157,7 @@ public sealed record SpeechTrainingOptions
         ["augmentation_options"] = AugmentationOptions.ToJson(), ["seed"] = Seed, ["feature_cache"] = FeatureCache,
         ["feature_cache_folder"] = FeatureCacheFolder, ["workers"] = Workers, ["non_finite_steps"] = NonFiniteSteps,
         ["durations"] = Durations, ["duration_loss_weight"] = DurationLossWeight,
-        ["distillation_alpha"] = DistillationAlpha, ["distillation_temperature"] = DistillationTemperature,
+        ["distillation_alpha"] = DistillationAlpha, ["distillation_temperature"] = DistillationTemperature, ["adversarial"] = Adversarial?.ToJson(),
     };
 
     /// <summary>Options from their JSON (<see cref="ToJson"/>); a key missing keeps the default.</summary>
@@ -192,6 +199,7 @@ public sealed record SpeechTrainingOptions
             DurationLossWeight = (float?)json["duration_loss_weight"] ?? d.DurationLossWeight,
             DistillationAlpha = (float?)json["distillation_alpha"] ?? d.DistillationAlpha,
             DistillationTemperature = (float?)json["distillation_temperature"] ?? d.DistillationTemperature,
+            Adversarial = json["adversarial"] is JsonObject adversarial ? AdversarialSynthesisOptions.FromJson(adversarial) : null,
         };
     }
 
@@ -225,6 +233,7 @@ public sealed record SpeechTrainingOptions
         }
 
         AugmentationOptions.Check();
+        Adversarial?.Check();
         if (FeatureCache is { } cache)
         {
             _ = FeatureCaches.Get(cache);
@@ -248,7 +257,11 @@ public sealed record SpeechTrainingOptions
 /// <param name="MicroBatchSeconds">The audio seconds that go through the device at once (smaller than a batch after running out of memory).</param>
 /// <param name="Evaluation">The evaluation score of this step, when it was scored.</param>
 public sealed record SpeechTrainingProgress(string Stage, int Step, int Steps, int Epoch, double EpochFraction, float Loss, float LearningRate, double UtterancesPerSecond,
-    double AudioSecondsPerSecond, TimeSpan Elapsed, TimeSpan Remaining, long PeakDeviceBytes, double MicroBatchSeconds, double? Evaluation);
+    double AudioSecondsPerSecond, TimeSpan Elapsed, TimeSpan Remaining, long PeakDeviceBytes, double MicroBatchSeconds, double? Evaluation)
+{
+    /// <summary>The last step's loss terms by name when the objective has several (an adversarial synthesizer's "mel", "kl", "discriminator", ...); null otherwise.</summary>
+    public IReadOnlyDictionary<string, float>? Terms { get; init; }
+}
 
 /// <summary>What a speech training run did.</summary>
 /// <param name="Steps">Steps done in all (a resumed run's included).</param>
@@ -296,7 +309,7 @@ public static class SpeechTrainer
     /// <summary>The checkpoint state file.</summary>
     public const string StateFile = "train-state.json";
 
-    private const string OptimizerFile = "optimizer.safetensors";
+    internal const string OptimizerFile = "optimizer.safetensors";
     private const string FeatureStage = "audio-features";
 
     /// <summary>
@@ -397,7 +410,7 @@ public static class SpeechTrainer
 
         var augmentations = options.Augmentations.Select(AudioAugmentations.Get).ToArray();
         var parameters = model.Network.Parameters().ToList();
-        using var optimizer = CreateOptimizer(parameters, options);
+        using var optimizer = model.CreateOptimizer(parameters, options);
         var losses = new List<float>(resume?.Losses ?? []);
         var evaluations = new List<(int, double)>(resume?.Evaluations ?? []);
         int step = resume?.Step ?? 0, epoch = resume?.Epoch ?? 0, next = resume?.Batch ?? 0;
@@ -412,6 +425,8 @@ public static class SpeechTrainer
         {
             schedule.Step();                                                    // the resumed run's rate where it was
         }
+
+        using var own = model.Start(options, resume?.Folder, step);              // the trainee's own optimizers (an adversarial one's discriminators)
 
         // Each pass's batches, made once from the seed (the worker reading ahead and the loop both ask), the passes behind dropped.
         var plans = new ConcurrentDictionary<int, List<int[]>>();
@@ -462,8 +477,9 @@ public static class SpeechTrainer
 
                 long computeStart = Stopwatch.GetTimestamp();
                 float rate0 = optimizer.LearningRate;
-                double loss = RunStep(model, reader, optimizer, batches, options, forward, ref micro, notes, trace);
+                double loss = RunStep(model, reader, optimizer, batches, options, forward, step + 1, ref micro, notes, trace);
                 schedule.Step();
+                model.Stepped();
                 var compute = Stopwatch.GetElapsedTime(computeStart);
                 (epoch, next) = (nextEpoch, nextBatch);
                 step++;
@@ -516,7 +532,7 @@ public static class SpeechTrainer
                     double pace = timedSeconds / Math.Max(1, step - startStep - 1);
                     progress.Report(new SpeechTrainingProgress(stage, step, options.Steps, epoch + 1, next / (double)Math.Max(1, PlanFor(epoch).Count), (float)loss, rate0,
                         trainedUtterances / Math.Max(1e-9, timedSeconds), trainedSeconds / Math.Max(1e-9, timedSeconds), clock.Elapsed,
-                        TimeSpan.FromSeconds(pace * (options.Steps - step)), model.Device.Backend.GetMemoryUsage().Peak, micro, evaluated));
+                        TimeSpan.FromSeconds(pace * (options.Steps - step)), model.Device.Backend.GetMemoryUsage().Peak, micro, evaluated) { Terms = model.Terms });
                 }
             }
         }
@@ -595,9 +611,8 @@ public static class SpeechTrainer
     // scaled by its utterances' share of the step, so the gradients added up are the step's mean. Out of device memory, the
     // micro-batches are halved and the step runs again from zeroed gradients.
     private static double RunStep(SpeechTrainee model, ISpeechReader reader, Optimizer optimizer, List<Prepared[]> batches, SpeechTrainingOptions options, SpeechForwardOptions forward,
-        ref double micro, List<string> notes, Action<string>? trace)
+        int step, ref double micro, List<string> notes, Action<string>? trace)
     {
-        int total = batches.Sum(b => b.Length);
         double secondsPerFrame = model.Features.Options.HopSize / (double)model.Features.Options.SampleRate;
         while (true)
         {
@@ -605,20 +620,7 @@ public static class SpeechTrainer
             var groups = batches.SelectMany(b => Split(b, limit, secondsPerFrame)).ToList();
             try
             {
-                optimizer.ZeroGrad();
-                double sum = 0;
-                foreach (var group in groups)
-                {
-                    using var scope = new TensorScope();
-                    using var precision = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
-                    var loss = model.Loss(reader, Padded(group, model), group, forward);
-                    var scaled = group.Length == total ? loss : loss * (group.Length / (float)total);
-                    scaled.Backward();
-                    sum += loss.Item() * group.Length;
-                }
-
-                optimizer.ClipAndStep(options.MaxGradientNorm);
-                return sum / total;
+                return model.Step(reader, groups, optimizer, options, forward, step);
             }
             catch (ResourceLimitExceededException e) when (groups.Any(g => g.Length > 1))
             {
@@ -631,10 +633,10 @@ public static class SpeechTrainer
         }
     }
 
-    // A group's features [count, longest, mels] on the trainee's device, each utterance's frames first and zeros after them.
-    private static Tensor Padded(Prepared[] group, SpeechTrainee model)
+    // A group's features [count, longest, width] on the trainee's device, each utterance's frames first and zeros after them.
+    internal static Tensor Padded(Prepared[] group, SpeechTrainee model)
     {
-        int mels = model.Features.Options.Mels;
+        int mels = model.FeatureWidth;
         int longest = group.Max(u => u.Frames);
         var padded = new float[group.Length * longest * mels];
         for (int i = 0; i < group.Length; i++)
@@ -734,20 +736,31 @@ public static class SpeechTrainer
         return TuningScore.Sum(scores).Value;
     }
 
-    private static Optimizer CreateOptimizer(List<Tensor> parameters, SpeechTrainingOptions options)
+    // The optimizer over `parameters` the options name (on the host with HostOptimizer).
+    internal static Optimizer CreateOptimizer(List<Tensor> parameters, SpeechTrainingOptions options)
     {
         var make = FineTuningOptimizers.Create(options.Optimizer, options.LearningRate, options.WeightDecay, options.Momentum);
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
+
+    internal static Dictionary<string, OptimizerStateValue> ReadState(string path)
+    {
+        using var reader = SafeTensorsReader.Open(path);
+        ITensorStore store = reader;
+        return store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
+    }
+
+    internal static void WriteState(string path, Optimizer optimizer) =>
+        SafeTensorsWriter.Write(path, optimizer.SaveState().Select(p => (p.Key, p.Value.Shape, p.Value.Values)), SafeTensorType.F32,
+            new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
 
     private static string SaveCheckpoint(SpeechTrainee model, Optimizer optimizer, SpeechTrainingOptions options, SpeechSource train, SpeechSource? evaluation,
         string outputFolder, int step, int epoch, int next, double micro, List<float> losses, List<(int, double)> evaluations)
     {
         string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
         model.Save(folder);
-        var state = optimizer.SaveState();
-        SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)), SafeTensorType.F32,
-            new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
+        WriteState(Path.Combine(folder, OptimizerFile), optimizer);
+        model.SaveState(folder);
         var json = new JsonObject
         {
             ["format"] = StateFormat,
@@ -789,9 +802,7 @@ public static class SpeechTrainer
             throw new FileNotFoundException($"{folder} holds no optimizer state ({OptimizerFile}).", path);
         }
 
-        using var reader = SafeTensorsReader.Open(path);
-        ITensorStore store = reader;
-        return store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
+        return ReadState(path);
     }
 
     /// <summary>An utterance ready for a step: its features [frames, mels] (host), its labels and its seconds.</summary>

@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "tts", "vits", "voices", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "tts", "vits", "voices", "vits-train", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -1390,6 +1390,365 @@ def write_vits(out):
     dump_json(os.path.join(folder, "tensors.json"), index)
 
 
+# ------------------------------------------------------------------ vits-train: fine-tuning a VITS checkpoint (plan 21, S9 route C)
+
+# The settings of the tiny run: the decoder's segment in frames, the loss weights (VITS's c_mel 45, c_kl 1, the duration,
+# adversarial and feature-matching terms; feature matching is VITS's feature_loss, twice the sum of the layers' mean
+# errors), the mel bands of the mel loss, the SGD rates of the generator and the discriminators.
+VITS_TRAIN = {"segment_frames": 8, "mel_weight": 45.0, "kl_weight": 1.0, "duration_weight": 1.0, "adversarial_weight": 1.0,
+              "feature_matching_weight": 2.0, "mels": 16, "generator_lr": 0.002, "discriminator_lr": 0.002}
+
+# The discriminators' description (the plug-in's discriminator.json): VITS's multi-period discriminator (a scale
+# discriminator and one per period) at tiny widths, with a second scale (HiFi-GAN's average-pooled multi-scale input).
+VITS_DISCRIMINATOR = {"periods": [2, 3], "period_channels": [4, 8, 8], "period_kernel": 5, "period_stride": 3, "post_kernel": 3,
+                      "scales": 2, "scale_channels": [4, 8, 8], "scale_kernels": [5, 9, 3], "scale_strides": [1, 4, 1], "scale_groups": [1, 2, 1],
+                      "pool_kernel": 4, "pool_stride": 2, "pool_padding": 2, "leaky_relu_slope": 0.1}
+
+
+def vits_train_config():
+    from transformers import VitsConfig
+    return VitsConfig(vocab_size=20, hidden_size=16, num_hidden_layers=2, num_attention_heads=2, window_size=2, ffn_dim=32, ffn_kernel_size=3,
+                      flow_size=8, prior_encoder_num_flows=2, prior_encoder_num_wavenet_layers=2, posterior_encoder_num_wavenet_layers=2,
+                      upsample_rates=[4, 4], upsample_kernel_sizes=[8, 8], upsample_initial_channel=16, resblock_kernel_sizes=[3, 5],
+                      resblock_dilation_sizes=[[1, 3], [1, 2]], spectrogram_bins=65, speaker_embedding_size=0, num_speakers=1,
+                      wavenet_kernel_size=3, wavenet_dilation_rate=2, duration_predictor_num_flows=2, duration_predictor_flow_bins=6,
+                      duration_predictor_tail_bound=5.0, depth_separable_num_layers=2, noise_scale=0.667, noise_scale_duration=0.8,
+                      sampling_rate=16000, hidden_dropout=0.0, attention_dropout=0.0, activation_dropout=0.0, wavenet_dropout=0.0,
+                      duration_predictor_dropout=0.0, layerdrop=0.0)
+
+
+def vits_initialize(torch, module, seed):
+    """Weights at 1/sqrt(fan-in) (a weight norm's directions too, its gains near 1), drawn biases, norms and flows, so
+    every gradient is of a size a check against its tensor's largest can tell apart from a wrong one."""
+    gen = torch.Generator().manual_seed(seed)
+    with torch.no_grad():
+        for name, p in module.named_parameters():
+            if name.endswith("original0"):
+                p.copy_(0.8 + 0.4 * torch.rand(p.shape, generator=gen))
+            elif "norm" in name and name.endswith("weight") and p.dim() == 1:
+                p.copy_(1 + 0.1 * torch.randn(p.shape, generator=gen))
+            elif p.dim() == 1 or name.endswith("translate") or name.endswith("log_scale"):
+                p.copy_(0.1 * torch.randn(p.shape, generator=gen))
+            else:
+                p.copy_(torch.randn(p.shape, generator=gen) / math.sqrt(p.numel() / p.shape[0]))
+
+
+def vits_discriminators(torch, d):
+    """VITS's MultiPeriodDiscriminator (DiscriminatorS and DiscriminatorP, weight-normed), the scale discriminators
+    reading the sound average-pooled once more each (HiFi-GAN's MultiScaleDiscriminator)."""
+    import torch.nn as nn
+    import torch.nn.functional as F
+    wn = nn.utils.parametrizations.weight_norm
+    slope = d["leaky_relu_slope"]
+
+    class Scale(nn.Module):
+        def __init__(self):
+            super().__init__()
+            convs, c_in = [], 1
+            for c, k, s, g in zip(d["scale_channels"], d["scale_kernels"], d["scale_strides"], d["scale_groups"]):
+                convs.append(wn(nn.Conv1d(c_in, c, k, s, groups=g, padding=(k - 1) // 2)))
+                c_in = c
+            self.convs = nn.ModuleList(convs)
+            self.conv_post = wn(nn.Conv1d(c_in, 1, d["post_kernel"], 1, padding=(d["post_kernel"] - 1) // 2))
+
+        def forward(self, x):
+            fmap = []
+            for layer in self.convs:
+                x = F.leaky_relu(layer(x), slope)
+                fmap.append(x)
+            x = self.conv_post(x)
+            fmap.append(x)
+            return torch.flatten(x, 1, -1), fmap
+
+    class Period(nn.Module):
+        def __init__(self, period):
+            super().__init__()
+            self.period = period
+            convs, c_in, k = [], 1, d["period_kernel"]
+            for j, c in enumerate(d["period_channels"]):
+                s = d["period_stride"] if j < len(d["period_channels"]) - 1 else 1
+                convs.append(wn(nn.Conv2d(c_in, c, (k, 1), (s, 1), padding=((k - 1) // 2, 0))))
+                c_in = c
+            self.convs = nn.ModuleList(convs)
+            self.conv_post = wn(nn.Conv2d(c_in, 1, (d["post_kernel"], 1), 1, padding=((d["post_kernel"] - 1) // 2, 0)))
+
+        def forward(self, x):
+            fmap = []
+            b, c, t = x.shape
+            if t % self.period != 0:
+                n_pad = self.period - (t % self.period)
+                x = F.pad(x, (0, n_pad), "reflect")
+                t = t + n_pad
+            x = x.view(b, c, t // self.period, self.period)
+            for layer in self.convs:
+                x = F.leaky_relu(layer(x), slope)
+                fmap.append(x)
+            x = self.conv_post(x)
+            fmap.append(x)
+            return torch.flatten(x, 1, -1), fmap
+
+    class Discriminators(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.discriminators = nn.ModuleList([Scale() for _ in range(d["scales"])] + [Period(p) for p in d["periods"]])
+            self.pool = nn.AvgPool1d(d["pool_kernel"], d["pool_stride"], padding=d["pool_padding"])
+
+        def forward(self, y):
+            outputs, fmaps, x = [], [], y
+            for i, disc in enumerate(self.discriminators):
+                if i < d["scales"]:
+                    if i > 0:
+                        x = self.pool(x)
+                    out, fmap = disc(x)
+                else:
+                    out, fmap = disc(y)
+                outputs.append(out)
+                fmaps.append(fmap)
+            return outputs, fmaps
+
+    return Discriminators()
+
+
+def maximum_path(value):
+    """VITS's monotonic alignment search (monotonic_align/core.pyx) on one utterance's [frames, tokens] scores, in
+    float32 as the Cython code adds them: the path [frames, tokens] of ones."""
+    value = np.array(value, dtype=np.float32)
+    t_y, t_x = value.shape
+    path = np.zeros((t_y, t_x), dtype=np.int32)
+    neg = np.float32(-1e9)
+    for y in range(t_y):
+        for x in range(max(0, t_x + y - t_y), min(t_x, y + 1)):
+            v_cur = neg if x == y else value[y - 1, x]
+            if x == 0:
+                v_prev = np.float32(0.0) if y == 0 else neg
+            else:
+                v_prev = value[y - 1, x - 1]
+            value[y, x] = np.float32(value[y, x] + max(v_prev, v_cur))
+    index = t_x - 1
+    for y in range(t_y - 1, -1, -1):
+        path[y, index] = 1
+        if index != 0 and (index == y or value[y - 1, index] < value[y - 1, index - 1]):
+            index -= 1
+    return path
+
+
+def vits_spectrogram(torch, samples, n_fft, hop):
+    """VITS's spectrogram_torch: reflect-padded by (n_fft - hop) / 2, frames not centred, a periodic Hann window,
+    sqrt(power + 1e-6): [bins, frames]."""
+    import torch.nn.functional as F
+    pad = (n_fft - hop) // 2
+    y = F.pad(samples[None, None], (pad, pad), mode="reflect")[0]
+    spec = torch.stft(y, n_fft, hop_length=hop, win_length=n_fft, window=torch.hann_window(n_fft), center=False, normalized=False,
+                      onesided=True, return_complex=True)
+    return torch.sqrt(torch.view_as_real(spec).pow(2).sum(-1) + 1e-6)[0]
+
+
+def vits_sdp_nll(torch, sdp, hidden, durations, noise):
+    """transformers' VitsStochasticDurationPredictor forward (reverse False) on one utterance (no padding), with the
+    posterior's noise given: nll + log q."""
+    import torch.nn.functional as F
+    mask = torch.ones(1, 1, hidden.shape[2])
+    inputs = sdp.conv_pre(torch.detach(hidden))
+    inputs = sdp.conv_dds(inputs, mask)
+    inputs = sdp.conv_proj(inputs) * mask
+    h = sdp.post_conv_pre(durations)
+    h = sdp.post_conv_dds(h, mask)
+    h = sdp.post_conv_proj(h) * mask
+    latents_posterior = noise[None]
+    logdet_q = 0
+    for flow in sdp.post_flows:
+        latents_posterior, logdet = flow(latents_posterior, mask, global_conditioning=inputs + h)
+        latents_posterior = torch.flip(latents_posterior, [1])
+        logdet_q = logdet_q + logdet
+    first, second = torch.split(latents_posterior, [1, 1], dim=1)
+    logdet_q = logdet_q + torch.sum(F.logsigmoid(first) + F.logsigmoid(-first), [1, 2])
+    logq = torch.sum(-0.5 * (math.log(2 * math.pi) + noise[None] ** 2), [1, 2]) - logdet_q
+    first = durations - torch.sigmoid(first)
+    first = torch.log(torch.clamp_min(first, 1e-5))
+    logdet = torch.sum(-first, [1, 2])
+    latents = torch.cat([first, second], dim=1)
+    for flow in sdp.flows:
+        latents, ld = flow(latents, mask, global_conditioning=inputs)
+        latents = torch.flip(latents, [1])
+        logdet = logdet + ld
+    nll = torch.sum(0.5 * (math.log(2 * math.pi) + latents ** 2), [1, 2]) - logdet
+    return (nll + logq)[0]
+
+
+def write_vits_train(out):
+    """A tiny random VitsModel (its decoder weight-normed, as a training checkpoint holds it) and tiny discriminators,
+    and VITS's training step on two utterances (with the noise and the decoder's segments drawn here and saved): the
+    generator's and the discriminators' losses and every gradient of step 1, the monotonic alignment search's scores and
+    paths, three SGD steps' losses and the weights after them. The utterances go through one at a time (no padding,
+    so no mask), their terms added up as VITS's batch losses are: the KL over the batch's frames, the duration over its
+    tokens, the mel, adversarial and feature-matching terms averaged over the utterances (their segments are of one length)."""
+    from transformers import VitsModel
+    from safetensors.torch import save_file
+    import torch.nn.functional as F
+    import torchaudio
+    torch = torch_setup()
+    folder = os.path.join(out, "vits-train")
+    if os.path.isdir(folder):
+        import shutil
+        shutil.rmtree(folder)
+    sub = os.path.join(folder, "model")
+    ref = os.path.join(folder, "reference")
+    os.makedirs(sub)
+    os.makedirs(ref)
+    s = VITS_TRAIN
+    config = vits_train_config()
+    model = VitsModel(config)
+    model.decoder.apply_weight_norm()
+    vits_initialize(torch, model, 2041)
+    disc = vits_discriminators(torch, VITS_DISCRIMINATOR)
+    vits_initialize(torch, disc, 2042)
+    model.train()
+    disc.train()
+    symbols = list("_ abcdefghijklmnopqr")
+    dump_json(os.path.join(sub, "vocab.json"), {c: i for i, c in enumerate(symbols)})
+    config.architectures = ["VitsModel"]
+    config.to_json_file(os.path.join(sub, "config.json"))
+    save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(sub, "model.safetensors"))
+    save_file({k: v.detach().clone().contiguous() for k, v in disc.state_dict().items()}, os.path.join(sub, "discriminator.safetensors"))
+    dump_json(os.path.join(sub, "discriminator.json"), VITS_DISCRIMINATOR)
+    index, _ = safetensors_index(os.path.join(sub, "model.safetensors"))
+    dump_json(os.path.join(sub, "tensors.json"), index)
+
+    hop = int(np.prod(config.upsample_rates))
+    n_fft = (config.spectrogram_bins - 1) * 2
+    seg = s["segment_frames"]
+    mel_basis = torchaudio.functional.melscale_fbanks(config.spectrogram_bins, 0.0, config.sampling_rate / 2, s["mels"], config.sampling_rate,
+                                                      norm="slaney", mel_scale="slaney").T            # [mels, bins]
+    gen = torch.Generator().manual_seed(2043)
+    texts = ["abc ab", "hello cab"]
+    frames = [20, 28]
+    ids = [torch.tensor([symbols.index(c) for c in t]) for t in texts]
+    audio, specs = [], []
+    for u, f in enumerate(frames):
+        n = torch.arange(f * hop, dtype=torch.float32) / config.sampling_rate
+        x = sum(0.2 * torch.sin(2 * math.pi * (300 + 210 * k + 50 * u) * n + k) * (1 + 0.5 * torch.sin(2 * math.pi * (3 + k) * n)) for k in range(3))
+        x = (x + 0.01 * torch.randn(x.shape, generator=gen)).to(torch.float32)
+        audio.append(x)
+        specs.append(vits_spectrogram(torch, x, n_fft, hop))
+        save_npy(folder, f"audio-{u}.npy", x.numpy().astype(np.float32))
+        save_npy(ref, f"spectrogram-{u}.npy", specs[u].numpy().astype(np.float32))            # [bins, frames]
+    total_frames, total_tokens, count = sum(frames), sum(len(i) for i in ids), len(ids)
+
+    def mel_of_spec(spec):
+        return torch.log(torch.clamp(mel_basis @ spec, min=1e-5))
+
+    def mel_of_samples(y):
+        return mel_of_spec(vits_spectrogram(torch, y, n_fft, hop))
+
+    def draw(step):
+        g = torch.Generator().manual_seed(3000 + step)
+        out_ = []
+        for u in range(count):
+            post = torch.randn(config.flow_size, frames[u], generator=g)
+            dur = torch.randn(2, len(ids[u]), generator=g)
+            start = int(torch.randint(0, frames[u] - seg + 1, (1,), generator=g))
+            out_.append((post, dur, start))
+        return out_
+
+    def generator_pass(u, draws, record=None):
+        post_noise, dur_noise, start = draws[u]
+        enc = model.text_encoder(ids[u][None], padding_mask=torch.ones(1, len(ids[u]), 1))
+        hidden = enc.last_hidden_state.transpose(1, 2)
+        m_p, logs_p = enc.prior_means.transpose(1, 2), enc.prior_log_variances.transpose(1, 2)            # [1, F, T]
+        ymask = torch.ones(1, 1, frames[u])
+        pe = model.posterior_encoder
+        h = pe.conv_pre(specs[u][None]) * ymask
+        h = pe.wavenet(h, ymask, None)
+        stats = pe.conv_proj(h) * ymask
+        m_q, logs_q = torch.split(stats, config.flow_size, dim=1)
+        z = m_q + post_noise[None] * torch.exp(logs_q)
+        z_p = model.flow(z, ymask, None, reverse=False)
+        with torch.no_grad():
+            s_p_sq_r = torch.exp(-2 * logs_p)
+            nc1 = torch.sum(-0.5 * math.log(2 * math.pi) - logs_p, [1], keepdim=True)
+            nc2 = torch.matmul(-0.5 * (z_p ** 2).transpose(1, 2), s_p_sq_r)
+            nc3 = torch.matmul(z_p.transpose(1, 2), m_p * s_p_sq_r)
+            nc4 = torch.sum(-0.5 * (m_p ** 2) * s_p_sq_r, [1], keepdim=True)
+            neg_cent = (nc1 + nc2 + nc3 + nc4)[0]                                                        # [frames, T]
+            path = maximum_path(neg_cent.numpy())
+            attn = torch.from_numpy(path.astype(np.float32))
+        if record is not None:
+            record["neg_cent"].append(neg_cent.numpy().astype(np.float32))
+            record["durations"].append([int(v) for v in path.sum(0)])
+        w = attn.sum(0)[None, None]                                                                      # [1, 1, T]
+        m_pf = torch.matmul(attn[None], m_p.transpose(1, 2)).transpose(1, 2)
+        logs_pf = torch.matmul(attn[None], logs_p.transpose(1, 2)).transpose(1, 2)
+        kl = torch.sum(logs_pf - logs_q - 0.5 + 0.5 * (z_p - m_pf) ** 2 * torch.exp(-2 * logs_pf))
+        nll = vits_sdp_nll(torch, model.duration_predictor, hidden, w, dur_noise)
+        y_hat = model.decoder(z[:, :, start:start + seg])[0, 0]                                           # [seg * hop]
+        y = audio[u][start * hop:(start + seg) * hop]
+        mel = torch.mean(torch.abs(mel_of_spec(specs[u])[:, start:start + seg] - mel_of_samples(y_hat)))
+        return {"kl": kl, "nll": nll, "mel": mel, "y": y, "y_hat": y_hat}
+
+    def discriminator_loss(passes):
+        total = 0
+        for p in passes:
+            real, _ = disc(p["y"][None, None])
+            fake, _ = disc(p["y_hat"].detach()[None, None])
+            total = total + sum(torch.mean((1 - r) ** 2) + torch.mean(f ** 2) for r, f in zip(real, fake)) / count
+        return total
+
+    def generator_loss(passes):
+        terms = {"mel": 0, "kl": 0, "duration": 0, "adversarial": 0, "feature_matching": 0}
+        for p in passes:
+            with torch.no_grad():
+                _, fmap_r = disc(p["y"][None, None])
+            fake, fmap_g = disc(p["y_hat"][None, None])
+            terms["mel"] = terms["mel"] + s["mel_weight"] * p["mel"] / count
+            terms["kl"] = terms["kl"] + s["kl_weight"] * p["kl"] / total_frames
+            terms["duration"] = terms["duration"] + s["duration_weight"] * p["nll"] / total_tokens
+            terms["adversarial"] = terms["adversarial"] + s["adversarial_weight"] * sum(torch.mean((1 - f) ** 2) for f in fake) / count
+            fm = sum(torch.mean(torch.abs(r.detach() - g)) for dr, dg in zip(fmap_r, fmap_g) for r, g in zip(dr, dg))
+            terms["feature_matching"] = terms["feature_matching"] + s["feature_matching_weight"] * fm / count
+        return sum(terms.values()), terms
+
+    opt_g = torch.optim.SGD(model.parameters(), lr=s["generator_lr"])
+    opt_d = torch.optim.SGD(disc.parameters(), lr=s["discriminator_lr"])
+    record = {"neg_cent": [], "durations": []}
+    draws_out, starts, steps = {}, [], []
+    for step in range(1, 4):
+        draws = draw(step)
+        for u, (post, dur, start) in enumerate(draws):
+            draws_out[f"step{step}.posterior.{u}"] = post.contiguous()
+            draws_out[f"step{step}.duration.{u}"] = dur.contiguous()
+        starts.append([d[2] for d in draws])
+        passes = [generator_pass(u, draws, record if step == 1 else None) for u in range(count)]
+        loss_d = discriminator_loss(passes)
+        opt_d.zero_grad()
+        loss_d.backward()
+        if step == 1:
+            save_file({k: p.grad.detach().clone().contiguous() for k, p in disc.named_parameters()}, os.path.join(ref, "grads-discriminator-step1.safetensors"))
+        opt_d.step()
+        loss_g, terms = generator_loss(passes)
+        opt_g.zero_grad()
+        opt_d.zero_grad()
+        loss_g.backward()
+        if step == 1:
+            grads = {k: p.grad.detach().clone().contiguous() for k, p in model.named_parameters() if p.grad is not None}
+            missing = [k for k, p in model.named_parameters() if p.grad is None]
+            save_file(grads, os.path.join(ref, "grads-generator-step1.safetensors"))
+            if step == 1:
+                for u in range(count):
+                    save_npy(ref, f"neg-cent-{u}.npy", record["neg_cent"][u])
+        opt_g.step()
+        steps.append({"discriminator": float(loss_d), "generator": float(loss_g), "terms": {k: float(v) for k, v in terms.items()}})
+    save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(ref, "weights-step3.safetensors"))
+    save_file({k: v.detach().clone().contiguous() for k, v in disc.state_dict().items()}, os.path.join(ref, "discriminator-step3.safetensors"))
+    save_file(draws_out, os.path.join(ref, "draws.safetensors"))
+    assert len(set(round(x["generator"], 4) for x in steps)) == 3, "the generator's losses should differ step to step"
+    dump_json(os.path.join(ref, "steps.json"), {
+        **s, "texts": texts, "ids": [i.tolist() for i in ids], "frames": frames, "hop": hop, "n_fft": n_fft, "starts": starts,
+        "durations": record["durations"], "steps": steps, "untrained": missing,
+        "order": "each step: the generator's pass of every utterance, the discriminators' loss (the sound made detached) and their SGD step, "
+                 "then the generator's loss with the stepped discriminators and its SGD step",
+    })
+
+
 def write_transcripts(out):
     folder = os.path.join(out, "transcripts")
     os.makedirs(folder, exist_ok=True)
@@ -1461,6 +1820,8 @@ def main():
         write_vits(args.out)
     if "voices" in sections:
         write_voices(args.out)
+    if "vits-train" in sections:
+        write_vits_train(args.out)
     if "transcripts" in sections:
         write_transcripts(args.out)
     manifest(args.out, sections)

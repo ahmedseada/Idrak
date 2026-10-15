@@ -15,22 +15,26 @@ namespace Idrak.VitsSpeech;
 /// a gather of repeated rows, the flow in reverse, the HiFi-GAN decoder; one device pass per piece of text. The
 /// rate, noise scales and seed come from <see cref="SpeechSynthesisOptions"/> (null scales: the checkpoint's).
 /// </summary>
-public sealed class VitsSynthesizer : ISpeechSynthesizer
+public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
 {
     private readonly VitsTextEncoder _encoder;
     private readonly IVitsDurationPredictor _durations;
     private readonly VitsFlow _flow;
     private readonly HifiGanDecoder _decoder;
+    private readonly VitsPosteriorEncoder? _posterior;                           // training: the spectrogram's latents
+    private readonly VitsTraining? _training;
     private readonly Tensor? _speakers;                                          // [speakers, E]
     private readonly string[] _voices;
     private bool _disposed;
 
-    internal VitsSynthesizer(VitsWeights weights, VitsConfig config, VitsTokenizer tokenizer, List<string> notes)
+    internal VitsSynthesizer(VitsWeights weights, VitsConfig config, VitsTokenizer tokenizer, List<string> notes, string? folder = null, Func<ITensorStore>? open = null)
     {
         Config = config;
         Tokenizer = tokenizer;
         Device = weights.Device;
         Notes = notes;
+        Folder = folder;
+        Open = open;
         _encoder = new VitsTextEncoder(weights, config);
         _durations = config.StochasticDurations
             ? new VitsStochasticDurationPredictor(weights, config)
@@ -48,7 +52,71 @@ public sealed class VitsSynthesizer : ISpeechSynthesizer
         }
 
         Vocoder = new DecoderVocoder(this);
+        if (weights.Trainable)
+        {
+            _posterior = new VitsPosteriorEncoder(weights, config);
+            _training = new VitsTraining(this, weights);
+        }
     }
+
+    /// <summary>The folder the model was read from (its files are copied when it is saved), or null.</summary>
+    public string? Folder { get; }
+
+    internal Func<ITensorStore>? Open { get; }
+
+    internal VitsTextEncoder Encoder => _encoder;
+
+    internal IVitsDurationPredictor StochasticDurations => _durations;
+
+    internal VitsFlow Flow => _flow;
+
+    internal HifiGanDecoder Decoder => _decoder;
+
+    internal VitsPosteriorEncoder Posterior => _posterior ?? throw NotTrainable();
+
+    /// <summary>Whether the model was loaded to be trained (<see cref="SpeechSynthesisLoadOptions.Training"/>).</summary>
+    public bool Trainable => _training is not null;
+
+    internal VitsTraining Training => _training ?? throw NotTrainable();
+
+    /// <inheritdoc />
+    public string Architecture => VitsSpeechFamily.Architecture;
+
+    /// <inheritdoc />
+    public Module Generator => Training.Generator;
+
+    /// <inheritdoc />
+    IAudioFeatureExtractor IAdversarialSpeechSynthesizer.Features => Training.Features;
+
+    /// <inheritdoc />
+    public int FeatureWidth => Training.Features.Width;
+
+    /// <inheritdoc />
+    public string Refused => "have fewer frames than their tokens or than the decoder's segment";
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> TrainingFiles => VitsTraining.TrainingFiles;
+
+    /// <inheritdoc />
+    public int[] Labels(string text) => Tokenizer.Encode(text);
+
+    /// <inheritdoc />
+    public bool Accepts(int frames, int[] labels, AdversarialSynthesisOptions options) => Training.Accepts(frames, labels, options);
+
+    /// <inheritdoc />
+    public Module Discriminators(AdversarialSynthesisOptions options, int seed) => Training.Discriminators(options, seed).Module;
+
+    /// <inheritdoc />
+    public IAdversarialSynthesisStep Begin(AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, bool keep) => Training.Begin(batch, options, keep);
+
+    /// <inheritdoc />
+    public float MelError(AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options) => Training.MelError(batch, options);
+
+    /// <inheritdoc />
+    public void Save(string folder) => Training.Save(folder);
+
+    private static InvalidOperationException NotTrainable() =>
+        new("This VITS model was loaded to speak: load it with SpeechSynthesisLoadOptions.Training (idrak voice train does) to train it.");
 
     /// <summary>The checkpoint's configuration.</summary>
     public VitsConfig Config { get; }
@@ -277,6 +345,8 @@ public sealed class VitsSynthesizer : ISpeechSynthesizer
         _durations.Dispose();
         _flow.Dispose();
         _decoder.Dispose();
+        _posterior?.Dispose();
+        _training?.Dispose();
         _speakers?.Dispose();
     }
 

@@ -1,0 +1,114 @@
+{
+ "adversarial_weight": 1.0,
+ "discriminator_lr": 0.002,
+ "duration_weight": 1.0,
+ "durations": [
+  [
+   1,
+   2,
+   1,
+   14,
+   1,
+   1
+  ],
+  [
+   1,
+   2,
+   1,
+   1,
+   1,
+   1,
+   19,
+   1,
+   1
+  ]
+ ],
+ "feature_matching_weight": 2.0,
+ "frames": [
+  20,
+  28
+ ],
+ "generator_lr": 0.002,
+ "hop": 16,
+ "ids": [
+  [
+   2,
+   3,
+   4,
+   1,
+   2,
+   3
+  ],
+  [
+   9,
+   6,
+   13,
+   13,
+   16,
+   1,
+   4,
+   2,
+   3
+  ]
+ ],
+ "kl_weight": 1.0,
+ "mel_weight": 45.0,
+ "mels": 16,
+ "n_fft": 128,
+ "order": "each step: the generator's pass of every utterance, the discriminators' loss (the sound made detached) and their SGD step, then the generator's loss with the stepped discriminators and its SGD step",
+ "segment_frames": 8,
+ "starts": [
+  [
+   5,
+   1
+  ],
+  [
+   12,
+   11
+  ],
+  [
+   9,
+   3
+  ]
+ ],
+ "steps": [
+  {
+   "discriminator": 3.8694698810577393,
+   "generator": 144.6858367919922,
+   "terms": {
+    "adversarial": 3.7943553924560547,
+    "duration": 15.274394989013672,
+    "feature_matching": 2.7886180877685547,
+    "kl": 13.150041580200195,
+    "mel": 109.67842102050781
+   }
+  },
+  {
+   "discriminator": 3.8601253032684326,
+   "generator": 122.39138793945312,
+   "terms": {
+    "adversarial": 3.748994827270508,
+    "duration": 12.655097961425781,
+    "feature_matching": 3.715076446533203,
+    "kl": 5.803761005401611,
+    "mel": 96.46846008300781
+   }
+  },
+  {
+   "discriminator": 3.737985134124756,
+   "generator": 111.36341094970703,
+   "terms": {
+    "adversarial": 3.80204439163208,
+    "duration": 11.245711326599121,
+    "feature_matching": 2.7792861461639404,
+    "kl": 6.3958892822265625,
+    "mel": 87.14047241210938
+   }
+  }
+ ],
+ "texts": [
+  "abc ab",
+  "hello cab"
+ ],
+ "untrained": []
+}
