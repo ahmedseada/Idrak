@@ -6,7 +6,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 //
-// transcribe.cs: speech to text through the Whisper plug-in (plan 21, S4), until `idrak transcribe` (S7) takes its place.
+// transcribe.cs: speech to text through the Whisper plug-in (plan 21, S4). The command line does the same now and is the
+// way to use it: `idrak transcribe -P Idrak.WhisperSpeech.dll MODEL AUDIO... [-o out.srt]` (idrak help transcribe). This
+// script stays as the prototype it matches.
 //   dotnet run samples/WhisperSpeech/transcribe.cs -- MODEL AUDIO [--language en|ar] [--task transcribe|translate] [--timestamps] [--beams 1] [--device cuda] [-o out.txt]
 // MODEL: a Whisper folder (idrak pull openai/whisper-small). AUDIO: WAV, FLAC or MP3, any rate and channels.
 using System.Diagnostics;

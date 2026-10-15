@@ -258,6 +258,18 @@ internal static class Npy
         }
     }
 
+    /// <summary>Writes <paramref name="values"/> as a float32 array of <paramref name="shape"/> in C order.</summary>
+    public static void Write(string path, ReadOnlySpan<float> values, IReadOnlyList<int> shape)
+    {
+        string dims = shape.Count == 1 ? $"{shape[0]}," : string.Join(", ", shape);
+        string header = $"{{'descr': '<f4', 'fortran_order': False, 'shape': ({dims}), }}";
+        int total = 10 + header.Length + 1;
+        header = header.PadRight(header.Length + (64 - total % 64) % 64) + "\n";   // the data starts on a 64-byte boundary
+        using var stream = File.Create(path);
+        WriteHeader(stream, header);
+        WriteFloat32(stream, values);
+    }
+
     /// <summary>The magic, version 1.0, the header's length (little-endian) and the header (padded, ending in a newline).</summary>
     public static void WriteHeader(Stream stream, string header)
     {

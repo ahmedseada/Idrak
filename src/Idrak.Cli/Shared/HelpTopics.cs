@@ -24,6 +24,7 @@ internal static class HelpTopics
         ("env", "Every environment variable Idrak reads"),
         ("exit-codes", "What the tool's exit codes mean"),
         ("arabic", "Messages in Arabic (--lang ar) and how they are shown right to left in a terminal"),
+        ("audio", "Sound files, speech recognition and synthesis, voices: the commands and what is registered"),
     ];
 
     /// <summary>The topic names.</summary>
@@ -44,6 +45,7 @@ internal static class HelpTopics
         "env" or "environment" => "idrak help env: every environment variable Idrak reads\n" + EnvironmentVariables.Reference(),
         "exit-codes" or "exitcodes" => ExitCodesPage,
         "arabic" or "lang" or "language" or "rtl" => Arabic,
+        "audio" or "speech" or "sound" => Audio(),
         _ => null,
     };
 
@@ -98,6 +100,39 @@ internal static class HelpTopics
         }
 
         return text.Append("\nCommands: idrak formats, idrak plugins list, idrak quantize, idrak inspect.\n").ToString();
+    }
+
+    private static string Audio()
+    {
+        static string Names(IEnumerable<string> names) => names.Order(StringComparer.OrdinalIgnoreCase).ToList() is { Count: > 0 } list ? string.Join(", ", list) : "none (a plug-in brings them: -P)";
+        return $$$"""
+            idrak help audio
+
+            Sound files are decoded and written in C#, with no outside program: WAV and FLAC are built in, MP3 comes with
+            the Mp3Audio plug-in (-P Idrak.Mp3Audio.dll). Speech models are families, registered by plug-ins and never by
+            the library: a model whose family is not registered is refused with "not registered" and the -P remedy.
+
+              idrak transcribe MODEL AUDIO...       speech to text: text, JSON, SRT or WebVTT
+              idrak speak MODEL TEXT -o OUT         text to speech, in a speaker or an installed voice (--voice)
+              idrak voice add NAME --from CLIPS     install a person's voice, with their consent (voice list, show, ...)
+              idrak data audio FILES -o DIR         convert, resample and split into a folder with manifest.jsonl
+              idrak data mel FILES -o DIR           a model's log-mel input features as .npy
+
+            Registered now (with the -P plug-ins of this command):
+              codecs (read): {{{Names(Idrak.Audio.Abstractions.AudioCodecs.Names)}}} ({{{string.Join(" ", Idrak.Audio.Abstractions.AudioCodecs.Extensions)}}})
+              encoders (write): {{{Names(Idrak.Audio.Abstractions.AudioEncoders.Names)}}} ({{{string.Join(" ", Idrak.Audio.Abstractions.AudioEncoders.Extensions)}}})
+              feature extractors: {{{Names(Idrak.Audio.Abstractions.AudioFeatureExtractors.Names)}}}
+              speech recognition families: {{{Names(Idrak.Audio.Abstractions.SpeechFamilies.Names)}}}
+              speech synthesis families: {{{Names(Idrak.Audio.Abstractions.SpeechSynthesisFamilies.Names)}}}
+              vocoders: {{{Names(Idrak.Audio.Abstractions.Vocoders.Names)}}}
+              voice converter families: {{{Names(Idrak.Audio.Abstractions.VoiceConverters.Names)}}}
+              splitters (data audio --split): {{{Names(Idrak.Audio.Abstractions.AudioSplitters.Names)}}}
+
+            Installed voices live in {{{Idrak.Audio.FolderVoiceStore.DefaultRoot}}} (IDRAK_VOICES; --voices DIR for one command).
+            A voice is a person's likeness: voice add records their consent, voice show prints it; the library cannot
+            verify it. The library plays no sound: open what speak writes in any player.
+            Variables: IDRAK_VOICES, IDRAK_STFT_PATH, IDRAK_CACHE (idrak help env).
+            """;
     }
 
     private static string Models()

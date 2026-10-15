@@ -31,6 +31,7 @@ internal static partial class Messages
         ["Measure"] = "القياس",
         ["Design"] = "التصميم",
         ["Developers"] = "للمطورين",
+        ["Voices"] = "الأصوات",
         ["Environment (idrak help env for all):"] = "متغيرات البيئة (اكتب idrak help env لعرضها كلها):",
         ["Every command"] = "كل الأوامر",
         [Help.CommonOptions] =
@@ -252,8 +253,24 @@ internal static partial class Messages
         ["Memory    process {0} MiB, managed {1} MiB"] = "الذاكرة   العملية {0} MiB، والمدارة {1} MiB",
 
         // Command summaries (idrak help, idrak help COMMAND).
-        ["Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, fonts, synth)"] =
-            "مجموعات البيانات: عرض وعد وتنزيل وبناء (ومعاينة وتحقق وإحصاءات وتحويل وإزالة تكرار وتقسيم وعينات ومزج ونص عشوائي وفحص خطوط وصفحات مصطنعة)",
+        ["Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, fonts, synth, audio, mel)"] =
+            "مجموعات البيانات: عرض وعد وتنزيل وبناء (ومعاينة وتحقق وإحصاءات وتحويل وإزالة تكرار وتقسيم وعينات ومزج ونص عشوائي وفحص خطوط وصفحات مصطنعة وصوت وسمات mel)",
+        ["Convert, resample and split sound files into a folder of WAV files with a manifest.jsonl"] =
+            "تحويل ملفات صوت وإعادة أخذ عيناتها وتقطيعها إلى مجلد ملفات WAV مع ملف manifest.jsonl",
+        ["Log-mel features of sound files as .npy (a model's input features), with the options used"] =
+            "سمات log-mel لملفات صوت بصيغة .npy (سمات مدخل النموذج)، مع الخيارات المستخدمة",
+        ["Text to speech with a text-to-speech model, in its own voice, a speaker or an installed voice"] =
+            "تحويل نص إلى كلام بنموذج نطق، بصوته أو بمتحدث منه أو بصوت مثبت",
+        ["Speech to text with a speech recognition model, as text, JSON or subtitles (SRT, WebVTT)"] =
+            "تحويل الكلام إلى نص بنموذج تعرف على الكلام، نصا أو JSON أو ترجمة مرئية (SRT و WebVTT)",
+        ["Install a person's voice from a few clips of them, with their consent, for idrak speak --voice"] =
+            "تثبيت صوت شخص من مقاطع قليلة له، بموافقته، للأمر idrak speak --voice",
+        ["The installed voices: kind, languages, clips and the converter they were made with"] = "الأصوات المثبتة: النوع واللغات والمقاطع والمحول الذي صنعت به",
+        ["One installed voice: its consent, clips and their agreement, converter and folder"] = "صوت مثبت واحد: الموافقة والمقاطع وتوافقها والمحول والمجلد",
+        ["Remove an installed voice (its folder: manifest, embedding and kept clips)"] = "إزالة صوت مثبت (مجلده: البيان والتضمين والمقاطع المحفوظة)",
+        ["Write an installed voice to a zip (manifest, consent, embedding) for idrak voice import"] =
+            "كتابة صوت مثبت في ملف zip (البيان والموافقة والتضمين) للأمر idrak voice import",
+        ["Install a voice from a zip idrak voice export wrote, or from a voice folder"] = "تثبيت صوت من ملف zip كتبه idrak voice export، أو من مجلد صوت",
         ["First rows, columns and their types of a data file (Parquet, JSON Lines, CSV)"] = "أول صفوف ملف بيانات وأعمدته وأنواعها (Parquet و JSON Lines و CSV)",
         ["Check rows against the shape a command expects (chat, preference or table), with the first bad rows"] =
             "فحص الصفوف مقابل الشكل الذي يتوقعه أمر (محادثة أو تفضيل أو جدول)، مع أول الصفوف الخاطئة",

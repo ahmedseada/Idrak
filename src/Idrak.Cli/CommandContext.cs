@@ -63,7 +63,9 @@ internal sealed class CommandContext : IDisposable
             Environment.SetEnvironmentVariable("GITHUB_TOKEN", token);
         }
 
-        Format = ParseFormat(Option("--format") ?? (flags.Contains("--json") ? "json" : "text"));
+        Format = Option("--format") is { } own && command.OwnFormats.Contains(own, StringComparer.Ordinal)
+            ? (flags.Contains("--json") ? OutputFormat.Json : OutputFormat.Text)
+            : ParseFormat(Option("--format") ?? (flags.Contains("--json") ? "json" : "text"));
         Timeout = Option("--timeout") is { } timeout ? ParseDuration(timeout, "--timeout") : null;
         if (Option("--color") is { } color && color is not ("auto" or "always" or "never"))
         {

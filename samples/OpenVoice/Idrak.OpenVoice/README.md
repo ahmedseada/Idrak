@@ -60,24 +60,27 @@ $converter = "$env:USERPROFILE\.cache\idrak\downloads\huggingface\models\myshell
 $converter = (Get-ChildItem $converter -Directory | Sort-Object LastWriteTime | Select-Object -Last 1).FullName + "\converter"
 ```
 
-`VoiceConverters.Load($converter)` (and `voice.cs add --converter $converter`) then reads it as it is. To keep a
+`VoiceConverters.Load($converter)` (and `idrak voice add --converter $converter`) then reads it as it is. To keep a
 safetensors copy instead, `tools/audio/convert_openvoice.py` still writes one (it needs torch).
 
 ## Installing a voice and speaking with it
 
-`samples/OpenVoice/voice.cs` does what `idrak voice` (plan 21, S7) will: it adds, lists, shows, removes, exports and
-imports voices, and speaks with one (both cold and warm timings are printed).
+`idrak voice` adds, lists, shows, removes, exports and imports voices, and `idrak speak --voice` speaks with one
+(`-v` prints the cold and warm timings and the peak device memory). The plug-in is given with `-P`; its folder holds
+the VITS plug-in it builds on too. `samples/OpenVoice/voice.cs` is the prototype these commands match.
 
 ```powershell
 cd D:\Projects\Idrak
-dotnet run samples\OpenVoice\voice.cs -c Release -- add ahmed --converter $converter --speaker "Ahmed Seada" --consent "I, Ahmed Seada, agree that this voice is used for speech made with Idrak." --language ar --language en --device cuda D:\Recordings\ahmed
-dotnet run samples\OpenVoice\voice.cs -c Release -- show ahmed
-dotnet run samples\OpenVoice\voice.cs -c Release -- speak D:\Models\mms-tts-ara "مرحبا، أنا إدراك" --voice ahmed --device cuda -o ahmed-ar.wav
-dotnet run samples\OpenVoice\voice.cs -c Release -- export ahmed ahmed-voice.zip
+$p = "D:\Projects\Idrak\samples\OpenVoice\Idrak.OpenVoice\bin\Release\net10.0"
+dotnet run --project src\Idrak.Cli -c Release -- voice add ahmed --from D:\Recordings\ahmed --converter $converter -P $p\Idrak.OpenVoice.dll --speaker "Ahmed Seada" --consent "I, Ahmed Seada, agree that this voice is used for speech made with Idrak." -l ar -l en -d cuda
+dotnet run --project src\Idrak.Cli -c Release -- voice show ahmed
+dotnet run --project src\Idrak.Cli -c Release -- speak D:\Models\mms-tts-ara --input arabic.txt --voice ahmed -P $p\Idrak.VitsSpeech.dll -P $p\Idrak.OpenVoice.dll -d cuda -o ahmed-ar.wav -v
+dotnet run --project src\Idrak.Cli -c Release -- voice export ahmed -o ahmed-voice.zip
 ```
 
 Record 1 to 3 minutes of one person's normal speech in a quiet room (WAV, FLAC or MP3; a folder takes every file the
-codecs read). `show` prints each clip's agreement (the cosine of its embedding with the voice's): a clip far below the
+codecs read; `idrak data audio rec\ -o clips --mono --split silence --min-seconds 3` cleans a long recording first).
+`voice add` and `voice show` print each clip's agreement (the cosine of its embedding with the voice's): a clip far below the
 others is another speaker or noise, and is better left out.
 
 ## Consent

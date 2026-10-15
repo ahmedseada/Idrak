@@ -14,7 +14,7 @@ internal sealed class DataCommand : Command
 {
     public override string Name => "data";
 
-    public override string Summary => "Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, fonts, synth)";
+    public override string Summary => "Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, fonts, synth, audio, mel)";
 
     public override string Usage => "show|count|download|build|cache SPEC... [options]\n\n"
         + DataTool.Usage + """

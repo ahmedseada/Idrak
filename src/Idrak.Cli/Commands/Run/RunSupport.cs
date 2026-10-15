@@ -22,6 +22,30 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
     /// <summary>Why the model reads no images, when it is a vision-language model that cannot (else null).</summary>
     public string? NoImagesReason { get; private init; }
 
+    /// <summary>How the chat reads sounds (an audio-language model: its audio family's part), or null.</summary>
+    public Idrak.Audio.ChatAudioParts? Audio { get; private init; }
+
+    /// <summary>Why the model reads no sounds, when it has an audio part its family cannot read here (else null).</summary>
+    public string? NoAudioReason { get; private init; }
+
+    /// <summary>
+    /// A usage error unless the chat reads sounds (the model's chat generator takes "audio" parts and its template writes
+    /// them): <paramref name="what"/> names the option that gave them.
+    /// </summary>
+    public void RequireAudio(string what)
+    {
+        if (!Chat.PartKinds.Contains(ChatParts.Audio))
+        {
+            throw new UsageException($"{what}: {Choice.Model} reads no sound (its chat model takes {string.Join(", ", Chat.PartKinds.Order(StringComparer.Ordinal))} parts"
+                                     + (NoAudioReason is null ? "; its config.json has no audio_config" : $"; {NoAudioReason}") + "). Give sounds to an audio-language model.");
+        }
+
+        if (!Chat.Template.PartKinds.Contains(ChatParts.Audio))
+        {
+            throw new UsageException($"{what}: the chat template of {Choice.Model} writes nothing for an audio part, so the model would not hear it.");
+        }
+    }
+
     /// <summary>
     /// A usage error unless the chat reads images (the model's <see cref="IChatModel.PartKinds"/> and its template's both
     /// take "image"): <paramref name="what"/> names the option that gave them.
@@ -76,12 +100,16 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
             {
                 var chat = ModelChoices.CreateChat(model, choice);
                 var images = ImageInputs.For(model, choice.Transforms, choice.VisionOptions, out string? reason);
-                if (images is not null)
+                var audio = AudioInputs.For(model, out string? noAudio);             // null for a model without audio_config
+                if (images is not null || audio is not null)
                 {
-                    chat = new ChatGenerator(chat.Generator, chat.Template) { Images = images.Images };
+                    chat = new ChatGenerator(chat.Generator, chat.Template) { Images = images?.Images, Parts = audio is null ? [] : [audio] };
                 }
 
-                var loaded = new LoadedChat(model, choice, chat, ModelChoices.ContextLength(choice, model), tools) { Images = images, NoImagesReason = reason };
+                var loaded = new LoadedChat(model, choice, chat, ModelChoices.ContextLength(choice, model), tools)
+                {
+                    Images = images, NoImagesReason = reason, Audio = audio, NoAudioReason = noAudio,
+                };
                 loaded._servers.AddRange(servers);
                 return loaded;
             }
@@ -172,6 +200,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
         }
 
         Images?.Dispose();
+        Audio?.Dispose();
         Model.Dispose();
     }
 }

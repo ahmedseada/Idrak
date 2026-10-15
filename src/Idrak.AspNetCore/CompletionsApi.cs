@@ -775,9 +775,10 @@ public static class CompletionsTranslation
         ["function"] = new JsonObject { ["name"] = call.Name, ["arguments"] = call.Arguments.ToJsonString() },
     };
 
-    // Content as a string, or an array of parts: {"type": "text", "text"} and {"type": "image_url", "image_url": {"url"}}
-    // with a data URL (http(s) URLs are downloaded by the endpoint first, when its options allow). Other parts are
-    // refused, never dropped.
+    // Content as a string, or an array of parts: {"type": "text", "text"}, {"type": "image_url", "image_url": {"url"}}
+    // with a data URL (http(s) URLs are downloaded by the endpoint first, when its options allow), {"type":
+    // "input_audio", "input_audio": {"data", "format"}} and a registered kind's own part ({"type": "audio", ...}). Other
+    // parts are refused, never dropped.
     private static List<ChatPart> Parts(JsonNode? content)
     {
         switch (content)
@@ -798,8 +799,14 @@ public static class CompletionsTranslation
                         case "image_url":
                             list.Add(Image(p!.AsObject()));
                             break;
+                        case "input_audio":
+                            list.Add(Audio(p!.AsObject()));
+                            break;
+                        case { } type when type != "image" && ChatParts.Find(type) is { } kind:
+                            list.Add(kind.Read(p!.AsObject()));                 // a registered kind's own JSON ("audio": {"media_type", "data"})
+                            break;
                         case var type:
-                            throw new ArgumentException($"Content parts of type '{type}' are not supported; send text and image_url parts.");
+                            throw new ArgumentException($"Content parts of type '{type}' are not supported; send text, image_url and input_audio parts.");
                     }
                 }
 
@@ -807,6 +814,39 @@ public static class CompletionsTranslation
             default:
                 throw new ArgumentException("A message's content must be a string or an array of parts.");
         }
+    }
+
+    // An input_audio part, {"input_audio": {"data": "<base64>", "format": "wav"}}: the "audio" part of the kind registered
+    // under that name (a binary kind: the package that brings audio registers it), a 400 when none is or the data is bad.
+    private static ChatPart Audio(JsonObject part)
+    {
+        var audio = part["input_audio"] as JsonObject ?? throw new ArgumentException("An input_audio part needs \"input_audio\": {\"data\": \"<base64>\", \"format\": \"wav\"}.");
+        string data = (string?)audio["data"] ?? throw new ArgumentException("input_audio: give the sound's bytes as base64 in \"data\".");
+        if (ChatParts.Find(ChatParts.Audio) is not IBinaryPartKind kind)
+        {
+            throw new ArgumentException("input_audio: this server reads no sound (no \"audio\" part kind is registered).");
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(data);
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("input_audio: \"data\" is not base64.");
+        }
+
+        string? format = ((string?)audio["format"])?.Trim().ToLowerInvariant();
+        string? mediaType = format switch
+        {
+            null or "" => null,                                                  // read from the bytes
+            "mp3" or "mpeg" => "audio/mpeg",
+            "wav" or "wave" => "audio/wav",
+            var other when other.Contains('/') => other,
+            var other => "audio/" + other,
+        };
+        return bytes.Length == 0 ? throw new ArgumentException("input_audio: the sound is empty.") : kind.FromBytes(bytes, mediaType);
     }
 
     // An image_url part with a data URL (a 400 for anything else: an address the endpoint did not download, bad base64).
