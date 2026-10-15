@@ -331,8 +331,12 @@ public sealed class PretrainedModel : IDisposable
             notes.Add($"{unused.Count} checkpoint tensors were not used (for example {string.Join(", ", unused.Take(3))}).");
         }
 
-        // A vision part's trained modules (modules_to_save) are kept beside the merged weights, for CreateVisionEncoder.
-        var visionTensors = adapter?.VisionTensors(vision?.StoredTensors);
+        // A vision part's and the other parts' trained modules (modules_to_save) are kept beside the merged weights, for
+        // CreateVisionEncoder and OpenPart.
+        var partStored = partTensors.Values.SelectMany(t => t).ToHashSet(StringComparer.Ordinal);
+        adapter?.CheckModulesToSave((vision?.StoredTensors ?? Enumerable.Empty<string>()).Concat(partStored).ToHashSet(StringComparer.Ordinal));
+        var visionTensors = adapter?.Tensors(vision?.StoredTensors);
+        var partTrained = adapter?.Tensors(partStored);
         if (adapter is not null)
         {
             notes.Add($"adapter {options.MergeAdapter} merged into {adapter.Merged} weights{(visionTensors is { Count: > 0 } ? $", {visionTensors.Count} trained vision tensors kept" : "")}.");
@@ -361,6 +365,11 @@ public sealed class PretrainedModel : IDisposable
         foreach (var (kind, owned) in partTensors)
         {
             model._partTensors[kind] = owned;
+        }
+
+        foreach (var (stored, value) in partTrained ?? [])
+        {
+            model._parts[stored] = value;
         }
 
         model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
@@ -827,8 +836,8 @@ public sealed class PretrainedModel : IDisposable
             throw new InvalidOperationException("The model has no LoRA adapters to save.");
         }
 
-        // The trained vision tensors as PEFT writes modules_to_save: base_model.model. + the checkpoint's name, as stored.
-        foreach (var (name, (shape, values)) in _vision.OrderBy(p => p.Key, StringComparer.Ordinal))
+        // The trained vision and part tensors as PEFT writes modules_to_save: base_model.model. + the checkpoint's name, as stored.
+        foreach (var (name, (shape, values)) in _vision.Concat(_parts).OrderBy(p => p.Key, StringComparer.Ordinal))
         {
             tensors.Add(($"base_model.model.{name}", shape, values));
         }
@@ -842,9 +851,10 @@ public sealed class PretrainedModel : IDisposable
             ["target_modules"] = new JsonArray([.. modules.Select(m => (JsonNode)m)]),
             ["base_model_name_or_path"] = (string?)Config["_name_or_path"] ?? Path.GetFileName(Path.TrimEndingDirectorySeparator(Folder)),
         };
-        if (_vision.Count > 0)
+        if (_vision.Count > 0 || _parts.Count > 0)
         {
-            config["modules_to_save"] = new JsonArray([.. SavedModules(_vision.Keys).Select(m => (JsonNode)m)]);
+            var saved = (_vision.Count > 0 ? SavedModules(_vision.Keys) : []).Concat(_parts.Count > 0 ? SavedModules(_parts.Keys) : []);
+            config["modules_to_save"] = new JsonArray([.. saved.Distinct(StringComparer.Ordinal).Select(m => (JsonNode)m)]);
         }
 
         File.WriteAllText(Path.Combine(folder, "adapter_config.json"), config.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
@@ -876,11 +886,16 @@ public sealed class PretrainedModel : IDisposable
     public int LoadAdapter(string folder)
     {
         var config = PeftAdapterConfig.Read(folder);
-        config.CheckModulesToSave(Vision?.StoredTensors);
+        var partStored = _partTensors.Values.SelectMany(t => t).ToHashSet(StringComparer.Ordinal);
+        config.CheckModulesToSave((Vision?.StoredTensors ?? Enumerable.Empty<string>()).Concat(partStored).ToHashSet(StringComparer.Ordinal));
         using var reader = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));
         var found = new List<(Linear Layer, string A, string B, string? Magnitude)>();
         var used = new HashSet<string>(StringComparer.Ordinal);
         var vision = PeftAdapterConfig.VisionTensors(reader, Vision?.StoredTensors, used);
+        foreach (var (name, value) in PeftAdapterConfig.VisionTensors(reader, partStored, used))
+        {
+            _parts[name] = value;                                             // a part's trained modules (an audio projector)
+        }
         foreach (var (path, module) in NamedModules())
         {
             if (module is Linear linear && Architecture.TensorName($"{path}.weight") is { } weight

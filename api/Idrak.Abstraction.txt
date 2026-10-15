@@ -2119,6 +2119,7 @@ public interface Idrak.Abstraction.Generation.IToolRegistry
   public System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult>> InvokeAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall> calls, System.Threading.CancellationToken cancellationToken = default)
 
 public interface Idrak.Abstraction.Generation.ITrainableSoftParts : Idrak.Abstraction.Generation.ISoftPartSource, System.IDisposable
+  public (default) System.Collections.Generic.IReadOnlyCollection<string> Trained { get; }
   public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(System.Collections.Generic.IReadOnlyCollection<string> parts)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts, bool checkpointing)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }

@@ -40,8 +40,8 @@ internal sealed class ChatCommand : Command
                                  more later); turned upright by its EXIF orientation
               --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it);
                                  the same as the grayscale image transform first
-              --audio FILE       give an audio-language model a sound with the first message (repeatable; its family
-                                 a plug-in, -P)
+              --audio FILE       give an audio-language model a sound with the first message (repeatable; /audio adds
+                                 more later; its family a plug-in, -P)
         """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
               --mcp SERVER      let the model call an MCP server's tools: an http(s) URL, or a command that starts
                                  the server ("npx -y some-server"); repeatable
@@ -127,6 +127,7 @@ internal sealed class ChatSession
         "  /save FILE            save the conversation (chat JSON); /load FILE: continue a saved one\n" +
         "  /file FILE            add a text file's content to the next message\n" +
         "  /image FILE           add an image to the next message (a vision-language model)\n" +
+        "  /audio FILE           add a sound to the next message (an audio-language model)\n" +
         "  /stats                speed, tokens, context used and memory\n" +
         "  /think on|off|default reasoning mode\n" +
         "  /tools                the tools the model may call\n" +
@@ -407,7 +408,27 @@ internal sealed class ChatSession
                 AttachImage(ChatImage.FromFile(argument));
                 Say(Shared.Messages.T("{0} will be sent with the next message.", argument));
                 break;
-            case "/save" or "/load" or "/file" or "/image":
+            case "/audio" when argument.Length > 0:
+                if (!File.Exists(argument))
+                {
+                    Say(Shared.Messages.T("No file {0}.", argument));
+                    break;
+                }
+
+                try
+                {
+                    _loaded.RequireAudio("/audio");
+                }
+                catch (UsageException e)
+                {
+                    Say(e.Message);
+                    break;
+                }
+
+                AttachAudio(Idrak.Audio.Abstractions.ChatAudio.FromFile(argument));
+                Say(Shared.Messages.T("{0} will be sent with the next message.", argument));
+                break;
+            case "/save" or "/load" or "/file" or "/image" or "/audio":
                 Say(Shared.Messages.T("{0} needs a file name, e.g. {0} talk.json", command));
                 break;
             case "/stats":

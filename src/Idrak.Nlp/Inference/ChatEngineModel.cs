@@ -25,17 +25,20 @@ internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Devi
     public override ChatGenerator LoadCopy()
     {
         var generator = settings.Load(load);
-        if (settings.ImageReader is not { } images)
+        if (settings.ImageReader is null && settings.PartReader is null)
         {
             return new ChatGenerator(generator, settings.ChatTemplate);
         }
 
+        ChatImages? images = null;
         try
         {
-            return new ChatGenerator(generator, settings.ChatTemplate) { Images = images(generator) };
+            images = settings.ImageReader?.Invoke(generator);
+            return new ChatGenerator(generator, settings.ChatTemplate) { Images = images, Parts = settings.PartReader?.Invoke(generator) ?? [] };
         }
         catch
         {
+            images?.Owner?.Dispose();
             if (owns)
             {
                 generator.Model.Dispose();
@@ -48,6 +51,11 @@ internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Devi
     public override void UnloadCopy(ChatGenerator copy)
     {
         copy.Images?.Owner?.Dispose();
+        foreach (var part in copy.Parts)
+        {
+            (part as IDisposable)?.Dispose();
+        }
+
         if (owns)
         {
             copy.Generator.Model.Dispose();
@@ -57,12 +65,24 @@ internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Devi
     public override ModelDescription Describe(ChatGenerator copy) => TextEngineModel.Describe(Name, Kind, copy.Generator);
 
     /// <summary>
-    /// The kinds of message parts it takes, known before a copy loads: text, and images when it was given
-    /// <see cref="GenerativeModelBuilder.Images"/> and its chat template renders them (<see cref="ChatTemplate.PartKinds"/>).
+    /// The kinds of message parts it takes, known before a copy loads: text, images when it was given
+    /// <see cref="GenerativeModelBuilder.Images"/>, and the kinds of <see cref="GenerativeModelBuilder.Parts"/>, each when
+    /// its chat template renders it (<see cref="ChatTemplate.PartKinds"/>).
     /// </summary>
-    public IReadOnlySet<string> PartKinds => _partKinds ??= settings.ImageReader is not null
-        && (settings.ChatTemplate ?? new ChatMLTemplate()).PartKinds.Contains(ChatParts.Image)
-            ? FrozenSet.Create(StringComparer.Ordinal, ChatParts.Text, ChatParts.Image) : ChatParts.TextOnly;
+    public IReadOnlySet<string> PartKinds => _partKinds ??= Kinds();
+
+    private IReadOnlySet<string> Kinds()
+    {
+        var rendered = (settings.ChatTemplate ?? new ChatMLTemplate()).PartKinds;
+        var kinds = new List<string> { ChatParts.Text };
+        if (settings.ImageReader is not null && rendered.Contains(ChatParts.Image))
+        {
+            kinds.Add(ChatParts.Image);
+        }
+
+        kinds.AddRange(settings.PartReaderKinds.Where(rendered.Contains));
+        return kinds.Count == 1 ? ChatParts.TextOnly : kinds.ToFrozenSet(StringComparer.Ordinal);
+    }
 
     private IReadOnlySet<string>? _partKinds;
 

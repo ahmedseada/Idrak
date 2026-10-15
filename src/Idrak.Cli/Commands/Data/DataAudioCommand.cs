@@ -33,7 +33,10 @@ internal sealed class DataAudioCommand : Command
         folder's files keep their subfolders) with a line of manifest.jsonl: name, seconds, rate, channels, source,
         start and end in the source, and text when --transcripts has the file's (a split file's pieces get none: its
         text is the whole file's). --stats prints the lengths (with a histogram), rates and channels, of the inputs
-        alone without -o.
+        alone without -o. --align MODEL then writes alignments.jsonl beside the manifest: where each label of every
+        piece's text is spoken, from a CTC speech model's best paths (the durations a synthesizer trains on, idrak
+        pretrain --durations); given transcripts files (.jsonl) instead of sounds, it aligns their rows as the trainer
+        reads them (--audio DIR|ZIP where their sounds are) and converts nothing.
 
         Arguments:
           FILE|DIR               sound files, folders (all subfolders) or globs
@@ -59,6 +62,9 @@ internal sealed class DataAudioCommand : Command
                                  (or "transcript", "sentence"), or lines of NAME<tab>TEXT or NAME|TEXT; matched by file
                                  name, then by name without extension
               --stats            print the lengths, rates and channels (without -o: of the inputs, nothing is written)
+              --align MODEL      write alignments.jsonl from a CTC speech model (its plug-in given with -P)
+              --align-seconds S  audio seconds in one pass of the model while aligning (default 60)
+              --audio DIR|ZIP    where the sounds of transcripts files given to --align are (default: beside each file)
 
         Examples:
           idrak data audio recordings/ -o clips --rate 16000 --mono
@@ -66,14 +72,14 @@ internal sealed class DataAudioCommand : Command
           idrak data audio talk.flac -o pieces --split seconds --max-seconds 30 --transcripts texts.jsonl
           idrak data audio -P Idrak.Mp3Audio.dll podcasts/*.mp3 -o wav --rate 16000 --mono --bits 16
           idrak data audio corpus/ --stats
-
-        Gap: --align MODEL (alignments.jsonl from a CTC speech model) comes with plan 21's CTC alignment in the command line.
+          idrak data audio rec/ -o clips --rate 16000 --mono --transcripts texts.tsv --align my-ctc -P Idrak.IdrakAudio.dll
+          idrak data audio train.jsonl --audio clips.zip --align my-ctc -o aligned -P Idrak.IdrakAudio.dll
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--out", "--rate", "--bits", "--type", "--split", "--silence-db", "--min-silence", "--pad-seconds", "--hop-seconds", "--min-seconds", "--max-seconds",
-        "--resample-width", "--rolloff", "--transcripts",
+        "--resample-width", "--rolloff", "--transcripts", "--align", "--align-seconds", "--audio",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--mono", "--stats"];
@@ -92,6 +98,20 @@ internal sealed class DataAudioCommand : Command
         if (output is null && !stats)
         {
             throw new UsageException("Missing -o, --out DIR (the folder to write), or --stats to describe the files only.");
+        }
+
+        if (context.Option("--align") is { } aligner && context.Positional.All(p => p.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
+        {
+            // Transcripts files: their rows aligned as the speech trainer reads them, nothing converted.
+            var given = new SpeechSource(SpeechSources.Transcripts, [.. context.Positional.Select(Path.GetFullPath)]) { Audio = context.Option("--audio") is { } a ? Path.GetFullPath(a) : null };
+            var aligned = Align(context, aligner, given, output ?? throw new UsageException("--align needs -o, --out DIR (where alignments.jsonl is written)."));
+            context.WriteJson(new JsonObject { ["out"] = output, ["alignments"] = aligned });
+            return ExitCodes.Ok;
+        }
+
+        if (context.Option("--audio") is not null && context.Option("--align") is null)
+        {
+            throw new UsageException("--audio says where the sounds of transcripts files given to --align are; give --align MODEL with .jsonl transcripts.");
         }
 
         var inputs = Inputs(context.Positional);
@@ -290,8 +310,57 @@ internal sealed class DataAudioCommand : Command
             json["stats"] = StatsJson(described, output is null ? sources.Select(s => (s.Rate, s.Channels)) : pieces.Select(p => (p.Rate, p.Channels)));
         }
 
+        if (context.Option("--align") is { } model && output is not null)
+        {
+            if (attached < pieces.Count)
+            {
+                throw new UsageException($"--align aligns pieces with their text: {pieces.Count - attached} of {pieces.Count} have none (give --transcripts with every file's text, "
+                    + "and no --split: a split file's pieces have no text of their own).");
+            }
+
+            json["alignments"] = Align(context, model, new SpeechSource(SpeechSources.Transcripts, [Path.GetFullPath(Path.Combine(output, ManifestFile))]), output);
+        }
+
         context.WriteJson(json);
         return ExitCodes.Ok;
+    }
+
+    // Aligns `source` with the CTC model at `model` into DIR/alignments.jsonl: progress per batch, the notes, the count.
+    private static string Align(CommandContext context, string model, SpeechSource source, string output)
+    {
+        using var recognizer = SpeechModels.Load(model, new SpeechModelOptions { Device = context.Device });
+        var ctc = recognizer as ICtcSpeechModel
+            ?? throw new UsageException($"--align {model} is a {recognizer.GetType().Name}: alignments come from a CTC speech model's best paths (an ICtcSpeechModel).");
+        Directory.CreateDirectory(output);
+        string path = Path.Combine(output, "alignments.jsonl");
+        var options = new SpeechAlignmentOptions { BatchSeconds = AudioFiles.Number(context, "--align-seconds", new SpeechAlignmentOptions().BatchSeconds, double.Epsilon) };
+        SpeechAlignmentResult result;
+        using (var line = new ProgressLine(context, $"aligning with {Path.GetFileName(Path.TrimEndingDirectorySeparator(model))}", unit: ProgressUnit.Items))
+        {
+            try
+            {
+                result = SpeechAlignments.AlignToFile(ctc, source, path, options, new SyncProgress<SpeechAlignmentProgress>(p =>
+                {
+                    line.Total = p.Total;
+                    line.Report(p.Done);
+                }));
+            }
+            catch (Exception e) when (e is ArgumentException or InvalidDataException or FileNotFoundException)
+            {
+                line.Erase();
+                throw new UsageException(e.Message);
+            }
+
+            line.Clear();
+        }
+
+        foreach (string note in result.Notes)
+        {
+            context.Write($"note: {note}");
+        }
+
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"aligned {result.Alignments.Count:N0} utterance(s) in {result.Elapsed.TotalSeconds:F1} s: {path}"));
+        return path;
     }
 
     // Each input file with the name it is written under: a folder's files under their path in the folder, others by name

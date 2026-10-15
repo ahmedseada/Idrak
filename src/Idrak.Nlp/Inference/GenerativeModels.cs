@@ -53,7 +53,7 @@ public static class GenerativeModels
     {
         ArgumentNullException.ThrowIfNull(engine);
         var settings = Configure(name, configure, reloadable);
-        if (settings.ChatTemplate is not null || settings.ToolRegistry is not null || settings.ImageReader is not null)
+        if (settings.ChatTemplate is not null || settings.ToolRegistry is not null || settings.ImageReader is not null || settings.PartReader is not null)
         {
             throw new InvalidOperationException($"'{name}' is a text model; Template, Tools and Images apply to chat models.");
         }
@@ -104,6 +104,8 @@ public sealed class GenerativeModelBuilder
     internal ChatTemplate? ChatTemplate { get; private set; }
     internal IToolRegistry? ToolRegistry { get; private set; }
     internal Func<TextGenerator, ChatImages>? ImageReader { get; private set; }
+    internal Func<TextGenerator, IReadOnlyList<ISoftPartSource>>? PartReader { get; private set; }
+    internal IReadOnlyCollection<string> PartReaderKinds { get; private set; } = [];
 
     /// <summary>Loads <paramref name="count"/> copies, so that many generations run at the same time.</summary>
     public GenerativeModelBuilder Instances(int count)
@@ -178,6 +180,20 @@ public sealed class GenerativeModelBuilder
     public GenerativeModelBuilder Images(Func<TextGenerator, ChatImages> images)
     {
         ImageReader = images ?? throw new ArgumentNullException(nameof(images));
+        return this;
+    }
+
+    /// <summary>
+    /// Chat models: they read other soft parts (an audio-language model's sounds; <see cref="ChatGenerator.Parts"/>).
+    /// <paramref name="parts"/> is called for each copy once its text generator loads and gives the copy's sources (on its
+    /// device); the engine disposes each one that is <see cref="IDisposable"/> when it unloads the copy. The model then
+    /// takes parts of <paramref name="kinds"/> (<see cref="IChatModel.PartKinds"/>) that its chat template renders.
+    /// </summary>
+    public GenerativeModelBuilder Parts(IReadOnlyCollection<string> kinds, Func<TextGenerator, IReadOnlyList<ISoftPartSource>> parts)
+    {
+        ArgumentNullException.ThrowIfNull(kinds);
+        PartReader = parts ?? throw new ArgumentNullException(nameof(parts));
+        PartReaderKinds = [.. kinds];
         return this;
     }
 

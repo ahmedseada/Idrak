@@ -1180,6 +1180,11 @@ public static class FineTuner
         var parameters = network.TrainableParameters().Concat(vision?.Parameters ?? []).Concat(TrainedParts(options.Parts)).ToList();
         void Save(string folder)
         {
+            foreach (var part in options.Parts.OfType<ITrainableSoftParts>().Where(p => p.Trained.Count > 0))
+            {
+                model.KeepTrainedParts(part.Export(part.Trained));             // saved with the adapters (modules_to_save)
+            }
+
             if (vision is not null)
             {
                 vision.Save(folder, images);                                  // the trained vision parts and tuning_images.json too

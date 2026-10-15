@@ -19,5 +19,6 @@ internal static class VoiceCommands
         new VoiceRemoveCommand(),
         new VoiceExportCommand(),
         new VoiceImportCommand(),
+        new VoicePullCommand(),
     ];
 }

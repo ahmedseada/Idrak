@@ -281,8 +281,10 @@ internal static partial class Tests
             Check(three.StatusCode == HttpStatusCode.BadRequest && Text(three).Contains("2 images at most"), $"over the image limit: {Text(three)}");
             var damaged = Post("/v1/chat/completions", VlmChatBody(DataUrlPart("data:image/png;base64," + Convert.ToBase64String(File.ReadAllBytes(png)[..100])), false, "vlm"));
             Check(damaged.StatusCode == HttpStatusCode.BadRequest, $"a damaged PNG: {Text(damaged)}");
+            var other = Post("/v1/chat/completions", """{"model":"vlm","messages":[{"role":"user","content":[{"type":"video_url","video_url":{}}]}]}""");
+            Check(other.StatusCode == HttpStatusCode.BadRequest && Text(other).Contains("\\u0027video_url\\u0027"), $"other content parts are refused: {Text(other)}");
             var audio = Post("/v1/chat/completions", """{"model":"vlm","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{}}]}]}""");
-            Check(audio.StatusCode == HttpStatusCode.BadRequest && Text(audio).Contains("\\u0027input_audio\\u0027"), "other content parts are refused");
+            Check(audio.StatusCode == HttpStatusCode.BadRequest && Text(audio).Contains("input_audio"), $"an input_audio part without its data is refused: {Text(audio)}");
             Check(encoders == 1, $"one encoder per loaded copy: {encoders}");
         }
         finally

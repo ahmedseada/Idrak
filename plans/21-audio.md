@@ -768,7 +768,17 @@ does); the TTS task without a neural vocoder sounds like Griffin-Lim (stated pla
   the call, the app or the config names another of the same mel layout); checked against `tts/` (`make_tiny_audio.py
   --sections tts`). "audio tts train:" 6 of 6 on the CPU. Without a neural vocoder it sounds like Griffin-Lim (the
   README says so plainly).
-- **Left in S6:** distillation, `PretrainedModel.Create` with "audio", and `idrak create` / `pretrain` for the ctc and seq2seq tasks (S7).
+- **Distillation.** From an audio-language teacher through the Pretrainer (b9aab4f7: `ModelTeacher` opens the teacher's
+  parts with `OpenPart`, each sound re-expanded to the teacher's own soft tokens). For CTC students, frame by frame:
+  `SpeechTrainingOptions.Teacher` (an `ICtcSpeechModel`, not kept in checkpoints: given again on resume),
+  `DistillationAlpha` (0.5) and `DistillationTemperature` (2), the step's loss (1 − α) · CTC + α · T² · the mean over
+  the batch's own steps (padding left out) of KL(teacher ‖ student) (`CtcDistillation`, through `Losses.Distillation`);
+  the teacher reads the student's features on its own device with gradients off, and is refused when its classes,
+  blank or feature options differ, or the student is not CTC (a sequence-level teacher teaches through pseudo-labels:
+  `idrak transcribe -o train.jsonl`). "audio train: CtcDistillation" checks a teacher equal to the student adds nothing,
+  alpha 0 is CTC alone, another teacher adds its divergence, and the refusals.
+- `PretrainedModel.Create` with "audio" is `CreateOptions.Parts` (above); `idrak create` and `pretrain` for the speech
+  tasks are S7's (below).
 
 ## Phase S7: the command line
 
@@ -845,6 +855,33 @@ Not built: `data audio --align` (S6's CTC model in the command line), `create` w
 "task": "ctc", `tune --audio` (S6); `/audio` in chat; the served engine reading audio parts (`ChatEngineModel` takes
 no soft-part source, so `serve` refuses an audio part naming "audio"); `voice pull`; `--temperature` is passed to the
 family, which refuses sampling until S4's fallback ladder is built.
+
+**S7 as built (2026-10-15), the training parts.** `idrak create` reads `"speech": {...}` (with `"architecture"` and
+`"tokenizer"`): a recognizer through `SpeechModels.Create`, or, when the architecture names a synthesizer family and the
+recognizer family refuses the spec, a synthesizer through `SpeechSynthesisModels.Create`; `"audio": {...}` beside a
+decoder spec becomes `CreateOptions.Parts["audio"]`; `create init --audio audio-language|ctc|seq2seq|tts` writes a
+commented spec of each. `idrak pretrain MODEL` dispatches on the folder (`SpeechPretraining`, `Commands/Train`): a
+config.json whose architecture a speech registry holds trains through `SpeechTrainer` (ctc, seq2seq) or
+`SpeechSynthesisTrainer` (tts) on `--data` transcripts or folders with `--audio`, every trainer option an option
+(`--batch-seconds`, `--metric`, `--decoder`, `--beam`, `--augment`, `--min-seconds`, `--max-seconds`, `--skip-missing`,
+`--source`, `--feature-cache memory|disk|none`, `--durations`, `--duration-weight`, `--teacher` with `--alpha` and
+`--temperature`, `-C` with the trainer's JSON and "train" / "evaluation" sources), the text options refused naming
+the model; run.json (`idrak-speech-run/1`), log.jsonl and checkpoints, which `resume` continues (`--steps`, `--teacher`
+again) and `runs show` describes. `--audio DIR|ZIP` on `pretrain` for an audio-language model's records (and in
+pretrain.json's sources). `idrak data audio ... --align MODEL` writes alignments.jsonl beside the manifest (every piece
+with its transcript) or, given transcripts files, of their rows as the trainer reads them (`--audio`,
+`--align-seconds`). `idrak tune` with `--audio DIR|ZIP`, `--audio-prompt` and `--parts audio-projector|audio-encoder`
+(the "transcripts" format, conversations with sounds): `ConversationTuning` opens the model's parts as sources, trains
+the parts asked for and keeps them (`KeepTrainedParts`), and the adapter carries them as `modules_to_save` (read back by
+`LoadAdapter` and `MergeAdapter`); answer scores (`TuningAnswerScorer.Parts`) and `tune evaluate` read the sounds too.
+`run`, `chat` and `serve` read sounds through the model's audio part (`OpenPart`, so an adapter's or a fine-tune's
+projector is used); chat's `/audio FILE`; the inference engine's chat models take other soft parts
+(`GenerativeModelBuilder.Parts`), which serve gives an audio-language model. `idrak voice pull OWNER/NAME[/FOLDER]`
+downloads a hub voice folder (one voice.json) into the cache and installs it. Tests: "audio cli:" adds create (the
+library's weights for the seed, the -P refusal), pretrain / resume / runs show of a ctc model (the library's losses,
+resumed to the losses of one longer run), data audio --align (the library's alignments), tts pretraining on them,
+--teacher (the library's distilled loss), and tune / run / tune evaluate / chat /audio on audio-language/model.
+Not covered by a test: serve's audio parts and voice pull (no hub in the tests).
 
 ## Phase S8: the owner's proof run
 

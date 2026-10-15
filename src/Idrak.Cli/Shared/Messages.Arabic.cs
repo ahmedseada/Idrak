@@ -221,6 +221,7 @@ internal static partial class Messages
             "  /save FILE            حفظ المحادثة (بصيغة JSON للمحادثات)؛ /load FILE: متابعة محادثة محفوظة\n" +
             "  /file FILE            إضافة محتوى ملف نصي إلى الرسالة التالية\n" +
             "  /image FILE           إضافة صورة إلى الرسالة التالية (لنموذج يقرأ الصور واللغة)\n" +
+            "  /audio FILE           إضافة صوت إلى الرسالة التالية (لنموذج يسمع الصوت ويكتب اللغة)\n" +
             "  /stats                السرعة والرموز والسياق المستخدم والذاكرة\n" +
             "  /think on|off|default وضع التفكير\n" +
             "  /tools                الأدوات التي يمكن للنموذج استدعاؤها\n" +
@@ -271,6 +272,7 @@ internal static partial class Messages
         ["Write an installed voice to a zip (manifest, consent, embedding) for idrak voice import"] =
             "كتابة صوت مثبت في ملف zip (البيان والموافقة والتضمين) للأمر idrak voice import",
         ["Install a voice from a zip idrak voice export wrote, or from a voice folder"] = "تثبيت صوت من ملف zip كتبه idrak voice export، أو من مجلد صوت",
+        ["Download a voice folder published on the Hugging Face hub and install it"] = "تنزيل مجلد صوت منشور على Hugging Face وتثبيته",
         ["First rows, columns and their types of a data file (Parquet, JSON Lines, CSV)"] = "أول صفوف ملف بيانات وأعمدته وأنواعها (Parquet و JSON Lines و CSV)",
         ["Check rows against the shape a command expects (chat, preference or table), with the first bad rows"] =
             "فحص الصفوف مقابل الشكل الذي يتوقعه أمر (محادثة أو تفضيل أو جدول)، مع أول الصفوف الخاطئة",

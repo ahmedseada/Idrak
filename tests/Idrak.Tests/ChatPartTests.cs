@@ -321,12 +321,23 @@ internal static partial class Tests
         Check(withImage.Messages[0].Parts is [ChatImage { MediaType: "image/png" }, ChatText { Text: "a" }], "/v1 image_url data URLs become image parts (plan 11, phase 8)");
         try
         {
-            Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {}}]}]}""")!.AsObject());
+            Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "video_url", "video_url": {}}]}]}""")!.AsObject());
             Check(false, "/v1 refuses parts it does not take");
         }
         catch (ArgumentException e)
         {
-            Check(e.Message.Contains("'input_audio'", StringComparison.Ordinal), e.Message);
+            Check(e.Message.Contains("'video_url'", StringComparison.Ordinal), e.Message);
+        }
+
+        try
+        {
+            // input_audio is read (plan 21, S7: the "audio" part); one without its bytes is refused naming "data".
+            Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {}}]}]}""")!.AsObject());
+            Check(false, "/v1 refuses an input_audio part without its data");
+        }
+        catch (ArgumentException e)
+        {
+            Check(e.Message.Contains("input_audio", StringComparison.Ordinal) && e.Message.Contains("\"data\"", StringComparison.Ordinal), e.Message);
         }
 
         var request = Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}, {"role": "assistant", "content": null}]}""")!.AsObject());

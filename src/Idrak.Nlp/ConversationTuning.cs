@@ -48,6 +48,18 @@ public sealed record ConversationTuningOptions
     /// <summary>The vision parts that train beside the adapters (<see cref="VisionTuningParts"/>); none by default.</summary>
     public IReadOnlyList<string> VisionParts { get; init; } = [];
 
+    /// <summary>Where relative audio paths are found (a folder or a zip); null: where the images are.</summary>
+    public string? Audios { get; init; }
+
+    /// <summary>The "transcripts" format's prompt (<see cref="TuningDataOptions.Prompt"/>); null: "Transcribe.".</summary>
+    public string? Prompt { get; init; }
+
+    /// <summary>
+    /// The parts of the model's soft parts (<see cref="PretrainedModel.Parts"/>: "audio-encoder", "audio-projector") that
+    /// train beside the adapters, saved with them; none by default (the parts read their features frozen).
+    /// </summary>
+    public IReadOnlyList<string> TrainedParts { get; init; } = [];
+
     /// <summary>Where image features are kept between steps and epochs (<see cref="FeatureCaches"/>).</summary>
     public string FeatureCache { get; init; } = FeatureCaches.Memory;
 
@@ -151,6 +163,12 @@ public sealed class ConversationTuning : IDisposable
     /// <summary>The image side, or null for a model without a vision part.</summary>
     public TuningVision? Vision { get; }
 
+    // The model's other soft parts (an audio part) as sources, and the parts each trains.
+    private List<(ITrainableSoftParts Source, IReadOnlyList<string> Trained)> _sources = [];
+
+    /// <summary>The sources of the model's soft parts other than images (its audio part), one per kind; none for most models.</summary>
+    public IReadOnlyList<ISoftPartSource> Parts => [.. _sources.Select(s => s.Source)];
+
     /// <summary>The model's chat template as training sequences.</summary>
     public ChatTranscriptEncoder Encoder { get; }
 
@@ -225,7 +243,39 @@ public sealed class ConversationTuning : IDisposable
             throw new InvalidOperationException("The model has no vision part (a text-only checkpoint): an image preparation and vision parts are for a vision-language model.");
         }
 
-        var run = new ConversationTuning(model, options, vision, cache, new ChatTranscriptEncoder(template, tokenizer) { Vision = vision });
+        // The parts stored beside the decoder (an audio part), opened as sources: frozen, or training the parts asked for.
+        var sources = new List<(ITrainableSoftParts Source, IReadOnlyList<string> Trained)>();
+        try
+        {
+            foreach (string kind in model.Parts)
+            {
+                var source = model.OpenPart(kind, model.Device);
+                var trained = source.TrainableParts.Where(p => options.TrainedParts.Contains(p, StringComparer.OrdinalIgnoreCase)).ToList();
+                sources.Add((source, trained));
+                source.Train(trained);
+                source.SetTraining(trained.Count > 0);
+                log?.Invoke($"{kind}: a soft-part source{(trained.Count > 0 ? $", training {string.Join(", ", trained)}" : " (frozen)")}");
+            }
+
+            var unknown = options.TrainedParts.Where(p => !sources.Any(s => s.Source.TrainableParts.Contains(p, StringComparer.OrdinalIgnoreCase))).ToList();
+            if (unknown.Count > 0)
+            {
+                throw new ArgumentException($"The model's parts offer no '{string.Join("', '", unknown)}' "
+                    + $"({(sources.Count == 0 ? "it has none" : string.Join(", ", sources.SelectMany(s => s.Source.TrainableParts)))}).", nameof(options));
+            }
+        }
+        catch
+        {
+            sources.ForEach(s => s.Source.Dispose());
+            vision?.Dispose();
+            cache?.Dispose();
+            throw;
+        }
+
+        var run = new ConversationTuning(model, options, vision, cache, new ChatTranscriptEncoder(template, tokenizer) { Vision = vision, Parts = [.. sources.Select(s => s.Source)] })
+        {
+            _sources = sources,
+        };
         try
         {
             run.Load(data, tuning, progress, log, cancellationToken);
@@ -240,7 +290,7 @@ public sealed class ConversationTuning : IDisposable
 
     /// <summary>The mean loss per trained token of the evaluation sequences, or null when there are none.</summary>
     public float? EvaluationLoss() => EvaluationSequences is { Count: > 0 } evaluation
-        ? FineTuner.Evaluate(Model, evaluation, Tuning.BatchTokens, Tuning.LossChunkRows, vision: Vision)
+        ? FineTuner.Evaluate(Model, evaluation, Tuning.BatchTokens, Tuning.LossChunkRows, vision: Vision, parts: Parts)
         : null;
 
     /// <summary>The scorer's answers with the model as it is now (before training, say), or null without a scorer.</summary>
@@ -301,6 +351,11 @@ public sealed class ConversationTuning : IDisposable
             Model.KeepTrainedVision(Vision.Encoder, Vision.Parts);
         }
 
+        foreach (var (source, trained) in _sources.Where(s => s.Trained.Count > 0))
+        {
+            Model.KeepTrainedParts(source.Export(trained));                   // saved with the adapters (modules_to_save)
+        }
+
         Model.SaveAdapter(folder);
         if (Vision is not null && TrainingSequences.Any(s => s.Images.Count > 0))
         {
@@ -308,9 +363,11 @@ public sealed class ConversationTuning : IDisposable
         }
     }
 
-    /// <summary>Disposes the image side and the feature cache (not the model).</summary>
+    /// <summary>Disposes the image side, the part sources and the feature cache (not the model).</summary>
     public void Dispose()
     {
+        _sources.ForEach(s => s.Source.Dispose());
+        _sources.Clear();
         Vision?.Dispose();
         _cache?.Dispose();
     }
@@ -374,11 +431,11 @@ public sealed class ConversationTuning : IDisposable
             {
                 AnswerText = Options.MetricText,
                 Every = Options.MetricEvery, MaxNewTokens = Options.MaxNewTokens, ContextLength = Math.Min(Model.MaxPositions, tuning.MaxLength + Options.MaxNewTokens),
-                Think = Options.Think, RepeatStop = Options.MetricRepeatStop,
+                Think = Options.Think, RepeatStop = Options.MetricRepeatStop, Parts = Parts,
             };
         }
 
-        Tuning = tuning with { Vision = Vision, Answers = Scorer };
+        Tuning = tuning with { Vision = Vision, Answers = Scorer, Parts = Parts };
     }
 
     // Conversations from data files through their format, their images not read yet (ITuningDataFormat.ReadPending);
@@ -393,7 +450,7 @@ public sealed class ConversationTuning : IDisposable
             foreach (string file in files)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var options = new TuningDataOptions { Images = byFile is not null && byFile.TryGetValue(file, out var root) ? root : images };
+                var options = new TuningDataOptions { Images = byFile is not null && byFile.TryGetValue(file, out var root) ? root : images, Audios = Options.Audios, Prompt = Options.Prompt };
                 var format = Options.DataFormat is { } name && !name.Equals("auto", StringComparison.OrdinalIgnoreCase) ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
                 var pending = format.ReadPending(file, options);
                 read.Add(pending);

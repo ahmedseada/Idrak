@@ -97,7 +97,7 @@ internal sealed record PeftAdapterConfig(int Rank, float Alpha, float Scale, boo
         if (refused.Count > 0)
         {
             throw new NotSupportedException($"{ConfigFile}: modules_to_save ({string.Join(", ", refused)}) {(refused.Count == 1 ? "is" : "are")} not supported; "
-                                            + "Idrak reads fully trained modules of a vision part only (its projector), and LoRA and DoRA adapters of the language model.");
+                                            + "Idrak reads fully trained modules of a vision or audio part only (its projector), and LoRA and DoRA adapters of the language model.");
         }
     }
 
@@ -196,13 +196,12 @@ internal sealed class AdapterMerge : IDisposable
     /// <summary>Throws when some of the adapter's tensors matched no weight that was read.</summary>
     public void CheckAllUsed() => PeftAdapterConfig.CheckAllUsed(_reader, _used, _folder);
 
-    /// <summary>The adapter's trained vision tensors (see <see cref="PeftAdapterConfig.VisionTensors"/>), counted as used.</summary>
-    /// <exception cref="NotSupportedException">The configuration's modules_to_save names a module that is not the vision part's.</exception>
-    public Dictionary<string, (int[] Shape, float[] Values)> VisionTensors(IReadOnlyCollection<string>? stored)
-    {
-        _config.CheckModulesToSave(stored);
-        return PeftAdapterConfig.VisionTensors(_reader, stored, _used);
-    }
+    /// <summary>Refuses a modules_to_save that names a module none of <paramref name="stored"/> (the vision and other parts' tensors) lies under.</summary>
+    /// <exception cref="NotSupportedException">The configuration's modules_to_save names such a module.</exception>
+    public void CheckModulesToSave(IReadOnlyCollection<string>? stored) => _config.CheckModulesToSave(stored);
+
+    /// <summary>The adapter's trained tensors of <paramref name="stored"/> (see <see cref="PeftAdapterConfig.VisionTensors"/>), counted as used.</summary>
+    public Dictionary<string, (int[] Shape, float[] Values)> Tensors(IReadOnlyCollection<string>? stored) => PeftAdapterConfig.VisionTensors(_reader, stored, _used);
 
     /// <summary>Whether the adapter has an update for the checkpoint module <paramref name="module"/> (which <see cref="AddTo"/> would add).</summary>
     public bool Updates(string module) => _config.Names(_reader, module) is not null;
