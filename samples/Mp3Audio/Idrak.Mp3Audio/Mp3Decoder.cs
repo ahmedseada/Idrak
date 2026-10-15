@@ -225,6 +225,55 @@ internal sealed class Mp3Decoder
     }
 
     /// <summary>
+    /// The next frame as <see cref="DecodeFrame"/> would take it, without decoding it: its offset from o, its size with
+    /// padding (0: none), and whether the decoder's state starts over there (a lost sync found again, or the first frame).
+    /// <paramref name="header"/> and <paramref name="freeFormatBytes"/> carry the walk's state as the decoder carries its own.
+    /// </summary>
+    internal static (int Skip, int Size, bool Reset) NextFrame(byte[] buf, int o, int bytes, byte[] header, ref int freeFormatBytes)
+    {
+        int frameSize = 0, i = 0;
+        bool reset = false;
+        if (bytes > 4 && header[0] == 0xff && HeaderCompare(header, 0, buf, o))
+        {
+            frameSize = FrameBytes(buf, o, freeFormatBytes) + Padding(buf, o);
+            if (frameSize != bytes && (frameSize + HeaderSize > bytes || !HeaderCompare(buf, o, buf, o + frameSize)))
+            {
+                frameSize = 0;
+            }
+        }
+
+        if (frameSize == 0)
+        {
+            reset = true;
+            Array.Clear(header);
+            freeFormatBytes = 0;
+            i = FindFrame(buf, o, bytes, ref freeFormatBytes, out frameSize);
+            if (frameSize == 0 || i + frameSize > bytes)
+            {
+                return (i, 0, true);
+            }
+        }
+
+        Array.Copy(buf, o + i, header, 0, HeaderSize);
+        return (i, frameSize, reset);
+    }
+
+    /// <summary>
+    /// Decodes the frame at buf[at..at+size) (found by <see cref="NextFrame"/>) into <paramref name="pcm"/>, the state
+    /// reset first when <paramref name="reset"/> (as the walk said): the samples per channel it gave (0 when its bit
+    /// reservoir is not there yet).
+    /// </summary>
+    public int DecodeFrameAt(byte[] buf, int at, int size, bool reset, float[] pcm)
+    {
+        if (reset)
+        {
+            Reset();
+        }
+
+        return DecodeFound(buf, at, size, pcm);
+    }
+
+    /// <summary>
     /// Decodes the next frame of buf[o..o+bytes) into <paramref name="pcm"/> (interleaved floats in [-1, 1] for a full
     /// scale, at least 1152 × 2): the samples per channel it gave (0 when the frame's bit reservoir is not there yet, or
     /// no frame was found: <see cref="Mp3FrameInfo.FrameBytes"/> 0).
@@ -253,11 +302,15 @@ internal sealed class Mp3Decoder
         }
 
         int h = o + i;
+        info = new Mp3FrameInfo(i + frameSize, i, IsMono(buf, h) ? 1 : 2, SampleRateHz(buf, h), 4 - LayerBits(buf, h));
+        return DecodeFound(buf, h, frameSize, pcm);
+    }
+
+    private int DecodeFound(byte[] buf, int h, int frameSize, float[] pcm)
+    {
         Array.Copy(buf, h, _header, 0, HeaderSize);
         int channels = IsMono(buf, h) ? 1 : 2;
         int layer = 4 - LayerBits(buf, h);
-        info = new Mp3FrameInfo(i + frameSize, i, channels, SampleRateHz(buf, h), layer);
-
         var bs = _frameBits;
         bs.Init(buf, h + HeaderSize, frameSize - HeaderSize);
         if (IsCrc(buf, h))
