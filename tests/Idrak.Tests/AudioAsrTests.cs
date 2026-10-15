@@ -22,7 +22,7 @@ internal static partial class Tests
         ("audio asr: greedy and beam-4 decoding give transformers' ids exactly (12 tokens, the end token suppressed first), and with timestamps (the timestamp rules) greedy and beam-4 do too; the int8 and bfloat16 caches run the same beam search", AudioAsrDecoding),
         ("audio asr: Transcribe on pcm16.wav gives the greedy reference's tokens and text, the language detected; chunks of 0.75 s equal two calls on the halves joined, TranscribeStream equals the chunked call, stereo and 44.1 kHz sound mixed and resampled; the timestamps' segment; the stats and progress; device bytes the same after every call from the second; cold and warm times", AudioAsrTranscribe),
         ("audio asr: three segments through the encoder at once give each segment's output alone within 1e-5", AudioAsrBatch),
-        ("audio asr: CrossAttention equals a loop over the heads (softmax over every memory position), the cached path (SetMemory, ForwardCached) equals Forward, one memory serves several rows; gradients to the input, the memory and every projection by finite differences on the CPU", AudioAsrCrossAttention),
+        ("audio asr: CrossAttention equals a loop over the heads (softmax over every memory position), the cached path (SetMemory, ForwardCached) equals Forward, one memory serves several rows, a padded batch of memories (per-sequence lengths) equals each sequence alone and its padding gets no gradient; gradients to the input, the memory and every projection by finite differences on the CPU", AudioAsrCrossAttention),
         ("audio asr: BeamSearch on the tiny Llama gives a reference beam search's hypotheses and scores (the whole sequences re-run, no cache): greedy, an end token, length penalties 0, 1 and 2, the least length, no repeated bigrams, without early stopping; the kit's speech recognizer suite passes on the Whisper plug-in", AudioAsrBeamSearch),
     ];
 
@@ -299,6 +299,50 @@ internal static partial class Tests
             }
 
             Throws<ArgumentException>(() => cross.SetMemory(memory, new DecodingContext(device, 3, 8)), "a memory of two sequences for three rows");
+        }
+
+        // A padded batch of memories: sequence b attends to its first lengths[b] positions, as if alone with them.
+        int[] lengths = [3, 4];
+        float[] padded;
+        using (Autograd.NoGrad())
+        {
+            padded = cross.Forward(input, memory, lengths).ToArray();
+            for (int b = 0; b < Batch; b++)
+            {
+                using var alone = Tensor.From(x[(b * Rows * Dim)..((b + 1) * Rows * Dim)], [1, Rows, Dim], device);
+                using var own = Tensor.From(m[(b * Memory * MemoryDim)..((b * Memory + lengths[b]) * MemoryDim)], [1, lengths[b], MemoryDim], device);
+                AssertClose(cross.Forward(alone, own).ToArray(), padded[(b * Rows * Dim)..((b + 1) * Rows * Dim)], 1e-5f,
+                    $"sequence {b} of a padded batch (memory length {lengths[b]} of {Memory}) against it alone on {device}");
+            }
+
+            using (EncoderMemory.Use(memory, lengths))
+            {
+                AssertClose(padded, cross.Forward(input).ToArray(), 0f, $"an EncoderMemory scope with lengths against Forward(input, memory, lengths) on {device}");
+            }
+
+            AssertClose(output, cross.Forward(input, memory, [Memory, Memory]).ToArray(), 0f, $"full lengths against no lengths on {device}");
+            Throws<ArgumentException>(() => cross.Forward(input, memory, [0, Memory]), "a memory length of 0");
+            Throws<ArgumentException>(() => cross.Forward(input, memory, [Memory + 1, Memory]), "a memory length past the memory");
+            Throws<ArgumentException>(() => cross.Forward(input, memory, [Memory]), "one length for two sequences");
+        }
+
+        // The padding gets no gradient.
+        using (var tracked = Tensor.From(m, [Batch, Memory, MemoryDim], device, requiresGrad: true))
+        {
+            using var padWeighting = Tensor.From(RandomArray(new Random(9), Batch * Rows * Dim), [Batch, Rows, Dim], device);
+            (cross.Forward(input, tracked, lengths) * padWeighting).Sum().Backward();
+            var grad = tracked.Grad!.ToArray();
+            for (int b = 0; b < Batch; b++)
+            {
+                var pad = grad.AsSpan((b * Memory + lengths[b]) * MemoryDim, (Memory - lengths[b]) * MemoryDim);
+                Check(!pad.ContainsAnyExcept(0f), $"sequence {b}'s padding gets no gradient on {device} (largest {pad.ToArray().Max(Math.Abs)})");
+                Check(grad.AsSpan(b * Memory * MemoryDim, lengths[b] * MemoryDim).ContainsAnyExcept(0f), $"sequence {b}'s own positions get a gradient on {device}");
+            }
+
+            foreach (var parameter in cross.Parameters())
+            {
+                parameter.ZeroGrad();
+            }
         }
 
         if (device.Type != DeviceType.Cpu)
