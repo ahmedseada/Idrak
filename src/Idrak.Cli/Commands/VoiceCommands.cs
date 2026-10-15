@@ -20,5 +20,6 @@ internal static class VoiceCommands
         new VoiceExportCommand(),
         new VoiceImportCommand(),
         new VoicePullCommand(),
+        new VoiceTrainCommand(),
     ];
 }

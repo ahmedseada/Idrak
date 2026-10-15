@@ -252,6 +252,7 @@ internal sealed class ResumeCommand : Command
           -o, --out FILE  the model package (default: the run's)
               --teacher MODEL, --temperature T, --alpha A, --top-k K, --teacher-device D
                           a pretraining run's teacher, given again (a checkpoint does not keep it)
+              --voices DIR  a voice run (idrak voice train): the store its voice is installed in again
 
         The run's data, split, scalers and settings are reused and its log continues. The checkpoint holds the weights
         only: the optimizer's moments and the learning-rate schedule start again. An image run that fine-tunes a model
@@ -262,9 +263,10 @@ internal sealed class ResumeCommand : Command
           idrak resume 20261003-101500-houses
           idrak resume ./runs/houses --epochs 50 -d cuda:0
           idrak resume run --steps 1000
+          idrak resume runs/sara --steps 500 -P Idrak.VitsSpeech.dll   (a voice run: trains on and installs the voice again)
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--steps", "--out", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--steps", "--out", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device", "--voices"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
@@ -285,6 +287,11 @@ internal sealed class ResumeCommand : Command
         if ((string?)run.Settings["format"] == SpeechPretraining.RunFormat)
         {
             return SpeechPretraining.Resume(context, run.Folder, run.Settings);
+        }
+
+        if ((string?)run.Settings["format"] == Voices.VoiceTrainCommand.RunFormat)
+        {
+            return Voices.VoiceTrainCommand.Resume(context, run.Folder, run.Settings);
         }
 
         string checkpoint = Path.Combine(run.Folder, "last.ikw");
