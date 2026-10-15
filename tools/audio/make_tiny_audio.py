@@ -559,30 +559,131 @@ def write_whisper(out, extractor):
     dump_json(os.path.join(folder, "tensors.json"), index)
 
 
-class CtcEncoder:
-    """Two Conv2d (1, 3) stride (1, 2) with GELU over [N, 1, T, mels], a linear to width 32, two encoder layers, a head."""
+# The IdrakAudio plug-in's "ctc" task in torch (plan 21, S6): the same layers, names and order as
+# samples/IdrakAudio/Idrak.IdrakAudio builds, written here from torch's own modules so the references do not come from
+# Idrak. Features [N, T, mels] padded with zeros; two Conv2d (1, k) stride (1, 2) over time with the mels as channels
+# (each output past an utterance's frames set to zero, so a batch gives each utterance what it gives alone), sinusoidal
+# positions, pre-norm blocks whose attention sees each utterance's own steps (key padding), optionally a Conformer-style
+# convolution module between attention and feed-forward, a final LayerNorm and a linear head (blank 0).
+CTC = dict(mels=MELS, dim=32, layers=2, heads=4, ffn_dim=64, subsample_layers=2, subsample_kernel=3, classes=40, blank_id=0,
+           convolution_kernel=5, norm_epsilon=1e-5, activation="gelu_tanh")
 
-    @staticmethod
-    def build(torch, mels=MELS, width=32, classes=40):
-        nn = torch.nn
-        channels, bins = 4, (((mels - 3) // 2 + 1) - 3) // 2 + 1
-        return nn.ModuleDict({
-            "conv1": nn.Conv2d(1, channels, (1, 3), stride=(1, 2)),
-            "conv2": nn.Conv2d(channels, channels, (1, 3), stride=(1, 2)),
-            "proj": nn.Linear(channels * bins, width),
-            "layer0": nn.TransformerEncoderLayer(width, 4, 64, dropout=0.0, activation="gelu", batch_first=True),
-            "layer1": nn.TransformerEncoderLayer(width, 4, 64, dropout=0.0, activation="gelu", batch_first=True),
-            "head": nn.Linear(width, classes),
-        })
 
-    @staticmethod
-    def forward(torch, m, mel):
-        x = torch.nn.functional.gelu(m["conv1"](mel[:, None]))
-        x = torch.nn.functional.gelu(m["conv2"](x))                 # [N, C, T, bins]
-        x = x.permute(0, 2, 1, 3).flatten(2)                        # [N, T, C * bins]
-        x = m["proj"](x)
-        x = m["layer1"](m["layer0"](x))
-        return torch.log_softmax(m["head"](x), dim=-1)              # [N, T, classes]
+def ctc_modules(torch, convolution):
+    nn = torch.nn
+    F = torch.nn.functional
+    c = CTC
+    act = lambda x: F.gelu(x, approximate="tanh")
+
+    class ConvolutionModule(nn.Module):
+        def __init__(self):
+            super().__init__()
+            d = c["dim"]
+            self.pointwise1 = nn.Linear(d, 2 * d)
+            self.depthwise = nn.Conv2d(d, d, (1, c["convolution_kernel"]), padding=(0, c["convolution_kernel"] // 2), groups=d)
+            self.depthwise_norm = nn.LayerNorm(d, eps=c["norm_epsilon"])
+            self.pointwise2 = nn.Linear(d, d)
+
+        def forward(self, x, keep):                                         # keep [N, T, 1]: 1 on an utterance's steps
+            d = c["dim"]
+            h = self.pointwise1(x)
+            h = (h[..., :d] * torch.sigmoid(h[..., d:])) * keep               # GLU, padding zeroed before the depthwise convolution
+            h = self.depthwise(h.transpose(1, 2)[:, :, None, :])[:, :, 0, :].transpose(1, 2)
+            return self.pointwise2(F.silu(self.depthwise_norm(h)))
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            d, eps = c["dim"], c["norm_epsilon"]
+            self.norm1 = nn.LayerNorm(d, eps=eps)
+            self.self_attn = nn.MultiheadAttention(d, c["heads"], batch_first=True)
+            if convolution:
+                self.conv_norm = nn.LayerNorm(d, eps=eps)
+                self.conv = ConvolutionModule()
+            self.norm2 = nn.LayerNorm(d, eps=eps)
+            self.linear1 = nn.Linear(d, c["ffn_dim"])
+            self.linear2 = nn.Linear(c["ffn_dim"], d)
+
+        def forward(self, x, pad, keep):
+            h = self.norm1(x)
+            x = x + self.self_attn(h, h, h, key_padding_mask=pad, need_weights=False)[0]
+            if convolution:
+                x = x + self.conv(self.conv_norm(x), keep)
+            return x + self.linear2(act(self.linear1(self.norm2(x))))
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            d, k = c["dim"], c["subsample_kernel"]
+            self.subsample = nn.ModuleList([nn.Conv2d(c["mels"] if i == 0 else d, d, (1, k), stride=(1, 2), padding=(0, k // 2))
+                                            for i in range(c["subsample_layers"])])
+            self.layers = nn.ModuleList([Block() for _ in range(c["layers"])])
+            self.norm = nn.LayerNorm(d, eps=c["norm_epsilon"])
+            self.head = nn.Linear(d, c["classes"])
+
+        def forward(self, mel, frames):                                     # mel [N, T, mels]; frames [N]
+            k = c["subsample_kernel"]
+            x = mel.transpose(1, 2)[:, :, None, :]                          # [N, mels, 1, T]
+            steps = frames.clone()
+            for conv in self.subsample:
+                x = act(conv(x))
+                steps = (steps + 2 * (k // 2) - k) // 2 + 1
+                keep = (torch.arange(x.shape[-1])[None, :] < steps[:, None]).to(x.dtype)
+                x = x * keep[:, None, None, :]
+            x = x[:, :, 0, :].transpose(1, 2)                               # [N, T', dim]
+            t, d = x.shape[1], x.shape[2]
+            pos = torch.arange(t, dtype=torch.float64)[:, None]
+            i = torch.arange(d)[None, :]
+            angle = pos / torch.pow(torch.tensor(10000.0, dtype=torch.float64), (2 * (i // 2)).to(torch.float64) / d)
+            x = x + torch.where(i % 2 == 0, torch.sin(angle), torch.cos(angle)).to(x.dtype)
+            pad = torch.arange(t)[None, :] >= steps[:, None]                # True: a padded step
+            keep = (~pad).to(x.dtype)[..., None]
+            for layer in self.layers:
+                x = layer(x, pad, keep)
+            return torch.log_softmax(self.head(self.norm(x)), dim=-1), steps
+
+    return Model()
+
+
+def ctc_initialize(torch, model, seed):
+    """Weights at 1/sqrt(fan-in), biases and norm offsets drawn too (at the usual zeros and ones a wrong mapping of them
+    would not show), so every tensor's gradient carries information."""
+    gen = torch.Generator().manual_seed(seed)
+    with torch.no_grad():
+        for name, p in model.named_parameters():
+            if "norm" in name:
+                p.copy_((1.0 if name.endswith("weight") else 0.0) + 0.1 * torch.randn(p.shape, generator=gen))
+            elif p.dim() == 1:
+                p.copy_(0.1 * torch.randn(p.shape, generator=gen))
+            else:
+                fan_in = p[0].numel()
+                p.copy_(torch.randn(p.shape, generator=gen) / math.sqrt(fan_in))
+
+
+def ctc_config(convolution):
+    c = CTC
+    return {
+        "architectures": ["IdrakAudio"], "model_type": "idrak-audio", "task": "ctc",
+        "mels": c["mels"], "dim": c["dim"], "layers": c["layers"], "heads": c["heads"], "ffn_dim": c["ffn_dim"],
+        "subsample_layers": c["subsample_layers"], "subsample_kernel": c["subsample_kernel"], "positions": "sinusoidal",
+        "convolution_module": convolution, "convolution_kernel": c["convolution_kernel"], "activation": c["activation"],
+        "norm_epsilon": c["norm_epsilon"], "dropout": 0.0, "classes": c["classes"], "blank_id": c["blank_id"],
+        "features": {"sample_rate": RATE, "window_size": N_FFT, "hop_size": HOP, "window": "hann", "center": True, "mels": MELS,
+                     "min_frequency": 0, "max_frequency": FMAX, "mel_scale": "slaney", "mel_norm": "slaney", "log_floor": 1e-10,
+                     "dynamic_range": 8.0, "normalize": [4.0, 0.25], "pad_seconds": None},
+        "max_seconds": 30,
+    }
+
+
+def ctc_tokenizer(folder):
+    """39 single-character tokens (Metaspace, no merges): token i is label i + 1, label 0 the blank."""
+    from tokenizers import Tokenizer, models, pre_tokenizers, decoders
+    symbols = ["▁"] + list("abcdefghijklmnopqrstuvwxyz") + list("0123456789") + ["'", "-"]
+    assert len(symbols) == CTC["classes"] - 1
+    tok = Tokenizer(models.BPE(vocab={s: i for i, s in enumerate(symbols)}, merges=[]))
+    tok.pre_tokenizer = pre_tokenizers.Metaspace()
+    tok.decoder = decoders.Metaspace()
+    tok.save(os.path.join(folder, "tokenizer.json"))
 
 
 def write_ctc(out):
@@ -590,50 +691,70 @@ def write_ctc(out):
     from safetensors.torch import save_file
     torch = torch_setup()
     folder = os.path.join(out, "ctc")
-    os.makedirs(folder, exist_ok=True)
-    torch.manual_seed(2029)
-    model = CtcEncoder.build(torch)
-    randomize(model, torch, 2029)
+    if os.path.isdir(folder):
+        import shutil
+        shutil.rmtree(folder)
+    ref = os.path.join(folder, "reference")
+    os.makedirs(ref)
     gen = torch.Generator().manual_seed(2029)
-    lengths = [23, 17, 31, 12]
+    frames = [96, 71, 123, 50]
     labels = [[5, 7, 7, 12, 3], [1, 2], [30, 9, 9, 9, 14, 2, 8], [4, 4, 4]]
-    mels = [torch.randn(t, MELS, generator=gen) for t in lengths]
-    T = max(lengths)
-    batch = torch.zeros(len(lengths), T, MELS)
-    for i, m in enumerate(mels):
-        batch[i, : m.shape[0]] = m
+    T = max(frames)
+    batch = torch.zeros(len(frames), T, MELS)
+    for i, t in enumerate(frames):
+        batch[i, :t] = torch.randn(t, MELS, generator=gen)
     targets = torch.tensor([l for ls in labels for l in ls])
     target_lengths = torch.tensor([len(l) for l in labels])
-    input_lengths = torch.tensor(lengths)
+    frames_t = torch.tensor(frames)
     save_npy(folder, "mels.npy", batch.numpy().astype(np.float32))
-    save_file({k: v.detach().clone() for k, v in model.state_dict().items()}, os.path.join(folder, "model.safetensors"))
 
-    def step():
-        logp = CtcEncoder.forward(torch, model, batch)                     # [N, T, C]
-        return torch.nn.functional.ctc_loss(logp.transpose(0, 1), targets, input_lengths, target_lengths, blank=0, reduction="mean", zero_infinity=True), logp
+    def ctc(model):
+        logp, steps = model(batch, frames_t)
+        loss = torch.nn.functional.ctc_loss(logp.transpose(0, 1), targets, steps, target_lengths, blank=CTC["blank_id"], reduction="mean", zero_infinity=True)
+        return loss, logp, steps
 
-    loss, logp = step()
-    loss.backward()
-    save_file({k: p.grad.detach().clone() for k, p in model.named_parameters()}, os.path.join(folder, "grads-step1.safetensors"))
-    alignments = []
-    with torch.no_grad():
-        for i, ls in enumerate(labels):
-            path, _ = F.forced_align(logp[i : i + 1, : lengths[i]], torch.tensor([ls]), blank=0)
-            alignments.append(path[0].tolist())
-    losses = [float(loss)]
-    opt = torch.optim.SGD(model.parameters(), lr=0.1)
-    for _ in range(3):
-        opt.step()
-        opt.zero_grad()
-        loss, _ = step()
-        losses.append(float(loss))
+    results = {}
+    for name, convolution, seed in [("model", False, 2029), ("model-conv", True, 2031)]:
+        torch.manual_seed(seed)
+        model = ctc_modules(torch, convolution)
+        ctc_initialize(torch, model, seed)
+        sub = os.path.join(folder, name)
+        os.makedirs(sub)
+        dump_json(os.path.join(sub, "config.json"), ctc_config(convolution))
+        save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(sub, "model.safetensors"))
+        ctc_tokenizer(sub)
+        index, _ = safetensors_index(os.path.join(sub, "model.safetensors"))
+        dump_json(os.path.join(sub, "tensors.json"), index)
+        loss, logp, steps = ctc(model)
         loss.backward()
-    save_file({k: v.detach().clone() for k, v in model.state_dict().items()}, os.path.join(folder, "weights-step3.safetensors"))
-    dump_json(os.path.join(folder, "loss.json"), {"losses": losses, "sgd_lr": 0.1, "blank": 0, "classes": 40, "reduction": "mean", "zero_infinity": True,
-                                                  "lengths": lengths, "labels": labels})
-    dump_json(os.path.join(folder, "alignment.json"), {"alignments": alignments, "note": "torchaudio.functional.forced_align per utterance, frame by frame, blank 0"})
-    index, _ = safetensors_index(os.path.join(folder, "model.safetensors"))
-    dump_json(os.path.join(folder, "tensors.json"), index)
+        suffix = "" if name == "model" else "-conv"
+        save_file({k: p.grad.detach().clone().contiguous() for k, p in model.named_parameters()}, os.path.join(ref, f"grads-step1{suffix}.safetensors"))
+        results[name] = {"loss_step1": float(loss), "steps": steps.tolist()}
+        if name == "model":
+            save_npy(ref, "logp-step1.npy", logp.detach().numpy().astype(np.float32))
+            alignments, scores = [], []
+            with torch.no_grad():
+                for i, ls in enumerate(labels):
+                    path, score = F.forced_align(logp[i: i + 1, : int(steps[i])].detach(), torch.tensor([ls]), blank=CTC["blank_id"])
+                    alignments.append(path[0].tolist())
+                    scores.append(float(score[0].sum()))
+            per = torch.nn.functional.ctc_loss(logp.transpose(0, 1), targets, steps, target_lengths, blank=0, reduction="none", zero_infinity=True)
+            results[name]["per_utterance_step1"] = per.tolist()
+            losses = [float(loss)]
+            opt = torch.optim.SGD(model.parameters(), lr=0.1)
+            for _ in range(3):
+                opt.step()
+                opt.zero_grad()
+                loss, _, _ = ctc(model)
+                losses.append(float(loss))
+                loss.backward()
+            results[name]["sgd_losses"] = losses
+            save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(ref, "weights-step3.safetensors"))
+            dump_json(os.path.join(ref, "alignment.json"), {"alignments": alignments, "path_log_probs": scores, "blank": CTC["blank_id"],
+                                                             "note": "torchaudio.functional.forced_align of each utterance's steps of logp-step1.npy (the model's step-1 log-probabilities)"})
+    assert len(set(round(x, 3) for x in results["model"]["sgd_losses"])) == 4, "the SGD losses should differ step to step"
+    dump_json(os.path.join(ref, "loss.json"), {"frames": frames, "labels": labels, "blank": CTC["blank_id"], "classes": CTC["classes"], "reduction": "mean",
+                                               "zero_infinity": True, "sgd_lr": 0.1, "sgd_momentum": 0.0, "results": results})
 
 
 def write_vits(out):

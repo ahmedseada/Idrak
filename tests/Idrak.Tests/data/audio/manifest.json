@@ -1,32 +1,64 @@
 {
  "files": {
-  "ctc/alignment.json": {
-   "bytes": 647,
-   "sha256": "eb633d9bbdbd2fdd706afd10fc9f24485947f3994d27d42e247043d596e6e157"
-  },
-  "ctc/grads-step1.safetensors": {
-   "bytes": 86360,
-   "sha256": "b382fd264f63c3f2183f742d707595858292cc9e4d8e1224ae5fca35070c98df"
-  },
-  "ctc/loss.json": {
-   "bytes": 390,
-   "sha256": "53c19207b82cc68727e1c758bc3376dda1bddbb0359f3fd98ea2a64c92f9d73f"
-  },
   "ctc/mels.npy": {
-   "bytes": 39808,
-   "sha256": "4a353d57df292d7f49c52ba5febde3ad909c26ff99acd4be65e8fedb8938628b"
+   "bytes": 157568,
+   "sha256": "b20b3f7875b3bafc920fbace04b7fadf7cba040c8c60ac542299e62f3bce9e32"
   },
-  "ctc/model.safetensors": {
-   "bytes": 86360,
-   "sha256": "e369eff15928607c7f34ddbcbc035a4da6c7b12656251fad5e24880d1d88d738"
+  "ctc/model-conv/config.json": {
+   "bytes": 746,
+   "sha256": "79652a21de5ac9ba3a61dc79b142e8328ef393e23512b10555cd361064420775"
   },
-  "ctc/tensors.json": {
-   "bytes": 2401,
-   "sha256": "ea6d3bfb7b299ab22402dbd37ea356b0065525fb3deab3800241853a53c06c29"
+  "ctc/model-conv/model.safetensors": {
+   "bytes": 149592,
+   "sha256": "27cea96c7ab92df7f3c7fad9bc560fc542daccfe5ef297bae2ba8da13f9a3502"
   },
-  "ctc/weights-step3.safetensors": {
-   "bytes": 86360,
-   "sha256": "71268f8e87a34a16bba8364b84c18993bce3fe786d31e28733cc583a05336132"
+  "ctc/model-conv/tensors.json": {
+   "bytes": 4164,
+   "sha256": "0f29912a8cd5227798b4eb4e4ce0554e353f71fc4e74053056fcbc12ed2ac2fe"
+  },
+  "ctc/model-conv/tokenizer.json": {
+   "bytes": 1227,
+   "sha256": "1896eba852e42657e5e375db4f60baf0e43ddb0c6cb1cbb1fb68447ddaaa9856"
+  },
+  "ctc/model/config.json": {
+   "bytes": 747,
+   "sha256": "e88b9b9bf5aa8115720394ba9d72d1d8afc78e9133722bba4d25ffc3479509cc"
+  },
+  "ctc/model/model.safetensors": {
+   "bytes": 119856,
+   "sha256": "4f8959ac113146cc1a1aa8a4d013ffd951535f485ceddfb6d9e1ec7c6fdf6e7e"
+  },
+  "ctc/model/tensors.json": {
+   "bytes": 2472,
+   "sha256": "6e90403838ad8ce4412739419daa23ef1ab1010ff62c370013d814537d1b7350"
+  },
+  "ctc/model/tokenizer.json": {
+   "bytes": 1227,
+   "sha256": "1896eba852e42657e5e375db4f60baf0e43ddb0c6cb1cbb1fb68447ddaaa9856"
+  },
+  "ctc/reference/alignment.json": {
+   "bytes": 845,
+   "sha256": "7e55e23ee58b6b24092e83f5843cd4b5cf4dd4e7f736bb2f7e894d0284a5fbfc"
+  },
+  "ctc/reference/grads-step1-conv.safetensors": {
+   "bytes": 149592,
+   "sha256": "a316db33722ca6f2b85584eb590678b05c1153efef46a4227782e3d587a8e1ca"
+  },
+  "ctc/reference/grads-step1.safetensors": {
+   "bytes": 119856,
+   "sha256": "35a635430a04a4eedebc10ba57acd1cff6ab96fa685ee05f72c8e2f5555f7ad9"
+  },
+  "ctc/reference/logp-step1.npy": {
+   "bytes": 19968,
+   "sha256": "32fffdc179cb81c1f9654a26adfe2b388f7ad91252be6d60bea64a4ea40e9ccd"
+  },
+  "ctc/reference/loss.json": {
+   "bytes": 787,
+   "sha256": "71f0d45b17492f554cfd0e6c63260ca0eb61d4d62d6cab500c61bb82bc335f34"
+  },
+  "ctc/reference/weights-step3.safetensors": {
+   "bytes": 119856,
+   "sha256": "38c2dc9922e9e00085b8cdbf93a5f1f329556e3e42c8c55758766adc12f81d8e"
   },
   "features/features.json": {
    "bytes": 428,

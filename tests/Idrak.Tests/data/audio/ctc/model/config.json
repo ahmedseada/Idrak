@@ -1,0 +1,42 @@
+{
+ "activation": "gelu_tanh",
+ "architectures": [
+  "IdrakAudio"
+ ],
+ "blank_id": 0,
+ "classes": 40,
+ "convolution_kernel": 5,
+ "convolution_module": false,
+ "dim": 32,
+ "dropout": 0.0,
+ "features": {
+  "center": true,
+  "dynamic_range": 8.0,
+  "hop_size": 160,
+  "log_floor": 1e-10,
+  "max_frequency": 8000,
+  "mel_norm": "slaney",
+  "mel_scale": "slaney",
+  "mels": 80,
+  "min_frequency": 0,
+  "normalize": [
+   4.0,
+   0.25
+  ],
+  "pad_seconds": null,
+  "sample_rate": 16000,
+  "window": "hann",
+  "window_size": 400
+ },
+ "ffn_dim": 64,
+ "heads": 4,
+ "layers": 2,
+ "max_seconds": 30,
+ "mels": 80,
+ "model_type": "idrak-audio",
+ "norm_epsilon": 1e-05,
+ "positions": "sinusoidal",
+ "subsample_kernel": 3,
+ "subsample_layers": 2,
+ "task": "ctc"
+}
