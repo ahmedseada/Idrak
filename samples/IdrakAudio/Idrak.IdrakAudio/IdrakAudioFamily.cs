@@ -26,6 +26,9 @@ public sealed class IdrakAudioFamily : ISpeechFamily
     /// <summary>The audio encoder of an audio-language model (<see cref="IdrakAudioLanguageFamily"/>, made with <c>PretrainedModel.Create</c>).</summary>
     public const string AudioLanguageTask = "audio-language";
 
+    /// <summary>The text-to-speech task (a synthesizer, <see cref="IdrakAudioSynthesisFamily"/>).</summary>
+    public const string TtsTask = "tts";
+
     /// <inheritdoc />
     public string Name => Architecture;
 
@@ -114,6 +117,11 @@ public sealed class IdrakAudioFamily : ISpeechFamily
         {
             throw new NotSupportedException($"IdrakAudio task '{AudioLanguageTask}' is a chat model's audio part, not a recognizer: make it with PretrainedModel.Create "
                 + $"(architecture {IdrakAudioLanguageFamily.Architecture}, CreateOptions.Parts[\"audio\"]) and read it with PretrainedModel.Load.");
+        }
+
+        if (config.Task == TtsTask)
+        {
+            throw new NotSupportedException($"IdrakAudio task '{TtsTask}' is a speech synthesizer, not a recognizer: make it with SpeechSynthesisModels.Create and read it with SpeechSynthesisModels.Load.");
         }
 
         if (config.Task is not (CtcTask or Seq2SeqTask))

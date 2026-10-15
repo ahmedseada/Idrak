@@ -118,6 +118,14 @@ public interface ISpeechSynthesisFamily
     /// <summary>Reads the checkpoint (configuration, tokenizer, tensors) into a synthesizer on the options' device.</summary>
     /// <exception cref="InvalidDataException">A tensor or file is missing or disagrees with the configuration.</exception>
     ISpeechSynthesizer Read(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options);
+
+    /// <summary>
+    /// A model that did not exist, from the family's own description of it (<paramref name="spec"/>): its tensors drawn from
+    /// <paramref name="seed"/>, its config.json and other files (<see cref="SpeechSynthesisModels.Create"/> writes them). A
+    /// family read from checkpoints only keeps this default, which refuses.
+    /// </summary>
+    CreatedSpeechModel Create(JsonObject spec, ITokenizer tokenizer, int seed) =>
+        throw new NotSupportedException($"Speech synthesis family '{Name}' cannot make a model from a description (it reads checkpoints only).");
 }
 
 /// <summary>
@@ -201,5 +209,28 @@ public static class SpeechSynthesisModels
         var family = SpeechSynthesisFamilies.For(architecture);
         using var tensors = format.Open(folder);
         return family.Read(new SpeechSynthesisCheckpoint(architecture, config, tensors, folder, () => format.Open(folder), []), options);
+    }
+
+    /// <summary>
+    /// A text-to-speech model that did not exist: the family registered under the spec's architecture makes it from
+    /// <paramref name="spec"/> (<see cref="ISpeechSynthesisFamily.Create"/>: its tensors drawn from the seed, its config.json
+    /// and other files), which is written into <paramref name="folder"/> (config.json with "architectures",
+    /// model.safetensors in float32, the tokenizer as tokenizer.json when it is a <c>BpeTokenizer</c> and the family wrote
+    /// none, the family's files) and loaded from there, so it is a model like any other: it speaks, trains and saves (plan 21, S6).
+    /// </summary>
+    /// <exception cref="NotSupportedException">No family is registered under the architecture, or it makes no models from a description.</exception>
+    /// <exception cref="InvalidDataException">The spec names no architecture.</exception>
+    /// <exception cref="IOException">The folder holds files and <see cref="SpeechCreateOptions.Overwrite"/> is off.</exception>
+    public static ISpeechSynthesizer Create(string folder, JsonObject spec, ITokenizer tokenizer, SpeechCreateOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(tokenizer);
+        options ??= new SpeechCreateOptions();
+        string architecture = SpeechModels.Architecture(spec, options);
+        var family = SpeechSynthesisFamilies.Get(architecture);
+        SpeechModels.CheckFolder(folder, options);
+        SpeechModels.Write(folder, architecture, family.Create(spec, tokenizer, options.Seed), tokenizer);
+        return Load(folder, new SpeechSynthesisLoadOptions { Device = options.Device });
     }
 }

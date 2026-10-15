@@ -1,0 +1,430 @@
+{
+ "decoder.layers.0.linear1.bias": {
+  "dtype": "F32",
+  "shape": [
+   40
+  ]
+ },
+ "decoder.layers.0.linear1.weight": {
+  "dtype": "F32",
+  "shape": [
+   40,
+   24
+  ]
+ },
+ "decoder.layers.0.linear2.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.0.linear2.weight": {
+  "dtype": "F32",
+  "shape": [
+   24,
+   40
+  ]
+ },
+ "decoder.layers.0.norm1.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.0.norm1.weight": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.0.norm2.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.0.norm2.weight": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.0.self_attn.in_proj_bias": {
+  "dtype": "F32",
+  "shape": [
+   72
+  ]
+ },
+ "decoder.layers.0.self_attn.in_proj_weight": {
+  "dtype": "F32",
+  "shape": [
+   72,
+   24
+  ]
+ },
+ "decoder.layers.0.self_attn.out_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.0.self_attn.out_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   24,
+   24
+  ]
+ },
+ "decoder.layers.1.linear1.bias": {
+  "dtype": "F32",
+  "shape": [
+   40
+  ]
+ },
+ "decoder.layers.1.linear1.weight": {
+  "dtype": "F32",
+  "shape": [
+   40,
+   24
+  ]
+ },
+ "decoder.layers.1.linear2.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.1.linear2.weight": {
+  "dtype": "F32",
+  "shape": [
+   24,
+   40
+  ]
+ },
+ "decoder.layers.1.norm1.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.1.norm1.weight": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.1.norm2.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.1.norm2.weight": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.1.self_attn.in_proj_bias": {
+  "dtype": "F32",
+  "shape": [
+   72
+  ]
+ },
+ "decoder.layers.1.self_attn.in_proj_weight": {
+  "dtype": "F32",
+  "shape": [
+   72,
+   24
+  ]
+ },
+ "decoder.layers.1.self_attn.out_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.layers.1.self_attn.out_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   24,
+   24
+  ]
+ },
+ "decoder.mel.bias": {
+  "dtype": "F32",
+  "shape": [
+   20
+  ]
+ },
+ "decoder.mel.weight": {
+  "dtype": "F32",
+  "shape": [
+   20,
+   24
+  ]
+ },
+ "decoder.norm.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.norm.weight": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   24
+  ]
+ },
+ "decoder.proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   24,
+   16
+  ]
+ },
+ "duration.conv1.bias": {
+  "dtype": "F32",
+  "shape": [
+   20
+  ]
+ },
+ "duration.conv1.weight": {
+  "dtype": "F32",
+  "shape": [
+   20,
+   16,
+   1,
+   3
+  ]
+ },
+ "duration.conv2.bias": {
+  "dtype": "F32",
+  "shape": [
+   20
+  ]
+ },
+ "duration.conv2.weight": {
+  "dtype": "F32",
+  "shape": [
+   20,
+   20,
+   1,
+   3
+  ]
+ },
+ "duration.linear.bias": {
+  "dtype": "F32",
+  "shape": [
+   1
+  ]
+ },
+ "duration.linear.weight": {
+  "dtype": "F32",
+  "shape": [
+   1,
+   20
+  ]
+ },
+ "duration.norm1.bias": {
+  "dtype": "F32",
+  "shape": [
+   20
+  ]
+ },
+ "duration.norm1.weight": {
+  "dtype": "F32",
+  "shape": [
+   20
+  ]
+ },
+ "duration.norm2.bias": {
+  "dtype": "F32",
+  "shape": [
+   20
+  ]
+ },
+ "duration.norm2.weight": {
+  "dtype": "F32",
+  "shape": [
+   20
+  ]
+ },
+ "text.embed.weight": {
+  "dtype": "F32",
+  "shape": [
+   12,
+   16
+  ]
+ },
+ "text.layers.0.linear1.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "text.layers.0.linear1.weight": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16
+  ]
+ },
+ "text.layers.0.linear2.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.0.linear2.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   32
+  ]
+ },
+ "text.layers.0.norm1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.0.norm1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.0.norm2.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.0.norm2.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.0.self_attn.in_proj_bias": {
+  "dtype": "F32",
+  "shape": [
+   48
+  ]
+ },
+ "text.layers.0.self_attn.in_proj_weight": {
+  "dtype": "F32",
+  "shape": [
+   48,
+   16
+  ]
+ },
+ "text.layers.0.self_attn.out_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.0.self_attn.out_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text.layers.1.linear1.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "text.layers.1.linear1.weight": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16
+  ]
+ },
+ "text.layers.1.linear2.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.1.linear2.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   32
+  ]
+ },
+ "text.layers.1.norm1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.1.norm1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.1.norm2.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.1.norm2.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.1.self_attn.in_proj_bias": {
+  "dtype": "F32",
+  "shape": [
+   48
+  ]
+ },
+ "text.layers.1.self_attn.in_proj_weight": {
+  "dtype": "F32",
+  "shape": [
+   48,
+   16
+  ]
+ },
+ "text.layers.1.self_attn.out_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.layers.1.self_attn.out_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text.norm.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text.norm.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ }
+}

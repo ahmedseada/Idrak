@@ -136,7 +136,8 @@ public sealed class GriffinLimVocoder : IVocoder
     /// <summary>
     /// Sound from a linear spectrogram [frames, bins] (magnitudes, or the power <see cref="GriffinLimOptions.Power"/>
     /// names) at the options' window and hop: the phases recovered by <see cref="GriffinLimOptions.Iterations"/>
-    /// Griffin-Lim steps with momentum, then one <see cref="Stft.Inverse"/>.
+    /// Griffin-Lim steps with momentum, then one <see cref="Stft.Inverse"/>. A centred spectrogram too short for its
+    /// signal to be reflect-padded (a frame or two) runs with silent frames after it and is cut back to its own length.
     /// </summary>
     public float[] Reconstruct(ReadOnlySpan<float> spectrogram, int frames)
     {
@@ -147,10 +148,16 @@ public sealed class GriffinLimVocoder : IVocoder
             throw new ArgumentException($"{spectrogram.Length} values hold fewer than {frames} x {bins}.", nameof(spectrogram));
         }
 
+        int own = frames;
+        while (Options.Center && Stft.SamplesFor(frames, Options) <= Options.WindowSize / 2)
+        {
+            frames++;                                                           // silent frames, so the forward transform can pad the signal
+        }
+
         int count = frames * bins;
         var magnitude = new float[count];
         float exponent = 1f / Settings.Power;
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < own * bins; i++)
         {
             magnitude[i] = Settings.Power == 1f ? spectrogram[i] : MathF.Pow(spectrogram[i], exponent);
         }
@@ -210,7 +217,8 @@ public sealed class GriffinLimVocoder : IVocoder
             specIm[i] = magnitude[i] * angleIm[i];
         }
 
-        return Stft.Inverse(specRe, specIm, frames, Options, length);
+        var samples = Stft.Inverse(specRe, specIm, frames, Options, length);
+        return own == frames ? samples : samples[..Stft.SamplesFor(own, Options)];
     }
 
     // (FᵀF + ridge I)⁻¹ Fᵀ for F [bins, mels] (row-major), the ridge a millionth of the diagonal's mean so an empty band

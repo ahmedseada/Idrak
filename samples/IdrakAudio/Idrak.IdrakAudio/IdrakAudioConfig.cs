@@ -14,8 +14,8 @@ namespace Idrak.IdrakAudio;
 public sealed record IdrakAudioConfig
 {
     /// <summary>
-    /// What the model does: "ctc" (a recognizer with a CTC head) or "seq2seq" (the encoder and a text decoder attending to
-    /// it). "audio-language" and "tts" are later tasks.
+    /// What the model does: "ctc" (a recognizer with a CTC head), "seq2seq" (the encoder and a text decoder attending to
+    /// it) or "tts" (a synthesizer: text encoder, duration predictor, length regulation, mel decoder).
     /// </summary>
     public string Task { get; init; } = IdrakAudioFamily.CtcTask;
 
@@ -94,6 +94,21 @@ public sealed record IdrakAudioConfig
     /// <summary>Whether the task is "seq2seq".</summary>
     public bool Sequence => Task == IdrakAudioFamily.Seq2SeqTask;
 
+    /// <summary>Whether the task is "tts" (a synthesizer: the text encoder over <see cref="Layers"/> blocks, the mel decoder over the decoder's).</summary>
+    public bool Synthesis => Task == IdrakAudioFamily.TtsTask;
+
+    /// <summary>"tts": the duration predictor's channels (its two convolutions); the spec's default is <see cref="Dim"/>.</summary>
+    public int DurationFilters { get; init; } = 256;
+
+    /// <summary>"tts": the duration predictor's kernel over the labels (odd: padded by half on each side).</summary>
+    public int DurationKernel { get; init; } = 3;
+
+    /// <summary>"tts": the duration predictor gives log(frames + this), so a label of no frames has a finite target.</summary>
+    public float DurationOffset { get; init; } = 1f;
+
+    /// <summary>"tts": the <see cref="Vocoders"/> name it speaks through when the call names none; null: the library's default ("griffin-lim").</summary>
+    public string? Vocoder { get; init; }
+
     /// <summary>The feature extractor (an <see cref="AudioFeatureExtractors"/> name).</summary>
     public string FeatureExtractor { get; init; } = "log-mel";
 
@@ -126,7 +141,7 @@ public sealed record IdrakAudioConfig
             int mels = (int?)json["mels"] ?? d.Mels;
             var features = json["features"] is JsonObject f ? ReadFeatures(f, mels) : d.Features with { Mels = mels };
             int dim = (int?)json["dim"] ?? d.Dim, heads = (int?)json["heads"] ?? d.Heads, ffn = (int?)json["ffn_dim"] ?? d.FfnDim;
-            int classes = (int?)json["classes"] ?? (vocabulary is { } v ? v + 1 : 0);
+            int classes = (int?)json["classes"] ?? (vocabulary is { } v ? v + ((string?)json["task"] == IdrakAudioFamily.TtsTask ? 0 : 1) : 0);   // tts: no class past the tokens
             var config = new IdrakAudioConfig
             {
                 Task = (string?)json["task"] ?? d.Task,
@@ -157,6 +172,10 @@ public sealed record IdrakAudioConfig
                 FeatureExtractor = (string?)json["feature_extractor"] ?? d.FeatureExtractor,
                 Features = features,
                 MaxSeconds = (double?)json["max_seconds"] ?? d.MaxSeconds,
+                DurationFilters = (int?)json["duration_filters"] ?? dim,
+                DurationKernel = (int?)json["duration_kernel"] ?? d.DurationKernel,
+                DurationOffset = (float?)json["duration_offset"] ?? d.DurationOffset,
+                Vocoder = (string?)json["vocoder"],
             };
             config.Check();
             return config;
@@ -206,7 +225,16 @@ public sealed record IdrakAudioConfig
             throw new ArgumentException($"positions is sinusoidal or none ({Positions}); activation gelu_tanh or gelu ({Activation}).");
         }
 
-        if (Task == IdrakAudioFamily.CtcTask && (Classes < 2 || (uint)BlankId >= (uint)Classes))
+        if (Synthesis)
+        {
+            if (Classes < 1 || DurationFilters < 1 || DurationKernel < 1 || DurationKernel % 2 == 0 || !(DurationOffset > 0)
+                || DecoderLayers < 0 || DecoderDim < 1 || DecoderHeads < 1 || DecoderDim % DecoderHeads != 0 || DecoderFfnDim < 1)
+            {
+                throw new ArgumentException($"tts: classes, duration_filters, decoder_dim, decoder_heads and decoder_ffn_dim are positive, decoder_dim a multiple of decoder_heads ({DecoderDim}, {DecoderHeads}), "
+                    + $"duration_kernel odd ({DurationKernel}), duration_offset positive ({DurationOffset}) and decoder_layers not negative.");
+            }
+        }
+        else if (Task == IdrakAudioFamily.CtcTask && (Classes < 2 || (uint)BlankId >= (uint)Classes))
         {
             throw new ArgumentException($"The head has {Classes} classes with the blank {BlankId}: at least a label and the blank, the blank one of them.");
         }
@@ -235,6 +263,28 @@ public sealed record IdrakAudioConfig
     public JsonObject ToJson()
     {
         var json = Common();
+        if (Synthesis)
+        {
+            foreach (string key in (string[])["blank_id", "subsample_layers", "subsample_kernel", "max_seconds"])
+            {
+                json.Remove(key);
+            }
+
+            json["decoder_layers"] = DecoderLayers;
+            json["decoder_dim"] = DecoderDim;
+            json["decoder_heads"] = DecoderHeads;
+            json["decoder_ffn_dim"] = DecoderFfnDim;
+            json["duration_filters"] = DurationFilters;
+            json["duration_kernel"] = DurationKernel;
+            json["duration_offset"] = DurationOffset;
+            if (Vocoder is not null)
+            {
+                json["vocoder"] = Vocoder;
+            }
+
+            return json;
+        }
+
         if (Sequence)
         {
             json.Remove("blank_id");

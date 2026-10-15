@@ -303,8 +303,16 @@ public interface Idrak.Audio.Abstractions.ISpeechSource
   public string Summary { get; }
 
 public interface Idrak.Audio.Abstractions.ISpeechSynthesisFamily
+  public (default) Idrak.Audio.Abstractions.CreatedSpeechModel Create(System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
   public Idrak.Audio.Abstractions.ISpeechSynthesizer Read(Idrak.Audio.Abstractions.SpeechSynthesisCheckpoint checkpoint, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions options)
   public string Name { get; }
+
+public interface Idrak.Audio.Abstractions.ISpeechSynthesisObjective
+  public Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, System.Collections.Generic.IReadOnlyList<int[]> durations, Idrak.Audio.Abstractions.SpeechForwardOptions forward, Idrak.Audio.SpeechTrainingOptions options)
+  public bool Accepts(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, int frames, int[] labels)
+  public bool Trains(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model)
+  public string Name { get; }
+  public string Refused { get; }
 
 public interface Idrak.Audio.Abstractions.ISpeechSynthesizer : System.IDisposable
   public (Idrak.Audio.Abstractions.AudioData, Idrak.Audio.Abstractions.SynthesisStats) Speak(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
@@ -328,6 +336,18 @@ public interface Idrak.Audio.Abstractions.ITrainableSpeechModel : Idrak.Audio.Ab
   public string Architecture { get; }
   public string Objective { get; }
   public string Text(System.ReadOnlySpan<int> labels)
+  public void Save(string folder)
+
+public interface Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer : Idrak.Audio.Abstractions.ISpeechSynthesizer, System.IDisposable
+  public (default) string Objective { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Decode(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int> lengths, System.Collections.Generic.IReadOnlyList<int[]> durations, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor labels, System.Collections.Generic.IReadOnlyList<int> lengths, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Abstraction.Tensor LogDurations(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int> lengths)
+  public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
+  public float DurationOffset { get; }
+  public int[] Labels(string text)
+  public string Architecture { get; }
   public void Save(string folder)
 
 public interface Idrak.Audio.Abstractions.IVocoder
@@ -447,7 +467,17 @@ public sealed record Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions : Syste
   public SpeechSynthesisLoadOptions()
 
 public static class Idrak.Audio.Abstractions.SpeechSynthesisModels
+  public static Idrak.Audio.Abstractions.ISpeechSynthesizer Create(string folder, System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, Idrak.Audio.SpeechCreateOptions? options = null)
   public static Idrak.Audio.Abstractions.ISpeechSynthesizer Load(string path, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions? options = null)
+
+public static class Idrak.Audio.Abstractions.SpeechSynthesisObjectives
+  public const string Durations = "durations"
+  public static Idrak.Audio.Abstractions.ISpeechSynthesisObjective Get(string name)
+  public static Idrak.Audio.Abstractions.ISpeechSynthesisObjective? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.ISpeechSynthesisObjective objective)
 
 public sealed record Idrak.Audio.Abstractions.SpeechSynthesisOptions : System.IEquatable<Idrak.Audio.Abstractions.SpeechSynthesisOptions>
   public Idrak.Audio.Abstractions.VoiceConversionOptions? Conversion { get; init; }
@@ -688,6 +718,16 @@ public sealed record Idrak.Audio.CtcPath : System.IEquatable<Idrak.Audio.CtcPath
   public int[] Lengths { get; init; }
   public int[] Starts { get; init; }
 
+public sealed class Idrak.Audio.DurationSynthesisObjective : Idrak.Audio.Abstractions.ISpeechSynthesisObjective
+  public DurationSynthesisObjective()
+  public Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, System.Collections.Generic.IReadOnlyList<int[]> durations, Idrak.Audio.Abstractions.SpeechForwardOptions forward, Idrak.Audio.SpeechTrainingOptions options)
+  public bool Accepts(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, int frames, int[] labels)
+  public bool Trains(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model)
+  public static (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) Parts(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, System.Collections.Generic.IReadOnlyList<int[]> durations, Idrak.Audio.Abstractions.SpeechForwardOptions? forward = null)
+  public static Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, System.Collections.Generic.IReadOnlyList<int[]> durations, float durationWeight = 1f, Idrak.Audio.Abstractions.SpeechForwardOptions? forward = null)
+  public string Name { get; }
+  public string Refused { get; }
+
 public sealed class Idrak.Audio.FlacCodec : Idrak.Audio.Abstractions.IAudioCodec
   public FlacCodec(Idrak.Audio.FlacOptions? options = null)
   public Idrak.Audio.Abstractions.AudioData Decode(System.ReadOnlySpan<byte> file)
@@ -743,6 +783,11 @@ public sealed class Idrak.Audio.GriffinLimVocoder : Idrak.Audio.Abstractions.IVo
   public static float[] MelPseudoInverse(Idrak.Audio.Abstractions.AudioFeatureOptions options)
   public string Name { get; }
 
+public static class Idrak.Audio.LengthRegulation
+  public static (Idrak.Abstraction.Tensor, int[]) Expand(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int[]> durations)
+  public static (int[], int[]) Rows(System.Collections.Generic.IReadOnlyList<int[]> durations, int length)
+  public static int[] Durations(System.ReadOnlySpan<float> logDurations, float offset, float rate = 1f)
+
 public sealed class Idrak.Audio.LogMelFeatures : Idrak.Audio.Abstractions.IAudioFeatureExtractor
   public Idrak.Abstraction.Tensor Extract(Idrak.Audio.Abstractions.AudioData audio, Idrak.Abstraction.Device device)
   public Idrak.Abstraction.Tensor Extract(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios, Idrak.Abstraction.Device device)
@@ -779,6 +824,43 @@ public sealed class Idrak.Audio.Seq2SeqObjective : Idrak.Audio.Abstractions.ISpe
   public string Name { get; }
   public string Refused { get; }
 
+public sealed record Idrak.Audio.SpeechAlignment : System.IEquatable<Idrak.Audio.SpeechAlignment>
+  public SpeechAlignment(string Audio, string Text, int[] Labels, int[] Starts, int[] Durations, int Steps, double StepSeconds, float LogProbability)
+  public double StepSeconds { get; init; }
+  public float LogProbability { get; init; }
+  public int Steps { get; init; }
+  public int[] Durations { get; init; }
+  public int[] FrameDurations(int frames)
+  public int[] Labels { get; init; }
+  public int[] Starts { get; init; }
+  public string Audio { get; init; }
+  public string Text { get; init; }
+
+public sealed record Idrak.Audio.SpeechAlignmentOptions : System.IEquatable<Idrak.Audio.SpeechAlignmentOptions>
+  public SpeechAlignmentOptions()
+  public double BatchSeconds { get; init; }
+  public int Workers { get; init; }
+
+public sealed record Idrak.Audio.SpeechAlignmentProgress : System.IEquatable<Idrak.Audio.SpeechAlignmentProgress>
+  public SpeechAlignmentProgress(int Done, int Total, System.TimeSpan Elapsed, System.TimeSpan Remaining, double AudioSecondsPerSecond)
+  public System.TimeSpan Elapsed { get; init; }
+  public System.TimeSpan Remaining { get; init; }
+  public double AudioSecondsPerSecond { get; init; }
+  public int Done { get; init; }
+  public int Total { get; init; }
+
+public sealed record Idrak.Audio.SpeechAlignmentResult : System.IEquatable<Idrak.Audio.SpeechAlignmentResult>
+  public SpeechAlignmentResult(System.Collections.Generic.IReadOnlyList<Idrak.Audio.SpeechAlignment> Alignments, System.Collections.Generic.IReadOnlyList<string> Notes, System.TimeSpan Elapsed)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.SpeechAlignment> Alignments { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; init; }
+  public System.TimeSpan Elapsed { get; init; }
+
+public static class Idrak.Audio.SpeechAlignments
+  public static Idrak.Audio.SpeechAlignmentResult Align(Idrak.Audio.Abstractions.ICtcSpeechModel model, Idrak.Audio.Abstractions.SpeechSource source, Idrak.Audio.SpeechAlignmentOptions? options = null, System.IProgress<Idrak.Audio.SpeechAlignmentProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public static Idrak.Audio.SpeechAlignmentResult AlignToFile(Idrak.Audio.Abstractions.ICtcSpeechModel model, Idrak.Audio.Abstractions.SpeechSource source, string path, Idrak.Audio.SpeechAlignmentOptions? options = null, System.IProgress<Idrak.Audio.SpeechAlignmentProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Audio.SpeechAlignment> Read(string path)
+  public static void Write(string path, System.Collections.Generic.IEnumerable<Idrak.Audio.SpeechAlignment> alignments)
+
 public sealed record Idrak.Audio.SpeechCreateOptions : System.IEquatable<Idrak.Audio.SpeechCreateOptions>
   public Idrak.Abstraction.Device? Device { get; init; }
   public SpeechCreateOptions()
@@ -789,6 +871,13 @@ public sealed record Idrak.Audio.SpeechCreateOptions : System.IEquatable<Idrak.A
 public static class Idrak.Audio.SpeechModels
   public static Idrak.Audio.Abstractions.ISpeechRecognizer Create(string folder, System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, Idrak.Audio.SpeechCreateOptions? options = null)
   public static Idrak.Audio.Abstractions.ISpeechRecognizer Load(string path, Idrak.Audio.Abstractions.SpeechModelOptions? options = null)
+
+public static class Idrak.Audio.SpeechSynthesisText
+  public static System.Collections.Generic.IReadOnlyList<string> Pieces(string text, int maxCharacters)
+
+public static class Idrak.Audio.SpeechSynthesisTrainer
+  public static Idrak.Audio.SpeechTrainingResult Resume(string checkpointFolder, Idrak.Audio.SpeechTrainingOptions? overrides = null, Idrak.Abstraction.Device? device = null, System.IProgress<Idrak.Audio.SpeechTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
+  public static Idrak.Audio.SpeechTrainingResult Train(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, Idrak.Audio.Abstractions.SpeechSource train, Idrak.Audio.Abstractions.SpeechSource? evaluation, Idrak.Audio.SpeechTrainingOptions options, string outputFolder, Idrak.Audio.SpeechTrainingCheckpoint? resume = null, System.IProgress<Idrak.Audio.SpeechTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
 
 public static class Idrak.Audio.SpeechTrainer
   public const string StateFile = "train-state.json"
@@ -820,6 +909,7 @@ public sealed record Idrak.Audio.SpeechTrainingOptions : System.IEquatable<Idrak
   public bool HostOptimizer { get; init; }
   public bool? BFloat16Activations { get; init; }
   public double BatchSeconds { get; init; }
+  public float DurationLossWeight { get; init; }
   public float LearningRate { get; init; }
   public float MaxGradientNorm { get; init; }
   public float MinLearningRate { get; init; }
@@ -841,6 +931,7 @@ public sealed record Idrak.Audio.SpeechTrainingOptions : System.IEquatable<Idrak
   public string Metric { get; init; }
   public string Optimizer { get; init; }
   public string Schedule { get; init; }
+  public string? Durations { get; init; }
   public string? FeatureCache { get; init; }
   public string? FeatureCacheFolder { get; init; }
 
