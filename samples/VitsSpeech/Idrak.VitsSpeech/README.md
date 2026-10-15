@@ -24,6 +24,11 @@ AudioEncoders.Save("hello.wav", audio);
 | Flow (`VitsFlow`) | residual coupling in reverse: channels flipped, WaveNet (`Conv2d` with dilation, weight norm folded at load, tanh × sigmoid gates) | `noise_scale` 0 gives the means |
 | Decoder (`HifiGanDecoder`) | `Conv2d` (1, 7), per stage leaky ReLU (`Maximum(x, slope · x)`), `ConvTranspose2d` (1, k) stride (1, rate), the residual blocks averaged; the last leaky ReLU (0.01, PyTorch's default, a setting `final_leaky_relu_slope`), `Conv2d` (1, 7), tanh | also `VitsSynthesizer.Vocoder`, an `IVocoder` over the flow's latents |
 
+**Memory.** With gradients off, the decoder runs each stage and each residual block's step in a `TensorScope` of
+its own, keeping only the result: for 3.94 s of sound from an MMS-sized checkpoint the pass peaks 185 MB above its start
+on the CPU, where holding every intermediate to the end peaked 1780 MB (the samples are the same bits). With gradients on,
+every intermediate stays for the backward pass.
+
 Every size, rate and scale is read from `config.json` (`VitsConfig`); `SpeechSynthesisOptions` carries the rate, the two
 noise scales (null: the checkpoint's), the seed, the voice (multi-speaker checkpoints: the speaker index), the output
 rate (resampled) and the sentence split (`MaxCharacters`: the pieces of `SpeakStream`).
