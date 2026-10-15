@@ -7,7 +7,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 //
-// voice.cs: install a person's voice and speak with it (plan 21, S9 route B), until `idrak voice` (S7) takes its place.
+// voice.cs: install a person's voice and speak with it (plan 21, S9 route B). The command line does the same now and is
+// the way to use it: `idrak voice add|list|show|remove|export|import` and `idrak speak MODEL TEXT --voice NAME` (with
+// -P Idrak.OpenVoice.dll, -P Idrak.VitsSpeech.dll; idrak help audio). This script stays as the prototype they match.
 //   dotnet run samples/OpenVoice/voice.cs -- add NAME --converter DIR --consent TEXT [--speaker WHO] [--language ar]... [--keep-clips] [--device cuda] CLIP...
 //   dotnet run samples/OpenVoice/voice.cs -- list | show NAME | remove NAME | export NAME ZIP | import ZIP|DIR
 //   dotnet run samples/OpenVoice/voice.cs -- speak MODEL TEXT --voice NAME [--tau 0.3] [--conversion auto|off|NAME] [--decoder-seconds 10] [--device cuda] [-o out.wav]

@@ -40,6 +40,8 @@ internal sealed class ChatCommand : Command
                                  more later); turned upright by its EXIF orientation
               --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it);
                                  the same as the grayscale image transform first
+              --audio FILE       give an audio-language model a sound with the first message (repeatable; its family
+                                 a plug-in, -P)
         """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
               --mcp SERVER      let the model call an MCP server's tools: an http(s) URL, or a command that starts
                                  the server ("npx -y some-server"); repeatable
@@ -59,7 +61,7 @@ internal sealed class ChatCommand : Command
         conversation, for now).
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--image", ModelChoices.ImageTransformOption, ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--image", "--audio", ModelChoices.ImageTransformOption, ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
@@ -82,10 +84,16 @@ internal sealed class ChatCommand : Command
         }
 
         var images = ImageInputs.Read(context.Options("--image"));
+        var sounds = AudioInputs.Read(context.Options("--audio"));
         using var loaded = LoadedChat.Load(context, name, settings);
         if (images.Count > 0)
         {
             loaded.RequireImages("--image");
+        }
+
+        if (sounds.Count > 0)
+        {
+            loaded.RequireAudio("--audio");
         }
 
         var session = new ChatSession(context, loaded, settings, context.Option("--history"));
@@ -97,6 +105,11 @@ internal sealed class ChatCommand : Command
         foreach (var image in images)
         {
             session.AttachImage(image);
+        }
+
+        foreach (var sound in sounds)
+        {
+            session.AttachAudio(sound);
         }
 
         return session.Run(StandardInput.Reader, interactive: !StandardInput.IsRedirected);
@@ -130,7 +143,7 @@ internal sealed class ChatSession
     private readonly List<ChatMessage> _messages = [];
     private readonly List<ChatAnswer> _answers = [];
     private readonly List<string> _attachments = [];
-    private readonly List<ChatImage> _images = [];
+    private readonly List<ChatPart> _images = [];                               // images, then sounds, for the next message
     private readonly bool _color;
     private CancellationTokenSource? _cancel;
 
@@ -160,7 +173,10 @@ internal sealed class ChatSession
         _attachments.Add($"File {Path.GetFileName(path)}:\n```\n{File.ReadAllText(path).TrimEnd()}\n```");
 
     /// <summary>Adds an image to the next message.</summary>
-    public void AttachImage(ChatImage image) => _images.Add(image);
+    public void AttachImage(ChatImage image) => _images.Insert(_images.Count(p => p is ChatImage), image);
+
+    /// <summary>Adds a sound to the next message (after its images).</summary>
+    public void AttachAudio(ChatPart sound) => _images.Add(sound);
 
     /// <summary>The conversation so far.</summary>
     public IReadOnlyList<ChatMessage> Messages => _messages;

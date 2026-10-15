@@ -31,7 +31,7 @@ internal static class EnvironmentVariables
         "doctor", "devices", "version", "report", "init", "chat", "run", "batch", "compare", "complete", "embed", "agent", "serve", "ui",
         "memory", "quantize", "merge", "convert", "bench", "eval", "perplexity", "profile", "check", "tuning show", "tune", "train", "resume", "predict",
         "distill", "create", "pretrain", "suggest", "explain", "rag index", "rag ask", "rag search", "rag eval", "test", "trace", "demo", "onnx import", "onnx export",
-        "onnx check", "vlm check",
+        "onnx check", "vlm check", "transcribe", "speak", "voice add", "data mel",
     ];
 
     // Commands that read models from the hub or the local stores (a model argument, or an index's embedding model).
@@ -40,7 +40,11 @@ internal static class EnvironmentVariables
         "pull", "list", "rm", "show", "search", "verify", "convert", "diff", "inspect", "chat", "run", "batch", "compare", "complete", "embed",
         "tokenize", "template", "agent", "serve", "ui", "memory", "quantize", "merge", "bench", "eval", "perplexity", "profile", "check", "tune",
         "distill", "create", "pretrain", "data stats", "data tokenizer", "data tokens", "rag index", "rag ask", "rag search", "rag eval", "suggest", "vlm check",
+        "transcribe", "speak", "voice add",
     ];
+
+    // Commands that read or write the installed voices.
+    private static readonly string[] VoiceStore = ["speak", "voice add", "voice list", "voice show", "voice remove", "voice export", "voice import"];
 
     // Commands that read datasets from remote sources (the others read local files only).
     private static readonly string[] Data = ["data", "data mix", "tune"];
@@ -78,6 +82,7 @@ internal static class EnvironmentVariables
         new("IDRAK_HIP_DEFAULT", Devices, "not set", "1: a HIP GPU may be the default device (after CUDA, before Vulkan)", OnDevice),
         new("IDRAK_RETRY_ON_HOST", Devices, "not set (a failing GPU kernel throws)", "1 or all: an operation whose GPU kernel fails runs again on the CPU (reported to telemetry, counted as a host call); a list of kinds (cuda,vulkan,hip): only those devices. Errors found after an operation returned can't be retried", OnDevice),
         new("IDRAK_CUDA_DEBUG", Devices, "not set", "1: synchronize after every CUDA kernel and name the one that failed (slow)", OnDevice),
+        new("IDRAK_STFT_PATH", Devices, "auto (the host on the CPU, composed device operations elsewhere)", "host or composed: how the short-time Fourier transform of audio features is computed, over the options' auto", ["transcribe", "data mel"]),
         new("IDRAK_ATTENTION_PATH", Devices, "measured", "spans or composed: attention that can run either way (a bidirectional pass, ranges with a dense mask) through the key-range kernel or through the full scores, instead of the faster as measured on the device (composed only where the device's free memory holds the scores)", OnDevice),
         new("IDRAK_WINDOW_KERNELS", Devices, "on", "0 or false: sliding-window and soft-capped attention through basic operations over the whole cache instead of the attention kernels (to compare or isolate them)", OnDevice),
         new("IDRAK_POWER_SOURCE", Devices, "as the system reports", "ac or battery: the power source tuning choices are measured and kept under", OnDevice),
@@ -128,6 +133,7 @@ internal static class EnvironmentVariables
         new("HIP_PATH", Hip, "not set", "Where the HIP SDK is (Windows)", OnDevice),
         new("ROCM_PATH", Hip, "/opt/rocm", "Where ROCm is (Linux)", OnDevice),
 
+        new("IDRAK_VOICES", Sources, "voices/ under IDRAK_CACHE or ~/.cache/idrak", "The installed voices' folder (--voices wins; with --cache given and this unset: voices/ under it)", VoiceStore),
         new("HF_TOKEN", Sources, "the saved login", "The Hugging Face access token for gated and private models and datasets", [.. Models, .. Data, .. Logins], Secret: true),
         new("HUGGING_FACE_HUB_TOKEN", Sources, "not set", "The older name of HF_TOKEN", [.. Models, .. Data, "doctor"], Secret: true),
         new("HF_TOKEN_PATH", Sources, "<HF_HOME>/token", "The file holding the saved Hugging Face token", [.. Models, .. Data, .. Logins]),

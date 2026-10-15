@@ -23,7 +23,8 @@ internal sealed class RunCommand : Command
         `cat notes.txt | idrak run MODEL "Summarize"` asks about the notes. The answer streams to the output; --json
         prints one document with the text, the token counts and the speed instead; -v adds the figures on the error output, with where the
         device's memory went (weights by part, image encoder, KV cache, activations at the peak; with --json, a "memory" object).
-        --image gives a vision-language model (Gemma 3 4B and larger) images, before the prompt's text.
+        --image gives a vision-language model (Gemma 3 4B and larger) images, before the prompt's text; --audio gives an
+        audio-language model sounds (its audio family a plug-in, -P), after the images.
 
         Options:
           -i, --input FILE       read (more of) the prompt from FILE (repeatable)
@@ -33,6 +34,8 @@ internal sealed class RunCommand : Command
                                  by its EXIF orientation
               --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it);
                                  the same as the grayscale image transform first
+              --audio FILE       a sound for an audio-language model to hear (WAV, FLAC, MP3, ...: its family decodes
+                                 it; repeatable)
         """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
           --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores and one
@@ -58,7 +61,7 @@ internal sealed class RunCommand : Command
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
@@ -71,6 +74,7 @@ internal sealed class RunCommand : Command
         string prompt = PromptInput.Read(context, 1);
         string? outFile = context.Option("--out");
         var images = ImageInputs.Read(context.Options("--image"));
+        var sounds = AudioInputs.Read(context.Options("--audio"));
         var settings = GenerationSettings.From(context);
         JsonObject? schema = null;
         if (context.Option("--schema") is { } schemaPath)
@@ -86,13 +90,18 @@ internal sealed class RunCommand : Command
             loaded.RequireImages("--image");
         }
 
+        if (sounds.Count > 0)
+        {
+            loaded.RequireAudio("--audio");
+        }
+
         var messages = new List<ChatMessage>();
         if (settings.System is { Length: > 0 } system)
         {
             messages.Add(new ChatMessage("system", system));
         }
 
-        messages.Add(images.Count == 0 ? new ChatMessage("user", prompt) : new ChatMessage("user", [.. images, new ChatText(prompt)]));
+        messages.Add(images.Count + sounds.Count == 0 ? new ChatMessage("user", prompt) : new ChatMessage("user", [.. images, .. sounds, new ChatText(prompt)]));
         var responder = new ChatResponder(loaded.Chat, loaded.Registry)
         {
             Stream = context.Json ? null : context.Output,
@@ -140,6 +149,11 @@ internal sealed class RunCommand : Command
             {
                 json["vision_options"] = visionOptions.ToJson();
             }
+        }
+
+        if (sounds.Count > 0)
+        {
+            json["audios"] = new JsonArray([.. context.Options("--audio").Select(p => (JsonNode)p)]);
         }
 
         if (answer.Message.Thinking is { } thinking)

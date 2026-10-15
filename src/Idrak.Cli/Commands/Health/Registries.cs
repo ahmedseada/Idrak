@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Audio.Abstractions;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
 using Idrak.Datasets;
@@ -42,6 +43,14 @@ internal static class Registries
             new("graphops", "Graph ops", false, Sorted(GraphOps.Names)),
             new("layers", "Layer types (network builder)", false, Sorted(NetworkOps.Names)),
             new("onnx", "ONNX import ops", false, Sorted(OnnxImportOps.Names)),
+            new("audiocodecs", "Audio codecs", true, Sorted(AudioCodecs.Names)),
+            new("audioencoders", "Audio encoders", true, Sorted(AudioEncoders.Names)),
+            new("audiofeatures", "Audio feature extractors", false, Sorted(AudioFeatureExtractors.Names)),
+            new("speech", "Speech recognition families", false, Sorted(SpeechFamilies.Names)),
+            new("synthesis", "Speech synthesis families", false, Sorted(SpeechSynthesisFamilies.Names)),
+            new("vocoders", "Vocoders", false, Sorted(Vocoders.Names)),
+            new("converters", "Voice converter families", false, Sorted(VoiceConverters.Names)),
+            new("splitters", "Audio splitters", false, Sorted(AudioSplitters.Names)),
             new("devices", "Device kinds", false, Sorted(DeviceListing.Backends.Select(b => b.Kind).Prepend("cpu"))),
         ];
     }

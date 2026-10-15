@@ -59,12 +59,14 @@ IDRAK_DEVICES=cpu IDRAK_FILTER="audio asr" dotnet run -c Release --no-build --pr
 
 ## Trying it on a real checkpoint
 
-`samples/WhisperSpeech/transcribe.cs` transcribes a WAV, FLAC or MP3 file through the plug-in (until `idrak transcribe`,
-plan 21 S7), printing the segments, the text and the cold and warm timings:
+`idrak transcribe` transcribes WAV, FLAC or MP3 files through the plug-in (given with `-P`), as text, JSON, SRT or
+WebVTT; `-v` prints the cold and warm stage timings and the peak device memory. `samples/WhisperSpeech/transcribe.cs`
+is the prototype it matches.
 
 ```powershell
 cd D:\Projects\Idrak
 dotnet run --project src\Idrak.Cli -c Release -- pull openai/whisper-small
 $whisper = (Get-ChildItem "$env:USERPROFILE\.cache\idrak\downloads\huggingface\models\openai\whisper-small" -Directory | Sort-Object LastWriteTime | Select-Object -Last 1).FullName
-dotnet run samples\WhisperSpeech\transcribe.cs -c Release -- $whisper sample-en.wav --language en --timestamps --device cuda
+dotnet run --project src\Idrak.Cli -c Release -- transcribe -P samples\WhisperSpeech\Idrak.WhisperSpeech\bin\Release\net10.0\Idrak.WhisperSpeech.dll $whisper sample-en.wav -l en --timestamps -d cuda -v
+dotnet run --project src\Idrak.Cli -c Release -- transcribe -P samples\WhisperSpeech\Idrak.WhisperSpeech\bin\Release\net10.0\Idrak.WhisperSpeech.dll $whisper sample-en.wav -o sample-en.srt -d cuda
 ```

@@ -148,6 +148,8 @@ Chat, one-off answers, batches and the tools a model may call. Generation uses a
 | `idrak compare` | The same prompt on two models (or two settings of one), answers side by side with speed |
 | `idrak complete` | Raw completion of a text, without the chat template |
 | `idrak embed` | Embeddings of lines or files to JSON or .npy |
+| `idrak transcribe` | Speech to text with a speech recognition model, as text, JSON or subtitles (SRT, WebVTT) |
+| `idrak speak` | Text to speech with a text-to-speech model, in its own voice, a speaker or an installed voice |
 | `idrak tokenize` | Tokens and ids of a text (--chat renders the chat template first, --count only counts) |
 | `idrak template` | The chat template, its tool-call format and a rendered sample conversation with a tool call |
 | `idrak agent` | The coding agent: reads, searches, edits files and runs commands in a folder |
@@ -163,7 +165,14 @@ idrak batch qwen -i prompts.jsonl -o answers.jsonl                   # resumable
 idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
 idrak tokenize qwen --chat "Hello" --count
 idrak agent qwen "Add a test for Parse" --workspace ./src
+idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav -o talk.srt   # -j: segments and stage times
+idrak speak -P Idrak.VitsSpeech.dll ./mms-tts-eng "Hello." -o hello.wav            # -P Idrak.Mp3Audio.dll for .mp3
+idrak run -P MyAudioFamily.dll ./audio-model --audio clip.wav "What is said?"      # an audio-language model
 ```
+
+Speech families are plug-ins (`-P`), never the library's: a model whose family is not registered exits 1 with "not
+registered" and the `-P` remedy. `idrak help audio` lists the codecs, encoders, families, converters and splitters
+registered.
 
 ### Serve
 
@@ -273,6 +282,27 @@ idrak memory Qwen/Qwen3-8B --kv int8           # what fits on which device
 idrak quantize Qwen/Qwen3-0.6B -w int4 -o ./qwen-int4
 idrak merge Qwen/Qwen3-0.6B ./run/adapter -o ./qwen-tuned
 idrak rm Qwen/Qwen3-0.6B --dry-run
+```
+
+### Voices
+
+A person's voice, installed by name from a few clips with their consent, for `idrak speak --voice NAME`. Voices live in
+`IDRAK_VOICES` (else voices/ under the cache); `--voices DIR` picks another folder for one command.
+
+| Command | What it does |
+|---|---|
+| `idrak voice add` | Install a person's voice from a few clips of them, with their consent, for idrak speak --voice |
+| `idrak voice list` (`voice ls`) | The installed voices: kind, languages, clips and the converter they were made with |
+| `idrak voice show` | One installed voice: its consent, clips and their agreement, converter and folder |
+| `idrak voice remove` (`voice rm`) | Remove an installed voice (its folder: manifest, embedding and kept clips) |
+| `idrak voice export` | Write an installed voice to a zip (manifest, consent, embedding) for idrak voice import |
+| `idrak voice import` | Install a voice from a zip idrak voice export wrote, or from a voice folder |
+
+```bash
+idrak voice add ahmed --from clips/ --converter ./openvoice-v2 -P Idrak.OpenVoice.dll -l ar --consent "I, Ahmed, agree."
+idrak voice show ahmed                                   # each clip's agreement; a clip far below the others is flagged
+idrak speak -P Idrak.VitsSpeech.dll -P Idrak.OpenVoice.dll ./mms-tts-eng "Hi" --voice ahmed -o ahmed.wav
+idrak voice export ahmed -o ahmed-voice.zip              # idrak voice import ahmed-voice.zip on another machine
 ```
 
 ### Train
@@ -387,6 +417,8 @@ subcommands work on local files.
 | `idrak data mix` | Assemble a training set from several sources with weights (a dataset recipe) |
 | `idrak data text` | Random text in a language (pages, lines or words) to draw training pages from |
 | `idrak data fonts` | Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz |
+| `idrak data audio` | Convert, resample and split sound files into a folder of WAV files with a manifest.jsonl |
+| `idrak data mel` | Log-mel features of sound files as .npy (a model's input features), with the options used |
 | `idrak data synth` (`idrak synth`) | Tuning pages drawn from text: each record's answer set as scanned-looking pages |
 
 ```bash
@@ -396,6 +428,8 @@ idrak data validate chats.jsonl --as chat
 idrak data stats chats.jsonl -m qwen
 idrak data convert alpaca.json chats.jsonl --as chat
 idrak data split chats.jsonl -t label --seed 2
+idrak data audio rec/ -o clips --rate 16000 --mono --split silence --min-seconds 3   # manifest.jsonl beside the pieces
+idrak data mel talk.wav -o mels --preprocessor ./whisper-small                        # NAME.npy and features.json
 ```
 
 #### Data sources and recipes

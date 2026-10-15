@@ -32,6 +32,12 @@ internal abstract class Command
 
     private static readonly Dictionary<string, string> EmptyShortForms = [];
 
+    /// <summary>
+    /// Values of the common <c>--format</c> this command reads itself beyond text, json, csv and md (transcribe's srt and
+    /// vtt): with one of them the context's <see cref="CommandContext.Format"/> is text and the command reads the option.
+    /// </summary>
+    public virtual IReadOnlyCollection<string> OwnFormats => [];
+
     /// <summary>Called before the <c>--plugin</c> assemblies load (e.g. to note what was registered before them).</summary>
     public virtual void BeforePlugins(CommandContext context)
     {
