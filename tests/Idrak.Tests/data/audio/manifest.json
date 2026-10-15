@@ -268,6 +268,46 @@
    "bytes": 269,
    "sha256": "04a3f63a65cf91025cc93d66526d3099415fb053b72c15d1cc65e54d36341942"
   },
+  "tiny-openvoice/config.json": {
+   "bytes": 587,
+   "sha256": "39e11c3779db4b08a44eef981f0a8e354284197693ed137b31410c4f22844dbd"
+  },
+  "tiny-openvoice/model.safetensors": {
+   "bytes": 2119496,
+   "sha256": "f310e8fc2edcb3556ce315564123eccaea2ae6f5e105c10ad5fa7d82f5e42f3b"
+  },
+  "tiny-openvoice/reference/converted-v1.npy": {
+   "bytes": 96128,
+   "sha256": "e6c47db48b9abe8c33012a4693e739f89b19da4bbbbadee9902a9c8cbe37fe20"
+  },
+  "tiny-openvoice/reference/converted-v2.npy": {
+   "bytes": 96128,
+   "sha256": "f61b37387fad8097c901a82cad5c5655f317105a5706e99563562bf58d0fa800"
+  },
+  "tiny-openvoice/reference/embedding-clips.npy": {
+   "bytes": 256,
+   "sha256": "97433759c415927deb7fa8488e46184b9ad657d522871acc9b9e7df67c2b2be0"
+  },
+  "tiny-openvoice/reference/embedding-source.npy": {
+   "bytes": 192,
+   "sha256": "660c8eb7d79881b4a01fad31827f21dff8616f4ead2c34ad4c68cc99f1acfa6c"
+  },
+  "tiny-openvoice/reference/embedding-target.npy": {
+   "bytes": 192,
+   "sha256": "06243ec753887b9c34daaa6eea24886971773f5bd88bf497e92a8c127255687c"
+  },
+  "tiny-openvoice/reference/input.json": {
+   "bytes": 174,
+   "sha256": "9714fe7077fc4861b752b149775d465640d092a5681adf8bd6addaf9c4ebe6b7"
+  },
+  "tiny-openvoice/reference/spectrogram.npy": {
+   "bytes": 198128,
+   "sha256": "32c0c662f3d5f427715d06a4ff3a16c47b8b412aaa54283dd88d0af9103cc33b"
+  },
+  "tiny-openvoice/tensors.json": {
+   "bytes": 27692,
+   "sha256": "db48de8ab23a6d562e86dea41083b500a1d1650181b7ca5813dfe68ce0b1be04"
+  },
   "tiny-vits/config.json": {
    "bytes": 1533,
    "sha256": "e760368738850cfa3c1a022b8c77e787ba8bb68fd18f2b7fb441bfdafbd5d749"
@@ -478,6 +518,7 @@
   "whisper",
   "ctc",
   "vits",
+  "voices",
   "transcripts"
  ],
  "versions": {

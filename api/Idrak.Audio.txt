@@ -176,6 +176,14 @@ public interface Idrak.Audio.Abstractions.IAudioLanguageEncoder : System.IDispos
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Audio.Abstractions.AudioData audio)
   public int Width { get; }
 
+public interface Idrak.Audio.Abstractions.ISpeakerEncoder : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public float[] Embed(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> clips, System.Threading.CancellationToken cancellationToken = default)
+  public int EmbeddingSize { get; }
+  public int SampleRate { get; }
+  public string Name { get; }
+  public string? Folder { get; }
+
 public interface Idrak.Audio.Abstractions.ISpeechFamily
   public (default) Idrak.Audio.Abstractions.CreatedSpeechModel Create(System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
   public Idrak.Audio.Abstractions.ISpeechRecognizer Read(Idrak.Audio.Abstractions.SpeechCheckpoint checkpoint)
@@ -203,6 +211,25 @@ public interface Idrak.Audio.Abstractions.IVocoder
   public int Mels { get; }
   public int SampleRate { get; }
   public string Name { get; }
+
+public interface Idrak.Audio.Abstractions.IVoiceConverter : Idrak.Audio.Abstractions.ISpeakerEncoder, System.IDisposable
+  public Idrak.Audio.Abstractions.AudioData Convert(Idrak.Audio.Abstractions.AudioData speech, System.ReadOnlySpan<float> target, Idrak.Audio.Abstractions.VoiceConversionOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Idrak.Audio.Abstractions.IVoiceConverterFamily
+  public Idrak.Audio.Abstractions.IVoiceConverter Read(Idrak.Audio.Abstractions.VoiceConverterCheckpoint checkpoint, Idrak.Audio.Abstractions.VoiceConverterLoadOptions options)
+  public bool Recognizes(System.Text.Json.Nodes.JsonObject config)
+  public string Name { get; }
+
+public interface Idrak.Audio.Abstractions.IVoiceStore
+  public Idrak.Audio.Abstractions.VoiceProfile Add(string name, System.Collections.Generic.IReadOnlyList<string> clips, Idrak.Audio.Abstractions.ISpeakerEncoder encoder, Idrak.Audio.Abstractions.VoiceAddOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Audio.Abstractions.VoiceProfile Import(string folderOrZip, bool overwrite = false)
+  public Idrak.Audio.Abstractions.VoiceProfile? Find(string name)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.VoiceProfile> List()
+  public bool Remove(string name)
+  public float[] ReadEmbedding(Idrak.Audio.Abstractions.VoiceProfile voice)
+  public string Location { get; }
+  public string Name { get; }
+  public void Export(string name, string zip)
 
 public abstract class Idrak.Audio.Abstractions.PretrainedAudio
   protected PretrainedAudio()
@@ -270,6 +297,7 @@ public static class Idrak.Audio.Abstractions.SpeechSynthesisModels
   public static Idrak.Audio.Abstractions.ISpeechSynthesizer Load(string path, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions? options = null)
 
 public sealed record Idrak.Audio.Abstractions.SpeechSynthesisOptions : System.IEquatable<Idrak.Audio.Abstractions.SpeechSynthesisOptions>
+  public Idrak.Audio.Abstractions.VoiceConversionOptions? Conversion { get; init; }
   public SpeechSynthesisOptions()
   public float Rate { get; init; }
   public float? DurationNoiseScale { get; init; }
@@ -277,11 +305,14 @@ public sealed record Idrak.Audio.Abstractions.SpeechSynthesisOptions : System.IE
   public int MaxCharacters { get; init; }
   public int Seed { get; init; }
   public int? SampleRate { get; init; }
+  public string VoiceConversion { get; init; }
   public string? Vocoder { get; init; }
   public string? Voice { get; init; }
+  public string? VoiceStore { get; init; }
 
 public sealed record Idrak.Audio.Abstractions.SynthesisStats : System.IEquatable<Idrak.Audio.Abstractions.SynthesisStats>
-  public SynthesisStats(System.TimeSpan Text, System.TimeSpan Model, System.TimeSpan Vocoder, long PeakDeviceBytes, double RealTimeFactor)
+  public SynthesisStats(System.TimeSpan Text, System.TimeSpan Model, System.TimeSpan Vocoder, long PeakDeviceBytes, double RealTimeFactor, System.TimeSpan Conversion = default)
+  public System.TimeSpan Conversion { get; init; }
   public System.TimeSpan Model { get; init; }
   public System.TimeSpan Text { get; init; }
   public System.TimeSpan Vocoder { get; init; }
@@ -355,6 +386,87 @@ public static class Idrak.Audio.Abstractions.Vocoders
   public static void Register(string name, System.Func<Idrak.Audio.Abstractions.AudioFeatureOptions, Idrak.Audio.Abstractions.IVocoder> factory)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed record Idrak.Audio.Abstractions.VoiceAddOptions : System.IEquatable<Idrak.Audio.Abstractions.VoiceAddOptions>
+  public Idrak.Audio.Abstractions.VoiceConsent? Consent { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Languages { get; init; }
+  public VoiceAddOptions()
+  public bool KeepClips { get; init; }
+  public bool Overwrite { get; init; }
+  public bool TrimSilence { get; init; }
+  public double MinClipSeconds { get; init; }
+  public float MinAgreement { get; init; }
+  public float SilenceDecibels { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.VoiceClip : System.IEquatable<Idrak.Audio.Abstractions.VoiceClip>
+  public VoiceClip(string File, string Sha256, double Seconds, float Agreement)
+  public double Seconds { get; init; }
+  public float Agreement { get; init; }
+  public string File { get; init; }
+  public string Sha256 { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.VoiceConsent : System.IEquatable<Idrak.Audio.Abstractions.VoiceConsent>
+  public System.DateTimeOffset Agreed { get; init; }
+  public VoiceConsent(string Speaker, string Statement, System.DateTimeOffset Agreed)
+  public string Speaker { get; init; }
+  public string Statement { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.VoiceConversionOptions : System.IEquatable<Idrak.Audio.Abstractions.VoiceConversionOptions>
+  public VoiceConversionOptions()
+  public double MaxSeconds { get; init; }
+  public float Tau { get; init; }
+  public float[]? Source { get; init; }
+  public int Seed { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.VoiceConverterCheckpoint : System.IEquatable<Idrak.Audio.Abstractions.VoiceConverterCheckpoint>
+  public Idrak.Abstraction.Formats.ITensorStore Tensors { get; init; }
+  public System.Collections.Generic.List<string> Notes { get; init; }
+  public System.Text.Json.Nodes.JsonObject Config { get; init; }
+  public VoiceConverterCheckpoint(System.Text.Json.Nodes.JsonObject Config, Idrak.Abstraction.Formats.ITensorStore Tensors, string Folder, System.Collections.Generic.List<string> Notes)
+  public string Folder { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.VoiceConverterLoadOptions : System.IEquatable<Idrak.Audio.Abstractions.VoiceConverterLoadOptions>
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public VoiceConverterLoadOptions()
+  public string? Family { get; init; }
+
+public static class Idrak.Audio.Abstractions.VoiceConverters
+  public static Idrak.Audio.Abstractions.IVoiceConverter Load(string path, Idrak.Audio.Abstractions.VoiceConverterLoadOptions? options = null)
+  public static Idrak.Audio.Abstractions.IVoiceConverterFamily FamilyFor(System.Text.Json.Nodes.JsonObject config, string? name = null, string? where = null)
+  public static Idrak.Audio.Abstractions.IVoiceConverterFamily Get(string name)
+  public static Idrak.Audio.Abstractions.IVoiceConverterFamily? Default(string name)
+  public static Idrak.Audio.Abstractions.IVoiceConverterFamily? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.IVoiceConverterFamily family)
+
+public static class Idrak.Audio.Abstractions.VoiceKinds
+  public const string Checkpoint = "checkpoint"
+  public const string Embedding = "embedding"
+  public const string Speaker = "speaker"
+
+public sealed record Idrak.Audio.Abstractions.VoiceProfile : System.IEquatable<Idrak.Audio.Abstractions.VoiceProfile>
+  public Idrak.Audio.Abstractions.VoiceConsent? Consent { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.VoiceClip> Clips { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Languages { get; init; }
+  public System.Text.Json.Nodes.JsonObject Manifest { get; init; }
+  public VoiceProfile(string Name, string Kind, System.Collections.Generic.IReadOnlyList<string> Languages, string Folder, System.Text.Json.Nodes.JsonObject Manifest)
+  public int EmbeddingSize { get; }
+  public string Folder { get; init; }
+  public string Kind { get; init; }
+  public string Name { get; init; }
+  public string? Encoder { get; }
+  public string? EncoderFolder { get; }
+
+public static class Idrak.Audio.Abstractions.VoiceStores
+  public const string FolderName = "folder"
+  public static Idrak.Audio.Abstractions.IVoiceStore Get(string? name = null)
+  public static Idrak.Audio.Abstractions.IVoiceStore? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.IVoiceStore store)
+
 public static class Idrak.Audio.AudioLanguage
   public static Idrak.Audio.Abstractions.PretrainedAudio? Attach(Idrak.Models.PretrainedModel model, string? architecture = null, System.Collections.Generic.List<string>? notes = null)
 
@@ -389,6 +501,26 @@ public sealed record Idrak.Audio.FlacOptions : System.IEquatable<Idrak.Audio.Fla
   public bool CheckCrc { get; init; }
   public bool KeepCutEnd { get; init; }
   public int FramesPerTask { get; init; }
+
+public sealed class Idrak.Audio.FolderVoiceStore : Idrak.Audio.Abstractions.IVoiceStore
+  public FolderVoiceStore(string root, string name = "folder")
+  public Idrak.Audio.Abstractions.VoiceProfile Add(string name, System.Collections.Generic.IReadOnlyList<string> clips, Idrak.Audio.Abstractions.ISpeakerEncoder encoder, Idrak.Audio.Abstractions.VoiceAddOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Audio.Abstractions.VoiceProfile Import(string folderOrZip, bool overwrite = false)
+  public Idrak.Audio.Abstractions.VoiceProfile? Find(string name)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.VoiceProfile> List()
+  public bool Remove(string name)
+  public const int ManifestVersion = 1
+  public const string EmbeddingFile = "embedding.safetensors"
+  public const string ManifestFile = "voice.json"
+  public float[] ReadEmbedding(Idrak.Audio.Abstractions.VoiceProfile voice)
+  public static Idrak.Audio.Abstractions.AudioData Prepare(Idrak.Audio.Abstractions.AudioData clip, int sampleRate, Idrak.Audio.Abstractions.VoiceAddOptions options)
+  public static bool IsPlainName(string name)
+  public static float Cosine(System.ReadOnlySpan<float> a, System.ReadOnlySpan<float> b)
+  public static string DefaultRoot { get; }
+  public string Location { get; }
+  public string Name { get; }
+  public string Root { get; }
+  public void Export(string name, string zip)
 
 public sealed record Idrak.Audio.GriffinLimOptions : System.IEquatable<Idrak.Audio.GriffinLimOptions>
   public GriffinLimOptions()
@@ -450,6 +582,17 @@ public static class Idrak.Audio.Stft
   public static int SamplesFor(int frames, Idrak.Audio.Abstractions.AudioFeatureOptions options)
   public static void ComplexOnHost(System.ReadOnlySpan<float> samples, Idrak.Audio.Abstractions.AudioFeatureOptions options, System.Span<float> real, System.Span<float> imaginary)
   public static void PowerOnHost(System.ReadOnlySpan<float> samples, Idrak.Audio.Abstractions.AudioFeatureOptions options, System.Span<float> power)
+
+public sealed class Idrak.Audio.VoicedSynthesizer : Idrak.Audio.Abstractions.ISpeechSynthesizer, System.IDisposable
+  public (Idrak.Audio.Abstractions.AudioData, Idrak.Audio.Abstractions.SynthesisStats) Speak(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public (Idrak.Audio.Abstractions.ISpeechSynthesizer, Idrak.Audio.Abstractions.SpeechSynthesisOptions, Idrak.Audio.Abstractions.IVoiceConverter?, float[]?) Resolve(Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null)
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Audio.Abstractions.ISpeechSynthesizer Synthesizer { get; }
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> SpeakStream(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<string> Voices { get; }
+  public VoicedSynthesizer(Idrak.Audio.Abstractions.ISpeechSynthesizer synthesizer, Idrak.Audio.Abstractions.IVoiceStore? store = null, Idrak.Audio.Abstractions.IVoiceConverter? converter = null, bool ownsSynthesizer = true)
+  public int SampleRate { get; }
+  public void Dispose()
 
 public sealed class Idrak.Audio.WavCodec : Idrak.Audio.Abstractions.IAudioCodec
   public Idrak.Audio.Abstractions.AudioData Decode(System.ReadOnlySpan<byte> file)

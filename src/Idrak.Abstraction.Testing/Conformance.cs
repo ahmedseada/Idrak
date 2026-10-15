@@ -218,6 +218,40 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks a voice converter (Idrak.Audio's <c>IVoiceConverter</c>, or one of your own, given as
+    /// <see cref="VoiceConverterUnderTest"/>) on tones and noise the suite makes (<see cref="VoiceConverterSuite"/>): finite
+    /// embeddings of the said width, the same twice; finite conversions of the input's length (within the slack), the same
+    /// twice and from two threads at once; a conversion to the source's own embedding. One random case unless
+    /// <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// Conformance.CheckVoiceConverter(new VoiceConverterUnderTest(converter.SampleRate, converter.EmbeddingSize,
+    ///     clips =&gt; converter.Embed([.. clips.Select(c =&gt; new AudioData(c, 1, converter.SampleRate))]),
+    ///     (speech, target) =&gt; converter.Convert(new AudioData(speech, 1, converter.SampleRate), target).Samples, hop)).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    public static ConformanceReport CheckVoiceConverter(VoiceConverterUnderTest converter, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(converter);
+        return Check(converter, new VoiceConverterSuite(), options ?? new ContractCheckOptions { RandomCases = 1 });
+    }
+
+    /// <summary>
+    /// Checks a voice store (Idrak.Audio's <c>IVoiceStore</c> with an encoder, or one of your own, given as
+    /// <see cref="VoiceStoreUnderTest"/>) on voices of WAV clips the suite writes into <paramref name="folder"/>
+    /// (<see cref="VoiceStoreSuite"/>): listed and found ignoring case once added, refused without consent or under an
+    /// installed name, the same embedding after export, removal and import. One random case unless
+    /// <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckVoiceStore(VoiceStoreUnderTest store, string folder, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentException.ThrowIfNullOrEmpty(folder);
+        return Check(store, new VoiceStoreSuite(folder), options ?? new ContractCheckOptions { RandomCases = 1 });
+    }
+
+    /// <summary>
     /// Checks an image model family (Idrak.Vision's <c>IImageModelFamily</c>, given as its loading: a checkpoint's path in, the
     /// loaded model wrapped as <see cref="ImageModelUnderTest"/> out) on checkpoints of its own
     /// (<see cref="ImageModelFamilySuite"/>): it loads, predicts finite outputs, the same every time, from several threads,

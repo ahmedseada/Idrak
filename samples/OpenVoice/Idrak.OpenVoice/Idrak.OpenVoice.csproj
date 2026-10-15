@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- OpenVoice, OpenVoice's tone colour converter (MIT) as a voice converter plug-in (plan 21, S9, route B): a
+       reference encoder gives a speaker embedding of a person's clips, and the converter changes any speech to that
+       voice (a posterior encoder, flows conditioned on the source and target embeddings, a HiFi-GAN decoder). It reuses
+       the VITS plug-in's layers, so Idrak.VitsSpeech.dll sits beside it. Load it in the command line with -P
+       Idrak.OpenVoice.dll, or reference it and call OpenVoicePlugin.Register() in an app. It references Idrak and
+       Idrak.Audio as packages, as an outside plug-in does; in this repository they come from the clone
+       (IdrakFromSource, samples/Directory.Build.props). -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Audio" Version="$(IdrakVersion)" />
+    <ProjectReference Include="..\..\VitsSpeech\Idrak.VitsSpeech\Idrak.VitsSpeech.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction" />
+    <Using Include="Idrak.Abstraction.Devices" />
+    <Using Include="Idrak.Audio" />
+    <Using Include="Idrak.Audio.Abstractions" />
+    <Using Include="Idrak.VitsSpeech" />
+  </ItemGroup>
+
+</Project>

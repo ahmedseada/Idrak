@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Nlp` | 11 | 2 | 8 | 21 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
-| `Idrak.Audio` | 10 | 1 | 7 | 18 | 0 |
+| `Idrak.Audio` | 14 | 1 | 9 | 24 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -236,15 +236,21 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechRecognizer` | interface | public | Device | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechSynthesisFamily` | interface | public | — | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISpeechSynthesizer` | interface | public | Device | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ISpeechSynthesizer` | interface | public | Device | VoicedSynthesizer |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, Vocoders.GuardedVocoder |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IVoiceConverter` | interface | public | — | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IVoiceConverterFamily` | interface | public | — | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IVoiceStore` | interface | public | — | FolderVoiceStore |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.PretrainedAudio` | abstract class | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechFamilies` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechSynthesisFamilies` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | — | Audio |
+| `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio | Audio |
+| `Idrak.Audio.Abstractions.VoiceStores` | registry | public | — |  | folder | Audio | Audio |
 
 ## The device contract (`Backend`)
 
