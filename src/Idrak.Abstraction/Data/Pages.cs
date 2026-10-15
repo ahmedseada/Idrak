@@ -100,8 +100,8 @@ public sealed record PageStyle
 
     /// <summary>
     /// How often a page is cut to its drawn parts (0 to 1; 0, the default: the whole page): the box around every part,
-    /// with <see cref="CropPadding"/> of paper around it, so the text fills the image (for a reader learning from
-    /// scratch, the text and not the paper). The text is unchanged: every drawn part is inside the box.
+    /// narrowed to the ink inside it, with <see cref="CropPadding"/> of paper around it, so the text fills the image (for
+    /// a reader learning from scratch, the text and not the paper). The text is unchanged: every drawn part is inside.
     /// </summary>
     public float Crop { get; init; }
 

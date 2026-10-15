@@ -638,11 +638,45 @@ public static class SyntheticPages
             return null;
         }
 
-        float pad = padding.Min + (float)random.NextDouble() * (padding.Max - padding.Min);
-        int x0 = Math.Clamp((int)MathF.Floor(left - pad), 0, page.Image.Width - 1), y0 = Math.Clamp((int)MathF.Floor(top - pad), 0, page.Image.Height - 1);
-        int x1 = Math.Clamp((int)MathF.Ceiling(right + pad), x0 + 1, page.Image.Width), y1 = Math.Clamp((int)MathF.Ceiling(bottom + pad), y0 + 1, page.Image.Height);
+        // A part's box spans its column (a short line's box is as wide as the page's text), so the box is narrowed to the
+        // ink inside it: the pixels that differ from the paper (the page's corner) in a channel, rows read in order.
+        var image = page.Image;
+        int bx0 = Math.Clamp((int)MathF.Floor(left), 0, image.Width - 1), by0 = Math.Clamp((int)MathF.Floor(top), 0, image.Height - 1);
+        int bx1 = Math.Clamp((int)MathF.Ceiling(right), bx0 + 1, image.Width), by1 = Math.Clamp((int)MathF.Ceiling(bottom), by0 + 1, image.Height);
+        var pixels = image.Pixels;
+        int plane = image.Height * image.Width;
+        int inkLeft = int.MaxValue, inkTop = int.MaxValue, inkRight = -1, inkBottom = -1;
+        for (int y = by0; y < by1; y++)
+        {
+            for (int x = bx0; x < bx1; x++)
+            {
+                bool ink = false;
+                for (int c = 0; c < image.Channels && !ink; c++)
+                {
+                    ink = MathF.Abs(pixels[c * plane + y * image.Width + x] - pixels[c * plane]) > InkContrast;
+                }
+
+                if (ink)
+                {
+                    (inkLeft, inkRight) = (Math.Min(inkLeft, x), Math.Max(inkRight, x));
+                    (inkTop, inkBottom) = (Math.Min(inkTop, y), y);
+                }
+            }
+        }
+
+        if (inkRight >= 0)
+        {
+            (bx0, by0, bx1, by1) = (inkLeft, inkTop, inkRight + 1, inkBottom + 1);
+        }
+
+        int pad = (int)MathF.Round(padding.Min + (float)random.NextDouble() * (padding.Max - padding.Min));
+        int x0 = Math.Max(0, bx0 - pad), y0 = Math.Max(0, by0 - pad);
+        int x1 = Math.Min(image.Width, bx1 + pad), y1 = Math.Min(image.Height, by1 + pad);
         return (x0, y0, x1 - x0, y1 - y0);
     }
+
+    // How far a pixel's value is from the paper's for a cut page to count it as ink (values in [0, 1]).
+    private const float InkContrast = 0.1f;
 
     // The pixels of `box`, each channel's rows copied in memory order.
     private static ImageData Cut(ImageData image, (int X, int Y, int Width, int Height) box)
