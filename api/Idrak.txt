@@ -1366,6 +1366,7 @@ public sealed record Idrak.Models.Abstractions.TokenizerTrainingOptions : System
   public int VocabularySize { get; init; }
   public int Workers { get; init; }
   public int? LimitAlphabet { get; init; }
+  public string LineEnds { get; init; }
   public string PreTokenizer { get; init; }
 
 public readonly record struct Idrak.Models.Abstractions.TokenizerTrainingProgress : System.IEquatable<Idrak.Models.Abstractions.TokenizerTrainingProgress>

@@ -51,6 +51,11 @@ internal sealed class BpeTrainer : ITokenizerTrainer
             throw new ArgumentException($"The minimum frequency cannot be negative ({options.MinFrequency}).", nameof(options));
         }
 
+        if (options.LineEnds is not ("lf" or "keep"))
+        {
+            throw new ArgumentException($"LineEnds is \"lf\" (\\r\\n read as \\n) or \"keep\" (the bytes as they are), not '{options.LineEnds}'.", nameof(options));
+        }
+
         if (files.Count == 0)
         {
             throw new ArgumentException("Give at least one text file to learn from.", nameof(files));
@@ -82,7 +87,7 @@ internal sealed class BpeTrainer : ITokenizerTrainer
         Parallel.ForEach(
             System.Collections.Concurrent.Partitioner.Create(Blocks(files, cancellationToken), EnumerablePartitionerOptions.NoBuffering),
             new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken },
-            () => new WordCounter(byteLevel, options.AddPrefixSpace),
+            () => new WordCounter(byteLevel, options.AddPrefixSpace, options.LineEnds == "lf"),
             (block, _, counter) =>
             {
                 try
@@ -186,7 +191,7 @@ internal sealed class BpeTrainer : ITokenizerTrainer
 
     // Counts one worker's words: a block's bytes become characters once, each line (with its line end) is cut into words
     // by the pre-tokenizer's rule, and each word is counted by its span (no string unless the word is new to this worker).
-    private sealed class WordCounter(bool byteLevel, bool prefixSpace) : IDisposable
+    private sealed class WordCounter(bool byteLevel, bool prefixSpace, bool crlfAsLf) : IDisposable
     {
         private char[] _chars = [];
         private char[] _line = [];
@@ -207,13 +212,19 @@ internal sealed class BpeTrainer : ITokenizerTrainer
             }
 
             int count = Encoding.UTF8.GetChars(bytes, _chars);
-            var text = _chars.AsSpan(0, count);
+            Span<char> text = _chars.AsSpan(0, count);
             var words = Words.GetAlternateLookup<ReadOnlySpan<char>>();
             while (!text.IsEmpty)
             {
                 int end = text.IndexOf('\n');
-                var line = end < 0 ? text : text[..(end + 1)];
+                Span<char> line = end < 0 ? text : text[..(end + 1)];
                 text = end < 0 ? [] : text[(end + 1)..];
+                if (crlfAsLf && line.Length >= 2 && line[^2] == '\r' && line[^1] == '\n')
+                {
+                    line[^2] = '\n';                                            // "\r\n" read as "\n", in the block's own characters
+                    line = line[..^1];
+                }
+
                 if (byteLevel)
                 {
                     if (prefixSpace && line[0] != ' ')

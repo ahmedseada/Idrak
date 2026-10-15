@@ -44,6 +44,8 @@ internal sealed class DataTokenizerCommand : Command
               --limit-alphabet N   keep at most N characters in the alphabet (the most frequent)
               --trainer NAME       the trainer (bpe; others from a plug-in, -P)
               --workers N          threads counting words (one per processor)
+              --line-ends E        lf (\r\n read as \n, so a file trains the same on every system; the default) or keep
+                                   (the bytes as they are, as Hugging Face's train_from_files reads them)
           -o, --out FILE           the tokenizer.json to write
 
         Examples:
@@ -54,7 +56,7 @@ internal sealed class DataTokenizerCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--vocab", "--min-frequency", "--special", "--pre-tokenizer", "--limit-alphabet", "--trainer", "--workers", "--out"];
+        ["--vocab", "--min-frequency", "--special", "--pre-tokenizer", "--limit-alphabet", "--trainer", "--workers", "--line-ends", "--out"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--no-special", "--prefix-space"];
 
@@ -80,6 +82,7 @@ internal sealed class DataTokenizerCommand : Command
             AddPrefixSpace = context.Flag("--prefix-space"),
             LimitAlphabet = context.Option("--limit-alphabet") is null ? null : context.IntOption("--limit-alphabet", 0),
             Workers = context.IntOption("--workers", 0),
+            LineEnds = context.Option("--line-ends") ?? defaults.LineEnds,
         };
         ITokenizerTrainer trainer;
         try
