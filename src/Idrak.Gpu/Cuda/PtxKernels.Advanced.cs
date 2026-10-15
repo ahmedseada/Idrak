@@ -15,7 +15,7 @@ internal static partial class PtxKernels
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
         "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32",
-        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32",
+        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
         "permute_f32", "copy2d_f32", "sum_axis_f32", "broadcast_axis_f32",
     ];
 
@@ -1069,13 +1069,68 @@ internal static partial class PtxKernels
             st.global.f32 [%a_cols], %f1;
             """);
 
-        Elementwise(sb, "col2im_f32", ["dcols", "dx"], ConvParams,
-            PatchIndex + """
-            @!%p1 bra SKIP;
-            ld.global.f32 %f1, [%a_dcols];
-            add.u64 %rd2, %b_dx, %rd1;
-            atom.global.add.f32 %f2, [%rd2], %f1;
-            SKIP:
+        // One thread per input element (n, c, ih, iw), gathering the column entries that read it (rule 86: no atomics, a
+        // fixed order): the windows in position order (oh, then ow, rising: kh, then kw, falling), added to dx's value as
+        // the CPU's fold adds them, so the sums are the CPU's bits.
+        Elementwise(sb, "col2im_f32", ["dcols", "dx"],
+            [("u32", "C"), ("u32", "H"), ("u32", "W"), ("u32", "KH"), ("u32", "KW"), ("u32", "SH"), ("u32", "SW"), ("u32", "PH"), ("u32", "PW"),
+             ("u32", "OH"), ("u32", "OW"), ("u32", "patch"), ("u32", "DH"), ("u32", "DW")],
+            """
+            div.u32 %r5, %i, %s_W;
+            rem.u32 %r6, %i, %s_W;
+            div.u32 %r7, %r5, %s_H;
+            rem.u32 %r8, %r5, %s_H;
+            div.u32 %r9, %r7, %s_C;
+            rem.u32 %r10, %r7, %s_C;
+            ld.global.f32 %f1, [%a_dx];
+            mul.lo.u32 %r11, %r9, %s_OH;
+            mul.lo.u32 %r12, %r10, %s_KH;
+            add.u32 %r24, %r8, %s_PH;
+            add.u32 %r25, %r6, %s_PW;
+            mov.u32 %r13, %s_KH;
+            C2I_KH:
+            setp.eq.u32 %p1, %r13, 0;
+            @%p1 bra C2I_DONE;
+            sub.u32 %r13, %r13, 1;
+            mul.lo.u32 %r14, %r13, %s_DH;
+            sub.s32 %r15, %r24, %r14;
+            setp.lt.s32 %p2, %r15, 0;
+            @%p2 bra C2I_KH;
+            rem.u32 %r16, %r15, %s_SH;
+            setp.ne.u32 %p2, %r16, 0;
+            @%p2 bra C2I_KH;
+            div.u32 %r16, %r15, %s_SH;
+            setp.ge.u32 %p2, %r16, %s_OH;
+            @%p2 bra C2I_KH;
+            add.u32 %r17, %r11, %r16;
+            mul.lo.u32 %r17, %r17, %s_OW;
+            add.u32 %r18, %r12, %r13;
+            mul.lo.u32 %r18, %r18, %s_KW;
+            mov.u32 %r19, %s_KW;
+            C2I_KW:
+            setp.eq.u32 %p3, %r19, 0;
+            @%p3 bra C2I_KH;
+            sub.u32 %r19, %r19, 1;
+            mul.lo.u32 %r20, %r19, %s_DW;
+            sub.s32 %r21, %r25, %r20;
+            setp.lt.s32 %p4, %r21, 0;
+            @%p4 bra C2I_KW;
+            rem.u32 %r22, %r21, %s_SW;
+            setp.ne.u32 %p4, %r22, 0;
+            @%p4 bra C2I_KW;
+            div.u32 %r22, %r21, %s_SW;
+            setp.ge.u32 %p4, %r22, %s_OW;
+            @%p4 bra C2I_KW;
+            add.u32 %r23, %r17, %r22;
+            mad.lo.u32 %r23, %r23, %s_patch, %r18;
+            add.u32 %r23, %r23, %r19;
+            mul.wide.u32 %rd2, %r23, 4;
+            add.u64 %rd2, %b_dcols, %rd2;
+            ld.global.f32 %f2, [%rd2];
+            add.rn.f32 %f1, %f1, %f2;
+            bra C2I_KW;
+            C2I_DONE:
+            st.global.f32 [%a_dx], %f1;
             """);
 
         // One thread per output (n, c, oh, ow): scan the window, keep the first maximum.
@@ -1125,6 +1180,61 @@ internal static partial class PtxKernels
             st.global.u32 [%a_argmax], %r20;
             """);
 
+        // One thread per input element, gathering the gradients of the windows whose maximum it is (rule 86: no atomics, a
+        // fixed order): the windows that hold it in output order (oh, then ow, rising), added to dx's value as the CPU adds them.
+        Elementwise(sb, "maxpool_bwd_gather_f32", ["dy", "argmax", "dx"],
+            [("u32", "H"), ("u32", "W"), ("u32", "KH"), ("u32", "KW"), ("u32", "SH"), ("u32", "SW"), ("u32", "PH"), ("u32", "PW"), ("u32", "OH"), ("u32", "OW")],
+            """
+            div.u32 %r5, %i, %s_W;
+            rem.u32 %r6, %i, %s_W;
+            div.u32 %r7, %r5, %s_H;
+            rem.u32 %r8, %r5, %s_H;
+            mul.lo.u32 %r9, %r7, %s_OH;
+            ld.global.f32 %f1, [%a_dx];
+            add.u32 %r20, %r8, %s_PH;
+            add.u32 %r21, %r6, %s_PW;
+            mov.u32 %r10, 0;
+            MPB_Y:
+            setp.ge.u32 %p1, %r10, %s_OH;
+            @%p1 bra MPB_DONE;
+            mul.lo.u32 %r11, %r10, %s_SH;
+            setp.gt.u32 %p2, %r11, %r20;
+            @%p2 bra MPB_DONE;
+            sub.u32 %r12, %r20, %r11;
+            setp.ge.u32 %p2, %r12, %s_KH;
+            @%p2 bra MPB_Y_NEXT;
+            add.u32 %r13, %r9, %r10;
+            mul.lo.u32 %r13, %r13, %s_OW;
+            mov.u32 %r14, 0;
+            MPB_X:
+            setp.ge.u32 %p3, %r14, %s_OW;
+            @%p3 bra MPB_Y_NEXT;
+            mul.lo.u32 %r15, %r14, %s_SW;
+            setp.gt.u32 %p4, %r15, %r21;
+            @%p4 bra MPB_Y_NEXT;
+            sub.u32 %r16, %r21, %r15;
+            setp.ge.u32 %p4, %r16, %s_KW;
+            @%p4 bra MPB_X_NEXT;
+            add.u32 %r17, %r13, %r14;
+            mul.wide.u32 %rd1, %r17, 4;
+            add.u64 %rd2, %b_argmax, %rd1;
+            ld.global.u32 %r18, [%rd2];
+            setp.ne.u32 %p4, %r18, %i;
+            @%p4 bra MPB_X_NEXT;
+            add.u64 %rd2, %b_dy, %rd1;
+            ld.global.f32 %f2, [%rd2];
+            add.rn.f32 %f1, %f1, %f2;
+            MPB_X_NEXT:
+            add.u32 %r14, %r14, 1;
+            bra MPB_X;
+            MPB_Y_NEXT:
+            add.u32 %r10, %r10, 1;
+            bra MPB_Y;
+            MPB_DONE:
+            st.global.f32 [%a_dx], %f1;
+            """);
+
+        // dx[argmax[i]] += dy[i] without the windows' geometry (callers that know it gather above instead).
         Elementwise(sb, "maxpool_bwd_f32", ["dy", "argmax", "dx"], [],
             """
             ld.global.u32 %r5, [%a_argmax];
