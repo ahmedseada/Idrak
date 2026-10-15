@@ -202,6 +202,7 @@ public sealed record Idrak.Nlp.Abstractions.TrainingSequence : System.IEquatable
 public static class Idrak.Nlp.Abstractions.TuningDataFormats
   public const string Messages = "messages"
   public const string ShareGpt = "sharegpt"
+  public const string Transcripts = "transcripts"
   public static Idrak.Nlp.Abstractions.ITuningDataFormat Detect(string path)
   public static Idrak.Nlp.Abstractions.ITuningDataFormat Get(string name)
   public static Idrak.Nlp.Abstractions.ITuningDataFormat? Default(string name)
@@ -217,6 +218,7 @@ public sealed record Idrak.Nlp.Abstractions.TuningDataOptions : System.IEquatabl
   public TuningDataOptions()
   public string? Audios { get; init; }
   public string? Images { get; init; }
+  public string? Prompt { get; init; }
 
 public sealed record Idrak.Nlp.AnswerChoice : System.IEquatable<Idrak.Nlp.AnswerChoice>
   public AnswerChoice(int Best, System.Collections.Generic.IReadOnlyList<double> Probabilities, System.Collections.Generic.IReadOnlyList<double> LogLikelihoods)
