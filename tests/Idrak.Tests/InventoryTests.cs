@@ -30,7 +30,7 @@ internal static partial class Tests
     // Idrak.Abstraction.Testing, is left out on purpose: it is a test tool, not a user of the contracts, and counting it
     // would pull contracts back into Idrak.Abstraction.
     private static readonly string[] LibraryAssemblyNames =
-        ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Nlp", "Idrak.Data", "Idrak.Vision", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
+        ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Nlp", "Idrak.Data", "Idrak.Vision", "Idrak.Audio", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
 
     // Each assembly whose internals others see, with those others (the tests aside): what must turn into public contract
     // or be justified. Idrak.Abstraction is not one since phase 4: it grants no library assembly its internals.
@@ -266,6 +266,7 @@ internal static partial class Tests
             "Idrak.Optimizers" or "Idrak.Training" => "Training",
             "Idrak.Data" or "Idrak.Data.Parquet" or "Idrak.Datasets" or "Idrak.Imaging" => "Data",
             "Idrak.Vision" => "Vision",
+            "Idrak.Audio" => "Audio",
             "Idrak.Retrieval" or "Idrak.Nlp.Retrieval" => "Retrieval",
             "Idrak.Generation" or "Idrak.Nlp" or "Idrak.Nlp.Generation" or "Idrak.Nlp.Inference" => "Generation",
             "Idrak.Models" or "Idrak.Onnx" or "Idrak.Onnx.Runtime" => "Formats",

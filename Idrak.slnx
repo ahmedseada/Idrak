@@ -39,6 +39,7 @@
     <Project Path="src/Idrak.Vision/Idrak.Vision.csproj" />
     <Project Path="src/Idrak.Cli/Idrak.Cli.csproj" />
     <Project Path="src/Idrak.Nlp/Idrak.Nlp.csproj" />
+    <Project Path="src/Idrak.Audio/Idrak.Audio.csproj" />
     <Project Path="src/Idrak/Idrak.csproj" />
   </Folder>
   <Folder Name="/tests/">

@@ -27,6 +27,31 @@ public sealed class Idrak.Abstraction.Testing.AnnotationFormatUnderTest
   public Idrak.Abstraction.Testing.AnnotationFormatTraits Traits { get; }
   public void Write(Idrak.Abstraction.Data.AnnotatedDataset dataset, string path)
 
+public sealed class Idrak.Abstraction.Testing.AudioCodecSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.AudioCodecUnderTest>
+  public AudioCodecSuite(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.AudioSample> samples)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.AudioCodecUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.AudioCodecUnderTest : System.IEquatable<Idrak.Abstraction.Testing.AudioCodecUnderTest>
+  public AudioCodecUnderTest(System.Func<System.ReadOnlyMemory<byte>, Idrak.Abstraction.Testing.AudioHeader?> ReadInfo, System.Func<System.ReadOnlyMemory<byte>, Idrak.Abstraction.Testing.DecodedAudio> Decode)
+  public System.Func<System.ReadOnlyMemory<byte>, Idrak.Abstraction.Testing.AudioHeader?> ReadInfo { get; init; }
+  public System.Func<System.ReadOnlyMemory<byte>, Idrak.Abstraction.Testing.DecodedAudio> Decode { get; init; }
+
+public readonly record struct Idrak.Abstraction.Testing.AudioHeader : System.IEquatable<Idrak.Abstraction.Testing.AudioHeader>
+  public AudioHeader(int SampleRate, int Channels, long Samples)
+  public int Channels { get; init; }
+  public int SampleRate { get; init; }
+  public long Samples { get; init; }
+
+public sealed record Idrak.Abstraction.Testing.AudioSample : System.IEquatable<Idrak.Abstraction.Testing.AudioSample>
+  public AudioSample(string Path, Idrak.Abstraction.Testing.DecodedAudio? Expected = null, float Tolerance = 0f, string? Error = null)
+  public Idrak.Abstraction.Testing.DecodedAudio? Expected { get; init; }
+  public float Tolerance { get; init; }
+  public string Path { get; init; }
+  public string? Error { get; init; }
+
 public sealed class Idrak.Abstraction.Testing.AugmentationSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IAugmentation>
   public AugmentationSuite()
   public bool ColorsKept { get; init; }
@@ -87,6 +112,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport Check(Idrak.Abstraction.Generation.ITokenizer tokenizer, Idrak.Abstraction.Generation.ITokenizer? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport Check<T>(T implementation, Idrak.Abstraction.Testing.ContractSuite<T> suite, Idrak.Abstraction.Testing.ContractCheckOptions? options = null) where T : class
   public static Idrak.Abstraction.Testing.ConformanceReport Check<TKernel>(Idrak.Abstraction.Operations.PluginOperation<TKernel> operation, Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Devices.Backend, TKernel, int, float[]> run, int cases = 8, float tolerance = 1E-05f) where TKernel : System.Delegate
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckAudioCodec(Idrak.Abstraction.Testing.AudioCodecUnderTest codec, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.AudioSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckChatPartKind(string name, Idrak.Abstraction.Generation.IChatPartKind? kind = null, System.Collections.Generic.IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -138,6 +164,12 @@ public abstract class Idrak.Abstraction.Testing.ContractSuite<T> where T : class
   public abstract string Name { get; }
   public abstract void Run(T implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
   public virtual Idrak.Abstraction.Device Device { get; }
+
+public readonly record struct Idrak.Abstraction.Testing.DecodedAudio : System.IEquatable<Idrak.Abstraction.Testing.DecodedAudio>
+  public DecodedAudio(int SampleRate, int Channels, float[] Samples)
+  public float[] Samples { get; init; }
+  public int Channels { get; init; }
+  public int SampleRate { get; init; }
 
 public sealed record Idrak.Abstraction.Testing.DetectionImage : System.IEquatable<Idrak.Abstraction.Testing.DetectionImage>
   public DetectionImage(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ScoredBox> Predictions, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ObjectAnnotation> Truths)

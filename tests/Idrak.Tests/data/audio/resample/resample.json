@@ -1,0 +1,16 @@
+{
+ "lowpass_filter_width": 6,
+ "rate44k": {
+  "from": 44100,
+  "samples_in": 66150,
+  "samples_out": 24000
+ },
+ "rate8k": {
+  "from": 8000,
+  "samples_in": 12000,
+  "samples_out": 24000
+ },
+ "resampling_method": "sinc_interp_hann",
+ "rolloff": 0.99,
+ "target": 16000
+}
