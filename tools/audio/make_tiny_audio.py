@@ -1,6 +1,7 @@
 """The reference for Idrak.Audio (plan 21, phase S0): generated WAV files and their samples, torchaudio's resampling and
 features, a tiny random Whisper-style model and transformers' outputs for it, a tiny CTC recognizer's loss, gradients
-and alignments, a tiny VITS synthesizer's waveform, and transcript records.
+and alignments, a tiny encoder-decoder recognizer's loss, gradients and greedy texts, a tiny VITS synthesizer's
+waveform, and transcript records.
 
     python -m venv audio && audio/bin/pip install torch torchaudio transformers tokenizers safetensors numpy soundfile
     audio/bin/python tools/audio/make_tiny_audio.py tests/Idrak.Tests/data/audio
@@ -25,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "vits", "voices", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "vits", "voices", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -624,6 +625,10 @@ def ctc_modules(torch, convolution):
             self.head = nn.Linear(d, c["classes"])
 
         def forward(self, mel, frames):                                     # mel [N, T, mels]; frames [N]
+            x, steps = self.encode(mel, frames)
+            return torch.log_softmax(self.head(x), dim=-1), steps
+
+        def encode(self, mel, frames):                                      # the normed states [N, T', dim] and each utterance's steps
             k = c["subsample_kernel"]
             x = mel.transpose(1, 2)[:, :, None, :]                          # [N, mels, 1, T]
             steps = frames.clone()
@@ -642,7 +647,7 @@ def ctc_modules(torch, convolution):
             keep = (~pad).to(x.dtype)[..., None]
             for layer in self.layers:
                 x = layer(x, pad, keep)
-            return torch.log_softmax(self.head(self.norm(x)), dim=-1), steps
+            return self.norm(x), steps
 
     return Model()
 
@@ -759,6 +764,182 @@ def write_ctc(out):
                                                "zero_infinity": True, "sgd_lr": 0.1, "sgd_momentum": 0.0, "results": results})
 
 
+# The IdrakAudio plug-in's "seq2seq" task in torch: the "ctc" encoder without its head (its normed states the memory) and
+# a pre-norm text decoder: token embedding and learned positions, blocks of causal self-attention, cross-attention over
+# each utterance's own encoder steps (the padding masked) and a feed-forward, a final LayerNorm and the head (the
+# embedding's table, or its own weight). The decoder reads the start token and the labels and is taught each next label
+# and then the end token; the loss is each utterance's mean cross-entropy, averaged over the batch.
+SEQ = dict(decoder_layers=2, max_target_positions=16, start_token=39, end_token=39)
+
+
+def seq2seq_modules(torch, decoder_dim, decoder_heads, tie):
+    nn = torch.nn
+    F = torch.nn.functional
+    c = CTC
+    act = lambda x: F.gelu(x, approximate="tanh")
+    encoder = ctc_modules(torch, False)
+    del encoder.head
+
+    class Attention(nn.Module):
+        def __init__(self, inputs):
+            super().__init__()
+            d = decoder_dim
+            self.q_proj = nn.Linear(d, d)
+            self.k_proj = nn.Linear(inputs, d)
+            self.v_proj = nn.Linear(inputs, d)
+            self.out_proj = nn.Linear(d, d)
+
+        def forward(self, x, memory, mask=None, causal=False):
+            n, length, d = x.shape
+            h, dh = decoder_heads, decoder_dim // decoder_heads
+            split = lambda t: t.view(n, t.shape[1], h, dh).transpose(1, 2)
+            o = F.scaled_dot_product_attention(split(self.q_proj(x)), split(self.k_proj(memory)), split(self.v_proj(memory)), attn_mask=mask, is_causal=causal)
+            return self.out_proj(o.transpose(1, 2).reshape(n, length, d))
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            d, eps = decoder_dim, c["norm_epsilon"]
+            self.norm1 = nn.LayerNorm(d, eps=eps)
+            self.self_attn = Attention(d)
+            self.norm2 = nn.LayerNorm(d, eps=eps)
+            self.cross_attn = Attention(c["dim"])
+            self.norm3 = nn.LayerNorm(d, eps=eps)
+            self.linear1 = nn.Linear(d, c["ffn_dim"])
+            self.linear2 = nn.Linear(c["ffn_dim"], d)
+
+        def forward(self, x, memory, mask):
+            h = self.norm1(x)
+            x = x + self.self_attn(h, h, causal=True)
+            x = x + self.cross_attn(self.norm2(x), memory, mask)
+            return x + self.linear2(act(self.linear1(self.norm3(x))))
+
+    class Decoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            d = decoder_dim
+            self.embed = nn.Embedding(c["classes"], d)
+            self.positions = nn.Embedding(SEQ["max_target_positions"], d)
+            self.layers = nn.ModuleList([Block() for _ in range(SEQ["decoder_layers"])])
+            self.norm = nn.LayerNorm(d, eps=c["norm_epsilon"])
+            if not tie:
+                self.head = nn.Linear(d, c["classes"], bias=False)
+
+        def forward(self, tokens, memory, steps):                           # tokens [N, L]; memory [N, T', dim]; steps [N]
+            mask = (torch.arange(memory.shape[1])[None, :] < steps[:, None])[:, None, None, :]   # True: a step the row attends to
+            x = self.embed(tokens) + self.positions.weight[: tokens.shape[1]]
+            for layer in self.layers:
+                x = layer(x, memory, mask)
+            x = self.norm(x)
+            return x @ self.embed.weight.T if tie else self.head(x)
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            for name, module in encoder.named_children():
+                self.add_module(name, module)
+            self.decoder = Decoder()
+
+        def forward(self, mel, frames, tokens):
+            memory, steps = encoder.encode(mel, frames)
+            return self.decoder(tokens, memory, steps), memory, steps
+
+    return Model()
+
+
+def seq2seq_config(decoder_dim, decoder_heads, tie):
+    config = ctc_config(False)
+    config["task"] = "seq2seq"
+    del config["blank_id"]
+    config.update({"decoder_layers": SEQ["decoder_layers"], "decoder_dim": decoder_dim, "decoder_heads": decoder_heads, "decoder_ffn_dim": CTC["ffn_dim"],
+                   "max_target_positions": SEQ["max_target_positions"], "tie_embeddings": tie, "start_token": SEQ["start_token"], "end_token": SEQ["end_token"]})
+    return config
+
+
+def write_seq2seq(out):
+    from safetensors.torch import save_file
+    torch = torch_setup()
+    F = torch.nn.functional
+    folder = os.path.join(out, "seq2seq")
+    if os.path.isdir(folder):
+        import shutil
+        shutil.rmtree(folder)
+    ref = os.path.join(folder, "reference")
+    os.makedirs(ref)
+    gen = torch.Generator().manual_seed(2029)
+    frames = [96, 71, 123, 50]
+    labels = [[5, 7, 7, 12, 3], [1, 2], [30, 9, 9, 9, 14, 2, 8], [4, 4, 4]]
+    T = max(frames)
+    batch = torch.zeros(len(frames), T, MELS)
+    for i, t in enumerate(frames):
+        batch[i, :t] = torch.randn(t, MELS, generator=gen)
+    frames_t = torch.tensor(frames)
+    start, end, length = SEQ["start_token"], SEQ["end_token"], max(len(l) for l in labels) + 1
+    tokens = torch.full((len(labels), length), end)                          # the end token as padding after each row's own
+    targets = torch.zeros(len(labels), length, dtype=torch.long)
+    weights = torch.zeros(len(labels), length)
+    for i, ls in enumerate(labels):
+        tokens[i, 0] = start
+        tokens[i, 1: len(ls) + 1] = torch.tensor(ls)
+        targets[i, : len(ls)] = torch.tensor(ls)
+        targets[i, len(ls)] = end
+        weights[i, : len(ls) + 1] = 1
+    save_npy(folder, "mels.npy", batch.numpy().astype(np.float32))
+
+    def seq_loss(model):
+        logits, memory, steps = model(batch, frames_t, tokens)
+        ce = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1), reduction="none").view(targets.shape)
+        return ((ce * weights).sum(1) / weights.sum(1)).mean(), memory, steps
+
+    def greedy(model, memory, steps):
+        """Each utterance alone (its own steps), from the start token, the likeliest token each step until the end token."""
+        texts = []
+        with torch.no_grad():
+            for i in range(len(frames)):
+                own = memory[i: i + 1, : int(steps[i])]
+                ids = [start]
+                while len(ids) < SEQ["max_target_positions"]:
+                    nxt = int(model.decoder(torch.tensor([ids]), own, steps[i: i + 1].clamp(max=own.shape[1]))[0, -1].argmax())
+                    if nxt == end:
+                        break
+                    ids.append(nxt)
+                texts.append(ids[1:])
+        return texts
+
+    results = {}
+    for name, decoder_dim, decoder_heads, tie, seed in [("model", CTC["dim"], CTC["heads"], True, 2033), ("model-untied", 24, 3, False, 2035)]:
+        torch.manual_seed(seed)
+        model = seq2seq_modules(torch, decoder_dim, decoder_heads, tie)
+        ctc_initialize(torch, model, seed)
+        sub = os.path.join(folder, name)
+        os.makedirs(sub)
+        dump_json(os.path.join(sub, "config.json"), seq2seq_config(decoder_dim, decoder_heads, tie))
+        save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(sub, "model.safetensors"))
+        ctc_tokenizer(sub)
+        index, _ = safetensors_index(os.path.join(sub, "model.safetensors"))
+        dump_json(os.path.join(sub, "tensors.json"), index)
+        loss, memory, steps = seq_loss(model)
+        loss.backward()
+        suffix = "" if name == "model" else "-untied"
+        save_file({k: p.grad.detach().clone().contiguous() for k, p in model.named_parameters()}, os.path.join(ref, f"grads-step1{suffix}.safetensors"))
+        results[name] = {"loss_step1": float(loss), "steps": steps.tolist(), "greedy_step1": greedy(model, memory.detach(), steps)}
+        if name == "model":
+            losses = [float(loss)]
+            opt = torch.optim.SGD(model.parameters(), lr=0.1)
+            for _ in range(3):
+                opt.step()
+                opt.zero_grad()
+                loss, _, _ = seq_loss(model)
+                losses.append(float(loss))
+                loss.backward()
+            results[name]["sgd_losses"] = losses
+            save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(ref, "weights-step3.safetensors"))
+    assert len(set(round(x, 3) for x in results["model"]["sgd_losses"])) == 4, "the SGD losses should differ step to step"
+    dump_json(os.path.join(ref, "loss.json"), {"frames": frames, "labels": labels, "start_token": start, "end_token": end, "classes": CTC["classes"],
+                                               "reduction": "each utterance's mean over its labels and the end token, then the mean over the batch",
+                                               "sgd_lr": 0.1, "sgd_momentum": 0.0, "results": results})
+
+
 def write_vits(out):
     from transformers import VitsConfig, VitsModel
     torch = torch_setup()
@@ -850,6 +1031,8 @@ def main():
         write_whisper(args.out, extractor)
     if "ctc" in sections:
         write_ctc(args.out)
+    if "seq2seq" in sections:
+        write_seq2seq(args.out)
     if "vits" in sections:
         write_vits(args.out)
     if "voices" in sections:

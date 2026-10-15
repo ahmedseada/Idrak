@@ -9,7 +9,8 @@ namespace Idrak.IdrakAudio;
 /// <summary>
 /// The IdrakAudio speech family (registered under <see cref="Architecture"/>): it makes a model from a spec
 /// (<see cref="Create"/>, through <c>SpeechModels.Create</c>) and reads one back from its folder (<see cref="Read"/>, through
-/// <c>SpeechModels.Load</c>). The task is the config's "task": "ctc" is built; another is refused naming it.
+/// <c>SpeechModels.Load</c>). The task is the config's "task": "ctc" (<see cref="IdrakAudioCtcModel"/>) and "seq2seq"
+/// (<see cref="IdrakAudioSeq2SeqModel"/>) are built; another is refused naming them.
 /// </summary>
 public sealed class IdrakAudioFamily : ISpeechFamily
 {
@@ -18,6 +19,9 @@ public sealed class IdrakAudioFamily : ISpeechFamily
 
     /// <summary>The CTC recognizer task.</summary>
     public const string CtcTask = "ctc";
+
+    /// <summary>The encoder-decoder recognizer task.</summary>
+    public const string Seq2SeqTask = "seq2seq";
 
     /// <inheritdoc />
     public string Name => Architecture;
@@ -37,10 +41,10 @@ public sealed class IdrakAudioFamily : ISpeechFamily
         var tokenizer = BpeTokenizer.Load(tokenizerFile);
         var device = checkpoint.Options.Device ?? Device.Default;
         var weights = IdrakAudioWeights.Read(checkpoint.Tensors, device);
-        IdrakAudioCtcModel? model = null;
+        ISpeechRecognizer? model = null;
         try
         {
-            model = new IdrakAudioCtcModel(config, weights, tokenizer, device);
+            model = config.Sequence ? new IdrakAudioSeq2SeqModel(config, weights, tokenizer, device) : new IdrakAudioCtcModel(config, weights, tokenizer, device);
             if (weights.Unread() is { Count: > 0 } unread)
             {
                 throw new InvalidDataException($"The IdrakAudio checkpoint holds tensors its config does not use ({string.Join(", ", unread.Take(5))}"
@@ -70,7 +74,8 @@ public sealed class IdrakAudioFamily : ISpeechFamily
     /// <inheritdoc />
     /// <remarks>
     /// The spec holds config.json's keys (<see cref="IdrakAudioConfig"/>; a missing key takes its default); the classes are
-    /// the tokenizer's tokens and the blank. The weights are drawn on the CPU from <paramref name="seed"/>.
+    /// the tokenizer's tokens and the blank ("ctc"), or the tokens and the start and end token, one class past them
+    /// ("seq2seq"). The weights are drawn on the CPU from <paramref name="seed"/>.
     /// </remarks>
     public CreatedSpeechModel Create(JsonObject spec, ITokenizer tokenizer, int seed)
     {
@@ -85,11 +90,12 @@ public sealed class IdrakAudioFamily : ISpeechFamily
         Task(config);
         if (config.Classes != tokenizer.VocabularySize + 1)
         {
-            throw new ArgumentException($"The spec gives {config.Classes} classes; the tokenizer's {tokenizer.VocabularySize} tokens and the blank make {tokenizer.VocabularySize + 1}.", nameof(spec));
+            throw new ArgumentException($"The spec gives {config.Classes} classes; the tokenizer's {tokenizer.VocabularySize} tokens and the {(config.Sequence ? "start and end token" : "blank")} make {tokenizer.VocabularySize + 1}.", nameof(spec));
         }
 
         var weights = IdrakAudioWeights.Draw(seed, config.InitScale, Device.Cpu);
         using var encoder = new IdrakAudioEncoder(config, weights);
+        using var decoder = config.Sequence ? IdrakAudioDecoder.Build(config, weights).Decoder : null;
         var tensors = new List<(string, int[], float[])>(weights.Entries.Count);
         foreach (var (name, tensor, stored, transposed) in weights.Entries)
         {
@@ -101,9 +107,9 @@ public sealed class IdrakAudioFamily : ISpeechFamily
 
     private static void Task(IdrakAudioConfig config)
     {
-        if (config.Task != CtcTask)
+        if (config.Task is not (CtcTask or Seq2SeqTask))
         {
-            throw new NotSupportedException($"IdrakAudio task '{config.Task}' is not built yet: this plug-in makes and reads \"{CtcTask}\" models (plan 21, S6).");
+            throw new NotSupportedException($"IdrakAudio task '{config.Task}' is not built yet: this plug-in makes and reads \"{CtcTask}\" and \"{Seq2SeqTask}\" models (plan 21, S6).");
         }
     }
 }

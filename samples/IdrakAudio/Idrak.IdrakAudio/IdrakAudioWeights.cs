@@ -29,8 +29,8 @@ internal sealed class IdrakAudioWeights
     /// <summary>The parameters made, in the order they were made.</summary>
     public IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> Entries => _entries;
 
-    /// <summary>A linear layer from <c>{prefix}.weight</c> [outputs, inputs] and <c>{prefix}.bias</c> [outputs].</summary>
-    public Linear Linear(string prefix, int inputs, int outputs, string? weightName = null, string? biasName = null)
+    /// <summary>A linear layer from <c>{prefix}.weight</c> [outputs, inputs] and <c>{prefix}.bias</c> [outputs] (none when <paramref name="bias"/> is false).</summary>
+    public Linear Linear(string prefix, int inputs, int outputs, string? weightName = null, string? biasName = null, bool bias = true)
     {
         string name = weightName ?? prefix + ".weight";
         float[] values;
@@ -45,7 +45,24 @@ internal sealed class IdrakAudioWeights
         }
 
         var weight = Add(name, values, [inputs, outputs], [outputs, inputs], transposed: true);
-        return Idrak.Layers.Linear.FromWeights(weight, Bias(biasName ?? prefix + ".bias", outputs));
+        return Idrak.Layers.Linear.FromWeights(weight, bias ? Bias(biasName ?? prefix + ".bias", outputs) : null);
+    }
+
+    /// <summary>A table [rows, columns] stored as it is (an embedding's): drawn as a matrix of <paramref name="columns"/> inputs.</summary>
+    public Tensor Table(string name, int rows, int columns)
+    {
+        float[] values;
+        if (_store is not null)
+        {
+            Expect(name, [rows, columns]);
+            values = _store.Read(name);
+        }
+        else
+        {
+            values = Normal(rows * columns, _scale / MathF.Sqrt(columns));
+        }
+
+        return Add(name, values, [rows, columns], [rows, columns], transposed: false);
     }
 
     /// <summary>A layer normalization from <c>{prefix}.weight</c> and <c>{prefix}.bias</c>.</summary>
