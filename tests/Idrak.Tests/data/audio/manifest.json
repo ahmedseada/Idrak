@@ -604,6 +604,42 @@
    "bytes": 691,
    "sha256": "1297b84f99443b36ff92f0e893c8cefbd9f316236c87ee5490fcde12e220d442"
   },
+  "tts/log-mels.npy": {
+   "bytes": 4288,
+   "sha256": "38ba70c3f6275a0bae9afd3e5ef6f6a6b657519a1953c373f686d3ed1cad16c6"
+  },
+  "tts/model/config.json": {
+   "bytes": 823,
+   "sha256": "253ad563f55e36f176a963a583f6c3a6205f738d11feb0f8ac85e1d024ab37ca"
+  },
+  "tts/model/model.safetensors": {
+   "bytes": 73564,
+   "sha256": "269f5460a68c2cc98d5d268880d7062f1cb3e795ba736ed46f69e92f500bfc7f"
+  },
+  "tts/model/tensors.json": {
+   "bytes": 5522,
+   "sha256": "3ece8b8bc1faa74f9840a52a9598d5a1e41cdc2aab3b1fd32a0db99eb3674db7"
+  },
+  "tts/model/tokenizer.json": {
+   "bytes": 822,
+   "sha256": "b729120c28d295e6442430b67ccfcaa843b41faa8a86c0845e71bdd698b71406"
+  },
+  "tts/reference/grads-step1.safetensors": {
+   "bytes": 73564,
+   "sha256": "fea4f8ce036ee0b545b94d7bac3df4e614d7deb6e236f98429a82d6a152b902e"
+  },
+  "tts/reference/log-mel-step1.npy": {
+   "bytes": 4288,
+   "sha256": "ba793fbd007468b10ae9304926366cd23f120926a1403bf656e9697f8c51e117"
+  },
+  "tts/reference/loss.json": {
+   "bytes": 1632,
+   "sha256": "257f8b0a7669ab230d571ee29b0f377304509679a4db36331a6f6d0807ebd02d"
+  },
+  "tts/reference/weights-step3.safetensors": {
+   "bytes": 73564,
+   "sha256": "8a987f4e87fe201bfd2d0db054d96d32cd95e2dfa284649568a155bf8edfcec2"
+  },
   "uroman/arabic.json": {
    "bytes": 17706,
    "sha256": "b46493a0f2bdd41a7cdb3d485e6868f15059ccbd628e39f8a045dbded5bd819a"
@@ -727,6 +763,7 @@
   "ctc",
   "seq2seq",
   "audio-language",
+  "tts",
   "vits",
   "voices",
   "transcripts"

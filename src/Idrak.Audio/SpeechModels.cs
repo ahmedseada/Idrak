@@ -81,15 +81,31 @@ public static class SpeechModels
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(tokenizer);
         options ??= new SpeechCreateOptions();
-        string architecture = options.Architecture ?? (string?)spec["architecture"] ?? (spec["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null)
-            ?? throw new InvalidDataException("The speech model's spec names no architecture (\"architecture\"); pass SpeechCreateOptions.Architecture.");
+        string architecture = Architecture(spec, options);
         var family = SpeechFamilies.Get(architecture);
+        CheckFolder(folder, options);
+        Write(folder, architecture, family.Create(spec, tokenizer, options.Seed), tokenizer);
+        return Load(folder, new SpeechModelOptions { Device = options.Device });
+    }
+
+    // The architecture a create spec names (the options' first).
+    internal static string Architecture(JsonObject spec, SpeechCreateOptions options) =>
+        options.Architecture ?? (string?)spec["architecture"] ?? (spec["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null)
+            ?? throw new InvalidDataException("The speech model's spec names no architecture (\"architecture\"); pass SpeechCreateOptions.Architecture.");
+
+    // A folder that already holds files is refused unless the options overwrite it.
+    internal static void CheckFolder(string folder, SpeechCreateOptions options)
+    {
         if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any() && !options.Overwrite)
         {
             throw new IOException($"{folder} already holds files; choose an empty folder or overwrite.");
         }
+    }
 
-        var created = family.Create(spec, tokenizer, options.Seed);
+    // A created model written as a model folder: config.json with "architectures", model.safetensors in float32, the
+    // family's files, and the tokenizer as tokenizer.json when it is a BpeTokenizer and the family wrote none.
+    internal static void Write(string folder, string architecture, CreatedSpeechModel created, ITokenizer tokenizer)
+    {
         var config = (JsonObject)created.Config.DeepClone();
         config["architectures"] = new JsonArray((JsonNode)architecture);
         Directory.CreateDirectory(folder);
@@ -105,6 +121,5 @@ public static class SpeechModels
         }
 
         File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
-        return Load(folder, new SpeechModelOptions { Device = options.Device });
     }
 }

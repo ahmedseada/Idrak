@@ -113,6 +113,15 @@ public sealed record SpeechTrainingOptions
     /// <summary>The run stops when the loss is not finite this many steps in a row.</summary>
     public int NonFiniteSteps { get; init; } = 3;
 
+    /// <summary>
+    /// A synthesizer's training (<see cref="SpeechSynthesisTrainer"/>): the alignments file (<see cref="SpeechAlignments"/>,
+    /// written by <c>idrak data audio --align MODEL</c>) giving each utterance's label durations; recognizers ignore it.
+    /// </summary>
+    public string? Durations { get; init; }
+
+    /// <summary>The "durations" synthesis objective's weight of the log-duration error beside the log-mel error (0: the durations not trained).</summary>
+    public float DurationLossWeight { get; init; } = 1f;
+
     /// <summary>The options as JSON (<see cref="FromJson"/> reads it back).</summary>
     public JsonObject ToJson() => new()
     {
@@ -124,6 +133,7 @@ public sealed record SpeechTrainingOptions
         ["decoder"] = Decoder, ["beam_width"] = BeamWidth, ["augmentations"] = new JsonArray([.. Augmentations.Select(a => (JsonNode)a)]),
         ["augmentation_options"] = AugmentationOptions.ToJson(), ["seed"] = Seed, ["feature_cache"] = FeatureCache,
         ["feature_cache_folder"] = FeatureCacheFolder, ["workers"] = Workers, ["non_finite_steps"] = NonFiniteSteps,
+        ["durations"] = Durations, ["duration_loss_weight"] = DurationLossWeight,
     };
 
     /// <summary>Options from their JSON (<see cref="ToJson"/>); a key missing keeps the default.</summary>
@@ -161,16 +171,19 @@ public sealed record SpeechTrainingOptions
             FeatureCacheFolder = (string?)json["feature_cache_folder"],
             Workers = (int?)json["workers"] ?? d.Workers,
             NonFiniteSteps = (int?)json["non_finite_steps"] ?? d.NonFiniteSteps,
+            Durations = (string?)json["durations"],
+            DurationLossWeight = (float?)json["duration_loss_weight"] ?? d.DurationLossWeight,
         };
     }
 
     internal void Check()
     {
         if (Steps < 1 || !(BatchSeconds > 0) || GradientAccumulation < 1 || BucketUtterances < 1 || !(LearningRate > 0) || WarmupFraction is < 0 or > 1
-            || MaxGradientNorm < 0 || SaveEvery < 0 || KeepCheckpoints < 0 || EvaluateEvery < 0 || BeamWidth < 1 || Workers < 0 || NonFiniteSteps < 0)
+            || MaxGradientNorm < 0 || SaveEvery < 0 || KeepCheckpoints < 0 || EvaluateEvery < 0 || BeamWidth < 1 || Workers < 0 || NonFiniteSteps < 0
+            || !(DurationLossWeight >= 0))
         {
             throw new ArgumentException("Speech training: Steps, BatchSeconds, GradientAccumulation, BucketUtterances, LearningRate and BeamWidth are positive, "
-                + "WarmupFraction 0 to 1, and MaxGradientNorm, SaveEvery, KeepCheckpoints, EvaluateEvery, Workers and NonFiniteSteps not negative.");
+                + "WarmupFraction 0 to 1, and MaxGradientNorm, SaveEvery, KeepCheckpoints, EvaluateEvery, Workers, NonFiniteSteps and DurationLossWeight not negative.");
         }
 
         if (!FineTuningOptimizers.Names.Contains(Optimizer, StringComparer.OrdinalIgnoreCase))
@@ -251,7 +264,8 @@ public sealed record SpeechTrainingCheckpoint(string Folder, SpeechTrainingOptio
 /// batched by length (sorted within windows of the pass's seeded order, cut by <see cref="SpeechTrainingOptions.BatchSeconds"/>);
 /// the next step's features are read, decoded and taken on worker threads while the device trains, and kept in a feature
 /// cache so later passes take none; checkpoints (<c>checkpoint-STEP</c>: the model folder, <c>optimizer.safetensors</c>,
-/// <c>train-state.json</c>) resume the run where it stopped, bit for bit on the CPU.
+/// <c>train-state.json</c>) resume the run where it stopped, bit for bit on the CPU. The same loop trains synthesizers
+/// (<see cref="SpeechSynthesisTrainer"/>).
 /// </summary>
 public static class SpeechTrainer
 {
@@ -276,9 +290,7 @@ public static class SpeechTrainer
         SpeechTrainingCheckpoint? resume = null, IProgress<SpeechTrainingProgress>? progress = null, CancellationToken cancellationToken = default, Action<string>? trace = null)
     {
         ArgumentNullException.ThrowIfNull(model);
-        ArgumentNullException.ThrowIfNull(train);
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
         options.Check();
         var objective = SpeechTrainingObjectives.Get(model.Objective);
         if (!objective.Trains(model))
@@ -286,6 +298,18 @@ public static class SpeechTrainer
             throw new ArgumentException($"The '{objective.Name}' objective does not train a {model.GetType().Name} ({model.Architecture}).", nameof(model));
         }
 
+        return Run(new RecognizerTrainee(model, objective, options), train, evaluation, options, outputFolder, resume, progress, cancellationToken, trace);
+    }
+
+    /// <summary>
+    /// The training loop for any trainee (a recognizer with its objective here, a synthesizer in
+    /// <see cref="SpeechSynthesisTrainer"/>): the sources, batches, steps, evaluations and checkpoints.
+    /// </summary>
+    internal static SpeechTrainingResult Run(SpeechTrainee model, SpeechSource train, SpeechSource? evaluation, SpeechTrainingOptions options, string outputFolder,
+        SpeechTrainingCheckpoint? resume, IProgress<SpeechTrainingProgress>? progress, CancellationToken cancellationToken, Action<string>? trace)
+    {
+        ArgumentNullException.ThrowIfNull(train);
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
         Directory.CreateDirectory(outputFolder);
         var clock = Stopwatch.StartNew();
         var notes = new List<string>();
@@ -299,7 +323,7 @@ public static class SpeechTrainer
         }
 
         using var cache = options.FeatureCache is { } cacheName ? FeatureCaches.Create(cacheName, new FeatureCacheOptions { Folder = options.FeatureCacheFolder }) : null;
-        var features = new FeatureSource(model, cache, options);
+        var features = new FeatureSource(model.Features, cache, options);
 
         // The utterances the objective can train on (CTC: their frames give at least the steps their labels need).
         var labels = new int[reader.Count][];
@@ -310,7 +334,7 @@ public static class SpeechTrainer
         {
             labels[i] = model.Labels(reader[i].Text);
             frames[i] = model.Features.FramesFor((long)Math.Round(reader[i].Seconds * rate));
-            if (objective.Accepts(model, frames[i], labels[i]))
+            if (model.Accepts(reader, i, frames[i], labels[i]))
             {
                 usable.Add(i);
             }
@@ -319,14 +343,22 @@ public static class SpeechTrainer
         int dropped = reader.Count - usable.Count;
         if (dropped > 0)
         {
-            string note = $"{dropped} utterances {objective.Refused} and are left out";
+            string note = $"{dropped} utterances {model.Refused} and are left out";
             notes.Add(note);
             trace?.Invoke(note);
         }
 
         if (usable.Count == 0)
         {
-            throw new ArgumentException($"The training source holds no utterance the '{objective.Name}' objective can train on ({reader.Count} read, {dropped} that {objective.Refused}).", nameof(train));
+            throw new ArgumentException($"The training source holds no utterance the '{model.Objective}' objective can train on ({reader.Count} read, {dropped} that {model.Refused}).", nameof(train));
+        }
+
+        int[] scored = evalReader is null ? [] : [.. Enumerable.Range(0, evalReader.Count).Where(i => model.Evaluates(evalReader, i))];
+        if (evalReader is { Count: > 0 } && scored.Length < evalReader.Count)
+        {
+            string note = $"evaluation: {evalReader.Count - scored.Length} utterances {model.Refused} and are not scored";
+            notes.Add(note);
+            trace?.Invoke(note);
         }
 
         var seconds = new double[reader.Count];
@@ -402,7 +434,7 @@ public static class SpeechTrainer
 
                 long computeStart = Stopwatch.GetTimestamp();
                 float rate0 = optimizer.LearningRate;
-                double loss = RunStep(model, objective, optimizer, batches, options, forward, ref micro, notes, trace);
+                double loss = RunStep(model, reader, optimizer, batches, options, forward, ref micro, notes, trace);
                 schedule.Step();
                 var compute = Stopwatch.GetElapsedTime(computeStart);
                 (epoch, next) = (nextEpoch, nextBatch);
@@ -429,12 +461,12 @@ public static class SpeechTrainer
 
                 double? score = null;
                 bool end = step == options.Steps;
-                if (evalReader is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 || end : end))
+                if (scored.Length > 0 && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 || end : end))
                 {
                     Report("evaluate", null);
-                    score = Evaluate(model, objective, evalReader, features, options, micro);
+                    score = Evaluate(model, evalReader!, scored, features, options, micro);
                     evaluations.Add((step, score.Value));
-                    trace?.Invoke(string.Create(CultureInfo.InvariantCulture, $"step {step}: {options.Metric} {score.Value:F4}"));
+                    trace?.Invoke(string.Create(CultureInfo.InvariantCulture, $"step {step}: {model.Metric} {score.Value:F4}"));
                 }
 
                 if (end || options.SaveEvery > 0 && step % options.SaveEvery == 0)
@@ -487,11 +519,11 @@ public static class SpeechTrainer
 
     /// <summary>
     /// Goes on with the run a checkpoint folder holds: its model read back (<c>SpeechModels.Load</c>, a family whose model
-    /// is an <see cref="ICtcSpeechModel"/>), its optimizer's state, its sources and position, and its options (or
+    /// is an <see cref="ITrainableSpeechModel"/>), its optimizer's state, its sources and position, and its options (or
     /// <paramref name="overrides"/>, for more steps say), writing later checkpoints beside it.
     /// </summary>
     /// <exception cref="FileNotFoundException">The folder holds no training state.</exception>
-    /// <exception cref="InvalidDataException">The folder's model is not one CTC trains.</exception>
+    /// <exception cref="InvalidDataException">The folder's model is not one the speech trainer trains.</exception>
     public static SpeechTrainingResult Resume(string checkpointFolder, SpeechTrainingOptions? overrides = null, Device? device = null, IProgress<SpeechTrainingProgress>? progress = null,
         CancellationToken cancellationToken = default, Action<string>? trace = null)
     {
@@ -506,7 +538,7 @@ public static class SpeechTrainer
     /// <summary>The latest checkpoint a run wrote into <paramref name="outputFolder"/>, or null.</summary>
     public static string? LatestCheckpoint(string outputFolder) => Checkpoints(outputFolder).Select(c => c.Folder).LastOrDefault();
 
-    /// <summary>Reads where a run stopped from a checkpoint folder <see cref="Train"/> wrote.</summary>
+    /// <summary>Reads where a run stopped from a checkpoint folder <see cref="Train"/> (or <see cref="SpeechSynthesisTrainer.Train"/>) wrote.</summary>
     /// <exception cref="FileNotFoundException">The folder holds no training state.</exception>
     /// <exception cref="InvalidDataException">The state is not this format.</exception>
     public static SpeechTrainingCheckpoint ReadCheckpoint(string folder)
@@ -534,11 +566,10 @@ public static class SpeechTrainer
     // One optimizer step over its batches: each split into micro-batches of at most `micro` padded seconds, every loss
     // scaled by its utterances' share of the step, so the gradients added up are the step's mean. Out of device memory, the
     // micro-batches are halved and the step runs again from zeroed gradients.
-    private static double RunStep(ITrainableSpeechModel model, ISpeechTrainingObjective objective, Optimizer optimizer, List<Prepared[]> batches, SpeechTrainingOptions options, SpeechForwardOptions forward,
+    private static double RunStep(SpeechTrainee model, ISpeechReader reader, Optimizer optimizer, List<Prepared[]> batches, SpeechTrainingOptions options, SpeechForwardOptions forward,
         ref double micro, List<string> notes, Action<string>? trace)
     {
         int total = batches.Sum(b => b.Length);
-        int mels = model.Features.Options.Mels;
         double secondsPerFrame = model.Features.Options.HopSize / (double)model.Features.Options.SampleRate;
         while (true)
         {
@@ -552,15 +583,7 @@ public static class SpeechTrainer
                 {
                     using var scope = new TensorScope();
                     using var precision = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
-                    int longest = group.Max(u => u.Frames);
-                    var padded = new float[group.Length * longest * mels];
-                    for (int i = 0; i < group.Length; i++)
-                    {
-                        group[i].Features.AsSpan(0, group[i].Frames * mels).CopyTo(padded.AsSpan(i * longest * mels));
-                    }
-
-                    var input = Tensor.From(padded, [group.Length, longest, mels], model.Device);
-                    var loss = objective.Loss(model, input, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], forward);
+                    var loss = model.Loss(reader, Padded(group, model), group, forward);
                     var scaled = group.Length == total ? loss : loss * (group.Length / (float)total);
                     scaled.Backward();
                     sum += loss.Item() * group.Length;
@@ -578,6 +601,20 @@ public static class SpeechTrainer
                 trace?.Invoke(note);
             }
         }
+    }
+
+    // A group's features [count, longest, mels] on the trainee's device, each utterance's frames first and zeros after them.
+    private static Tensor Padded(Prepared[] group, SpeechTrainee model)
+    {
+        int mels = model.Features.Options.Mels;
+        int longest = group.Max(u => u.Frames);
+        var padded = new float[group.Length * longest * mels];
+        for (int i = 0; i < group.Length; i++)
+        {
+            group[i].Features.AsSpan(0, group[i].Frames * mels).CopyTo(padded.AsSpan(i * longest * mels));
+        }
+
+        return Tensor.From(padded, [group.Length, longest, mels], model.Device);
     }
 
     // A batch (sorted by length) cut into runs whose padded seconds (count × the longest) are at most `micro`; one utterance
@@ -640,19 +677,16 @@ public static class SpeechTrainer
         return batches;
     }
 
-    // The metric over the evaluation source: its utterances in batches of BatchSeconds (sorted by length), decoded with the
-    // options' decoder, the texts scored against the transcripts.
-    private static double Evaluate(ITrainableSpeechModel model, ISpeechTrainingObjective objective, ISpeechReader reader, FeatureSource features, SpeechTrainingOptions options, double micro)
+    // The trainee's score over the evaluation utterances it can score: a window of BucketUtterances read at a time, sorted
+    // by length (the features of the whole source are never held), the scores added up.
+    private static double Evaluate(SpeechTrainee model, ISpeechReader reader, int[] scored, FeatureSource features, SpeechTrainingOptions options, double micro)
     {
-        var metric = TuningMetrics.Get(options.Metric);
         double secondsPerFrame = model.Features.Options.HopSize / (double)model.Features.Options.SampleRate;
-        int mels = model.Features.Options.Mels;
-        var scores = new List<TuningScore>(reader.Count);
+        var scores = new List<TuningScore>(scored.Length);
         model.Network.Eval();
         try
         {
-            // Sorted by length, a window of BucketUtterances read at a time (the features of the whole source are never held).
-            var order = Enumerable.Range(0, reader.Count).OrderBy(i => reader[i].Seconds).ThenBy(i => i).ToArray();
+            var order = scored.OrderBy(i => reader[i].Seconds).ThenBy(i => i).ToArray();
             using var _ = Autograd.NoGrad();
             for (int start = 0; start < order.Length; start += options.BucketUtterances)
             {
@@ -660,18 +694,7 @@ public static class SpeechTrainer
                 foreach (var group in Split(window, micro, secondsPerFrame))
                 {
                     using var scope = new TensorScope();
-                    int longest = group.Max(u => u.Frames);
-                    var padded = new float[group.Length * longest * mels];
-                    for (int i = 0; i < group.Length; i++)
-                    {
-                        group[i].Features.AsSpan(0, group[i].Frames * mels).CopyTo(padded.AsSpan(i * longest * mels));
-                    }
-
-                    var readings = objective.Decode(model, Tensor.From(padded, [group.Length, longest, mels], model.Device), [.. group.Select(u => u.Frames)], options.Decoder, options.BeamWidth);
-                    for (int i = 0; i < group.Length; i++)
-                    {
-                        scores.Add(metric.Score(model.Text(readings[i]), reader[group[i].Utterance].Text));
-                    }
+                    scores.AddRange(model.Score(reader, Padded(group, model), group));
                 }
             }
         }
@@ -689,7 +712,7 @@ public static class SpeechTrainer
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
 
-    private static string SaveCheckpoint(ITrainableSpeechModel model, Optimizer optimizer, SpeechTrainingOptions options, SpeechSource train, SpeechSource? evaluation,
+    private static string SaveCheckpoint(SpeechTrainee model, Optimizer optimizer, SpeechTrainingOptions options, SpeechSource train, SpeechSource? evaluation,
         string outputFolder, int step, int epoch, int next, double micro, List<float> losses, List<(int, double)> evaluations)
     {
         string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
@@ -743,15 +766,54 @@ public static class SpeechTrainer
         return store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
     }
 
-    // An utterance ready for a step: its features [frames, mels] (host), its labels and its seconds.
-    private sealed record Prepared(int Utterance, float[] Features, int Frames, int[] Labels, double Seconds);
+    /// <summary>An utterance ready for a step: its features [frames, mels] (host), its labels and its seconds.</summary>
+    internal sealed record Prepared(int Utterance, float[] Features, int Frames, int[] Labels, double Seconds);
+
+    // A recognizer and its objective: the utterances the objective accepts, its loss, and the options' metric of each
+    // utterance's decoded text against its transcript.
+    private sealed class RecognizerTrainee(ITrainableSpeechModel model, ISpeechTrainingObjective objective, SpeechTrainingOptions options) : SpeechTrainee
+    {
+        private readonly ITuningMetric _metric = TuningMetrics.Get(options.Metric);
+
+        public override string Architecture => model.Architecture;
+
+        public override string Objective => model.Objective;
+
+        public override Module Network => model.Network;
+
+        public override IAudioFeatureExtractor Features => model.Features;
+
+        public override Device Device => model.Device;
+
+        public override string Refused => objective.Refused;
+
+        public override string Metric => options.Metric;
+
+        public override int[] Labels(string text) => model.Labels(text);
+
+        public override bool Accepts(ISpeechReader reader, int utterance, int frames, int[] labels) => objective.Accepts(model, frames, labels);
+
+        public override Tensor Loss(ISpeechReader reader, Tensor features, Prepared[] group, SpeechForwardOptions forward) =>
+            objective.Loss(model, features, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], forward);
+
+        public override IEnumerable<TuningScore> Score(ISpeechReader reader, Tensor features, Prepared[] group)
+        {
+            var readings = objective.Decode(model, features, [.. group.Select(u => u.Frames)], options.Decoder, options.BeamWidth);
+            for (int i = 0; i < group.Length; i++)
+            {
+                yield return _metric.Score(model.Text(readings[i]), reader[group[i].Utterance].Text);
+            }
+        }
+
+        public override void Save(string folder) => model.Save(folder);
+    }
 
     // Utterances to features on worker threads: the file read and hashed, the features from the cache when the utterance's
     // sound is not augmented this pass, else decoded, mixed to one channel, resampled, augmented and taken (and cached);
     // then the feature augmentations.
-    private sealed class FeatureSource(ITrainableSpeechModel model, IFeatureCache? cache, SpeechTrainingOptions options)
+    private sealed class FeatureSource(IAudioFeatureExtractor extractor, IFeatureCache? cache, SpeechTrainingOptions options)
     {
-        private readonly string _options = model.Features.Options.ToJson().ToJsonString();
+        private readonly string _options = extractor.Options.ToJson().ToJsonString();
         private int _extracted, _cached;
 
         public int Extracted => Volatile.Read(ref _extracted);
@@ -769,7 +831,6 @@ public static class SpeechTrainer
 
         private Prepared One(ISpeechReader reader, int utterance, int[] labels, int epoch, IAudioAugmentation[] augmentations)
         {
-            var extractor = model.Features;
             int mels = extractor.Options.Mels;
             var draws = new Random?[augmentations.Length];
             bool sound = false;

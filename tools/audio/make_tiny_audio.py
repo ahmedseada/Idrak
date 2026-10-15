@@ -1,7 +1,7 @@
 """The reference for Idrak.Audio (plan 21, phase S0): generated WAV files and their samples, torchaudio's resampling and
 features, a tiny random Whisper-style model and transformers' outputs for it, a tiny CTC recognizer's loss, gradients
-and alignments, a tiny encoder-decoder recognizer's loss, gradients and greedy texts, a tiny VITS synthesizer's
-waveform, and transcript records.
+and alignments, a tiny encoder-decoder recognizer's loss, gradients and greedy texts, a tiny IdrakAudio synthesizer's
+loss and gradients, a tiny VITS synthesizer's waveform, and transcript records.
 
     python -m venv audio && audio/bin/pip install torch torchaudio transformers tokenizers safetensors numpy soundfile
     audio/bin/python tools/audio/make_tiny_audio.py tests/Idrak.Tests/data/audio
@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "vits", "voices", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "tts", "vits", "voices", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -1159,6 +1159,207 @@ def write_audio_language(out):
     dump_json(os.path.join(folder, "tuning.json"), {"records": encoded, "tokens_per_audio": tokens_of, "audio_token": sound, "begin": begin, "end": end, "stack": AL_STACK})
 
 
+# The IdrakAudio plug-in's "tts" task in torch: characters through a token embedding and sinusoidal positions, pre-norm
+# blocks over each text's own labels (key padding), a final LayerNorm (the text's hidden states); a duration predictor
+# (the padding zeroed before each of two Conv2d (1, k) over the labels, each with a ReLU and a LayerNorm, then a linear
+# to log(duration + offset)); the hidden states projected to the decoder's width when it differs, repeated for each
+# label's frames (length regulation, the given durations in training), sinusoidal positions, pre-norm blocks over each
+# utterance's own frames, a final LayerNorm and a linear to the mels. The loss: each utterance's mean |log-mel - target|
+# over its frames and mels, plus the weight times its mean squared error of the log durations over its labels, each
+# averaged over the batch.
+TTS = dict(classes=12, dim=16, heads=2, ffn_dim=32, layers=2, decoder_layers=2, decoder_dim=24, decoder_heads=2, decoder_ffn_dim=40,
+           duration_filters=20, duration_kernel=3, duration_offset=1.0, mels=20, norm_epsilon=1e-5, duration_weight=1.0)
+
+
+def sinusoids(torch, t, d):
+    pos = torch.arange(t, dtype=torch.float64)[:, None]
+    i = torch.arange(d)[None, :]
+    angle = pos / torch.pow(torch.tensor(10000.0, dtype=torch.float64), (2 * (i // 2)).to(torch.float64) / d)
+    return torch.where(i % 2 == 0, torch.sin(angle), torch.cos(angle)).to(torch.float32)
+
+
+def tts_modules(torch):
+    nn = torch.nn
+    F = torch.nn.functional
+    c = TTS
+    act = lambda x: F.gelu(x, approximate="tanh")
+
+    class Block(nn.Module):
+        def __init__(self, d, heads, ffn):
+            super().__init__()
+            eps = c["norm_epsilon"]
+            self.norm1 = nn.LayerNorm(d, eps=eps)
+            self.self_attn = nn.MultiheadAttention(d, heads, batch_first=True)
+            self.norm2 = nn.LayerNorm(d, eps=eps)
+            self.linear1 = nn.Linear(d, ffn)
+            self.linear2 = nn.Linear(ffn, d)
+
+        def forward(self, x, pad):
+            h = self.norm1(x)
+            x = x + self.self_attn(h, h, h, key_padding_mask=pad, need_weights=False)[0]
+            return x + self.linear2(act(self.linear1(self.norm2(x))))
+
+    class Text(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = nn.Embedding(c["classes"], c["dim"])
+            self.layers = nn.ModuleList([Block(c["dim"], c["heads"], c["ffn_dim"]) for _ in range(c["layers"])])
+            self.norm = nn.LayerNorm(c["dim"], eps=c["norm_epsilon"])
+
+        def forward(self, labels, lengths):                                  # labels [N, L] (0 as padding); lengths [N]
+            x = self.embed(labels) + sinusoids(torch, labels.shape[1], c["dim"])
+            pad = torch.arange(labels.shape[1])[None, :] >= lengths[:, None]
+            for layer in self.layers:
+                x = layer(x, pad)
+            return self.norm(x)
+
+    class Duration(nn.Module):
+        def __init__(self):
+            super().__init__()
+            d, f, k = c["dim"], c["duration_filters"], c["duration_kernel"]
+            self.conv1 = nn.Conv2d(d, f, (1, k), padding=(0, k // 2))
+            self.norm1 = nn.LayerNorm(f, eps=c["norm_epsilon"])
+            self.conv2 = nn.Conv2d(f, f, (1, k), padding=(0, k // 2))
+            self.norm2 = nn.LayerNorm(f, eps=c["norm_epsilon"])
+            self.linear = nn.Linear(f, 1)
+
+        def forward(self, hidden, lengths):                                  # the log durations [N, L]
+            keep = (torch.arange(hidden.shape[1])[None, :] < lengths[:, None]).to(hidden.dtype)[..., None]
+            conv = lambda layer, x: torch.relu(layer((x * keep).transpose(1, 2)[:, :, None, :]))[:, :, 0, :].transpose(1, 2)
+            h = self.norm1(conv(self.conv1, hidden))
+            h = self.norm2(conv(self.conv2, h))
+            return self.linear(h)[..., 0]
+
+    class Decoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            d, dd = c["dim"], c["decoder_dim"]
+            if d != dd:
+                self.proj = nn.Linear(d, dd)
+            self.layers = nn.ModuleList([Block(dd, c["decoder_heads"], c["decoder_ffn_dim"]) for _ in range(c["decoder_layers"])])
+            self.norm = nn.LayerNorm(dd, eps=c["norm_epsilon"])
+            self.mel = nn.Linear(dd, c["mels"])
+
+        def forward(self, hidden, lengths, durations):                      # durations: each utterance's frames per label
+            h = self.proj(hidden) if hasattr(self, "proj") else hidden
+            frames = [int(sum(d)) for d in durations]
+            t = max(frames)
+            rows = []
+            for b, d in enumerate(durations):
+                own = torch.repeat_interleave(h[b, : int(lengths[b])], torch.tensor(d), dim=0)
+                rows.append(torch.cat([own, torch.zeros(t - own.shape[0], h.shape[2])]))
+            x = torch.stack(rows) + sinusoids(torch, t, h.shape[2])
+            pad = torch.arange(t)[None, :] >= torch.tensor(frames)[:, None]
+            for layer in self.layers:
+                x = layer(x, pad)
+            return self.mel(self.norm(x))
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.text = Text()
+            self.duration = Duration()
+            self.decoder = Decoder()
+
+        def forward(self, labels, lengths, durations):
+            hidden = self.text(labels, lengths)
+            return self.decoder(hidden, lengths, durations), self.duration(hidden, lengths)
+
+    return Model()
+
+
+def tts_config():
+    c = TTS
+    return {
+        "architectures": ["IdrakAudio"], "model_type": "idrak-audio", "task": "tts",
+        "mels": c["mels"], "dim": c["dim"], "layers": c["layers"], "heads": c["heads"], "ffn_dim": c["ffn_dim"], "positions": "sinusoidal",
+        "convolution_module": False, "convolution_kernel": 5, "activation": "gelu_tanh", "norm_epsilon": c["norm_epsilon"], "dropout": 0.0,
+        "classes": c["classes"], "decoder_layers": c["decoder_layers"], "decoder_dim": c["decoder_dim"], "decoder_heads": c["decoder_heads"],
+        "decoder_ffn_dim": c["decoder_ffn_dim"], "duration_filters": c["duration_filters"], "duration_kernel": c["duration_kernel"],
+        "duration_offset": c["duration_offset"],
+        "features": {"sample_rate": RATE, "window_size": N_FFT, "hop_size": HOP, "window": "hann", "center": True, "mels": c["mels"],
+                     "min_frequency": 0, "max_frequency": FMAX, "mel_scale": "slaney", "mel_norm": "slaney", "log_floor": 1e-10,
+                     "dynamic_range": 8.0, "normalize": [4.0, 0.25], "pad_seconds": None},
+    }
+
+
+def tts_tokenizer(folder):
+    """12 single-character tokens (Metaspace, no merges): token i is label i."""
+    from tokenizers import Tokenizer, models, pre_tokenizers, decoders
+    symbols = ["▁"] + list("abcdefghijk")
+    assert len(symbols) == TTS["classes"]
+    tok = Tokenizer(models.BPE(vocab={s: i for i, s in enumerate(symbols)}, merges=[]))
+    tok.pre_tokenizer = pre_tokenizers.Metaspace()
+    tok.decoder = decoders.Metaspace()
+    tok.save(os.path.join(folder, "tokenizer.json"))
+
+
+def write_tts(out):
+    from safetensors.torch import save_file
+    torch = torch_setup()
+    folder = os.path.join(out, "tts")
+    if os.path.isdir(folder):
+        import shutil
+        shutil.rmtree(folder)
+    ref = os.path.join(folder, "reference")
+    os.makedirs(ref)
+    c = TTS
+    labels = [[3, 5, 7, 1, 9], [2, 11], [4, 4, 6, 8, 10, 0, 1], [7, 3, 2]]
+    durations = [[2, 3, 0, 4, 1], [5, 2], [1, 1, 3, 2, 0, 2, 4], [3, 3, 2]]
+    frames = [sum(d) for d in durations]
+    lengths = torch.tensor([len(l) for l in labels])
+    L, T, M = max(len(l) for l in labels), max(frames), c["mels"]
+    ids = torch.zeros(len(labels), L, dtype=torch.long)
+    log_target = torch.zeros(len(labels), L)
+    for i, ls in enumerate(labels):
+        ids[i, : len(ls)] = torch.tensor(ls)
+        log_target[i, : len(ls)] = torch.log(torch.tensor(durations[i], dtype=torch.float32) + c["duration_offset"])
+    gen = torch.Generator().manual_seed(2037)
+    target = torch.zeros(len(labels), T, M)
+    for i, t in enumerate(frames):
+        target[i, :t] = torch.randn(t, M, generator=gen)
+    save_npy(folder, "log-mels.npy", target.numpy().astype(np.float32))
+    keep_frames = (torch.arange(T)[None, :] < torch.tensor(frames)[:, None]).to(torch.float32)
+    keep_labels = (torch.arange(L)[None, :] < lengths[:, None]).to(torch.float32)
+
+    def tts_loss(model):
+        mel, logd = model(ids, lengths, durations)
+        l1 = ((mel - target).abs() * keep_frames[..., None]).sum((1, 2)) / (torch.tensor(frames, dtype=torch.float32) * M)
+        mse = ((logd - log_target) ** 2 * keep_labels).sum(1) / lengths.to(torch.float32)
+        return l1.mean() + c["duration_weight"] * mse.mean(), l1.mean(), mse.mean(), mel, logd
+
+    torch.manual_seed(2037)
+    model = tts_modules(torch)
+    ctc_initialize(torch, model, 2037)
+    sub = os.path.join(folder, "model")
+    os.makedirs(sub)
+    dump_json(os.path.join(sub, "config.json"), tts_config())
+    save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(sub, "model.safetensors"))
+    tts_tokenizer(sub)
+    index, _ = safetensors_index(os.path.join(sub, "model.safetensors"))
+    dump_json(os.path.join(sub, "tensors.json"), index)
+    loss, l1, mse, mel, logd = tts_loss(model)
+    loss.backward()
+    save_file({k: p.grad.detach().clone().contiguous() for k, p in model.named_parameters()}, os.path.join(ref, "grads-step1.safetensors"))
+    save_npy(ref, "log-mel-step1.npy", mel.detach().numpy().astype(np.float32))
+    results = {"loss_step1": loss.item(), "mel_l1_step1": l1.item(), "duration_mse_step1": mse.item(), "log_durations_step1": logd.detach().tolist()}
+    losses = [float(loss)]
+    opt = torch.optim.SGD(model.parameters(), lr=0.03)
+    for _ in range(3):
+        opt.step()
+        opt.zero_grad()
+        loss, _, _, _, _ = tts_loss(model)
+        losses.append(float(loss))
+        loss.backward()
+    results["sgd_losses"] = losses
+    save_file({k: v.detach().clone().contiguous() for k, v in model.state_dict().items()}, os.path.join(ref, "weights-step3.safetensors"))
+    assert len(set(round(x, 3) for x in losses)) == 4, "the SGD losses should differ step to step"
+    dump_json(os.path.join(ref, "loss.json"), {"labels": labels, "durations": durations, "frames": frames, "mels": M,
+                                               "duration_offset": c["duration_offset"], "duration_weight": c["duration_weight"],
+                                               "reduction": "each utterance's mean |log-mel error| over its frames and mels, plus the weight times its mean squared log-duration error over its labels, each averaged over the batch",
+                                               "sgd_lr": 0.03, "sgd_momentum": 0.0, "results": results})
+
+
 def write_vits(out):
     from transformers import VitsConfig, VitsModel
     torch = torch_setup()
@@ -1254,6 +1455,8 @@ def main():
         write_seq2seq(args.out)
     if "audio-language" in sections:
         write_audio_language(args.out)
+    if "tts" in sections:
+        write_tts(args.out)
     if "vits" in sections:
         write_vits(args.out)
     if "voices" in sections:

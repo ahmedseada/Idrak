@@ -753,7 +753,22 @@ does); the TTS task without a neural vocoder sounds like Griffin-Lim (stated pla
   `<audio>`. Idrak.Audio: `IAudioTuningPart`, `AudioEncoderOptions.Trained`, `ChatAudioParts` trainable. The IdrakAudio
   plug-in's `IdrakAudioLanguageFamily` (`IdrakAudioForConditionalGeneration`: Llama decoder, encoder, stacking MLP
   projector) against `audio-language/` (`make_tiny_audio.py --sections audio-language`). "audio language:" 5 of 5 on the CPU.
-- **Left in S6:** the tts task, distillation, `PretrainedModel.Create` with "audio", and `idrak create` / `pretrain` for the ctc and seq2seq tasks (S7).
+- **The tts task** (`SpeechSynthesisTrainer`, `SpeechSynthesisObjectives` "durations", `ITrainableSpeechSynthesizer`:
+  `Encode`, `LogDurations`, `Decode`, `Save`; `SpeechSynthesisModels.Create` and `ISpeechSynthesisFamily.Create`). The
+  speech trainer's loop now runs over an internal trainee (a recognizer with its objective, or a synthesizer with its
+  own), so ctc and seq2seq are unchanged and the synthesizer gets the same batches, cache, out-of-memory halving and
+  checkpoints; `SpeechTrainingOptions.Durations` names the alignments file and `DurationLossWeight` weighs the duration
+  error. `SpeechAlignments.Align` / `AlignToFile` / `Read` / `Write` (the library side of `idrak data audio --align
+  MODEL`): JSON lines of `{audio, text, labels, starts, durations, steps, step_seconds, log_probability}` from a CTC
+  model's Viterbi paths; `SpeechAlignment.FrameDurations` gives each label the steps to the next label's start, scaled
+  to the utterance's frames. `LengthRegulation` (rows, a gather, predicted durations at a rate) and
+  `SpeechSynthesisText.Pieces` (the sentence split, moved from the VITS plug-in) in Idrak.Audio. The IdrakAudio
+  plug-in's "tts" model (`IdrakAudioSynthesisFamily`, `IdrakAudioTtsModel`): text blocks, a two-convolution duration
+  predictor, length regulation, decoder blocks and a linear to the mels, spoken through `Vocoders` ("griffin-lim" unless
+  the call, the app or the config names another of the same mel layout); checked against `tts/` (`make_tiny_audio.py
+  --sections tts`). "audio tts train:" 6 of 6 on the CPU. Without a neural vocoder it sounds like Griffin-Lim (the
+  README says so plainly).
+- **Left in S6:** distillation, `PretrainedModel.Create` with "audio", and `idrak create` / `pretrain` for the ctc and seq2seq tasks (S7).
 
 ## Phase S7: the command line
 

@@ -67,6 +67,9 @@ public sealed class IdrakAudioEncoder : Module
 
     internal static BatchLayout Layout => t_layout ?? throw new InvalidOperationException("An IdrakAudio block runs inside its encoder's pass.");
 
+    // Sets the layout the blocks read (another stack of blocks, the synthesizer's): left set after its pass, as Run leaves it.
+    internal static void Use(BatchLayout layout) => t_layout = layout;
+
     /// <inheritdoc />
     public override IEnumerable<Module> Children() => _head is null ? [.. _subsample, .. _blocks, _norm] : [.. _subsample, .. _blocks, _norm, _head];
 
