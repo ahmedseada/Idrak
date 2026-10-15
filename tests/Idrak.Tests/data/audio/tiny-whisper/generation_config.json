@@ -1,0 +1,21 @@
+{
+ "begin_suppress_tokens": [
+  562
+ ],
+ "bos_token_id": 562,
+ "decoder_start_token_id": 563,
+ "eos_token_id": 562,
+ "is_multilingual": true,
+ "lang_to_id": {
+  "<|ar|>": 565,
+  "<|en|>": 564
+ },
+ "max_length": 448,
+ "no_timestamps_token_id": 568,
+ "pad_token_id": 562,
+ "suppress_tokens": [],
+ "task_to_id": {
+  "transcribe": 567,
+  "translate": 566
+ }
+}

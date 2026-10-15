@@ -1,0 +1,266 @@
+{
+ "files": {
+  "ctc/alignment.json": {
+   "bytes": 647,
+   "sha256": "eb633d9bbdbd2fdd706afd10fc9f24485947f3994d27d42e247043d596e6e157"
+  },
+  "ctc/grads-step1.safetensors": {
+   "bytes": 86360,
+   "sha256": "b382fd264f63c3f2183f742d707595858292cc9e4d8e1224ae5fca35070c98df"
+  },
+  "ctc/loss.json": {
+   "bytes": 390,
+   "sha256": "53c19207b82cc68727e1c758bc3376dda1bddbb0359f3fd98ea2a64c92f9d73f"
+  },
+  "ctc/mels.npy": {
+   "bytes": 39808,
+   "sha256": "4a353d57df292d7f49c52ba5febde3ad909c26ff99acd4be65e8fedb8938628b"
+  },
+  "ctc/model.safetensors": {
+   "bytes": 86360,
+   "sha256": "e369eff15928607c7f34ddbcbc035a4da6c7b12656251fad5e24880d1d88d738"
+  },
+  "ctc/tensors.json": {
+   "bytes": 2401,
+   "sha256": "ea6d3bfb7b299ab22402dbd37ea356b0065525fb3deab3800241853a53c06c29"
+  },
+  "ctc/weights-step3.safetensors": {
+   "bytes": 86360,
+   "sha256": "71268f8e87a34a16bba8364b84c18993bce3fe786d31e28733cc583a05336132"
+  },
+  "features/features.json": {
+   "bytes": 428,
+   "sha256": "971ca740ef3530cb2f80406d6a0d082ea946e6acfc6545bf5701a82fefe1479c"
+  },
+  "features/log-mel.npy": {
+   "bytes": 960128,
+   "sha256": "ac50dfe8936ada3e5138bdf1b1162dced6096c678671a311e9ec42ec9d197aeb"
+  },
+  "features/mel-filterbank.npy": {
+   "bytes": 64448,
+   "sha256": "328c439d5a5f1c2361028bfbc8b268c98337e43435572e36b09ad803ae9caaab"
+  },
+  "features/stft-magnitude.npy": {
+   "bytes": 121532,
+   "sha256": "990531a04230f1b299dceb86213f2ff1bcae4b849b3048d826c8b442a5d010dc"
+  },
+  "resample/rate44k-16k.npy": {
+   "bytes": 96128,
+   "sha256": "c0cb75608ad4da530b765dc45dea990109f5a6c47a75d779aeb23a3d36c795f3"
+  },
+  "resample/rate8k-16k.npy": {
+   "bytes": 96128,
+   "sha256": "be7e3ab0ffc265892fcd384ec894624074a9f1d22a37fe42d6da089a5164ff18"
+  },
+  "resample/resample.json": {
+   "bytes": 269,
+   "sha256": "04a3f63a65cf91025cc93d66526d3099415fb053b72c15d1cc65e54d36341942"
+  },
+  "tiny-vits/config.json": {
+   "bytes": 1533,
+   "sha256": "e760368738850cfa3c1a022b8c77e787ba8bb68fd18f2b7fb441bfdafbd5d749"
+  },
+  "tiny-vits/model.safetensors": {
+   "bytes": 440048,
+   "sha256": "7d05127db75540d917f95437d12de7c46b42ffdacacf0fa73f9ce444aefdfc26"
+  },
+  "tiny-vits/reference/input.json": {
+   "bytes": 175,
+   "sha256": "e6bea50ee6987ceea000a96ff907a2ebdadcb3288eea8cf140f5bf94f4e54222"
+  },
+  "tiny-vits/reference/waveform.npy": {
+   "bytes": 576,
+   "sha256": "f584267d3fb9583f9b63f5341357b34729611409e3eefe9e70b952660e4267e3"
+  },
+  "tiny-vits/tensors.json": {
+   "bytes": 17874,
+   "sha256": "98a36df584f8c347ee83e9b1c0313820d5db18cb1be24aae2767232c2433b9b3"
+  },
+  "tiny-vits/vocab.json": {
+   "bytes": 193,
+   "sha256": "a8c335b3edf501e0c9032930ca7c08d289c7741a8fd855504d9e447920cbfdc0"
+  },
+  "tiny-whisper/config.json": {
+   "bytes": 1204,
+   "sha256": "cfa8c4e2c91f82c636073db7e80ca0460cf0cae82d50721afebd31fadd4a1f8b"
+  },
+  "tiny-whisper/generation_config.json": {
+   "bytes": 356,
+   "sha256": "c6784157584230130a612f9995022b07b156e88cbc06d54a6c9a701cd3bea236"
+  },
+  "tiny-whisper/model.safetensors": {
+   "bytes": 549680,
+   "sha256": "e44ff88fe6d0ead9335cef8691547fe94ccdb88a6113c05946e6f94c77a61c79"
+  },
+  "tiny-whisper/preprocessor_config.json": {
+   "bytes": 315,
+   "sha256": "ba2e601484abc80f4cded977f9a4fd4a53175b7d35c2f2511f0cfc3a32ad2499"
+  },
+  "tiny-whisper/reference/beam4-ids.json": {
+   "bytes": 182,
+   "sha256": "e368753ad2bfae981decfa59658283d198a4a7e0462cd913194874c32d01d385"
+  },
+  "tiny-whisper/reference/encoder-output.npy": {
+   "bytes": 192128,
+   "sha256": "a03147218c6ade969e9afebbf70b9a47bc65dc5dcad19f48a2548f5202f5c84e"
+  },
+  "tiny-whisper/reference/greedy-ids.json": {
+   "bytes": 116,
+   "sha256": "537adbedc606c8405271e15bc6729030de6d5fd04f83fbcccf8b9f56125235d5"
+  },
+  "tiny-whisper/reference/logits-step1.npy": {
+   "bytes": 2528,
+   "sha256": "88926883064dca12fbacbbcbf567c41c818a31ec67d205e4e8f0e832cadf22be"
+  },
+  "tiny-whisper/reference/timestamps-ids.json": {
+   "bytes": 109,
+   "sha256": "697f948682b0870b9116447fbb0e43c6b39d542a34c8ec395ac688ff7046779e"
+  },
+  "tiny-whisper/special_tokens.json": {
+   "bytes": 720,
+   "sha256": "23090e36bb6598a192752cd79d2158bbe48745b2ec56dcbad7d39227790a56fa"
+  },
+  "tiny-whisper/tensors.json": {
+   "bytes": 8665,
+   "sha256": "53b177d61475f50465fa088d216e97e7bcd27f1aae189bec6ff91e9957e9d48a"
+  },
+  "tiny-whisper/tokenizer.json": {
+   "bytes": 34911,
+   "sha256": "55834098dfcb37478d4fe3a2a2bd24e10c2722803147217d513fde87cdb63545"
+  },
+  "transcripts/train-sharegpt.jsonl": {
+   "bytes": 1231,
+   "sha256": "4cc60826960adb2e83cec10d452d2ceb14c98bf8ae7146dc1a271965247c15db"
+  },
+  "transcripts/train.jsonl": {
+   "bytes": 691,
+   "sha256": "1297b84f99443b36ff92f0e893c8cefbd9f316236c87ee5490fcde12e220d442"
+  },
+  "wav/bad-no-fmt.wav": {
+   "bytes": 48020,
+   "sha256": "406969804ffe6dd92dea35266e5e16edb64132b8b89c07f2361132a8bc46efa0"
+  },
+  "wav/bad-truncated.wav": {
+   "bytes": 30,
+   "sha256": "39af56995dad539e57f6608b3304d4704162391370f4165859597b9ffd29d3ea"
+  },
+  "wav/extensible16.npy": {
+   "bytes": 192128,
+   "sha256": "48ab6aacd550899884287c072259b464dc14e3301b9f5b84e10d5c005d8c67e8"
+  },
+  "wav/extensible16.wav": {
+   "bytes": 96068,
+   "sha256": "0ee8247030829cd41c898690a8fdd2a9f71f16d37ee8c9bd680c15cb98d8f825"
+  },
+  "wav/files.json": {
+   "bytes": 859,
+   "sha256": "9dd0c16f3ab302a397225a14b672e59d9bbcbc8c3dbf5a246783fdf561ca68e1"
+  },
+  "wav/float32.npy": {
+   "bytes": 96128,
+   "sha256": "78856070b654cd1c485467993584578202885b014e0bc65834fce73c2bed20ca"
+  },
+  "wav/float32.wav": {
+   "bytes": 96044,
+   "sha256": "f009158c3b07c8a1a4142787b75b9e8a24da0504a71ade13fa6d13b9c5919792"
+  },
+  "wav/float64.npy": {
+   "bytes": 96128,
+   "sha256": "78856070b654cd1c485467993584578202885b014e0bc65834fce73c2bed20ca"
+  },
+  "wav/float64.wav": {
+   "bytes": 192044,
+   "sha256": "28c97487fcd18d6e7dd3828bc13401cbc2a32eae6152c0353e09362a353a7efe"
+  },
+  "wav/list-chunk16.npy": {
+   "bytes": 96128,
+   "sha256": "47229867f6c65240405598114a06b9256b5e02f0b5660e10242376ae8c29af39"
+  },
+  "wav/list-chunk16.wav": {
+   "bytes": 48076,
+   "sha256": "5a1b9dc703d0a36efd5149b28f33465f29ffb85a8b92c19003350e93c0c4038b"
+  },
+  "wav/oversized16.npy": {
+   "bytes": 96128,
+   "sha256": "47229867f6c65240405598114a06b9256b5e02f0b5660e10242376ae8c29af39"
+  },
+  "wav/oversized16.wav": {
+   "bytes": 48044,
+   "sha256": "2a1e24b8411ac32c67a1580c4284362b7c3327488e45577b1cdd5e7a751396ec"
+  },
+  "wav/pcm16.npy": {
+   "bytes": 96128,
+   "sha256": "47229867f6c65240405598114a06b9256b5e02f0b5660e10242376ae8c29af39"
+  },
+  "wav/pcm16.wav": {
+   "bytes": 48044,
+   "sha256": "4677b58b3e9661f3afaa297494e5334933919fafda965757869d57d1e7099654"
+  },
+  "wav/pcm24.npy": {
+   "bytes": 96128,
+   "sha256": "0a91bd5b458c0ece4152cb7f4c176bb3dc1c8a4509e85a54507f20659d33a26a"
+  },
+  "wav/pcm24.wav": {
+   "bytes": 72044,
+   "sha256": "730917ab48de566b776f9d94df24bf9d0810319d6fffb639dfceed054b32c199"
+  },
+  "wav/pcm32.npy": {
+   "bytes": 96128,
+   "sha256": "5bca8c8abc6fb2110ea5c9d291f13b86fbd13806de50596353f81db99e27ad59"
+  },
+  "wav/pcm32.wav": {
+   "bytes": 96044,
+   "sha256": "0b0debd005b5a96127fe744293f0f7ed777050b72eb8ef98b21c358eca4fafa2"
+  },
+  "wav/pcm8.npy": {
+   "bytes": 96128,
+   "sha256": "0d6d453b465c69348271e3d84793aeb24256edc3004574dbb30debb23d681ef1"
+  },
+  "wav/pcm8.wav": {
+   "bytes": 24044,
+   "sha256": "cd9f827747db21d3f717468f8b7422f8004c4ab28afabaa2795e2a1082de4a20"
+  },
+  "wav/rate44k.npy": {
+   "bytes": 264728,
+   "sha256": "8858298255f00aa96e067ca8a35c64e3c94da080ce7c2522bda69306e55e860a"
+  },
+  "wav/rate44k.wav": {
+   "bytes": 132344,
+   "sha256": "fb023831015ff9a64c8773808a889d2b44ebea9cc2fa7b8f2375c61258c12492"
+  },
+  "wav/rate8k.npy": {
+   "bytes": 48128,
+   "sha256": "1b348a4c7b751add441b16523c90cb09255e3c8e9bbbe4d8fda81a2ac2748e8c"
+  },
+  "wav/rate8k.wav": {
+   "bytes": 24044,
+   "sha256": "b4d013fa7cdc24d05dfaf0b16baef7edf02282bc8eaef0c0f180b69dda2d1838"
+  },
+  "wav/stereo16.npy": {
+   "bytes": 192128,
+   "sha256": "48ab6aacd550899884287c072259b464dc14e3301b9f5b84e10d5c005d8c67e8"
+  },
+  "wav/stereo16.wav": {
+   "bytes": 96044,
+   "sha256": "ea907654e78601f6926ac53b5da697e5670466590244447365a9aaf20a68731c"
+  }
+ },
+ "sections": [
+  "wav",
+  "resample",
+  "features",
+  "whisper",
+  "ctc",
+  "vits",
+  "transcripts"
+ ],
+ "versions": {
+  "numpy": "2.5.4",
+  "python": "3.13.16",
+  "safetensors": "0.8.0",
+  "tokenizers": "0.23.3",
+  "torch": "2.14.1+cu130",
+  "torchaudio": "2.11.0+cu130",
+  "transformers": "5.19.0"
+ }
+}

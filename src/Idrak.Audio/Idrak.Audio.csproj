@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Audio</RootNamespace>
+    <AssemblyName>Idrak.Audio</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Audio</PackageId>
+    <Description>Sound for Idrak (no dependencies beyond Idrak): WAV decoding and encoding in C# (PCM 8 to 32 bits, float, extensible), decoded audio held as 16-bit until its floats are read, audio codec and encoder registries, and (plan 21) resampling, log-mel features, speech recognition and synthesis contracts.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\Idrak.Nlp\Idrak.Nlp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Devices" />
+    <Using Include="Idrak.Audio.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+</Project>

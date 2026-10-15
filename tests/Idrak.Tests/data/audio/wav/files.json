@@ -1,0 +1,62 @@
+{
+ "extensible16": {
+  "channels": 2,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "float32": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "float64": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "list-chunk16": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "oversized16": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "pcm16": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "pcm24": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "pcm32": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "pcm8": {
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "rate44k": {
+  "channels": 1,
+  "rate": 44100,
+  "samples": 66150
+ },
+ "rate8k": {
+  "channels": 1,
+  "rate": 8000,
+  "samples": 12000
+ },
+ "stereo16": {
+  "channels": 2,
+  "rate": 16000,
+  "samples": 24000
+ }
+}

@@ -1,6 +1,6 @@
 # Plan 21: Idrak.Audio (sound in and out: codecs, features, speech recognition and synthesis)
 
-**Status:** planned 2026-10-15 against the code at `abstraction` 82d84937. Nothing is built. The package name
+**Status:** planned 2026-10-15 against the code at `abstraction` 82d84937; S0 (the reference fixture) and S1 (AudioData, the codec and encoder registries, the WAV codec and encoder) built the same day, CPU-checked. Nothing is built. The package name
 `Idrak.Audio` is reserved in the library (`src/Idrak.Abstraction/LibraryDefaults.cs:29-30`, with a
 `DynamicDependency` on `Idrak.Audio.LibraryRegistrations` at line 43), so the day the assembly exists its
 registrations are found without a change to Idrak.Abstraction.

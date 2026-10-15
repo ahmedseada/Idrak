@@ -1,0 +1,17 @@
+{
+ "ids": [
+  2,
+  3,
+  4,
+  1,
+  2,
+  3
+ ],
+ "noise_scale": 0.0,
+ "noise_scale_duration": 0.0,
+ "sequence_lengths": [
+  112
+ ],
+ "text": "abc ab",
+ "waveform_samples": 112
+}

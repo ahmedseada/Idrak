@@ -1,0 +1,6 @@
+{"conversations": [{"from": "human", "value": "<audio>Transcribe."}, {"from": "gpt", "value": "حسب الذمة جدة. الإقامة عبر 1407 هـ. سعود بن خديجة"}], "audios": ["wav/pcm16.wav"]}
+{"conversations": [{"from": "human", "value": "<audio>Transcribe."}, {"from": "gpt", "value": "كذلك قدمت النقض مع صاحب عنيزة إدارة العامة قبل الديوان اللازمة"}], "audios": ["wav/stereo16.wav"]}
+{"conversations": [{"from": "human", "value": "<audio>Transcribe."}, {"from": "gpt", "value": "the quick brown fox jumps over the lazy dog"}], "audios": ["wav/rate8k.wav"]}
+{"conversations": [{"from": "human", "value": "<audio>Transcribe."}, {"from": "gpt", "value": "a recording of one voice, read slowly, with numbers 12 345 and dates"}], "audios": ["wav/rate44k.wav"]}
+{"conversations": [{"from": "human", "value": "<audio>Transcribe."}, {"from": "gpt", "value": "وفق ينبع قبل الرهن. كانت تكون القرار"}], "audios": ["wav/float32.wav"]}
+{"conversations": [{"from": "human", "value": "<audio>Transcribe."}, {"from": "gpt", "value": "speech recognition from scratch needs many hours of transcribed sound"}], "audios": ["wav/list-chunk16.wav"]}

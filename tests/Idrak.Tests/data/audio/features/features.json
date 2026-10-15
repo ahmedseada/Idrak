@@ -1,0 +1,19 @@
+{
+ "center": true,
+ "fmax": 8000,
+ "fmin": 0,
+ "hop_length": 160,
+ "log": "log10 clamped at 1e-10, floored at max - 8, then (x + 4) / 4",
+ "log_mel_frames": 3000,
+ "mel_scale": "slaney",
+ "mels": 80,
+ "n_fft": 400,
+ "norm": "slaney",
+ "pad_mode": "reflect",
+ "padding_seconds": 30,
+ "power": 2,
+ "sample_rate": 16000,
+ "source": "wav/pcm16.wav (16 kHz already: no resampling)",
+ "stft_frames": 151,
+ "window": "hann periodic"
+}

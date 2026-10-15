@@ -163,6 +163,27 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks a sound codec (Idrak.Audio's <c>IAudioCodec</c>, given as its two methods in <see cref="AudioCodecUnderTest"/>)
+    /// on sound files of its own (<see cref="AudioCodecSuite"/>): the header from the first bytes, the decoded sound's rate,
+    /// channels, length and range, the same samples every time and from two threads, the expected samples when given, invalid
+    /// files refused saying why; then files cut at random lengths, which decode shorter or are refused as damaged. Eight
+    /// random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// var codec = AudioCodecs.Get("wav");
+    /// Conformance.CheckAudioCodec(new AudioCodecUnderTest(
+    ///     bytes =&gt; codec.ReadInfo(bytes.Span) is { } i ? new AudioHeader(i.SampleRate, i.Channels, i.Samples) : null,
+    ///     bytes =&gt; { var a = codec.Decode(bytes.Span); return new DecodedAudio(a.SampleRate, a.Channels, a.Samples); }), samples).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    public static ConformanceReport CheckAudioCodec(AudioCodecUnderTest codec, IReadOnlyList<AudioSample> samples, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(codec);
+        return Check(codec, new AudioCodecSuite(samples), options ?? new ContractCheckOptions { RandomCases = 8 });
+    }
+
+    /// <summary>
     /// Checks an image model family (Idrak.Vision's <c>IImageModelFamily</c>, given as its loading: a checkpoint's path in, the
     /// loaded model wrapped as <see cref="ImageModelUnderTest"/> out) on checkpoints of its own
     /// (<see cref="ImageModelFamilySuite"/>): it loads, predicts finite outputs, the same every time, from several threads,

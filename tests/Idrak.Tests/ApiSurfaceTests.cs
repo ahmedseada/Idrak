@@ -41,7 +41,7 @@ internal static partial class Tests
 
     // The packages whose surface is guarded: the library's, the testing kit included (apps build on it), the CLI not (an app).
     private static readonly string[] ApiAssemblyNames =
-        ["Idrak.Abstraction", "Idrak.Abstraction.Testing", "Idrak.Gpu", "Idrak", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision", "Idrak.Mcp", "Idrak.AspNetCore", "Idrak.Onnx.Runtime"];
+        ["Idrak.Abstraction", "Idrak.Abstraction.Testing", "Idrak.Gpu", "Idrak", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision", "Idrak.Audio", "Idrak.Mcp", "Idrak.AspNetCore", "Idrak.Onnx.Runtime"];
 
     private static bool UpdateApi => Environment.GetEnvironmentVariable("IDRAK_UPDATE_API") == "1";
 
