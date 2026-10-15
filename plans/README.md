@@ -41,6 +41,7 @@ Language and vision-language models from scratch, two tracks (A: a decoder from 
 pretraining loop with every parameter trained, checkpoints with resume, `idrak create` / `pretrain` / `data tokenizer`;
 B: a vision tower and projector made by a family plug-in through `IVisionFamily.Create`, align and joint stages, images
 in distillation; detailed per phase with files, signatures and tests; tracks A and B built and CPU-checked, the proof runs the owner's): [19-vision-language-from-scratch.md](19-vision-language-from-scratch.md).
+Sound in and out of the library (`Idrak.Audio` as general building blocks: WAV and registered audio codecs, resampling, STFT and log-mel on every device, an "audio" chat part, speech recognition and synthesis contracts, CTC training from scratch; the Whisper-style loader, a VITS-style synthesizer and the from-scratch IdrakAudio family as plug-in samples; `idrak transcribe`, `speak`, `data audio`; planned): [21-audio.md](21-audio.md).
 
 ## Not supported yet
 
