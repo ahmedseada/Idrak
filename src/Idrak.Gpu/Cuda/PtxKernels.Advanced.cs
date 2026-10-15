@@ -15,7 +15,7 @@ internal static partial class PtxKernels
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
         "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32",
-        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_add_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32",
+        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32",
         "permute_f32", "copy2d_f32", "sum_axis_f32", "broadcast_axis_f32",
     ];
 
@@ -945,11 +945,81 @@ internal static partial class PtxKernels
             st.global.f32 [%a_y], %f2;
             """);
 
-        Elementwise(sb, "scatter_add_f32", ["dy", "indices", "dtable"], [("u32", "dim"), ("u32", "maxindex")],
-            TableIndex + """
-            add.u64 %rd3, %b_dtable, %rd3;
-            ld.global.f32 %f2, [%a_dy];
-            atom.global.add.f32 %f3, [%rd3], %f2;
+        // dtable[indices[i], :] += dy[i, :] in a fixed order, no atomics (rule 86): each id's rows are added in position
+        // order, as the CPU and Vulkan add them, so the gradient is the same bit for bit run to run and device to device.
+        // First pass, one thread per position: the next position with the same id (count when none) in the low 31 bits,
+        // the top bit set when no earlier position has it (the chain's head). A thread scans the ids from the start until
+        // an earlier copy of its own (then from after itself) and stops at the next one: index compares only, every thread
+        // of a warp reading the same id.
+        Elementwise(sb, "scatter_chain_u32", ["indices", "chain"], [("u32", "count"), ("u32", "maxindex")], """
+            ld.global.f32 %f1, [%a_indices];
+            cvt.rzi.u32.f32 %r5, %f1;
+            min.u32 %r5, %r5, %s_maxindex;
+            mov.u32 %r6, 0x80000000;
+            mov.u32 %r7, %s_count;
+            mov.u32 %r8, 0;
+            SCAN:
+            setp.ge.u32 %p1, %r8, %s_count;
+            @%p1 bra LINK;
+            setp.eq.u32 %p2, %r8, %i;
+            @%p2 bra STEP;
+            mul.wide.u32 %rd1, %r8, 4;
+            add.u64 %rd2, %b_indices, %rd1;
+            ld.global.f32 %f2, [%rd2];
+            cvt.rzi.u32.f32 %r9, %f2;
+            min.u32 %r9, %r9, %s_maxindex;
+            setp.ne.u32 %p3, %r9, %r5;
+            @%p3 bra STEP;
+            setp.gt.u32 %p4, %r8, %i;
+            @%p4 bra FOUND;
+            mov.u32 %r6, 0;
+            mov.u32 %r8, %i;
+            bra STEP;
+            FOUND:
+            mov.u32 %r7, %r8;
+            bra LINK;
+            STEP:
+            add.u32 %r8, %r8, 1;
+            bra SCAN;
+            LINK:
+            or.b32 %r10, %r7, %r6;
+            st.global.u32 [%a_chain], %r10;
+            """);
+
+        // Second pass, one thread per (position, column) of a chain's head: the table's value plus each of the id's rows in
+        // position order, stored once (no other thread writes that element).
+        Elementwise(sb, "scatter_walk_f32", ["dy", "chain", "indices", "dtable"], [("u32", "dim"), ("u32", "maxindex"), ("u32", "count")], """
+            div.u32 %r5, %i, %s_dim;
+            rem.u32 %r6, %i, %s_dim;
+            mul.wide.u32 %rd1, %r5, 4;
+            add.u64 %rd2, %b_chain, %rd1;
+            ld.global.u32 %r7, [%rd2];
+            and.b32 %r8, %r7, 0x80000000;
+            setp.eq.u32 %p1, %r8, 0;
+            @%p1 bra WALKED;
+            add.u64 %rd3, %b_indices, %rd1;
+            ld.global.f32 %f1, [%rd3];
+            cvt.rzi.u32.f32 %r9, %f1;
+            min.u32 %r9, %r9, %s_maxindex;
+            mad.lo.u32 %r10, %r9, %s_dim, %r6;
+            mul.wide.u32 %rd4, %r10, 4;
+            add.u64 %rd4, %b_dtable, %rd4;
+            ld.global.f32 %f2, [%rd4];
+            mov.u32 %r11, %r5;
+            WALK:
+            mad.lo.u32 %r12, %r11, %s_dim, %r6;
+            mul.wide.u32 %rd5, %r12, 4;
+            add.u64 %rd5, %b_dy, %rd5;
+            ld.global.f32 %f3, [%rd5];
+            add.rn.f32 %f2, %f2, %f3;
+            mul.wide.u32 %rd6, %r11, 4;
+            add.u64 %rd6, %b_chain, %rd6;
+            ld.global.u32 %r13, [%rd6];
+            and.b32 %r11, %r13, 0x7FFFFFFF;
+            setp.lt.u32 %p2, %r11, %s_count;
+            @%p2 bra WALK;
+            st.global.f32 [%rd4], %f2;
+            WALKED:
             """);
     }
 

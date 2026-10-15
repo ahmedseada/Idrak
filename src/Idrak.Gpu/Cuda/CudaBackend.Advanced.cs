@@ -139,10 +139,25 @@ internal sealed unsafe partial class CudaBackend
         Launch1D(K("one_hot_f32"), n, P(indices), P(y), U(classes), U(classes - 1), U(n));
     }
 
+    // Each id's rows added in position order (rule 86): the positions linked id by id, then each chain walked by its head.
     public override void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
-        int n = count * dim;
-        Launch1D(K("scatter_add_f32"), n, P(dy), P(indices), P(dtable), U(dim), U(vocabulary - 1), U(n));
+        if (count == 0 || dim == 0)
+        {
+            return;
+        }
+
+        var chain = Allocate(count, zeroed: false);
+        try
+        {
+            Launch1D(K("scatter_chain_u32"), count, P(indices), P(chain), U(count), U(vocabulary - 1), U(count));
+            int n = count * dim;
+            Launch1D(K("scatter_walk_f32"), n, P(dy), P(chain), P(indices), P(dtable), U(dim), U(vocabulary - 1), U(count), U(n));
+        }
+        finally
+        {
+            chain.Release();                                                   // reused in stream order
+        }
     }
 
     private void LaunchPatches(string kernel, Storage a, Storage b, in ConvGeometry g)
