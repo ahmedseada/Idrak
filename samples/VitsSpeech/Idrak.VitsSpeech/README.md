@@ -64,8 +64,45 @@ inference. `VitsTokenizer` romanises such text first, with the romanizer `TextRo
 `posterior_encoder_num_wavenet_layers` from config.json), `VitsFlow.Forward` (the coupling layers forward, the inverse of
 `Reverse`) and `HifiGanDecoder`. The project lets that assembly (and the tests) see its internal layers.
 
+## Fine-tuning a voice (plan 21, S9 route C)
+
+Loaded with `SpeechSynthesisLoadOptions.Training`, the synthesizer is an `IAdversarialSpeechSynthesizer` that
+`AdversarialSynthesisTrainer` (Idrak.Audio) fine-tunes on one person's transcribed recordings, VITS's way:
+
+| Part | What training does |
+|---|---|
+| Weights | every tensor a parameter under its stored name; weight norms kept as gains and directions, folded per pass; saved back to the checkpoint's own layout (`model.safetensors`, the other files copied) |
+| Posterior | the linear spectrogram (VITS's `spectrogram_torch`) through the posterior encoder, latents drawn, the flow forward |
+| Durations | the monotonic alignment search on the host (`MonotonicAlignment`, VITS's recursion in float), the stochastic duration predictor's negative log-likelihood through its posterior flows (the spline composed from tensor operations); the deterministic predictor's squared log error when the checkpoint uses one |
+| Losses | mel L1 × 45, KL × 1 (over the batch's frames), duration × 1 (over its tokens), least-squares adversarial × 1, feature matching × 2: every weight a setting (`AdversarialSynthesisOptions`) |
+| Decoder | a random segment of `SegmentFrames` latent frames (32 by default, 8192 samples at hop 256): memory follows the batch, not an utterance's length |
+| Discriminators | `VitsDiscriminators`: VITS's multi-period discriminator (a scale discriminator of grouped convolutions, periods 2, 3, 5, 7, 11), `scales` above 1 adds HiFi-GAN's pooled scales; weight-normed; `discriminator.json` lists every channel, kernel, stride, group and slope; read from the base folder when it holds `discriminator.safetensors`, else drawn new (MMS-TTS checkpoints ship none) |
+
+```powershell
+idrak voice train ahmed --from D:\rec\transcripts.jsonl --base facebook/mms-tts-ara -P Idrak.VitsSpeech.dll -l ar `
+  --consent "I, Ahmed, agree that this voice is trained for speech made with Idrak." -d cuda
+idrak speak facebook/mms-tts-ara "مرحبا، أنا إدراك" --voice ahmed -P Idrak.VitsSpeech.dll -o ahmed.wav
+```
+
+`--from` takes transcripts (JSON lines of `{"audio", "text"}`) or a folder of `name.wav` + `name.txt`; 30 to 60 minutes
+of one person in a quiet room. The run folder resumes with `idrak voice train --resume RUN` or `idrak resume RUN`.
+Fine-tuning defaults (all options): AdamW at 2e-4 with betas 0.8 and 0.99, a constant rate, no clipping, 40 audio seconds
+a step, 2000 steps, a checkpoint every 500. Only single-speaker checkpoints train (route C is one person's voice).
+
+**Checked** against a torch mirror of VITS's training step (`tests/Idrak.Tests/data/audio/vits-train`, the
+`"audio voice train"` tests): both losses and every gradient of step 1 within 1e-4, the alignment paths exactly, three SGD
+steps; resumed bit for bit on the CPU.
+
+**What to expect, plainly.** The fixture proves the step is VITS's, not that the voice sounds good: no voice made here has
+been listened to. The discriminators start new, so for the first thousand steps or so the adversarial terms are noisy
+and the sound can get worse before it gets better. From clean, accurately transcribed speech, a few thousand steps
+should give a voice recognisably the person's with the base model's pronunciation; Arabic goes through uroman
+romanisation (no diacritics) as MMS was trained, so its pronunciation errors stay. Fine-tuning runs without dropout (a
+later setting). On CUDA the convolution's backward does not yet sum in a fixed order, so runs are not bit for bit there.
+
 ## Not done
 
-- `SpeechSynthesisFamilies` has no `Create` (a VITS model from a description): MMS-TTS checkpoints are loaded, not made.
+- `SpeechSynthesisFamilies` has no `Create` (a VITS model from a description): MMS-TTS checkpoints are loaded, not made
+  (and fine-tuned, above).
 - The HiFi-GAN decoder is not registered in `Vocoders` by name (it needs a loaded checkpoint); `VitsSynthesizer.Vocoder`
   exposes it to a model that produces the same latents.
