@@ -40,7 +40,8 @@ internal sealed class VitsTextEncoder : IDisposable
             throw new InvalidDataException($"'{prefix}.weight' is {Tensor.FormatShape(shape)}, the configuration says [{outFeatures}, {inFeatures}, 1].");
         }
 
-        var weight = Tensor.Persistent(HostParallel.Transpose(weights.Read(prefix + ".weight"), outFeatures, inFeatures), [inFeatures, outFeatures], weights.Device);
+        var weight = weights.Parameter(prefix + ".weight", HostParallel.Transpose(weights.Read(prefix + ".weight"), outFeatures, inFeatures), [inFeatures, outFeatures], shape,
+            transposed: true);
         return Linear.FromWeights(weight, weights.Contains(prefix + ".bias") ? weights.Tensor(prefix + ".bias", outFeatures) : null);
     }
 
@@ -69,9 +70,10 @@ internal sealed class VitsTextEncoder : IDisposable
         private readonly VitsConfig _config;
         private readonly Linear _q, _k, _v, _out;
         private readonly float[]? _relK, _relV;                                  // [2w + 1, d] each
+        private readonly Tensor? _relKParameter, _relVParameter, _zeroRow;      // training: the relative embeddings [2w + 1, d] as parameters, and a zero row [1, d]
         private readonly LayerNorm _norm, _finalNorm;
         private readonly Conv1d _conv1, _conv2;
-        private readonly ConcurrentDictionary<int, (float[] RelToAbs, float[] AbsToRel, float[] RelK, float[] RelV)> _byLength = new();
+        private readonly ConcurrentDictionary<int, (float[] RelToAbs, float[] AbsToRel, float[] RelK, float[] RelV, float[] Offsets)> _byLength = new();
 
         public Layer(VitsWeights weights, string prefix, VitsConfig config)
         {
@@ -97,6 +99,13 @@ internal sealed class VitsTextEncoder : IDisposable
 
                 _relK = weights.Read($"{prefix}.attention.emb_rel_k");
                 _relV = weights.Read($"{prefix}.attention.emb_rel_v");
+                if (weights.Trainable)
+                {
+                    // The relative embeddings as parameters, gathered per length (offsets beyond the window read the zero row).
+                    _relKParameter = weights.Parameter($"{prefix}.attention.emb_rel_k", _relK, [span, d], shape);
+                    _relVParameter = weights.Parameter($"{prefix}.attention.emb_rel_v", _relV, [span, d], weights.Shape($"{prefix}.attention.emb_rel_v"));
+                    _zeroRow = Tensor.PersistentZeros([1, d], weights.Device);
+                }
             }
 
             _norm = weights.Norm($"{prefix}.layer_norm", c, config.LayerNormEps);
@@ -123,7 +132,7 @@ internal sealed class VitsTextEncoder : IDisposable
             var tables = _relK is null ? default : _byLength.GetOrAdd(t, BuildTables);
             if (_relK is not null)
             {
-                var relK = Tensor.From(tables.RelK, [2 * t - 1, d], x.Device);
+                var relK = RelativeTable(_relKParameter, tables.RelK, tables.Offsets, t, d, x.Device);
                 var relative = q.MatMul(relK, transposeB: true);                    // [h, T, 2T - 1]: query i against offset r - (T - 1)
                 var bias = relative.Reshape(h * t * (2 * t - 1), 1).EmbeddingLookup(Tensor.From(tables.RelToAbs, [h * t * t], x.Device)).Reshape(h, t, t);
                 scores = scores + bias;
@@ -135,14 +144,21 @@ internal sealed class VitsTextEncoder : IDisposable
             {
                 var table = Tensor.Concat([probs.Reshape(h * t * t, 1), Tensor.Zeros([1, 1], x.Device)], 0);
                 var relativeProbs = table.EmbeddingLookup(Tensor.From(tables.AbsToRel, [h * t * (2 * t - 1)], x.Device)).Reshape(h, t, 2 * t - 1);
-                output = output + relativeProbs.MatMul(Tensor.From(tables.RelV, [2 * t - 1, d], x.Device));
+                output = output + relativeProbs.MatMul(RelativeTable(_relVParameter, tables.RelV, tables.Offsets, t, d, x.Device));
             }
 
             return _out.Forward(output.Permute(1, 0, 2).Reshape(t, c));
         }
 
+        // The relative embeddings [2T - 1, d] for T queries: the host's slices when speaking; when training, the parameters'
+        // rows gathered (each offset's row, the zero row beyond the window), so their gradients reach the parameters.
+        private Tensor RelativeTable(Tensor? parameter, float[] host, float[] offsets, int t, int d, Device device) =>
+            parameter is null
+                ? Tensor.From(host, [2 * t - 1, d], device)
+                : Tensor.Concat([parameter, _zeroRow!], 0).EmbeddingLookup(Tensor.From(offsets, [offsets.Length], device));
+
         // The gather indices and the relative embeddings for T queries: offset r in [0, 2T - 2] is key j = i + r - (T - 1).
-        private (float[] RelToAbs, float[] AbsToRel, float[] RelK, float[] RelV) BuildTables(int t)
+        private (float[] RelToAbs, float[] AbsToRel, float[] RelK, float[] RelV, float[] Offsets) BuildTables(int t)
         {
             int h = _config.Heads, w = _config.WindowSize, d = _config.HiddenSize / h, offsets = 2 * t - 1;
             var relToAbs = new float[h * t * t];
@@ -167,9 +183,11 @@ internal sealed class VitsTextEncoder : IDisposable
 
             var relK = new float[offsets * d];
             var relV = new float[offsets * d];
+            var rows = new float[offsets];
             for (int r = 0; r < offsets; r++)
             {
                 int offset = r - (t - 1);
+                rows[r] = Math.Abs(offset) <= w ? offset + w : 2 * w + 1;
                 if (Math.Abs(offset) <= w)
                 {
                     _relK!.AsSpan((offset + w) * d, d).CopyTo(relK.AsSpan(r * d, d));
@@ -177,7 +195,7 @@ internal sealed class VitsTextEncoder : IDisposable
                 }
             }
 
-            return (relToAbs, absToRel, relK, relV);
+            return (relToAbs, absToRel, relK, relV, rows);
         }
 
         private Tensor FeedForward(Tensor x)
@@ -197,6 +215,9 @@ internal sealed class VitsTextEncoder : IDisposable
             _finalNorm.Dispose();
             _conv1.Dispose();
             _conv2.Dispose();
+            _relKParameter?.Dispose();
+            _relVParameter?.Dispose();
+            _zeroRow?.Dispose();
         }
     }
 }

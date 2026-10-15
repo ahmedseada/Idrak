@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
-| `Idrak.Audio` | 25 | 2 | 14 | 41 | 0 |
+| `Idrak.Audio` | 27 | 2 | 14 | 43 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -236,6 +236,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioFeatureExtractors` | registry | public | — |  | log-mel | — | Audio |
 | `Idrak.Audio.Abstractions.AudioSplitters` | registry | public | — |  | seconds, silence | — | Audio |
+| `Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer` | interface | public | Module | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioAugmentation` | interface | public | — | NoiseAugmentation, SpecMaskAugmentation, SpeedAugmentation |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCodec` | interface | public | — | AudioCodecs.GuardedCodec, FlacCodec, WavCodec |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioEncoder` | interface | public | — | AudioEncoders.GuardedEncoder, WavEncoder |  | Audio | Audio |
@@ -266,7 +268,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.SpeechSources` | registry | public | — |  | audio-folder, transcripts | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechSynthesisFamilies` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechSynthesisObjectives` | registry | public | — |  | durations | Audio | Audio |
-| `Idrak.Audio.Abstractions.SpeechTrainee` | abstract class | internal | Device, Module, Tensor | SpeechSynthesisTrainer.SynthesisTrainee, SpeechTrainer.RecognizerTrainee |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.SpeechTrainee` | abstract class | internal | Device, Module, Tensor | AdversarialSynthesisTrainer.AdversarialTrainee, SpeechSynthesisTrainer.SynthesisTrainee, SpeechTrainer.RecognizerTrainee |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechTrainingObjectives` | registry | public | — |  | ctc, seq2seq | Audio | Audio |
 | `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | — | Audio |
 | `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio | Audio |

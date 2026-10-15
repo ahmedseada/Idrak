@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Audio;
+
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>
@@ -41,4 +43,48 @@ internal abstract class SpeechTrainee
     public abstract IEnumerable<TuningScore> Score(ISpeechReader reader, Tensor features, SpeechTrainer.Prepared[] group);
 
     public abstract void Save(string folder);
+
+    // The width of an utterance's feature rows (the mels, for a log-mel model).
+    public virtual int FeatureWidth => Features.Options.Mels;
+
+    // The last step's loss terms by name, for the progress (null: the loss alone).
+    public virtual IReadOnlyDictionary<string, float>? Terms => null;
+
+    // The optimizer of the network's parameters.
+    public virtual Optimizer CreateOptimizer(List<Tensor> parameters, SpeechTrainingOptions options) => SpeechTrainer.CreateOptimizer(parameters, options);
+
+    // Before the first step: the trainee's own optimizers (and their state from `resume`, `step` steps done); disposed after the run.
+    public virtual IDisposable? Start(SpeechTrainingOptions options, string? resume, int step) => null;
+
+    // After each optimizer step: the trainee's own schedules.
+    public virtual void Stepped()
+    {
+    }
+
+    // Writes the trainee's own optimizers' state into a checkpoint folder.
+    public virtual void SaveState(string folder)
+    {
+    }
+
+    // One optimizer step over the step's micro-batches (`step` counts from 1): each micro-batch's mean loss, scaled by its
+    // utterances' share of the step, backward; then the optimizer's step. Returns the step's mean loss.
+    public virtual double Step(ISpeechReader reader, IReadOnlyList<SpeechTrainer.Prepared[]> groups, Optimizer optimizer, SpeechTrainingOptions options,
+        SpeechForwardOptions forward, int step)
+    {
+        int total = groups.Sum(g => g.Length);
+        optimizer.ZeroGrad();
+        double sum = 0;
+        foreach (var group in groups)
+        {
+            using var scope = new TensorScope();
+            using var precision = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
+            var loss = Loss(reader, SpeechTrainer.Padded(group, this), group, forward);
+            var scaled = group.Length == total ? loss : loss * (group.Length / (float)total);
+            scaled.Backward();
+            sum += loss.Item() * group.Length;
+        }
+
+        optimizer.ClipAndStep(options.MaxGradientNorm);
+        return sum / total;
+    }
 }

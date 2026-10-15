@@ -22,6 +22,13 @@ internal sealed class VitsPosteriorEncoder : IDisposable
         _proj = weights.Conv("posterior_encoder.conv_proj", config.HiddenSize, 2 * config.FlowSize, 1, 0);
     }
 
+    /// <summary>The posterior's means and log-stddevs [F, T] each of the spectrogram [bins, T] with the speaker's embedding [E, 1] (training draws the latents from them).</summary>
+    public (Tensor Means, Tensor LogStddevs) Stats(Tensor spectrogram, Tensor? speaker)
+    {
+        var stats = _proj.Forward(_waveNet.Forward(_pre.Forward(spectrogram), speaker));   // [2F, T]
+        return (stats.Narrow(0, 0, _flowSize), stats.Narrow(0, _flowSize, _flowSize));
+    }
+
     /// <summary>The latents [F, T] of the spectrogram [bins, T] with the speaker's embedding [E, 1]: the means, plus noise scaled by <paramref name="noiseScale"/> (none at 0).</summary>
     public Tensor Forward(Tensor spectrogram, Tensor? speaker, float noiseScale, Random random)
     {

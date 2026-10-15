@@ -1,0 +1,1849 @@
+{
+ "decoder.conv_post.weight": {
+  "dtype": "F32",
+  "shape": [
+   1,
+   4,
+   7
+  ]
+ },
+ "decoder.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "decoder.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   8,
+   7
+  ]
+ },
+ "decoder.resblocks.0.convs1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.0.convs1.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.0.convs1.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   3
+  ]
+ },
+ "decoder.resblocks.0.convs1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.0.convs1.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.0.convs1.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   3
+  ]
+ },
+ "decoder.resblocks.0.convs2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.0.convs2.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.0.convs2.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   3
+  ]
+ },
+ "decoder.resblocks.0.convs2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.0.convs2.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.0.convs2.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   3
+  ]
+ },
+ "decoder.resblocks.1.convs1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.1.convs1.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.1.convs1.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   5
+  ]
+ },
+ "decoder.resblocks.1.convs1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.1.convs1.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.1.convs1.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   5
+  ]
+ },
+ "decoder.resblocks.1.convs2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.1.convs2.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.1.convs2.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   5
+  ]
+ },
+ "decoder.resblocks.1.convs2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.resblocks.1.convs2.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.1.convs2.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   8,
+   5
+  ]
+ },
+ "decoder.resblocks.2.convs1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.2.convs1.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.2.convs1.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   3
+  ]
+ },
+ "decoder.resblocks.2.convs1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.2.convs1.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.2.convs1.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   3
+  ]
+ },
+ "decoder.resblocks.2.convs2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.2.convs2.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.2.convs2.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   3
+  ]
+ },
+ "decoder.resblocks.2.convs2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.2.convs2.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.2.convs2.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   3
+  ]
+ },
+ "decoder.resblocks.3.convs1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.3.convs1.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.3.convs1.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   5
+  ]
+ },
+ "decoder.resblocks.3.convs1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.3.convs1.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.3.convs1.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   5
+  ]
+ },
+ "decoder.resblocks.3.convs2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.3.convs2.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.3.convs2.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   5
+  ]
+ },
+ "decoder.resblocks.3.convs2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.resblocks.3.convs2.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   1,
+   1
+  ]
+ },
+ "decoder.resblocks.3.convs2.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   4,
+   5
+  ]
+ },
+ "decoder.upsampler.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   8
+  ]
+ },
+ "decoder.upsampler.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "decoder.upsampler.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   8,
+   8
+  ]
+ },
+ "decoder.upsampler.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "decoder.upsampler.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   1,
+   1
+  ]
+ },
+ "decoder.upsampler.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   8,
+   4,
+   8
+  ]
+ },
+ "duration_predictor.conv_dds.convs_dilated.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.convs_dilated.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.conv_dds.convs_dilated.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.convs_dilated.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.conv_dds.convs_pointwise.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.convs_pointwise.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.conv_dds.convs_pointwise.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.convs_pointwise.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.conv_dds.norms_1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.norms_1.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.norms_1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.norms_1.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.norms_2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.norms_2.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.norms_2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_dds.norms_2.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.conv_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.conv_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.flows.0.log_scale": {
+  "dtype": "F32",
+  "shape": [
+   2,
+   1
+  ]
+ },
+ "duration_predictor.flows.0.translate": {
+  "dtype": "F32",
+  "shape": [
+   2,
+   1
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_dilated.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_dilated.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_dilated.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_dilated.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_pointwise.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_pointwise.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_pointwise.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.convs_pointwise.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_1.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_1.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_2.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_dds.norms_2.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.1.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "duration_predictor.flows.1.conv_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   17
+  ]
+ },
+ "duration_predictor.flows.1.conv_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   17,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_dilated.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_dilated.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_dilated.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_dilated.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_pointwise.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_pointwise.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_pointwise.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.convs_pointwise.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_1.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_1.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_2.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_dds.norms_2.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.flows.2.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "duration_predictor.flows.2.conv_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   17
+  ]
+ },
+ "duration_predictor.flows.2.conv_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   17,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_dilated.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_dilated.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_dilated.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_dilated.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_pointwise.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_pointwise.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_pointwise.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.convs_pointwise.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_1.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_1.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_2.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_dds.norms_2.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "duration_predictor.post_conv_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_conv_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.0.log_scale": {
+  "dtype": "F32",
+  "shape": [
+   2,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.0.translate": {
+  "dtype": "F32",
+  "shape": [
+   2,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_dilated.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_dilated.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_dilated.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_dilated.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_pointwise.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_pointwise.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_pointwise.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.convs_pointwise.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_1.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_1.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_2.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_dds.norms_2.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   17
+  ]
+ },
+ "duration_predictor.post_flows.1.conv_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   17,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_dilated.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_dilated.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_dilated.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_dilated.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   3
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_pointwise.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_pointwise.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_pointwise.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.convs_pointwise.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_1.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_1.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_1.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_1.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_2.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_2.0.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_2.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_dds.norms_2.1.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   17
+  ]
+ },
+ "duration_predictor.post_flows.2.conv_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   17,
+   16,
+   1
+  ]
+ },
+ "flow.flows.0.conv_post.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "flow.flows.0.conv_post.weight": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   16,
+   1
+  ]
+ },
+ "flow.flows.0.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "flow.flows.0.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   4,
+   1
+  ]
+ },
+ "flow.flows.0.wavenet.in_layers.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "flow.flows.0.wavenet.in_layers.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "flow.flows.0.wavenet.in_layers.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "flow.flows.0.wavenet.in_layers.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "flow.flows.0.wavenet.in_layers.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "flow.flows.0.wavenet.in_layers.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "flow.flows.0.wavenet.res_skip_layers.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "flow.flows.0.wavenet.res_skip_layers.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "flow.flows.0.wavenet.res_skip_layers.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   1
+  ]
+ },
+ "flow.flows.0.wavenet.res_skip_layers.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "flow.flows.0.wavenet.res_skip_layers.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "flow.flows.0.wavenet.res_skip_layers.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "flow.flows.1.conv_post.bias": {
+  "dtype": "F32",
+  "shape": [
+   4
+  ]
+ },
+ "flow.flows.1.conv_post.weight": {
+  "dtype": "F32",
+  "shape": [
+   4,
+   16,
+   1
+  ]
+ },
+ "flow.flows.1.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "flow.flows.1.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   4,
+   1
+  ]
+ },
+ "flow.flows.1.wavenet.in_layers.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "flow.flows.1.wavenet.in_layers.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "flow.flows.1.wavenet.in_layers.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "flow.flows.1.wavenet.in_layers.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "flow.flows.1.wavenet.in_layers.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "flow.flows.1.wavenet.in_layers.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "flow.flows.1.wavenet.res_skip_layers.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "flow.flows.1.wavenet.res_skip_layers.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "flow.flows.1.wavenet.res_skip_layers.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   1
+  ]
+ },
+ "flow.flows.1.wavenet.res_skip_layers.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "flow.flows.1.wavenet.res_skip_layers.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "flow.flows.1.wavenet.res_skip_layers.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "posterior_encoder.conv_pre.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "posterior_encoder.conv_pre.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   65,
+   1
+  ]
+ },
+ "posterior_encoder.conv_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "posterior_encoder.conv_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "posterior_encoder.wavenet.in_layers.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "posterior_encoder.wavenet.in_layers.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "posterior_encoder.wavenet.in_layers.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "posterior_encoder.wavenet.in_layers.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "posterior_encoder.wavenet.in_layers.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "posterior_encoder.wavenet.in_layers.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "posterior_encoder.wavenet.res_skip_layers.0.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "posterior_encoder.wavenet.res_skip_layers.0.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   1,
+   1
+  ]
+ },
+ "posterior_encoder.wavenet.res_skip_layers.0.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   1
+  ]
+ },
+ "posterior_encoder.wavenet.res_skip_layers.1.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "posterior_encoder.wavenet.res_skip_layers.1.parametrizations.weight.original0": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   1,
+   1
+  ]
+ },
+ "posterior_encoder.wavenet.res_skip_layers.1.parametrizations.weight.original1": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ },
+ "text_encoder.embed_tokens.weight": {
+  "dtype": "F32",
+  "shape": [
+   20,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.emb_rel_k": {
+  "dtype": "F32",
+  "shape": [
+   1,
+   5,
+   8
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.emb_rel_v": {
+  "dtype": "F32",
+  "shape": [
+   1,
+   5,
+   8
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.k_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.k_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.out_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.out_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.q_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.q_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.v_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.attention.v_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.feed_forward.conv_1.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "text_encoder.encoder.layers.0.feed_forward.conv_1.weight": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "text_encoder.encoder.layers.0.feed_forward.conv_2.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.feed_forward.conv_2.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   32,
+   3
+  ]
+ },
+ "text_encoder.encoder.layers.0.final_layer_norm.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.final_layer_norm.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.layer_norm.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.0.layer_norm.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.emb_rel_k": {
+  "dtype": "F32",
+  "shape": [
+   1,
+   5,
+   8
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.emb_rel_v": {
+  "dtype": "F32",
+  "shape": [
+   1,
+   5,
+   8
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.k_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.k_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.out_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.out_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.q_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.q_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.v_proj.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.attention.v_proj.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.feed_forward.conv_1.bias": {
+  "dtype": "F32",
+  "shape": [
+   32
+  ]
+ },
+ "text_encoder.encoder.layers.1.feed_forward.conv_1.weight": {
+  "dtype": "F32",
+  "shape": [
+   32,
+   16,
+   3
+  ]
+ },
+ "text_encoder.encoder.layers.1.feed_forward.conv_2.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.feed_forward.conv_2.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   32,
+   3
+  ]
+ },
+ "text_encoder.encoder.layers.1.final_layer_norm.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.final_layer_norm.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.layer_norm.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.encoder.layers.1.layer_norm.weight": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.project.bias": {
+  "dtype": "F32",
+  "shape": [
+   16
+  ]
+ },
+ "text_encoder.project.weight": {
+  "dtype": "F32",
+  "shape": [
+   16,
+   16,
+   1
+  ]
+ }
+}

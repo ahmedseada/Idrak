@@ -10,10 +10,21 @@ namespace Idrak.VitsSpeech;
 /// Reads a checkpoint's tensors into the library's layers on one device. A convolution over time is the library's
 /// <see cref="Conv2d"/> with a (1, k) kernel over <c>[1, C, 1, T]</c>; a weight-normed one is folded at load
 /// (<c>g · v / ‖v‖</c>, once); a linear layer's <c>[out, in]</c> weight is read transposed to the library's <c>[in, out]</c>.
+/// Loaded to be trained (<see cref="Trainable"/>), every tensor read becomes a parameter that takes gradients, a weight
+/// norm stays its gains and directions (folded per pass, so training updates what the checkpoint stores), and each is
+/// listed in <see cref="Trained"/> under its stored name, so the model saves back to the checkpoint's own layout.
 /// </summary>
-internal sealed class VitsWeights(ITensorStore store, Device device)
+internal sealed class VitsWeights(ITensorStore store, Device device, bool trainable = false)
 {
+    private readonly List<VitsParameter> _trained = [];
+
     public Device Device { get; } = device;
+
+    /// <summary>Whether the tensors are read as trained parameters.</summary>
+    public bool Trainable { get; } = trainable;
+
+    /// <summary>Every tensor read as a parameter (when <see cref="Trainable"/>), in reading order.</summary>
+    public IReadOnlyList<VitsParameter> Trained => _trained;
 
     public bool Contains(string name) => store.Contains(name);
 
@@ -31,7 +42,19 @@ internal sealed class VitsWeights(ITensorStore store, Device device)
             throw new InvalidDataException($"'{name}' is {Abstraction.Tensor.FormatShape(shape)}, the configuration says {Abstraction.Tensor.FormatShape(expected)}.");
         }
 
-        return Abstraction.Tensor.Persistent(Read(name), shape, Device);
+        return Parameter(name, Read(name), shape, shape);
+    }
+
+    /// <summary>A tensor of <paramref name="shape"/> holding the values stored as <paramref name="name"/> (of <paramref name="stored"/>), a parameter when trainable.</summary>
+    public Tensor Parameter(string name, float[] values, int[] shape, int[] stored, bool transposed = false)
+    {
+        var tensor = Abstraction.Tensor.Persistent(values, shape, Device, requiresGrad: Trainable);
+        if (Trainable)
+        {
+            _trained.Add(new VitsParameter(name, tensor, stored, transposed));
+        }
+
+        return tensor;
     }
 
     /// <summary>A linear layer from <c>{prefix}.weight</c> [out, in] and <c>{prefix}.bias</c> when present.</summary>
@@ -43,28 +66,33 @@ internal sealed class VitsWeights(ITensorStore store, Device device)
             throw new InvalidDataException($"'{prefix}.weight' is {Abstraction.Tensor.FormatShape(shape)}, the configuration says [{outFeatures}, {inFeatures}].");
         }
 
-        var weight = Abstraction.Tensor.Persistent(store.ReadTransposed(prefix + ".weight"), [inFeatures, outFeatures], Device);
+        var weight = Parameter(prefix + ".weight", store.ReadTransposed(prefix + ".weight"), [inFeatures, outFeatures], shape, transposed: true);
         return Layers.Linear.FromWeights(weight, store.Contains(prefix + ".bias") ? Tensor(prefix + ".bias", outFeatures) : null);
     }
 
     public LayerNorm Norm(string prefix, int features, float epsilon) =>
         LayerNorm.FromWeights(Tensor(prefix + ".weight", features), Tensor(prefix + ".bias", features), epsilon);
 
-    /// <summary>A convolution over time from <c>{prefix}.weight</c> [out, in / groups, k] (and <c>{prefix}.bias</c> when present).</summary>
+    /// <summary>
+    /// A convolution over time from <c>{prefix}.weight</c> [out, in / groups, k], or a weight norm's gains and directions
+    /// when the checkpoint stores those (and <c>{prefix}.bias</c> when present).
+    /// </summary>
     public Conv1d Conv(string prefix, int inChannels, int outChannels, int kernel, int padding, int dilation = 1, int groups = 1) =>
-        ConvFrom(prefix, Read(prefix + ".weight"), Shape(prefix + ".weight"), inChannels, outChannels, kernel, padding, dilation, groups);
+        Conv2(prefix, inChannels, outChannels, (1, kernel), (1, 1), (0, padding), (1, dilation), groups);
 
-    /// <summary>A weight-normed convolution (<c>parametrizations.weight.original0</c> the gains, <c>original1</c> the directions), folded once.</summary>
-    public Conv1d WeightNormConv(string prefix, int inChannels, int outChannels, int kernel, int padding, int dilation = 1)
+    /// <summary>A weight-normed convolution (<c>parametrizations.weight.original0</c> the gains, <c>original1</c> the directions, or the older <c>weight_g</c> and <c>weight_v</c>).</summary>
+    public Conv1d WeightNormConv(string prefix, int inChannels, int outChannels, int kernel, int padding, int dilation = 1) =>
+        Conv(prefix, inChannels, outChannels, kernel, padding, dilation);
+
+    /// <summary>A 2-D convolution (the discriminators' (k, 1) filters over a period's rows) from <c>{prefix}</c>'s filters [out, in / groups, kh, kw].</summary>
+    public Conv1d Conv2(string prefix, int inChannels, int outChannels, (int Height, int Width) kernel, (int Height, int Width) stride, (int Height, int Width) padding,
+        (int Height, int Width) dilation, int groups = 1)
     {
-        string g = prefix + ".parametrizations.weight.original0", v = prefix + ".parametrizations.weight.original1";
-        if (!store.Contains(v))
-        {
-            g = prefix + ".weight_g";                                            // the older weight_norm names
-            v = prefix + ".weight_v";
-        }
-
-        return ConvFrom(prefix, FoldWeightNorm(Read(g), Read(v), Shape(v)), Shape(v), inChannels, outChannels, kernel, padding, dilation, 1);
+        int columns = inChannels / groups * kernel.Height * kernel.Width;
+        int[] expected = kernel.Height == 1 ? [outChannels, inChannels / groups, kernel.Width] : [outChannels, inChannels / groups, kernel.Height, kernel.Width];
+        var (weight, gain) = Filters(prefix, expected, outChannels, columns);
+        var bias = store.Contains(prefix + ".bias") ? Tensor(prefix + ".bias", outChannels) : null;
+        return new Conv1d(Conv2d.FromWeights(weight, bias, kernel, stride, padding, dilation, groups), gain);
     }
 
     /// <summary>w[o] = g[o] · v[o] / ‖v[o]‖ over every dimension but the first (PyTorch's weight_norm with dim 0).</summary>
@@ -97,35 +125,91 @@ internal sealed class VitsWeights(ITensorStore store, Device device)
         return folded;
     }
 
-    /// <summary>A transposed convolution over time from <c>{prefix}.weight</c> [in, out, k] and <c>{prefix}.bias</c>.</summary>
+    /// <summary>A transposed convolution over time from <c>{prefix}.weight</c> [in, out, k] (or a weight norm's gains and directions) and <c>{prefix}.bias</c>.</summary>
     public ConvTranspose1d ConvTranspose(string prefix, int inChannels, int outChannels, int kernel, int stride, int padding)
     {
-        var shape = Shape(prefix + ".weight");
-        if (shape.Length != 3 || shape[0] != inChannels || shape[1] != outChannels || shape[2] != kernel)
-        {
-            throw new InvalidDataException($"'{prefix}.weight' is {Abstraction.Tensor.FormatShape(shape)}, the configuration says [{inChannels}, {outChannels}, {kernel}].");
-        }
-
-        var weight = Abstraction.Tensor.Persistent(Read(prefix + ".weight"), [inChannels, outChannels, 1, kernel], Device);
+        var (weight, gain) = Filters(prefix, [inChannels, outChannels, kernel], inChannels, outChannels * kernel);
         var bias = store.Contains(prefix + ".bias") ? Tensor(prefix + ".bias", outChannels) : null;
-        return new ConvTranspose1d(ConvTranspose2d.FromWeights(weight, bias, (1, kernel), (1, stride), (0, padding)));
+        return new ConvTranspose1d(ConvTranspose2d.FromWeights(weight, bias, (1, kernel), (1, stride), (0, padding)), gain);
     }
 
-    private Conv1d ConvFrom(string prefix, float[] values, int[] shape, int inChannels, int outChannels, int kernel, int padding, int dilation, int groups)
+    // A convolution's filters as [rows, columns] (rows the first stored dimension): {prefix}.weight, else a weight norm's
+    // gains and directions, folded once (speaking) or kept as the directions and the gains [rows, 1] (training).
+    private (Tensor Weight, Tensor? Gain) Filters(string prefix, int[] expected, int rows, int columns)
     {
-        if (shape.Length != 3 || shape[0] != outChannels || shape[1] != inChannels / groups || shape[2] != kernel)
+        string? g = null, v = null;
+        if (store.Contains(prefix + ".parametrizations.weight.original1"))
         {
-            throw new InvalidDataException($"'{prefix}.weight' is {Abstraction.Tensor.FormatShape(shape)}, the configuration says [{outChannels}, {inChannels / groups}, {kernel}].");
+            (g, v) = (prefix + ".parametrizations.weight.original0", prefix + ".parametrizations.weight.original1");
+        }
+        else if (store.Contains(prefix + ".weight_v"))
+        {
+            (g, v) = (prefix + ".weight_g", prefix + ".weight_v");
         }
 
-        var weight = Abstraction.Tensor.Persistent(values, [outChannels, inChannels / groups, 1, kernel], Device);
-        var bias = store.Contains(prefix + ".bias") ? Tensor(prefix + ".bias", outChannels) : null;
-        return new Conv1d(Conv2d.FromWeights(weight, bias, (1, kernel), (1, 1), (0, padding), (1, dilation), groups));
+        string name = v ?? prefix + ".weight";
+        var shape = Shape(name);
+        if (!shape.AsSpan().SequenceEqual(expected))
+        {
+            throw new InvalidDataException($"'{name}' is {Abstraction.Tensor.FormatShape(shape)}, the configuration says {Abstraction.Tensor.FormatShape(expected)}.");
+        }
+
+        if (g is null)
+        {
+            return (Parameter(name, Read(name), [rows, columns], shape), null);
+        }
+
+        if (!Trainable)
+        {
+            return (Abstraction.Tensor.Persistent(FoldWeightNorm(Read(g), Read(v!), shape), [rows, columns], Device), null);
+        }
+
+        var gains = Read(g);
+        if (gains.Length != rows)
+        {
+            throw new InvalidDataException($"'{g}' holds {gains.Length} gains for {rows} filters.");
+        }
+
+        var direction = Parameter(v!, Read(v!), [rows, columns], shape);
+        return (direction, Parameter(g, gains, [rows, 1], Shape(g)));
     }
 }
 
-/// <summary>A convolution over time on <c>[C, T]</c> (channels as rows), through the library's <see cref="Conv2d"/> over <c>[1, C, 1, T]</c>.</summary>
-internal sealed class Conv1d(Conv2d conv) : IDisposable
+/// <summary>A tensor a model trains, under the name and in the layout its checkpoint stores it (a linear weight transposed back to [out, in]).</summary>
+/// <param name="Name">The stored name.</param>
+/// <param name="Tensor">The parameter.</param>
+/// <param name="Stored">The stored shape.</param>
+/// <param name="Transposed">Whether the parameter is the stored [out, in] matrix transposed.</param>
+internal sealed record VitsParameter(string Name, Tensor Tensor, int[] Stored, bool Transposed)
+{
+    /// <summary>The values in the stored layout.</summary>
+    public float[] Values(Tensor? of = null)
+    {
+        var values = (of ?? Tensor).ToArray();
+        return Transposed ? HostParallel.Transpose(values, Tensor.Shape[0], Tensor.Shape[1]) : values;
+    }
+}
+
+/// <summary>A model's trained tensors as a <see cref="Module"/> (what the trainers take); its layers compute, it does not, and they own the tensors.</summary>
+internal sealed class VitsParameterSet(string name, IReadOnlyList<VitsParameter> parameters) : Module
+{
+    public IReadOnlyList<VitsParameter> Named => parameters;
+
+    protected override Tensor ForwardCore(Tensor input) => throw new NotSupportedException($"{name} lists the trained tensors; the model's layers run them.");
+
+    public override IEnumerable<Tensor> Parameters() => parameters.Select(p => p.Tensor);
+
+    public override string ToString() => name;
+
+    public override void Dispose() => GC.SuppressFinalize(this);
+}
+
+/// <summary>
+/// A convolution through the library's <see cref="Conv2d"/>: over time on <c>[C, T]</c> (as <c>[1, C, 1, T]</c>), or on
+/// <c>[N, C, H, W]</c>. With a weight norm's gains (training), the filters are <c>g · v / ‖v‖</c> of the layer's
+/// directions, made per pass so their gradients reach both.
+/// </summary>
+internal sealed class Conv1d(Conv2d conv, Tensor? gain = null) : IDisposable
 {
     public int InChannels => conv.InChannels;
 
@@ -133,25 +217,44 @@ internal sealed class Conv1d(Conv2d conv) : IDisposable
 
     public Tensor Forward(Tensor x)
     {
-        var y = conv.Forward(x.Reshape(1, x.Shape[0], 1, x.Shape[1]));
+        var y = Forward4(x.Reshape(1, x.Shape[0], 1, x.Shape[1]));
         return y.Reshape(y.Shape[1], y.Shape[3]);
     }
 
-    public void Dispose() => conv.Dispose();
+    public Tensor Forward4(Tensor x)
+    {
+        if (gain is null)
+        {
+            return conv.Forward(x);
+        }
+
+        return x.Convolution(VitsOps.WeightNorm(gain, conv.Weight), conv.Bias, conv.Geometry(x.Shape[0], x.Shape[2], x.Shape[3]), conv.Groups);
+    }
+
+    public void Dispose()
+    {
+        conv.Dispose();
+        gain?.Dispose();
+    }
 }
 
-/// <summary>A transposed convolution over time on <c>[C, T]</c>, through the library's <see cref="ConvTranspose2d"/>.</summary>
-internal sealed class ConvTranspose1d(ConvTranspose2d conv) : IDisposable
+/// <summary>A transposed convolution over time on <c>[C, T]</c>, through the library's <see cref="ConvTranspose2d"/> (weight-normed per pass in training, as <see cref="Conv1d"/>).</summary>
+internal sealed class ConvTranspose1d(ConvTranspose2d conv, Tensor? gain = null) : IDisposable
 {
     public int OutChannels => conv.OutChannels;
 
     public Tensor Forward(Tensor x)
     {
-        var y = conv.Forward(x.Reshape(1, x.Shape[0], 1, x.Shape[1]));
+        var x4 = x.Reshape(1, x.Shape[0], 1, x.Shape[1]);
+        var y = gain is null ? conv.Forward(x4) : x4.ConvolutionTranspose(VitsOps.WeightNorm(gain, conv.Weight), conv.Bias, conv.Geometry(1, 1, x.Shape[1]), conv.Groups);
         return y.Reshape(y.Shape[1], y.Shape[3]);
     }
 
-    public void Dispose() => conv.Dispose();
+    public void Dispose()
+    {
+        conv.Dispose();
+        gain?.Dispose();
+    }
 }
 
 /// <summary>Element-wise pieces written from public tensor operations, so they run on every device.</summary>
@@ -195,6 +298,48 @@ internal static class VitsOps
 
     /// <summary>A column [C, 1] repeated over <paramref name="columns"/> columns: [C, columns].</summary>
     public static Tensor ExpandColumns(Tensor column, int columns) => column.MatMul(Tensor.Ones([1, columns], column.Device));
+
+    /// <summary>g · v / ‖v‖ per row: the directions [rows, columns] scaled by the gains [rows, 1] over each row's norm (PyTorch's weight_norm, dim 0).</summary>
+    public static Tensor WeightNorm(Tensor gain, Tensor direction)
+    {
+        var scale = gain * direction.Square().Sum(1, keepDim: true).Sqrt().Pow(-1f);   // [rows, 1]
+        return direction * ExpandColumns(scale, direction.Shape[1]);
+    }
+
+    /// <summary>
+    /// The samples [1, L] padded at the end by reflection to <paramref name="length"/> (torch's <c>F.pad(x, (0, n), "reflect")</c>),
+    /// as a gather, so the padding's gradient reaches the samples it copies.
+    /// </summary>
+    public static Tensor ReflectEnd(Tensor samples, int length)
+    {
+        int n = samples.Shape[1];
+        if (length == n)
+        {
+            return samples;
+        }
+
+        var rows = new int[length];
+        for (int i = 0; i < length; i++)
+        {
+            rows[i] = i < n ? i : 2 * (n - 1) - i;
+        }
+
+        return samples.Reshape(n, 1).EmbeddingLookup(Indices(rows, samples.Device)).Reshape(1, length);
+    }
+
+    /// <summary>The samples [1, L] reflect-padded by <paramref name="pad"/> at both ends (the edge sample not repeated), as a gather.</summary>
+    public static Tensor Reflect(Tensor samples, int pad)
+    {
+        int n = samples.Shape[1];
+        var rows = new int[n + 2 * pad];
+        for (int i = 0; i < rows.Length; i++)
+        {
+            int j = i - pad;
+            rows[i] = j < 0 ? -j : j >= n ? 2 * (n - 1) - j : j;
+        }
+
+        return samples.Reshape(n, 1).EmbeddingLookup(Indices(rows, samples.Device)).Reshape(1, rows.Length);
+    }
 
     /// <summary>A float tensor of integer indices [count] on <paramref name="device"/> (what the library's gathers take).</summary>
     public static Tensor Indices(ReadOnlySpan<int> indices, Device device)

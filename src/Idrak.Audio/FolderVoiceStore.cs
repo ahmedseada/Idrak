@@ -13,7 +13,8 @@ namespace Idrak.Audio;
 
 /// <summary>
 /// The built-in voice store (plan 21, S9): one folder per voice under <see cref="Root"/>, named as the voice, holding
-/// voice.json, embedding.safetensors (an embedding voice) and clips/ (only when the clips were kept). A voice is
+/// voice.json, embedding.safetensors (an embedding voice), model/ (a checkpoint voice: the fine-tuned synthesizer) and
+/// clips/ (only when the clips were kept). A voice is
 /// written to a hidden folder first and moved into place, so a half-written voice is never listed.
 /// </summary>
 public sealed class FolderVoiceStore : IVoiceStore
@@ -224,6 +225,71 @@ public sealed class FolderVoiceStore : IVoiceStore
         }
     }
 
+    /// <summary>A checkpoint voice's model folder within the voice's folder.</summary>
+    public const string CheckpointFolder = "model";
+
+    /// <inheritdoc />
+    public VoiceProfile AddCheckpoint(string name, string modelFolder, VoiceCheckpointOptions options)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(modelFolder);
+        ArgumentNullException.ThrowIfNull(options);
+        CheckName(name);
+        if (options.Consent is not { } consent || string.IsNullOrWhiteSpace(consent.Speaker) || string.IsNullOrWhiteSpace(consent.Statement))
+        {
+            throw new ArgumentException($"Voice '{name}' has no consent: a model trained on a person's recordings speaks as them, so VoiceCheckpointOptions.Consent "
+                + "(who is speaking and the statement they agreed to) is required.", nameof(options));
+        }
+
+        if (!File.Exists(Path.Combine(modelFolder, "config.json")))
+        {
+            throw new FileNotFoundException($"{modelFolder} holds no config.json: give a trained model folder (a checkpoint the trainer wrote).", Path.Combine(modelFolder, "config.json"));
+        }
+
+        if (Find(name) is { } existing && !options.Overwrite)
+        {
+            throw new IOException($"Voice '{existing.Name}' is installed already at {existing.Folder}; set VoiceCheckpointOptions.Overwrite to replace it.");
+        }
+
+        Directory.CreateDirectory(Root);
+        string staging = Path.Combine(Root, $".{name}.{Guid.NewGuid():N}");
+        Directory.CreateDirectory(staging);
+        try
+        {
+            var excluded = new HashSet<string>(options.Exclude, StringComparer.Ordinal);
+            string model = Path.Combine(staging, CheckpointFolder);
+            CopyFolder(modelFolder, model, file => !excluded.Contains(Path.GetRelativePath(modelFolder, file).Replace('\\', '/')));
+            long bytes = Directory.EnumerateFiles(model, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
+            var manifest = new JsonObject
+            {
+                ["version"] = ManifestVersion,
+                ["name"] = name,
+                ["kind"] = VoiceKinds.Checkpoint,
+                ["languages"] = new JsonArray([.. options.Languages.Select(l => (JsonNode?)JsonValue.Create(l))]),
+                ["created"] = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+                ["consent"] = new JsonObject
+                {
+                    ["speaker"] = consent.Speaker,
+                    ["statement"] = consent.Statement,
+                    ["agreed"] = (consent.Agreed == default ? DateTimeOffset.UtcNow : consent.Agreed).ToString("o", CultureInfo.InvariantCulture),
+                },
+                ["checkpoint"] = CheckpointFolder,
+                ["checkpoint_bytes"] = bytes,
+                ["base"] = options.Base,
+                ["voice"] = options.Voice,
+                ["training"] = options.Training?.DeepClone(),
+            };
+            File.WriteAllText(Path.Combine(staging, ManifestFile), manifest.ToJsonString(Indented));
+            return Place(staging, name, overwrite: true);
+        }
+        finally
+        {
+            if (Directory.Exists(staging))
+            {
+                Directory.Delete(staging, recursive: true);
+            }
+        }
+    }
+
     /// <inheritdoc />
     public float[] ReadEmbedding(VoiceProfile voice)
     {
@@ -282,6 +348,10 @@ public sealed class FolderVoiceStore : IVoiceStore
             if (profile.Kind == VoiceKinds.Embedding)
             {
                 ReadEmbedding(profile);
+            }
+            else if (profile.CheckpointFolder is { } model && !File.Exists(Path.Combine(model, "config.json")))
+            {
+                throw new InvalidDataException($"{folderOrZip}: voice '{profile.Name}' is of kind {VoiceKinds.Checkpoint} and holds no model ({Path.GetRelativePath(staging, model)}/config.json).");
             }
 
             if (!overwrite && Find(profile.Name) is { } existing)
@@ -476,17 +546,20 @@ public sealed class FolderVoiceStore : IVoiceStore
         return candidate;
     }
 
-    private static void CopyFolder(string from, string to)
+    private static void CopyFolder(string from, string to, Func<string, bool>? copy = null)
     {
         Directory.CreateDirectory(to);
         foreach (string file in Directory.EnumerateFiles(from))
         {
-            File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
+            if (copy?.Invoke(file) != false)
+            {
+                File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
+            }
         }
 
         foreach (string folder in Directory.EnumerateDirectories(from))
         {
-            CopyFolder(folder, Path.Combine(to, Path.GetFileName(folder)));
+            CopyFolder(folder, Path.Combine(to, Path.GetFileName(folder)), copy);
         }
     }
 

@@ -104,6 +104,13 @@ public sealed record SpeechSynthesisLoadOptions
 {
     /// <summary>The device the model runs on; null: <see cref="Device.Default"/>.</summary>
     public Device? Device { get; init; }
+
+    /// <summary>
+    /// Load the model to be trained: its weights as parameters that take gradients, kept in the form training updates (a
+    /// weight norm's gains and directions, not folded once as for speaking), so a family that trains returns a model the
+    /// trainers take (an <see cref="IAdversarialSpeechSynthesizer"/>). A family that does not train ignores it.
+    /// </summary>
+    public bool Training { get; init; }
 }
 
 /// <summary>
