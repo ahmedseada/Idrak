@@ -48,3 +48,16 @@ idrak run run/checkpoint-2000 --image page.png "Read the page." -P Idrak.IdrakVi
 ```
 
 In an app: reference the project and call `IdrakVisionPlugin.Register()`.
+
+## From nothing to a reader, in one script
+
+`scripts/b6-curriculum.ps1` (from the repository root) makes everything a missing `work` folder needs and teaches the
+model to read in three stages: a corpus, tokenizer and token file; the text model; the vision model on it; clean pages
+cut to their ink (`data synth --page crop=1`); then single words, two or three words and full lines, each stage from
+the previous one's checkpoint and evaluated by its character error rate on held-out images. What exists is kept and a
+stopped run resumes, so it can be run again; its output also goes to `work\b6.log`. Every size and step count is a
+parameter (`-Device`, `-Fonts`, `-ImageSize`, `-Steps1`, `-Rate1`, ...).
+
+```
+powershell -ExecutionPolicy Bypass -File samples\IdrakVision\scripts\b6-curriculum.ps1 -Device cuda:0
+```
