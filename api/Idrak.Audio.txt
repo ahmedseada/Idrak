@@ -488,6 +488,18 @@ public sealed class Idrak.Audio.ChatAudioParts : Idrak.Abstraction.Generation.IS
   public string Kind { get; }
   public void Dispose()
 
+public static class Idrak.Audio.CtcAlignment
+  public static Idrak.Audio.CtcPath Viterbi(Idrak.Abstraction.Tensor logProbs, System.ReadOnlySpan<int> labels, int blank = 0)
+  public static Idrak.Audio.CtcPath Viterbi(System.ReadOnlySpan<float> logProbs, int steps, int classes, System.ReadOnlySpan<int> labels, int blank = 0)
+  public static int MinimumSteps(System.ReadOnlySpan<int> labels)
+
+public sealed record Idrak.Audio.CtcPath : System.IEquatable<Idrak.Audio.CtcPath>
+  public CtcPath(int[] Frames, int[] Starts, int[] Lengths, float LogProbability)
+  public float LogProbability { get; init; }
+  public int[] Frames { get; init; }
+  public int[] Lengths { get; init; }
+  public int[] Starts { get; init; }
+
 public sealed class Idrak.Audio.FlacCodec : Idrak.Audio.Abstractions.IAudioCodec
   public FlacCodec(Idrak.Audio.FlacOptions? options = null)
   public Idrak.Audio.Abstractions.AudioData Decode(System.ReadOnlySpan<byte> file)
