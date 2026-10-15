@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- WhisperSpeech, a Whisper-style speech recognition family as a plug-in (plan 21, phase S4): a checkpoint saved by
+       transformers (config.json, model.safetensors, tokenizer.json, preprocessor_config.json, generation_config.json) is
+       read into the library's speech contracts (ISpeechRecognizer through SpeechFamilies). Load it in the command line
+       with -P (idrak transcribe talk.wav -m whisper-tiny -P Idrak.WhisperSpeech.dll), or reference it and call
+       WhisperSpeechPlugin.Register() in an app. It references Idrak as packages, as an outside plug-in does; in this
+       repository they come from the clone (IdrakFromSource, samples/Directory.Build.props). -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Audio" Version="$(IdrakVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Audio.Abstractions" />
+  </ItemGroup>
+
+</Project>

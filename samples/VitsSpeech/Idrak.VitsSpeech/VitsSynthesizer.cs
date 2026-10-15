@@ -1,0 +1,374 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using Idrak.Abstraction.Diagnostics;
+using Idrak.Audio;
+
+namespace Idrak.VitsSpeech;
+
+/// <summary>
+/// A loaded VITS model (transformers' <c>VitsModel</c>, as MMS-TTS ships it): text to ids, ids through the text
+/// encoder, durations (the stochastic predictor in reverse, or the deterministic one), the prior expanded to frames by
+/// a gather of repeated rows, the flow in reverse, the HiFi-GAN decoder; one device pass per piece of text. The
+/// rate, noise scales and seed come from <see cref="SpeechSynthesisOptions"/> (null scales: the checkpoint's).
+/// </summary>
+public sealed class VitsSynthesizer : ISpeechSynthesizer
+{
+    private readonly VitsTextEncoder _encoder;
+    private readonly IVitsDurationPredictor _durations;
+    private readonly VitsFlow _flow;
+    private readonly HifiGanDecoder _decoder;
+    private readonly Tensor? _speakers;                                          // [speakers, E]
+    private readonly string[] _voices;
+    private bool _disposed;
+
+    internal VitsSynthesizer(VitsWeights weights, VitsConfig config, VitsTokenizer tokenizer, List<string> notes)
+    {
+        Config = config;
+        Tokenizer = tokenizer;
+        Device = weights.Device;
+        Notes = notes;
+        _encoder = new VitsTextEncoder(weights, config);
+        _durations = config.StochasticDurations
+            ? new VitsStochasticDurationPredictor(weights, config)
+            : new VitsDeterministicDurationPredictor(weights, config);
+        _flow = new VitsFlow(weights, config);
+        _decoder = new HifiGanDecoder(weights, config);
+        if (config.SpeakerEmbeddingSize > 0 && config.Speakers > 1)
+        {
+            _speakers = weights.Tensor("embed_speaker.weight", config.Speakers, config.SpeakerEmbeddingSize);
+            _voices = [.. Enumerable.Range(0, config.Speakers).Select(i => i.ToString(CultureInfo.InvariantCulture))];
+        }
+        else
+        {
+            _voices = [];
+        }
+
+        Vocoder = new DecoderVocoder(this);
+    }
+
+    /// <summary>The checkpoint's configuration.</summary>
+    public VitsConfig Config { get; }
+
+    /// <summary>The checkpoint's tokenizer (its flags can be changed).</summary>
+    public VitsTokenizer Tokenizer { get; }
+
+    /// <summary>What was approximated while loading (nothing, for a complete checkpoint).</summary>
+    public IReadOnlyList<string> Notes { get; }
+
+    /// <inheritdoc />
+    public Device Device { get; }
+
+    /// <inheritdoc />
+    public int SampleRate => Config.SamplingRate;
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Voices => _voices;
+
+    /// <summary>The HiFi-GAN decoder as a vocoder over the flow's latents [frames, flow_size] (what a model trained to produce them can use).</summary>
+    public IVocoder Vocoder { get; }
+
+    /// <inheritdoc />
+    public (AudioData Audio, SynthesisStats Stats) Speak(string text, SpeechSynthesisOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        options ??= new SpeechSynthesisOptions();
+        Device.Backend.ResetPeakMemoryUsage();
+        long started = Stopwatch.GetTimestamp();
+        var pieces = SplitText(text, options.MaxCharacters);
+        var ids = new List<int[]>(pieces.Count);
+        foreach (var piece in pieces)
+        {
+            var encoded = Tokenizer.Encode(piece);
+            if (encoded.Length > 0)
+            {
+                ids.Add(encoded);
+            }
+        }
+
+        var textTime = Stopwatch.GetElapsedTime(started);
+        var samples = new List<float[]>(ids.Count);
+        TimeSpan model = TimeSpan.Zero, vocoder = TimeSpan.Zero;
+        long total = 0;
+        for (int i = 0; i < ids.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (piece, _, modelTime, vocoderTime) = SynthesizeCore(ids[i], options, options.Seed + i);
+            samples.Add(piece);
+            total += piece.Length;
+            model += modelTime;
+            vocoder += vocoderTime;
+        }
+
+        var joined = new float[total];
+        int at = 0;
+        foreach (var piece in samples)
+        {
+            piece.CopyTo(joined, at);
+            at += piece.Length;
+        }
+
+        var audio = new AudioData(joined, 1, SampleRate);
+        if (options.SampleRate is { } rate && rate != SampleRate)
+        {
+            audio = Resampler.Resample(audio, rate);
+        }
+
+        long peak = Device.Backend.GetMemoryUsage().Peak;
+        double seconds = (double)total / SampleRate;
+        var elapsed = Stopwatch.GetElapsedTime(started);
+        return (audio, new SynthesisStats(textTime, model, vocoder, peak, seconds > 0 ? elapsed.TotalSeconds / seconds : 0));
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<AudioData> SpeakStream(string text, SpeechSynthesisOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        options ??= new SpeechSynthesisOptions();
+        var pieces = SplitText(text, options.MaxCharacters);
+        int index = 0;
+        foreach (var piece in pieces)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var ids = Tokenizer.Encode(piece);
+            if (ids.Length == 0)
+            {
+                continue;
+            }
+
+            int seed = options.Seed + index++;
+            var (samples, _, _, _) = await Task.Run(() => SynthesizeCore(ids, options, seed), cancellationToken).ConfigureAwait(false);
+            var audio = new AudioData(samples, 1, SampleRate);
+            yield return options.SampleRate is { } rate && rate != SampleRate ? Resampler.Resample(audio, rate) : audio;
+        }
+    }
+
+    /// <summary>Speaks token ids directly (no text): the samples at <see cref="SampleRate"/> and each token's frames.</summary>
+    public (AudioData Audio, int[] Durations) Synthesize(ReadOnlySpan<int> ids, SpeechSynthesisOptions? options = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        options ??= new SpeechSynthesisOptions();
+        var (samples, durations, _, _) = SynthesizeCore(ids.ToArray(), options, options.Seed);
+        return (new AudioData(samples, 1, SampleRate), durations);
+    }
+
+    /// <summary>
+    /// The pieces <paramref name="text"/> is spoken in: the whole text when <paramref name="maxCharacters"/> is 0,
+    /// otherwise sentences (split at . ! ? ؟ ۔ 。 and line breaks) joined up to that many characters; a sentence longer
+    /// than the limit is cut at its last space before it.
+    /// </summary>
+    public static IReadOnlyList<string> SplitText(string text, int maxCharacters)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (maxCharacters <= 0)
+        {
+            return [text];
+        }
+
+        var sentences = new List<string>();
+        int start = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] is '.' or '!' or '?' or '؟' or '۔' or '。' or '\n')
+            {
+                string sentence = text[start..(i + 1)].Trim();
+                if (sentence.Length > 0)
+                {
+                    sentences.Add(sentence);
+                }
+
+                start = i + 1;
+            }
+        }
+
+        if (start < text.Length && text[start..].Trim() is { Length: > 0 } rest)
+        {
+            sentences.Add(rest);
+        }
+
+        var pieces = new List<string>();
+        var current = "";
+        foreach (var sentence in sentences)
+        {
+            foreach (var part in CutLong(sentence, maxCharacters))
+            {
+                if (current.Length == 0)
+                {
+                    current = part;
+                }
+                else if (current.Length + 1 + part.Length <= maxCharacters)
+                {
+                    current = current + " " + part;
+                }
+                else
+                {
+                    pieces.Add(current);
+                    current = part;
+                }
+            }
+        }
+
+        if (current.Length > 0)
+        {
+            pieces.Add(current);
+        }
+
+        return pieces;
+    }
+
+    private static IEnumerable<string> CutLong(string sentence, int maxCharacters)
+    {
+        while (sentence.Length > maxCharacters)
+        {
+            int cut = sentence.LastIndexOf(' ', maxCharacters - 1);
+            if (cut <= 0)
+            {
+                cut = maxCharacters;
+            }
+
+            yield return sentence[..cut].Trim();
+            sentence = sentence[cut..].Trim();
+        }
+
+        if (sentence.Length > 0)
+        {
+            yield return sentence;
+        }
+    }
+
+    // One piece: the samples, the durations, and the model's and the decoder's times.
+    private (float[] Samples, int[] Durations, TimeSpan Model, TimeSpan Vocoder) SynthesizeCore(int[] ids, SpeechSynthesisOptions options, int seed)
+    {
+        if (ids.Length == 0)
+        {
+            throw new ArgumentException("There are no ids to speak.", nameof(ids));
+        }
+
+        if (options.Rate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), $"SpeechSynthesisOptions.Rate is positive, got {options.Rate}.");
+        }
+
+        float noiseScale = options.NoiseScale ?? Config.NoiseScale;
+        float durationNoise = options.DurationNoiseScale ?? Config.NoiseScaleDuration;
+        float lengthScale = 1f / (options.Rate * Config.SpeakingRate);
+        var random = new Random(seed);
+        long started = Stopwatch.GetTimestamp();
+        long telemetryStart = Telemetry.Start(TelemetryLevel.Inference);
+        using var noGrad = Autograd.NoGrad();
+        using var scope = new TensorScope();
+        var speaker = Speaker(options.Voice);
+        var (hidden, means, logVariances) = _encoder.Forward(ids);               // [T, C], [T, F], [T, F]
+        var logDurations = _durations.LogDurations(hidden.Transpose(), speaker, durationNoise, random);
+        var durations = new int[ids.Length];
+        int frames = 0;
+        for (int i = 0; i < durations.Length; i++)
+        {
+            durations[i] = (int)Math.Ceiling(Math.Exp(logDurations[i]) * lengthScale);
+            frames += durations[i];
+        }
+
+        if (frames < 1)
+        {
+            durations[0] = 1;                                                    // torch clamps the total to at least one frame
+            frames = 1;
+        }
+
+        // The prior expanded to frames: a gather of each token's row repeated for its duration.
+        var rows = new int[frames];
+        for (int i = 0, at = 0; i < durations.Length; i++)
+        {
+            for (int k = 0; k < durations[i]; k++)
+            {
+                rows[at++] = i;
+            }
+        }
+
+        var indices = VitsOps.Indices(rows, Device);
+        var prior = means.EmbeddingLookup(indices);                              // [frames, F]
+        if (noiseScale != 0)
+        {
+            var noise = new float[frames * Config.FlowSize];
+            for (int i = 0; i < noise.Length; i++)
+            {
+                noise[i] = (float)VitsNoise.Normal(random);
+            }
+
+            prior = prior + Tensor.From(noise, [frames, Config.FlowSize], Device) * logVariances.EmbeddingLookup(indices).Exp() * noiseScale;
+        }
+
+        var latents = _flow.Reverse(prior.Transpose(), speaker);                 // [F, frames]
+        Telemetry.InferenceStage(InferenceStageKind.Encoder, Device, telemetryStart, ids.Length, (long)frames * Config.FlowSize * sizeof(float));
+        var modelTime = Stopwatch.GetElapsedTime(started);
+        long decoderStart = Stopwatch.GetTimestamp();
+        var samples = _decoder.Forward(latents, speaker).ToArray();              // [1, frames · hop]
+        return (samples, durations, modelTime, Stopwatch.GetElapsedTime(decoderStart));
+    }
+
+    // The speaker's embedding as a column [E, 1], or null for a single-speaker model.
+    private Tensor? Speaker(string? voice)
+    {
+        if (_speakers is null)
+        {
+            if (voice is not null)
+            {
+                throw new ArgumentException($"This model has one voice; '{voice}' was asked for.", nameof(voice));
+            }
+
+            return null;
+        }
+
+        int index = 0;
+        if (voice is not null && (!int.TryParse(voice, NumberStyles.Integer, CultureInfo.InvariantCulture, out index) || index < 0 || index >= _voices.Length))
+        {
+            throw new ArgumentException($"Voice '{voice}' is not one of this model's {_voices.Length} speakers (0 to {_voices.Length - 1}).", nameof(voice));
+        }
+
+        return _speakers.EmbeddingLookup(VitsOps.Indices([index], Device)).Transpose();
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _encoder.Dispose();
+        _durations.Dispose();
+        _flow.Dispose();
+        _decoder.Dispose();
+        _speakers?.Dispose();
+    }
+
+    // The decoder as a vocoder: latents [frames, flow_size] (frames as rows) to samples.
+    private sealed class DecoderVocoder(VitsSynthesizer owner) : IVocoder
+    {
+        public string Name => "hifigan";
+
+        public int SampleRate => owner.SampleRate;
+
+        public int Mels => owner.Config.FlowSize;
+
+        public AudioData Synthesize(Tensor logMel, Device device)
+        {
+            ArgumentNullException.ThrowIfNull(logMel);
+            if (logMel.Rank != 2 || logMel.Shape[1] != Mels)
+            {
+                throw new ArgumentException($"The HiFi-GAN decoder takes [frames, {Mels}], got {Tensor.FormatShape(logMel.Shape)}.", nameof(logMel));
+            }
+
+            using var noGrad = Autograd.NoGrad();
+            using var scope = new TensorScope();
+            var samples = owner._decoder.Forward(logMel.To(owner.Device).Transpose(), null).ToArray();
+            return new AudioData(samples, 1, SampleRate);
+        }
+    }
+}

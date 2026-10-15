@@ -104,11 +104,12 @@ internal static partial class Tests
 
     private static void ChatPartRegistry()
     {
-        Check(ChatParts.Names.SequenceEqual(["text", "image"]) && ChatParts.Origin("text") == Overrides.Library && ChatParts.DefaultVersion("image") == 1
-              && ChatParts.Default("image", 1) == ChatParts.Default("image") && ChatParts.Default("image", 2) is null && ChatParts.Default("audio") is null
-              && ChatParts.TextOnly.SetEquals(["text"]), "text and image are library defaults, version 1");
-        Throws<NotSupportedException>(() => ChatParts.Get("audio"), "an unknown kind");
-        Check(ChatParts.Find("audio") is null && ChatParts.Find("text") is not null, "Find");
+        // "audio" is Idrak.Audio's library default (plan 21, S3), registered on the registry's first use; "video" is no one's.
+        Check(ChatParts.Names.Take(2).SequenceEqual(["text", "image"]) && ChatParts.Names.Contains("audio") && ChatParts.Origin("text") == Overrides.Library && ChatParts.DefaultVersion("image") == 1
+              && ChatParts.Default("image", 1) == ChatParts.Default("image") && ChatParts.Default("image", 2) is null && ChatParts.Default("video") is null
+              && ChatParts.Origin("audio") == Overrides.Library && ChatParts.TextOnly.SetEquals(["text"]), "text, image and audio are library defaults, version 1");
+        Throws<NotSupportedException>(() => ChatParts.Get("video"), "an unknown kind");
+        Check(ChatParts.Find("video") is null && ChatParts.Find("text") is not null, "Find");
 
         var image = ChatImage.FromBytes(PngBytes);
         var json = ChatParts.ToJson(image);
@@ -177,7 +178,7 @@ internal static partial class Tests
         Conformance.CheckChatPartKind("image", options: new ContractCheckOptions { RandomCases = 10 }).ThrowIfFailed();
         var report = Conformance.CheckChatPartKind("image", new ForgetfulImageKind());
         Check(!report.Passed && report.Failures.Any(f => f.Check == "writes the JSON the library's kind writes"), report.ToString());
-        Throws<ArgumentException>(() => new ChatPartKindSuite("audio"), "a kind of one's own needs samples");
+        Throws<ArgumentException>(() => new ChatPartKindSuite("video"), "a kind of one's own needs samples");
     }
 
     // Drops the media type: still reads back equal (images compare by bytes), but not the library's JSON.

@@ -172,8 +172,11 @@ public static class AudioCodecs
         byte[] bytes = ArrayPool<byte>.Shared.Rent((int)size);
         try
         {
+            long start = Telemetry.Start(TelemetryLevel.Inference);
             int length = stream.ReadAtLeast(bytes.AsSpan(0, (int)size), (int)size, throwOnEndOfStream: false);
-            return Decode(bytes.AsSpan(0, length), path);
+            var audio = Decode(bytes.AsSpan(0, length), path);
+            Telemetry.InferenceStage(InferenceStageKind.AudioDecode, null, start, (long)audio.Channels * audio.Length, length);
+            return audio;
         }
         finally
         {

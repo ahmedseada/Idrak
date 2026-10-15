@@ -11,7 +11,10 @@ namespace Idrak.Audio;
 /// </summary>
 internal static class LibraryRegistrations
 {
-    private static readonly Dictionary<Type, Action> ByRegistry = new();
+    private static readonly Dictionary<Type, Action> ByRegistry = new()
+    {
+        [typeof(ChatParts)] = () => ChatParts.Register(new AudioPartKind()),       // the "audio" message part (plan 21, S3)
+    };
 
     private static void RegisterFor(Type registry)
     {

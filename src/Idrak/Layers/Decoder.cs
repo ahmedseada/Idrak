@@ -872,11 +872,41 @@ public sealed class DecoderBlock : Module, ICachedModule
         }
     }
 
+    /// <summary>
+    /// Creates an encoder-decoder block from its parts: as the sequential block, with a cross-attention over the encoder's
+    /// output run between the self-attention and the feed-forward block, x + cross(crossNorm(x)); the block takes
+    /// ownership. A block without one is unchanged.
+    /// </summary>
+    /// <param name="attentionNorm">Normalization before the self-attention ("attn_norm").</param>
+    /// <param name="attention">The self-attention layer.</param>
+    /// <param name="crossNorm">Normalization before the cross-attention ("cross_norm").</param>
+    /// <param name="cross">The cross-attention layer ("cross"); its memory comes from the decoding context (<see cref="CrossAttention.SetMemory"/>) or an <see cref="EncoderMemory"/> scope.</param>
+    /// <param name="feedForwardNorm">Normalization before the feed-forward block ("mlp_norm").</param>
+    /// <param name="feedForward">The feed-forward block.</param>
+    /// <param name="residualDropout">Dropout on each branch's output before its residual addition (training only), or null.</param>
+    public DecoderBlock(Module attentionNorm, CausalSelfAttention attention, Module crossNorm, CrossAttention cross, Module feedForwardNorm, Module feedForward,
+        Dropout? residualDropout = null)
+        : this(attentionNorm, attention, feedForwardNorm ?? throw new ArgumentNullException(nameof(feedForwardNorm)), feedForward, null, null, residualDropout)
+    {
+        ArgumentNullException.ThrowIfNull(crossNorm);
+        ArgumentNullException.ThrowIfNull(cross);
+        CrossNorm = crossNorm;
+        Cross = cross;
+        crossNorm.Name = "cross_norm";
+        cross.Name = "cross";
+    }
+
     /// <summary>Normalization before attention.</summary>
     public Module AttentionNorm { get; }
 
     /// <summary>The attention layer.</summary>
     public CausalSelfAttention Attention { get; }
+
+    /// <summary>Normalization before the cross-attention, or null for a block without one.</summary>
+    public Module? CrossNorm { get; }
+
+    /// <summary>The cross-attention over the encoder's output ("cross"), or null for a decoder-only block.</summary>
+    public CrossAttention? Cross { get; }
 
     /// <summary>Normalization before the feed-forward block, or null for a parallel block.</summary>
     public Module? FeedForwardNorm { get; }
@@ -907,7 +937,7 @@ public sealed class DecoderBlock : Module, ICachedModule
 
     /// <inheritdoc />
     public override IEnumerable<Module> Children() =>
-        new Module?[] { AttentionNorm, Attention, FeedForwardNorm, FeedForward, PostAttentionNorm, PostFeedForwardNorm, ResidualDropout }.OfType<Module>();
+        new Module?[] { AttentionNorm, Attention, CrossNorm, Cross, FeedForwardNorm, FeedForward, PostAttentionNorm, PostFeedForwardNorm, ResidualDropout }.OfType<Module>();
 
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) => Run(input, null);
@@ -927,7 +957,7 @@ public sealed class DecoderBlock : Module, ICachedModule
         using var compressNormalized = new CompressAfter(normalized);
         bool inference = !Autograd.IsEnabled && !Dropping;
         Tensor x, fed;
-        if (!Parallel && inference && FeedForwardNorm is RMSNorm norm)
+        if (!Parallel && inference && Cross is null && FeedForwardNorm is RMSNorm norm)
         {
             // A norm after attention (a sandwich block) joins the pass: the projection, that norm, the residual addition and
             // the next norm as one launch where the device can.
@@ -958,6 +988,15 @@ public sealed class DecoderBlock : Module, ICachedModule
 
             x = Dropping ? ResidualDropout!.AddTo(input, attended) : input + attended;          // dropout fused in
             ActivationMemory.Release([x, normalized], attended);
+            if (Cross is not null)
+            {
+                // The encoder's output attended between the self-attention and the feed-forward block (its memory held by
+                // the context, projected once per sequence; in a plain pass, the EncoderMemory scope's).
+                var crossInput = CrossNorm!.Forward(x);
+                var crossed = context is null ? Cross.Forward(crossInput) : Cross.ForwardCached(crossInput, context);
+                x = Dropping ? ResidualDropout!.AddTo(x, crossed) : x + crossed;
+            }
+
             var fedInput = FeedForwardNorm!.Forward(x);
             fed = FeedForward.Forward(fedInput);
             ActivationMemory.Compress(fedInput);
@@ -1015,7 +1054,7 @@ public sealed class DecoderBlock : Module, ICachedModule
               ?? Tensor.AddRmsNormAffine(residual, after.Forward(projection.Forward(h)), norm.Gain, norm.Epsilon, norm.Offset);
 
     /// <inheritdoc />
-    public override string ToString() => $"DecoderBlock({(Parallel ? "parallel" : "sequential")})";
+    public override string ToString() => $"DecoderBlock({(Parallel ? "parallel" : "sequential")}{(Cross is null ? "" : ", cross-attention")})";
 }
 
 /// <summary>

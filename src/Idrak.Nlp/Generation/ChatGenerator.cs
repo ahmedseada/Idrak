@@ -119,37 +119,96 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     /// </summary>
     public ChatImages? Images { get; init; }
 
+    /// <summary>
+    /// The sources of soft tokens for the other kinds of message part (an audio part through Idrak.Audio's
+    /// <c>ChatAudioParts</c>, one source per kind, <see cref="ISoftPartSource"/>); none (the default): those kinds are
+    /// refused. Each request's parts of a source's kind are encoded when it is answered, their markers expanded by the
+    /// source's format in message order and their features put at the soft tokens by the prefill, as images are.
+    /// Images keep their own path (<see cref="Images"/>); a request whose soft parts need more than one soft token id or
+    /// attention rule (an image beside an audio, say) is refused until the prefill takes several.
+    /// </summary>
+    public IReadOnlyList<ISoftPartSource> Parts
+    {
+        get => _parts;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            foreach (var source in value)
+            {
+                ArgumentNullException.ThrowIfNull(source, nameof(value));
+                if (source.Kind is ChatParts.Text or ChatParts.Image || value.Count(s => s.Kind == source.Kind) > 1)
+                {
+                    throw new ArgumentException($"Parts holds one source per kind other than text and image; '{source.Kind}' is {(source.Kind is ChatParts.Text or ChatParts.Image ? "not one" : "given twice")}.", nameof(value));
+                }
+            }
+
+            _parts = value;
+            _partKinds = null;
+        }
+    }
+
+    private IReadOnlyList<ISoftPartSource> _parts = [];
+    private IReadOnlySet<string>? _partKinds;
+
     private static readonly IReadOnlySet<string> TextAndImages = FrozenSet.Create(StringComparer.Ordinal, ChatParts.Text, ChatParts.Image);
 
     /// <summary>
-    /// The kinds of message parts it takes: text, and images when <see cref="Images"/> is set. A request with another
-    /// kind throws <see cref="NotSupportedException"/>.
+    /// The kinds of message parts it takes: text, images when <see cref="Images"/> is set, and each kind of
+    /// <see cref="Parts"/>. A request with another kind throws <see cref="NotSupportedException"/>.
     /// </summary>
-    public IReadOnlySet<string> PartKinds => Images is null ? ChatParts.TextOnly : TextAndImages;
+    public IReadOnlySet<string> PartKinds => _parts.Count == 0 ? Images is null ? ChatParts.TextOnly : TextAndImages
+        : _partKinds ??= FrozenSet.Create(StringComparer.Ordinal, [ChatParts.Text, .. Images is null ? [] : new[] { ChatParts.Image }, .. _parts.Select(p => p.Kind)]);
 
     /// <summary>
     /// The prompt text for a request (useful for debugging templates), its images' markers expanded to the model's image
     /// tokens (<see cref="ChatImages.Format"/>, each image as many blocks and tokens as its encoder gives it under the
-    /// request's <see cref="ChatRequest.VisionOptions"/>, so its images are decoded); throws for a message part it does
-    /// not take (<see cref="PartKinds"/>).
+    /// request's <see cref="ChatRequest.VisionOptions"/>, so its images are decoded) and its other soft parts' markers by
+    /// their sources (<see cref="Parts"/>); throws for a message part it does not take (<see cref="PartKinds"/>).
     /// </summary>
     public string RenderPrompt(ChatRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
         var images = Images is null ? [] : ImagesOf(request);
-        return RenderPrompt(request, images.Count == 0 ? [] : [.. images.Select(i => Images!.Encoder.Blocks(Images.Read(i, request), request.VisionOptions))]);
+        return RenderPrompt(request, images.Count == 0 ? [] : [.. images.Select(i => Images!.Encoder.Blocks(Images.Read(i, request), request.VisionOptions))], SoftLayouts(request));
     }
 
-    private string RenderPrompt(ChatRequest request, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> layouts)
+    private string RenderPrompt(ChatRequest request, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> layouts, IReadOnlyList<(ISoftPartSource Source, List<IReadOnlyList<ImageTokenLayout>> Layouts)>? soft = null)
     {
         ChatParts.ThrowIfUnsupported(this, request);
         string prompt = Template.Render(request.Messages, request.Tools ?? [], request.Think);
         prompt = Images is { } images && layouts.Count > 0 ? images.Format.Expand(prompt, layouts, Generator.Tokenizer) : prompt;
+        foreach (var (source, own) in soft ?? [])
+        {
+            prompt = source.Format.Expand(prompt, own, Generator.Tokenizer);          // each source touches its own markers only
+        }
+
         return request.AddSpecialTokens ? Template.AddedPrefix + prompt : prompt;
     }
 
     // The image parts of a request, in the order the template renders them.
     private static List<ChatImage> ImagesOf(ChatRequest request) => [.. request.Messages.SelectMany(m => m.Parts).OfType<ChatImage>()];
+
+    // Each source's parts of a request, in the order the template renders them (sources with none left out).
+    private List<(ISoftPartSource Source, List<ChatPart> Parts)> SoftPartsOf(ChatRequest request)
+    {
+        var found = new List<(ISoftPartSource, List<ChatPart>)>();
+        foreach (var source in _parts)
+        {
+            var own = request.Messages.SelectMany(m => m.Parts).Where(p => p.Kind == source.Kind).ToList();
+            if (own.Count > 0)
+            {
+                found.Add((source, own));
+            }
+        }
+
+        return found;
+    }
+
+    // Each source's parts' blocks, for expanding the prompt.
+    private List<(ISoftPartSource Source, List<IReadOnlyList<ImageTokenLayout>> Layouts)> SoftLayouts(ChatRequest request) =>
+        [.. SoftPartsOf(request).Select(s => (s.Source, s.Parts.Select(s.Source.Blocks).ToList()))];
+
+    private static bool HasSoftParts(ChatRequest request) => request.Messages.Any(m => m.Parts.Any(p => p is not ChatText and not ChatImage));
 
     // A text-only model refuses images as RenderPrompt does; a model that reads them answers them one at a time.
     private void ThrowIfImages(IReadOnlyList<ChatRequest> requests)
@@ -162,6 +221,11 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         if (requests.Any(r => r.Messages.Any(m => m.Parts.Any(p => p is ChatImage))))
         {
             throw new NotSupportedException("ChatBatch takes text only; answer requests with images with StreamBatch, or each on its own (Chat or Stream).");
+        }
+
+        if (_parts.Count > 0 && requests.Any(HasSoftParts))
+        {
+            throw new NotSupportedException("ChatBatch takes text only; answer requests with audio or other soft parts with StreamBatch, or each on its own (Chat or Stream).");
         }
     }
 
@@ -227,6 +291,20 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         ArgumentNullException.ThrowIfNull(requests);
         if (requests.Count == 0)
         {
+            yield break;
+        }
+
+        if (_parts.Count > 0 && requests.Any(HasSoftParts))
+        {
+            // Soft parts other than images: each request on its own (the prefill takes one soft token id per prompt).
+            for (int i = 0; i < requests.Count; i++)
+            {
+                foreach (var chunk in Stream(requests[i], cancellationToken))
+                {
+                    yield return (i, chunk);
+                }
+            }
+
             yield break;
         }
 
@@ -449,7 +527,74 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         var images = Images is null ? [] : ImagesOf(request);
         IReadOnlyList<ImageFeatures> features = [];
         string prompt;
-        if (images.Count == 0)
+        var soft = _parts.Count == 0 ? [] : SoftPartsOf(request);
+        (int Token, IImageAttentionRule Attention)? softInput = null;
+        if (soft.Count > 0)
+        {
+            // One soft token id and one attention rule per prompt (the prefill replaces the runs of one token): the soft
+            // parts must share them, and images (their own token and rule) go in a request of their own.
+            ChatParts.ThrowIfUnsupported(this, request);
+            var first = soft[0].Source;
+            if (images.Count > 0)
+            {
+                throw new NotSupportedException($"The request holds images and '{first.Kind}' parts; the prefill takes one soft token id per prompt, so give them in separate requests.");
+            }
+
+            var other = soft.Skip(1).Select(s => s.Source).FirstOrDefault(s => s.Format.ImageToken != first.Format.ImageToken || s.Attention.Name != first.Attention.Name);
+            if (other is not null)
+            {
+                throw new NotSupportedException($"The request holds '{first.Kind}' and '{other.Kind}' parts, whose soft tokens or attention rules differ ({first.Format.Name} against "
+                    + $"{other.Format.Name}); the prefill takes one soft token id per prompt, so give them in separate requests.");
+            }
+
+            softInput = (first.Format.ImageToken, first.Attention);
+            var softLayouts = soft.Select(s => (s.Source, s.Parts.Select(s.Source.Blocks).ToList())).ToList();
+            prompt = RenderPrompt(request, [], softLayouts);
+            var expected = softLayouts.SelectMany(s => s.Item2).SelectMany(l => l).ToList();
+            cancellationToken.ThrowIfCancellationRequested();                    // before the encoders, and after them below
+            TensorOffloading.BeforeInference(Generator.Device, Generator.Model);  // with offloading: the encoders' room
+            var encoded = new List<ImageFeatures>(expected.Count);
+            try
+            {
+                foreach (var (source, parts) in soft)
+                {
+                    long start = Telemetry.Start(TelemetryLevel.Inference);
+                    var own = source.Encode(parts);
+                    encoded.AddRange(own);
+                    if (start != 0)
+                    {
+                        Telemetry.InferenceStage(InferenceStageKind.Encoder, Generator.Device, start, parts.Count, own.Sum(f => 4L * f.Features.Size));
+                    }
+                }
+
+                if (encoded.Count != expected.Count)
+                {
+                    throw new InvalidOperationException($"The '{first.Kind}' source gave {encoded.Count} blocks' features for {expected.Count} blocks of soft tokens.");
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                for (int i = 0; i < encoded.Count; i++)
+                {
+                    if (!encoded[i].Layout.Equals(expected[i]) || encoded[i].Features.Shape[^1] != first.Width)
+                    {
+                        throw new InvalidOperationException($"Soft block {i} ('{first.Kind}'): the source gave {Tensor.FormatShape(encoded[i].Features.Shape)} ({encoded[i].Layout}); "
+                            + $"its layout says {expected[i]} of width {first.Width}.");
+                    }
+                }
+
+                features = encoded;
+            }
+            catch
+            {
+                foreach (var f in encoded)
+                {
+                    f.Dispose();
+                }
+
+                throw;
+            }
+        }
+        else if (images.Count == 0)
         {
             prompt = RenderPrompt(request, []);
         }
@@ -499,7 +644,8 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
         try
         {
-            var source = images.Count > 0
+            var source = softInput is { } input ? Generator.Stream(prompt, input.Token, features, input.Attention, options, cancellationToken)
+                : images.Count > 0
                 ? Generator.Stream(prompt, Images!.Format.ImageToken, features, Images.Attention, options, cancellationToken)
                 : Generator.Stream(prompt, options, cancellationToken);
             foreach (var chunk in source)

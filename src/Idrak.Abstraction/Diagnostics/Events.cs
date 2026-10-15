@@ -202,6 +202,15 @@ public enum InferenceStageKind
 
     /// <summary>A layer's key/value cache allocated: Count its positions, Bytes its memory.</summary>
     CacheAllocation,
+
+    /// <summary>A sound file's bytes decoded to samples: Count the samples (every channel), Bytes the encoded bytes.</summary>
+    AudioDecode,
+
+    /// <summary>Sound resampled to a model's rate: Count the samples out.</summary>
+    Resample,
+
+    /// <summary>Sound to a model's features (log-mel frames): Count the frames, Bytes the features.</summary>
+    AudioFeatures,
 }
 
 /// <summary>
