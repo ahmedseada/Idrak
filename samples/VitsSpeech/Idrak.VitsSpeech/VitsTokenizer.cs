@@ -11,8 +11,8 @@ namespace Idrak.VitsSpeech;
 /// symbol to its id; <c>tokenizer_config.json</c> (optional) says whether the text is lower-cased
 /// (<c>normalize</c>), whether a blank is put between symbols (<c>add_blank</c>, the pad token's id), whether the
 /// checkpoint expects phonemes (<c>phonemize</c>: refused, the library carries no phonemizer) or romanised text
-/// (<c>is_uroman</c>: non-Latin text is refused until a romanisation table exists, see the README). Each flag can be
-/// changed after loading.
+/// (<c>is_uroman</c>: non-Latin text is romanised first by the <see cref="TextRomanizers"/> entry that covers its
+/// script, Arabic built in; a script none covers is refused). Each flag can be changed after loading.
 /// </summary>
 public sealed class VitsTokenizer
 {
@@ -55,8 +55,14 @@ public sealed class VitsTokenizer
     /// <summary>The checkpoint expects phonemes: encoding is refused, since the library carries no phonemizer.</summary>
     public bool Phonemize { get; set; }
 
-    /// <summary>The checkpoint expects romanised (uroman) text: non-Latin text is refused until a romanisation table exists.</summary>
+    /// <summary>The checkpoint expects romanised (uroman) text: non-Latin text is romanised before it is tokenized.</summary>
     public bool IsUroman { get; set; }
+
+    /// <summary>
+    /// The romanizer for <see cref="IsUroman"/> checkpoints: a name in <see cref="TextRomanizers"/>, or null (the default)
+    /// for the one that covers the text's script.
+    /// </summary>
+    public string? Romanizer { get; set; }
 
     /// <summary>Reads <c>vocab.json</c> and, when present, <c>tokenizer_config.json</c> from <paramref name="folder"/>.</summary>
     /// <exception cref="FileNotFoundException">There is no vocab.json.</exception>
@@ -100,7 +106,7 @@ public sealed class VitsTokenizer
 
         if (IsUroman && HasNonLatin(text))
         {
-            throw new NotSupportedException("This checkpoint's tokenizer_config.json sets \"is_uroman\": it expects romanised text, and the plug-in has no romanisation table yet (see samples/VitsSpeech/Idrak.VitsSpeech/README.md); give it Latin text, or set VitsTokenizer.IsUroman false.");
+            text = Romanize(text);
         }
 
         var symbols = new List<int>(text.Length);
@@ -164,11 +170,33 @@ public sealed class VitsTokenizer
         symbols.RemoveRange(0, start);
     }
 
+    /// <summary>
+    /// <paramref name="text"/> as an <see cref="IsUroman"/> checkpoint reads it: romanised by <see cref="Romanizer"/> (or
+    /// the registered romanizer that covers its script) when it holds non-Latin letters, else as it is.
+    /// </summary>
+    /// <exception cref="NotSupportedException">No registered romanizer covers the text's script.</exception>
+    public string Romanize(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (!HasNonLatin(text))
+        {
+            return text;
+        }
+
+        var romanizer = Romanizer is { } name ? TextRomanizers.Get(name) : TextRomanizers.For(text)
+            ?? throw new NotSupportedException("This checkpoint's tokenizer_config.json sets \"is_uroman\": it expects romanised text, and no registered romanizer covers the "
+                + $"text's script (registered: {string.Join(", ", TextRomanizers.Names)}); add one with TextRomanizers.Register, or give it Latin text.");
+        return romanizer.Romanize(text);
+    }
+
+    // A letter past Latin Extended-B: a script uroman would romanise.
+    internal static bool IsNonLatinLetter(Rune rune) => Rune.IsLetter(rune) && rune.Value > 0x024F;
+
     private static bool HasNonLatin(string text)
     {
         foreach (var rune in text.EnumerateRunes())
         {
-            if (Rune.IsLetter(rune) && rune.Value > 0x024F)                      // past Latin Extended-B
+            if (IsNonLatinLetter(rune))
             {
                 return true;
             }

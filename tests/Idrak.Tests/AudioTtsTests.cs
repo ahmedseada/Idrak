@@ -15,7 +15,7 @@ internal static partial class Tests
         ("audio tts: Stft.Inverse gives a random signal back from ComplexOnHost within 1e-4 away from the edges (centred and not), SamplesFor names the length, and a hop the window does not cover is refused", AudioTtsInverseStft),
         ("audio tts: Griffin-Lim on a tone's magnitudes gives a tone of the same frequency, finite and of the frames' length; the same spectrogram and seed twice give the same samples; the vocoder registry has griffin-lim as the library default and makes it from a log-mel whose peak band is the tone's", AudioTtsGriffinLim),
         ("audio tts: the VITS plug-in loads tiny-vits and speaks the fixture's ids with noise 0 within 1e-4 of reference/waveform.npy at the config's rate (the durations' frames times the hop), the same twice, Rate 2 no longer, text through the tokenizer equal to the ids, SpeakStream joined equal to Speak, the WAV saved and read back; without the plug-in the family is refused", AudioTtsVitsFixture),
-        ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, refuses phonemes and non-Latin text for a uroman checkpoint, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
+        ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, refuses phonemes, romanises Arabic for a uroman checkpoint (uroman's output exactly on the tool's cases) and refuses a script no romanizer covers, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
     ];
 
     private static string TinyVits => AudioData("tiny-vits");
@@ -210,12 +210,56 @@ internal static partial class Tests
         Check(ThrowsSaying<NotSupportedException>(() => tokenizer.Encode("ab"), "phonemize"), "a phonemizing checkpoint is refused naming the flag");
         tokenizer.Phonemize = false;
         tokenizer.IsUroman = true;
-        Check(ThrowsSaying<NotSupportedException>(() => tokenizer.Encode("مرحبا"), "is_uroman"), "a uroman checkpoint refuses non-Latin text naming the flag");
         Check(tokenizer.Encode("ab").SequenceEqual([2, 3]), "a uroman checkpoint accepts Latin text");
+        Check(tokenizer.Romanize("بكا بك") == "bka bk" && tokenizer.Encode("بكا بك").SequenceEqual(tokenizer.Encode("bka bk")), $"Arabic is romanised before its ids: {tokenizer.Romanize("بكا بك")}");
+        Check(ThrowsSaying<NotSupportedException>(() => tokenizer.Encode("你好"), "TextRomanizers.Register"), "a script no romanizer covers is refused naming the registry");
+        tokenizer.Romanizer = "none";
+        Check(ThrowsSaying<NotSupportedException>(() => tokenizer.Encode("بك"), "not registered"), "a romanizer named but not registered is refused");
+        tokenizer.Romanizer = null;
+        tokenizer.IsUroman = false;
+
+        // uroman's own output on the tool's cases (sentences, diacritics, digits, presentation forms, decomposed marks, random strings).
+        var cases = JsonNode.Parse(File.ReadAllText(AudioData("uroman/arabic.json")))!.AsObject();
+        var arabic = TextRomanizers.Get(TextRomanizers.UromanArabic);
+        int wrong = 0;
+        string first = "";
+        foreach (var row in cases["cases"]!.AsArray())
+        {
+            string text = (string)row!["text"]!, expected = (string)row["uroman"]!, got = arabic.Romanize(text);
+            if (got != expected && wrong++ == 0)
+            {
+                first = $"\"{text}\": \"{got}\", uroman \"{expected}\"";
+            }
+        }
+
+        Check(wrong == 0, $"{wrong} of {cases["cases"]!.AsArray().Count} cases differ from uroman {cases["uroman"]} (first: {first})");
+        Check(UromanArabicRomanizer.Version == (string)cases["uroman"]! && TextRomanizers.Origin(TextRomanizers.UromanArabic) == Overrides.Library && TextRomanizers.For("مرحبا") == arabic && TextRomanizers.For("hello") is null,
+            "the table is from the cases' uroman; the registry picks it for Arabic, none for Latin");
+        var upper = new UpperRomanizer();
+        TextRomanizers.Register(upper);
+        try
+        {
+            Check(TextRomanizers.For("Ωμέγα") == upper && TextRomanizers.Names[0] == "test-greek", "an app's romanizer is asked first for its script");
+        }
+        finally
+        {
+            TextRomanizers.Unregister("test-greek");
+        }
+
+        Check(!TextRomanizers.Names.Contains("test-greek"), "and unregisters");
 
         var pieces = VitsSynthesizer.SplitText("One two. Three four! Five? Six seven eight nine", 12);
         Check(pieces.SequenceEqual(["One two.", "Three four!", "Five?", "Six seven", "eight nine"]), $"the split: [{string.Join(" | ", pieces)}]");
         Check(VitsSynthesizer.SplitText("a. b", 0).SequenceEqual(["a. b"]), "MaxCharacters 0: one piece");
+    }
+
+    private sealed class UpperRomanizer : ITextRomanizer
+    {
+        public string Name => "test-greek";
+
+        public bool Covers(System.Text.Rune rune) => rune.Value is >= 0x0370 and <= 0x03FF or >= 0x1F00 and <= 0x1FFF;
+
+        public string Romanize(string text) => text;
     }
 
     private static bool ThrowsSaying<TException>(Action action, string containing) where TException : Exception
