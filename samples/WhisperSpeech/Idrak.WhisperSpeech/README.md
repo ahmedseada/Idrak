@@ -57,6 +57,11 @@ through the encoder, and the testing kit's `SpeechRecognizerSuite`. On the CPU:
 IDRAK_DEVICES=cpu IDRAK_FILTER="audio asr" dotnet run -c Release --no-build --project tests/Idrak.Tests
 ```
 
+**Memory.** With gradients off, the encoder runs each layer in a scope of its own and keeps only its output, so the
+device holds one layer's attention scores (heads × 1500 × 1500 for a 30 s segment) at a time. For a whisper-small-shaped
+model transcribing 4.5 s on the CPU, the call peaked 6620 MB above the weights when every layer's intermediates stayed to
+the end, and 863 MB now (the owner's CUDA run with whisper-small had reported 7.37 GB).
+
 ## Trying it on a real checkpoint
 
 `idrak transcribe` transcribes WAV, FLAC or MP3 files through the plug-in (given with `-P`), as text, JSON, SRT or
