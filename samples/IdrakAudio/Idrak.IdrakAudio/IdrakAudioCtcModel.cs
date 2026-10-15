@@ -13,7 +13,7 @@ namespace Idrak.IdrakAudio;
 /// <summary>
 /// An IdrakAudio "ctc" model: the encoder and head (<see cref="IdrakAudioEncoder"/>), its tokenizer and its features, as a
 /// speech recognizer (sound in, text out through the library's <see cref="CtcDecoders"/>: greedy, or "beam" when
-/// <see cref="TranscriptionOptions.Beams"/> is above 1) and as a model <c>CtcTrainer</c> trains and saves.
+/// <see cref="TranscriptionOptions.Beams"/> is above 1) and as a model <c>SpeechTrainer</c> trains and saves.
 /// </summary>
 public sealed class IdrakAudioCtcModel : ICtcSpeechModel
 {
@@ -94,7 +94,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
     }
 
     /// <inheritdoc />
-    public Tensor Logits(Tensor features, IReadOnlyList<int> frames, CtcForwardOptions? options = null) =>
+    public Tensor Logits(Tensor features, IReadOnlyList<int> frames, SpeechForwardOptions? options = null) =>
         Encoder.Run(features, frames, options?.Checkpointing ?? false);
 
     /// <inheritdoc />

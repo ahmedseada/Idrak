@@ -21,10 +21,10 @@ internal static partial class Tests
         ("audio train: CtcAlignment.Viterbi gives torchaudio's forced_align path of each utterance of ctc/reference/logp-step1.npy exactly, its log-probability within 1e-4, each label's start and length from the path; MinimumSteps counts a step between equal labels; too few steps, a blank label and a label out of range refused", AudioTrainViterbi),
         ("audio train: SpeechSources \"transcripts\" reads the fixture's train.jsonl with its audio folder, rows relative to the file, NeMo's audio_filepath and duration, a zip of the transcripts and clips, and audio in another zip, each utterance's text, seconds (the row's or the header's) and bytes; MinSeconds and MaxSeconds leave rows out with a note; a missing file refused naming the row unless SkipMissing; \"audio-folder\" pairs name.wav with name.txt in a folder and a zip, noting files without text; the JSON round trip; an unregistered kind refused; Order a seeded permutation per pass", AudioTrainSpeechSources),
         ("audio train: AudioAugmentations: \"speed\" makes the sound 1/factor as long (a factor of 1 the same sound), \"noise\" adds white noise and a noise file's stretch at the drawn signal-to-noise ratio, \"spec-mask\" fills at most its masks' widths with the mean feature and leaves the rest; RandomFor gives the same draws for the same seed, pass and utterance and others for another pass; the options' JSON round trip and refusals; an unregistered name refused", AudioTrainAugmentations),
-        ("audio train: the IdrakAudio plug-in reads ctc/model and ctc/model-conv (refused naming SpeechFamilies.Register without it) and gives torch's step-1 CTC loss within 1e-4 and every tensor's gradient within 1e-4 of that tensor's largest, through CtcTrainer.Loss; three SGD steps' losses within 1e-4 and the weights after them within 1e-4; Viterbi on the model's own log-probabilities gives torchaudio's paths; each utterance's logits in the padded batch equal its logits alone within 1e-5; a config that does not match the weights refused", AudioTrainFixture),
+        ("audio train: the IdrakAudio plug-in reads ctc/model and ctc/model-conv (refused naming SpeechFamilies.Register without it) and gives torch's step-1 CTC loss within 1e-4 and every tensor's gradient within 1e-4 of that tensor's largest, through CtcObjective.Loss; three SGD steps' losses within 1e-4 and the weights after them within 1e-4; Viterbi on the model's own log-probabilities gives torchaudio's paths; each utterance's logits in the padded batch equal its logits alone within 1e-5; a config that does not match the weights refused", AudioTrainFixture),
         ("audio train: SpeechModels.Create makes an IdrakAudio ctc model from a spec and a trained tokenizer into a folder SpeechModels.Load reads back with the same weights (an unregistered architecture, a used folder and an unbuilt task refused); it transcribes tone speech with greedy and beam decoding, batch and chunked and streamed alike, and passes the kit's SpeechRecognizerSuite", AudioTrainCreate),
-        ("audio train: CtcTrainer: a run stopped after step 2 and resumed from checkpoint-2 gives steps 3 to 6 and the final weights bit for bit (augmentations on, an epoch boundary crossed); checkpoints are models SpeechModels.Load reads with train-state.json; the feature cache takes each utterance's features once (no AudioFeatures stage after the first pass); an utterance too short for its text is counted and left out; progress reports every step with the time left", AudioTrainResume),
-        ("audio train: CtcTrainer halves the micro-batch when the device runs out of memory (a model refusing more than two utterances at once) and repeats the step: the same losses within 1e-5 as a run that never ran out, the note and the final micro-batch reported; with gradient accumulation of two batches a step, the run one utterance at a time gives the same losses within 1e-5", AudioTrainMemory),
+        ("audio train: SpeechTrainer: a run stopped after step 2 and resumed from checkpoint-2 gives steps 3 to 6 and the final weights bit for bit (augmentations on, an epoch boundary crossed); checkpoints are models SpeechModels.Load reads with train-state.json; the feature cache takes each utterance's features once (no AudioFeatures stage after the first pass); an utterance too short for its text is counted and left out; progress reports every step with the time left", AudioTrainResume),
+        ("audio train: SpeechTrainer halves the micro-batch when the device runs out of memory (a model refusing more than two utterances at once) and repeats the step: the same losses within 1e-5 as a run that never ran out, the note and the final micro-batch reported; with gradient accumulation of two batches a step, the run one utterance at a time gives the same losses within 1e-5", AudioTrainMemory),
         ("audio train: a 200-step CPU run of a tiny IdrakAudio ctc model on tone speech halves its loss (the mean of the last 10 steps under half of step 1), its evaluation CER at step 200 is at most its CER at step 100 and under 0.5, and the trained checkpoint transcribes (step time and CER printed)", AudioTrainSmoke),
     ];
 
@@ -310,7 +310,7 @@ internal static partial class Tests
                 using (var scope = new TensorScope())
                 {
                     var input = Tensor.From(mels, [frames.Length, padded, 80], device);
-                    var loss = CtcTrainer.Loss(model, input, frames, labels);
+                    var loss = CtcObjective.Loss(model, input, frames, labels);
                     float expected = (float)reference["results"]![folder]!["loss_step1"]!;
                     Check(MathF.Abs(loss.Item() - expected) <= 1e-4f * MathF.Abs(expected), $"{folder}: the step-1 loss {loss.Item()} is not torch's {expected}");
                     loss.Backward();
@@ -348,7 +348,7 @@ internal static partial class Tests
                     }
 
                     sgd.ZeroGrad();
-                    var loss = CtcTrainer.Loss(model, Tensor.From(mels, [frames.Length, padded, 80], device), frames, labels);
+                    var loss = CtcObjective.Loss(model, Tensor.From(mels, [frames.Length, padded, 80], device), frames, labels);
                     losses.Add(loss.Item());
                     loss.Backward();
                 }
@@ -565,7 +565,7 @@ internal static partial class Tests
         }
     }
 
-    private static CtcTrainingOptions ToneTraining(string cache) => new()
+    private static SpeechTrainingOptions ToneTraining(string cache) => new()
     {
         Steps = 6, BatchSeconds = 3, LearningRate = 3e-3f, WarmupFraction = 0.1f, Seed = 3, FeatureCache = FeatureCaches.Disk, FeatureCacheFolder = cache,
     };
@@ -585,11 +585,11 @@ internal static partial class Tests
             var options = ToneTraining(Path.Combine(root, "cache")) with { Augmentations = ["speed", "noise", "spec-mask"], AugmentationOptions = new() { Probability = 0.5 }, SaveEvery = 2 };
 
             // The whole run.
-            CtcTrainingResult whole;
-            var reports = new List<CtcTrainingProgress>();
+            SpeechTrainingResult whole;
+            var reports = new List<SpeechTrainingProgress>();
             using (var model = CreateTone(Path.Combine(root, "start-a"), tokenizer, device))
             {
-                whole = CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-a"), progress: new Progress(reports));
+                whole = SpeechTrainer.Train(model, train, null, options, Path.Combine(root, "run-a"), progress: new Progress(reports));
             }
 
             Check(whole.Steps == 6 && whole.Losses.Count == 6 && whole.Losses.All(float.IsFinite) && whole.Dropped == 1 && whole.Utterances == 12,
@@ -600,14 +600,14 @@ internal static partial class Tests
                 && steps[2].Remaining > TimeSpan.Zero && steps.All(r => r.MicroBatchSeconds == 3), "progress after every step, the time left, an epoch boundary crossed");
             foreach (int step in new[] { 2, 4, 6 })
             {
-                Check(File.Exists(Path.Combine(root, "run-a", $"checkpoint-{step}", CtcTrainer.StateFile)), $"checkpoint-{step} holds its state");
+                Check(File.Exists(Path.Combine(root, "run-a", $"checkpoint-{step}", SpeechTrainer.StateFile)), $"checkpoint-{step} holds its state");
             }
 
             // The same run stopped after step 2 (cancelled: the checkpoint of the last finished step is written), then resumed.
             using (var model = CreateTone(Path.Combine(root, "start-b"), tokenizer, device))
             using (var stop = new CancellationTokenSource())
             {
-                var seen = new List<CtcTrainingProgress>();
+                var seen = new List<SpeechTrainingProgress>();
                 var stopper = new Progress(seen, r =>
                 {
                     if (r.Stage == "step" && r.Step == 2)
@@ -615,18 +615,18 @@ internal static partial class Tests
                         stop.Cancel();
                     }
                 });
-                ThrowsNaming<OperationCanceledException>(() => CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-b"), progress: stopper, cancellationToken: stop.Token),
+                ThrowsNaming<OperationCanceledException>(() => SpeechTrainer.Train(model, train, null, options, Path.Combine(root, "run-b"), progress: stopper, cancellationToken: stop.Token),
                     "the run cancelled after step 2");
                 Check(seen.Count(r => r.Stage == "step") == 2, "two steps ran before the run stopped");
             }
 
-            var state = CtcTrainer.ReadCheckpoint(Path.Combine(root, "run-b", "checkpoint-2"));
+            var state = SpeechTrainer.ReadCheckpoint(Path.Combine(root, "run-b", "checkpoint-2"));
             Check(state.Step == 2 && state.Losses.SequenceEqual(whole.Losses.Take(2)) && state.Train.Paths.SequenceEqual(train.Paths) && state.Options.Steps == 6, "train-state.json");
-            var resumed = CtcTrainer.Resume(Path.Combine(root, "run-b", "checkpoint-2"), device: device);
+            var resumed = SpeechTrainer.Resume(Path.Combine(root, "run-b", "checkpoint-2"), device: device);
             Check(resumed.Losses.SequenceEqual(whole.Losses), $"resumed losses {string.Join(", ", resumed.Losses)} are not the whole run's {string.Join(", ", whole.Losses)}");
             Check(File.ReadAllBytes(Path.Combine(root, "run-b", "checkpoint-6", "model.safetensors")).AsSpan()
                 .SequenceEqual(File.ReadAllBytes(Path.Combine(root, "run-a", "checkpoint-6", "model.safetensors"))), "the resumed run's final weights are the whole run's, bit for bit");
-            Check(CtcTrainer.LatestCheckpoint(Path.Combine(root, "run-b"))!.EndsWith("checkpoint-6", StringComparison.Ordinal), "the latest checkpoint");
+            Check(SpeechTrainer.LatestCheckpoint(Path.Combine(root, "run-b"))!.EndsWith("checkpoint-6", StringComparison.Ordinal), "the latest checkpoint");
             using (var trained = SpeechModels.Load(Path.Combine(root, "run-a", "checkpoint-6"), new SpeechModelOptions { Device = device }))
             {
                 Check(trained is ICtcSpeechModel && trained.Transcribe(AudioCodecs.Decode(Path.Combine(root, "data", "u001.wav"))).Segments.Count == 1, "a checkpoint is a model that transcribes");
@@ -637,7 +637,7 @@ internal static partial class Tests
             using (Telemetry.Subscribe(hook))
             using (var model = CreateTone(Path.Combine(root, "start-c"), tokenizer, device))
             {
-                var cached = CtcTrainer.Train(model, train, null, ToneTraining(Path.Combine(root, "cache-c")) with { Steps = 16 }, Path.Combine(root, "run-c"));
+                var cached = SpeechTrainer.Train(model, train, null, ToneTraining(Path.Combine(root, "cache-c")) with { Steps = 16 }, Path.Combine(root, "run-c"));
                 Check(cached.FeaturesExtracted == 12 && cached.FeaturesCached >= 12 && hook.Count == 12,
                     $"features taken {cached.FeaturesExtracted} times (telemetry {hook.Count}), {cached.FeaturesCached} from the cache, over three passes of 12");
             }
@@ -649,9 +649,9 @@ internal static partial class Tests
         }
     }
 
-    private sealed class Progress(List<CtcTrainingProgress> reports, Action<CtcTrainingProgress>? then = null) : IProgress<CtcTrainingProgress>
+    private sealed class Progress(List<SpeechTrainingProgress> reports, Action<SpeechTrainingProgress>? then = null) : IProgress<SpeechTrainingProgress>
     {
-        public void Report(CtcTrainingProgress value)
+        public void Report(SpeechTrainingProgress value)
         {
             reports.Add(value);
             then?.Invoke(value);
@@ -683,7 +683,7 @@ internal static partial class Tests
 
         public string Text(ReadOnlySpan<int> labels) => inner.Text(labels);
 
-        public Tensor Logits(Tensor features, IReadOnlyList<int> frames, CtcForwardOptions? options = null)
+        public Tensor Logits(Tensor features, IReadOnlyList<int> frames, SpeechForwardOptions? options = null)
         {
             if (features.Shape[0] > most)
             {
@@ -715,15 +715,15 @@ internal static partial class Tests
             var tokenizer = ToneTokenizer(root, texts);
             var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
             var options = ToneTraining(Path.Combine(root, "cache")) with { Steps = 4, BatchSeconds = 6 };
-            CtcTrainingResult free, tight;
+            SpeechTrainingResult free, tight;
             using (var model = CreateTone(Path.Combine(root, "a"), tokenizer, device))
             {
-                free = CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-a"));
+                free = SpeechTrainer.Train(model, train, null, options, Path.Combine(root, "run-a"));
             }
 
             using (var model = new TightCtcModel(CreateTone(Path.Combine(root, "b"), tokenizer, device), 2))
             {
-                tight = CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-b"));
+                tight = SpeechTrainer.Train(model, train, null, options, Path.Combine(root, "run-b"));
                 Check(model.Refused > 0, "the tight model refused a batch");
             }
 
@@ -735,15 +735,15 @@ internal static partial class Tests
             }
 
             // Gradient accumulation (two batches of 3 s a step), and the same run on a device that takes one utterance at a time.
-            CtcTrainingResult accumulated, accumulatedTight;
+            SpeechTrainingResult accumulated, accumulatedTight;
             using (var model = CreateTone(Path.Combine(root, "c"), tokenizer, device))
             {
-                accumulated = CtcTrainer.Train(model, train, null, options with { BatchSeconds = 3, GradientAccumulation = 2 }, Path.Combine(root, "run-c"));
+                accumulated = SpeechTrainer.Train(model, train, null, options with { BatchSeconds = 3, GradientAccumulation = 2 }, Path.Combine(root, "run-c"));
             }
 
             using (var model = new TightCtcModel(CreateTone(Path.Combine(root, "d"), tokenizer, device), 1))
             {
-                accumulatedTight = CtcTrainer.Train(model, train, null, options with { BatchSeconds = 3, GradientAccumulation = 2 }, Path.Combine(root, "run-d"));
+                accumulatedTight = SpeechTrainer.Train(model, train, null, options with { BatchSeconds = 3, GradientAccumulation = 2 }, Path.Combine(root, "run-d"));
             }
 
             for (int s = 0; s < accumulated.Losses.Count; s++)
@@ -770,10 +770,10 @@ internal static partial class Tests
             var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
             var options = ToneTraining(Path.Combine(root, "cache")) with { Steps = 200, BatchSeconds = 8, LearningRate = 3e-3f, WarmupFraction = 0.05f, EvaluateEvery = 100, Checkpointing = false };
             var clock = Stopwatch.StartNew();
-            CtcTrainingResult result;
+            SpeechTrainingResult result;
             using (var model = CreateTone(Path.Combine(root, "start"), tokenizer, device))
             {
-                result = CtcTrainer.Train(model, train, train, options, Path.Combine(root, "run"));
+                result = SpeechTrainer.Train(model, train, train, options, Path.Combine(root, "run"));
             }
 
             double seconds = clock.Elapsed.TotalSeconds;

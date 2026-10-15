@@ -16,10 +16,10 @@ using Idrak.Abstraction.Generation;
 namespace Idrak.Audio;
 
 /// <summary>
-/// How <see cref="CtcTrainer"/> trains a speech model with CTC. Every value is a setting; the defaults are a starting
+/// How <see cref="SpeechTrainer"/> trains a speech model (whatever its objective). Every value is a setting; the defaults are a starting
 /// point for a recognizer trained from scratch, not values tied to a device.
 /// </summary>
-public sealed record CtcTrainingOptions
+public sealed record SpeechTrainingOptions
 {
     /// <summary>Optimizer steps to run in all (a resumed run goes on to this many).</summary>
     public int Steps { get; init; } = 1000;
@@ -83,7 +83,7 @@ public sealed record CtcTrainingOptions
     /// <summary>The evaluation's score: a <see cref="TuningMetrics"/> name ("cer", "wer").</summary>
     public string Metric { get; init; } = TuningMetrics.CharacterErrorRate;
 
-    /// <summary>The evaluation's decoder: a <see cref="CtcDecoders"/> name ("greedy", "beam").</summary>
+    /// <summary>The evaluation's decoder: "greedy" or "beam" (for CTC, a <see cref="CtcDecoders"/> name).</summary>
     public string Decoder { get; init; } = CtcDecoders.Greedy;
 
     /// <summary>The beam width of the "beam" decoder.</summary>
@@ -127,11 +127,11 @@ public sealed record CtcTrainingOptions
     };
 
     /// <summary>Options from their JSON (<see cref="ToJson"/>); a key missing keeps the default.</summary>
-    public static CtcTrainingOptions FromJson(JsonObject json)
+    public static SpeechTrainingOptions FromJson(JsonObject json)
     {
         ArgumentNullException.ThrowIfNull(json);
-        var d = new CtcTrainingOptions();
-        return new CtcTrainingOptions
+        var d = new SpeechTrainingOptions();
+        return new SpeechTrainingOptions
         {
             Steps = (int?)json["steps"] ?? d.Steps,
             BatchSeconds = (double?)json["batch_seconds"] ?? d.BatchSeconds,
@@ -169,7 +169,7 @@ public sealed record CtcTrainingOptions
         if (Steps < 1 || !(BatchSeconds > 0) || GradientAccumulation < 1 || BucketUtterances < 1 || !(LearningRate > 0) || WarmupFraction is < 0 or > 1
             || MaxGradientNorm < 0 || SaveEvery < 0 || KeepCheckpoints < 0 || EvaluateEvery < 0 || BeamWidth < 1 || Workers < 0 || NonFiniteSteps < 0)
         {
-            throw new ArgumentException("CTC training: Steps, BatchSeconds, GradientAccumulation, BucketUtterances, LearningRate and BeamWidth are positive, "
+            throw new ArgumentException("Speech training: Steps, BatchSeconds, GradientAccumulation, BucketUtterances, LearningRate and BeamWidth are positive, "
                 + "WarmupFraction 0 to 1, and MaxGradientNorm, SaveEvery, KeepCheckpoints, EvaluateEvery, Workers and NonFiniteSteps not negative.");
         }
 
@@ -198,7 +198,7 @@ public sealed record CtcTrainingOptions
     }
 }
 
-/// <summary>Where a CTC training run is (<see cref="CtcTrainer.Train"/>'s progress), reported after every step.</summary>
+/// <summary>Where a speech training run is (<see cref="SpeechTrainer.Train"/>'s progress), reported after every step.</summary>
 /// <param name="Stage">What runs: "step" (a step finished), "evaluate" (the evaluation source being scored) or "checkpoint" (one written).</param>
 /// <param name="Step">Steps done.</param>
 /// <param name="Steps">Steps in all.</param>
@@ -213,25 +213,25 @@ public sealed record CtcTrainingOptions
 /// <param name="PeakDeviceBytes">The device's peak memory (0 where it does not report it).</param>
 /// <param name="MicroBatchSeconds">The audio seconds that go through the device at once (smaller than a batch after running out of memory).</param>
 /// <param name="Evaluation">The evaluation score of this step, when it was scored.</param>
-public sealed record CtcTrainingProgress(string Stage, int Step, int Steps, int Epoch, double EpochFraction, float Loss, float LearningRate, double UtterancesPerSecond,
+public sealed record SpeechTrainingProgress(string Stage, int Step, int Steps, int Epoch, double EpochFraction, float Loss, float LearningRate, double UtterancesPerSecond,
     double AudioSecondsPerSecond, TimeSpan Elapsed, TimeSpan Remaining, long PeakDeviceBytes, double MicroBatchSeconds, double? Evaluation);
 
-/// <summary>What a CTC training run did.</summary>
+/// <summary>What a speech training run did.</summary>
 /// <param name="Steps">Steps done in all (a resumed run's included).</param>
 /// <param name="Losses">Each step's loss, the first step first.</param>
-/// <param name="Evaluations">The evaluation scores (the step, the <see cref="CtcTrainingOptions.Metric"/>'s value).</param>
+/// <param name="Evaluations">The evaluation scores (the step, the <see cref="SpeechTrainingOptions.Metric"/>'s value).</param>
 /// <param name="Checkpoint">The last checkpoint written (a model folder <c>SpeechModels.Load</c> reads), or null.</param>
 /// <param name="Elapsed">The time this call took.</param>
 /// <param name="Utterances">The training utterances used.</param>
-/// <param name="Dropped">Utterances left out because their frames give fewer steps than their labels need (CTC cannot read them).</param>
+/// <param name="Dropped">Utterances left out because the objective cannot train on them (CTC: fewer steps than their labels need).</param>
 /// <param name="MicroBatchSeconds">The micro-batch the run ended with (the batch's seconds unless the device ran out of memory).</param>
 /// <param name="FeaturesExtracted">Utterances whose features were taken this call.</param>
 /// <param name="FeaturesCached">Utterances whose features came from the cache.</param>
 /// <param name="Notes">What the sources left out and what the run changed (a smaller micro-batch), one line each.</param>
-public sealed record CtcTrainingResult(int Steps, IReadOnlyList<float> Losses, IReadOnlyList<(int Step, double Score)> Evaluations, string? Checkpoint, TimeSpan Elapsed,
+public sealed record SpeechTrainingResult(int Steps, IReadOnlyList<float> Losses, IReadOnlyList<(int Step, double Score)> Evaluations, string? Checkpoint, TimeSpan Elapsed,
     int Utterances, int Dropped, double MicroBatchSeconds, int FeaturesExtracted, int FeaturesCached, IReadOnlyList<string> Notes);
 
-/// <summary>A checkpoint of a CTC training run (<see cref="CtcTrainer.ReadCheckpoint"/>): the model folder and where the run was.</summary>
+/// <summary>A checkpoint of a speech training run (<see cref="SpeechTrainer.ReadCheckpoint"/>): the model folder and where the run was.</summary>
 /// <param name="Folder">The checkpoint folder (a model folder, with the optimizer's state and train-state.json).</param>
 /// <param name="Options">The run's options.</param>
 /// <param name="Train">The training source.</param>
@@ -242,22 +242,21 @@ public sealed record CtcTrainingResult(int Steps, IReadOnlyList<float> Losses, I
 /// <param name="MicroBatchSeconds">The micro-batch the run had (so a resumed run splits its batches as the run did).</param>
 /// <param name="Losses">Each step's loss.</param>
 /// <param name="Evaluations">The evaluation scores so far.</param>
-public sealed record CtcTrainingCheckpoint(string Folder, CtcTrainingOptions Options, SpeechSource Train, SpeechSource? Evaluation, int Step, int Epoch, int Batch,
+public sealed record SpeechTrainingCheckpoint(string Folder, SpeechTrainingOptions Options, SpeechSource Train, SpeechSource? Evaluation, int Step, int Epoch, int Batch,
     double MicroBatchSeconds, IReadOnlyList<float> Losses, IReadOnlyList<(int Step, double Score)> Evaluations);
 
 /// <summary>
-/// Trains a speech model with a CTC head (<see cref="ICtcSpeechModel"/>) on transcribed speech (plan 21, S6), with the
-/// library's CTC loss (<c>Losses.Ctc</c>: a log-softmax over the head's classes, each utterance's steps after the
-/// subsampling, zero_infinity on), optimizers, schedules and decoders. Utterances are batched by length (sorted within
-/// windows of the pass's seeded order, cut by <see cref="CtcTrainingOptions.BatchSeconds"/>); the next step's features are
-/// read, decoded and taken on worker threads while the device trains, and kept in a feature cache so later passes take
-/// none; checkpoints (<c>checkpoint-STEP</c>: the model folder, <c>optimizer.safetensors</c>, <c>train-state.json</c>)
-/// resume the run where it stopped, bit for bit on the CPU.
+/// Trains a speech model (<see cref="ITrainableSpeechModel"/>) on transcribed speech (plan 21, S6) with its objective
+/// (<see cref="SpeechTrainingObjectives"/>: "ctc", "seq2seq"), the library's optimizers and schedules. Utterances are
+/// batched by length (sorted within windows of the pass's seeded order, cut by <see cref="SpeechTrainingOptions.BatchSeconds"/>);
+/// the next step's features are read, decoded and taken on worker threads while the device trains, and kept in a feature
+/// cache so later passes take none; checkpoints (<c>checkpoint-STEP</c>: the model folder, <c>optimizer.safetensors</c>,
+/// <c>train-state.json</c>) resume the run where it stopped, bit for bit on the CPU.
 /// </summary>
-public static class CtcTrainer
+public static class SpeechTrainer
 {
     /// <summary>The checkpoint state file's format.</summary>
-    public const string StateFormat = "idrak-ctc-train-state/1";
+    public const string StateFormat = "idrak-speech-train-state/1";
 
     /// <summary>The checkpoint state file.</summary>
     public const string StateFile = "train-state.json";
@@ -266,41 +265,27 @@ public static class CtcTrainer
     private const string FeatureStage = "audio-features";
 
     /// <summary>
-    /// The mean CTC loss of a batch, as the trainer computes it: the model's logits, a log-softmax over the classes, each
-    /// utterance's steps (<see cref="ICtcSpeechModel.StepsFor"/> of its frames) and labels, PyTorch's <c>ctc_loss</c> with
-    /// mean reduction and zero_infinity.
-    /// </summary>
-    public static Tensor Loss(ICtcSpeechModel model, Tensor features, IReadOnlyList<int> frames, IReadOnlyList<int[]> labels, CtcForwardOptions? forward = null)
-    {
-        ArgumentNullException.ThrowIfNull(model);
-        ArgumentNullException.ThrowIfNull(frames);
-        ArgumentNullException.ThrowIfNull(labels);
-        var logProbs = model.Logits(features, frames, forward).LogSoftmax();
-        var steps = new int[frames.Count];
-        for (int i = 0; i < steps.Length; i++)
-        {
-            steps[i] = model.StepsFor(frames[i]);
-        }
-
-        return Losses.Ctc(logProbs, labels, steps, model.Blank, LossReduction.Mean, zeroInfinity: true, batchFirst: true);
-    }
-
-    /// <summary>
-    /// Trains <paramref name="model"/> on <paramref name="train"/> for <see cref="CtcTrainingOptions.Steps"/> steps, writing
+    /// Trains <paramref name="model"/> on <paramref name="train"/> for <see cref="SpeechTrainingOptions.Steps"/> steps, writing
     /// checkpoints into <paramref name="outputFolder"/>, scoring <paramref name="evaluation"/> when given; or goes on from
     /// <paramref name="resume"/> (the model then read from its folder, see <see cref="Resume"/>).
     /// </summary>
     /// <exception cref="ArgumentException">An option is out of range or names nothing registered, or the source holds no utterance CTC can read.</exception>
-    /// <exception cref="InvalidOperationException">The loss stayed not finite (<see cref="CtcTrainingOptions.NonFiniteSteps"/>).</exception>
+    /// <exception cref="InvalidOperationException">The loss stayed not finite (<see cref="SpeechTrainingOptions.NonFiniteSteps"/>).</exception>
     /// <exception cref="OperationCanceledException">Cancelled: a checkpoint of the last finished step is written first.</exception>
-    public static CtcTrainingResult Train(ICtcSpeechModel model, SpeechSource train, SpeechSource? evaluation, CtcTrainingOptions options, string outputFolder,
-        CtcTrainingCheckpoint? resume = null, IProgress<CtcTrainingProgress>? progress = null, CancellationToken cancellationToken = default, Action<string>? trace = null)
+    public static SpeechTrainingResult Train(ITrainableSpeechModel model, SpeechSource train, SpeechSource? evaluation, SpeechTrainingOptions options, string outputFolder,
+        SpeechTrainingCheckpoint? resume = null, IProgress<SpeechTrainingProgress>? progress = null, CancellationToken cancellationToken = default, Action<string>? trace = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(train);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
         options.Check();
+        var objective = SpeechTrainingObjectives.Get(model.Objective);
+        if (!objective.Trains(model))
+        {
+            throw new ArgumentException($"The '{objective.Name}' objective does not train a {model.GetType().Name} ({model.Architecture}).", nameof(model));
+        }
+
         Directory.CreateDirectory(outputFolder);
         var clock = Stopwatch.StartNew();
         var notes = new List<string>();
@@ -316,7 +301,7 @@ public static class CtcTrainer
         using var cache = options.FeatureCache is { } cacheName ? FeatureCaches.Create(cacheName, new FeatureCacheOptions { Folder = options.FeatureCacheFolder }) : null;
         var features = new FeatureSource(model, cache, options);
 
-        // The utterances CTC can read: their frames (from their lengths) give at least the steps their labels need.
+        // The utterances the objective can train on (CTC: their frames give at least the steps their labels need).
         var labels = new int[reader.Count][];
         var frames = new int[reader.Count];
         var usable = new List<int>(reader.Count);
@@ -325,7 +310,7 @@ public static class CtcTrainer
         {
             labels[i] = model.Labels(reader[i].Text);
             frames[i] = model.Features.FramesFor((long)Math.Round(reader[i].Seconds * rate));
-            if (model.StepsFor(frames[i]) >= CtcAlignment.MinimumSteps(labels[i]))
+            if (objective.Accepts(model, frames[i], labels[i]))
             {
                 usable.Add(i);
             }
@@ -334,14 +319,14 @@ public static class CtcTrainer
         int dropped = reader.Count - usable.Count;
         if (dropped > 0)
         {
-            string note = $"{dropped} utterances give fewer steps than their labels need (CTC cannot read them) and are left out";
+            string note = $"{dropped} utterances {objective.Refused} and are left out";
             notes.Add(note);
             trace?.Invoke(note);
         }
 
         if (usable.Count == 0)
         {
-            throw new ArgumentException($"The training source holds no utterance CTC can read ({reader.Count} read, {dropped} too short for their text).", nameof(train));
+            throw new ArgumentException($"The training source holds no utterance the '{objective.Name}' objective can train on ({reader.Count} read, {dropped} that {objective.Refused}).", nameof(train));
         }
 
         var seconds = new double[reader.Count];
@@ -380,7 +365,7 @@ public static class CtcTrainer
         Telemetry.TrainingStarted(new TrainingStarted(model.Architecture, options.Optimizer, model.Device, 0, usable.Count, evalReader?.Count, 0, PlanFor(epoch).Count,
             parameters.Sum(p => (long)p.Size), options.LearningRate, Environment.ProcessorCount));
         string? last = resume?.Folder;
-        var forward = new CtcForwardOptions { Checkpointing = options.Checkpointing };
+        var forward = new SpeechForwardOptions { Checkpointing = options.Checkpointing };
         int startStep = step, nonFinite = 0;
         double trainedUtterances = 0, trainedSeconds = 0, timedSeconds = 0;
         model.Network.Train();
@@ -417,7 +402,7 @@ public static class CtcTrainer
 
                 long computeStart = Stopwatch.GetTimestamp();
                 float rate0 = optimizer.LearningRate;
-                double loss = RunStep(model, optimizer, batches, options, forward, ref micro, notes, trace);
+                double loss = RunStep(model, objective, optimizer, batches, options, forward, ref micro, notes, trace);
                 schedule.Step();
                 var compute = Stopwatch.GetElapsedTime(computeStart);
                 (epoch, next) = (nextEpoch, nextBatch);
@@ -426,7 +411,7 @@ public static class CtcTrainer
                 nonFinite = double.IsFinite(loss) ? 0 : nonFinite + 1;
                 if (options.NonFiniteSteps > 0 && nonFinite >= options.NonFiniteSteps)
                 {
-                    throw new InvalidOperationException($"The loss of step {step} is {loss}, the last {nonFinite} steps not finite; the run stops (CtcTrainingOptions.NonFiniteSteps).");
+                    throw new InvalidOperationException($"The loss of step {step} is {loss}, the last {nonFinite} steps not finite; the run stops (SpeechTrainingOptions.NonFiniteSteps).");
                 }
 
                 int utterances = batches.Sum(b => b.Length);
@@ -447,7 +432,7 @@ public static class CtcTrainer
                 if (evalReader is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 || end : end))
                 {
                     Report("evaluate", null);
-                    score = Evaluate(model, evalReader, features, options, micro);
+                    score = Evaluate(model, objective, evalReader, features, options, micro);
                     evaluations.Add((step, score.Value));
                     trace?.Invoke(string.Create(CultureInfo.InvariantCulture, $"step {step}: {options.Metric} {score.Value:F4}"));
                 }
@@ -469,7 +454,7 @@ public static class CtcTrainer
                     }
 
                     double pace = timedSeconds / Math.Max(1, step - startStep - 1);
-                    progress.Report(new CtcTrainingProgress(stage, step, options.Steps, epoch + 1, next / (double)Math.Max(1, PlanFor(epoch).Count), (float)loss, rate0,
+                    progress.Report(new SpeechTrainingProgress(stage, step, options.Steps, epoch + 1, next / (double)Math.Max(1, PlanFor(epoch).Count), (float)loss, rate0,
                         trainedUtterances / Math.Max(1e-9, timedSeconds), trainedSeconds / Math.Max(1e-9, timedSeconds), clock.Elapsed,
                         TimeSpan.FromSeconds(pace * (options.Steps - step)), model.Device.Backend.GetMemoryUsage().Peak, micro, evaluated));
                 }
@@ -497,7 +482,7 @@ public static class CtcTrainer
 
         Telemetry.TrainingCompleted(new TrainingCompleted(epoch + 1, clock.Elapsed, losses.Count > 0 ? losses[^1] : double.NaN, 0,
             evaluations.Count > 0 ? evaluations.Min(e => e.Item2) : double.NaN, false, false));
-        return new CtcTrainingResult(step, losses, evaluations, last, clock.Elapsed, usable.Count, dropped, micro, features.Extracted, features.Cached, notes);
+        return new SpeechTrainingResult(step, losses, evaluations, last, clock.Elapsed, usable.Count, dropped, micro, features.Extracted, features.Cached, notes);
     }
 
     /// <summary>
@@ -507,13 +492,13 @@ public static class CtcTrainer
     /// </summary>
     /// <exception cref="FileNotFoundException">The folder holds no training state.</exception>
     /// <exception cref="InvalidDataException">The folder's model is not one CTC trains.</exception>
-    public static CtcTrainingResult Resume(string checkpointFolder, CtcTrainingOptions? overrides = null, Device? device = null, IProgress<CtcTrainingProgress>? progress = null,
+    public static SpeechTrainingResult Resume(string checkpointFolder, SpeechTrainingOptions? overrides = null, Device? device = null, IProgress<SpeechTrainingProgress>? progress = null,
         CancellationToken cancellationToken = default, Action<string>? trace = null)
     {
         var state = ReadCheckpoint(checkpointFolder);
         using var recognizer = SpeechModels.Load(checkpointFolder, new SpeechModelOptions { Device = device });
-        var model = recognizer as ICtcSpeechModel
-            ?? throw new InvalidDataException($"{checkpointFolder} holds a {recognizer.GetType().Name}, not a model CTC trains (an ICtcSpeechModel).");
+        var model = recognizer as ITrainableSpeechModel
+            ?? throw new InvalidDataException($"{checkpointFolder} holds a {recognizer.GetType().Name}, not a model the speech trainer trains (an ITrainableSpeechModel).");
         string output = Path.GetDirectoryName(Path.GetFullPath(checkpointFolder))!;
         return Train(model, state.Train, state.Evaluation, overrides ?? state.Options, output, state with { Options = overrides ?? state.Options }, progress, cancellationToken, trace);
     }
@@ -524,13 +509,13 @@ public static class CtcTrainer
     /// <summary>Reads where a run stopped from a checkpoint folder <see cref="Train"/> wrote.</summary>
     /// <exception cref="FileNotFoundException">The folder holds no training state.</exception>
     /// <exception cref="InvalidDataException">The state is not this format.</exception>
-    public static CtcTrainingCheckpoint ReadCheckpoint(string folder)
+    public static SpeechTrainingCheckpoint ReadCheckpoint(string folder)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         string path = Path.Combine(folder, StateFile);
         if (!File.Exists(path))
         {
-            throw new FileNotFoundException($"{folder} holds no CTC training state ({StateFile}); give a checkpoint-STEP folder a run wrote.", path);
+            throw new FileNotFoundException($"{folder} holds no speech training state ({StateFile}); give a checkpoint-STEP folder a run wrote.", path);
         }
 
         var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
@@ -539,7 +524,7 @@ public static class CtcTrainer
             throw new InvalidDataException($"{path} is in format '{json["format"]}', not {StateFormat}.");
         }
 
-        return new CtcTrainingCheckpoint(folder, CtcTrainingOptions.FromJson(json["options"]!.AsObject()), SpeechSource.FromJson(json["train"]!.AsObject()),
+        return new SpeechTrainingCheckpoint(folder, SpeechTrainingOptions.FromJson(json["options"]!.AsObject()), SpeechSource.FromJson(json["train"]!.AsObject()),
             json["evaluation"] is JsonObject e ? SpeechSource.FromJson(e) : null, (int)json["step"]!, (int)json["epoch"]!, (int)json["batch"]!,
             (double)json["micro_batch_seconds"]!,
             [.. json["losses"]!.AsArray().Select(l => l is JsonValue v && v.TryGetValue(out float f) ? f : float.NaN)],
@@ -549,7 +534,7 @@ public static class CtcTrainer
     // One optimizer step over its batches: each split into micro-batches of at most `micro` padded seconds, every loss
     // scaled by its utterances' share of the step, so the gradients added up are the step's mean. Out of device memory, the
     // micro-batches are halved and the step runs again from zeroed gradients.
-    private static double RunStep(ICtcSpeechModel model, Optimizer optimizer, List<Prepared[]> batches, CtcTrainingOptions options, CtcForwardOptions forward,
+    private static double RunStep(ITrainableSpeechModel model, ISpeechTrainingObjective objective, Optimizer optimizer, List<Prepared[]> batches, SpeechTrainingOptions options, SpeechForwardOptions forward,
         ref double micro, List<string> notes, Action<string>? trace)
     {
         int total = batches.Sum(b => b.Length);
@@ -575,7 +560,7 @@ public static class CtcTrainer
                     }
 
                     var input = Tensor.From(padded, [group.Length, longest, mels], model.Device);
-                    var loss = Loss(model, input, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], forward);
+                    var loss = objective.Loss(model, input, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], forward);
                     var scaled = group.Length == total ? loss : loss * (group.Length / (float)total);
                     scaled.Backward();
                     sum += loss.Item() * group.Length;
@@ -588,7 +573,7 @@ public static class CtcTrainer
             {
                 micro /= 2;
                 string note = string.Create(CultureInfo.InvariantCulture,
-                    $"out of device memory ({e.Message.Split(':')[0]}): micro-batches of {micro:0.##} audio seconds from this step, their gradients added up (CtcTrainingOptions.BatchSeconds to start smaller)");
+                    $"out of device memory ({e.Message.Split(':')[0]}): micro-batches of {micro:0.##} audio seconds from this step, their gradients added up (SpeechTrainingOptions.BatchSeconds to start smaller)");
                 notes.Add(note);
                 trace?.Invoke(note);
             }
@@ -616,7 +601,7 @@ public static class CtcTrainer
 
     // The batches of pass `epoch`: the usable utterances in the pass's seeded order, windows of BucketUtterances sorted by
     // length, cut into batches of at most BatchSeconds padded seconds, the batches shuffled from the seed and the pass.
-    private static List<int[]> Plan(List<int> usable, double[] seconds, CtcTrainingOptions options, int epoch)
+    private static List<int[]> Plan(List<int> usable, double[] seconds, SpeechTrainingOptions options, int epoch)
     {
         var order = SpeechSources.Order(usable.Count, options.Seed, epoch);
         var batches = new List<int[]>();
@@ -657,10 +642,9 @@ public static class CtcTrainer
 
     // The metric over the evaluation source: its utterances in batches of BatchSeconds (sorted by length), decoded with the
     // options' decoder, the texts scored against the transcripts.
-    private static double Evaluate(ICtcSpeechModel model, ISpeechReader reader, FeatureSource features, CtcTrainingOptions options, double micro)
+    private static double Evaluate(ITrainableSpeechModel model, ISpeechTrainingObjective objective, ISpeechReader reader, FeatureSource features, SpeechTrainingOptions options, double micro)
     {
         var metric = TuningMetrics.Get(options.Metric);
-        var decode = new CtcDecodeOptions { Blank = model.Blank, BeamWidth = options.BeamWidth };
         double secondsPerFrame = model.Features.Options.HopSize / (double)model.Features.Options.SampleRate;
         int mels = model.Features.Options.Mels;
         var scores = new List<TuningScore>(reader.Count);
@@ -683,11 +667,10 @@ public static class CtcTrainer
                         group[i].Features.AsSpan(0, group[i].Frames * mels).CopyTo(padded.AsSpan(i * longest * mels));
                     }
 
-                    var logProbs = model.Logits(Tensor.From(padded, [group.Length, longest, mels], model.Device), [.. group.Select(u => u.Frames)]).LogSoftmax();
-                    var readings = CtcDecoders.Decode(logProbs, [.. group.Select(u => model.StepsFor(u.Frames))], options.Decoder, decode, batchFirst: true);
+                    var readings = objective.Decode(model, Tensor.From(padded, [group.Length, longest, mels], model.Device), [.. group.Select(u => u.Frames)], options.Decoder, options.BeamWidth);
                     for (int i = 0; i < group.Length; i++)
                     {
-                        scores.Add(metric.Score(model.Text(readings[i][0].Labels), reader[group[i].Utterance].Text));
+                        scores.Add(metric.Score(model.Text(readings[i]), reader[group[i].Utterance].Text));
                     }
                 }
             }
@@ -700,13 +683,13 @@ public static class CtcTrainer
         return TuningScore.Sum(scores).Value;
     }
 
-    private static Optimizer CreateOptimizer(List<Tensor> parameters, CtcTrainingOptions options)
+    private static Optimizer CreateOptimizer(List<Tensor> parameters, SpeechTrainingOptions options)
     {
         var make = FineTuningOptimizers.Create(options.Optimizer, options.LearningRate, options.WeightDecay, options.Momentum);
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
 
-    private static string SaveCheckpoint(ICtcSpeechModel model, Optimizer optimizer, CtcTrainingOptions options, SpeechSource train, SpeechSource? evaluation,
+    private static string SaveCheckpoint(ITrainableSpeechModel model, Optimizer optimizer, SpeechTrainingOptions options, SpeechSource train, SpeechSource? evaluation,
         string outputFolder, int step, int epoch, int next, double micro, List<float> losses, List<(int, double)> evaluations)
     {
         string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
@@ -717,6 +700,7 @@ public static class CtcTrainer
         var json = new JsonObject
         {
             ["format"] = StateFormat,
+            ["objective"] = model.Objective,
             ["step"] = step,
             ["epoch"] = epoch,
             ["batch"] = next,
@@ -765,7 +749,7 @@ public static class CtcTrainer
     // Utterances to features on worker threads: the file read and hashed, the features from the cache when the utterance's
     // sound is not augmented this pass, else decoded, mixed to one channel, resampled, augmented and taken (and cached);
     // then the feature augmentations.
-    private sealed class FeatureSource(ICtcSpeechModel model, IFeatureCache? cache, CtcTrainingOptions options)
+    private sealed class FeatureSource(ITrainableSpeechModel model, IFeatureCache? cache, SpeechTrainingOptions options)
     {
         private readonly string _options = model.Features.Options.ToJson().ToJsonString();
         private int _extracted, _cached;

@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>
-/// Transcribed speech to train on (<c>CtcTrainer</c>): files of one kind, read by the <see cref="SpeechSources">source
+/// Transcribed speech to train on (<c>SpeechTrainer</c>): files of one kind, read by the <see cref="SpeechSources">source
 /// kind</see> named <see cref="Kind"/>. Kept in a run's checkpoints, so a resumed run opens the same data.
 /// </summary>
 /// <param name="Kind">A <see cref="SpeechSources"/> name: "transcripts" (JSONL rows of audio and text) or "audio-folder" (name.wav beside name.txt).</param>
