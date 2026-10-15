@@ -84,6 +84,9 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     public IReadOnlyList<Tensor> Parameters { get; private set; } = [];
 
     /// <inheritdoc />
+    public IReadOnlyCollection<string> Trained { get; private set; } = [];
+
+    /// <inheritdoc />
     public IReadOnlyList<Tensor> Train(IReadOnlyCollection<string> parts)
     {
         ArgumentNullException.ThrowIfNull(parts);
@@ -95,6 +98,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
         lock (_family)
         {
             Parameters = tuning.Train(Encoder, parts);
+            Trained = [.. parts];
         }
 
         return Parameters;

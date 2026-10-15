@@ -41,6 +41,10 @@ internal sealed record ServedModel(string Name, string Source, ModelChoices.Mode
     public bool ReadsImages => Config is not null && VisionFamilies.HasVision(Config) && Architecture(Config) is { } architecture
         && VisionFamilies.Find(architecture) is not null && Template?.PartKinds.Contains(ChatParts.Image) == true;
 
+    /// <summary>Whether its chat takes sounds: an audio-language model whose audio family is registered and whose template renders sounds.</summary>
+    public bool ReadsAudio => Config is not null && Idrak.Audio.Abstractions.AudioFamilies.HasAudio(Config) && Architecture(Config) is { } architecture
+        && Idrak.Audio.Abstractions.AudioFamilies.Find(architecture) is not null && Template?.PartKinds.Contains(ChatParts.Audio) == true;
+
     /// <summary>The architecture name config.json gives (its first "architectures" entry), or null.</summary>
     public static string? Architecture(JsonObject config) => config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;
 }
@@ -365,7 +369,7 @@ internal sealed class ServeHost
             ["request_log"] = Settings.RequestLog is { } file ? System.IO.Path.GetFullPath(file) : null,
             ["models"] = new JsonArray([.. Served.Select(m => (JsonNode)new JsonObject
             {
-                ["name"] = m.Name, ["source"] = m.Source, ["path"] = m.Path, ["images"] = m.ReadsImages, ["grayscale"] = m.ReadsImages && m.Choice.Grayscale,
+                ["name"] = m.Name, ["source"] = m.Source, ["path"] = m.Path, ["images"] = m.ReadsImages, ["audio"] = m.ReadsAudio, ["grayscale"] = m.ReadsImages && m.Choice.Grayscale,
                 ["image_transforms"] = m.ReadsImages && !m.Choice.Transforms.IsEmpty ? m.Choice.Transforms.ToString() : null,
             })]),
         });
@@ -486,6 +490,7 @@ internal sealed class ServeHost
             {
                 b = b.KeepAlive(Settings.KeepAlive);
                 b = served.Template is null ? b : b.Template(served.Template);
+                b = served.ReadsAudio ? b.Parts([ChatParts.Audio], generator => [Audio(served, generator)]) : b;
                 return served.ReadsImages ? b.Images(generator => Images(served, generator)) : b;
             });
         }
@@ -515,6 +520,13 @@ internal sealed class ServeHost
         var images = ImageInputs.For(pretrained, model.Choice.Transforms, model.Choice.VisionOptions, out string? reason)
             ?? throw new InvalidOperationException($"{model.Name} reads no images{(reason is null ? "" : $": {reason}")}.");
         return images.Images;
+    }
+
+    // How a loaded copy reads sounds: the command line's (AudioInputs: the model's audio part, with an adapter's trained tensors).
+    private ISoftPartSource Audio(ServedModel model, TextGenerator generator)
+    {
+        var pretrained = _loaded.TryGetValue(generator, out var p) ? p : throw new InvalidOperationException($"{model.Name}: the loaded model is unknown.");
+        return AudioInputs.For(pretrained, out string? reason) ?? throw new InvalidOperationException($"{model.Name} reads no sounds{(reason is null ? "" : $": {reason}")}.");
     }
 
     // The served model a request names; with anyName (client requests), any name selects the only model.

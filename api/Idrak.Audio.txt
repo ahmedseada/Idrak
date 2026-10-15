@@ -680,6 +680,7 @@ public sealed class Idrak.Audio.ChatAudioParts : Idrak.Abstraction.Generation.IS
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
   public Idrak.Audio.Abstractions.IAudioLanguageEncoder Encoder { get; }
   public Idrak.Audio.Abstractions.PretrainedAudio Audio { get; }
+  public System.Collections.Generic.IReadOnlyCollection<string> Trained { get; }
   public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(System.Collections.Generic.IReadOnlyCollection<string> parts)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts, bool checkpointing)
@@ -700,6 +701,10 @@ public static class Idrak.Audio.CtcAlignment
   public static Idrak.Audio.CtcPath Viterbi(Idrak.Abstraction.Tensor logProbs, System.ReadOnlySpan<int> labels, int blank = 0)
   public static Idrak.Audio.CtcPath Viterbi(System.ReadOnlySpan<float> logProbs, int steps, int classes, System.ReadOnlySpan<int> labels, int blank = 0)
   public static int MinimumSteps(System.ReadOnlySpan<int> labels)
+
+public static class Idrak.Audio.CtcDistillation
+  public static Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ICtcSpeechModel student, Idrak.Audio.Abstractions.ICtcSpeechModel teacher, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, float alpha, float temperature, Idrak.Audio.Abstractions.SpeechForwardOptions? forward = null)
+  public static void Check(Idrak.Audio.Abstractions.ICtcSpeechModel student, Idrak.Audio.Abstractions.ICtcSpeechModel teacher)
 
 public sealed class Idrak.Audio.CtcObjective : Idrak.Audio.Abstractions.ISpeechTrainingObjective
   public CtcObjective()
@@ -902,6 +907,7 @@ public sealed record Idrak.Audio.SpeechTrainingCheckpoint : System.IEquatable<Id
 
 public sealed record Idrak.Audio.SpeechTrainingOptions : System.IEquatable<Idrak.Audio.SpeechTrainingOptions>
   public Idrak.Audio.Abstractions.AudioAugmentationOptions AugmentationOptions { get; init; }
+  public Idrak.Audio.Abstractions.ICtcSpeechModel? Teacher { get; init; }
   public SpeechTrainingOptions()
   public System.Collections.Generic.IReadOnlyList<string> Augmentations { get; init; }
   public System.Text.Json.Nodes.JsonObject ToJson()
@@ -909,6 +915,8 @@ public sealed record Idrak.Audio.SpeechTrainingOptions : System.IEquatable<Idrak
   public bool HostOptimizer { get; init; }
   public bool? BFloat16Activations { get; init; }
   public double BatchSeconds { get; init; }
+  public float DistillationAlpha { get; init; }
+  public float DistillationTemperature { get; init; }
   public float DurationLossWeight { get; init; }
   public float LearningRate { get; init; }
   public float MaxGradientNorm { get; init; }

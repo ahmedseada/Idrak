@@ -282,6 +282,11 @@ internal sealed class ResumeCommand : Command
             return PretrainCommand.Resume(context, run.Folder, run.Settings);
         }
 
+        if ((string?)run.Settings["format"] == SpeechPretraining.RunFormat)
+        {
+            return SpeechPretraining.Resume(context, run.Folder, run.Settings);
+        }
+
         string checkpoint = Path.Combine(run.Folder, "last.ikw");
         if (!File.Exists(checkpoint))
         {
@@ -385,6 +390,12 @@ internal sealed class RunsShowCommand : Command
         {
             var o = p["options"];
             context.Write($"Settings  model {p["model"]} · {o?["stages"]?.AsArray().Count} stages · {o?["optimizer"]} · max length {o?["max_length"]} · batch tokens {o?["batch_tokens"]} · seed {o?["seed"]}");
+        }
+        else if (run.Settings is { } sp && (string?)sp["format"] == SpeechPretraining.RunFormat)
+        {
+            var o = sp["options"];
+            context.Write($"Settings  model {sp["model"]} · {sp["trainer"]} ({sp["objective"]}) · {o?["steps"]} steps · {o?["optimizer"]} {o?["learning_rate"]} · "
+                          + $"{o?["batch_seconds"]} s a batch · metric {o?["metric"]} · seed {o?["seed"]}");
         }
         else if (run.Settings is { } s)
         {

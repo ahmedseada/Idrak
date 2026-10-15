@@ -101,6 +101,12 @@ public sealed class TuningAnswerScorer
     /// </summary>
     public int Every { get; init; }
 
+    /// <summary>
+    /// The sources of the prompts' soft parts other than images (an audio-language model's audio part: the same sources the
+    /// training sequences were encoded with); none by default, and a prompt holding such a part is then refused by the chat.
+    /// </summary>
+    public IReadOnlyList<ISoftPartSource> Parts { get; set; } = [];
+
     /// <summary>The most tokens generated per answer.</summary>
     public int MaxNewTokens { get; init; } = 512;
 
@@ -165,6 +171,7 @@ public sealed class TuningAnswerScorer
             var chat = new ChatGenerator(generator, template)
             {
                 Images = images ? new ChatImages(vision!.Encoder, vision.Format, vision.Attention) { Transforms = vision.Images.Pipeline } : null,
+                Parts = Parts,
             };
             var options = new GenerationOptions
             {

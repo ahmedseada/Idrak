@@ -72,6 +72,11 @@ internal sealed class TuneTool(ToolConsole console)
                    (the projector trains beside the adapters and is saved with them), --feature-cache memory|disk (the frozen
                    tower's output kept between steps and epochs; disk: under --cache). The adapter keeps tuning_images.json,
                    which run, chat and serve apply with --adapter; -v shows the images, blocks, image tokens, cache hits and memory
+        Audio:     an audio-language model (its family registered by a plug-in, -P) tunes on conversations with sounds (messages
+                   audio parts, ShareGPT <audio> markers with an "audios" list) or speech transcripts ({"audio", "text"} rows,
+                   --data-format transcripts), --audio DIR|ZIP (where relative sound paths are found), --audio-prompt TEXT
+                   (a transcript's prompt after the sound; "Transcribe."), --parts audio-projector (or audio-encoder: the
+                   model's audio part trains beside the adapters and is saved with them; frozen otherwise)
         Scores:    --metric cer|wer (answers generated on the evaluation data and scored against the references; any metric a
                    plug-in registers), --metric-every N (steps; default: each epoch), --metric-samples K (the first K; 0: all)
         Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1|cer|wer, --out F.jsonl,
@@ -94,7 +99,7 @@ internal sealed class TuneTool(ToolConsole console)
         "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--matmul", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
         "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
-        "--metric-samples",
+        "--metric-samples", "--audio", "--audio-prompt",
     ];
 
     /// <summary>The flags.</summary>
@@ -128,7 +133,7 @@ internal sealed class TuneTool(ToolConsole console)
     private Device device = Device.Default;                                    // the best GPU found, else the CPU
 
     // Images (a vision-language model) and answer scores.
-    private string? dataFormat, imagesRoot, imageTransform, featureCache, tuningMetric;
+    private string? dataFormat, imagesRoot, imageTransform, featureCache, tuningMetric, audiosRoot, audioPrompt;
     private readonly List<string> visionItems = [], parts = [];
     private bool grayscale;
     private int metricEvery, metricSamples;
@@ -258,6 +263,8 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--metric-samples": metricSamples = NextInt(); break;
                 case "--data-format": dataFormat = Next(); break;
                 case "--images": imagesRoot = Next(); break;
+                case "--audio": audiosRoot = Next(); break;
+                case "--audio-prompt": audioPrompt = Next(); break;
                 case "--image-transform": imageTransform = imageTransform is null ? Next() : $"{imageTransform},{Next()}"; break;
                 case "--vision" or "--vision-option": visionItems.AddRange(Next().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)); break;
                 case "--grayscale": grayscale = true; break;
@@ -642,23 +649,28 @@ internal sealed class TuneTool(ToolConsole console)
     }
 
     // Whether an option asks for images (a vision-language model's data and preparation).
-    private bool ImageOptionsGiven => imagesRoot is not null || imageTransform is not null || visionItems.Count > 0 || grayscale || parts.Count > 0 || featureCache is not null;
+    private bool ImageOptionsGiven => imagesRoot is not null || imageTransform is not null || visionItems.Count > 0 || grayscale || VisionPartsGiven.Count > 0 || featureCache is not null;
 
-    // Whether the data is read as conversation files (TuningDataFormats: messages or ShareGPT, with images) rather than as
-    // dataset rows: when an image option, --data-format or a generated-text metric asks for it, or when the model reads
-    // images and the data is local .json / .jsonl files (not a recipe).
+    // --parts split: the vision part's names (projector, tower), and the model's other parts' (audio-encoder, audio-projector).
+    private List<string> VisionPartsGiven => [.. parts.Where(p => p.Equals(VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase) || p.Equals(VisionTuningParts.Tower, StringComparison.OrdinalIgnoreCase))];
+
+    private List<string> OtherPartsGiven => [.. parts.Except(VisionPartsGiven, StringComparer.OrdinalIgnoreCase)];
+
+    // Whether the data is read as conversation files (TuningDataFormats: messages, ShareGPT or transcripts, with images or
+    // sounds) rather than as dataset rows: when an image or audio option, --data-format or a generated-text metric asks for
+    // it, or when the model reads images or sounds and the data is local .json / .jsonl files (not a recipe).
     private bool ReadsTranscripts(PretrainedModel model, IReadOnlyList<string> specs)
     {
         bool files = specs.Count > 0 && specs.All(s => File.Exists(s) && Path.GetExtension(s).ToLowerInvariant() is ".json" or ".jsonl" && !IsRecipe(s));
-        if (ImageOptionsGiven || dataFormat is not null || tuningMetric is not null)
+        if (ImageOptionsGiven || dataFormat is not null || tuningMetric is not null || audiosRoot is not null || audioPrompt is not null || OtherPartsGiven.Count > 0)
         {
             return files ? true : throw new ArgumentException(
-                "Conversations with images (--images, --image-transform, --vision, --train-projector, --data-format, --metric "
+                "Conversations with images or sounds (--images, --image-transform, --vision, --train-projector, --audio, --audio-prompt, --parts, --data-format, --metric "
                 + $"{string.Join("|", TuningMetrics.Names)}) are read from local .json or .jsonl files ({TuningDataFormats.Describe().Replace("\n", "; ", StringComparison.Ordinal)}); "
                 + $"not {string.Join(", ", specs.Where(s => !File.Exists(s)).DefaultIfEmpty(string.Join(", ", specs)))}.");
         }
 
-        return model.Vision is not null && files;
+        return (model.Vision is not null || model.Parts.Count > 0) && files;   // a model that reads images or sounds
     }
 
     // A recipe file (.json with "sources"), told from its first character before it is read whole.
@@ -725,7 +737,7 @@ internal sealed class TuneTool(ToolConsole console)
     {
         var watch = Stopwatch.StartNew();
         var transcripts = new List<ChatTranscript>();
-        var options = new TuningDataOptions { Images = imagesRoot };
+        var options = new TuningDataOptions { Images = imagesRoot, Audios = audiosRoot, Prompt = audioPrompt };
         foreach (string file in files)
         {
             var format = DataFormat is { } name ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
@@ -823,7 +835,8 @@ internal sealed class TuneTool(ToolConsole console)
         using var run = ConversationTuning.Prepare(model, files, new ConversationTuningOptions
         {
             Evaluation = evalFile, EvaluationFraction = evalFraction, Seed = seed, DataFormat = DataFormat, Images = imagesRoot, System = systemPrompt,
-            Preparation = model.Vision is null ? TuningImages.None : images, VisionParts = parts, FeatureCache = featureCache ?? FeatureCaches.Memory, FeatureFolder = FeatureFolder,
+            Preparation = model.Vision is null ? TuningImages.None : images, VisionParts = VisionPartsGiven, FeatureCache = featureCache ?? FeatureCaches.Memory, FeatureFolder = FeatureFolder,
+            Audios = audiosRoot, Prompt = audioPrompt, TrainedParts = OtherPartsGiven,
             Metric = tuningMetric, MetricEvery = metricEvery, MetricSamples = metricSamples, MaxNewTokens = maxNew, Think = noThink ? false : null, Tuning = tuning,
         }, new Reporter<TuningStage>(stage =>
         {
@@ -918,12 +931,17 @@ internal sealed class TuneTool(ToolConsole console)
             var (vision, cache) = CreateVision(model, images with { Family = null }, []);
             using var ownedCache = cache;
             using var ownedVision = vision;
-            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."), model.Tokenizer!) { Vision = vision };
+            var sources = model.Parts.Select(kind => model.OpenPart(kind, model.Device)).ToList();   // an audio part, with the adapter's trained tensors
+            using var ownedSources = new OwnedSources(sources);
+            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."), model.Tokenizer!)
+            {
+                Vision = vision, Parts = [.. sources],
+            };
             var sequences = scored.Select(t => encoder.Encode(t, Math.Min(tuning.MaxLength, model.MaxPositions - 1))).OfType<TrainingSequence>().ToList();
-            double loss = sequences.Count > 0 ? FineTuner.Evaluate(model, sequences, tuning.BatchTokens, vision: vision) : double.NaN;
+            double loss = sequences.Count > 0 ? FineTuner.Evaluate(model, sequences, tuning.BatchTokens, vision: vision, parts: [.. sources]) : double.NaN;
             var scorer = new TuningAnswerScorer(scored, metricName)
             {
-                MaxNewTokens = maxNew, ContextLength = Math.Min(model.MaxPositions, context), Think = noThink ? false : null,
+                MaxNewTokens = maxNew, ContextLength = Math.Min(model.MaxPositions, context), Think = noThink ? false : null, Parts = [.. sources],
             };
             var clock = Stopwatch.StartNew();
             int done = 0;
@@ -1000,7 +1018,7 @@ internal sealed class TuneTool(ToolConsole console)
     private int Evaluate()
     {
         // The rows: the held-out part when --eval-fraction splits the data as train did, else the data itself.
-        if (ImageOptionsGiven || dataFormat is not null || tuningMetric is not null)
+        if (ImageOptionsGiven || dataFormat is not null || tuningMetric is not null || audiosRoot is not null || audioPrompt is not null)
         {
             return EvaluateTranscripts(positional.Skip(2).ToList());
         }
@@ -1419,5 +1437,11 @@ internal sealed class TuneTool(ToolConsole console)
     private sealed class Reporter<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);
+    }
+
+    // Disposes the part sources a scoring opened, as one using does.
+    private sealed class OwnedSources(List<ITrainableSoftParts> sources) : IDisposable
+    {
+        public void Dispose() => sources.ForEach(s => s.Dispose());
     }
 }

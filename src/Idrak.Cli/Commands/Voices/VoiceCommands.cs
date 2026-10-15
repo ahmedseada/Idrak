@@ -417,3 +417,104 @@ internal sealed class VoiceImportCommand : Command
         }
     }
 }
+
+/// <summary>
+/// <c>idrak voice pull OWNER/NAME[/FOLDER]</c>: downloads a voice folder published on the Hugging Face hub (a
+/// <c>voice.json</c> with its consent and embedding, as <c>voice export</c> writes them) into the cache and installs it,
+/// as <c>idrak pull</c> takes a model.
+/// </summary>
+internal sealed class VoicePullCommand : Command
+{
+    public override string Name => "voice pull";
+
+    public override string Summary => "Download a voice folder published on the Hugging Face hub and install it";
+
+    public override string Usage => """
+        OWNER/NAME[/FOLDER] [options]
+
+        The repository (or its folder) holds one voice folder: voice.json with the consent record, the embedding and
+        any kept clips, as idrak voice export writes them. Its files are downloaded into the cache (resumed when
+        interrupted), then installed as idrak voice import installs a folder; a voice without a consent record is refused.
+
+        Options:
+              --revision REV     a branch, tag or commit (default main)
+              --token TOKEN      for gated and private repositories (default: the config's hf_token, HF_TOKEN or the saved login)
+              --overwrite        replace an installed voice of the same name
+          -f, --force            download again even when cached
+        """ + "\n" + VoiceText.StoreHelp + "\n" + """
+
+        Examples:
+          idrak voice pull someone/voices/sara
+          idrak voice pull someone/sara-voice --overwrite
+        """;
+
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--voices", "--revision", "--token"];
+
+    public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite", "--force"];
+
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-f"] = "--force" };
+
+    public override int Run(CommandContext context)
+    {
+        string target = context.Argument(0, "OWNER/NAME[/FOLDER] (a voice folder on the Hugging Face hub)");
+        var (repo, folder) = PullTarget.SplitFolder(target) ?? (target.Trim('/'), "");
+        if (!Idrak.Models.ModelSource.IsModelId(repo))
+        {
+            throw new UsageException($"'{target}' is not a Hugging Face id (owner/name, or owner/name/folder); a voice zip or folder on disk installs with idrak voice import.");
+        }
+
+        if (context.Offline)
+        {
+            throw new UsageException("voice pull downloads; --offline forbids it (idrak voice import installs a folder on disk).");
+        }
+
+        var downloader = ModelCache.Downloader(context, context.Flag("--force"));
+        string? token = Hub.Token(context);
+        string revision = context.Option("--revision") ?? "main";
+        string commit = Idrak.Data.HuggingFace.ResolveRevisionAsync(repo, "models", revision, token, downloader).GetAwaiter().GetResult();
+        var files = Idrak.Data.HuggingFace.ListFilesAsync(repo, "models", commit, token, downloader).GetAwaiter().GetResult();
+        string prefix = folder.Length == 0 ? "" : folder.TrimEnd('/') + "/";
+        var manifests = files.Where(f => f.Path.StartsWith(prefix, StringComparison.Ordinal) && Path.GetFileName(f.Path) == FolderVoiceStore.ManifestFile).ToList();
+        if (manifests.Count != 1)
+        {
+            throw new UsageException(manifests.Count == 0
+                ? $"{target} holds no voice ({FolderVoiceStore.ManifestFile} not found{(prefix.Length == 0 ? "" : $" under {folder}")})."
+                : $"{target} holds {manifests.Count} voices; name one: {string.Join(", ", manifests.Select(m => $"{repo}/{Path.GetDirectoryName(m.Path)!.Replace('\\', '/')}"))}.");
+        }
+
+        string voiceFolder = Path.GetDirectoryName(manifests[0].Path)!.Replace('\\', '/');
+        string voicePrefix = voiceFolder.Length == 0 ? "" : voiceFolder + "/";
+        var wanted = files.Where(f => f.Path.StartsWith(voicePrefix, StringComparison.Ordinal)).ToList();
+        context.Write($"{repo}{(voiceFolder.Length == 0 ? "" : "/" + voiceFolder)} at {commit[..Math.Min(12, commit.Length)]}: {wanted.Count} files ({Units.Bytes(wanted.Sum(f => f.Size))})");
+        string? local = null;
+        foreach (var file in wanted)
+        {
+            string path = Idrak.Data.HuggingFace.DownloadFileAsync(repo, file.Path, "models", commit, token, downloader).GetAwaiter().GetResult();
+            if (file == manifests[0])
+            {
+                local = Path.GetDirectoryName(path);
+            }
+        }
+
+        var store = AudioFiles.VoiceStore(context);
+        try
+        {
+            var voice = store.Import(local!, context.Flag("--overwrite"));
+            context.Write($"installed '{voice.Name}' in {store.Location}");
+            foreach (string line in VoiceText.Lines(voice, VoiceText.WarnAgreement))
+            {
+                context.Write(line);
+            }
+
+            var json = VoiceText.Json(voice, VoiceText.WarnAgreement);
+            json["source"] = $"{repo}{(voiceFolder.Length == 0 ? "" : "/" + voiceFolder)}@{commit}";
+            context.WriteJson(json);
+            return ExitCodes.Ok;
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or ArgumentException)
+        {
+            context.Error(VoiceText.Options(e.Message).Replace("set overwrite", "give --overwrite", StringComparison.Ordinal));
+            return ExitCodes.Failed;
+        }
+    }
+}

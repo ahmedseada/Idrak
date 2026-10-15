@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Generation;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Models;
@@ -10,8 +11,9 @@ namespace Idrak.Cli.Shared;
 /// <summary>
 /// Sounds given to an audio-language model on the command line (<c>run --audio</c>, <c>chat --audio</c>), beside
 /// <see cref="ImageInputs"/>: the files as chat audio parts (<see cref="ChatAudio"/>, the bytes as they are: the model's
-/// audio family decodes them), and how a chat generator reads them (<see cref="ChatAudioParts"/> over the model's audio
-/// part, which its family reads: <see cref="AudioLanguage.Attach"/>, a plug-in given with <c>-P</c>).
+/// audio family decodes them), and how a chat generator reads them: the model's audio part
+/// (<see cref="PretrainedModel.OpenPart"/>, with the trained tensors an adapter or a fine-tune brought), or, for a model
+/// that loaded without it, <see cref="ChatAudioParts"/> over <see cref="AudioLanguage.Attach"/> (a plug-in given with <c>-P</c>).
 /// </summary>
 internal static class AudioInputs
 {
@@ -32,12 +34,17 @@ internal static class AudioInputs
     /// the caller), or null with the reason when it reads none: a model without <c>audio_config</c> (no reason), or one
     /// whose audio family is not registered (the registry's message and the <c>-P</c> remedy).
     /// </summary>
-    public static ChatAudioParts? For(PretrainedModel model, out string? reason)
+    public static ISoftPartSource? For(PretrainedModel model, out string? reason)
     {
         ArgumentNullException.ThrowIfNull(model);
         reason = null;
         try
         {
+            if (model.Parts.Contains(ChatParts.Audio))
+            {
+                return model.OpenPart(ChatParts.Audio, model.Device);
+            }
+
             return AudioLanguage.Attach(model) is { } audio ? new ChatAudioParts(audio) : null;
         }
         catch (NotSupportedException e)

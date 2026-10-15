@@ -92,6 +92,11 @@ internal sealed class CreateCommand : Command
             throw new UsageException($"{specPath}: {e.Message}");
         }
 
+        if (file["speech"] is JsonObject speech)
+        {
+            return CreateSpeech(context, specPath, file, speech, output);
+        }
+
         bool wrapped = file["spec"] is JsonObject;
         if (wrapped && (string?)file["format"] is { } format && format != Format)
         {
@@ -99,6 +104,7 @@ internal sealed class CreateCommand : Command
         }
 
         var vision = wrapped ? file["vision"] as JsonObject : null;
+        var audio = wrapped ? file["audio"] as JsonObject : null;
         string folder = Path.GetDirectoryName(Path.GetFullPath(specPath))!;
         string? Text(string option, string key) => context.Option(option) ?? (wrapped ? (string?)file[key] : null);
         string? PathOf(string option, string key) => context.Option(option) ?? (wrapped && (string?)file[key] is { } p ? Path.Combine(folder, p) : null);
@@ -157,6 +163,7 @@ internal sealed class CreateCommand : Command
             {
                 Device = Idrak.Abstraction.Device.Cpu, Seed = seed, InitStd = initStd > 0 ? initStd : null, Type = type, Overwrite = context.Flag("--overwrite"),
                 Vision = (JsonObject?)vision?.DeepClone(),
+                Parts = audio is null ? null : new Dictionary<string, JsonObject> { [Idrak.Abstraction.Generation.ChatParts.Audio] = (JsonObject)audio.DeepClone() },
                 Decoder = PathOf("--decoder", "decoder"),
             });
         }
@@ -180,6 +187,81 @@ internal sealed class CreateCommand : Command
             {
                 ["path"] = Path.GetFullPath(output), ["architecture"] = architecture, ["parameters"] = parameters, ["seed"] = seed,
                 ["spec"] = spec.ToJson(), ["files"] = new JsonArray([.. Directory.GetFiles(output).Order(StringComparer.Ordinal).Select(f => (JsonNode)Path.GetFileName(f))]),
+            });
+        }
+
+        return ExitCodes.Ok;
+    }
+
+    // A speech model made from its family's spec ("speech": the family's keys): a recognizer through SpeechModels.Create
+    // into a folder SpeechModels.Load (idrak transcribe, idrak pretrain) reads, or, when the architecture names a
+    // synthesizer family and the recognizer family refuses the spec (or there is none), a synthesizer through
+    // SpeechSynthesisModels.Create (idrak speak, idrak pretrain --durations).
+    private static int CreateSpeech(CommandContext context, string specPath, JsonObject file, JsonObject speech, string output)
+    {
+        string folder = Path.GetDirectoryName(Path.GetFullPath(specPath))!;
+        string architecture = context.Option("--architecture") ?? (string?)file["architecture"] ?? (string?)speech["architecture"]
+            ?? throw new UsageException($"{specPath}: give the speech family's \"architecture\" (IdrakAudio, from -P Idrak.IdrakAudio.dll).");
+        string tokenizerPath = context.Option("--tokenizer") ?? ((string?)file["tokenizer"] is { } t ? Path.Combine(folder, t) : null)
+            ?? throw new UsageException("Give --tokenizer FILE (idrak data tokenizer learns one from the transcripts), or \"tokenizer\" in the spec file.");
+        if (!File.Exists(tokenizerPath) && !File.Exists(Path.Combine(tokenizerPath, "tokenizer.json")))
+        {
+            throw new UsageException($"No tokenizer.json at {tokenizerPath}.");
+        }
+
+        var tokenizer = BpeTokenizer.Load(tokenizerPath);
+        var spec = (JsonObject)speech.DeepClone();
+        spec["architecture"] = architecture;
+        int seed = context.Seed ?? ((int?)file["seed"] ?? 0);
+        IDisposable model;
+        var options = new Idrak.Audio.SpeechCreateOptions { Device = Idrak.Abstraction.Device.Cpu, Seed = seed, Overwrite = context.Flag("--overwrite") };
+        bool synthesizer = Idrak.Audio.Abstractions.SpeechSynthesisFamilies.Find(architecture) is not null;
+        try
+        {
+            if (Idrak.Audio.Abstractions.SpeechFamilies.Find(architecture) is null && synthesizer)
+            {
+                model = Idrak.Audio.Abstractions.SpeechSynthesisModels.Create(output, spec, tokenizer, options);
+            }
+            else
+            {
+                try
+                {
+                    model = Idrak.Audio.SpeechModels.Create(output, spec, tokenizer, options);
+                    synthesizer = false;
+                }
+                catch (NotSupportedException) when (synthesizer)
+                {
+                    model = Idrak.Audio.Abstractions.SpeechSynthesisModels.Create(output, spec, tokenizer, options);   // a synthesizer's task
+                }
+            }
+        }
+        catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
+        {
+            return ImageModelFiles.Refuse(context, e);
+        }
+        catch (Exception e) when (e is NotSupportedException or ArgumentException or IOException or InvalidDataException)
+        {
+            context.Error(e.Message);
+            return ExitCodes.Failed;
+        }
+
+        using (model)
+        {
+            long parameters = model switch
+            {
+                Idrak.Audio.Abstractions.ITrainableSpeechModel trainable => trainable.Network.ParameterCount,
+                Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer trainable => trainable.Network.ParameterCount,
+                _ => 0,
+            };
+            string task = (string?)spec["task"] ?? (synthesizer ? "synthesizer" : "recognizer");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{architecture} {task}: {parameters:N0} parameters, seed {seed}, written to {Path.GetFullPath(output)}"));
+            context.Write(synthesizer
+                ? $"next: idrak data audio transcripts.jsonl --align MY-CTC -o aligned, then idrak pretrain \"{output}\" --data transcripts.jsonl --durations aligned/alignments.jsonl -o run"
+                : $"next: idrak pretrain \"{output}\" --data transcripts.jsonl --steps 2000 -o run");
+            context.WriteJson(new JsonObject
+            {
+                ["path"] = Path.GetFullPath(output), ["architecture"] = architecture, ["task"] = task, ["parameters"] = parameters, ["seed"] = seed,
+                ["files"] = new JsonArray([.. Directory.GetFiles(output).Order(StringComparer.Ordinal).Select(f => (JsonNode)Path.GetFileName(f))]),
             });
         }
 
@@ -247,30 +329,74 @@ internal sealed class CreateInitCommand : Command
         }
         """;
 
+    // The audio part of create init --audio audio-language's file (IdrakAudio's audio-language description; every key optional).
+    private const string AudioPart = """
+          "seed": 0,
+          // The audio part: the description the audio family reads (IdrakAudio's audio-language part here). Every key is optional.
+          "audio": {
+            "audio_config": {
+              "mels": 80, "dim": 256, "layers": 6, "heads": 4, "ffn_dim": 1024,
+              "subsample_layers": 2,   // each halves the frames: 100 frames a second become 25 steps
+              "convolution_module": false
+            },
+            "audio_projector": { "stack": 4, "type": "mlp" },   // 4 steps a soft token: about 6 tokens a second
+            "audio_token": "<audio>",          // the marker the chat template writes for a sound (one token of the tokenizer)
+            "begin_audio": null, "end_audio": null,
+            "audio_attention": "causal"
+          }
+        }
+        """;
+
+    // create init --audio ctc|seq2seq's file: a recognizer made from the IdrakAudio speech family's spec.
+    private const string SpeechFile = """
+        {
+          // idrak create's spec of a speech recognizer (plan 21, S6). Paths are read from this file's folder.
+          "format": "idrak-create/1",
+          // The speech family (load its plug-in: idrak create ... -P Idrak.IdrakAudio.dll).
+          "architecture": "IdrakAudio",
+          // The tokenizer (idrak data tokenizer transcripts.txt --vocab N -o tokenizer.json learns one from the texts).
+          "tokenizer": "tokenizer.json",
+          "speech": {
+            "task": "TASK",            // "ctc" (a CTC head), "seq2seq" (a text decoder attending to the encoder) or "tts" (speech from text)
+            "mels": 80,                // the log-mel features' bands
+            "dim": 256, "layers": 6, "heads": 4, "ffn_dim": 1024,
+            "subsample_layers": 2, "subsample_kernel": 3,
+            "convolution_module": false,   // a Conformer-style convolution module in each block
+            "dropout": 0.0SEQ2SEQ
+          },
+          "seed": 0
+        }
+
+        """;
+
     public override string Name => "create init";
 
     public override string Summary => "Write a spec file to make a new model from (idrak create), every setting explained";
 
     public override string Usage => """
-        [-o SPEC.json] [--vision]
+        [-o SPEC.json] [--vision | --audio TASK]
 
         Writes a spec file for idrak create: the family, the network's sizes (small ones to change: nothing in Idrak
         prefers a size), the tokenizer and the special tokens, every key with a comment. With --vision, a
-        vision-language model of the IdrakVision family (its plug-in, samples/IdrakVision, with -P). Comments and
-        trailing commas are allowed in the file.
+        vision-language model of the IdrakVision family (its plug-in, samples/IdrakVision, with -P). With --audio, an
+        IdrakAudio model (samples/IdrakAudio, with -P): audio-language (a chat model that hears), ctc or seq2seq (a
+        speech recognizer) or tts (a synthesizer). Comments and trailing commas are allowed in the file.
 
         Options:
           -o, --out FILE  the file to write (spec.json)
               --vision    a vision-language model (IdrakVision): the tower, projector and image settings too
+              --audio T   an IdrakAudio model: audio-language, ctc, seq2seq or tts
 
         Examples:
           idrak create init -o spec.json
           idrak create spec.json -o my-model
           idrak create init --vision -o vision-spec.json
           idrak create vision-spec.json -o my-vlm --decoder my-model -P Idrak.IdrakVision.dll
+          idrak create init --audio ctc -o asr-spec.json
+          idrak create init --audio audio-language -o audio-spec.json
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out", "--audio"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--vision"];
 
@@ -283,6 +409,39 @@ internal sealed class CreateInitCommand : Command
         {
             context.Error($"{output} exists; give another -o.");
             return ExitCodes.Failed;
+        }
+
+        string? audio = context.Option("--audio");
+        if (audio is not (null or "audio-language" or "ctc" or "seq2seq" or "tts"))
+        {
+            throw new UsageException($"--audio is audio-language, ctc, seq2seq or tts, not '{audio}'.");
+        }
+
+        if (audio is not null && context.Flag("--vision"))
+        {
+            throw new UsageException("Give --vision or --audio, not both.");
+        }
+
+        if (audio is "ctc" or "seq2seq" or "tts")
+        {
+            string decoder = audio switch
+            {
+                "seq2seq" => ",\n    \"decoder_layers\": 4,       // the text decoder's blocks\n    \"max_target_positions\": 448   // its longest text in tokens",
+                "tts" => ",\n    \"decoder_layers\": 4, \"decoder_dim\": 256, \"decoder_heads\": 4, \"decoder_ffn_dim\": 1024,   // the mel decoder\n"
+                         + "    \"duration_filters\": 256   // the duration predictor's convolutions",
+                _ => "",
+            };
+            string text = SpeechFile.ReplaceLineEndings("\n").Replace("TASK", audio, StringComparison.Ordinal).Replace("SEQ2SEQ", decoder, StringComparison.Ordinal);
+            if (audio == "tts")
+            {
+                // A synthesizer reads text, not frames: no subsampling and no convolution module.
+                text = string.Join('\n', text.Split('\n').Where(l => !l.Contains("\"subsample_layers\"", StringComparison.Ordinal) && !l.Contains("\"convolution_module\"", StringComparison.Ordinal)));
+            }
+
+            File.WriteAllText(output, text);
+            context.Write($"wrote {output}; next: idrak create {output} -o {(audio == "tts" ? "my-tts" : "my-asr")} -P Idrak.IdrakAudio.dll");
+            context.WriteJson(new JsonObject { ["path"] = Path.GetFullPath(output) });
+            return ExitCodes.Ok;
         }
 
         File.WriteAllText(output, """
@@ -323,8 +482,10 @@ internal sealed class CreateInitCommand : Command
 
             """.ReplaceLineEndings("\n").Replace("\"architecture\": \"LlamaForCausalLM\",", context.Flag("--vision")
                 ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // load its plug-in: idrak create ... -P Idrak.IdrakVision.dll"
+                : audio is not null ? "\"architecture\": \"IdrakAudioForConditionalGeneration\",   // load its plug-in: idrak create ... -P Idrak.IdrakAudio.dll"
                 : "\"architecture\": \"LlamaForCausalLM\",", StringComparison.Ordinal)
-            .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart.ReplaceLineEndings("\n") : "  \"seed\": 0\n}", StringComparison.Ordinal));
+            .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart.ReplaceLineEndings("\n")
+                : audio is not null ? AudioPart.ReplaceLineEndings("\n") : "  \"seed\": 0\n}", StringComparison.Ordinal));
         context.Write($"wrote {output}; next: idrak create {output} -o my-model");
         context.WriteJson(new JsonObject { ["path"] = Path.GetFullPath(output) });
         return ExitCodes.Ok;

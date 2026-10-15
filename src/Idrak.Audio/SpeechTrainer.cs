@@ -122,6 +122,22 @@ public sealed record SpeechTrainingOptions
     /// <summary>The "durations" synthesis objective's weight of the log-duration error beside the log-mel error (0: the durations not trained).</summary>
     public float DurationLossWeight { get; init; } = 1f;
 
+    /// <summary>
+    /// A CTC teacher for a CTC student (plan 21, S6 distillation; null: none): each step's loss becomes
+    /// (1 − <see cref="DistillationAlpha"/>) · CTC + α · T² · the mean over the batch's steps of KL(teacher ‖ student) at
+    /// temperature <see cref="DistillationTemperature"/> (<see cref="CtcDistillation"/>). The teacher reads the same
+    /// features (its feature options equal the student's), has the same classes and blank, and gives as many steps per
+    /// utterance. Not kept in checkpoints (a model, not a value): give it again on resume. A sequence-level teacher
+    /// (Whisper-style text) teaches through pseudo-labels instead (<c>idrak transcribe -o train.jsonl</c>).
+    /// </summary>
+    public ICtcSpeechModel? Teacher { get; init; }
+
+    /// <summary>The weight of the teacher's term (0 to 1; the CTC loss gets 1 − α).</summary>
+    public float DistillationAlpha { get; init; } = 0.5f;
+
+    /// <summary>The temperature both distributions are softened by (1: as they are; 2 to 4 is usual).</summary>
+    public float DistillationTemperature { get; init; } = 2f;
+
     /// <summary>The options as JSON (<see cref="FromJson"/> reads it back).</summary>
     public JsonObject ToJson() => new()
     {
@@ -134,6 +150,7 @@ public sealed record SpeechTrainingOptions
         ["augmentation_options"] = AugmentationOptions.ToJson(), ["seed"] = Seed, ["feature_cache"] = FeatureCache,
         ["feature_cache_folder"] = FeatureCacheFolder, ["workers"] = Workers, ["non_finite_steps"] = NonFiniteSteps,
         ["durations"] = Durations, ["duration_loss_weight"] = DurationLossWeight,
+        ["distillation_alpha"] = DistillationAlpha, ["distillation_temperature"] = DistillationTemperature,
     };
 
     /// <summary>Options from their JSON (<see cref="ToJson"/>); a key missing keeps the default.</summary>
@@ -173,6 +190,8 @@ public sealed record SpeechTrainingOptions
             NonFiniteSteps = (int?)json["non_finite_steps"] ?? d.NonFiniteSteps,
             Durations = (string?)json["durations"],
             DurationLossWeight = (float?)json["duration_loss_weight"] ?? d.DurationLossWeight,
+            DistillationAlpha = (float?)json["distillation_alpha"] ?? d.DistillationAlpha,
+            DistillationTemperature = (float?)json["distillation_temperature"] ?? d.DistillationTemperature,
         };
     }
 
@@ -180,10 +199,12 @@ public sealed record SpeechTrainingOptions
     {
         if (Steps < 1 || !(BatchSeconds > 0) || GradientAccumulation < 1 || BucketUtterances < 1 || !(LearningRate > 0) || WarmupFraction is < 0 or > 1
             || MaxGradientNorm < 0 || SaveEvery < 0 || KeepCheckpoints < 0 || EvaluateEvery < 0 || BeamWidth < 1 || Workers < 0 || NonFiniteSteps < 0
-            || !(DurationLossWeight >= 0))
+            || !(DurationLossWeight >= 0) || DistillationAlpha is < 0 or > 1 || float.IsNaN(DistillationAlpha)
+            || !(DistillationTemperature > 0) || float.IsInfinity(DistillationTemperature))
         {
             throw new ArgumentException("Speech training: Steps, BatchSeconds, GradientAccumulation, BucketUtterances, LearningRate and BeamWidth are positive, "
-                + "WarmupFraction 0 to 1, and MaxGradientNorm, SaveEvery, KeepCheckpoints, EvaluateEvery, Workers, NonFiniteSteps and DurationLossWeight not negative.");
+                + "WarmupFraction 0 to 1, and MaxGradientNorm, SaveEvery, KeepCheckpoints, EvaluateEvery, Workers, NonFiniteSteps and DurationLossWeight not negative, "
+                + "DistillationAlpha 0 to 1 and DistillationTemperature positive.");
         }
 
         if (!FineTuningOptimizers.Names.Contains(Optimizer, StringComparer.OrdinalIgnoreCase))
@@ -296,6 +317,13 @@ public static class SpeechTrainer
         if (!objective.Trains(model))
         {
             throw new ArgumentException($"The '{objective.Name}' objective does not train a {model.GetType().Name} ({model.Architecture}).", nameof(model));
+        }
+
+        if (options.Teacher is { } teacher)
+        {
+            CtcDistillation.Check(model as ICtcSpeechModel ?? throw new ArgumentException(
+                $"A CTC teacher (SpeechTrainingOptions.Teacher) teaches a CTC student, not a {model.GetType().Name} ('{model.Objective}'); a sequence-level student learns from pseudo-labels.", nameof(options)), teacher);
+            teacher.Network.Eval();                                             // its posteriors without dropout
         }
 
         return Run(new RecognizerTrainee(model, objective, options), train, evaluation, options, outputFolder, resume, progress, cancellationToken, trace);
@@ -793,8 +821,10 @@ public static class SpeechTrainer
 
         public override bool Accepts(ISpeechReader reader, int utterance, int frames, int[] labels) => objective.Accepts(model, frames, labels);
 
-        public override Tensor Loss(ISpeechReader reader, Tensor features, Prepared[] group, SpeechForwardOptions forward) =>
-            objective.Loss(model, features, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], forward);
+        public override Tensor Loss(ISpeechReader reader, Tensor features, Prepared[] group, SpeechForwardOptions forward) => options.Teacher is { } teacher
+            ? CtcDistillation.Loss((ICtcSpeechModel)model, teacher, features, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], options.DistillationAlpha,
+                options.DistillationTemperature, forward)
+            : objective.Loss(model, features, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], forward);
 
         public override IEnumerable<TuningScore> Score(ISpeechReader reader, Tensor features, Prepared[] group)
         {

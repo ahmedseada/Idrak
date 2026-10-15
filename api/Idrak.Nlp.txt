@@ -287,6 +287,7 @@ public sealed class Idrak.Nlp.ConversationTuning : System.IDisposable
   public Idrak.Nlp.TuningAnswerReport? ScoreAnswers(System.IProgress<Idrak.Nlp.TuningAnswer>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Nlp.TuningAnswerScorer? Scorer { get; }
   public Idrak.Nlp.TuningVision? Vision { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> TrainingSequences { get; set; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence>? EvaluationSequences { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.ChatTranscript> TrainingConversations { get; }
@@ -301,6 +302,7 @@ public sealed record Idrak.Nlp.ConversationTuningOptions : System.IEquatable<Idr
   public Idrak.Nlp.FineTuningOptions Tuning { get; init; }
   public Idrak.Nlp.TuningImages Preparation { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string?>? ImagesByData { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> TrainedParts { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> VisionParts { get; init; }
   public bool? Think { get; init; }
   public double EvaluationFraction { get; init; }
@@ -312,6 +314,7 @@ public sealed record Idrak.Nlp.ConversationTuningOptions : System.IEquatable<Idr
   public int MetricSamples { get; init; }
   public int Seed { get; init; }
   public string FeatureCache { get; init; }
+  public string? Audios { get; init; }
   public string? DataFormat { get; init; }
   public string? Evaluation { get; init; }
   public string? EvaluationImages { get; init; }
@@ -319,6 +322,7 @@ public sealed record Idrak.Nlp.ConversationTuningOptions : System.IEquatable<Idr
   public string? Images { get; init; }
   public string? Metric { get; init; }
   public string? MetricText { get; init; }
+  public string? Prompt { get; init; }
   public string? System { get; init; }
 
 public sealed record Idrak.Nlp.ConversationTuningResult : System.IEquatable<Idrak.Nlp.ConversationTuningResult>
@@ -716,6 +720,7 @@ public sealed class Idrak.Nlp.Inference.GenerativeModelBuilder
   public Idrak.Nlp.Inference.GenerativeModelBuilder Images(System.Func<Idrak.Generation.TextGenerator, Idrak.Nlp.Generation.ChatImages> images)
   public Idrak.Nlp.Inference.GenerativeModelBuilder Instances(int count)
   public Idrak.Nlp.Inference.GenerativeModelBuilder KeepAlive(System.TimeSpan? idle)
+  public Idrak.Nlp.Inference.GenerativeModelBuilder Parts(System.Collections.Generic.IReadOnlyCollection<string> kinds, System.Func<Idrak.Generation.TextGenerator, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource>> parts)
   public Idrak.Nlp.Inference.GenerativeModelBuilder QueueLimit(int waiting)
   public Idrak.Nlp.Inference.GenerativeModelBuilder Template(Idrak.Abstraction.Generation.ChatTemplate template)
   public Idrak.Nlp.Inference.GenerativeModelBuilder Timeout(System.TimeSpan limit)
@@ -1172,6 +1177,7 @@ public sealed class Idrak.Nlp.TuningAnswerScorer
   public Idrak.Nlp.TuningAnswerReport Score(Idrak.Models.PretrainedModel model, Idrak.Nlp.TuningVision? vision = null, System.IProgress<Idrak.Nlp.TuningAnswer>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyDictionary<string, string>? MetricOptions { get; init; }
   public System.Collections.Generic.IReadOnlyList<(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>, string, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>, bool?)> Items { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; set; }
   public System.IProgress<Idrak.Nlp.TuningAnswer>? Progress { get; set; }
   public TuningAnswerScorer(System.Collections.Generic.IEnumerable<Idrak.Nlp.ChatTranscript> transcripts, string metric = "cer", int samples = 0)
   public bool IsDue(int step, bool lastOfEpoch)

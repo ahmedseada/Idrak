@@ -23,7 +23,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
     public string? NoImagesReason { get; private init; }
 
     /// <summary>How the chat reads sounds (an audio-language model: its audio family's part), or null.</summary>
-    public Idrak.Audio.ChatAudioParts? Audio { get; private init; }
+    public Idrak.Abstraction.Generation.ISoftPartSource? Audio { get; private init; }
 
     /// <summary>Why the model reads no sounds, when it has an audio part its family cannot read here (else null).</summary>
     public string? NoAudioReason { get; private init; }
@@ -200,7 +200,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
         }
 
         Images?.Dispose();
-        Audio?.Dispose();
+        (Audio as IDisposable)?.Dispose();
         Model.Dispose();
     }
 }

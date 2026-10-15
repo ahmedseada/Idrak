@@ -64,6 +64,12 @@ public interface ITrainableSoftParts : ISoftPartSource, IDisposable
     /// <exception cref="ArgumentException">A part is not one it offers; the message names those it does.</exception>
     IReadOnlyList<Tensor> Train(IReadOnlyCollection<string> parts);
 
+    /// <summary>
+    /// The parts the last <see cref="Train"/> made trainable (none before it, or after an empty list): what a save
+    /// exports (<see cref="Export"/>) beside a run's adapters.
+    /// </summary>
+    IReadOnlyCollection<string> Trained => [];
+
     /// <summary>The parameters <see cref="Train"/> made trainable last (none until it is called, or after an empty list).</summary>
     IReadOnlyList<Tensor> Parameters { get; }
 

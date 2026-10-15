@@ -33,6 +33,17 @@ internal sealed class PretrainCommand : Command
         Checkpoints (RUN/checkpoint-STEP) are model folders with the optimizer's state; Ctrl+C writes one, and idrak
         resume RUN continues where the run stopped. idrak pretrain init writes a pretrain.json to start from.
 
+        A speech model (its family registered by a plug-in, -P: a recognizer whose objective is ctc or seq2seq, or a
+        synthesizer) trains on transcribed speech instead: --data transcripts.jsonl ({"audio", "text"} rows; a folder or
+        zip of name.wav beside name.txt) with --audio DIR|ZIP, the step, rate and checkpoint options below, and these:
+        --batch-seconds S (audio seconds a step, 160), --metric cer|wer (the held-out score), --decoder greedy|beam and
+        --beam N (how a CTC model reads the held-out sounds), --augment speed,noise,spec-mask, --min-seconds and
+        --max-seconds S (utterances left out), --skip-missing (rows whose sound is missing), --source KIND (the speech
+        source kind; told from the paths), --feature-cache memory|disk|none (disk); a synthesizer reads --durations
+        alignments.jsonl (idrak data audio --align MODEL writes it) and --duration-weight W (1); a CTC recognizer learns
+        from a CTC --teacher's frame posteriors with --alpha and --temperature (0.5, 2). -C takes the trainer's options
+        as JSON (batch_seconds, learning_rate, …, with "train" and "evaluation" sources).
+
         Arguments:
           MODEL  a model folder (idrak create writes one)
 
@@ -41,6 +52,7 @@ internal sealed class PretrainCommand : Command
               --tokens FILE        a token file to train on (repeat for several; one stage)
               --data FILE          conversation records to train on (messages or sharegpt JSON Lines; repeat)
               --images DIR|ZIP     where the records' images are
+              --audio DIR|ZIP      where the records' sounds are (an audio-language model's records)
               --image-transform T  how record images are prepared (grayscale, max_width=1024, …; the vision families')
               --vision K=V         a vision option of the model's family (repeat)
               --feature-cache NAME where image features of frozen stages are kept: memory or disk (memory)
@@ -53,7 +65,8 @@ internal sealed class PretrainCommand : Command
               --teacher-device D   the teacher's device (the model's)
               --weight NAME=W      a source's share of each step: tokens=3, data=1 (1 each)
               --steps N            the stage's optimizer steps (1000)
-              --trained PARTS      what trains: decoder, embeddings, head, tower, projector, all (decoder,embeddings,head)
+              --trained PARTS      what trains: decoder, embeddings, head, tower, projector, the model's parts'
+                                   (audio-encoder, audio-projector), all (decoder,embeddings,head)
               --lr X               the peak learning rate (3e-4)
               --min-lr X           the rate at the end (0)
               --warmup F           the share of steps warming up (0.03)
@@ -84,6 +97,9 @@ internal sealed class PretrainCommand : Command
           idrak create spec.json -o my-model
           idrak pretrain my-model --tokens tokens.bin --steps 2000 --lr 6e-4 -o run -d cuda:0
           idrak pretrain my-vlm --data pages.jsonl --images pages.zip --trained tower,projector -P Idrak.IdrakVision.dll
+          idrak pretrain my-audio-lm --data talks.jsonl --audio clips.zip --trained audio-encoder,audio-projector -P Idrak.IdrakAudio.dll
+          idrak pretrain my-ctc --data train.jsonl --audio clips --eval dev.jsonl --batch-seconds 120 -P Idrak.IdrakAudio.dll
+          idrak pretrain my-tts --data train.jsonl --audio clips --durations alignments.jsonl -P Idrak.IdrakAudio.dll
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
           idrak resume run
@@ -94,19 +110,30 @@ internal sealed class PretrainCommand : Command
     [
         "--tokens", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
         "--batch-tokens", "--accumulate", "--optimizer", "--weight-decay", "--clip", "--save-every", "--keep", "--eval", "--eval-every", "--log-every", "--out",
-        "--image-transform", "--vision", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device",
+        "--image-transform", "--vision", "--audio", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device",
+        .. SpeechPretraining.ValueOptions,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
-        ["--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--host-optimizer", "--no-packing", "--no-graphs"];
+        ["--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--host-optimizer", "--no-packing", "--no-graphs", .. SpeechPretraining.Flags];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
     public override int Run(CommandContext context)
     {
         string modelFolder = context.Argument(0, "MODEL (a model folder; idrak create writes one)");
-        var options = Options(context);
         string run = context.Option("--out") ?? NewRunFolder(context, Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(modelFolder))));
+        if (SpeechPretraining.Holds(modelFolder))
+        {
+            return SpeechPretraining.Run(context, modelFolder, run, context.IntOption("--log-every", 10));   // a recognizer or synthesizer
+        }
+
+        if (SpeechPretraining.ValueOptions.FirstOrDefault(o => context.Option(o) is not null) is { } speech)
+        {
+            throw new UsageException($"{speech} is for a speech model's training; {modelFolder} is not one (a speech family registered by a plug-in, -P, reads one).");
+        }
+
+        var options = Options(context);
         if (Directory.Exists(run) && Pretrainer.LatestCheckpoint(run) is not null)
         {
             throw new UsageException($"{run} holds a pretraining run already; continue it with idrak resume {run}, or give another -o.");
@@ -281,7 +308,7 @@ internal sealed class PretrainCommand : Command
 
         if (context.Options("--data") is { Count: > 0 } data)
         {
-            sources.Add(new PretrainingSource(PretrainingSources.Records, data) { Weight = weights.GetValueOrDefault("data", 1), Images = context.Option("--images") });
+            sources.Add(new PretrainingSource(PretrainingSources.Records, data) { Weight = weights.GetValueOrDefault("data", 1), Images = context.Option("--images"), Audios = context.Option("--audio") });
         }
 
         float Real(string option, float otherwise) => context.Option(option) is not { } text ? otherwise
@@ -328,7 +355,7 @@ internal sealed class PretrainCommand : Command
             EvaluateEvery = context.IntOption("--eval-every", options.EvaluateEvery),
             Evaluation = context.Options("--eval") is { Count: > 0 } eval
                 ? [.. eval.Select(e => new PretrainingSource(e.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || e.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
-                    ? PretrainingSources.Records : PretrainingSources.Tokens, [e]) { Images = context.Option("--images") })]
+                    ? PretrainingSources.Records : PretrainingSources.Tokens, [e]) { Images = context.Option("--images"), Audios = context.Option("--audio") })]
                 : options.Evaluation,
             Checkpointing = Switch("--checkpointing", "--no-checkpointing") ?? options.Checkpointing,
             RecomputeFeedForward = context.Flag("--recompute") ? true : options.RecomputeFeedForward,
@@ -359,6 +386,11 @@ internal sealed class PretrainCommand : Command
             if ((string?)source["images"] is { } images)
             {
                 source["images"] = Path.Combine(folder, images);
+            }
+
+            if ((string?)source["audios"] is { } audios)
+            {
+                source["audios"] = Path.Combine(folder, audios);
             }
         }
 
