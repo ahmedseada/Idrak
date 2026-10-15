@@ -37,7 +37,8 @@ internal static class Hub
     // The files HuggingFaceModels.DownloadAsync takes of a transformers model (kept the same, so a pull is what loading reads).
     private static readonly string[] Wanted = ["config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
         "added_tokens.json", "chat_template.jinja", "chat_template.json", "model.safetensors.index.json",
-        "preprocessor_config.json", "processor_config.json"];
+        "preprocessor_config.json", "processor_config.json",
+        "vocab.json", "merges.txt", "vocab.txt", "tokenizer.model"];   // the tokenizers without a tokenizer.json (VITS's vocab.json, BPE, WordPiece, SentencePiece)
 
     /// <summary>A file of a hub repository with its size and, for large (LFS) files, its SHA-256.</summary>
     public sealed record HubFile(string Path, long Size, string? Sha256);

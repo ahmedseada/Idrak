@@ -17,7 +17,8 @@ public static class HuggingFaceModels
 {
     private static readonly string[] Wanted = ["config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
         "added_tokens.json", "chat_template.jinja", "chat_template.json", "model.safetensors.index.json",
-        "preprocessor_config.json", "processor_config.json"];
+        "preprocessor_config.json", "processor_config.json",
+        "vocab.json", "merges.txt", "vocab.txt", "tokenizer.model"];   // the tokenizers without a tokenizer.json (VITS's vocab.json, BPE, WordPiece, SentencePiece)
 
     // Registered after Idrak's own sources, so asked before them: it leaves them the names they own (a .gguf file, "store:…").
     internal static IModelSource Source { get; } = new HubSource();
