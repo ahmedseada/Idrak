@@ -10,7 +10,7 @@ namespace Idrak.Gpu.Cuda;
 // such as a softmax over a 150k-token vocabulary), and matrix products with few rows (token-by-token decoding).
 internal static partial class PtxKernels
 {
-    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "attention_rows_f32", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
+    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "attention_rows_f32", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "sum_blocks_f32", "fold_chunks_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
 
     /// <summary>Threads of a <c>gemm128_f32</c> / <c>gemm64_f32</c> block.</summary>
     public const int GemmThreads = 256;
@@ -426,9 +426,10 @@ internal static partial class PtxKernels
         sb.AppendLine();
     }
 
-    // total[0] += Σ x²: blocks stride over x (n = blocks), reduce, and add their sums atomically.
+    // total[0] += Σ x²: blocks stride over x (n = blocks, fixed by the count), reduce; with `direct` (one block) it adds its
+    // sum to total, else it stores it in partials[block] for sum_blocks_f32 (rule 86: no atomics).
     private static void SumSquares(StringBuilder sb) =>
-        RowBlock(sb, "sumsq_f32", ["x", "total"], [("u32", "count")], $"""
+        RowBlock(sb, "sumsq_f32", ["x", "total", "partials"], [("u32", "count"), ("u32", "direct")], $"""
             mov.f32 %f1, {Zero};
             mad.lo.u32 %r1, %row, %nt, %tx;
             mul.lo.u32 %r2, %n, %nt;
@@ -443,8 +444,68 @@ internal static partial class PtxKernels
             bra SQ;
             SQ_END:
             {BlockReduce("RS", "%f1", "add", Zero)}
-            setp.eq.u32 %p2, %tx, 0;
-            @%p2 red.global.add.f32 [%b_total], %f1;
+            setp.ne.u32 %p2, %tx, 0;
+            @%p2 bra SQ_DONE;
+            setp.eq.u32 %p3, %s_direct, 0;
+            @%p3 bra SQ_PART;
+            ld.global.f32 %f3, [%b_total];
+            add.f32 %f3, %f3, %f1;
+            st.global.f32 [%b_total], %f3;
+            bra SQ_DONE;
+            SQ_PART:
+            st.global.f32 [%a_partials], %f1;
+            SQ_DONE:
+            """);
+
+    // out[0] = scale · Σ partials (accumulate: out[0] += it), one block: each thread adds partials tx, tx + nt, … in order,
+    // then the block's fixed reduction; the second pass of sum_f32, sumsq_f32 and multi_sumsq_f32.
+    private static void SumBlocks(StringBuilder sb) =>
+        RowBlock(sb, "sum_blocks_f32", ["partials", "out"], [("u32", "count"), ("f32", "scale"), ("u32", "accumulate")], $"""
+            mov.f32 %f1, {Zero};
+            mov.u32 %r1, %tx;
+            SB:
+            setp.ge.u32 %p1, %r1, %s_count;
+            @%p1 bra SB_END;
+            mul.wide.u32 %rd1, %r1, 4;
+            add.u64 %rd1, %rd1, %b_partials;
+            ld.global.f32 %f2, [%rd1];
+            add.f32 %f1, %f1, %f2;
+            add.u32 %r1, %r1, %nt;
+            bra SB;
+            SB_END:
+            {BlockReduce("SR", "%f1", "add", Zero)}
+            setp.ne.u32 %p2, %tx, 0;
+            @%p2 bra SB_DONE;
+            mul.f32 %f1, %f1, %s_scale;
+            setp.eq.u32 %p3, %s_accumulate, 0;
+            @%p3 bra SB_STORE;
+            ld.global.f32 %f3, [%b_out];
+            add.f32 %f1, %f3, %f1;
+            SB_STORE:
+            st.global.f32 [%b_out], %f1;
+            SB_DONE:
+            """);
+
+    // y[j] += Σ_c partials[c · cols + j] over the chunks in order: the second pass of the chunked column sums
+    // (sum_cols_strided_f32, layernorm_bwd_params_f32) when there is more than one chunk.
+    private static void FoldChunks(StringBuilder sb) =>
+        Elementwise(sb, "fold_chunks_f32", ["partials", "y"], [("u32", "cols"), ("u32", "chunks")], """
+            mov.f32 %f1, 0f00000000;
+            mov.u32 %r5, 0;
+            FOLD:
+            setp.ge.u32 %p1, %r5, %s_chunks;
+            @%p1 bra FOLDED;
+            mad.lo.u32 %r6, %r5, %s_cols, %i;
+            mul.wide.u32 %rd1, %r6, 4;
+            add.u64 %rd1, %b_partials, %rd1;
+            ld.global.f32 %f2, [%rd1];
+            add.f32 %f1, %f1, %f2;
+            add.u32 %r5, %r5, 1;
+            bra FOLD;
+            FOLDED:
+            ld.global.f32 %f3, [%a_y];
+            add.f32 %f3, %f3, %f1;
+            st.global.f32 [%a_y], %f3;
             """);
 
     // Many tensors in one launch (the optimizer over every adapter matrix): block b takes chunk b, 4096 elements of one
@@ -462,9 +523,9 @@ internal static partial class PtxKernels
         min.u32 %r13, %r13, %r12;
         """;
 
-    // total[0] += Σ g² over every tensor's gradient.
+    // partials[chunk] = Σ g² over each chunk of every tensor's gradient (sum_blocks_f32 adds them in chunk order).
     private static void MultiSumSquares(StringBuilder sb) =>
-        RowBlock(sb, "multi_sumsq_f32", ["chunks", "table", "total"], [], $"""
+        RowBlock(sb, "multi_sumsq_f32", ["chunks", "table", "partials"], [], $"""
             {ChunkStart}
             ld.global.u64 %rd3, [%rd2+8];
             cvta.to.global.u64 %rd3, %rd3;
@@ -482,7 +543,7 @@ internal static partial class PtxKernels
             MSQ_END:
             {BlockReduce("MS", "%f1", "add", Zero)}
             setp.eq.u32 %p2, %tx, 0;
-            @%p2 red.global.add.f32 [%b_total], %f1;
+            @%p2 st.global.f32 [%a_partials], %f1;
             """);
 
     // AdamW over every tensor: g · factor[0] (the clipping factor), p · decay (decoupled weight decay), the moments and
@@ -535,15 +596,16 @@ internal static partial class PtxKernels
             MAD_END:
             """);
 
-    // y[j] += Σ_r x[r·ld + j]: thread = column (x = blocks of BlockSize columns), grid y = chunks of rows, added atomically.
+    // y[j] += Σ_r x[r·ld + j]: thread = column (x = blocks of BlockSize columns), grid y = chunks of rows; one chunk adds to
+    // y, several store their sums in partials[chunk · cols + j] for fold_chunks_f32 (rule 86: no atomics).
     private static void SumColumnsStrided(StringBuilder sb) => sb.AppendLine(CultureInfo.InvariantCulture, $$"""
         .visible .entry sum_cols_strided_f32(
-            .param .u64 p_x, .param .u64 p_y, .param .u32 p_rows, .param .u32 p_cols, .param .u32 p_ld, .param .u32 p_chunk
+            .param .u64 p_x, .param .u64 p_y, .param .u64 p_partials, .param .u32 p_rows, .param .u32 p_cols, .param .u32 p_ld, .param .u32 p_chunk
         )
         {
             .reg .pred %p<4>;
             .reg .b32 %r<16>;
-            .reg .b64 %rd<8>;
+            .reg .b64 %rd<12>;
             .reg .f32 %f<4>;
             ld.param.u64 %rd1, [p_x];
             ld.param.u64 %rd2, [p_y];
@@ -576,9 +638,22 @@ internal static partial class PtxKernels
             add.u32 %r9, %r9, 1;
             bra ROWS;
         ROWS_END:
+            mov.u32 %r11, %nctaid.y;
+            setp.ne.u32 %p3, %r11, 1;
+            @%p3 bra PARTIAL;
             mul.wide.u32 %rd5, %r7, 4;
             add.u64 %rd5, %rd5, %rd2;
-            red.global.add.f32 [%rd5], %f1;
+            ld.global.f32 %f3, [%rd5];
+            add.f32 %f3, %f3, %f1;
+            st.global.f32 [%rd5], %f3;
+            bra DONE;
+        PARTIAL:
+            ld.param.u64 %rd6, [p_partials];
+            cvta.to.global.u64 %rd6, %rd6;
+            mad.lo.u32 %r12, %r8, %r2, %r7;
+            mul.wide.u32 %rd7, %r12, 4;
+            add.u64 %rd6, %rd6, %rd7;
+            st.global.f32 [%rd6], %f1;
         DONE:
             ret;
         }
@@ -588,6 +663,8 @@ internal static partial class PtxKernels
     {
         SumColumnsStrided(sb);
         SumSquares(sb);
+        SumBlocks(sb);
+        FoldChunks(sb);
         MultiSumSquares(sb);
         MultiAdamW(sb);
         Transpose(sb);

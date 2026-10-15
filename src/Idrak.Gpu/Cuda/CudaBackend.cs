@@ -1044,23 +1044,43 @@ internal sealed unsafe partial class CudaBackend : Backend
         Launch1D(_sumRows, cols, P(x), P(y), U(rows), U(cols));
     }
 
+    // Blocks of the grid fixed by n (at most SumBlocks: any device filled, the grid-stride loop covers the rest), never by the
+    // device's multiprocessors; one block stores the sum, several store theirs for sum_blocks_f32 to add in block order
+    // (rule 86: the same bits on every run and card).
     public override void SumKernel(Storage x, Storage result, int n, float scale)
     {
-        MakeCurrent();
-        using (UseStream())
-        {
-            Check(cuMemsetD32Async(P(result), 0, 1, _stream), nameof(cuMemsetD32Async));
-        }
-
         if (n == 0)
         {
+            MakeCurrent();
+            using (UseStream())
+            {
+                Check(cuMemsetD32Async(P(result), 0, 1, _stream), nameof(cuMemsetD32Async));
+            }
+
             return;
         }
 
-        // Enough blocks to fill the GPU; the grid-stride loop covers the rest.
-        uint blocks = (uint)Math.Min((n + _shapes.BlockSize - 1) / _shapes.BlockSize, Math.Max(1, _multiprocessors) * 8);
-        Launch(_sum, blocks, 1, (uint)_shapes.BlockSize, 1, P(x), P(result), U(n), F(scale));
+        int blocks = Math.Min((n + _shapes.BlockSize - 1) / _shapes.BlockSize, SumBlocks);
+        if (blocks == 1)
+        {
+            Launch(_sum, 1, 1, (uint)_shapes.BlockSize, 1, P(x), P(result), P(result), U(n), F(scale));
+            return;
+        }
+
+        var partials = Allocate(blocks, zeroed: false);
+        try
+        {
+            Launch(_sum, (uint)blocks, 1, (uint)_shapes.BlockSize, 1, P(x), P(result), P(partials), U(n), F(scale));
+            LaunchRows(K("sum_blocks_f32"), 1, P(partials), P(result), U(blocks), F(scale), U(0), U(1));
+        }
+        finally
+        {
+            partials.Release();                                                // reused in stream order
+        }
     }
+
+    // The most blocks a sum's first pass uses (a fixed number: rule 86).
+    private const int SumBlocks = 1024;
 
     public override void AxpyAtKernel(Storage x, Storage y, int offset, float alpha) =>
         Launch1D(_addScalar, 1, P(x), P(y) + (ulong)offset * sizeof(float), F(alpha), U(1));
@@ -1828,12 +1848,12 @@ internal sealed unsafe partial class CudaBackend : Backend
         public int[] Sizes = [];
         public ulong[] Pointers = [];
         public ulong[] Spare = [];                                         // the next step's pointers, compared with Pointers
-        public Storage? Chunks, Table, Factor;
+        public Storage? Chunks, Table, Factor, Partials;               // Partials: each chunk's sum of squares (the clipping norm)
         public int ChunkCount;
 
         public void Dispose()
         {
-            foreach (var storage in new[] { Chunks, Table, Factor })
+            foreach (var storage in new[] { Chunks, Table, Factor, Partials })
             {
                 if (storage is not null)
                 {
@@ -1841,7 +1861,7 @@ internal sealed unsafe partial class CudaBackend : Backend
                 }
             }
 
-            (Chunks, Table, Factor) = (null, null, null);
+            (Chunks, Table, Factor, Partials) = (null, null, null, null);
         }
     }
 
@@ -1891,6 +1911,12 @@ internal sealed unsafe partial class CudaBackend : Backend
 
             state.ChunkCount = chunks.Count / 2;
             state.Chunks = Allocate(chunks.Count, zeroed: false);
+            if (state.Partials is not null)
+            {
+                Return(state.Partials);
+            }
+
+            state.Partials = Allocate(state.ChunkCount, zeroed: false);
             Upload(System.Runtime.InteropServices.MemoryMarshal.Cast<uint, float>(chunks.ToArray()), state.Chunks);
             state.Pointers = [];
         }
@@ -1923,8 +1949,9 @@ internal sealed unsafe partial class CudaBackend : Backend
         state.Factor ??= Allocate(1, zeroed: false);
         if (maxNorm > 0f)
         {
-            Check(cuMemsetD32Async(P(state.Factor), 0, 1, _stream), nameof(cuMemsetD32Async));
-            LaunchRows(sumSquares, state.ChunkCount, P(state.Chunks!), P(state.Table!), P(state.Factor), U(state.ChunkCount));
+            // Each chunk's sum of squares, then their sum in chunk order (rule 86: the clipping factor the same on every run).
+            LaunchRows(sumSquares, state.ChunkCount, P(state.Chunks!), P(state.Table!), P(state.Partials!), U(state.ChunkCount));
+            LaunchRows(K("sum_blocks_f32"), 1, P(state.Partials!), P(state.Factor), U(state.ChunkCount), F(1f), U(0), U(1));
             ClipFactor(state.Factor, state.Factor, maxNorm);
         }
         else
@@ -1937,12 +1964,30 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
+    // total[0] += Σ x²: one block adds its sum, several store theirs for sum_blocks_f32 to add in block order (rule 86).
     public override void SumSquaresKernel(Storage x, Storage total, int n)
     {
-        if (n > 0)
+        if (n <= 0)
         {
-            int blocks = Math.Min(1024, (n + PtxKernels.RowThreads - 1) / PtxKernels.RowThreads);
-            LaunchRows(K("sumsq_f32"), blocks, P(x), P(total), U(n), U(blocks));
+            return;
+        }
+
+        int blocks = Math.Min(SumBlocks, (n + PtxKernels.RowThreads - 1) / PtxKernels.RowThreads);
+        if (blocks == 1)
+        {
+            LaunchRows(K("sumsq_f32"), 1, P(x), P(total), P(total), U(n), U(1), U(1));
+            return;
+        }
+
+        var partials = Allocate(blocks, zeroed: false);
+        try
+        {
+            LaunchRows(K("sumsq_f32"), blocks, P(x), P(total), P(partials), U(n), U(0), U(blocks));
+            LaunchRows(K("sum_blocks_f32"), 1, P(partials), P(total), U(blocks), F(1f), U(1), U(1));
+        }
+        finally
+        {
+            partials.Release();                                                // reused in stream order
         }
     }
 

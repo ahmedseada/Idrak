@@ -398,7 +398,7 @@ internal sealed unsafe partial class CudaBackend
             float total = 0f;
             for (int i = 0; i < count; i++)
             {
-                Launch(_sum, blocks, 1, (uint)_shapes.BlockSize, 1, flush, flush + (ulong)flushFloats * sizeof(float), U(flushFloats), F(0f));
+                Launch(_sum, blocks, 1, (uint)_shapes.BlockSize, 1, flush, flush + (ulong)flushFloats * sizeof(float), flush, U(flushFloats), F(0f));   // a read: the sums land in the flushed block
                 Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
                 run(candidate);
                 Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));

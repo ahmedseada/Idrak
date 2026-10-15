@@ -1171,11 +1171,25 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
+    // Chunks of rows in parallel; several chunks' sums are added in chunk order by fold_chunks_f32 (rule 86: no atomics).
     public override void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         const int Chunk = 64;
-        Launch(K("sum_cols_strided_f32"), (uint)((cols + _shapes.BlockSize - 1) / _shapes.BlockSize), (uint)((rows + Chunk - 1) / Chunk), 1, (uint)_shapes.BlockSize, 1,
-            P(x) + (ulong)offset * 4, P(y), U(rows), U(cols), U(ld), U(Chunk));
+        int chunks = (rows + Chunk - 1) / Chunk;
+        var partials = chunks > 1 ? Allocate(chunks * cols, zeroed: false) : null;
+        try
+        {
+            Launch(K("sum_cols_strided_f32"), (uint)((cols + _shapes.BlockSize - 1) / _shapes.BlockSize), (uint)chunks, 1, (uint)_shapes.BlockSize, 1,
+                P(x) + (ulong)offset * 4, P(y), partials is null ? P(y) : P(partials), U(rows), U(cols), U(ld), U(Chunk));
+            if (partials is not null)
+            {
+                Launch1D(K("fold_chunks_f32"), cols, P(partials), P(y), U(cols), U(chunks), U(cols));
+            }
+        }
+        finally
+        {
+            partials?.Release();                                               // reused in stream order
+        }
     }
 
     // The tensor-core flash kernels when MixedPrecision asks for bfloat16 and the head size and GPU allow them.
