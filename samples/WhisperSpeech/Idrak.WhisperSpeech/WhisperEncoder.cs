@@ -128,9 +128,22 @@ public sealed class WhisperEncoder : Module
         }
 
         x = x.Reshape(n, Dim, t).Permute(0, 2, 1) + (t == Config.MaxSourcePositions ? _positions : _positions.Narrow(0, 0, t));
+        // With gradients off, each layer in a scope of its own that keeps only its output, the layer before's released: the
+        // device holds one layer's attention scores and activations at a time, not every layer's (rule 76).
+        bool release = !Autograd.IsEnabled;
         foreach (var layer in _layers)
         {
-            x = layer.Forward(x);
+            var previous = x;
+            using (var scope = release ? new TensorScope() : null)
+            {
+                x = layer.Forward(x);
+                scope?.Keep(x);
+            }
+
+            if (release && !ReferenceEquals(previous, input) && !ReferenceEquals(previous, features))
+            {
+                TensorScope.Untrack(previous).Dispose();
+            }
         }
 
         return _norm.Forward(x);
