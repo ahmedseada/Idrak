@@ -23,7 +23,7 @@ internal static partial class Tests
         ("audio chat: ChatAudio from bytes, files, streams and data URLs (media types sniffed for WAV, FLAC, MP3, Ogg and MP4 or given; SHA-256 identity; equality by bytes; bad data URLs refused); the 'audio' kind is a library default an app's kind shadows and Unregister restores; the kit's ChatPartKindSuite passes on its own samples and the fixture's files", d => { if (d == Device.Cpu) AudioChatPart(); }),
         ("audio chat: a message with text and audio round-trips through the chat JSON (ChatJson, ChatTranscript) and ContentToJson; text-only models and templates refuse an audio part naming 'audio'; a Jinja template that writes a marker for audio parts takes them", AudioChatJsonAndRefusal),
         ("audio chat: sharegpt reads <audio> markers with the record's \"audios\" list (from the file's folder, an audios root and a zip) and messages reads audio parts by path, bare with the list, and <audio> markers, each part carrying the fixture's WAV bytes; a count that disagrees or a missing file names the record", d => { if (d == Device.Cpu) AudioChatTuningData(); }),
-        ("audio chat: the transcript encoder with a fake soft-part source (two tokens per sound) expands each marker to its soft tokens, records the parts' blocks, trains the answer alone, keeps whole blocks when cut, and refuses a sound in an assistant turn or without a source; the training step refuses sequences with parts until S6", AudioChatTranscriptEncoder),
+        ("audio chat: the transcript encoder with a fake soft-part source (two tokens per sound) expands each marker to its soft tokens, records the parts' blocks, trains the answer alone, keeps whole blocks when cut, and refuses a sound in an assistant turn or without a source; the training step reads the parts through FineTuningOptions.Parts and refuses them without it", AudioChatTranscriptEncoder),
         ("audio chat: ChatGenerator with the same source on the tiny Llama renders the soft tokens in place, encodes each sound once per request, answers, and the features land at the soft tokens' positions; ChatBatch refuses soft parts and StreamBatch answers them one by one", AudioChatGenerator),
         ("audio chat: AudioLanguage.Attach is null for a model without audio_config, names AudioFamilies.Register for one with an unregistered family, and reads the part through a family registered from the test; ChatAudioParts caches features by the sound's hash", AudioChatAttach),
     ];
@@ -364,9 +364,22 @@ internal static partial class Tests
         ThrowsNaming<InvalidOperationException>(() => textOnly.Encode(transcript, 128), "no source", "ChatTranscriptEncoder.Parts", "'audio'");
         ThrowsNaming<ArgumentException>(() => new ChatTranscriptEncoder(template, tokenizer) { Parts = [source, source] }, "a kind twice", "given twice");
 
-        // The training step refuses sequences with parts until S6 wires their sources into it.
-        ThrowsNaming<NotSupportedException>(() => FineTuner.Train(model, [sequence], null, new FineTuningOptions { Epochs = 1, BatchTokens = 256, MaxLength = 128 }, Path.Combine(Path.GetTempPath(), $"idrak-audio-chat-{Guid.NewGuid():N}")),
-            "training on parts", "'audio' part", "S6");
+        // The training step reads the parts through their source (FineTuningOptions.Parts); without one it refuses, naming it.
+        string tuned = Path.Combine(Path.GetTempPath(), $"idrak-audio-chat-{Guid.NewGuid():N}");
+        try
+        {
+            ThrowsNaming<InvalidOperationException>(() => FineTuner.Train(model, [sequence], null, new FineTuningOptions { Epochs = 1, BatchTokens = 256, MaxLength = 128 }, tuned),
+                "training on parts without a source", "'audio' part", "FineTuningOptions.Parts");
+            var evaluations = FineTuner.Train(model, [sequence], null, new FineTuningOptions { Epochs = 1, BatchTokens = 256, MaxLength = 128, Parts = [source] }, tuned);
+            Check(source.EncodeCalls.Count > 0 && evaluations.Count == 0, "a step with parts encodes them through the source");
+        }
+        finally
+        {
+            if (Directory.Exists(tuned))
+            {
+                Directory.Delete(tuned, recursive: true);
+            }
+        }
     }
 
     private static void AudioChatGenerator(Device device)

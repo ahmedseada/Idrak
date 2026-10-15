@@ -374,8 +374,11 @@ public static class Pretrainer
 
             using var vision = model.Vision is not null && (records || visionParts.Count > 0)
                 ? TuningVision.Create(model, options.Images, visionParts, FeatureCaches.Create(options.FeatureCache)) : null;
+            // The parts stored beside the decoder (an audio encoder and projector), opened as soft-part sources: each trains
+            // the stage's names it offers ("audio-encoder", "audio-projector"; "all": every one), the others frozen.
+            using var partSources = new PartSources(model, stage, records, options.FeatureCache);
             var encoder = records && model.JinjaTemplate is { } template && model.Tokenizer is { } tokenizer
-                ? new ChatTranscriptEncoder(template, tokenizer) { Vision = vision } : null;
+                ? new ChatTranscriptEncoder(template, tokenizer) { Vision = vision, Parts = partSources.Sources } : null;
             var context = new PretrainingContext(model, options.MaxLength, encoder);
             var readers = new List<SourceState>();
             try
@@ -394,7 +397,7 @@ public static class Pretrainer
                 }
 
                 var evaluation = ReadEvaluation(options, context);
-                var parameters = Trainable(model, stage, vision);
+                var parameters = Trainable(model, stage, vision, partSources);
                 using var optimizer = CreateOptimizer(parameters, options, stage);
                 if (resume is { } rs && rs.Stage == stageIndex)
                 {
@@ -421,6 +424,7 @@ public static class Pretrainer
                     BatchTokens = options.BatchTokens,
                     MaxLength = options.MaxLength,
                     Vision = vision,
+                    Parts = partSources.Sources,
                     // An optimizer other than the built-in AdamW: the recorded step checks it keeps its gradient buffers.
                     Optimizer = optimizer is AdamW && !options.HostOptimizer ? null : _ => optimizer,
                 };
@@ -460,6 +464,7 @@ public static class Pretrainer
                         catch (OperationCanceledException) when (done > 0)
                         {
                             // No update was made (a step is cancelled before its update): the checkpoint is the last finished step's.
+                            partSources.Keep();
                             last = SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, done, finished, losses, evaluations);
                             throw;
                         }
@@ -486,7 +491,7 @@ public static class Pretrainer
                         bool stageEnd = stageStep == stage.Steps;
                         if (evaluation.Count > 0 && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : stageEnd))
                         {
-                            evaluationLoss = FineTuner.Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision);
+                            evaluationLoss = FineTuner.Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision, partSources.Sources);
                             evaluations.Add((step, evaluationLoss.Value));
                         }
 
@@ -498,6 +503,7 @@ public static class Pretrainer
                         if (stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0)
                         {
                             // The stage it is in and its steps done (a finished stage is skipped on resume, or goes on when its steps grew).
+                            partSources.Keep();
                             last = SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
                             trace?.Invoke($"checkpoint {last}");
                         }
@@ -515,6 +521,8 @@ public static class Pretrainer
                     {
                         model.KeepTrainedVision(vision.Encoder, vision.Parts);
                     }
+
+                    partSources.Keep();                                      // the parts' trained tensors too
                 }
                 finally
                 {
@@ -538,6 +546,90 @@ public static class Pretrainer
     // Rows of a micro-batch.
     private static int Rows(PretrainingOptions options) => Math.Max(1, options.BatchTokens / options.MaxLength);
 
+    // A stage's parts stored beside the decoder (PretrainedModel.Parts), opened as trainable soft-part sources when the stage
+    // reads conversations or trains one: each trains the stage's names it offers ("all": every one) and the rest frozen. A
+    // name the stage gives that is neither the decoder's, the vision part's nor a part's is refused, naming them all.
+    private sealed class PartSources : IDisposable
+    {
+        private readonly List<(ITrainableSoftParts Source, IReadOnlyList<string> Trained)> _opened = [];
+        private readonly PretrainedModel _model;
+
+        public PartSources(PretrainedModel model, PretrainingStage stage, bool records, string featureCache)
+        {
+            _model = model;
+            bool all = stage.Trained.Contains("all", StringComparer.OrdinalIgnoreCase);
+            string[] own = ["decoder", "embeddings", "head", VisionTuningParts.Tower, VisionTuningParts.Projector, "all"];
+            try
+            {
+                foreach (string kind in model.Parts)
+                {
+                    var source = model.OpenPart(kind, model.Device, FeatureCaches.Create(featureCache));
+                    var trained = source.TrainableParts.Where(p => all || stage.Trained.Contains(p, StringComparer.OrdinalIgnoreCase)).ToList();
+                    if (!records && trained.Count == 0)
+                    {
+                        source.Dispose();                                    // neither read nor trained this stage
+                        continue;
+                    }
+
+                    _opened.Add((source, trained));
+                    Parameters.AddRange(source.Train(trained));
+                    source.SetTraining(trained.Count > 0);
+                }
+
+                var offered = own.Concat(_opened.SelectMany(o => o.Source.TrainableParts)).ToList();
+                if (stage.Trained.Any(t => !offered.Contains(t, StringComparer.OrdinalIgnoreCase)) && _opened.Count < model.Parts.Count)
+                {
+                    offered.AddRange(KnownNames(model));                    // the parts this stage left closed, for the message
+                }
+
+                if (stage.Trained.FirstOrDefault(t => !offered.Contains(t, StringComparer.OrdinalIgnoreCase)) is { } unknown)
+                {
+                    throw new ArgumentException($"Stage {stage.Name} trains '{unknown}': the parts are {string.Join(", ", offered.Distinct(StringComparer.OrdinalIgnoreCase))}.");
+                }
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        public List<Tensor> Parameters { get; } = [];
+
+        public IReadOnlyList<ISoftPartSource> Sources => [.. _opened.Select(o => o.Source)];
+
+        // The trained parts' tensors kept by the model: the next stage's sources and every save start from them.
+        public void Keep()
+        {
+            foreach (var (source, trained) in _opened)
+            {
+                if (trained.Count > 0)
+                {
+                    _model.KeepTrainedParts(source.Export(trained));
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _opened.ForEach(o => o.Source.Dispose());
+            _opened.Clear();
+        }
+
+        // The names a model's parts offer, read by opening each once (a stage that neither reads nor trains them).
+        private static IEnumerable<string> KnownNames(PretrainedModel model)
+        {
+            var names = new List<string>();
+            foreach (string kind in model.Parts)
+            {
+                using var source = model.OpenPart(kind);
+                names.AddRange(source.TrainableParts);
+            }
+
+            return names;
+        }
+    }
+
     private static void Check(PretrainingOptions options)
     {
         if (options.Stages.Count == 0)
@@ -560,6 +652,7 @@ public static class Pretrainer
             throw new ArgumentException($"Optimizer '{options.Optimizer}' is not one of {string.Join(", ", FineTuningOptimizers.Names)}.", nameof(options));
         }
 
+        // Names outside these are the model's parts' (ModelParts: "audio-encoder", say), checked when the stage opens them.
         string[] parts = ["decoder", "embeddings", "head", VisionTuningParts.Tower, VisionTuningParts.Projector, "all"];
         foreach (var stage in options.Stages)
         {
@@ -573,7 +666,7 @@ public static class Pretrainer
                 throw new ArgumentException($"Stage {stage.Name} reads no sources.", nameof(options));
             }
 
-            if (stage.Trained.Count == 0 || stage.Trained.FirstOrDefault(t => !parts.Contains(t, StringComparer.OrdinalIgnoreCase)) is { } unknown && unknown is not null)
+            if (stage.Trained.Count == 0 || stage.Trained.Any(string.IsNullOrWhiteSpace))
             {
                 throw new ArgumentException($"Stage {stage.Name} trains '{string.Join(", ", stage.Trained)}': the parts are {string.Join(", ", parts)}.", nameof(options));
             }
@@ -590,8 +683,8 @@ public static class Pretrainer
         }
     }
 
-    // The parameters a stage trains, in the network's order (then the vision parts'), every other one frozen.
-    private static List<Tensor> Trainable(PretrainedModel model, PretrainingStage stage, TuningVision? vision)
+    // The parameters a stage trains, in the network's order (then the vision parts', then the other parts'), every other one frozen.
+    private static List<Tensor> Trainable(PretrainedModel model, PretrainingStage stage, TuningVision? vision, PartSources partSources)
     {
         bool all = stage.Trained.Contains("all", StringComparer.OrdinalIgnoreCase);
         bool Trains(string part) => all || stage.Trained.Contains(part, StringComparer.OrdinalIgnoreCase);
@@ -622,7 +715,7 @@ public static class Pretrainer
             }
         }
 
-        foreach (var p in vision?.Parameters ?? [])
+        foreach (var p in (vision?.Parameters ?? []).Concat(partSources.Parameters))
         {
             if (seen.Add(p))
             {
@@ -996,7 +1089,7 @@ internal sealed class RecordPretrainingSource : IPretrainingSource
                 }
 
                 var format = source.Format is { } name ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(path);
-                files.Add(format.ReadPending(path, new TuningDataOptions { Images = source.Images }));
+                files.Add(format.ReadPending(path, new TuningDataOptions { Images = source.Images, Audios = source.Audios }));
             }
 
             return new Reader(files, encoder, context.MaxLength);

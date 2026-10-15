@@ -25,6 +25,9 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
     /// <summary>Records: the folder or .zip their images are in, or null for beside each file.</summary>
     public string? Images { get; init; }
 
+    /// <summary>Records: the folder or .zip their sounds are in, or null for beside each file.</summary>
+    public string? Audios { get; init; }
+
     /// <summary>Tokens: how ids are stored in a raw token file (a .npy file says it itself).</summary>
     public TokenType TokenType { get; init; } = TokenType.UInt16;
 
@@ -40,6 +43,11 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
         if (Images is not null)
         {
             json["images"] = Images;
+        }
+
+        if (Audios is not null)
+        {
+            json["audios"] = Audios;
         }
 
         if (TokenType != TokenType.UInt16)
@@ -69,6 +77,7 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
             Weight = (double?)json["weight"] ?? 1,
             Format = (string?)json["format"],
             Images = (string?)json["images"],
+            Audios = (string?)json["audios"],
             TokenType = type,
         };
     }

@@ -44,3 +44,38 @@ public interface ISoftPartSource
     /// </summary>
     IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ChatPart> parts);
 }
+
+/// <summary>
+/// A soft-part source whose layers can be trained (an audio encoder and its projector, made from scratch): training reads
+/// its features with gradients (<see cref="EncodeTraining"/>) and trains the parts it offers (<see cref="TrainableParts"/>,
+/// the names a pretraining stage's <c>Trained</c> list gives, "audio-encoder" and "audio-projector" for the audio part).
+/// The model-part registry (<see cref="ModelParts"/>) opens one beside a loaded model; the training step lays its
+/// features out where the soft tokens are, as it does images' features. Dispose it when done.
+/// </summary>
+public interface ITrainableSoftParts : ISoftPartSource, IDisposable
+{
+    /// <summary>The parts it can train, by the names a training stage uses.</summary>
+    IReadOnlyList<string> TrainableParts { get; }
+
+    /// <summary>
+    /// Makes the parameters of <paramref name="parts"/> (of <see cref="TrainableParts"/>) trainable and every other one
+    /// frozen, and returns them for the optimizer (none for an empty list: the source runs as a frozen one).
+    /// </summary>
+    /// <exception cref="ArgumentException">A part is not one it offers; the message names those it does.</exception>
+    IReadOnlyList<Tensor> Train(IReadOnlyCollection<string> parts);
+
+    /// <summary>The parameters <see cref="Train"/> made trainable last (none until it is called, or after an empty list).</summary>
+    IReadOnlyList<Tensor> Parameters { get; }
+
+    /// <summary>Training or evaluation mode of its layers (dropout).</summary>
+    void SetTraining(bool training);
+
+    /// <summary>
+    /// <see cref="ISoftPartSource.Encode"/> recording gradients to the trained parameters (<see cref="Train"/>);
+    /// <paramref name="checkpointing"/> keeps only each block's output and recomputes the rest in the backward pass.
+    /// </summary>
+    IReadOnlyList<ImageFeatures> EncodeTraining(IReadOnlyList<ChatPart> parts, bool checkpointing);
+
+    /// <summary>The tensors of <paramref name="parts"/> as they are now, under the checkpoint's names and in its layout, copied to the host.</summary>
+    IReadOnlyList<(string Name, int[] Shape, float[] Values)> Export(IReadOnlyCollection<string> parts);
+}

@@ -1811,6 +1811,12 @@ public sealed record Idrak.Abstraction.Generation.ChatText : Idrak.Abstraction.G
 public static class Idrak.Abstraction.Generation.ChatTools
   public static Idrak.Abstraction.Generation.IChatModel WithTools(this Idrak.Abstraction.Generation.IChatModel model, Idrak.Abstraction.Generation.IToolRegistry tools, int maxToolRounds)
 
+public sealed record Idrak.Abstraction.Generation.CreatedModelPart : System.IEquatable<Idrak.Abstraction.Generation.CreatedModelPart>
+  public CreatedModelPart(System.Text.Json.Nodes.JsonObject Config, System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Tensors, System.Collections.Generic.IReadOnlyDictionary<string, string> Files)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Files { get; init; }
+  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Tensors { get; init; }
+  public System.Text.Json.Nodes.JsonObject Config { get; init; }
+
 public sealed record Idrak.Abstraction.Generation.CtcDecodeOptions : System.IEquatable<Idrak.Abstraction.Generation.CtcDecodeOptions>
   public CtcDecodeOptions()
   public float? MinLogProbability { get; init; }
@@ -2065,6 +2071,13 @@ public interface Idrak.Abstraction.Generation.IImagePromptFormat
   public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout>> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public string Name { get; }
 
+public interface Idrak.Abstraction.Generation.IModelPart
+  public Idrak.Abstraction.Generation.CreatedModelPart Create(Idrak.Abstraction.Generation.ModelPartRequest request)
+  public Idrak.Abstraction.Generation.ITrainableSoftParts Open(Idrak.Abstraction.Generation.ModelPartCheckpoint checkpoint, Idrak.Abstraction.Generation.ModelPartOptions options)
+  public System.Collections.Generic.IReadOnlySet<string> StoredTensors(Idrak.Abstraction.Generation.ModelPartCheckpoint checkpoint)
+  public bool In(System.Text.Json.Nodes.JsonObject config)
+  public string Kind { get; }
+
 public interface Idrak.Abstraction.Generation.ISoftPartSource
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
@@ -2104,6 +2117,14 @@ public interface Idrak.Abstraction.Generation.IToolRegistry
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Definitions { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ToolResult> InvokeAsync(Idrak.Abstraction.Generation.ToolCall call, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult>> InvokeAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall> calls, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Idrak.Abstraction.Generation.ITrainableSoftParts : Idrak.Abstraction.Generation.ISoftPartSource, System.IDisposable
+  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts, bool checkpointing)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Train(System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
+  public void SetTraining(bool training)
 
 public interface Idrak.Abstraction.Generation.ITuningMetric
   public Idrak.Abstraction.Generation.TuningScore Score(string answer, string reference, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
@@ -2284,6 +2305,39 @@ public static class Idrak.Abstraction.Generation.KeyValueLayouts
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(string name, Idrak.Abstraction.Generation.KeyValueLayout layout)
+
+public sealed record Idrak.Abstraction.Generation.ModelPartCheckpoint : System.IEquatable<Idrak.Abstraction.Generation.ModelPartCheckpoint>
+  public Idrak.Abstraction.Formats.ITensorStore Tensors { get; init; }
+  public ModelPartCheckpoint(string Architecture, System.Text.Json.Nodes.JsonObject Config, Idrak.Abstraction.Formats.ITensorStore Tensors, string? Folder, System.Func<Idrak.Abstraction.Formats.ITensorStore> Open, System.Collections.Generic.List<string> Notes)
+  public System.Collections.Generic.List<string> Notes { get; init; }
+  public System.Func<Idrak.Abstraction.Formats.ITensorStore> Open { get; init; }
+  public System.Text.Json.Nodes.JsonObject Config { get; init; }
+  public string Architecture { get; init; }
+  public string? Folder { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.ModelPartOptions : System.IEquatable<Idrak.Abstraction.Generation.ModelPartOptions>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public ModelPartOptions()
+  public Idrak.Abstraction.Generation.IFeatureCache? Cache { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, (int[], float[])>? Trained { get; init; }
+  public required Idrak.Abstraction.Device Device { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.ModelPartRequest : System.IEquatable<Idrak.Abstraction.Generation.ModelPartRequest>
+  public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; init; }
+  public ModelPartRequest(string Architecture, System.Text.Json.Nodes.JsonObject Description, int TextDim, Idrak.Abstraction.Generation.ITokenizer Tokenizer, int Seed)
+  public System.Text.Json.Nodes.JsonObject Description { get; init; }
+  public int Seed { get; init; }
+  public int TextDim { get; init; }
+  public string Architecture { get; init; }
+
+public static class Idrak.Abstraction.Generation.ModelParts
+  public static Idrak.Abstraction.Generation.IModelPart Get(string kind)
+  public static Idrak.Abstraction.Generation.IModelPart? Default(string kind)
+  public static Idrak.Abstraction.Generation.IModelPart? Find(string kind)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.IModelPart> In(System.Text.Json.Nodes.JsonObject config)
+  public static bool Unregister(string kind)
+  public static string? Origin(string kind)
+  public static void Register(Idrak.Abstraction.Generation.IModelPart part)
 
 public abstract class Idrak.Abstraction.Generation.PackedWeight : System.IDisposable
   protected PackedWeight()
