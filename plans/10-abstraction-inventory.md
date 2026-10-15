@@ -182,14 +182,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Nlp.Abstractions.IPretrainingSource` | interface | public | — | RecordPretrainingSource, TokenPretrainingSource |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.IRandomTextSource` | interface | public | — | PooledTextSource |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ISyntheticRecordFormat` | interface | public | — | MessagesSyntheticRecords, ShareGptSyntheticRecords, TextSyntheticRecords |  | Nlp | Nlp |
-| `Idrak.Nlp.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat |  | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat, TranscriptsDataFormat |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.PagePartFillers` | registry | public | — |  | date, digits, field, hijri, line, number, pick | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.PretrainingSources` | registry | public | — |  | records, tokens | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.RandomTextSources` | registry | public | — |  | ar, en | — | Nlp |
 | `Idrak.Nlp.Abstractions.SyntheticRecordFormats` | registry | public | — |  | messages, sharegpt, text | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |
-| `Idrak.Nlp.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt, transcripts | Nlp | Nlp |
 | `Idrak.Nlp.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Nlp | Nlp |
 | `Idrak.Nlp.Retrieval.Abstractions.IRetriever` | interface | public | — | RetrievalIndex |  | Nlp | Nlp |
 

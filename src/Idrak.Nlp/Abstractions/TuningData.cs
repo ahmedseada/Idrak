@@ -23,6 +23,12 @@ public sealed record TuningDataOptions
     /// a file with audio and no such kind is refused naming it.
     /// </summary>
     public string? Audios { get; init; }
+
+    /// <summary>
+    /// The "transcripts" format: the user's words after each sound (the owner's prompt for an audio-language model: what it
+    /// is asked to do with the sound); empty for the sound alone. "Transcribe." when null.
+    /// </summary>
+    public string? Prompt { get; init; }
 }
 
 /// <summary>
@@ -151,6 +157,9 @@ public static class TuningDataFormats
     /// <summary>ShareGPT conversations with LlamaFactory's <c>"images"</c> list and <c>&lt;image&gt;</c> placeholders.</summary>
     public const string ShareGpt = "sharegpt";
 
+    /// <summary>Speech transcripts, <c>{"audio", "text"}</c> per line: each a conversation of the sound and the prompt (<see cref="TuningDataOptions.Prompt"/>), answered by the text.</summary>
+    public const string Transcripts = "transcripts";
+
     private static readonly SlotTable<string, ITuningDataFormat> Table = BuiltIn();
 
     private static SlotTable<string, ITuningDataFormat> BuiltIn()
@@ -159,6 +168,7 @@ public static class TuningDataFormats
             unguarded: "a data file is read as a stream of records, so a reading cannot change format half-way");
         table.RegisterDefault(Messages, new MessagesDataFormat());
         table.RegisterDefault(ShareGpt, new ShareGptDataFormat());
+        table.RegisterDefault(Transcripts, new TranscriptsDataFormat());
         return table;
     }
 

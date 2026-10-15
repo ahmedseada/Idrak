@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Testing;
 using Idrak.Abstraction.Generation;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
@@ -21,6 +22,7 @@ internal static partial class Tests
     [
         ("audio language: the IdrakAudio plug-in reads audio-language/model (its audio part claimed, nothing unused): each sound's log-mel within 1e-4 of torch's, its soft tokens and the records' ids and blocks the fixture's; joint pretraining (every parameter) gives PyTorch's step-1 loss and gradients and its losses and weights after three steps", AudioLanguageJoint),
         ("audio language: align pretraining (audio-encoder and audio-projector; the decoder stays) gives PyTorch's losses, gradients and weights; the decoder's tensors are as they were", AudioLanguageAlign),
+        ("audio language: the \"transcripts\" tuning format reads the fixture's train.jsonl as conversations of the sound and the prompt answered by the text (NeMo's keys too, the prompt a setting, an empty one the sound alone; a row without text refused naming it) and passes the kit's CheckTuningDataFormat; FineTuner trains the audio-language model's projector on them through FineTuningOptions.Parts", AudioLanguageTranscripts),
         ("audio language: PretrainedModel.Create with CreateOptions.Parts[\"audio\"] gives the fixture's tensor names and shapes and reads back with its part; align then joint stages stopped between them and resumed give the uninterrupted losses; the trained model answers about a sound through ChatGenerator with its part", AudioLanguageStages),
     ];
 
@@ -124,6 +126,54 @@ internal static partial class Tests
         try
         {
             CheckAudioLanguageRun(device, "align", [IdrakAudioLanguageFamily.EncoderPart, IdrakAudioLanguageFamily.ProjectorPart], folder);
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void AudioLanguageTranscripts(Device device)
+    {
+        IdrakAudioPlugin.Register();
+        string folder = TempFolder("audio-language-transcripts");
+        try
+        {
+            var format = TuningDataFormats.Get(TuningDataFormats.Transcripts);
+            string fixture = AudioData("transcripts/train.jsonl");
+            var rows = File.ReadAllLines(fixture).Where(l => l.Length > 0).Select(l => JsonNode.Parse(l)!.AsObject()).ToList();
+            var read = format.Read(fixture, new TuningDataOptions { Audios = AudioData("") }).ToList();
+            Check(read.Count == rows.Count && read.Zip(rows).All(p => p.First.Messages is [{ Role: "user", Parts: [ChatAudio a, ChatText { Text: "Transcribe." }] }, { Role: "assistant" } answer]
+                    && a.Data.Span.SequenceEqual(File.ReadAllBytes(AudioData((string)p.Second["audio"]!))) && answer.Content == (string)p.Second["text"]!),
+                $"each row is the sound and the prompt answered by the text ({read.Count} of {rows.Count})");
+            Check(format.Recognizes(rows[0]) && !format.Recognizes(new JsonObject { ["messages"] = new JsonArray() }), "it recognizes transcript rows only");
+
+            string nemo = Path.Combine(folder, "nemo.jsonl");
+            var row = new JsonObject { ["audio_filepath"] = AudioData("wav/pcm16.wav"), ["duration"] = 1.5, ["text"] = "the quick brown fox" };
+            File.WriteAllLines(nemo, [row.ToJsonString()]);
+            var bare = format.Read(nemo, new TuningDataOptions { Prompt = "" }).Single();
+            Check(bare.Messages[0].Parts is [ChatAudio] && bare.Messages[1].Content == "the quick brown fox", "NeMo's audio_filepath; an empty prompt gives the sound alone");
+            string bad = Path.Combine(folder, "bad.jsonl");
+            File.WriteAllLines(bad, [new JsonObject { ["audio"] = "wav/pcm16.wav" }.ToJsonString()]);
+            ThrowsNaming<InvalidDataException>(() => format.Read(bad).ToList(), "a row without text", "bad.jsonl", "needs a sound");
+            Conformance.CheckTuningDataFormat(path => format.Read(path, new TuningDataOptions { Audios = AudioData("") }).Select(t => t.Messages), [new TuningDataSample(fixture)]).ThrowIfFailed();
+
+            // Tuning the audio-language model's projector on transcripts.
+            string english = Path.Combine(folder, "train.jsonl");
+            File.WriteAllLines(english, [.. new[] { ("wav/pcm16.wav", "the quick brown fox"), ("wav/pcm8.wav", "hello there"), ("wav/list-chunk16.wav", "a short tone") }
+                .Select(r => new JsonObject { ["audio"] = r.Item1, ["text"] = r.Item2 }.ToJsonString())]);
+            using var model = PretrainedModel.Load(AudioLanguageData("model"), new PretrainedOptions { Device = device });
+            using var source = model.OpenPart(ChatParts.Audio, device);
+            source.Train([IdrakAudioLanguageFamily.ProjectorPart]);
+            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate!, model.Tokenizer!) { Parts = [source] };
+            var sequences = format.Read(english, new TuningDataOptions { Audios = AudioData("") }).Select(t => encoder.Encode(t, 128)!).ToList();
+            var before = source.Export([IdrakAudioLanguageFamily.ProjectorPart]).ToDictionary(t => t.Name, t => t.Values);
+            float initial = FineTuner.Evaluate(model, sequences, 384, 512, parts: [source]);
+            FineTuner.Train(model, sequences, null, new FineTuningOptions { Epochs = 3, BatchTokens = 384, MaxLength = 128, LearningRate = 1e-2f, Parts = [source] }, Path.Combine(folder, "tuned"));
+            float after = FineTuner.Evaluate(model, sequences, 384, 512, parts: [source]);
+            var moved = source.Export([IdrakAudioLanguageFamily.ProjectorPart]);
+            Check(moved.Any(t => !t.Values.AsSpan().SequenceEqual(before[t.Name])) && after < initial, $"the projector trained on transcripts: loss {initial} then {after}");
         }
         finally
         {

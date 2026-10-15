@@ -598,6 +598,40 @@ internal struct PendingCounts
     public int Images, Audios;
 }
 
+// "transcripts": {"audio", "text"} per line or as a JSON array, the keys as Idrak.Audio's "transcripts" speech source reads
+// them (audio, audio_filepath, path or file; text, transcript or sentence), so NeMo manifests read too: each row a
+// conversation of the user's sound and the prompt (TuningDataOptions.Prompt), answered by the text.
+internal sealed class TranscriptsDataFormat : ITuningDataFormat
+{
+    private static readonly string[] AudioKeys = ["audio", "audio_filepath", "path", "file"], TextKeys = ["text", "transcript", "sentence"];
+
+    public string Name => TuningDataFormats.Transcripts;
+
+    public string Summary => "{\"audio\", \"text\"} per line or a JSON array (also NeMo's audio_filepath): the sound and the prompt (TuningDataOptions.Prompt, \"Transcribe.\"), answered by the text";
+
+    public bool Recognizes(JsonObject record) =>
+        record["messages"] is null && record["conversations"] is null && AudioKeys.Any(k => record[k] is JsonValue) && TextKeys.Any(k => record[k] is JsonValue);
+
+    public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null) => TuningRecordImages.Read(path, options, (r, w) => Pending(r, w, options));
+
+    public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, (r, w) => Pending(r, w, options));
+
+    private static PendingRecord Pending(JsonObject record, string where, TuningDataOptions? options)
+    {
+        string? sound = AudioKeys.Select(k => (string?)record[k]).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+        string? text = TextKeys.Select(k => (string?)record[k]).FirstOrDefault(v => v is not null);
+        if (sound is null || text is null)
+        {
+            throw new InvalidDataException($"{where}: a transcript row needs a sound ({string.Join(", ", AudioKeys)}) and its text ({string.Join(", ", TextKeys)}).");
+        }
+
+        string prompt = options?.Prompt ?? "Transcribe.";
+        ChatPart[] user = prompt.Length == 0 ? [new PendingAudio(-1, sound)] : [new PendingAudio(-1, sound), new ChatText(prompt)];
+        var transcript = new ChatTranscript([new ChatMessage("user", user), new ChatMessage("assistant", text)], []);
+        return TuningRecordImages.Check(transcript, new PendingCounts(), [], $"{TuningRecordImages.Marker} markers", where);
+    }
+}
+
 // What the two library formats share: placeholders found while a record's messages are read, checked against its
 // "images" list, then filled in place. Each format reads a record into a transcript whose images are placeholders
 // (`pending`); Read fills each record's images as the record is read (streamed), ReadPending keeps every record and reads
