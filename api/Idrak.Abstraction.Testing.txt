@@ -128,6 +128,8 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTuningDataFormat(System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>> read, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckVisionEncoder(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f, Idrak.Abstraction.Testing.ContractCheckOptions? options = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckVoiceConverter(Idrak.Abstraction.Testing.VoiceConverterUnderTest converter, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckVoiceStore(Idrak.Abstraction.Testing.VoiceStoreUnderTest store, string folder, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
 
 public sealed class Idrak.Abstraction.Testing.ConformanceException : System.Exception
   public ConformanceException(string message)
@@ -480,3 +482,34 @@ public sealed class Idrak.Abstraction.Testing.VisionLossSuite : Idrak.Abstractio
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.VoiceConverterSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.VoiceConverterUnderTest>
+  public VoiceConverterSuite()
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.VoiceConverterUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.VoiceConverterUnderTest : System.IEquatable<Idrak.Abstraction.Testing.VoiceConverterUnderTest>
+  public System.Func<System.Collections.Generic.IReadOnlyList<float[]>, float[]> Embed { get; init; }
+  public System.Func<float[], float[], float[]> Convert { get; init; }
+  public VoiceConverterUnderTest(int SampleRate, int EmbeddingSize, System.Func<System.Collections.Generic.IReadOnlyList<float[]>, float[]> Embed, System.Func<float[], float[], float[]> Convert, int LengthSlack)
+  public int EmbeddingSize { get; init; }
+  public int LengthSlack { get; init; }
+  public int SampleRate { get; init; }
+
+public sealed class Idrak.Abstraction.Testing.VoiceStoreSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.VoiceStoreUnderTest>
+  public VoiceStoreSuite(string folder)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.VoiceStoreUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.VoiceStoreUnderTest : System.IEquatable<Idrak.Abstraction.Testing.VoiceStoreUnderTest>
+  public System.Action<string, System.Collections.Generic.IReadOnlyList<string>, string?> Add { get; init; }
+  public System.Action<string, string> Export { get; init; }
+  public System.Func<System.Collections.Generic.IReadOnlyList<string>> List { get; init; }
+  public System.Func<string, bool> Remove { get; init; }
+  public System.Func<string, float[]?> Embedding { get; init; }
+  public System.Func<string, string> Import { get; init; }
+  public VoiceStoreUnderTest(System.Action<string, System.Collections.Generic.IReadOnlyList<string>, string?> Add, System.Func<string, float[]?> Embedding, System.Func<System.Collections.Generic.IReadOnlyList<string>> List, System.Action<string, string> Export, System.Func<string, string> Import, System.Func<string, bool> Remove)

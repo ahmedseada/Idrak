@@ -1,6 +1,6 @@
 # Plan 21: Idrak.Audio (sound in and out: codecs, features, speech recognition and synthesis)
 
-**Status:** planned 2026-10-15 against the code at `abstraction` 82d84937; S0 (the reference fixture) and S1 (AudioData, the codec and encoder registries, the WAV codec and encoder) built the same day, CPU-checked; S1's FLAC decoder (decision 6) built after, its fixture in flac/ from libFLAC through soundfile, "audio codecs: flac:" passing on the CPU (ten minutes of 16-bit FLAC in about 130 ms); MP3 and MP2 as the plug-in samples/Mp3Audio (an IAudioCodec through AudioCodecs.Register, minimp3 ported, frames decoded in parallel with the in-order samples), ffmpeg's samples within 1e-4 and its lengths on 15 files, "audio codecs: mp3:" passing on the CPU (three minutes of 44.1 kHz stereo in about 320 ms on 4 threads). **Built and CPU-checked 2026-10-15 (after the 09:25 UTC snapshot):** S2 (Resampler, Stft host FFT and composed path, MelFilterbank, LogMelFeatures, AudioFeatureOptions/Extractors, AudioFeatureSuite, "audio features:" tests); S3 (ChatAudio part and AudioPartKind, SoftParts contract, the tuning encoder and readers with "audios" lists, "audio chat:" tests); S5 (SpeechSynthesis and Vocoders contracts, Stft.Inverse, GriffinLim, samples/VitsSpeech, "audio tts:" tests). IDRAK_FILTER="audio" passes 19 of 19 on the CPU. S4 built and CPU-checked the same day ("audio asr:", 6 tests): the Whisper plug-in (samples/WhisperSpeech, referenced by the tests) gives transformers' encoder output and logits within 1e-4 and its greedy, beam-4 and timestamp ids exactly on tiny-whisper/ (regenerated with weights at std 0.5 so the references vary, through transformers' generate with Whisper's processors), BeamSearch matches a reference search and applies its rules to log-probabilities as transformers does, CrossAttention matches a loop and its gradients, and the kit's SpeechRecognizerSuite passes; IDRAK_FILTER="audio" passes 29 of 29 on the CPU and on CUDA (the owner's run: Transcribe of 1.5 s warm in about 24 ms, 30 s of log-mel in about 9 ms). Not in S4 yet: sampling with the temperature fallback, segment batches through Transcribe (the encoder takes a batch), the ctc/ fixture (S6's). S9 (voices: a real person's voice installed by name, three routes) planned 2026-10-15. S5's Arabic romanisation (decision 3) built after: the VITS plug-in's TextRomanizers with "uroman-arabic", uroman's output exactly on 218 cases (tools/audio/make_uroman_table.py). Next: S6 and S7. The package name
+**Status:** planned 2026-10-15 against the code at `abstraction` 82d84937; S0 (the reference fixture) and S1 (AudioData, the codec and encoder registries, the WAV codec and encoder) built the same day, CPU-checked; S1's FLAC decoder (decision 6) built after, its fixture in flac/ from libFLAC through soundfile, "audio codecs: flac:" passing on the CPU (ten minutes of 16-bit FLAC in about 130 ms); MP3 and MP2 as the plug-in samples/Mp3Audio (an IAudioCodec through AudioCodecs.Register, minimp3 ported, frames decoded in parallel with the in-order samples), ffmpeg's samples within 1e-4 and its lengths on 15 files, "audio codecs: mp3:" passing on the CPU (three minutes of 44.1 kHz stereo in about 320 ms on 4 threads). **Built and CPU-checked 2026-10-15 (after the 09:25 UTC snapshot):** S2 (Resampler, Stft host FFT and composed path, MelFilterbank, LogMelFeatures, AudioFeatureOptions/Extractors, AudioFeatureSuite, "audio features:" tests); S3 (ChatAudio part and AudioPartKind, SoftParts contract, the tuning encoder and readers with "audios" lists, "audio chat:" tests); S5 (SpeechSynthesis and Vocoders contracts, Stft.Inverse, GriffinLim, samples/VitsSpeech, "audio tts:" tests). IDRAK_FILTER="audio" passes 19 of 19 on the CPU. S4 built and CPU-checked the same day ("audio asr:", 6 tests): the Whisper plug-in (samples/WhisperSpeech, referenced by the tests) gives transformers' encoder output and logits within 1e-4 and its greedy, beam-4 and timestamp ids exactly on tiny-whisper/ (regenerated with weights at std 0.5 so the references vary, through transformers' generate with Whisper's processors), BeamSearch matches a reference search and applies its rules to log-probabilities as transformers does, CrossAttention matches a loop and its gradients, and the kit's SpeechRecognizerSuite passes; IDRAK_FILTER="audio" passes 29 of 29 on the CPU and on CUDA (the owner's run: Transcribe of 1.5 s warm in about 24 ms, 30 s of log-mel in about 9 ms). Not in S4 yet: sampling with the temperature fallback, segment batches through Transcribe (the encoder takes a batch), the ctc/ fixture (S6's). S9 (voices: a real person's voice installed by name, three routes) planned 2026-10-15. S9 route B (voice conversion) built and CPU-checked the same day: the contracts in Idrak.Audio (ISpeakerEncoder, IVoiceConverter, IVoiceConverterFamily and the VoiceConverters registry, IVoiceStore and VoiceStores with the built-in FolderVoiceStore, VoicedSynthesizer resolving SpeechSynthesisOptions.Voice), the plug-in samples/OpenVoice (OpenVoice's tone colour converter over the VITS plug-in's layers), the kit's VoiceConverterSuite and VoiceStoreSuite, "audio voices:" (4 tests) passing on the CPU: OpenVoice's spectrogram, embeddings and v1 and v2 conversions within 1e-4 on tiny-openvoice/; the owner's script samples/OpenVoice/voice.cs until S7's `idrak voice`. IDRAK_FILTER="audio" passes 36 of 36 on the CPU. Routes A (a multi-speaker fixture) and C (after S6) are not built. S5's Arabic romanisation (decision 3) built after: the VITS plug-in's TextRomanizers with "uroman-arabic", uroman's output exactly on 218 cases (tools/audio/make_uroman_table.py). Next: S6 and S7. The package name
 `Idrak.Audio` is reserved in the library (`src/Idrak.Abstraction/LibraryDefaults.cs:29-30`, with a
 `DynamicDependency` on `Idrak.Audio.LibraryRegistrations` at line 43), so the day the assembly exists its
 registrations are found without a change to Idrak.Abstraction.
@@ -872,29 +872,34 @@ adversarial losses (multi-period and multi-scale discriminators, the feature-mat
 work, written as S9's last step so the routes before it do not wait for it. The result installs as a voice of kind
 `checkpoint` (a fine-tuned folder) and is used as any other.
 
-**The contracts** (`src/Idrak.Audio/Abstractions/Voices.cs`):
+**The contracts** (`src/Idrak.Audio/Abstractions/Voices.cs`, as built for route B):
 
 ```csharp
 public sealed record VoiceProfile(string Name, string Kind, IReadOnlyList<string> Languages, string Folder, JsonObject Manifest);
-    // Kind: "speaker" (a checkpoint's speaker: route A), "embedding" (a speaker embedding for a converter or a cloning
-    // family: route B), "checkpoint" (a fine-tuned synthesizer: route C). Manifest: voice.json as read.
-public interface ISpeakerEncoder { string Name { get; } int SampleRate { get; } float[] Embed(IReadOnlyList<AudioData> clips, Device device); }
-public static class SpeakerEncoders           // registry (SlotTable), plug-ins register theirs
-public interface IVoiceConverter
-{
-    string Name { get; } int SampleRate { get; } string Encoder { get; }    // the speaker encoder its embeddings come from
-    AudioData Convert(AudioData speech, VoiceProfile target, VoiceConversionOptions? options = null, Device? device = null);
-}
-public sealed record VoiceConversionOptions { float Tau { get; init; } = 0.3f; int MaxSeconds { get; init; } = 30; }   // the converter's own knobs, settings
-public static class VoiceConverters           // registry
+    // Kind (VoiceKinds): "speaker" (a checkpoint's speaker: route A), "embedding" (a speaker embedding for a converter:
+    // route B), "checkpoint" (a fine-tuned synthesizer: route C). Typed views of the manifest: Encoder, EncoderFolder,
+    // EmbeddingSize, Consent, Clips.
+public interface ISpeakerEncoder : IDisposable { string Name { get; } int SampleRate { get; } int EmbeddingSize { get; } Device Device { get; } string? Folder { get; }
+    float[] Embed(IReadOnlyList<AudioData> clips, CancellationToken ct = default); }
+public interface IVoiceConverter : ISpeakerEncoder    // a converter embeds with its own encoder: its embeddings are its own
+{ AudioData Convert(AudioData speech, ReadOnlySpan<float> target, VoiceConversionOptions? options = null, CancellationToken ct = default); }
+public sealed record VoiceConversionOptions { float Tau = 0.3f; int Seed; float[]? Source; double MaxSeconds = 30; }
+public interface IVoiceConverterFamily { string Name { get; } bool Recognizes(JsonObject config); IVoiceConverter Read(VoiceConverterCheckpoint c, VoiceConverterLoadOptions o); }
+public static class VoiceConverters           // registry (SlotTable), the library registers none; Load(path, options) through CheckpointFormats
 public interface IVoiceStore
 {
-    IReadOnlyList<VoiceProfile> List(); VoiceProfile? Find(string name);
-    VoiceProfile Add(string name, IReadOnlyList<string> clips, VoiceAddOptions options);   // embeds the clips, writes the folder
-    VoiceProfile Import(string folderOrZip); void Export(string name, string zip); bool Remove(string name);
+    string Name { get; } string Location { get; } IReadOnlyList<VoiceProfile> List(); VoiceProfile? Find(string name);
+    VoiceProfile Add(string name, IReadOnlyList<string> clips, ISpeakerEncoder encoder, VoiceAddOptions options, CancellationToken ct = default);
+    float[] ReadEmbedding(VoiceProfile voice); VoiceProfile Import(string folderOrZip, bool overwrite = false); void Export(string name, string zip); bool Remove(string name);
 }
-public static class VoiceStores               // "folder" built in: IDRAK_VOICES, else voices/ under IDRAK_CACHE
+public static class VoiceStores               // "folder" built in (FolderVoiceStore): IDRAK_VOICES, else voices/ under IDRAK_CACHE or ~/.cache/idrak
+public sealed class VoicedSynthesizer : ISpeechSynthesizer   // resolves SpeechSynthesisOptions.Voice (below); VoiceConversion, Conversion, VoiceStore are options
 ```
+
+One registry of converter families stands for the planned SpeakerEncoders and VoiceConverters: a converter's embeddings
+come from its own encoder (OpenVoice's reference encoder is part of its checkpoint), so a separate encoder registry
+would only let two disagree. `VoiceAddOptions`: Consent (required), Languages, KeepClips, TrimSilence (40 dB under the
+peak, 10 ms windows), MinClipSeconds, MinAgreement, Overwrite. `SynthesisStats` gained `Conversion`.
 
 **A voice folder** (what installing writes): `voice.json` (name, kind, languages, the encoder and converter names and
 versions, the embedding's width, the clips' SHA-256s and seconds, the date, and a `consent` object: who is speaking,
@@ -925,8 +930,11 @@ the checkpoint's speakers and the installed voices.
 1. Record the speaker, with their consent: 1 to 3 minutes of normal speech in a quiet room, any format AudioCodecs reads
    (WAV, FLAC, MP3), one or several files. Clean it: `idrak data audio rec\ -o voice-clips --rate 22050 --mono --split
    silence --min-seconds 3`.
-2. Fetch the converter and its plug-in: `idrak pull <owner>/openvoice-v2-safetensors` (or convert the official
-   checkpoint once with `python tools/audio/convert_openvoice.py`), and keep `Idrak.OpenVoice.dll` at hand for `-P`.
+2. Fetch the converter and its plug-in: `hf download myshell-ai/OpenVoiceV2 converter/checkpoint.pth converter/config.json
+   --local-dir D:\Models\OpenVoiceV2`, then convert it once with `python tools/audio/convert_openvoice.py
+   D:\Models\OpenVoiceV2\converter -o D:\Models\openvoice-v2` (or `idrak pull` a safetensors copy the owner publishes),
+   and keep `Idrak.OpenVoice.dll` at hand for `-P`. Until S7 builds `idrak voice`, steps 3 to 6 run through
+   `samples/OpenVoice/voice.cs` (its README gives the commands).
 3. Install the voice: `idrak voice add ahmed --from voice-clips -P Idrak.OpenVoice.dll --language ar --consent "I, Ahmed
    Seada, agree that this voice is used for speech made with Idrak."`
 4. Check it: `idrak voice show ahmed` (the clips' agreement, the consent, the folder).
@@ -937,11 +945,12 @@ the checkpoint's speakers and the installed voices.
 
 For route A no install is needed: `idrak speak kakao-enterprise/vits-vctk "Hello" --voice p225 -o p225.wav`.
 
-**The plug-in** `samples/OpenVoice/Idrak.OpenVoice`: `OpenVoiceSpeakerEncoder` (the reference encoder: a linear
-spectrogram through `Stft.Magnitude`, convolutions, a GRU, the 256-wide embedding), `OpenVoiceConverter` (the
-posterior encoder over the source's spectrogram, the flows forward with the source embedding and backward with the
-target's, the HiFi-GAN decoder; the VITS plug-in's `VitsLayers` reused), registered in `SpeakerEncoders` and
-`VoiceConverters` as "openvoice-v2".
+**The plug-in** `samples/OpenVoice/Idrak.OpenVoice` (as built): `OpenVoiceConverter` (OpenVoice's spectrogram through
+`Stft.Power`, the reference encoder `OpenVoiceReferenceEncoder` of LayerNorm, six weight-normed convolutions, the core
+GRU and a projection; the VITS plug-in's `VitsPosteriorEncoder`, `VitsFlow.Forward` and `Reverse` and `HifiGanDecoder`,
+its tensors read under the VITS names by `OpenVoiceTensors`), registered in `VoiceConverters` as "openvoice" (v1 and v2:
+`zero_g` is read from config.json). Long clips are embedded in windows of `EmbedSeconds` (10 s) and averaged, long
+speech converted in pieces of `MaxSeconds`, so device memory does not grow with the length.
 
 **Tests** (`"audio voices:"`): a tiny random converter and speaker encoder built from OpenVoice's model code in the
 fixture tool (`tools/audio/make_tiny_audio.py --sections voices`) give its embedding and converted samples within 1e-4;

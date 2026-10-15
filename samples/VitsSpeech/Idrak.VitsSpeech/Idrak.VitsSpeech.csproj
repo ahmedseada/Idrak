@@ -17,6 +17,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The OpenVoice converter plug-in reuses the VITS layers (the WaveNet, the flow, the HiFi-GAN decoder). -->
+    <InternalsVisibleTo Include="Idrak.OpenVoice" />
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Idrak.Abstraction" />
     <Using Include="Idrak.Abstraction.Devices" />
     <Using Include="Idrak.Audio.Abstractions" />

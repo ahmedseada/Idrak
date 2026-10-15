@@ -6,7 +6,8 @@ namespace Idrak.VitsSpeech;
 /// <summary>
 /// transformers' <c>VitsResidualCouplingBlock</c> run in reverse: for each coupling layer from the last, the channels
 /// flipped, then the first half conditions a WaveNet whose output (a pointwise projection) is subtracted from the second
-/// half (the log-stddev is zero, so there is no scaling).
+/// half (the log-stddev is zero, so there is no scaling). <see cref="Forward"/> runs it the other way (what voice
+/// conversion takes a posterior's latents through, to the prior).
 /// </summary>
 internal sealed class VitsFlow : IDisposable
 {
@@ -27,6 +28,17 @@ internal sealed class VitsFlow : IDisposable
         for (int i = _layers.Length - 1; i >= 0; i--)
         {
             z = _layers[i].Reverse(VitsOps.FlipRows(z), speaker);
+        }
+
+        return z;
+    }
+
+    /// <summary>The prior latents [F, T] of the acoustic latents [F, T] (the inverse of <see cref="Reverse"/>), with the speaker's embedding [E, 1].</summary>
+    public Tensor Forward(Tensor z, Tensor? speaker)
+    {
+        for (int i = 0; i < _layers.Length; i++)
+        {
+            z = VitsOps.FlipRows(_layers[i].Forward(z, speaker));
         }
 
         return z;
@@ -55,9 +67,17 @@ internal sealed class VitsFlow : IDisposable
         {
             var first = z.Narrow(0, 0, _half);
             var second = z.Narrow(0, _half, _half);
-            var mean = _post.Forward(_waveNet.Forward(_pre.Forward(first), speaker));
-            return Tensor.Concat([first, second - mean], 0);
+            return Tensor.Concat([first, second - Mean(first, speaker)], 0);
         }
+
+        public Tensor Forward(Tensor z, Tensor? speaker)
+        {
+            var first = z.Narrow(0, 0, _half);
+            var second = z.Narrow(0, _half, _half);
+            return Tensor.Concat([first, second + Mean(first, speaker)], 0);
+        }
+
+        private Tensor Mean(Tensor first, Tensor? speaker) => _post.Forward(_waveNet.Forward(_pre.Forward(first), speaker));
 
         public void Dispose()
         {

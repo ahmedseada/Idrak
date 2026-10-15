@@ -1,0 +1,10 @@
+{
+ "clips": [
+  "wav/stereo16 channel 1",
+  "wav/stereo16 channel 1, second half"
+ ],
+ "frames": 1500,
+ "samples": 24000,
+ "source": "wav/pcm16 (its samples)",
+ "tau": 0.0
+}

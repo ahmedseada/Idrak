@@ -98,6 +98,12 @@ public sealed record VitsConfig
     /// <summary>The WaveNet layers inside each coupling layer.</summary>
     public int PriorWaveNetLayers { get; init; } = 4;
 
+    /// <summary>The linear spectrogram's bins the posterior encoder reads (n_fft / 2 + 1).</summary>
+    public int SpectrogramBins { get; init; } = 513;
+
+    /// <summary>The WaveNet layers of the posterior encoder.</summary>
+    public int PosteriorWaveNetLayers { get; init; } = 16;
+
     /// <summary>The WaveNet convolutions' kernel.</summary>
     public int WaveNetKernelSize { get; init; } = 5;
 
@@ -161,6 +167,8 @@ public sealed record VitsConfig
             StochasticDurations = config["use_stochastic_duration_prediction"]?.GetValue<bool>() ?? defaults.StochasticDurations,
             PriorFlows = Int(config, "prior_encoder_num_flows", defaults.PriorFlows),
             PriorWaveNetLayers = Int(config, "prior_encoder_num_wavenet_layers", defaults.PriorWaveNetLayers),
+            SpectrogramBins = Int(config, "spectrogram_bins", defaults.SpectrogramBins),
+            PosteriorWaveNetLayers = Int(config, "posterior_encoder_num_wavenet_layers", defaults.PosteriorWaveNetLayers),
             WaveNetKernelSize = Int(config, "wavenet_kernel_size", defaults.WaveNetKernelSize),
             WaveNetDilationRate = Int(config, "wavenet_dilation_rate", defaults.WaveNetDilationRate),
             NoiseScale = Float(config, "noise_scale", defaults.NoiseScale),

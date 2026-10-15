@@ -50,6 +50,13 @@ inference. `VitsTokenizer` romanises such text first, with the romanizer `TextRo
 - A script no registered romanizer covers is refused, naming `TextRomanizers.Register`: an app registers an
   `ITextRomanizer` for it (asked before the earlier ones), or gives Latin text.
 
+## Reused by the OpenVoice converter (plan 21, S9)
+
+`samples/OpenVoice` (a voice converter plug-in) reads OpenVoice's tensors under these layers' names and runs
+`VitsPosteriorEncoder` (transformers' `VitsPosteriorEncoder`: a spectrogram to latents, `spectrogram_bins` and
+`posterior_encoder_num_wavenet_layers` from config.json), `VitsFlow.Forward` (the coupling layers forward, the inverse of
+`Reverse`) and `HifiGanDecoder`. The project lets that assembly (and the tests) see its internal layers.
+
 ## Not done
 
 - `SpeechSynthesisFamilies` has no `Create` (a VITS model from a description): MMS-TTS checkpoints are loaded, not made.

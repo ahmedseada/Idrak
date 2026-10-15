@@ -25,7 +25,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "vits", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "vits", "voices", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -312,6 +312,77 @@ def write_mp3s(out):
         f.write(whole[: len(whole) // 2 + 37])                                # cut inside a frame
     dump_json(os.path.join(folder, "files.json"), files)
     return files
+
+
+# ------------------------------------------------------------------ voices: a tiny OpenVoice tone colour converter
+
+def write_voices(out):
+    """A tiny random OpenVoice converter (openvoice-cli's SynthesizerTrn with n_speakers 0: the reference encoder, the
+    posterior encoder, the flows and the HiFi-GAN decoder), saved as model.safetensors (the state dict, weight norm's
+    weight_g and weight_v as stored, as tools/audio/convert_openvoice.py writes it), with OpenVoice's config.json; and its outputs: the linear spectrogram of wav/pcm16, the speaker embeddings of the
+    source and of two target clips (and their mean, as extract_se takes it), and the conversion of the source to the
+    target with tau 0 (no noise), zero_g on (OpenVoice v2) and off (v1). The reference encoder's six weight-normed
+    convolutions get gains of ten times the drawn ones' size: at the drawn gains (about 0.16 a filter) the signal fades
+    through them, the GRU sees almost nothing, and every full-length clip gets the same embedding (references that
+    cannot tell a right encoder from a wrong one)."""
+    torch = torch_setup()
+    from openvoice_cli.models import SynthesizerTrn
+    from openvoice_cli.mel_processing import spectrogram_torch
+    from safetensors.torch import save_file
+    folder = os.path.join(out, "tiny-openvoice")
+    ref = os.path.join(folder, "reference")
+    os.makedirs(ref, exist_ok=True)
+    data = {"sampling_rate": 16000, "filter_length": 64, "hop_length": 16, "win_length": 64, "n_speakers": 0}
+    model_cfg = {"inter_channels": 8, "hidden_channels": 16, "filter_channels": 32, "n_heads": 2, "n_layers": 2, "kernel_size": 3,
+                 "p_dropout": 0.0, "resblock": "1", "resblock_kernel_sizes": [3], "resblock_dilation_sizes": [[1, 3, 5]],
+                 "upsample_rates": [4, 4], "upsample_initial_channel": 32, "upsample_kernel_sizes": [8, 8], "gin_channels": 16, "zero_g": True}
+    config = {"_version_": "v2", "data": data, "model": model_cfg}
+
+    def build(zero_g):
+        m = SynthesizerTrn(0, data["filter_length"] // 2 + 1, n_speakers=0, **{**model_cfg, "zero_g": zero_g})
+        randomize(m, torch, 2031, std=0.2)
+        with torch.no_grad():
+            for name, p in m.ref_enc.convs.named_parameters():
+                if name.endswith("weight_g"):
+                    p.copy_(p.abs() * 10)
+        return m.eval()
+
+    model = build(True)
+    state = {k: v.contiguous() for k, v in model.state_dict().items()}
+    save_file(state, os.path.join(folder, "model.safetensors"))
+    dump_json(os.path.join(folder, "config.json"), config)
+
+    def spec(samples):
+        y = torch.from_numpy(samples.astype(np.float32))[None]
+        return spectrogram_torch(y, data["filter_length"], data["sampling_rate"], data["hop_length"], data["win_length"], center=False)
+
+    def embed(m, samples):
+        with torch.no_grad():
+            return m.ref_enc(spec(samples).transpose(1, 2)).unsqueeze(-1)                # [1, gin, 1]
+
+    source = load_wav_npy(out, "pcm16")[0]
+    other = load_wav_npy(out, "stereo16")[1]                                        # the second channel: another "speaker"
+    clips = [other, other[len(other) // 2:]]
+    save_npy(ref, "spectrogram.npy", spec(source)[0].numpy().astype(np.float32))     # [freq, frames]
+    src = embed(model, source)
+    embs = [embed(model, c) for c in clips]
+    tgt = torch.stack(embs).mean(0)
+    save_npy(ref, "embedding-source.npy", src[0, :, 0].numpy().astype(np.float32))
+    save_npy(ref, "embedding-clips.npy", torch.cat([e[0, :, 0][None] for e in embs]).numpy().astype(np.float32))
+    save_npy(ref, "embedding-target.npy", tgt[0, :, 0].numpy().astype(np.float32))
+    y = spec(source)
+    lengths = torch.LongTensor([y.size(-1)])
+    with torch.no_grad():
+        converted = model.voice_conversion(y, lengths, sid_src=src, sid_tgt=tgt, tau=0.0)[0][0, 0]
+        v1 = build(False)
+        v1.load_state_dict(state)
+        converted_v1 = v1.voice_conversion(y, lengths, sid_src=src, sid_tgt=tgt, tau=0.0)[0][0, 0]
+    save_npy(ref, "converted-v2.npy", converted.numpy().astype(np.float32))
+    save_npy(ref, "converted-v1.npy", converted_v1.numpy().astype(np.float32))
+    dump_json(os.path.join(ref, "input.json"), {"source": "wav/pcm16 (its samples)", "clips": ["wav/stereo16 channel 1", "wav/stereo16 channel 1, second half"],
+                                               "tau": 0.0, "frames": int(y.size(-1)), "samples": int(converted.numel())})
+    index, _ = safetensors_index(os.path.join(folder, "model.safetensors"))
+    dump_json(os.path.join(folder, "tensors.json"), index)
 
 
 # ------------------------------------------------------------------ torch sections
@@ -658,6 +729,8 @@ def main():
         write_ctc(args.out)
     if "vits" in sections:
         write_vits(args.out)
+    if "voices" in sections:
+        write_voices(args.out)
     if "transcripts" in sections:
         write_transcripts(args.out)
     manifest(args.out, sections)

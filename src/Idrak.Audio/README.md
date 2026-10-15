@@ -17,6 +17,13 @@ Built so far (phase S1):
   checked (a damaged frame refused by number). `FlacOptions`: `KeepCutEnd` (a file cut inside its last frame keeps its
   whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3, Ogg and AAC are plug-ins (`AudioCodecs.Register`).
 
+Voices (phase S9, route B): `VoiceConverters` (a registry of converter families, none in the library; OpenVoice is
+the plug-in `samples/OpenVoice`), `VoiceStores` with the built-in "folder" store (`FolderVoiceStore`: one folder per
+voice under `IDRAK_VOICES`, else voices/ under `IDRAK_CACHE` or `~/.cache/idrak`, with voice.json holding the consent,
+the clips' SHA-256s, seconds and agreements, and embedding.safetensors), and `VoicedSynthesizer`, which speaks
+`SpeechSynthesisOptions.Voice` as a checkpoint's speaker first, else as an installed voice (converted, a checkpoint of
+its own, or a named speaker).
+
 Planned next (the plan's phases): resampling and log-mel features on every device (S2), the "audio" chat part (S3),
 speech recognition and synthesis contracts with their families as plug-ins (S4, S5), training (S6) and the command
 line (S7).

@@ -35,6 +35,7 @@
     <ProjectReference Include="..\..\samples\IdrakVision\Idrak.IdrakVision\Idrak.IdrakVision.csproj" />
     <ProjectReference Include="..\..\samples\Mp3Audio\Idrak.Mp3Audio\Idrak.Mp3Audio.csproj" />
     <ProjectReference Include="..\..\samples\VitsSpeech\Idrak.VitsSpeech\Idrak.VitsSpeech.csproj" />
+    <ProjectReference Include="..\..\samples\OpenVoice\Idrak.OpenVoice\Idrak.OpenVoice.csproj" />
     <ProjectReference Include="..\..\samples\WhisperSpeech\Idrak.WhisperSpeech\Idrak.WhisperSpeech.csproj" />
   </ItemGroup>
 

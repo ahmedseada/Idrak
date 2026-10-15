@@ -14,8 +14,25 @@ namespace Idrak.Audio.Abstractions;
 /// </summary>
 public sealed record SpeechSynthesisOptions
 {
-    /// <summary>A speaker id or name when the family has several; null: the family's first.</summary>
+    /// <summary>
+    /// A speaker id or name when the family has several; null: the family's first. Through a
+    /// <see cref="VoicedSynthesizer"/> it can also name an installed voice (<see cref="IVoiceStore"/>): a checkpoint's
+    /// speaker is looked for first, then the store's voices.
+    /// </summary>
     public string? Voice { get; init; }
+
+    /// <summary>
+    /// How an installed embedding voice is used (<see cref="VoicedSynthesizer"/>): "auto" converts the speech with the
+    /// converter family the voice was made with; "off" speaks in the synthesizer's own voice, unconverted (to compare);
+    /// a <see cref="VoiceConverters"/> name requires that family (a voice made by another is refused).
+    /// </summary>
+    public string VoiceConversion { get; init; } = "auto";
+
+    /// <summary>The conversion's own settings (tau, seed, pieces); null: <see cref="VoiceConversionOptions"/>' defaults with <see cref="Seed"/>.</summary>
+    public VoiceConversionOptions? Conversion { get; init; }
+
+    /// <summary>The <see cref="VoiceStores"/> name installed voices are looked up in when the <see cref="VoicedSynthesizer"/> was given no store; null: "folder".</summary>
+    public string? VoiceStore { get; init; }
 
     /// <summary>The speaking rate: 2 speaks twice as fast (half the frames per token), 0.5 half as fast; 1 / the length scale.</summary>
     public float Rate { get; init; } = 1f;
@@ -45,7 +62,8 @@ public sealed record SpeechSynthesisOptions
 /// <param name="Vocoder">The samples from the model's output (the decoder or a vocoder).</param>
 /// <param name="PeakDeviceBytes">The device's peak memory over the call (0 when the device does not report it).</param>
 /// <param name="RealTimeFactor">The time taken over the sound's duration: below 1 is faster than real time.</param>
-public sealed record SynthesisStats(TimeSpan Text, TimeSpan Model, TimeSpan Vocoder, long PeakDeviceBytes, double RealTimeFactor);
+/// <param name="Conversion">Converting the speech to an installed voice (<see cref="VoicedSynthesizer"/>; zero when it was not converted).</param>
+public sealed record SynthesisStats(TimeSpan Text, TimeSpan Model, TimeSpan Vocoder, long PeakDeviceBytes, double RealTimeFactor, TimeSpan Conversion = default);
 
 /// <summary>A loaded text-to-speech model.</summary>
 public interface ISpeechSynthesizer : IDisposable
