@@ -95,6 +95,9 @@ public sealed class OpenVoiceConverter : IVoiceConverter
     /// </summary>
     public double EmbedSeconds { get; set; } = 10;
 
+    /// <summary>The seconds of sound the decoder makes in one piece, with its context (the same samples as one pass); 0: each conversion piece in one pass.</summary>
+    public double DecoderChunkSeconds { get; set; } = 10;
+
     /// <inheritdoc />
     public float[] Embed(IReadOnlyList<AudioData> clips, CancellationToken cancellationToken = default)
     {
@@ -202,7 +205,7 @@ public sealed class OpenVoiceConverter : IVoiceConverter
         var prior = _flow.Forward(latents, sourceColumn);
         var converted = _flow.Reverse(prior, targetColumn);
         Telemetry.InferenceStage(InferenceStageKind.Encoder, Device, started, spectrogram.Shape[1], (long)latents.Shape[0] * latents.Shape[1] * sizeof(float));
-        return _decoder.Forward(converted, zero ?? targetColumn).ToArray();
+        return _decoder.Samples(converted, zero ?? targetColumn, DecoderChunkSeconds <= 0 ? 0 : Math.Max(1, (int)(DecoderChunkSeconds * SampleRate / Config.HopLength)));
     }
 
     // The speech mixed to one channel at the converter's rate.

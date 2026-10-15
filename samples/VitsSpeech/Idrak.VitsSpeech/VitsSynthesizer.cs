@@ -68,6 +68,15 @@ public sealed class VitsSynthesizer : ISpeechSynthesizer
     /// <inheritdoc />
     public IReadOnlyList<string> Voices => _voices;
 
+    /// <summary>
+    /// The seconds of sound the decoder makes in one piece (each piece with its context, so the samples are a whole
+    /// pass's): the device's memory follows the piece, not the text's length. 0: the whole utterance in one pass.
+    /// </summary>
+    public double DecoderChunkSeconds { get; set; } = 10;
+
+    /// <summary>The decoder's piece in latent frames for <see cref="DecoderChunkSeconds"/> (0: one pass).</summary>
+    internal int DecoderChunkFrames => DecoderChunkSeconds <= 0 ? 0 : Math.Max(1, (int)(DecoderChunkSeconds * Config.SamplingRate / Config.HopLength));
+
     /// <summary>The HiFi-GAN decoder as a vocoder over the flow's latents [frames, flow_size] (what a model trained to produce them can use).</summary>
     public IVocoder Vocoder { get; }
 
@@ -306,7 +315,7 @@ public sealed class VitsSynthesizer : ISpeechSynthesizer
         Telemetry.InferenceStage(InferenceStageKind.Encoder, Device, telemetryStart, ids.Length, (long)frames * Config.FlowSize * sizeof(float));
         var modelTime = Stopwatch.GetElapsedTime(started);
         long decoderStart = Stopwatch.GetTimestamp();
-        var samples = _decoder.Forward(latents, speaker).ToArray();              // [1, frames · hop]
+        var samples = _decoder.Samples(latents, speaker, DecoderChunkFrames);              // [1, frames · hop]
         return (samples, durations, modelTime, Stopwatch.GetElapsedTime(decoderStart));
     }
 
@@ -367,7 +376,7 @@ public sealed class VitsSynthesizer : ISpeechSynthesizer
 
             using var noGrad = Autograd.NoGrad();
             using var scope = new TensorScope();
-            var samples = owner._decoder.Forward(logMel.To(owner.Device).Transpose(), null).ToArray();
+            var samples = owner._decoder.Samples(logMel.To(owner.Device).Transpose(), null, owner.DecoderChunkFrames);
             return new AudioData(samples, 1, SampleRate);
         }
     }

@@ -15,6 +15,7 @@ internal static partial class Tests
         ("audio tts: Stft.Inverse gives a random signal back from ComplexOnHost within 1e-4 away from the edges (centred and not), SamplesFor names the length, and a hop the window does not cover is refused", AudioTtsInverseStft),
         ("audio tts: Griffin-Lim on a tone's magnitudes gives a tone of the same frequency, finite and of the frames' length; the same spectrogram and seed twice give the same samples; the vocoder registry has griffin-lim as the library default and makes it from a log-mel whose peak band is the tone's", AudioTtsGriffinLim),
         ("audio tts: the VITS plug-in loads tiny-vits and speaks the fixture's ids with noise 0 within 1e-4 of reference/waveform.npy at the config's rate (the durations' frames times the hop), the same twice, Rate 2 no longer, text through the tokenizer equal to the ids, SpeakStream joined equal to Speak, the WAV saved and read back; without the plug-in the family is refused", AudioTtsVitsFixture),
+        ("audio tts: the VITS decoder in pieces (DecoderChunkSeconds) with its context frames on both sides gives one pass's samples within 1e-6 (pieces of 3, 7 and 50 frames, through Synthesize and the vocoder), where 50 frames decoded without context differ near the cut 100 times more; on the CPU its peak memory stays within 1.5 times while the latents grow fivefold", AudioTtsDecoderPieces),
         ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, refuses phonemes, romanises Arabic for a uroman checkpoint (uroman's output exactly on the tool's cases) and refuses a script no romanizer covers, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
     ];
 
@@ -260,6 +261,85 @@ internal static partial class Tests
         public bool Covers(System.Text.Rune rune) => rune.Value is >= 0x0370 and <= 0x03FF or >= 0x1F00 and <= 0x1FFF;
 
         public string Romanize(string text) => text;
+    }
+
+    private static void AudioTtsDecoderPieces(Device device)
+    {
+        VitsSpeechPlugin.Register();
+        using var model = (VitsSynthesizer)SpeechSynthesisModels.Load(TinyVits, new SpeechSynthesisLoadOptions { Device = device });
+        int flow = model.Config.FlowSize, hop = model.Config.HopLength, rate = model.Config.SamplingRate;
+        var random = new Random(77);
+        float[] Latents(int frames)
+        {
+            var values = new float[frames * flow];
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = random.NextSingle() * 2 - 1;
+            }
+
+            return values;
+        }
+
+        float[] Decode(float[] values, int frames, int chunkFrames)
+        {
+            model.DecoderChunkSeconds = chunkFrames * (double)hop / rate;
+            using var latents = Tensor.From(values, [frames, flow], device);
+            return model.Vocoder.Synthesize(latents, device).Samples;
+        }
+
+        var long200 = Latents(200);
+        var whole = Decode(long200, 200, 0);
+        Check(whole.Length == 200 * hop, $"one pass gives {whole.Length} samples for 200 frames of hop {hop}");
+        float worstPieces = 0;
+        foreach (int chunk in new[] { 3, 7, 50 })
+        {
+            float[] pieces = Decode(long200, 200, chunk);
+            float worst = 0;
+            for (int i = 0; i < whole.Length; i++)
+            {
+                worst = Math.Max(worst, MathF.Abs(whole[i] - pieces[i]));
+            }
+
+            worstPieces = Math.Max(worstPieces, worst);
+            Check(pieces.Length == whole.Length && worst <= 1e-6f, $"pieces of {chunk} frames differ from one pass by {worst:E2} (samples lie in [-1, 1]; the bound is 1e-6)");
+        }
+
+        // The context is what makes pieces exact: 50 frames decoded alone differ near their cut by far more.
+        var alone = Decode(long200[..(50 * flow)], 50, 0);
+        float edge = 0;
+        for (int i = 45 * hop; i < 50 * hop; i++)
+        {
+            edge = Math.Max(edge, MathF.Abs(whole[i] - alone[i]));
+        }
+
+        Check(edge > 100 * Math.Max(worstPieces, 1e-9f), $"50 frames decoded without context differ by {edge:E2} near the cut, pieces with context by {worstPieces:E2}");
+
+        var ids = JsonNode.Parse(File.ReadAllText(Path.Combine(TinyVits, "reference", "input.json")))!["ids"]!.AsArray().Select(v => (int)v!).ToArray();
+        var deterministic = new SpeechSynthesisOptions { NoiseScale = 0, DurationNoiseScale = 0 };
+        model.DecoderChunkSeconds = 0;
+        var (onePass, _) = model.Synthesize(ids, deterministic);
+        model.DecoderChunkSeconds = 2.0 * hop / rate;
+        var (inPieces, _) = model.Synthesize(ids, deterministic);
+        AssertClose(onePass.Samples, inPieces.Samples, 1e-6f, "Synthesize with the decoder in pieces of 2 frames against one pass");
+
+        if (device.Type == DeviceType.Cpu)
+        {
+            long Peak(int frames)
+            {
+                var values = Latents(frames);
+                model.DecoderChunkSeconds = 50.0 * hop / rate;
+                using var latents = Tensor.From(values, [frames, flow], device);
+                device.Backend.ResetPeakMemoryUsage();
+                long before = device.Backend.GetMemoryUsage().InUse;
+                model.Vocoder.Synthesize(latents, device);
+                return device.Backend.GetMemoryUsage().Peak - before;
+            }
+
+            long small = Peak(400), large = Peak(2000);
+            Check(large <= small * 1.5, $"the decoder's peak memory in pieces of 50 frames: {small} bytes for 400 frames, {large} for 2000 (it should not grow with the length)");
+        }
+
+        model.DecoderChunkSeconds = 10;
     }
 
     private static bool ThrowsSaying<TException>(Action action, string containing) where TException : Exception
