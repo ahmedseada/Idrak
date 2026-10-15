@@ -165,40 +165,48 @@
    "sha256": "a8c335b3edf501e0c9032930ca7c08d289c7741a8fd855504d9e447920cbfdc0"
   },
   "tiny-whisper/config.json": {
-   "bytes": 1204,
-   "sha256": "cfa8c4e2c91f82c636073db7e80ca0460cf0cae82d50721afebd31fadd4a1f8b"
+   "bytes": 1191,
+   "sha256": "83fc56f3487393ecad96ef7ce2c1880b2ca9f15c658b70f8e2ab7d891e38039e"
   },
   "tiny-whisper/generation_config.json": {
-   "bytes": 356,
-   "sha256": "c6784157584230130a612f9995022b07b156e88cbc06d54a6c9a701cd3bea236"
+   "bytes": 391,
+   "sha256": "8af8fb55bd543e16f0835b595f3dfdb65826462da176a451721bc5590bed4e6b"
   },
   "tiny-whisper/model.safetensors": {
    "bytes": 549680,
-   "sha256": "e44ff88fe6d0ead9335cef8691547fe94ccdb88a6113c05946e6f94c77a61c79"
+   "sha256": "511f89f5a7a02721c8656330e419b3f4e3fece3634301ea38644c77488a753c1"
   },
   "tiny-whisper/preprocessor_config.json": {
    "bytes": 315,
    "sha256": "ba2e601484abc80f4cded977f9a4fd4a53175b7d35c2f2511f0cfc3a32ad2499"
   },
   "tiny-whisper/reference/beam4-ids.json": {
-   "bytes": 182,
-   "sha256": "e368753ad2bfae981decfa59658283d198a4a7e0462cd913194874c32d01d385"
+   "bytes": 232,
+   "sha256": "e1bf4c9b2462370e3e38a336fe48c4376fc106eee95113d634934c65f0ec33c9"
   },
   "tiny-whisper/reference/encoder-output.npy": {
    "bytes": 192128,
-   "sha256": "a03147218c6ade969e9afebbf70b9a47bc65dc5dcad19f48a2548f5202f5c84e"
+   "sha256": "ad15de91917ba95e2f1813588f47306e8066e0b1b3915f5a299bdff80ff59e51"
   },
   "tiny-whisper/reference/greedy-ids.json": {
-   "bytes": 116,
-   "sha256": "537adbedc606c8405271e15bc6729030de6d5fd04f83fbcccf8b9f56125235d5"
+   "bytes": 167,
+   "sha256": "65fb9fc1c42b46c7caf5b00b0825db6d2531fb29e5c66e8bd6aa4b1e433a4356"
+  },
+  "tiny-whisper/reference/language.json": {
+   "bytes": 95,
+   "sha256": "529cb5ec1cf971e70b95e034c2f6c4f8c708731e7f63565a5396b71a966b777f"
   },
   "tiny-whisper/reference/logits-step1.npy": {
    "bytes": 2528,
-   "sha256": "88926883064dca12fbacbbcbf567c41c818a31ec67d205e4e8f0e832cadf22be"
+   "sha256": "95bca8babde8b77c6291d53966e69e2740d30f87b7f21caf21f1ecdb98717edf"
+  },
+  "tiny-whisper/reference/timestamps-beam4-ids.json": {
+   "bytes": 176,
+   "sha256": "56d48579dba492e707080888291aaf18d0d2187e0bd5a4aa37e145ecb6359ab1"
   },
   "tiny-whisper/reference/timestamps-ids.json": {
-   "bytes": 109,
-   "sha256": "697f948682b0870b9116447fbb0e43c6b39d542a34c8ec395ac688ff7046779e"
+   "bytes": 158,
+   "sha256": "1fe9e99d89c6919241284606107537104da0fa0fee0eeb93c97fbeab4805f09e"
   },
   "tiny-whisper/special_tokens.json": {
    "bytes": 720,

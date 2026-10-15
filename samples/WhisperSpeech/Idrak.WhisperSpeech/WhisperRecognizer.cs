@@ -359,7 +359,7 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
                 continue;
             }
 
-            var found = Segments(best, offset, (double)length / rate);
+            var found = Segments(best, offset, (double)length / rate, options.Timestamps);
             segments.AddRange(found);
             if (found.Count > 0)
             {
@@ -373,9 +373,10 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
         return new Transcription(text, language, segments, new TranscriptionStats(sound.Duration, decodeTime, features, encoder, decoder, peak, count, 1));
     }
 
-    // The segments of a hypothesis: timestamp tokens open and close phrases (times from the segment's offset); without
-    // any, one segment over the whole chunk. Special tokens are not part of the text.
-    private List<TranscriptSegment> Segments(BeamHypothesis best, double offset, double seconds)
+    // The segments of a hypothesis: with timestamps asked for, timestamp tokens open and close phrases (times from the
+    // segment's offset); without them, or without any timestamp token, one segment over the whole chunk (a timestamp token
+    // the model gives anyway is not a time then). Special tokens are not part of the text.
+    private List<TranscriptSegment> Segments(BeamHypothesis best, double offset, double seconds, bool timestamps)
     {
         var tokens = best.Tokens;
         float average = tokens.Count == 0 ? 0f : best.LogProb / tokens.Count;
@@ -386,7 +387,7 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
         int begin = Config.TimestampBegin;
         foreach (int token in tokens)
         {
-            if (token >= begin)
+            if (timestamps && token >= begin)
             {
                 double time = offset + (token - begin) * Config.TimePrecision;
                 if (start is { } s && text.Count > 0)

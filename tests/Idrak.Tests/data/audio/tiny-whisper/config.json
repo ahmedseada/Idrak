@@ -7,8 +7,7 @@
   ],
   "attention_dropout": 0.0,
   "begin_suppress_tokens": [
-    220,
-    50256
+    562
   ],
   "bos_token_id": 562,
   "classifier_proj_size": 256,
@@ -40,7 +39,7 @@
   "num_mel_bins": 80,
   "pad_token_id": 562,
   "scale_embedding": false,
-  "suppress_tokens": null,
+  "suppress_tokens": [],
   "tie_word_embeddings": true,
   "transformers_version": "5.19.0",
   "use_cache": true,

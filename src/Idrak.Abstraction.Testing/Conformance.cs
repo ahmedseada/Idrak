@@ -195,6 +195,29 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks a speech recognizer (Idrak.Audio's <c>ISpeechRecognizer</c>, or one of your own, given as
+    /// <see cref="SpeechRecognizerUnderTest"/>) on sounds the suite makes (<see cref="SpeechRecognizerSuite"/>): it
+    /// transcribes silence, tones, noise, a sound of milliseconds and an empty one without throwing, the segments in order
+    /// within the sound and in the text, the same text twice and from two threads at once, and, with
+    /// <paramref name="silenceMaxChars"/>, little text for silence. Two random cases unless <paramref name="options"/>
+    /// says otherwise (each transcribes four times).
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// Conformance.CheckSpeechRecognizer(new SpeechRecognizerUnderTest(16000, samples =&gt;
+    /// {
+    ///     var t = recognizer.Transcribe(new AudioData(samples, 1, 16000));
+    ///     return new RecognizedSpeech(t.Text, [.. t.Segments.Select(s =&gt; new RecognizedSegment(s.Start, s.End, s.Text))]);
+    /// })).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    public static ConformanceReport CheckSpeechRecognizer(SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(recognizer);
+        return Check(recognizer, new SpeechRecognizerSuite(silenceMaxChars), options ?? new ContractCheckOptions { RandomCases = 2 });
+    }
+
+    /// <summary>
     /// Checks an image model family (Idrak.Vision's <c>IImageModelFamily</c>, given as its loading: a checkpoint's path in, the
     /// loaded model wrapped as <see cref="ImageModelUnderTest"/> out) on checkpoints of its own
     /// (<see cref="ImageModelFamilySuite"/>): it loads, predicts finite outputs, the same every time, from several threads,

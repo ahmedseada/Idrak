@@ -10,6 +10,7 @@
   "<|ar|>": 565,
   "<|en|>": 564
  },
+ "max_initial_timestamp_index": 5,
  "max_length": 448,
  "no_timestamps_token_id": 568,
  "pad_token_id": 562,
