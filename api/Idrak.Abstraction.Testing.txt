@@ -39,6 +39,13 @@ public sealed record Idrak.Abstraction.Testing.AudioCodecUnderTest : System.IEqu
   public System.Func<System.ReadOnlyMemory<byte>, Idrak.Abstraction.Testing.AudioHeader?> ReadInfo { get; init; }
   public System.Func<System.ReadOnlyMemory<byte>, Idrak.Abstraction.Testing.DecodedAudio> Decode { get; init; }
 
+public sealed class Idrak.Abstraction.Testing.AudioFeatureSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.StftUnderTest>
+  public AudioFeatureSuite(int sampleRate = 16000)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.StftUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
 public readonly record struct Idrak.Abstraction.Testing.AudioHeader : System.IEquatable<Idrak.Abstraction.Testing.AudioHeader>
   public AudioHeader(int SampleRate, int Channels, long Samples)
   public int Channels { get; init; }
@@ -117,6 +124,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTuningDataFormat(System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>> read, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckVisionEncoder(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f, Idrak.Abstraction.Testing.ContractCheckOptions? options = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null)
 
@@ -269,6 +277,12 @@ public sealed class Idrak.Abstraction.Testing.ImageModelUnderTest : System.IDisp
   public string Task { get; }
   public void Dispose()
 
+public readonly record struct Idrak.Abstraction.Testing.PowerSpectra : System.IEquatable<Idrak.Abstraction.Testing.PowerSpectra>
+  public PowerSpectra(int Frames, int Bins, float[] Power)
+  public float[] Power { get; init; }
+  public int Bins { get; init; }
+  public int Frames { get; init; }
+
 public static class Idrak.Abstraction.Testing.Regression
   public const string OperationKind = "operation"
   public static Idrak.Abstraction.Testing.ConformanceReport Replay(string path, Idrak.Abstraction.Device device, Idrak.Abstraction.Testing.DeviceCheckOptions? options = null)
@@ -346,6 +360,14 @@ public sealed class Idrak.Abstraction.Testing.SegmentationMetricSuite : Idrak.Ab
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.SegmentationImage>, double> implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.StftUnderTest : System.IEquatable<Idrak.Abstraction.Testing.StftUnderTest>
+  public StftUnderTest(int WindowSize, int HopSize, bool Center, System.Func<int, float> Window, System.Func<float[], Idrak.Abstraction.Testing.PowerSpectra> Power)
+  public System.Func<float[], Idrak.Abstraction.Testing.PowerSpectra> Power { get; init; }
+  public System.Func<int, float> Window { get; init; }
+  public bool Center { get; init; }
+  public int HopSize { get; init; }
+  public int WindowSize { get; init; }
 
 public static class Idrak.Abstraction.Testing.Stress
   public static Idrak.Abstraction.Testing.StressReport Run(Idrak.Abstraction.Device device, Idrak.Abstraction.Testing.StressOptions? options = null, System.Threading.CancellationToken cancellation = default)

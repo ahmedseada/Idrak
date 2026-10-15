@@ -268,6 +268,29 @@ public sealed record Idrak.Generation.BatchChunk : System.IEquatable<Idrak.Gener
   public string Text { get; init; }
   public string? DoneReason { get; init; }
 
+public sealed record Idrak.Generation.BeamHypothesis : System.IEquatable<Idrak.Generation.BeamHypothesis>
+  public BeamHypothesis(System.Collections.Generic.IReadOnlyList<int> Tokens, float Score, float LogProb)
+  public System.Collections.Generic.IReadOnlyList<int> Tokens { get; init; }
+  public float LogProb { get; init; }
+  public float Score { get; init; }
+
+public sealed record Idrak.Generation.BeamOptions : System.IEquatable<Idrak.Generation.BeamOptions>
+  public BeamOptions()
+  public System.Collections.Generic.IReadOnlyList<int> BeginSuppressTokens { get; init; }
+  public System.Collections.Generic.IReadOnlyList<int> SuppressTokens { get; init; }
+  public bool EarlyStopping { get; init; }
+  public float LengthPenalty { get; init; }
+  public int Beams { get; init; }
+  public int EndToken { get; init; }
+  public int MaxTokens { get; init; }
+  public int MinTokens { get; init; }
+  public int NoRepeatNgram { get; init; }
+
+public static class Idrak.Generation.BeamSearch
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Generation.BeamHypothesis> Decode(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Generation.DecodingContext, Idrak.Abstraction.Tensor> step, Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int> prompt, Idrak.Generation.BeamOptions options, Idrak.Generation.LogitsFilter? filter = null, System.Threading.CancellationToken cancellationToken = default)
+
+public delegate void Idrak.Generation.LogitsFilter(int step, System.ReadOnlySpan<int> generated, System.Span<float> logits)
+
 public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
   public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Abstraction.Device Device { get; }
@@ -746,15 +769,38 @@ public sealed class Idrak.Layers.ConvTranspose2d : Idrak.Abstraction.Module
   public override string ToString()
   public static Idrak.Layers.ConvTranspose2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? outputPadding = null, (int, int)? dilation = null, int groups = 1)
 
+public sealed class Idrak.Layers.CrossAttention : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
+  public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) Project(Idrak.Abstraction.Tensor memory)
+  public CrossAttention(Idrak.Layers.Linear query, Idrak.Layers.Linear key, Idrak.Layers.Linear value, Idrak.Layers.Linear output, int heads)
+  public CrossAttention(int dim, int heads, int? memoryDim = null, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor memory)
+  public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
+  public Idrak.Layers.Linear Key { get; }
+  public Idrak.Layers.Linear Output { get; }
+  public Idrak.Layers.Linear Query { get; }
+  public Idrak.Layers.Linear Value { get; }
+  public float ScoreScale { get; init; }
+  public int Dim { get; }
+  public int HeadDim { get; }
+  public int Heads { get; }
+  public int MemoryDim { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public void SetMemory(Idrak.Abstraction.Tensor memory, Idrak.Abstraction.Generation.DecodingContext context)
+
 public sealed class Idrak.Layers.DecoderBlock : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
+  public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module crossNorm, Idrak.Layers.CrossAttention cross, Idrak.Abstraction.Module feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Layers.Dropout? residualDropout = null)
   public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module? feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Abstraction.Module? postAttentionNorm = null, Idrak.Abstraction.Module? postFeedForwardNorm = null, Idrak.Layers.Dropout? residualDropout = null)
   public Idrak.Abstraction.Module AttentionNorm { get; }
   public Idrak.Abstraction.Module FeedForward { get; }
+  public Idrak.Abstraction.Module? CrossNorm { get; }
   public Idrak.Abstraction.Module? FeedForwardNorm { get; }
   public Idrak.Abstraction.Module? PostAttentionNorm { get; }
   public Idrak.Abstraction.Module? PostFeedForwardNorm { get; }
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Layers.CausalSelfAttention Attention { get; }
+  public Idrak.Layers.CrossAttention? Cross { get; }
   public Idrak.Layers.Dropout? ResidualDropout { get; }
   public bool Parallel { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
@@ -781,6 +827,12 @@ public sealed class Idrak.Layers.Embedding : Idrak.Abstraction.Module
   public static Idrak.Layers.Embedding FromBFloat16(Idrak.Abstraction.Generation.BFloat16Weight weight)
   public static Idrak.Layers.Embedding FromHead(Idrak.Layers.Linear head)
   public static Idrak.Layers.Embedding FromWeights(Idrak.Abstraction.Tensor weight)
+
+public sealed class Idrak.Layers.EncoderMemory : System.IDisposable
+  public Idrak.Abstraction.Tensor Memory { get; }
+  public static Idrak.Abstraction.Tensor? Current { get; }
+  public static Idrak.Layers.EncoderMemory Use(Idrak.Abstraction.Tensor memory)
+  public void Dispose()
 
 public sealed class Idrak.Layers.ExactGELU : Idrak.Abstraction.Module
   public ExactGELU()

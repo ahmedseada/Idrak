@@ -28,53 +28,13 @@ public abstract class Idrak.Nlp.Abstractions.DistillationTeacher : System.IDispo
   public void Check(Idrak.Abstraction.Generation.ITokenizer student)
   public void Dispose()
 
-public sealed record Idrak.Nlp.Abstractions.FeatureCacheKey : System.IEquatable<Idrak.Nlp.Abstractions.FeatureCacheKey>
-  public FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage = "tower")
-  public System.Text.Json.Nodes.JsonArray ToJson()
-  public const string FeaturesStage = "features"
-  public const string PixelsStage = "pixels"
-  public const string TowerStage = "tower"
-  public static Idrak.Nlp.Abstractions.FeatureCacheKey For(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages images, string family, string checkpoint, string dtype, string stage = "tower")
-  public string Checkpoint { get; init; }
-  public string DType { get; init; }
-  public string Family { get; init; }
-  public string Id { get; }
-  public string Image { get; init; }
-  public string Stage { get; init; }
-  public string Transforms { get; init; }
-  public string VisionOptions { get; init; }
-
-public sealed record Idrak.Nlp.Abstractions.FeatureCacheOptions : System.IEquatable<Idrak.Nlp.Abstractions.FeatureCacheOptions>
-  public FeatureCacheOptions()
-  public long? Budget { get; init; }
-  public string? Folder { get; init; }
-
-public static class Idrak.Nlp.Abstractions.FeatureCaches
-  public const string Disk = "disk"
-  public const string Memory = "memory"
-  public static Idrak.Nlp.Abstractions.IFeatureCache Create(string name, Idrak.Nlp.Abstractions.FeatureCacheOptions? options = null)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Nlp.Abstractions.FeatureCacheOptions, Idrak.Nlp.Abstractions.IFeatureCache> Get(string name)
-  public static System.Func<Idrak.Nlp.Abstractions.FeatureCacheOptions, Idrak.Nlp.Abstractions.IFeatureCache>? Default(string name)
-  public static bool Unregister(string name)
-  public static string DefaultFolder { get; }
-  public static string? Origin(string name)
-  public static void Register(string name, System.Func<Idrak.Nlp.Abstractions.FeatureCacheOptions, Idrak.Nlp.Abstractions.IFeatureCache> create)
-  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+public static class Idrak.Nlp.Abstractions.FeatureCacheKeyExtensions
+  public static Idrak.Abstraction.Generation.FeatureCacheKey For(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages images, string family, string checkpoint, string dtype, string stage = "tower")
 
 public interface Idrak.Nlp.Abstractions.IAnswerText
   public string Name { get; }
   public string Summary { get; }
   public string Text(string answer)
-
-public interface Idrak.Nlp.Abstractions.IFeatureCache : System.IDisposable
-  public bool Contains(Idrak.Nlp.Abstractions.FeatureCacheKey key)
-  public bool Put(Idrak.Nlp.Abstractions.FeatureCacheKey key, Idrak.Abstraction.Tensor value)
-  public bool TryGet(Idrak.Nlp.Abstractions.FeatureCacheKey key, Idrak.Abstraction.Device device, out Idrak.Abstraction.Tensor? value)
-  public int Count { get; }
-  public long Bytes { get; }
-  public string Name { get; }
-  public void Clear()
 
 public interface Idrak.Nlp.Abstractions.IJsonRepair
   public Idrak.Nlp.Abstractions.JsonRepairResult? Repair(string text)
@@ -228,8 +188,16 @@ public sealed record Idrak.Nlp.Abstractions.TrainingImage : System.IEquatable<Id
   public TrainingImage(Idrak.Abstraction.Generation.ChatImage Image, Idrak.Nlp.TuningImages Preparation, System.Collections.Generic.IReadOnlyList<(int, int)> Blocks)
   public int Tokens { get; }
 
+public sealed record Idrak.Nlp.Abstractions.TrainingPart : System.IEquatable<Idrak.Nlp.Abstractions.TrainingPart>
+  public Idrak.Abstraction.Generation.ChatPart Part { get; init; }
+  public System.Collections.Generic.IReadOnlyList<(int, int)> Blocks { get; init; }
+  public TrainingPart(Idrak.Abstraction.Generation.ChatPart Part, System.Collections.Generic.IReadOnlyList<(int, int)> Blocks)
+  public int Tokens { get; }
+  public string Kind { get; }
+
 public sealed record Idrak.Nlp.Abstractions.TrainingSequence : System.IEquatable<Idrak.Nlp.Abstractions.TrainingSequence>
   public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingImage> Images { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingPart> Parts { get; init; }
   public TrainingSequence(int[] Tokens, bool[] Trained)
   public bool Equals(Idrak.Nlp.Abstractions.TrainingSequence? other)
   public bool[] Trained { get; init; }
@@ -253,6 +221,7 @@ public static class Idrak.Nlp.Abstractions.TuningDataFormats
 
 public sealed record Idrak.Nlp.Abstractions.TuningDataOptions : System.IEquatable<Idrak.Nlp.Abstractions.TuningDataOptions>
   public TuningDataOptions()
+  public string? Audios { get; init; }
   public string? Images { get; init; }
 
 public static class Idrak.Nlp.Abstractions.TuningMetrics
@@ -332,6 +301,7 @@ public sealed class Idrak.Nlp.ChatTranscriptEncoder
   public System.Collections.Generic.IEnumerable<(System.Text.Json.Nodes.JsonObject, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence>)> EncodeRows(System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> rows, int maxLength, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Nlp.Abstractions.TrainingSequence> EncodeRow(System.Text.Json.Nodes.JsonObject row, int maxLength)
   public System.Collections.Generic.IEnumerable<Idrak.Nlp.Abstractions.TrainingSequence> EncodeText(string text, int maxLength)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; init; }
   public bool ShortenToFit { get; init; }
   public string AssistantEnd { get; }
   public string AssistantHeader { get; }
@@ -579,6 +549,7 @@ public sealed class Idrak.Nlp.Generation.ChatGenerator : Idrak.Abstraction.Gener
   public System.Collections.Generic.IEnumerable<(int, Idrak.Abstraction.Generation.ChatChunk)> StreamBatch(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatRequest> requests, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ChatChunk> Stream(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatChunk> ChatBatch(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatRequest> requests, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; init; }
   public System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ChatChunk> ChatAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
   public string RenderPrompt(Idrak.Abstraction.Generation.ChatRequest request)
@@ -1284,14 +1255,14 @@ public sealed record Idrak.Nlp.TuningStage : System.IEquatable<Idrak.Nlp.TuningS
 
 public sealed class Idrak.Nlp.TuningVision : System.IDisposable
   public Idrak.Abstraction.Data.ImageData Read(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages? preparation = null)
+  public Idrak.Abstraction.Generation.FeatureCacheKey Key(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages preparation, string stage)
+  public Idrak.Abstraction.Generation.IFeatureCache Cache { get; }
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
   public Idrak.Abstraction.Generation.IVisionEncoder Encoder { get; }
   public Idrak.Abstraction.Generation.IVisionTuningPart? Tuning { get; }
   public Idrak.Abstraction.Generation.PretrainedVision Vision { get; }
   public Idrak.Models.PretrainedModel Model { get; }
-  public Idrak.Nlp.Abstractions.FeatureCacheKey Key(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages preparation, string stage)
-  public Idrak.Nlp.Abstractions.IFeatureCache Cache { get; }
   public Idrak.Nlp.TuningImages Images { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages? preparation = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
@@ -1300,7 +1271,7 @@ public sealed class Idrak.Nlp.TuningVision : System.IDisposable
   public long CacheHits { get; }
   public long Encoded { get; }
   public override string ToString()
-  public static Idrak.Nlp.TuningVision Create(Idrak.Models.PretrainedModel model, Idrak.Nlp.TuningImages? images = null, System.Collections.Generic.IEnumerable<string>? parts = null, Idrak.Nlp.Abstractions.IFeatureCache? cache = null)
+  public static Idrak.Nlp.TuningVision Create(Idrak.Models.PretrainedModel model, Idrak.Nlp.TuningImages? images = null, System.Collections.Generic.IEnumerable<string>? parts = null, Idrak.Abstraction.Generation.IFeatureCache? cache = null)
   public string CachedStage { get; }
   public string Checkpoint { get; }
   public void Dispose()

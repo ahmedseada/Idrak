@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The fields of a feature cache's key, as the cache checks see them (Idrak.Nlp's <c>FeatureCacheKey</c>, field for field):
+/// The fields of a feature cache's key, as the cache checks see them (Idrak.Abstraction's <c>FeatureCacheKey</c>, field for field):
 /// the image's hash, its transforms and vision options, the encoder's family, checkpoint and precision, and the stage.
 /// </summary>
 /// <param name="Image">The SHA-256 of the image's bytes.</param>
@@ -19,9 +19,8 @@ namespace Idrak.Abstraction.Testing;
 public sealed record FeatureKeyFields(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage);
 
 /// <summary>
-/// A feature cache as the cache checks drive it. The contract lives with the package that uses it (<c>IFeatureCache</c>
-/// in Idrak.Nlp) and this kit depends on Idrak.Abstraction alone, so a test wraps the cache it checks in these delegates
-/// (its key made from <see cref="FeatureKeyFields"/>).
+/// A feature cache as the cache checks drive it (<c>IFeatureCache</c> in Idrak.Abstraction): a test wraps the cache it
+/// checks in these delegates (its key made from <see cref="FeatureKeyFields"/>).
 /// </summary>
 /// <param name="put">Keeps a copy of a tensor under a key (<c>Put</c>); false when not kept.</param>
 /// <param name="get">The tensor kept under a key, made on the device given, or null on a miss (<c>TryGet</c>).</param>
@@ -44,7 +43,7 @@ public sealed class FeatureCacheUnderTest(Func<FeatureKeyFields, Tensor, bool> p
 }
 
 /// <summary>
-/// The checks of a feature cache (Idrak.Nlp's <c>IFeatureCache</c>), wrapped as <see cref="FeatureCacheUnderTest"/>, on
+/// The checks of a feature cache (Idrak.Abstraction's <c>IFeatureCache</c>), wrapped as <see cref="FeatureCacheUnderTest"/>, on
 /// small tensors of many shapes (each case clears the cache first):
 /// <list type="bullet">
 /// <item>an empty cache misses;</item>

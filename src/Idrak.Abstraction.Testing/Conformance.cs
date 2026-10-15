@@ -218,7 +218,7 @@ public static class Conformance
     }
 
     /// <summary>
-    /// Checks a feature cache (Idrak.Nlp's <c>IFeatureCache</c>, wrapped as <see cref="FeatureCacheUnderTest"/>) with
+    /// Checks a feature cache (Idrak.Abstraction's <c>IFeatureCache</c>, wrapped as <see cref="FeatureCacheUnderTest"/>) with
     /// <see cref="FeatureCacheSuite"/>: misses when empty or cleared, exact values and shapes back on the device asked for,
     /// its own copy, a miss for a key differing in any field, a put replacing the last, and many threads at once. Six random
     /// cases unless <paramref name="options"/> says otherwise.
