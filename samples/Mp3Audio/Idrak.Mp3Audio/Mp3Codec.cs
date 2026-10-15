@@ -22,6 +22,14 @@ public sealed record Mp3Options
     /// in order on one thread.
     /// </summary>
     public int FramesPerTask { get; init; } = 512;
+
+    /// <summary>
+    /// When bytes that are not MPEG audio come before the first frame header found (not an ID3 tag: junk, or the samples
+    /// of another format), the headers that must follow it in a row, each where the one before ends, before the bytes
+    /// are taken as MPEG audio by <see cref="Mp3Codec.ReadInfo"/>: a frame sync found by chance (quiet 16-bit samples
+    /// hold many FF Fx pairs) does not chain. A stream shorter than that after its junk is refused.
+    /// </summary>
+    public int SyncFramesAfterJunk { get; init; } = 4;
 }
 
 /// <summary>
@@ -75,6 +83,11 @@ public sealed class Mp3Codec(Mp3Options? options = null) : IAudioCodec
             }
 
             int at = start + skip;
+            if (OtherContainer(bytes, header.Length) || (skip > 0 && !Chains(bytes, at, end, freeFormat, _options.SyncFramesAfterJunk)))
+            {
+                return null;                                                     // another format's file, or a sync found by chance in its bytes
+            }
+
             int rate = Mp3Decoder.SampleRateHz(bytes, at), channels = Mp3Decoder.IsMono(bytes, at) ? 1 : 2;
             if (ReadTag(bytes, at, frameSize) is { } tag)
             {
@@ -91,6 +104,30 @@ public sealed class Mp3Codec(Mp3Options? options = null) : IAudioCodec
         {
             ArrayPool<byte>.Shared.Return(bytes);
         }
+    }
+
+    // A RIFF (WAV), FLAC, Ogg or MP4 file: never a stream of MPEG frames, whatever its samples hold (an MPEG stream inside
+    // a WAV file is the WAV codec's to read or refuse).
+    private static bool OtherContainer(byte[] bytes, int length) =>
+        length >= 4 && (bytes.AsSpan(0, 4).SequenceEqual("RIFF"u8) || bytes.AsSpan(0, 4).SequenceEqual("fLaC"u8) || bytes.AsSpan(0, 4).SequenceEqual("OggS"u8)
+                        || (length >= 8 && bytes.AsSpan(4, 4).SequenceEqual("ftyp"u8)));
+
+    // Whether `count` frame headers follow the one at `at` in a row, each where the one before ends, within [at, end).
+    private static bool Chains(byte[] bytes, int at, int end, int freeFormat, int count)
+    {
+        int o = at;
+        for (int k = 0; k < count; k++)
+        {
+            int size = Mp3Decoder.FrameBytes(bytes, o, freeFormat) + Mp3Decoder.Padding(bytes, o);
+            if (size <= 0 || o + size + 4 > end || !Mp3Decoder.HeaderCompare(bytes, at, bytes, o + size))
+            {
+                return false;
+            }
+
+            o += size;
+        }
+
+        return true;
     }
 
     /// <inheritdoc />

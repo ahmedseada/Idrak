@@ -103,6 +103,21 @@ public static class AudioCodecs
     /// </summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
+    // The codecs in the order a file is offered to them: those that list the path's extension first (a .wav file is the
+    // WAV codec's before a codec that finds a frame sync inside its samples is asked), then the rest, each group in the
+    // registry's order.
+    private static IEnumerable<IAudioCodec> ForExtension(string path)
+    {
+        string extension = Path.GetExtension(path);
+        if (extension.Length == 0)
+        {
+            return Registry.Values;
+        }
+
+        var listing = Registry.Values.Where(c => c.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase)).ToList();
+        return listing.Count == 0 ? Registry.Values : listing.Concat(Registry.Values.Where(c => !listing.Contains(c)));
+    }
+
     /// <summary>Whether a registered codec lists the extension of <paramref name="path"/>.</summary>
     public static bool CanDecode(string path)
     {
@@ -123,7 +138,7 @@ public static class AudioCodecs
             }
 
             byte[]? whole = null;
-            foreach (var codec in Registry.Values)
+            foreach (var codec in ForExtension(path))
             {
                 if (codec.ReadInfo(head.AsSpan(0, length)) is not { } info)
                 {
@@ -215,7 +230,7 @@ public static class AudioCodecs
     private static AudioData Decode(ReadOnlySpan<byte> bytes, string path)
     {
         var header = bytes[..Math.Min(bytes.Length, HeaderBytes)];
-        foreach (var codec in Registry.Values)
+        foreach (var codec in ForExtension(path))
         {
             // A codec that knows the first bytes decodes the file; one that needs all of them to be sure (a large tag
             // before the sound) and then finds it is not its own leaves it to the next.
