@@ -170,7 +170,13 @@ internal sealed unsafe partial class CudaBackend
 
     public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g) => LaunchPatches("im2col_f32", x, cols, g);
 
-    public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g) => LaunchPatches("col2im_f32", dcols, dx, g);
+    // A gather over dx's elements (each adds the column entries that read it, in a fixed order: rule 86).
+    public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        int n = g.N * g.C * g.H * g.W;
+        Launch1D(K("col2im_f32"), n, P(dcols), P(dx),
+            U(g.C), U(g.H), U(g.W), U(g.KH), U(g.KW), U(g.SH), U(g.SW), U(g.PH), U(g.PW), U(g.OH), U(g.OW), U(g.PatchSize), U(g.DH), U(g.DW), U(n));
+    }
 
     public override void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
@@ -181,6 +187,14 @@ internal sealed unsafe partial class CudaBackend
 
     public override void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int count) =>
         Launch1D(K("maxpool_bwd_f32"), count, P(dy), P(argmax), P(dx), U(count));
+
+    // A gather over dx's elements (each adds the gradients of the windows whose maximum it is, in output order: rule 86).
+    public override void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
+    {
+        int n = g.N * g.C * g.H * g.W;
+        Launch1D(K("maxpool_bwd_gather_f32"), n, P(dy), P(argmax), P(dx),
+            U(g.H), U(g.W), U(g.KH), U(g.KW), U(g.SH), U(g.SW), U(g.PH), U(g.PW), U(g.OH), U(g.OW), U(n));
+    }
 
     public override void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
