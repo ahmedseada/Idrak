@@ -205,8 +205,11 @@ internal static partial class Tests
         Check(template.PartKinds.SetEquals(["text", "image", "audio"]), $"the template's kinds: {string.Join(", ", template.PartKinds)}");
         string rendered = template.Render(withAudio, [], null, addGenerationPrompt: true);
         Check(rendered.Contains("<start_of_image>Transcribe.", StringComparison.Ordinal), rendered);
-        var imagesOnly = new JinjaChatTemplate(AudioTemplate.Replace("{%- elif item['type'] == 'audio' -%}\n{{- '<start_of_image>' -}}\n", "", StringComparison.Ordinal), ["<|im_end|>"]);
-        Check(imagesOnly.PartKinds.SetEquals(["text", "image"]), "a template without an audio branch keeps text and image");
+        // The source's line endings are the checkout's (CRLF on Windows): the branch is cut from the text with LF endings.
+        string withoutAudio = AudioTemplate.ReplaceLineEndings("\n").Replace("{%- elif item['type'] == 'audio' -%}\n{{- '<start_of_image>' -}}\n", "", StringComparison.Ordinal);
+        Check(!withoutAudio.Contains("'audio'", StringComparison.Ordinal), "the audio branch is cut from the template");
+        var imagesOnly = new JinjaChatTemplate(withoutAudio, ["<|im_end|>"]);
+        Check(imagesOnly.PartKinds.SetEquals(["text", "image"]), $"a template without an audio branch keeps text and image: {string.Join(", ", imagesOnly.PartKinds)}");
     }
 
     private static void AudioChatTuningData()
