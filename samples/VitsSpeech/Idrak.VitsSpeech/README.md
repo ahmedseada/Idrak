@@ -36,11 +36,19 @@ samples) within 1e-4 (`IDRAK_FILTER="audio tts"`). The owner runs a real MMS-TTS
 
 ## Romanisation (decision 3 of plan 21)
 
-MMS-TTS checkpoints for languages written in non-Latin scripts (Arabic among them) set `is_uroman` in
-`tokenizer_config.json`: they were trained on text romanised by uroman, and expect the same at inference. The plug-in
-has no romanisation table yet: such a checkpoint refuses non-Latin text with a message naming the flag, and accepts
-Latin text (romanised beforehand). The plan's decision 3 adds a table for Arabic here, in the plug-in, never in the
-library; other uroman languages stay refused until a table exists for them.
+MMS-TTS checkpoints for languages written in non-Latin scripts (Arabic among them: `facebook/mms-tts-ara`) set
+`is_uroman` in `tokenizer_config.json`: they were trained on text romanised by uroman, and expect the same at
+inference. `VitsTokenizer` romanises such text first, with the romanizer `TextRomanizers` holds for its script
+(`VitsTokenizer.Romanizer` names one instead):
+
+- **"uroman-arabic"** (built in, `UromanArabicRomanizer`): uroman's romanisation of the Arabic script, every code point
+  of the Arabic blocks and presentation forms plus the three sequences uroman romanises together without a language
+  code (alef + fathatan "an", maddah + alef, a word-initial alef + Persian yeh). `tools/audio/make_uroman_table.py`
+  generates the table (`UromanArabicTable.cs`) and the cases `tests/Idrak.Tests/data/audio/uroman/arabic.json` from
+  uroman itself; the test checks the plug-in gives uroman's output on every case. So "مرحبا بكم في إدراك" reads
+  "mrhba bkm fy idrak", as the model was trained.
+- A script no registered romanizer covers is refused, naming `TextRomanizers.Register`: an app registers an
+  `ITextRomanizer` for it (asked before the earlier ones), or gives Latin text.
 
 ## Not done
 
