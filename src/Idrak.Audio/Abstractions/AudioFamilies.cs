@@ -23,6 +23,39 @@ public sealed record AudioEncoderOptions
 
     /// <summary>How the encoder holds its weights: as the checkpoint stores them (the default), float32, or bfloat16.</summary>
     public EncoderWeights Weights { get; init; }
+
+    /// <summary>
+    /// Trained tensors by their checkpoint names and in its layout (a training run's kept encoder and projector), read in
+    /// place of the checkpoint's; none when null.
+    /// </summary>
+    public IReadOnlyDictionary<string, (int[] Shape, float[] Values)>? Trained { get; init; }
+}
+
+/// <summary>
+/// The trainable side of a family's audio part (implemented by its <see cref="PretrainedAudio"/> when it trains, as a
+/// from-scratch family's does): which parts it trains, their parameters in its encoder, the features with gradients and
+/// the trained tensors in the checkpoint's names. <c>ChatAudioParts</c> uses it to be a trainable soft-part source.
+/// </summary>
+public interface IAudioTuningPart
+{
+    /// <summary>The parts it can train, by the names a training stage uses ("audio-encoder", "audio-projector").</summary>
+    IReadOnlyList<string> TrainableParts { get; }
+
+    /// <summary>Makes the parameters of <paramref name="parts"/> in <paramref name="encoder"/> trainable and every other one frozen; returns them.</summary>
+    /// <exception cref="ArgumentException">A part is not one it offers, or the encoder is not this family's.</exception>
+    IReadOnlyList<Tensor> Train(IAudioLanguageEncoder encoder, IReadOnlyCollection<string> parts);
+
+    /// <summary>Training or evaluation mode of the encoder's layers (dropout).</summary>
+    void SetTraining(IAudioLanguageEncoder encoder, bool training);
+
+    /// <summary>
+    /// <see cref="IAudioLanguageEncoder.Encode"/> recording gradients to the trained parameters; <paramref name="checkpointing"/>
+    /// keeps only each block's output and recomputes the rest in the backward pass.
+    /// </summary>
+    IReadOnlyList<ImageFeatures> EncodeTraining(IAudioLanguageEncoder encoder, IReadOnlyList<AudioData> audios, bool checkpointing);
+
+    /// <summary>The tensors of <paramref name="parts"/> as they are now in <paramref name="encoder"/>, under the checkpoint's names and layout, on the host.</summary>
+    IReadOnlyList<(string Name, int[] Shape, float[] Values)> Export(IAudioLanguageEncoder encoder, IReadOnlyCollection<string> parts);
 }
 
 /// <summary>

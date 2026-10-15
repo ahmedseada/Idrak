@@ -1,0 +1,29 @@
+{
+ "align": {
+  "losses": [
+   6.835438251495361,
+   6.480384826660156,
+   6.212392807006836
+  ],
+  "trained": [
+   "audio_tower.",
+   "audio_projector."
+  ],
+  "trained_tokens": 39
+ },
+ "joint": {
+  "losses": [
+   6.835438251495361,
+   5.874886989593506,
+   5.43577241897583
+  ],
+  "trained": [
+   "language_model.",
+   "audio_tower.",
+   "audio_projector."
+  ],
+  "trained_tokens": 39
+ },
+ "loss": "mean cross entropy over the three records' trained tokens (each answer and <|im_end|>)",
+ "sgd_lr": 0.05
+}

@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "vits", "voices", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "vits", "voices", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -940,6 +940,225 @@ def write_seq2seq(out):
                                                "sgd_lr": 0.1, "sgd_momentum": 0.0, "results": results})
 
 
+# The IdrakAudio plug-in's audio-language model in torch: a Llama text decoder (transformers' LlamaForCausalLM, its tensors
+# under language_model.) with the "ctc" encoder without its head as the audio tower (audio_tower.) and a projector
+# (audio_projector.: every STACK encoder steps joined, linear_1, GELU (tanh), linear_2); a sound's soft tokens replace the
+# embeddings of the audio token's run between the begin and end tokens. Three conversations of a sound and its answer,
+# rendered by the chat template and tokenized by the pretrain fixture's tokenizer; the loss is the mean cross-entropy
+# over the three records' trained tokens (each answer and its <|im_end|>), as one pretraining step takes it.
+AL_STACK = 4
+AL_TEXT = dict(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, head_dim=8,
+               max_position_embeddings=128, rms_norm_eps=1e-6, rope_theta=10000.0, tie_word_embeddings=True, hidden_act="silu",
+               attention_bias=False, mlp_bias=False)
+AL_TEMPLATE = (
+    "{%- for message in messages -%}\n"
+    "{{- '<|im_start|>' + message['role'] + '\\n' -}}\n"
+    "{%- if message['content'] is string -%}\n"
+    "{{- message['content'] -}}\n"
+    "{%- else -%}\n"
+    "{%- for item in message['content'] -%}\n"
+    "{%- if item['type'] == 'audio' -%}\n"
+    "{{- '<image>' -}}\n"
+    "{%- elif item['type'] == 'text' -%}\n"
+    "{{- item['text'] -}}\n"
+    "{%- endif -%}\n"
+    "{%- endfor -%}\n"
+    "{%- endif -%}\n"
+    "{{- '<|im_end|>\\n' -}}\n"
+    "{%- endfor -%}\n"
+    "{%- if add_generation_prompt -%}\n"
+    "{{- '<|im_start|>assistant\\n' -}}\n"
+    "{%- endif -%}\n")
+AL_RECORDS = [
+    {"messages": [{"role": "user", "content": [{"type": "audio", "path": "wav/pcm16.wav"}, {"type": "text", "text": "Transcribe."}]},
+                  {"role": "assistant", "content": "the quick brown fox"}]},
+    {"messages": [{"role": "user", "content": [{"type": "text", "text": "What is said? "}, {"type": "audio", "path": "wav/pcm8.wav"}]},
+                  {"role": "assistant", "content": "hello there"}]},
+    {"messages": [{"role": "system", "content": "You listen."},
+                  {"role": "user", "content": [{"type": "audio", "path": "wav/list-chunk16.wav"}, {"type": "text", "text": "Again."}]},
+                  {"role": "assistant", "content": "a short tone"}]},
+]
+
+
+def write_audio_language(out):
+    import jinja2
+    import torchaudio.functional as F
+    from safetensors.torch import save_file
+    from tokenizers import Tokenizer
+    from transformers import LlamaConfig, LlamaForCausalLM
+    torch = torch_setup()
+    nn = torch.nn
+    folder = os.path.join(out, "audio-language")
+    if os.path.isdir(folder):
+        import shutil
+        shutil.rmtree(folder)
+    os.makedirs(os.path.join(folder, "wav"))
+    model_dir = os.path.join(folder, "model")
+    os.makedirs(model_dir)
+    data = os.path.normpath(os.path.join(out, ".."))
+    tokenizer_path = os.path.join(data, "pretrain", "tokenizer", "tokenizer.json")
+    tok = Tokenizer.from_file(tokenizer_path)
+    ids = {t: tok.token_to_id(t) for t in ["<pad>", "<s>", "</s>", "<|im_start|>", "<|im_end|>", "<start_of_image>", "<image>", "<end_of_image>"]}
+    sound, begin, end = ids["<image>"], ids["<start_of_image>"], ids["<end_of_image>"]
+
+    # Each sound's features (the WAV fixture's decoded samples, 16 kHz mono) and soft tokens.
+    mels, tokens_of = {}, {}
+    for record in AL_RECORDS:
+        for m in record["messages"]:
+            for part in (m["content"] if isinstance(m["content"], list) else []):
+                if part["type"] == "audio" and part["path"] not in mels:
+                    name = os.path.splitext(os.path.basename(part["path"]))[0]
+                    import shutil
+                    shutil.copy(os.path.join(out, "wav", name + ".wav"), os.path.join(folder, part["path"]))
+                    audio = torch.from_numpy(load_wav_npy(out, name)[0].astype(np.float32))
+                    mel = log_mel(torch, F, audio)[0].T.contiguous()            # [frames, mels]
+                    mels[part["path"]] = mel
+                    save_npy(folder, f"features-{name}.npy", mel.numpy().astype(np.float32))
+
+    torch.manual_seed(2041)
+    text_config = LlamaConfig(vocab_size=tok.get_vocab_size(), pad_token_id=ids["<pad>"], bos_token_id=ids["<s>"],
+                              eos_token_id=[ids["<|im_end|>"], ids["</s>"]], attn_implementation="eager", **AL_TEXT)
+
+    class Projector(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear_1 = nn.Linear(AL_STACK * CTC["dim"], AL_TEXT["hidden_size"])
+            self.linear_2 = nn.Linear(AL_TEXT["hidden_size"], AL_TEXT["hidden_size"])
+
+        def forward(self, states):                                          # [steps, dim] -> [tokens, text width]
+            steps = states.shape[0]
+            tokens = (steps + AL_STACK - 1) // AL_STACK
+            padded = torch.cat([states, states.new_zeros(tokens * AL_STACK - steps, states.shape[1])])
+            return self.linear_2(torch.nn.functional.gelu(self.linear_1(padded.reshape(tokens, AL_STACK * states.shape[1])), approximate="tanh"))
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.language_model = LlamaForCausalLM(text_config)
+            tower = ctc_modules(torch, False)
+            del tower.head
+            self.audio_tower = tower
+            self.audio_projector = Projector()
+
+        def features(self, path):
+            mel = mels[path]
+            states, steps = self.audio_tower.encode(mel[None], torch.tensor([mel.shape[0]]))
+            return self.audio_projector(states[0, : int(steps[0])])
+
+    def build():
+        model = Model()
+        ctc_initialize(torch, model, 2041)
+        model.language_model.tie_weights()
+        return model
+
+    for path, mel in mels.items():
+        with torch.no_grad():
+            tokens_of[path] = int(build().features(path).shape[0])
+
+    env = jinja2.Environment(trim_blocks=False, lstrip_blocks=False)
+
+    def render(messages, add_generation_prompt):
+        return env.from_string(AL_TEMPLATE).render(messages=messages, add_generation_prompt=add_generation_prompt)
+
+    def expand(text, paths):
+        pieces = text.split("<image>")
+        assert len(pieces) == len(paths) + 1
+        result = pieces[0]
+        for k, p in enumerate(paths):
+            result += "<start_of_image>" + "<image>" * tokens_of[p] + "<end_of_image>" + pieces[k + 1]
+        return result
+
+    def encode(record):
+        messages = record["messages"]
+        paths = [part["path"] for m in messages if isinstance(m["content"], list) for part in m["content"] if part["type"] == "audio"]
+        full = expand(render(messages, False), paths)
+        prefix = expand(render(messages[:-1], True), paths)
+        answer = messages[-1]["content"] + "<|im_end|>"
+        assert full.startswith(prefix + answer), (full, prefix, answer)
+        enc = tok.encode(full, add_special_tokens=False)
+        trained = [len(prefix) <= s and e <= len(prefix) + len(answer) for (s, e) in enc.offsets]
+        positions = [i for i, t in enumerate(enc.ids) if t == sound and (i == 0 or enc.ids[i - 1] != sound)]
+        return {"input_ids": enc.ids, "trained": trained, "audios": paths, "blocks": [[q, tokens_of[p]] for q, p in zip(positions, paths)]}
+
+    encoded = [encode(r) for r in AL_RECORDS]
+
+    def loss_of(model):
+        total, count = 0.0, 0
+        for e in encoded:
+            idt = torch.tensor([e["input_ids"]])
+            embeds = model.language_model.model.embed_tokens(idt)
+            pieces, last = [], 0
+            for (start, n), path in zip(e["blocks"], e["audios"]):
+                pieces += [embeds[:, last:start], model.features(path)[None]]
+                last = start + n
+            pieces.append(embeds[:, last:])
+            logits = model.language_model(inputs_embeds=torch.cat(pieces, dim=1)).logits[0]
+            targets = torch.tensor(e["input_ids"][1:])
+            rows = torch.tensor([t for t in range(len(e["input_ids"]) - 1) if e["trained"][t + 1]])
+            total = total + torch.nn.functional.cross_entropy(logits[rows], targets[rows], reduction="sum")
+            count += len(rows)
+        return total / count, count
+
+    def named(model):
+        return {n: p for n, p in model.named_parameters() if not n.startswith("language_model.lm_head")}
+
+    model = build()
+    save_file({n: p.detach().clone().contiguous() for n, p in sorted(named(model).items())}, os.path.join(model_dir, "model.safetensors"), metadata={"format": "pt"})
+    audio_config = ctc_config(False)
+    for key in ("architectures", "model_type", "classes", "blank_id"):
+        audio_config.pop(key)
+    audio_config["task"] = "audio-language"
+    text = {k: v for k, v in text_config.to_dict().items() if k in (
+        "vocab_size", "hidden_size", "intermediate_size", "num_hidden_layers", "num_attention_heads", "num_key_value_heads", "head_dim",
+        "max_position_embeddings", "rms_norm_eps", "rope_theta", "hidden_act", "attention_bias", "mlp_bias", "tie_word_embeddings",
+        "bos_token_id", "eos_token_id", "pad_token_id")}
+    text["model_type"] = "llama"
+    text["rope_theta"] = AL_TEXT["rope_theta"]
+    dump_json(os.path.join(model_dir, "config.json"), {
+        "architectures": ["IdrakAudioForConditionalGeneration"], "model_type": "idrak_audio", "text_config": text, "audio_config": audio_config,
+        "audio_projector": {"stack": AL_STACK, "type": "mlp", "text_dim": AL_TEXT["hidden_size"]}, "audio_token_index": sound,
+        "boa_token_index": begin, "eoa_token_index": end, "audio_attention": "causal", "tie_word_embeddings": True, "torch_dtype": "float32"})
+    import shutil
+    shutil.copy(tokenizer_path, os.path.join(model_dir, "tokenizer.json"))
+    dump_json(os.path.join(model_dir, "tokenizer_config.json"), {
+        "add_bos_token": False, "bos_token": "<s>", "eos_token": "<|im_end|>", "pad_token": "<pad>", "chat_template": AL_TEMPLATE,
+        "model_max_length": AL_TEXT["max_position_embeddings"], "tokenizer_class": "PreTrainedTokenizerFast"})
+    dump_json(os.path.join(model_dir, "special_tokens_map.json"), {"bos_token": "<s>", "eos_token": "<|im_end|>", "pad_token": "<pad>"})
+    dump_json(os.path.join(model_dir, "generation_config.json"), {"bos_token_id": ids["<s>"], "eos_token_id": [ids["<|im_end|>"], ids["</s>"]], "pad_token_id": ids["<pad>"]})
+    with open(os.path.join(folder, "records.jsonl"), "w", encoding="utf-8", newline="\n") as f:
+        for record in AL_RECORDS:
+            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+    from safetensors.torch import load_file
+    steps = {}
+    for kind, prefixes in [("joint", ["language_model.", "audio_tower.", "audio_projector."]), ("align", ["audio_tower.", "audio_projector."])]:
+        trained_model = Model()
+        state = load_file(os.path.join(model_dir, "model.safetensors"))
+        trained_model.load_state_dict({**state, "language_model.lm_head.weight": state["language_model.model.embed_tokens.weight"]}, strict=True)
+        trained_model.language_model.tie_weights()
+        params = named(trained_model)
+        for n, p in params.items():
+            p.requires_grad_(any(n.startswith(t) for t in prefixes))
+        opt = torch.optim.SGD([p for p in params.values() if p.requires_grad], lr=0.05, momentum=0.0)
+        losses = []
+        sub = os.path.join(folder, kind)
+        os.makedirs(sub)
+        for step in range(1, 4):
+            opt.zero_grad(set_to_none=True)
+            loss, count = loss_of(trained_model)
+            loss.backward()
+            losses.append(float(loss.detach()))
+            if step == 1:
+                grads = {n: p.grad.detach().clone().contiguous() for n, p in params.items() if p.requires_grad}
+                save_file(dict(sorted(grads.items())), os.path.join(sub, "grads-step1.safetensors"), metadata={"format": "pt"})
+            opt.step()
+        save_file({n: p.detach().clone().contiguous() for n, p in sorted(params.items())}, os.path.join(sub, "weights-step3.safetensors"), metadata={"format": "pt"})
+        assert len(set(round(x, 4) for x in losses)) == 3, losses
+        steps[kind] = {"losses": losses, "trained_tokens": count, "trained": prefixes}
+    dump_json(os.path.join(folder, "steps.json"), dict(steps, loss="mean cross entropy over the three records' trained tokens (each answer and <|im_end|>)", sgd_lr=0.05))
+    dump_json(os.path.join(folder, "tuning.json"), {"records": encoded, "tokens_per_audio": tokens_of, "audio_token": sound, "begin": begin, "end": end, "stack": AL_STACK})
+
+
 def write_vits(out):
     from transformers import VitsConfig, VitsModel
     torch = torch_setup()
@@ -1033,6 +1252,8 @@ def main():
         write_ctc(args.out)
     if "seq2seq" in sections:
         write_seq2seq(args.out)
+    if "audio-language" in sections:
+        write_audio_language(args.out)
     if "vits" in sections:
         write_vits(args.out)
     if "voices" in sections:

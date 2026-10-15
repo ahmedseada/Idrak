@@ -206,7 +206,7 @@ public sealed record IdrakAudioConfig
             throw new ArgumentException($"positions is sinusoidal or none ({Positions}); activation gelu_tanh or gelu ({Activation}).");
         }
 
-        if (!Sequence && (Classes < 2 || (uint)BlankId >= (uint)Classes))
+        if (Task == IdrakAudioFamily.CtcTask && (Classes < 2 || (uint)BlankId >= (uint)Classes))
         {
             throw new ArgumentException($"The head has {Classes} classes with the blank {BlankId}: at least a label and the blank, the blank one of them.");
         }

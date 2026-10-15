@@ -743,7 +743,17 @@ does); the TTS task without a neural vocoder sounds like Griffin-Lim (stated pla
 
 - **The speech trainer's objectives** (`SpeechTrainer`, `SpeechTrainingObjectives`: "ctc" and "seq2seq", a registry; the model names its own). **seq2seq** (`Seq2SeqObjective`, `ISequenceSpeechModel`): teacher forcing from the start token, each utterance's mean next-token cross-entropy through the fused `TokenCrossEntropy`, averaged over the batch; evaluation greedy or by beam search. `CrossAttention` takes each sequence's memory length (`Forward(input, memory, lengths)`, `EncoderMemory.Use(memory, lengths)`), so a padded batch equals each utterance alone. The IdrakAudio plug-in's "seq2seq" task: the encoder without its head and a decoder of the library's layers (learned positions, `DecoderBlock`s with causal self-attention and cross-attention, a tied or own head; every size, the start and end tokens in config.json). Checked against `seq2seq/` (`make_tiny_audio.py --sections seq2seq`, tied and untied): loss, gradients, batch against alone, torch's greedy texts, three SGD steps; create, load, transcribe, resume bit for bit, a smoke run. "audio seq2seq:" 3 of 3 on the CPU.
 - **CUDA training sums in a fixed order** (rule 86), found by the seq2seq resume on CUDA: the embedding gradient (`scatter_chain_u32`, `scatter_walk_f32`: each id's rows in position order, the CPU's bits), a tensor's sum, the clipping norm, bias and LayerNorm parameter gradients (per-block or per-chunk results added in order by `sum_blocks_f32`, `fold_chunks_f32`; grids fixed by the sizes, not the multiprocessors). Left: `col2im_f32` and `maxpool_bwd_f32` (a queued task).
-- **Left in S6:** the audio-language task (the Pretrainer's audio parts), the tts task, distillation, `PretrainedModel.Create` with "audio", and `idrak create` / `pretrain` for the ctc and seq2seq tasks (S7).
+- **The audio-language task** (b280db22 and the next commit). The plan's `CreateOptions.Audio` became general, as the
+  package layering requires (core and Nlp cannot name Idrak.Audio): `IModelPart` / `ModelParts` (Idrak.Abstraction; a
+  part stored beside the decoder, the "audio" one registered by Idrak.Audio over `AudioFamilies`), `CreateOptions.Parts`,
+  `PretrainedModel.Parts` / `OpenPart` / `KeepTrainedParts` (claimed on load, carried by every save), and
+  `ITrainableSoftParts` (a soft-part source that trains). The training step lays parts out as images
+  (`FineTuningOptions.Parts`, replacing S3's refusal); the Pretrainer opens the model's parts per stage and trains the
+  names they offer ("audio-encoder", "audio-projector"); records sources take `Audios`; the default template writes
+  `<audio>`. Idrak.Audio: `IAudioTuningPart`, `AudioEncoderOptions.Trained`, `ChatAudioParts` trainable. The IdrakAudio
+  plug-in's `IdrakAudioLanguageFamily` (`IdrakAudioForConditionalGeneration`: Llama decoder, encoder, stacking MLP
+  projector) against `audio-language/` (`make_tiny_audio.py --sections audio-language`). "audio language:" 5 of 5 on the CPU.
+- **Left in S6:** the tts task, distillation, `PretrainedModel.Create` with "audio", and `idrak create` / `pretrain` for the ctc and seq2seq tasks (S7).
 
 ## Phase S7: the command line
 

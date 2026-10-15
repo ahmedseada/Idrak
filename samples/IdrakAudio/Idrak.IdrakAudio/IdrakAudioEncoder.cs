@@ -55,9 +55,9 @@ public sealed class IdrakAudioEncoder : Module
 
         _norm = weights.Norm("norm", d, config.NormEpsilon);
         _norm.Name = "norm";
-        if (!config.Sequence)
+        if (config.Task == IdrakAudioFamily.CtcTask)
         {
-            _head = weights.Linear("head", d, config.Classes);                // a seq2seq model's decoder reads the normed states
+            _head = weights.Linear("head", d, config.Classes);                // the other tasks read the normed states
             _head.Name = "head";
         }
     }
