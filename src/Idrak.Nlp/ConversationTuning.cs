@@ -5,6 +5,7 @@ using System.Diagnostics;
 using Idrak.Data;
 using Idrak.Models;
 using Idrak.Nlp.Abstractions;
+using Idrak.Abstraction.Generation;
 
 namespace Idrak.Nlp;
 

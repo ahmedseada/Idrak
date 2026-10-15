@@ -73,13 +73,6 @@ public interface Idrak.Nlp.Abstractions.ITuningDataFormat
   public string Name { get; }
   public string Summary { get; }
 
-public interface Idrak.Nlp.Abstractions.ITuningMetric
-  public Idrak.Nlp.Abstractions.TuningScore Score(string answer, string reference, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
-  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
-  public bool LowerIsBetter { get; }
-  public string Name { get; }
-  public string Summary { get; }
-
 public sealed record Idrak.Nlp.Abstractions.JsonRepairResult : System.IEquatable<Idrak.Nlp.Abstractions.JsonRepairResult>
   public JsonRepairResult(System.Text.Json.Nodes.JsonNode? Json, bool Repaired)
   public System.Text.Json.Nodes.JsonNode? Json { get; init; }
@@ -223,30 +216,6 @@ public sealed record Idrak.Nlp.Abstractions.TuningDataOptions : System.IEquatabl
   public TuningDataOptions()
   public string? Audios { get; init; }
   public string? Images { get; init; }
-
-public static class Idrak.Nlp.Abstractions.TuningMetrics
-  public const string CharacterErrorRate = "cer"
-  public const string WordErrorRate = "wer"
-  public static Idrak.Nlp.Abstractions.ITuningMetric Get(string name)
-  public static Idrak.Nlp.Abstractions.ITuningMetric? Default(string name)
-  public static Idrak.Nlp.Abstractions.ITuningMetric? Find(string name)
-  public static Idrak.Nlp.Abstractions.TuningScore Score(string name, System.Collections.Generic.IEnumerable<(string, string)> pairs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static bool Unregister(string name)
-  public static int EditDistance<T>(System.ReadOnlySpan<T> a, System.ReadOnlySpan<T> b) where T : System.IEquatable<T>
-  public static string Describe()
-  public static string? Origin(string name)
-  public static void Register(Idrak.Nlp.Abstractions.ITuningMetric metric)
-  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
-
-public readonly record struct Idrak.Nlp.Abstractions.TuningScore : System.IEquatable<Idrak.Nlp.Abstractions.TuningScore>
-  public TuningScore(double Numerator, double Denominator)
-  public double Denominator { get; init; }
-  public double Numerator { get; init; }
-  public double Value { get; }
-  public override string ToString()
-  public static Idrak.Nlp.Abstractions.TuningScore Sum(System.Collections.Generic.IEnumerable<Idrak.Nlp.Abstractions.TuningScore> scores)
-  public static Idrak.Nlp.Abstractions.TuningScore op_Addition(Idrak.Nlp.Abstractions.TuningScore a, Idrak.Nlp.Abstractions.TuningScore b)
 
 public sealed record Idrak.Nlp.AnswerChoice : System.IEquatable<Idrak.Nlp.AnswerChoice>
   public AnswerChoice(int Best, System.Collections.Generic.IReadOnlyList<double> Probabilities, System.Collections.Generic.IReadOnlyList<double> LogLikelihoods)
@@ -1178,18 +1147,18 @@ public sealed class Idrak.Nlp.TeacherLogitsWriter : System.IDisposable
   public void Dispose()
 
 public sealed record Idrak.Nlp.TuningAnswer : System.IEquatable<Idrak.Nlp.TuningAnswer>
-  public Idrak.Nlp.Abstractions.TuningScore Score { get; init; }
+  public Idrak.Abstraction.Generation.TuningScore Score { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt { get; init; }
-  public TuningAnswer(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt, string Reference, string Answer, Idrak.Nlp.Abstractions.TuningScore Score, int Tokens)
+  public TuningAnswer(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt, string Reference, string Answer, Idrak.Abstraction.Generation.TuningScore Score, int Tokens)
   public int Tokens { get; init; }
   public string Answer { get; init; }
   public string Reference { get; init; }
 
 public sealed record Idrak.Nlp.TuningAnswerReport : System.IEquatable<Idrak.Nlp.TuningAnswerReport>
-  public Idrak.Nlp.Abstractions.TuningScore Score { get; init; }
+  public Idrak.Abstraction.Generation.TuningScore Score { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.TuningAnswer> Answers { get; init; }
   public System.TimeSpan Duration { get; init; }
-  public TuningAnswerReport(string Metric, bool LowerIsBetter, Idrak.Nlp.Abstractions.TuningScore Score, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.TuningAnswer> Answers, System.TimeSpan Duration)
+  public TuningAnswerReport(string Metric, bool LowerIsBetter, Idrak.Abstraction.Generation.TuningScore Score, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.TuningAnswer> Answers, System.TimeSpan Duration)
   public bool LowerIsBetter { get; init; }
   public double MeanTokens { get; }
   public override string ToString()

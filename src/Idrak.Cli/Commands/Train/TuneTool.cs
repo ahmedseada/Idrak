@@ -14,6 +14,7 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Nlp;
 using Idrak.Nlp.Abstractions;
+using Idrak.Abstraction.Generation;
 
 namespace Idrak.Cli.Commands.Train;
 

@@ -1,10 +1,15 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Testing;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
+using Idrak.IdrakAudio;
+using Idrak.Models;
+using Idrak.Models.Abstractions;
 
 // Plan 21, phase S6: training. The fixture comes from tools/audio/make_tiny_audio.py --sections ctc (ctc/: the IdrakAudio
 // "ctc" network in torch with two weight sets, padded log-mel inputs, torch's CTC loss and gradients, three SGD steps and
@@ -16,6 +21,11 @@ internal static partial class Tests
         ("audio train: CtcAlignment.Viterbi gives torchaudio's forced_align path of each utterance of ctc/reference/logp-step1.npy exactly, its log-probability within 1e-4, each label's start and length from the path; MinimumSteps counts a step between equal labels; too few steps, a blank label and a label out of range refused", AudioTrainViterbi),
         ("audio train: SpeechSources \"transcripts\" reads the fixture's train.jsonl with its audio folder, rows relative to the file, NeMo's audio_filepath and duration, a zip of the transcripts and clips, and audio in another zip, each utterance's text, seconds (the row's or the header's) and bytes; MinSeconds and MaxSeconds leave rows out with a note; a missing file refused naming the row unless SkipMissing; \"audio-folder\" pairs name.wav with name.txt in a folder and a zip, noting files without text; the JSON round trip; an unregistered kind refused; Order a seeded permutation per pass", AudioTrainSpeechSources),
         ("audio train: AudioAugmentations: \"speed\" makes the sound 1/factor as long (a factor of 1 the same sound), \"noise\" adds white noise and a noise file's stretch at the drawn signal-to-noise ratio, \"spec-mask\" fills at most its masks' widths with the mean feature and leaves the rest; RandomFor gives the same draws for the same seed, pass and utterance and others for another pass; the options' JSON round trip and refusals; an unregistered name refused", AudioTrainAugmentations),
+        ("audio train: the IdrakAudio plug-in reads ctc/model and ctc/model-conv (refused naming SpeechFamilies.Register without it) and gives torch's step-1 CTC loss within 1e-4 and every tensor's gradient within 1e-4 of that tensor's largest, through CtcTrainer.Loss; three SGD steps' losses within 1e-4 and the weights after them within 1e-4; Viterbi on the model's own log-probabilities gives torchaudio's paths; each utterance's logits in the padded batch equal its logits alone within 1e-5; a config that does not match the weights refused", AudioTrainFixture),
+        ("audio train: SpeechModels.Create makes an IdrakAudio ctc model from a spec and a trained tokenizer into a folder SpeechModels.Load reads back with the same weights (an unregistered architecture, a used folder and an unbuilt task refused); it transcribes tone speech with greedy and beam decoding, batch and chunked and streamed alike, and passes the kit's SpeechRecognizerSuite", AudioTrainCreate),
+        ("audio train: CtcTrainer: a run stopped after step 2 and resumed from checkpoint-2 gives steps 3 to 6 and the final weights bit for bit (augmentations on, an epoch boundary crossed); checkpoints are models SpeechModels.Load reads with train-state.json; the feature cache takes each utterance's features once (no AudioFeatures stage after the first pass); an utterance too short for its text is counted and left out; progress reports every step with the time left", AudioTrainResume),
+        ("audio train: CtcTrainer halves the micro-batch when the device runs out of memory (a model refusing more than two utterances at once) and repeats the step: the same losses within 1e-5 as a run that never ran out, the note and the final micro-batch reported; with gradient accumulation of two batches a step, the run one utterance at a time gives the same losses within 1e-5", AudioTrainMemory),
+        ("audio train: a 200-step CPU run of a tiny IdrakAudio ctc model on tone speech halves its loss (the mean of the last 10 steps under half of step 1), its evaluation CER at step 200 is at most its CER at step 100 and under 0.5, and the trained checkpoint transcribes (step time and CER printed)", AudioTrainSmoke),
     ];
 
     private static string CtcData(string relative) => AudioData(Path.Combine("ctc", relative));
@@ -247,5 +257,539 @@ internal static partial class Tests
         ThrowsNaming<ArgumentException>(() => (options with { Probability = 2 }).Check(), "a probability of 2", "Probability is 0 to 1");
         ThrowsNaming<NotSupportedException>(() => AudioAugmentations.Get("reverb"), "an unregistered augmentation", "'reverb' is not registered", "AudioAugmentations.Register");
         Check(AudioAugmentations.Names.Count >= 3 && AudioAugmentations.Origin(AudioAugmentations.SpecMask) == Idrak.Abstraction.Overrides.Library, "the built-in augmentations");
+    }
+
+    // ---------------------------------------------------------------- the plug-in against torch
+
+    private static (float[] Mels, int[] Frames, int[][] Labels) CtcInputs()
+    {
+        var reference = CtcReference;
+        int[] frames = [.. reference["frames"]!.AsArray().Select(v => (int)v!)];
+        int[][] labels = [.. reference["labels"]!.AsArray().Select(l => l!.AsArray().Select(v => (int)v!).ToArray())];
+        return (ReadNpyFloat32(CtcData("mels.npy")), frames, labels);
+    }
+
+    private static Dictionary<string, (int[] Shape, float[] Values)> ReadSafeTensors(string path)
+    {
+        using var reader = SafeTensorsReader.Open(path);
+        ITensorStore store = reader;
+        return store.Names.ToDictionary(n => n, n => (store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
+    }
+
+    // Each tensor's values within `relative` of that tensor's largest expected value.
+    private static void TensorsClose(Dictionary<string, (int[] Shape, float[] Values)> expected, IEnumerable<(string Name, float[] Values)> actual, float relative, string what)
+    {
+        int seen = 0;
+        foreach (var (name, values) in actual)
+        {
+            Check(expected.TryGetValue(name, out var reference), $"{what}: no reference for {name}");
+            CloseRelative(reference.Values, values, relative, $"{what} {name}");
+            seen++;
+        }
+
+        Check(seen == expected.Count, $"{what}: {seen} tensors for the reference's {expected.Count}");
+    }
+
+    private static IEnumerable<(string Name, float[] Values)> Gradients(IdrakAudioCtcModel model) =>
+        model.NamedParameters().Select(p => (p.Name, IdrakAudioWeights.Stored(p.Parameter.Grad ?? throw new Exception($"{p.Name} has no gradient"), p.Transposed)));
+
+    private static void AudioTrainFixture(Device device)
+    {
+        IdrakAudioPlugin.Unregister();
+        ThrowsNaming<NotSupportedException>(() => SpeechModels.Load(CtcData("model")).Dispose(), "without the plug-in", "'IdrakAudio' is not registered", "SpeechFamilies.Register");
+        IdrakAudioPlugin.Register();
+        try
+        {
+            var (mels, frames, labels) = CtcInputs();
+            var reference = CtcReference;
+            int padded = frames.Max();
+            foreach (var (folder, grads) in new[] { ("model", "grads-step1.safetensors"), ("model-conv", "grads-step1-conv.safetensors") })
+            {
+                using var model = (IdrakAudioCtcModel)SpeechModels.Load(CtcData(folder), new SpeechModelOptions { Device = device });
+                model.Network.Train();
+                using (var scope = new TensorScope())
+                {
+                    var input = Tensor.From(mels, [frames.Length, padded, 80], device);
+                    var loss = CtcTrainer.Loss(model, input, frames, labels);
+                    float expected = (float)reference["results"]![folder]!["loss_step1"]!;
+                    Check(MathF.Abs(loss.Item() - expected) <= 1e-4f * MathF.Abs(expected), $"{folder}: the step-1 loss {loss.Item()} is not torch's {expected}");
+                    loss.Backward();
+                    TensorsClose(ReadSafeTensors(CtcData("reference/" + grads)), Gradients(model), 1e-4f, $"{folder} step-1 gradient");
+                }
+
+                // Each utterance alone gives the batch's logits on its own steps (its padding is not attended to).
+                using (var scope = new TensorScope())
+                using (Autograd.NoGrad())
+                {
+                    var batch = model.Logits(Tensor.From(mels, [frames.Length, padded, 80], device), frames).ToArray();
+                    int steps = model.StepsFor(padded), classes = model.Classes;
+                    for (int n = 0; n < frames.Length; n++)
+                    {
+                        var alone = model.Logits(Tensor.From(mels.AsSpan(n * padded * 80, frames[n] * 80), [1, frames[n], 80], device), [frames[n]]).ToArray();
+                        int own = model.StepsFor(frames[n]);
+                        CloseRelative(alone[..(own * classes)], batch.AsSpan(n * steps * classes, own * classes).ToArray(), 1e-5f, $"{folder} utterance {n} alone against in the batch");
+                    }
+                }
+            }
+
+            // Three SGD steps as torch took them, and the weights after them; the alignment of the model's own log-probabilities.
+            using (var model = (IdrakAudioCtcModel)SpeechModels.Load(CtcData("model"), new SpeechModelOptions { Device = device }))
+            {
+                model.Network.Train();
+                using var sgd = new Sgd(model.Network.Parameters(), 0.1f, 0f, 0f);
+                float[] expected = [.. reference["results"]!["model"]!["sgd_losses"]!.AsArray().Select(v => (float)v!)];
+                var losses = new List<float>();
+                for (int s = 0; s < 4; s++)
+                {
+                    using var scope = new TensorScope();
+                    if (s > 0)
+                    {
+                        sgd.Step();
+                    }
+
+                    sgd.ZeroGrad();
+                    var loss = CtcTrainer.Loss(model, Tensor.From(mels, [frames.Length, padded, 80], device), frames, labels);
+                    losses.Add(loss.Item());
+                    loss.Backward();
+                }
+
+                for (int s = 0; s < 4; s++)
+                {
+                    Check(MathF.Abs(losses[s] - expected[s]) <= 1e-4f * MathF.Abs(expected[s]), $"SGD loss {s}: {losses[s]}, torch {expected[s]} ({string.Join(", ", losses)})");
+                }
+
+                TensorsClose(ReadSafeTensors(CtcData("reference/weights-step3.safetensors")), model.Export().Select(e => (e.Name, e.Values)), 1e-4f, "the weights after 3 SGD steps");
+            }
+
+            using (var model = (IdrakAudioCtcModel)SpeechModels.Load(CtcData("model"), new SpeechModelOptions { Device = device }))
+            using (var scope = new TensorScope())
+            using (Autograd.NoGrad())
+            {
+                var alignment = JsonNode.Parse(File.ReadAllText(CtcData("reference/alignment.json")))!.AsObject();
+                var logp = model.Logits(Tensor.From(mels, [frames.Length, padded, 80], device), frames).LogSoftmax().ToArray();
+                int steps = model.StepsFor(padded), classes = model.Classes;
+                for (int n = 0; n < frames.Length; n++)
+                {
+                    var path = CtcAlignment.Viterbi(logp.AsSpan(n * steps * classes, model.StepsFor(frames[n]) * classes), model.StepsFor(frames[n]), classes, labels[n], model.Blank);
+                    Check(path.Frames.SequenceEqual(alignment["alignments"]![n]!.AsArray().Select(v => (int)v!)), $"utterance {n}: the model's own path differs from torchaudio's");
+                }
+            }
+
+            // A config that does not match the weights: the convolution module's tensors unread.
+            string root = TempFolder("ctc-mismatch");
+            try
+            {
+                foreach (string file in Directory.GetFiles(CtcData("model-conv")))
+                {
+                    File.Copy(file, Path.Combine(root, Path.GetFileName(file)));
+                }
+
+                var config = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "config.json")))!.AsObject();
+                config["convolution_module"] = false;
+                File.WriteAllText(Path.Combine(root, "config.json"), config.ToJsonString());
+                ThrowsNaming<InvalidDataException>(() => SpeechModels.Load(root).Dispose(), "conv weights read without the module", "does not use", "layers.0.conv");
+                config["convolution_module"] = true;
+                config["dim"] = 48;
+                File.WriteAllText(Path.Combine(root, "config.json"), config.ToJsonString());
+                ThrowsNaming<InvalidDataException>(() => SpeechModels.Load(root).Dispose(), "a width the weights do not have", "the config gives");
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+        }
+    }
+
+    // ---------------------------------------------------------------- tone speech: letters as tone bursts
+
+    private const string ToneLetters = "abcdefgh";
+
+    // `count` utterances of 2 to 6 letters, each letter a 0.12 s tone of its own pitch (a Hann envelope) and 0.04 s of
+    // silence, 0.1 s of silence around them, a little seeded noise: transcripts.jsonl and the WAV files in `folder`.
+    private static (string Transcripts, string[] Texts) ToneSpeech(string folder, int count, int seed, int minLetters = 2, int maxLetters = 6)
+    {
+        Directory.CreateDirectory(folder);
+        var random = new Random(seed);
+        var texts = new string[count];
+        var rows = new System.Text.StringBuilder();
+        const int Rate = 16000;
+        for (int u = 0; u < count; u++)
+        {
+            int letters = random.Next(minLetters, maxLetters + 1);
+            var text = new char[letters];
+            for (int i = 0; i < letters; i++)
+            {
+                text[i] = ToneLetters[(u + i * 3 + random.Next(ToneLetters.Length)) % ToneLetters.Length];
+            }
+
+            texts[u] = new string(text);
+            int tone = (int)(0.12 * Rate), gap = (int)(0.04 * Rate), edge = (int)(0.1 * Rate);
+            var samples = new float[2 * edge + letters * (tone + gap)];
+            for (int i = 0; i < letters; i++)
+            {
+                double frequency = 300 + 150 * ToneLetters.IndexOf(text[i], StringComparison.Ordinal);
+                int start = edge + i * (tone + gap);
+                for (int j = 0; j < tone; j++)
+                {
+                    double envelope = 0.5 - 0.5 * Math.Cos(2 * Math.PI * j / (tone - 1));
+                    samples[start + j] = (float)(0.5 * envelope * Math.Sin(2 * Math.PI * frequency * j / Rate));
+                }
+            }
+
+            for (int i = 0; i < samples.Length; i++)
+            {
+                samples[i] += (float)(0.003 * (random.NextDouble() * 2 - 1));
+            }
+
+            AudioEncoders.Save(Path.Combine(folder, $"u{u:D3}.wav"), new AudioData(samples, 1, Rate));
+            rows.Append($"{{\"audio\": \"u{u:D3}.wav\", \"text\": \"{texts[u]}\"}}\n");
+        }
+
+        string transcripts = Path.Combine(folder, "transcripts.jsonl");
+        File.WriteAllText(transcripts, rows.ToString());
+        return (transcripts, texts);
+    }
+
+    // A character tokenizer for the tone letters: Metaspace BPE trained to its alphabet alone (no merges): the letters, "▁"
+    // and the line end (the trainer reads each line with its end, as Hugging Face's train_from_files does).
+    private static BpeTokenizer ToneTokenizer(string folder, IEnumerable<string> texts)
+    {
+        string file = Path.Combine(folder, "texts.txt");
+        File.WriteAllLines(file, texts);
+        int alphabet = string.Concat(texts).Distinct().Count() + 2;
+        return TokenizerTrainers.Get(TokenizerTrainers.Bpe).Train([file],
+            new TokenizerTrainingOptions { VocabularySize = alphabet, MinFrequency = 1, PreTokenizer = TokenizerTrainers.Metaspace, Workers = 1 });
+    }
+
+    private static JsonObject ToneSpec(bool convolution = false) => new()
+    {
+        ["architecture"] = IdrakAudioFamily.Architecture, ["task"] = "ctc", ["mels"] = 80, ["dim"] = 32, ["layers"] = 2, ["heads"] = 4, ["ffn_dim"] = 64,
+        ["subsample_layers"] = 2, ["subsample_kernel"] = 3, ["convolution_module"] = convolution, ["convolution_kernel"] = 5,
+    };
+
+    private static IdrakAudioCtcModel CreateTone(string folder, BpeTokenizer tokenizer, Device device, int seed = 7, bool convolution = false) =>
+        (IdrakAudioCtcModel)SpeechModels.Create(folder, ToneSpec(convolution), tokenizer, new SpeechCreateOptions { Device = device, Seed = seed });
+
+    private static void AudioTrainCreate(Device device)
+    {
+        string root = TempFolder("ctc-create");
+        IdrakAudioPlugin.Register();
+        try
+        {
+            var (transcripts, texts) = ToneSpeech(Path.Combine(root, "data"), 6, 11);
+            var tokenizer = ToneTokenizer(root, texts);
+            Check(tokenizer.VocabularySize == texts.SelectMany(t => t).Distinct().Count() + 2 && tokenizer.IdOf("▁") is not null, $"the tone tokenizer has {tokenizer.VocabularySize} tokens ({string.Join(" ", Enumerable.Range(0, tokenizer.VocabularySize).Select(tokenizer.TokenOf))}) for the texts {string.Join(" ", texts)}");
+            string folder = Path.Combine(root, "model");
+            using var model = CreateTone(folder, tokenizer, device, convolution: true);
+            var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
+            Check((string?)config["architectures"]![0] == "IdrakAudio" && (int)config["classes"]! == tokenizer.VocabularySize + 1 && File.Exists(Path.Combine(folder, "tokenizer.json")),
+                "config.json names the architecture and the classes; tokenizer.json is written");
+            Check(model.Labels(texts[0]).Length == texts[0].Length + 1 && model.Text(model.Labels(texts[0])) == texts[0], $"labels of '{texts[0]}' read back as '{model.Text(model.Labels(texts[0]))}'");
+            using (var again = (IdrakAudioCtcModel)SpeechModels.Load(folder, new SpeechModelOptions { Device = device }))
+            {
+                Check(again.Export().Zip(model.Export()).All(p => p.First.Name == p.Second.Name && p.First.Values.AsSpan().SequenceEqual(p.Second.Values)), "the folder reads back to the same weights");
+            }
+
+            using (var same = CreateTone(Path.Combine(root, "same"), tokenizer, device, convolution: true))
+            {
+                Check(same.Export().Zip(model.Export()).All(p => p.First.Values.AsSpan().SequenceEqual(p.Second.Values)), "the same seed draws the same weights");
+            }
+
+            ThrowsNaming<IOException>(() => CreateTone(folder, tokenizer, device).Dispose(), "a used folder", "already holds files");
+            ThrowsNaming<NotSupportedException>(() => SpeechModels.Create(Path.Combine(root, "other"), new JsonObject { ["architecture"] = "NoSuchAudio" }, tokenizer).Dispose(),
+                "an unregistered architecture", "'NoSuchAudio' is not registered");
+            ThrowsNaming<NotSupportedException>(() => SpeechModels.Create(Path.Combine(root, "tts"), new JsonObject { ["architecture"] = "IdrakAudio", ["task"] = "tts" }, tokenizer).Dispose(),
+                "an unbuilt task", "task 'tts' is not built yet");
+
+            using var reader = SpeechSources.Open(new SpeechSource(SpeechSources.Transcripts, [transcripts]));
+            var audio = AudioCodecs.Decode(reader.ReadBytes(0));
+            var greedy = model.Transcribe(audio);
+            var beam = model.Transcribe(audio, new TranscriptionOptions { Beams = 4 });
+            Check(greedy.Segments.Count == 1 && greedy.Segments[0].End == audio.Duration.TotalSeconds && beam.Segments.Count == 1, "one segment for a short sound");
+            var chunked = model.Transcribe(audio, new TranscriptionOptions { ChunkSeconds = 0.4 });
+            int pieces = (int)Math.Ceiling(audio.Duration.TotalSeconds / 0.4 - 1e-9);
+            Check(chunked.Segments.Count == pieces && chunked.Segments.Zip(chunked.Segments.Skip(1)).All(p => Math.Abs(p.First.End - p.Second.Start) < 1e-9), $"{chunked.Segments.Count} chunks of 0.4 s for {pieces}");
+            async IAsyncEnumerable<AudioData> Pieces()
+            {
+                var samples = audio.Samples;
+                for (int start = 0; start < samples.Length; start += 1000)
+                {
+                    await Task.Yield();
+                    yield return new AudioData(samples[start..Math.Min(samples.Length, start + 1000)], 1, audio.SampleRate);
+                }
+            }
+
+            var streamed = new List<TranscriptSegment>();
+            var enumerator = model.TranscribeStream(Pieces(), new TranscriptionOptions { ChunkSeconds = 0.4 }).GetAsyncEnumerator();
+            while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+            {
+                streamed.Add(enumerator.Current);
+            }
+
+            Check(streamed.Select(s => s.Text).SequenceEqual(chunked.Segments.Select(s => s.Text)) && streamed.Select(s => s.Start).SequenceEqual(chunked.Segments.Select(s => s.Start)),
+                "the stream gives the chunks' segments");
+            var report = Conformance.CheckSpeechRecognizer(new SpeechRecognizerUnderTest(16000, samples =>
+            {
+                var t = model.Transcribe(new AudioData(samples, 1, 16000));
+                return new RecognizedSpeech(t.Text, [.. t.Segments.Select(s => new RecognizedSegment(s.Start, s.End, s.Text))]);
+            }), silenceMaxChars: 1000);
+            Check(report.Passed, report.ToString());
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // ---------------------------------------------------------------- the trainer
+
+    private sealed class FeatureStages : ITelemetryHook
+    {
+        private int _count;
+
+        public int Count => Volatile.Read(ref _count);
+
+        public TelemetryLevel Levels => TelemetryLevel.Inference;
+
+        public void OnInferenceStage(in InferenceStage e)
+        {
+            if (e.Stage == InferenceStageKind.AudioFeatures)
+            {
+                Interlocked.Increment(ref _count);
+            }
+        }
+    }
+
+    private static CtcTrainingOptions ToneTraining(string cache) => new()
+    {
+        Steps = 6, BatchSeconds = 3, LearningRate = 3e-3f, WarmupFraction = 0.1f, Seed = 3, FeatureCache = FeatureCaches.Disk, FeatureCacheFolder = cache,
+    };
+
+    private static void AudioTrainResume(Device device)
+    {
+        string root = TempFolder("ctc-resume");
+        IdrakAudioPlugin.Register();
+        try
+        {
+            var (transcripts, texts) = ToneSpeech(Path.Combine(root, "data"), 12, 21);
+            // One more utterance whose text is far longer than its sound can hold.
+            File.Copy(Path.Combine(root, "data", "u000.wav"), Path.Combine(root, "data", "short.wav"));
+            File.AppendAllText(transcripts, "{\"audio\": \"short.wav\", \"text\": \"" + new string('a', 80) + "\"}\n");
+            var tokenizer = ToneTokenizer(root, texts);
+            var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
+            var options = ToneTraining(Path.Combine(root, "cache")) with { Augmentations = ["speed", "noise", "spec-mask"], AugmentationOptions = new() { Probability = 0.5 }, SaveEvery = 2 };
+
+            // The whole run.
+            CtcTrainingResult whole;
+            var reports = new List<CtcTrainingProgress>();
+            using (var model = CreateTone(Path.Combine(root, "start-a"), tokenizer, device))
+            {
+                whole = CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-a"), progress: new Progress(reports));
+            }
+
+            Check(whole.Steps == 6 && whole.Losses.Count == 6 && whole.Losses.All(float.IsFinite) && whole.Dropped == 1 && whole.Utterances == 12,
+                $"the run: {whole.Steps} steps, {whole.Dropped} dropped, {whole.Utterances} used");
+            Check(whole.Notes.Any(n => n.Contains("1 utterances give fewer steps than their labels need", StringComparison.Ordinal)), $"the dropped row is noted: {string.Join("; ", whole.Notes)}");
+            var steps = reports.Where(r => r.Stage == "step").ToList();
+            Check(steps.Select(r => r.Step).SequenceEqual(Enumerable.Range(1, 6)) && steps[^1].Remaining == TimeSpan.Zero && steps.Any(r => r.Epoch == 2)
+                && steps[2].Remaining > TimeSpan.Zero && steps.All(r => r.MicroBatchSeconds == 3), "progress after every step, the time left, an epoch boundary crossed");
+            foreach (int step in new[] { 2, 4, 6 })
+            {
+                Check(File.Exists(Path.Combine(root, "run-a", $"checkpoint-{step}", CtcTrainer.StateFile)), $"checkpoint-{step} holds its state");
+            }
+
+            // The same run stopped after step 2 (cancelled: the checkpoint of the last finished step is written), then resumed.
+            using (var model = CreateTone(Path.Combine(root, "start-b"), tokenizer, device))
+            using (var stop = new CancellationTokenSource())
+            {
+                var seen = new List<CtcTrainingProgress>();
+                var stopper = new Progress(seen, r =>
+                {
+                    if (r.Stage == "step" && r.Step == 2)
+                    {
+                        stop.Cancel();
+                    }
+                });
+                ThrowsNaming<OperationCanceledException>(() => CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-b"), progress: stopper, cancellationToken: stop.Token),
+                    "the run cancelled after step 2");
+                Check(seen.Count(r => r.Stage == "step") == 2, "two steps ran before the run stopped");
+            }
+
+            var state = CtcTrainer.ReadCheckpoint(Path.Combine(root, "run-b", "checkpoint-2"));
+            Check(state.Step == 2 && state.Losses.SequenceEqual(whole.Losses.Take(2)) && state.Train.Paths.SequenceEqual(train.Paths) && state.Options.Steps == 6, "train-state.json");
+            var resumed = CtcTrainer.Resume(Path.Combine(root, "run-b", "checkpoint-2"), device: device);
+            Check(resumed.Losses.SequenceEqual(whole.Losses), $"resumed losses {string.Join(", ", resumed.Losses)} are not the whole run's {string.Join(", ", whole.Losses)}");
+            Check(File.ReadAllBytes(Path.Combine(root, "run-b", "checkpoint-6", "model.safetensors")).AsSpan()
+                .SequenceEqual(File.ReadAllBytes(Path.Combine(root, "run-a", "checkpoint-6", "model.safetensors"))), "the resumed run's final weights are the whole run's, bit for bit");
+            Check(CtcTrainer.LatestCheckpoint(Path.Combine(root, "run-b"))!.EndsWith("checkpoint-6", StringComparison.Ordinal), "the latest checkpoint");
+            using (var trained = SpeechModels.Load(Path.Combine(root, "run-a", "checkpoint-6"), new SpeechModelOptions { Device = device }))
+            {
+                Check(trained is ICtcSpeechModel && trained.Transcribe(AudioCodecs.Decode(Path.Combine(root, "data", "u001.wav"))).Segments.Count == 1, "a checkpoint is a model that transcribes");
+            }
+
+            // The feature cache: each utterance's features taken once, in the first pass only.
+            var hook = new FeatureStages();
+            using (Telemetry.Subscribe(hook))
+            using (var model = CreateTone(Path.Combine(root, "start-c"), tokenizer, device))
+            {
+                var cached = CtcTrainer.Train(model, train, null, ToneTraining(Path.Combine(root, "cache-c")) with { Steps = 16 }, Path.Combine(root, "run-c"));
+                Check(cached.FeaturesExtracted == 12 && cached.FeaturesCached >= 12 && hook.Count == 12,
+                    $"features taken {cached.FeaturesExtracted} times (telemetry {hook.Count}), {cached.FeaturesCached} from the cache, over three passes of 12");
+            }
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private sealed class Progress(List<CtcTrainingProgress> reports, Action<CtcTrainingProgress>? then = null) : IProgress<CtcTrainingProgress>
+    {
+        public void Report(CtcTrainingProgress value)
+        {
+            reports.Add(value);
+            then?.Invoke(value);
+        }
+    }
+
+    // A model whose device takes at most `most` utterances at once: more is a ResourceLimitExceededException, as a full device.
+    private sealed class TightCtcModel(IdrakAudioCtcModel inner, int most) : ICtcSpeechModel
+    {
+        public int Refused { get; private set; }
+
+        public string Architecture => inner.Architecture;
+
+        public Module Network => inner.Network;
+
+        public IAudioFeatureExtractor Features => inner.Features;
+
+        public int Classes => inner.Classes;
+
+        public int Blank => inner.Blank;
+
+        public Device Device => inner.Device;
+
+        public IReadOnlySet<string> Languages => inner.Languages;
+
+        public int StepsFor(int frames) => inner.StepsFor(frames);
+
+        public int[] Labels(string text) => inner.Labels(text);
+
+        public string Text(ReadOnlySpan<int> labels) => inner.Text(labels);
+
+        public Tensor Logits(Tensor features, IReadOnlyList<int> frames, CtcForwardOptions? options = null)
+        {
+            if (features.Shape[0] > most)
+            {
+                Refused++;
+                throw new ResourceLimitExceededException($"device memory: {features.Shape[0]} utterances at once");
+            }
+
+            return inner.Logits(features, frames, options);
+        }
+
+        public void Save(string folder) => inner.Save(folder);
+
+        public Transcription Transcribe(AudioData audio, TranscriptionOptions? options = null, IProgress<TranscriptionProgress>? progress = null, CancellationToken cancellationToken = default) =>
+            inner.Transcribe(audio, options, progress, cancellationToken);
+
+        public IAsyncEnumerable<TranscriptSegment> TranscribeStream(IAsyncEnumerable<AudioData> chunks, TranscriptionOptions? options = null, CancellationToken cancellationToken = default) =>
+            inner.TranscribeStream(chunks, options, cancellationToken);
+
+        public void Dispose() => inner.Dispose();
+    }
+
+    private static void AudioTrainMemory(Device device)
+    {
+        string root = TempFolder("ctc-memory");
+        IdrakAudioPlugin.Register();
+        try
+        {
+            var (transcripts, texts) = ToneSpeech(Path.Combine(root, "data"), 12, 31);
+            var tokenizer = ToneTokenizer(root, texts);
+            var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
+            var options = ToneTraining(Path.Combine(root, "cache")) with { Steps = 4, BatchSeconds = 6 };
+            CtcTrainingResult free, tight;
+            using (var model = CreateTone(Path.Combine(root, "a"), tokenizer, device))
+            {
+                free = CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-a"));
+            }
+
+            using (var model = new TightCtcModel(CreateTone(Path.Combine(root, "b"), tokenizer, device), 2))
+            {
+                tight = CtcTrainer.Train(model, train, null, options, Path.Combine(root, "run-b"));
+                Check(model.Refused > 0, "the tight model refused a batch");
+            }
+
+            Check(free.MicroBatchSeconds == 6 && tight.MicroBatchSeconds < 6 && tight.Notes.Any(n => n.Contains("out of device memory", StringComparison.Ordinal)),
+                $"micro-batches of {tight.MicroBatchSeconds} s after running out ({string.Join("; ", tight.Notes)})");
+            for (int s = 0; s < free.Losses.Count; s++)
+            {
+                Check(MathF.Abs(free.Losses[s] - tight.Losses[s]) <= 1e-5f * Math.Max(1f, MathF.Abs(free.Losses[s])), $"step {s + 1}: {tight.Losses[s]} in halves against {free.Losses[s]}");
+            }
+
+            // Gradient accumulation (two batches of 3 s a step), and the same run on a device that takes one utterance at a time.
+            CtcTrainingResult accumulated, accumulatedTight;
+            using (var model = CreateTone(Path.Combine(root, "c"), tokenizer, device))
+            {
+                accumulated = CtcTrainer.Train(model, train, null, options with { BatchSeconds = 3, GradientAccumulation = 2 }, Path.Combine(root, "run-c"));
+            }
+
+            using (var model = new TightCtcModel(CreateTone(Path.Combine(root, "d"), tokenizer, device), 1))
+            {
+                accumulatedTight = CtcTrainer.Train(model, train, null, options with { BatchSeconds = 3, GradientAccumulation = 2 }, Path.Combine(root, "run-d"));
+            }
+
+            for (int s = 0; s < accumulated.Losses.Count; s++)
+            {
+                Check(MathF.Abs(accumulated.Losses[s] - accumulatedTight.Losses[s]) <= 1e-5f * Math.Max(1f, MathF.Abs(accumulated.Losses[s])),
+                    $"accumulated step {s + 1}: {accumulatedTight.Losses[s]} one utterance at a time against {accumulated.Losses[s]}");
+            }
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void AudioTrainSmoke(Device device)
+    {
+        string root = TempFolder("ctc-smoke");
+        IdrakAudioPlugin.Register();
+        try
+        {
+            var (transcripts, texts) = ToneSpeech(Path.Combine(root, "data"), 24, 41);
+            var tokenizer = ToneTokenizer(root, texts);
+            var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
+            var options = ToneTraining(Path.Combine(root, "cache")) with { Steps = 200, BatchSeconds = 8, LearningRate = 3e-3f, WarmupFraction = 0.05f, EvaluateEvery = 100, Checkpointing = false };
+            var clock = Stopwatch.StartNew();
+            CtcTrainingResult result;
+            using (var model = CreateTone(Path.Combine(root, "start"), tokenizer, device))
+            {
+                result = CtcTrainer.Train(model, train, train, options, Path.Combine(root, "run"));
+            }
+
+            double seconds = clock.Elapsed.TotalSeconds;
+            float first = result.Losses[0], last = result.Losses.TakeLast(10).Average();
+            Console.WriteLine(FormattableString.Invariant($"    200 steps in {seconds:F1} s ({seconds * 1000 / 200:F1} ms a step); loss {first:F3} at step 1, {last:F3} over the last 10; cer {string.Join(", ", result.Evaluations.Select(e => $"{e.Score:F3} at step {e.Step}"))}"));
+            Check(last < first / 2, FormattableString.Invariant($"the loss went from {first:F3} to {last:F3}, not under half"));
+            Check(result.Evaluations.Count == 2 && result.Evaluations[1].Score <= result.Evaluations[0].Score && result.Evaluations[1].Score < 0.5,
+                $"the CER at steps 100 and 200: {string.Join(", ", result.Evaluations)}");
+            using var trained = SpeechModels.Load(result.Checkpoint!, new SpeechModelOptions { Device = device });
+            var text = trained.Transcribe(AudioCodecs.Decode(Path.Combine(root, "data", "u000.wav"))).Text;
+            Console.WriteLine($"    u000 '{texts[0]}' reads as '{text}'");
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
     }
 }

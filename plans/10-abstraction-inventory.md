@@ -11,14 +11,14 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 52 | 13 | 28 | 92 | 0 |
-| `Idrak` | 11 | 4 | 13 | 28 | 0 |
+| `Idrak.Abstraction` | 53 | 13 | 30 | 95 | 0 |
+| `Idrak` | 11 | 4 | 12 | 27 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Nlp` | 11 | 2 | 8 | 21 | 0 |
+| `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
-| `Idrak.Audio` | 17 | 1 | 11 | 29 | 0 |
+| `Idrak.Audio` | 18 | 1 | 11 | 30 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -87,6 +87,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | audio, image, text | Abstraction, AspNetCore, Audio, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio | Abstraction |
 | `Idrak.Abstraction.Generation.FeatureCaches` | registry | public | — |  | disk, memory | Audio, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IBinaryPartKind` | interface | public | — | AudioPartKind |  | Audio, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Nlp | Abstraction |
@@ -102,6 +103,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | AspNetCore, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Abstraction, Audio, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | ModelImages.LazyEncoder |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | — |  | Abstraction, Idrak, Nlp | Abstraction |
@@ -115,6 +117,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.TokenSamplers` | registry | public | — |  | default | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | Abstraction, Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, wer | Abstraction, Audio, Nlp | Abstraction |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, +34 |  | Abstraction, AspNetCore, Audio, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Nlp | Abstraction |
@@ -128,8 +131,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Serving.IEngineLease<TCopy>` | interface | public | — | HostedModel.Lease<TCopy> |  | Abstraction, AspNetCore, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | Idrak, Mcp | Abstraction |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | AspNetCore, Idrak | Abstraction |
-| `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Audio, Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Nlp | Abstraction |
 
 ### Idrak
 
@@ -137,7 +140,6 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Datasets.Abstractions.IBatchSource` | interface | public | — | DataLoader |  | Idrak | Idrak |
 | `Idrak.Datasets.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
-| `Idrak.Inference.Abstractions.CtcDecoders` | registry | public | Tensor |  | beam, greedy | — | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, CrossAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, +2 |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkBuilder` | interface | public | Device, Module, Tensor | NetworkBuilder |  | Idrak | Idrak |
@@ -178,7 +180,6 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Nlp.Abstractions.IRandomTextSource` | interface | public | — | PooledTextSource |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ISyntheticRecordFormat` | interface | public | — | MessagesSyntheticRecords, ShareGptSyntheticRecords, TextSyntheticRecords |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat |  | Nlp | Nlp |
-| `Idrak.Nlp.Abstractions.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.PagePartFillers` | registry | public | — |  | date, digits, field, hijri, line, number, pick | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.PretrainingSources` | registry | public | — |  | records, tokens | Nlp | Nlp |
@@ -186,7 +187,6 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Nlp.Abstractions.SyntheticRecordFormats` | registry | public | — |  | messages, sharegpt, text | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt | Nlp | Nlp |
-| `Idrak.Nlp.Abstractions.TuningMetrics` | registry | public | — |  | cer, wer | Nlp | Nlp |
 | `Idrak.Nlp.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Nlp | Nlp |
 | `Idrak.Nlp.Retrieval.Abstractions.IRetriever` | interface | public | — | RetrievalIndex |  | Nlp | Nlp |
 
@@ -227,7 +227,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
-| `Idrak.Audio.Abstractions.AudioAugmentations` | registry | public | — |  | noise, spec-mask, speed | — | Audio |
+| `Idrak.Audio.Abstractions.AudioAugmentations` | registry | public | — |  | noise, spec-mask, speed | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, wav | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | wav | — | Audio |
 | `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio | Audio |
@@ -238,6 +238,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Module, Tensor | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechReader` | interface | public | — | SpeechReader |  | Audio | Audio |
@@ -251,7 +252,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IVoiceStore` | interface | public | — | FolderVoiceStore |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.PretrainedAudio` | abstract class | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechFamilies` | registry | public | — |  | — | Audio | Audio |
-| `Idrak.Audio.Abstractions.SpeechSources` | registry | public | — |  | audio-folder, transcripts | — | Audio |
+| `Idrak.Audio.Abstractions.SpeechSources` | registry | public | — |  | audio-folder, transcripts | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechSynthesisFamilies` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | — | Audio |
 | `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio | Audio |

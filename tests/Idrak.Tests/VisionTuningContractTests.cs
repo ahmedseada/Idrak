@@ -9,6 +9,7 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Nlp;
 using Idrak.Nlp.Abstractions;
+using Idrak.Abstraction.Generation;
 
 // Plan 12, phase 1: the contracts and registries of vision-language fine-tuning (no family in the library): tuning data
 // formats with images, the images' preparation saved with the adapters, the trainable parts a family offers, the feature

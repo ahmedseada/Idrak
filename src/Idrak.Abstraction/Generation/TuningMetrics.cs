@@ -4,7 +4,7 @@
 using System.Buffers;
 using System.Runtime.CompilerServices;
 
-namespace Idrak.Nlp.Abstractions;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// A score as a ratio, so scores of many answers add up the way the metric means them to: an error rate is the errors of

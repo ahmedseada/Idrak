@@ -1,9 +1,27 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Models;
 
 namespace Idrak.Audio;
+
+/// <summary>Settings for <see cref="SpeechModels.Create"/>.</summary>
+public sealed record SpeechCreateOptions
+{
+    /// <summary>Where the created model is loaded (the default device when null); its weights are drawn and written first.</summary>
+    public Device? Device { get; init; }
+
+    /// <summary>The seed the weights are drawn from.</summary>
+    public int Seed { get; init; }
+
+    /// <summary>The architecture (a <see cref="SpeechFamilies"/> name); null: the spec's "architecture" (or its "architectures"[0]).</summary>
+    public string? Architecture { get; init; }
+
+    /// <summary>Write into a folder that already holds files (they are replaced); otherwise such a folder is refused.</summary>
+    public bool Overwrite { get; init; }
+}
 
 /// <summary>
 /// Loads speech recognition models through their registered family (<see cref="SpeechFamilies"/>), as
@@ -45,5 +63,48 @@ public static class SpeechModels
         using var tensors = format.Open(folder);
         var checkpoint = new SpeechCheckpoint(architecture, config, path, folder, tensors, options, notes);
         return family.Read(checkpoint) ?? throw new InvalidOperationException($"Speech family '{architecture}' read {path} as nothing.");
+    }
+
+    /// <summary>
+    /// A speech model that did not exist: the family registered under the spec's architecture makes it from
+    /// <paramref name="spec"/> (<see cref="ISpeechFamily.Create"/>: its tensors drawn from the seed, its config.json and
+    /// other files), which is written into <paramref name="folder"/> (config.json with "architectures", model.safetensors
+    /// in float32, the tokenizer as tokenizer.json when it is a <see cref="BpeTokenizer"/> and the family wrote none, the
+    /// family's files) and loaded from there, so it is a model like any other: it transcribes, trains and saves (plan 21, S6).
+    /// </summary>
+    /// <exception cref="NotSupportedException">No family is registered under the architecture, or it makes no models from a description.</exception>
+    /// <exception cref="InvalidDataException">The spec names no architecture.</exception>
+    /// <exception cref="IOException">The folder holds files and <see cref="SpeechCreateOptions.Overwrite"/> is off.</exception>
+    public static ISpeechRecognizer Create(string folder, JsonObject spec, ITokenizer tokenizer, SpeechCreateOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(tokenizer);
+        options ??= new SpeechCreateOptions();
+        string architecture = options.Architecture ?? (string?)spec["architecture"] ?? (spec["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null)
+            ?? throw new InvalidDataException("The speech model's spec names no architecture (\"architecture\"); pass SpeechCreateOptions.Architecture.");
+        var family = SpeechFamilies.Get(architecture);
+        if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any() && !options.Overwrite)
+        {
+            throw new IOException($"{folder} already holds files; choose an empty folder or overwrite.");
+        }
+
+        var created = family.Create(spec, tokenizer, options.Seed);
+        var config = (JsonObject)created.Config.DeepClone();
+        config["architectures"] = new JsonArray((JsonNode)architecture);
+        Directory.CreateDirectory(folder);
+        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), created.Tensors, SafeTensorType.F32);
+        foreach (var (name, text) in created.Files)
+        {
+            File.WriteAllText(Path.Combine(folder, name), text);
+        }
+
+        if (!created.Files.ContainsKey("tokenizer.json") && tokenizer is BpeTokenizer bpe)
+        {
+            bpe.Save(Path.Combine(folder, "tokenizer.json"));
+        }
+
+        File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
+        return Load(folder, new SpeechModelOptions { Device = options.Device });
     }
 }

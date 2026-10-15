@@ -1811,6 +1811,34 @@ public sealed record Idrak.Abstraction.Generation.ChatText : Idrak.Abstraction.G
 public static class Idrak.Abstraction.Generation.ChatTools
   public static Idrak.Abstraction.Generation.IChatModel WithTools(this Idrak.Abstraction.Generation.IChatModel model, Idrak.Abstraction.Generation.IToolRegistry tools, int maxToolRounds)
 
+public sealed record Idrak.Abstraction.Generation.CtcDecodeOptions : System.IEquatable<Idrak.Abstraction.Generation.CtcDecodeOptions>
+  public CtcDecodeOptions()
+  public float? MinLogProbability { get; init; }
+  public int BeamWidth { get; init; }
+  public int Blank { get; init; }
+  public int Results { get; init; }
+  public int? TopClasses { get; init; }
+
+public delegate System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.CtcHypothesis> Idrak.Abstraction.Generation.CtcDecoder(System.ReadOnlyMemory<float> logProbs, int steps, int classes, Idrak.Abstraction.Generation.CtcDecodeOptions options)
+
+public static class Idrak.Abstraction.Generation.CtcDecoders
+  public const string Beam = "beam"
+  public const string Greedy = "greedy"
+  public static Idrak.Abstraction.Generation.CtcDecoder Get(string name)
+  public static Idrak.Abstraction.Generation.CtcDecoder? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.CtcHypothesis> Decode(System.ReadOnlyMemory<float> logProbs, int steps, int classes, string name = "greedy", Idrak.Abstraction.Generation.CtcDecodeOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.CtcHypothesis>[] Decode(Idrak.Abstraction.Tensor logProbs, System.Collections.Generic.IReadOnlyList<int>? lengths = null, string name = "greedy", Idrak.Abstraction.Generation.CtcDecodeOptions? options = null, bool batchFirst = false)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, Idrak.Abstraction.Generation.CtcDecoder decoder)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Abstraction.Generation.CtcHypothesis : System.IEquatable<Idrak.Abstraction.Generation.CtcHypothesis>
+  public CtcHypothesis(int[] Labels, float LogProbability)
+  public float LogProbability { get; init; }
+  public int[] Labels { get; init; }
+
 public enum Idrak.Abstraction.Generation.DecoderNorm : int
   Layer = 1
   Rms = 0
@@ -2076,6 +2104,13 @@ public interface Idrak.Abstraction.Generation.IToolRegistry
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Definitions { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ToolResult> InvokeAsync(Idrak.Abstraction.Generation.ToolCall call, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult>> InvokeAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall> calls, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Idrak.Abstraction.Generation.ITuningMetric
+  public Idrak.Abstraction.Generation.TuningScore Score(string answer, string reference, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public bool LowerIsBetter { get; }
+  public string Name { get; }
+  public string Summary { get; }
 
 public interface Idrak.Abstraction.Generation.IVisionEncoder : System.IDisposable
   public (default) float[]? AxisPositions(Idrak.Abstraction.Generation.ImageTokenLayout layout)
@@ -2508,6 +2543,30 @@ public sealed record Idrak.Abstraction.Generation.ToolResult : System.IEquatable
   public bool Succeeded { get; init; }
   public string Content { get; init; }
   public string? Error { get; init; }
+
+public static class Idrak.Abstraction.Generation.TuningMetrics
+  public const string CharacterErrorRate = "cer"
+  public const string WordErrorRate = "wer"
+  public static Idrak.Abstraction.Generation.ITuningMetric Get(string name)
+  public static Idrak.Abstraction.Generation.ITuningMetric? Default(string name)
+  public static Idrak.Abstraction.Generation.ITuningMetric? Find(string name)
+  public static Idrak.Abstraction.Generation.TuningScore Score(string name, System.Collections.Generic.IEnumerable<(string, string)> pairs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static int EditDistance<T>(System.ReadOnlySpan<T> a, System.ReadOnlySpan<T> b) where T : System.IEquatable<T>
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Generation.ITuningMetric metric)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.Generation.TuningScore : System.IEquatable<Idrak.Abstraction.Generation.TuningScore>
+  public TuningScore(double Numerator, double Denominator)
+  public double Denominator { get; init; }
+  public double Numerator { get; init; }
+  public double Value { get; }
+  public override string ToString()
+  public static Idrak.Abstraction.Generation.TuningScore Sum(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.TuningScore> scores)
+  public static Idrak.Abstraction.Generation.TuningScore op_Addition(Idrak.Abstraction.Generation.TuningScore a, Idrak.Abstraction.Generation.TuningScore b)
 
 public sealed record Idrak.Abstraction.Generation.VisionEncoderOptions : System.IEquatable<Idrak.Abstraction.Generation.VisionEncoderOptions>
   public Idrak.Abstraction.Device? Device { get; init; }

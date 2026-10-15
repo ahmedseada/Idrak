@@ -17,6 +17,7 @@ using Idrak;
 using Idrak.Nlp.Abstractions;
 using Idrak.Samples.ArabicOcr;
 using Idrak.Samples.ArabicOcr.Tests;
+using Idrak.Abstraction.Generation;
 
 string device = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } devices ? devices.Split(',')[0].Trim() : "cpu";
 string root = Path.Combine(Path.GetTempPath(), $"idrak-ocr-tests-{Environment.ProcessId}");

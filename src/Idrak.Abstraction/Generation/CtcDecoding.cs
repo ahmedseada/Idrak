@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Inference.Abstractions;
 
-namespace Idrak.Inference;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>The library's CTC decoders, registered in <see cref="CtcDecoders"/> as "greedy" and "beam".</summary>
 internal static class CtcDecoding

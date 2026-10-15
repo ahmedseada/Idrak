@@ -12,3 +12,4 @@ Idrak.Abstraction.Data.IOutlineRasterizer | how glyph and shape outlines become 
 Idrak.Abstraction.Data.OutlineRasterizers | the outline rasterizers by name, overridable once for every package that draws outlines
 Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per script, for every package that draws text (Imaging draws, Nlp's synthetic pages lay out, Vision makes text samples); a script's shaper is registered once for all of them
 Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for every package that draws text
+Idrak.Abstraction.Generation.CtcDecoders | CTC decoding reads any recognizer's per-step classes the same way, whatever they stand for: speech (Audio's CTC trainer and recognizers) and text lines (OCR readers, Vision's sequence heads); a lexicon or language-model decoder is registered once for all of them

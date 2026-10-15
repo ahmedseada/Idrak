@@ -3,10 +3,10 @@
 
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Inference.Abstractions;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 using Idrak.Onnx;
+using Idrak.Abstraction.Generation;
 
 // Plan 13, steps 3 and 2 (the parts a text-line recognizer uses): CTC loss and decoding, convolutions with rectangular
 // kernels, strides, padding, dilation and groups, rectangular pooling, bidirectional and stacked recurrent layers. Checked
