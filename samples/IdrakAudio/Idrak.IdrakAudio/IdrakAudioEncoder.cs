@@ -23,7 +23,7 @@ public sealed class IdrakAudioEncoder : Module
     private readonly Conv2d[] _subsample;
     private readonly IdrakAudioBlock[] _blocks;
     private readonly LayerNorm _norm;
-    private readonly Linear _head;
+    private readonly Linear? _head;
     private readonly Lock _gate = new();
     private readonly List<Tensor> _tables = [];
     private Tensor? _positions;
@@ -54,9 +54,12 @@ public sealed class IdrakAudioEncoder : Module
         }
 
         _norm = weights.Norm("norm", d, config.NormEpsilon);
-        _head = weights.Linear("head", d, config.Classes);
         _norm.Name = "norm";
-        _head.Name = "head";
+        if (!config.Sequence)
+        {
+            _head = weights.Linear("head", d, config.Classes);                // a seq2seq model's decoder reads the normed states
+            _head.Name = "head";
+        }
     }
 
     /// <summary>The settings it was built for.</summary>
@@ -65,14 +68,14 @@ public sealed class IdrakAudioEncoder : Module
     internal static BatchLayout Layout => t_layout ?? throw new InvalidOperationException("An IdrakAudio block runs inside its encoder's pass.");
 
     /// <inheritdoc />
-    public override IEnumerable<Module> Children() => [.. _subsample, .. _blocks, _norm, _head];
+    public override IEnumerable<Module> Children() => _head is null ? [.. _subsample, .. _blocks, _norm] : [.. _subsample, .. _blocks, _norm, _head];
 
     /// <summary>Every utterance of <paramref name="input"/> [batch, frames, mels] taken as all frames.</summary>
     protected override Tensor ForwardCore(Tensor input) => Run(input, null, checkpointing: false);
 
     /// <summary>
     /// The logits of features [batch, frames, mels] whose utterance n has <paramref name="frames"/>[n] frames (all when
-    /// null), zeros after them: [batch, steps, classes].
+    /// null), zeros after them: [batch, steps, classes]; a "seq2seq" encoder's normed states [batch, steps, dim].
     /// </summary>
     public Tensor Run(Tensor features, IReadOnlyList<int>? frames, bool checkpointing)
     {
@@ -132,7 +135,8 @@ public sealed class IdrakAudioEncoder : Module
             x = checkpointing && IsTraining ? block.ForwardCheckpointed(x) : block.Forward(x);
         }
 
-        return _head.Forward(_norm.Forward(x));
+        var normed = _norm.Forward(x);
+        return _head is null ? normed : _head.Forward(normed);
     }
 
     internal Tensor Activate(Tensor x) => Config.Activation == "gelu" ? ExactGELU.Apply(x) : x.Gelu();
@@ -207,7 +211,7 @@ public sealed class IdrakAudioEncoder : Module
     }
 
     /// <inheritdoc />
-    public override string ToString() => $"IdrakAudioEncoder(dim {Config.Dim}, {Config.Layers} blocks, {Config.Classes} classes)";
+    public override string ToString() => $"IdrakAudioEncoder(dim {Config.Dim}, {Config.Layers} blocks{(_head is null ? "" : $", {Config.Classes} classes")})";
 
     // A batch's layout for the blocks: each utterance's steps as one key range per utterance ([n · t] starts and ends, a
     // table per utterance), or one table when every utterance has every step; the padding's row mask when there is one.

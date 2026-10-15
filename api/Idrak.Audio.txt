@@ -253,6 +253,17 @@ public interface Idrak.Audio.Abstractions.ICtcSpeechModel : Idrak.Audio.Abstract
   public int Classes { get; }
   public int StepsFor(int frames)
 
+public interface Idrak.Audio.Abstractions.ISequenceSpeechModel : Idrak.Audio.Abstractions.ISpeechRecognizer, Idrak.Audio.Abstractions.ITrainableSpeechModel, System.IDisposable
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Abstraction.Tensor Head(Idrak.Abstraction.Tensor hidden)
+  public Idrak.Abstraction.Tensor Hidden(Idrak.Abstraction.Tensor tokens, Idrak.Abstraction.Tensor memory, System.Collections.Generic.IReadOnlyList<int> steps)
+  public int EndToken { get; }
+  public int MaxPositions { get; }
+  public int StartToken { get; }
+  public int StepsFor(int frames)
+  public int Vocabulary { get; }
+  public int[] Generate(Idrak.Abstraction.Tensor memory, int beams, System.Threading.CancellationToken cancellationToken = default)
+
 public interface Idrak.Audio.Abstractions.ISpeakerEncoder : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public float[] Embed(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> clips, System.Threading.CancellationToken cancellationToken = default)
@@ -447,6 +458,7 @@ public sealed record Idrak.Audio.Abstractions.SpeechSynthesisOptions : System.IE
 
 public static class Idrak.Audio.Abstractions.SpeechTrainingObjectives
   public const string Ctc = "ctc"
+  public const string Seq2Seq = "seq2seq"
   public static Idrak.Audio.Abstractions.ISpeechTrainingObjective Get(string name)
   public static Idrak.Audio.Abstractions.ISpeechTrainingObjective? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
@@ -742,6 +754,16 @@ public static class Idrak.Audio.Resampler
   public static Idrak.Abstraction.Tensor ResampleOnDevice(Idrak.Audio.Abstractions.AudioData audio, int sampleRate, Idrak.Abstraction.Device device, Idrak.Audio.ResampleOptions? options = null)
   public static Idrak.Audio.Abstractions.AudioData Resample(Idrak.Audio.Abstractions.AudioData audio, int sampleRate, Idrak.Audio.ResampleOptions? options = null)
   public static long OutputLength(long samples, int from, int to)
+
+public sealed class Idrak.Audio.Seq2SeqObjective : Idrak.Audio.Abstractions.ISpeechTrainingObjective
+  public Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ITrainableSpeechModel model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, Idrak.Audio.Abstractions.SpeechForwardOptions forward)
+  public Seq2SeqObjective()
+  public System.Collections.Generic.IReadOnlyList<int[]> Decode(Idrak.Audio.Abstractions.ITrainableSpeechModel model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, string decoder, int beamWidth)
+  public bool Accepts(Idrak.Audio.Abstractions.ITrainableSpeechModel model, int frames, int[] labels)
+  public bool Trains(Idrak.Audio.Abstractions.ITrainableSpeechModel model)
+  public static Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ISequenceSpeechModel model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, Idrak.Audio.Abstractions.SpeechForwardOptions? forward = null)
+  public string Name { get; }
+  public string Refused { get; }
 
 public sealed record Idrak.Audio.SpeechCreateOptions : System.IEquatable<Idrak.Audio.SpeechCreateOptions>
   public Idrak.Abstraction.Device? Device { get; init; }

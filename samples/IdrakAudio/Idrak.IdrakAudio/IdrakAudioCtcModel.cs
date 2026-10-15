@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Idrak.Audio;
 using Idrak.Models;
@@ -18,6 +17,7 @@ namespace Idrak.IdrakAudio;
 public sealed class IdrakAudioCtcModel : ICtcSpeechModel
 {
     private readonly IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> _layout;
+    private readonly IdrakAudioTranscriber _transcriber;
 
     internal IdrakAudioCtcModel(IdrakAudioConfig config, IdrakAudioWeights weights, BpeTokenizer tokenizer, Device device)
     {
@@ -27,6 +27,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
         Encoder = new IdrakAudioEncoder(config, weights);
         _layout = [.. weights.Entries];
         Features = AudioFeatureExtractors.Create(config.FeatureExtractor, config.Features);
+        _transcriber = new IdrakAudioTranscriber(config, Features, device, Read, labels => Text(labels));
         if (tokenizer.VocabularySize + 1 != config.Classes)
         {
             Encoder.Dispose();
@@ -127,99 +128,27 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
         NamedParameters().Select((p, i) => (p.Name, _layout[i].Stored, IdrakAudioWeights.Stored(p.Parameter, p.Transposed)));
 
     /// <inheritdoc />
-    public Transcription Transcribe(AudioData audio, TranscriptionOptions? options = null, IProgress<TranscriptionProgress>? progress = null, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(audio);
-        options ??= new TranscriptionOptions();
-        var total = Stopwatch.StartNew();
-        var clock = Stopwatch.StartNew();
-        var sound = Prepare(audio);
-        var decode = clock.Elapsed;
-        int chunk = ChunkSamples(options);
-        int count = (sound.Length + chunk - 1) / chunk;
-        var segments = new List<TranscriptSegment>(count);
-        TimeSpan features = default, encoder = default, decoder = default;
-        for (int c = 0; c < count; c++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            int start = c * chunk, length = Math.Min(chunk, sound.Length - start);
-            segments.Add(Piece(sound.Channel(0).Slice(start, length), start, options, ref features, ref encoder, ref decoder));
-            progress?.Report(new TranscriptionProgress(c + 1, count, "decoder", total.Elapsed));
-        }
-
-        string text = string.Join(" ", segments.Select(s => s.Text).Where(t => t.Length > 0));
-        var stats = new TranscriptionStats(audio.Duration, decode, features, encoder, decoder, Device.Backend.GetMemoryUsage().Peak, count, 1);
-        return new Transcription(text, null, segments, stats);
-    }
+    public Transcription Transcribe(AudioData audio, TranscriptionOptions? options = null, IProgress<TranscriptionProgress>? progress = null, CancellationToken cancellationToken = default) =>
+        _transcriber.Transcribe(audio, options, progress, cancellationToken);
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<TranscriptSegment> TranscribeStream(IAsyncEnumerable<AudioData> chunks, TranscriptionOptions? options = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<TranscriptSegment> TranscribeStream(IAsyncEnumerable<AudioData> chunks, TranscriptionOptions? options = null, CancellationToken cancellationToken = default) =>
+        _transcriber.TranscribeStream(chunks, options, cancellationToken);
+
+    // One stretch's features read: the encoder, a log-softmax and the CTC decoder (greedy, or "beam" above one beam).
+    private (int[] Labels, float Score) Read(Tensor features, TranscriptionOptions options, ref TimeSpan encoder, ref TimeSpan decoder)
     {
-        ArgumentNullException.ThrowIfNull(chunks);
-        options ??= new TranscriptionOptions();
-        int size = ChunkSamples(options);
-        var pending = new List<float>(size);
-        long offset = 0;
-        TimeSpan features = default, encoder = default, decoder = default;
-        await foreach (var piece in chunks.WithCancellation(cancellationToken))
-        {
-            pending.AddRange(Prepare(piece).Channel(0));
-            while (pending.Count >= size)
-            {
-                var samples = pending.GetRange(0, size).ToArray();
-                pending.RemoveRange(0, size);
-                yield return Piece(samples, offset, options, ref features, ref encoder, ref decoder);
-                offset += size;
-            }
-        }
-
-        if (pending.Count > 0)
-        {
-            yield return Piece(pending.ToArray(), offset, options, ref features, ref encoder, ref decoder);
-        }
-    }
-
-    private int ChunkSamples(TranscriptionOptions options) =>
-        Math.Max(1, (int)Math.Round((options.ChunkSeconds > 0 ? options.ChunkSeconds : Config.MaxSeconds) * Features.Options.SampleRate));
-
-    // One channel at the features' rate.
-    private AudioData Prepare(AudioData audio)
-    {
-        if (audio.Channels > 1)
-        {
-            var mono = new float[audio.Length];
-            audio.ToMono(mono);
-            audio = new AudioData(mono, 1, audio.SampleRate);
-        }
-
-        return Resampler.Resample(audio, Features.Options.SampleRate);
-    }
-
-    // One stretch of sound transcribed: its features (a stretch shorter than a window padded with silence to one), the
-    // encoder, a log-softmax and the CTC decoder; the segment timed from `start` samples.
-    private TranscriptSegment Piece(ReadOnlySpan<float> samples, long start, TranscriptionOptions options, ref TimeSpan features, ref TimeSpan encoder, ref TimeSpan decoder)
-    {
-        int rate = Features.Options.SampleRate;
-        var padded = new float[Math.Max(samples.Length, Features.Options.WindowSize)];
-        samples.CopyTo(padded);
         var clock = Stopwatch.StartNew();
-        using var scope = new TensorScope();
-        using var _ = Autograd.NoGrad();
-        var values = Features.Extract(new AudioData(padded, 1, rate), Device);
-        int frames = values.Shape[0];
-        features += clock.Elapsed;
-        clock.Restart();
-        var logProbs = Encoder.Run(values.Reshape(1, frames, Config.Mels), null, checkpointing: false).LogSoftmax();
+        int frames = features.Shape[1];
+        var logProbs = Encoder.Run(features, null, checkpointing: false).LogSoftmax();
         int steps = StepsFor(frames);
         var read = logProbs.ToArray();
         encoder += clock.Elapsed;
         clock.Restart();
         var decodeOptions = new CtcDecodeOptions { Blank = Blank, BeamWidth = Math.Max(1, options.Beams) };
         var best = CtcDecoders.Decode(read.AsMemory(0, steps * Classes), steps, Classes, options.Beams > 1 ? CtcDecoders.Beam : CtcDecoders.Greedy, decodeOptions)[0];
-        string text = Text(best.Labels);
         decoder += clock.Elapsed;
-        return new TranscriptSegment(start / (double)rate, (start + samples.Length) / (double)rate, text, best.LogProbability / Math.Max(1, steps), best.Labels);
+        return (best.Labels, best.LogProbability / Math.Max(1, steps));
     }
 
     /// <inheritdoc />

@@ -13,7 +13,10 @@ namespace Idrak.IdrakAudio;
 /// </summary>
 public sealed record IdrakAudioConfig
 {
-    /// <summary>What the model does: "ctc" (a recognizer with a CTC head). "seq2seq", "audio-language" and "tts" are later tasks.</summary>
+    /// <summary>
+    /// What the model does: "ctc" (a recognizer with a CTC head) or "seq2seq" (the encoder and a text decoder attending to
+    /// it). "audio-language" and "tts" are later tasks.
+    /// </summary>
     public string Task { get; init; } = IdrakAudioFamily.CtcTask;
 
     /// <summary>Mel bands of the features (the subsampler's input channels).</summary>
@@ -58,11 +61,38 @@ public sealed record IdrakAudioConfig
     /// <summary>The weights drawn at creation: a normal draw of this over the square root of each matrix's inputs (biases 0, norms 1).</summary>
     public float InitScale { get; init; } = 1f;
 
-    /// <summary>The head's classes: the tokenizer's tokens and the blank.</summary>
+    /// <summary>The head's classes: the tokenizer's tokens and the blank ("ctc"), or the tokens and the start and end token ("seq2seq").</summary>
     public int Classes { get; init; }
 
-    /// <summary>The blank class; token i is class i below it and i + 1 from it on.</summary>
+    /// <summary>The blank class ("ctc"); token i is class i below it and i + 1 from it on.</summary>
     public int BlankId { get; init; }
+
+    /// <summary>"seq2seq": the decoder's blocks.</summary>
+    public int DecoderLayers { get; init; } = 4;
+
+    /// <summary>"seq2seq": the decoder's width (its cross-attention reads the encoder's <see cref="Dim"/>); the spec's default is <see cref="Dim"/>.</summary>
+    public int DecoderDim { get; init; } = 256;
+
+    /// <summary>"seq2seq": the decoder's attention heads (a divisor of <see cref="DecoderDim"/>); the spec's default is <see cref="Heads"/>.</summary>
+    public int DecoderHeads { get; init; } = 4;
+
+    /// <summary>"seq2seq": the decoder's feed-forward width; the spec's default is <see cref="FfnDim"/>.</summary>
+    public int DecoderFfnDim { get; init; } = 1024;
+
+    /// <summary>"seq2seq": the decoder's learned positions (the start token, the labels and the end token fit in them).</summary>
+    public int MaxTargetPositions { get; init; } = 448;
+
+    /// <summary>"seq2seq": the head reads the token embedding's table (true) or has its own weight ("decoder.head.weight").</summary>
+    public bool TieEmbeddings { get; init; } = true;
+
+    /// <summary>"seq2seq": the token the decoder starts from; the spec's default is the last class (the one past the tokenizer's tokens).</summary>
+    public int StartToken { get; init; }
+
+    /// <summary>"seq2seq": the token that ends a text; the spec's default is the last class, as the start token.</summary>
+    public int EndToken { get; init; }
+
+    /// <summary>Whether the task is "seq2seq".</summary>
+    public bool Sequence => Task == IdrakAudioFamily.Seq2SeqTask;
 
     /// <summary>The feature extractor (an <see cref="AudioFeatureExtractors"/> name).</summary>
     public string FeatureExtractor { get; init; } = "log-mel";
@@ -95,14 +125,16 @@ public sealed record IdrakAudioConfig
         {
             int mels = (int?)json["mels"] ?? d.Mels;
             var features = json["features"] is JsonObject f ? ReadFeatures(f, mels) : d.Features with { Mels = mels };
+            int dim = (int?)json["dim"] ?? d.Dim, heads = (int?)json["heads"] ?? d.Heads, ffn = (int?)json["ffn_dim"] ?? d.FfnDim;
+            int classes = (int?)json["classes"] ?? (vocabulary is { } v ? v + 1 : 0);
             var config = new IdrakAudioConfig
             {
                 Task = (string?)json["task"] ?? d.Task,
                 Mels = mels,
-                Dim = (int?)json["dim"] ?? d.Dim,
+                Dim = dim,
                 Layers = (int?)json["layers"] ?? d.Layers,
-                Heads = (int?)json["heads"] ?? d.Heads,
-                FfnDim = (int?)json["ffn_dim"] ?? d.FfnDim,
+                Heads = heads,
+                FfnDim = ffn,
                 SubsampleLayers = (int?)json["subsample_layers"] ?? d.SubsampleLayers,
                 SubsampleKernel = (int?)json["subsample_kernel"] ?? d.SubsampleKernel,
                 Positions = (string?)json["positions"] ?? d.Positions,
@@ -112,8 +144,16 @@ public sealed record IdrakAudioConfig
                 NormEpsilon = (float?)json["norm_epsilon"] ?? d.NormEpsilon,
                 Dropout = (float?)json["dropout"] ?? d.Dropout,
                 InitScale = (float?)json["init_scale"] ?? d.InitScale,
-                Classes = (int?)json["classes"] ?? (vocabulary is { } v ? v + 1 : 0),
+                Classes = classes,
                 BlankId = (int?)json["blank_id"] ?? d.BlankId,
+                DecoderLayers = (int?)json["decoder_layers"] ?? d.DecoderLayers,
+                DecoderDim = (int?)json["decoder_dim"] ?? dim,
+                DecoderHeads = (int?)json["decoder_heads"] ?? heads,
+                DecoderFfnDim = (int?)json["decoder_ffn_dim"] ?? ffn,
+                MaxTargetPositions = (int?)json["max_target_positions"] ?? d.MaxTargetPositions,
+                TieEmbeddings = (bool?)json["tie_embeddings"] ?? d.TieEmbeddings,
+                StartToken = (int?)json["start_token"] ?? classes - 1,
+                EndToken = (int?)json["end_token"] ?? classes - 1,
                 FeatureExtractor = (string?)json["feature_extractor"] ?? d.FeatureExtractor,
                 Features = features,
                 MaxSeconds = (double?)json["max_seconds"] ?? d.MaxSeconds,
@@ -166,9 +206,23 @@ public sealed record IdrakAudioConfig
             throw new ArgumentException($"positions is sinusoidal or none ({Positions}); activation gelu_tanh or gelu ({Activation}).");
         }
 
-        if (Classes < 2 || (uint)BlankId >= (uint)Classes)
+        if (!Sequence && (Classes < 2 || (uint)BlankId >= (uint)Classes))
         {
             throw new ArgumentException($"The head has {Classes} classes with the blank {BlankId}: at least a label and the blank, the blank one of them.");
+        }
+
+        if (Sequence)
+        {
+            if (Classes < 2 || (uint)StartToken >= (uint)Classes || (uint)EndToken >= (uint)Classes)
+            {
+                throw new ArgumentException($"The decoder has {Classes} classes with the start token {StartToken} and the end token {EndToken}: at least a label and the end token, both of them classes.");
+            }
+
+            if (DecoderLayers < 0 || DecoderDim < 1 || DecoderHeads < 1 || DecoderDim % DecoderHeads != 0 || DecoderFfnDim < 1 || MaxTargetPositions < 2)
+            {
+                throw new ArgumentException($"decoder_dim, decoder_heads and decoder_ffn_dim are positive, decoder_dim a multiple of decoder_heads ({DecoderDim}, {DecoderHeads}), "
+                    + $"decoder_layers not negative and max_target_positions at least 2 ({DecoderLayers}, {MaxTargetPositions}).");
+            }
         }
 
         if (Features.Mels != Mels)
@@ -177,8 +231,27 @@ public sealed record IdrakAudioConfig
         }
     }
 
-    /// <summary>The settings as config.json holds them (with "architectures" and "model_type").</summary>
-    public JsonObject ToJson() => new()
+    /// <summary>The settings as config.json holds them (with "architectures" and "model_type"; the decoder's for "seq2seq" only).</summary>
+    public JsonObject ToJson()
+    {
+        var json = Common();
+        if (Sequence)
+        {
+            json.Remove("blank_id");
+            json["decoder_layers"] = DecoderLayers;
+            json["decoder_dim"] = DecoderDim;
+            json["decoder_heads"] = DecoderHeads;
+            json["decoder_ffn_dim"] = DecoderFfnDim;
+            json["max_target_positions"] = MaxTargetPositions;
+            json["tie_embeddings"] = TieEmbeddings;
+            json["start_token"] = StartToken;
+            json["end_token"] = EndToken;
+        }
+
+        return json;
+    }
+
+    private JsonObject Common() => new()
     {
         ["architectures"] = new JsonArray((JsonNode)IdrakAudioFamily.Architecture),
         ["model_type"] = "idrak-audio",

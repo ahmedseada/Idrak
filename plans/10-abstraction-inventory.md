@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
-| `Idrak.Audio` | 21 | 1 | 13 | 35 | 0 |
+| `Idrak.Audio` | 22 | 1 | 13 | 36 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -241,6 +241,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Tensor | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ISequenceSpeechModel` | interface | public | Tensor | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechReader` | interface | public | — | SpeechReader |  | Audio | Audio |
@@ -248,7 +249,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.ISpeechSource` | interface | public | — | FolderSpeechSource, TranscriptSpeechSource |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechSynthesisFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechSynthesizer` | interface | public | Device | VoicedSynthesizer |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISpeechTrainingObjective` | interface | public | Tensor | CtcObjective |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ISpeechTrainingObjective` | interface | public | Tensor | CtcObjective, Seq2SeqObjective |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, Vocoders.GuardedVocoder |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IVoiceConverter` | interface | public | — | — |  | Audio | Audio |
@@ -258,7 +259,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.SpeechFamilies` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechSources` | registry | public | — |  | audio-folder, transcripts | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechSynthesisFamilies` | registry | public | — |  | — | Audio | Audio |
-| `Idrak.Audio.Abstractions.SpeechTrainingObjectives` | registry | public | — |  | ctc | Audio | Audio |
+| `Idrak.Audio.Abstractions.SpeechTrainingObjectives` | registry | public | — |  | ctc, seq2seq | Audio | Audio |
 | `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | — | Audio |
 | `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.VoiceStores` | registry | public | — |  | folder | Audio | Audio |

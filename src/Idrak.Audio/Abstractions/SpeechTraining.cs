@@ -76,13 +76,18 @@ public interface ISpeechTrainingObjective
 
 /// <summary>
 /// The speech training objectives, by name (ordinal). Built in (Idrak.Audio): "ctc" (<see cref="Idrak.Audio.CtcObjective"/>:
-/// PyTorch's CTC loss over an <see cref="ICtcSpeechModel"/>'s head, CtcDecoders for evaluation). Register another with
+/// PyTorch's CTC loss over an <see cref="ICtcSpeechModel"/>'s head, CtcDecoders for evaluation) and "seq2seq"
+/// (<see cref="Idrak.Audio.Seq2SeqObjective"/>: an <see cref="ISequenceSpeechModel"/>'s decoder read with teacher forcing,
+/// each utterance's mean token cross-entropy; greedy or beam generation for evaluation). Register another with
 /// <see cref="Register"/> (one under a built-in name takes its place until <see cref="Unregister"/>).
 /// </summary>
 public static class SpeechTrainingObjectives
 {
     /// <summary>"ctc".</summary>
     public const string Ctc = "ctc";
+
+    /// <summary>"seq2seq".</summary>
+    public const string Seq2Seq = "seq2seq";
 
     private static readonly SlotTable<string, ISpeechTrainingObjective> Registry = BuiltIn();
 
@@ -91,6 +96,7 @@ public static class SpeechTrainingObjectives
         var table = new SlotTable<string, ISpeechTrainingObjective>(nameof(SpeechTrainingObjectives), comparer: StringComparer.Ordinal,
             unguarded: "an objective's loss and decoding belong to its models, so two registrations cannot stand in for each other");
         table.RegisterDefault(Ctc, new Idrak.Audio.CtcObjective());
+        table.RegisterDefault(Seq2Seq, new Idrak.Audio.Seq2SeqObjective());
         return table;
     }
 
@@ -148,3 +154,51 @@ public interface ICtcSpeechModel : ITrainableSpeechModel
     Tensor Logits(Tensor features, IReadOnlyList<int> frames, SpeechForwardOptions? options = null);
 }
 
+/// <summary>
+/// A speech recognizer that reads the sound with an encoder and writes the text with a decoder attending to it, trained
+/// with the "seq2seq" objective (<see cref="Idrak.Audio.Seq2SeqObjective"/>): the decoder reads the start token and an
+/// utterance's labels and is taught each next label and then the end token. The IdrakAudio plug-in's "seq2seq" task is one.
+/// </summary>
+public interface ISequenceSpeechModel : ITrainableSpeechModel
+{
+    /// <inheritdoc />
+    string ITrainableSpeechModel.Objective => SpeechTrainingObjectives.Seq2Seq;
+
+    /// <summary>The decoder's vocabulary (the head's outputs): the labels and the start and end tokens.</summary>
+    int Vocabulary { get; }
+
+    /// <summary>The token the decoder starts from.</summary>
+    int StartToken { get; }
+
+    /// <summary>The token that ends a text.</summary>
+    int EndToken { get; }
+
+    /// <summary>The decoder's positions: the start token, the labels and the end token fit in them (labels at most this less 1).</summary>
+    int MaxPositions { get; }
+
+    /// <summary>The encoder's steps for <paramref name="frames"/> feature frames (each utterance's memory length).</summary>
+    int StepsFor(int frames);
+
+    /// <summary>
+    /// The encoder's output for a batch of features [batch, frames, mels] on <see cref="ISpeechRecognizer.Device"/>, each
+    /// utterance's frames first and zeros after them: [batch, steps, width], utterance n's first <see cref="StepsFor"/> of
+    /// its frames its own (the same in any batch), the rest padding the decoder does not attend to.
+    /// </summary>
+    Tensor Encode(Tensor features, IReadOnlyList<int> frames, SpeechForwardOptions? options = null);
+
+    /// <summary>
+    /// The decoder's last hidden states (before the head) for <paramref name="tokens"/> [batch, length] (token ids as floats)
+    /// over <paramref name="memory"/> [batch, steps, width], sequence n attending to its first <paramref name="steps"/>[n]
+    /// memory positions: [batch, length, decoder width]. Each position sees the tokens up to it only.
+    /// </summary>
+    Tensor Hidden(Tensor tokens, Tensor memory, IReadOnlyList<int> steps);
+
+    /// <summary>The head: hidden states [rows, decoder width] to logits [rows, <see cref="Vocabulary"/>].</summary>
+    Tensor Head(Tensor hidden);
+
+    /// <summary>
+    /// The labels the decoder writes for one utterance's memory [1, steps, width] (its own steps, no padding), from the start
+    /// token to the end token (neither returned): greedy for one beam, else a beam search of <paramref name="beams"/>.
+    /// </summary>
+    int[] Generate(Tensor memory, int beams, CancellationToken cancellationToken = default);
+}
