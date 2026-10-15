@@ -23,6 +23,9 @@ public sealed class IdrakAudioFamily : ISpeechFamily
     /// <summary>The encoder-decoder recognizer task.</summary>
     public const string Seq2SeqTask = "seq2seq";
 
+    /// <summary>The audio encoder of an audio-language model (<see cref="IdrakAudioLanguageFamily"/>, made with <c>PretrainedModel.Create</c>).</summary>
+    public const string AudioLanguageTask = "audio-language";
+
     /// <inheritdoc />
     public string Name => Architecture;
 
@@ -107,6 +110,12 @@ public sealed class IdrakAudioFamily : ISpeechFamily
 
     private static void Task(IdrakAudioConfig config)
     {
+        if (config.Task == AudioLanguageTask)
+        {
+            throw new NotSupportedException($"IdrakAudio task '{AudioLanguageTask}' is a chat model's audio part, not a recognizer: make it with PretrainedModel.Create "
+                + $"(architecture {IdrakAudioLanguageFamily.Architecture}, CreateOptions.Parts[\"audio\"]) and read it with PretrainedModel.Load.");
+        }
+
         if (config.Task is not (CtcTask or Seq2SeqTask))
         {
             throw new NotSupportedException($"IdrakAudio task '{config.Task}' is not built yet: this plug-in makes and reads \"{CtcTask}\" and \"{Seq2SeqTask}\" models (plan 21, S6).");

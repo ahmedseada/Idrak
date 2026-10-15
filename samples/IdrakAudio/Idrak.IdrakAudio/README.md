@@ -3,7 +3,7 @@
 Idrak's own audio family (decision 1 of plan 21), registered in `SpeechFamilies` by `IdrakAudioPlugin.Register()` (or
 `-P Idrak.IdrakAudio.dll` in the command line). Built so far: the **"ctc"** and **"seq2seq"** tasks, speech recognizers
 trained from scratch with `SpeechTrainer` (src/Idrak.Audio) and the matching objective (`SpeechTrainingObjectives`:
-"ctc", "seq2seq"). The "audio-language" and "tts" tasks of the plan come later; a spec asking for one is refused by name.
+"ctc", "seq2seq"), and the **"audio-language"** model (below). The "tts" task comes later; a spec asking for it is refused by name.
 
 ```csharp
 IdrakAudioPlugin.Register();
@@ -36,6 +36,19 @@ batch). Reading uses `BeamSearch` on the key/value cache, greedy or with `Transc
 training uses the trainer's decoder setting ("greedy", or "beam" with `BeamWidth` beams). Activation checkpointing covers
 the encoder's blocks (a text's tokens are far fewer than its sound's steps).
 
+## The "audio-language" model (IdrakAudioLanguageFamily)
+
+A chat model that hears: a Llama-style text decoder (architecture `IdrakAudioForConditionalGeneration`, its spec as
+`text_config`, its tensors under `language_model.`) with an audio part, made with `PretrainedModel.Create` and
+`CreateOptions.Parts["audio"]` (the library's "audio" model part over this family): the IdrakAudio encoder over log-mel
+(`audio_config`, tensors under `audio_tower.`) and a projector (`audio_projector`: every `stack` encoder steps joined,
+"mlp" or "linear", tensors under `audio_projector.`). A sound is one block of soft tokens: the chat template's audio
+marker (`audio_token`, `<audio>` by default) expanded to `begin_audio`, the soft tokens and `end_audio` (each optional,
+each a single token of the tokenizer); `audio_attention` says how they attend ("causal"). The `Pretrainer` trains it on
+records with sounds (a "records" source with `Audios`), its stages naming `audio-encoder`, `audio-projector` or the
+decoder's parts: an "align" stage (the audio part alone) then "joint" (`all`); the trained part is kept between stages
+and in every checkpoint. `ChatGenerator` answers about sounds with the model's part (`model.OpenPart("audio")`).
+
 ## Training (SpeechTrainer)
 
 `SpeechTrainingOptions`, all settings: steps, `BatchSeconds` (audio seconds per micro-batch, length-bucketed; halved and the
@@ -49,7 +62,7 @@ Features are extracted ahead of each step and cached (`FeatureCaches`), so a sec
 the objective cannot train on (ctc: fewer frames than labels; seq2seq: more labels than the decoder's positions) are
 counted and left out.
 
-## Checked (`IDRAK_FILTER="audio train"`, `IDRAK_FILTER="audio seq2seq"`)
+## Checked (`IDRAK_FILTER="audio train"`, `"audio seq2seq"`, `"audio language"`)
 
 On `tests/Idrak.Tests/data/audio/ctc/` (models from PyTorch with torch's CTC loss and torchaudio's forced alignment): the
 step-1 loss within 1e-4 and every gradient within 1e-4 of each tensor's largest, three SGD steps, Viterbi alignment
@@ -58,9 +71,10 @@ a forced out-of-memory; and a 200-step CPU run that halves the loss with a CER u
 `tests/Idrak.Tests/data/audio/seq2seq/` (two decoders from PyTorch, tied and untied, the second narrower than the
 encoder): the step-1 loss and every gradient as for ctc, the decoder's states in a padded batch equal to each utterance
 alone, torch's greedy texts exactly, three SGD steps; create and load, transcription and the recognizer suite; resume
-bit for bit; and a 200-step CPU run that halves the loss with a CER under 0.5.
+bit for bit; and a 200-step CPU run that halves the loss with a CER under 0.5. On `tests/Idrak.Tests/data/audio/audio-language/` (a Llama
+decoder with this encoder and projector in PyTorch): the log-mels, soft tokens, ids and blocks; joint and align
+pretraining's step-1 loss and gradients and three steps' losses and weights; create, stages resumed, an answer.
 
 ## Not done yet
 
-The "audio-language" and "tts" tasks, `PretrainedModel.Create` with `"audio"`, distillation, and the command line for
-training (`idrak create` / `pretrain` with the ctc and seq2seq tasks).
+The "tts" task, distillation, and the command line for training (`idrak create` / `pretrain` with the audio tasks).

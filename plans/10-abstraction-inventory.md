@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
-| `Idrak.Audio` | 22 | 1 | 13 | 36 | 0 |
+| `Idrak.Audio` | 23 | 1 | 13 | 37 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -96,7 +96,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule |  | Abstraction, Audio, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IImagePositionRule` | interface | public | — | ImagePositionRules.GridRule, ImagePositionRules.GuardedRule |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.IImagePromptFormat` | interface | public | — | ImageTokenFormat |  | Abstraction, Audio, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Generation.IModelPart` | interface | public | — | — |  | Idrak | Abstraction |
+| `Idrak.Abstraction.Generation.IModelPart` | interface | public | — | AudioModelPart |  | Abstraction, Audio, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ISoftPartSource` | interface | public | — | ChatAudioParts |  | Abstraction, Audio, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, TextEngineModel, TextGenerator |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Idrak | Abstraction |
@@ -104,7 +104,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | AspNetCore, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Nlp | Abstraction |
-| `Idrak.Abstraction.Generation.ITrainableSoftParts` | interface | public | Tensor | — |  | Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.ITrainableSoftParts` | interface | public | Tensor | ChatAudioParts |  | Abstraction, Audio, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Abstraction, Audio, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | ModelImages.LazyEncoder |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | — |  | Abstraction, Idrak, Nlp | Abstraction |
@@ -114,7 +114,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Audio, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | Abstraction, AspNetCore, Audio, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.MarkedToolCallParser` | abstract class | internal | — | DeepSeekToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Generation.ModelParts` | registry | public | — |  | — | Idrak | Abstraction |
+| `Idrak.Abstraction.Generation.ModelParts` | registry | public | — |  | audio | Audio, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.PackedWeight` | abstract class, registry | public | Device, Storage, Tensor | BFloat16Weight, Int4Weight, Int8Weight | — | Abstraction, AspNetCore, Audio, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.PretrainedVision` | abstract class | public | — | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Idrak, Nlp | Abstraction |
@@ -243,6 +243,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | Tensor | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Tensor | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISequenceSpeechModel` | interface | public | Tensor | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | — |  | Audio | Audio |

@@ -1,5 +1,81 @@
 {
  "files": {
+  "audio-language/align/grads-step1.safetensors": {
+   "bytes": 135928,
+   "sha256": "4bf4bedf160a478bba372ad98e4b9d23a80c9390994da31b45f8a84b2254298c"
+  },
+  "audio-language/align/weights-step3.safetensors": {
+   "bytes": 278160,
+   "sha256": "50d47e26e99b77603975fe85d4dd4b42e1f65247eb12229f96f74f27514c9b52"
+  },
+  "audio-language/features-list-chunk16.npy": {
+   "bytes": 48128,
+   "sha256": "7563201feb5f24bd4629dc3d84c33670e1f8361ce069016e0c5d1217470e5974"
+  },
+  "audio-language/features-pcm16.npy": {
+   "bytes": 48128,
+   "sha256": "7563201feb5f24bd4629dc3d84c33670e1f8361ce069016e0c5d1217470e5974"
+  },
+  "audio-language/features-pcm8.npy": {
+   "bytes": 48128,
+   "sha256": "fc0b3c7bb9317af422e6018b4afc644418a02f3879d32c08e2114aa34237155b"
+  },
+  "audio-language/joint/grads-step1.safetensors": {
+   "bytes": 278160,
+   "sha256": "15c79be0982d0a8b168b13cd5e4c5a8de45ff1479aaa85dfe22ae1eebf46349e"
+  },
+  "audio-language/joint/weights-step3.safetensors": {
+   "bytes": 278160,
+   "sha256": "7f54b4037ada99215781225db77f6c4f567182b0e97655899e8cb2ec537fbc89"
+  },
+  "audio-language/model/config.json": {
+   "bytes": 1517,
+   "sha256": "7e1c7b9a19318c679dc1b82690b23d05535c121917e0c795cea833d6cb7f705d"
+  },
+  "audio-language/model/generation_config.json": {
+   "bytes": 75,
+   "sha256": "7667820ae76988caf1babb35a47dbed8e6e4348d96a88fbac80a0fb7930b2c41"
+  },
+  "audio-language/model/model.safetensors": {
+   "bytes": 278160,
+   "sha256": "6cf2b258942c80604cf17cb5647c2c6a60ab583afb31ead08059e12536e00039"
+  },
+  "audio-language/model/special_tokens_map.json": {
+   "bytes": 75,
+   "sha256": "8d81139b071ef8c0bf69a0c4cf1815d6092fa518ecf9a84aba73d66060c15f8a"
+  },
+  "audio-language/model/tokenizer.json": {
+   "bytes": 23467,
+   "sha256": "2bd463e6f4b65548dcc250fbe5ac5354d21b096cb3e8085f4fbc2402c3a055a4"
+  },
+  "audio-language/model/tokenizer_config.json": {
+   "bytes": 687,
+   "sha256": "087bceef3b55f58c6db327b72eaf5ee01d0ec8d49640f2925b224a633410d368"
+  },
+  "audio-language/records.jsonl": {
+   "bytes": 599,
+   "sha256": "ee171f2bddfaae1c8a9a4d35e4f122aad209a1d53454c81eebddcbdb73c05226"
+  },
+  "audio-language/steps.json": {
+   "bytes": 508,
+   "sha256": "95221438aa64bc2b6a7ec4976e64e6b2f578aea470b934e74d44fbf3b72145d0"
+  },
+  "audio-language/tuning.json": {
+   "bytes": 3632,
+   "sha256": "58ee5add3ad62dc7ecb71f41d79b8e97af42f6eb124e124689c328da0f897a72"
+  },
+  "audio-language/wav/list-chunk16.wav": {
+   "bytes": 48076,
+   "sha256": "5a1b9dc703d0a36efd5149b28f33465f29ffb85a8b92c19003350e93c0c4038b"
+  },
+  "audio-language/wav/pcm16.wav": {
+   "bytes": 48044,
+   "sha256": "4677b58b3e9661f3afaa297494e5334933919fafda965757869d57d1e7099654"
+  },
+  "audio-language/wav/pcm8.wav": {
+   "bytes": 24044,
+   "sha256": "cd9f827747db21d3f717468f8b7422f8004c4ab28afabaa2795e2a1082de4a20"
+  },
   "ctc/mels.npy": {
    "bytes": 157568,
    "sha256": "b20b3f7875b3bafc920fbace04b7fadf7cba040c8c60ac542299e62f3bce9e32"
@@ -650,6 +726,7 @@
   "whisper",
   "ctc",
   "seq2seq",
+  "audio-language",
   "vits",
   "voices",
   "transcripts"

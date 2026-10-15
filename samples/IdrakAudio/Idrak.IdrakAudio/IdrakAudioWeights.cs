@@ -16,15 +16,25 @@ internal sealed class IdrakAudioWeights
     private readonly Random? _random;
     private readonly float _scale;
     private readonly Device _device;
+    private readonly string _root;
+    private readonly IReadOnlyDictionary<string, (int[] Shape, float[] Values)>? _trained;
     private readonly List<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> _entries = [];
 
-    private IdrakAudioWeights(ITensorStore? store, Random? random, float scale, Device device) => (_store, _random, _scale, _device) = (store, random, scale, device);
+    private IdrakAudioWeights(ITensorStore? store, Random? random, float scale, Device device, string root, IReadOnlyDictionary<string, (int[] Shape, float[] Values)>? trained) =>
+        (_store, _random, _scale, _device, _root, _trained) = (store, random, scale, device, root, trained);
 
-    /// <summary>The tensors of a checkpoint.</summary>
-    public static IdrakAudioWeights Read(ITensorStore store, Device device) => new(store, null, 1f, device);
+    /// <summary>
+    /// The tensors of a checkpoint, each name under <paramref name="root"/> (an audio-language model's "audio_tower."),
+    /// <paramref name="trained"/> ones (by their full stored names) read in place of the checkpoint's.
+    /// </summary>
+    public static IdrakAudioWeights Read(ITensorStore store, Device device, string root = "", IReadOnlyDictionary<string, (int[] Shape, float[] Values)>? trained = null) =>
+        new(store, null, 1f, device, root, trained);
 
-    /// <summary>New tensors: matrices a normal draw of <paramref name="scale"/> / √inputs, biases 0, norms 1 and 0.</summary>
-    public static IdrakAudioWeights Draw(int seed, float scale, Device device) => new(null, new Random(seed), scale, device);
+    /// <summary>New tensors: matrices a normal draw of <paramref name="scale"/> / √inputs, biases 0, norms 1 and 0; names under <paramref name="root"/>.</summary>
+    public static IdrakAudioWeights Draw(int seed, float scale, Device device, string root = "") => new(null, new Random(seed), scale, device, root, null);
+
+    /// <summary>The same store, seed and device with names under <paramref name="root"/> (a second part of the same checkpoint).</summary>
+    public IdrakAudioWeights Under(string root) => new(_store, _random, _scale, _device, root, _trained) { };
 
     /// <summary>The parameters made, in the order they were made.</summary>
     public IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> Entries => _entries;
@@ -32,9 +42,14 @@ internal sealed class IdrakAudioWeights
     /// <summary>A linear layer from <c>{prefix}.weight</c> [outputs, inputs] and <c>{prefix}.bias</c> [outputs] (none when <paramref name="bias"/> is false).</summary>
     public Linear Linear(string prefix, int inputs, int outputs, string? weightName = null, string? biasName = null, bool bias = true)
     {
-        string name = weightName ?? prefix + ".weight";
+        string name = _root + (weightName ?? prefix + ".weight");
         float[] values;
-        if (_store is not null)
+        if (_trained is not null && _trained.TryGetValue(name, out var kept))
+        {
+            Check(name, kept.Shape, [outputs, inputs]);
+            values = Transpose(kept.Values, outputs, inputs);                  // [inputs, outputs]
+        }
+        else if (_store is not null)
         {
             Expect(name, [outputs, inputs]);
             values = _store.ReadTransposed(name);                                // [inputs, outputs]
@@ -51,18 +66,51 @@ internal sealed class IdrakAudioWeights
     /// <summary>A table [rows, columns] stored as it is (an embedding's): drawn as a matrix of <paramref name="columns"/> inputs.</summary>
     public Tensor Table(string name, int rows, int columns)
     {
-        float[] values;
-        if (_store is not null)
-        {
-            Expect(name, [rows, columns]);
-            values = _store.Read(name);
-        }
-        else
-        {
-            values = Normal(rows * columns, _scale / MathF.Sqrt(columns));
-        }
+        name = _root + name;
+        var values = ReadAsStored(name, [rows, columns]) ?? Normal(rows * columns, _scale / MathF.Sqrt(columns));
 
         return Add(name, values, [rows, columns], [rows, columns], transposed: false);
+    }
+
+    // [rows, columns] row-major to [columns, rows].
+    private static float[] Transpose(float[] values, int rows, int columns)
+    {
+        var result = new float[values.Length];
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < columns; c++)
+            {
+                result[c * rows + r] = values[r * columns + c];
+            }
+        }
+
+        return result;
+    }
+
+    private static void Check(string name, int[] stored, int[] expected)
+    {
+        if (!stored.SequenceEqual(expected))
+        {
+            throw new InvalidDataException($"The trained '{name}' is {Tensor.FormatShape(stored)}; the config gives {Tensor.FormatShape(expected)}.");
+        }
+    }
+
+    // A tensor stored as it is: the trained one, else the checkpoint's, else null (drawn by the caller).
+    private float[]? ReadAsStored(string name, int[] shape)
+    {
+        if (_trained is not null && _trained.TryGetValue(name, out var kept))
+        {
+            Check(name, kept.Shape, shape);
+            return kept.Values;
+        }
+
+        if (_store is not null)
+        {
+            Expect(name, shape);
+            return _store.Read(name);
+        }
+
+        return null;
     }
 
     /// <summary>A layer normalization from <c>{prefix}.weight</c> and <c>{prefix}.bias</c>.</summary>
@@ -72,32 +120,23 @@ internal sealed class IdrakAudioWeights
     /// <summary>A bias [length] (zeros when drawn).</summary>
     public Tensor Bias(string name, int length) => Vector(name, length, 0f);
 
+    /// <summary>The parameters made so far, in order, whose names start with <paramref name="root"/> (one part's).</summary>
+    public IEnumerable<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> EntriesUnder(string root) => _entries.Where(e => e.Name.StartsWith(root, StringComparison.Ordinal));
+
     /// <summary>A convolution's filters, stored [outputs, inputsPerGroup, 1, kernel], as [outputs, inputsPerGroup · kernel].</summary>
     public Tensor Convolution(string name, int outputs, int inputsPerGroup, int kernel)
     {
-        float[] values;
-        if (_store is not null)
-        {
-            Expect(name, [outputs, inputsPerGroup, 1, kernel]);
-            values = _store.Read(name);
-        }
-        else
-        {
-            values = Normal(outputs * inputsPerGroup * kernel, _scale / MathF.Sqrt(inputsPerGroup * kernel));
-        }
+        name = _root + name;
+        var values = ReadAsStored(name, [outputs, inputsPerGroup, 1, kernel]) ?? Normal(outputs * inputsPerGroup * kernel, _scale / MathF.Sqrt(inputsPerGroup * kernel));
 
         return Add(name, values, [outputs, inputsPerGroup * kernel], [outputs, inputsPerGroup, 1, kernel], transposed: false);
     }
 
     private Tensor Vector(string name, int length, float fill)
     {
-        float[] values;
-        if (_store is not null)
-        {
-            Expect(name, [length]);
-            values = _store.Read(name);
-        }
-        else
+        name = _root + name;
+        var values = ReadAsStored(name, [length]);
+        if (values is null)
         {
             values = new float[length];
             Array.Fill(values, fill);
@@ -147,7 +186,7 @@ internal sealed class IdrakAudioWeights
 
     /// <summary>Tensors of the checkpoint that no layer read (a config that does not match its weights), or none.</summary>
     public IReadOnlyList<string> Unread() =>
-        _store is null ? [] : [.. _store.Names.Except(_entries.Select(e => e.Name), StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+        _store is null ? [] : [.. _store.Names.Where(n => n.StartsWith(_root, StringComparison.Ordinal)).Except(_entries.Select(e => e.Name), StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 
     /// <summary>A parameter's values in its stored layout: a linear's weight [inputs, outputs] transposed back to [outputs, inputs].</summary>
     public static float[] Stored(Tensor tensor, bool transposed)

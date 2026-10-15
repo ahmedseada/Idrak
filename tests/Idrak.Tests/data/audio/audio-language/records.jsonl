@@ -1,0 +1,3 @@
+{"messages": [{"content": [{"path": "wav/pcm16.wav", "type": "audio"}, {"text": "Transcribe.", "type": "text"}], "role": "user"}, {"content": "the quick brown fox", "role": "assistant"}]}
+{"messages": [{"content": [{"text": "What is said? ", "type": "text"}, {"path": "wav/pcm8.wav", "type": "audio"}], "role": "user"}, {"content": "hello there", "role": "assistant"}]}
+{"messages": [{"content": "You listen.", "role": "system"}, {"content": [{"path": "wav/list-chunk16.wav", "type": "audio"}, {"text": "Again.", "type": "text"}], "role": "user"}, {"content": "a short tone", "role": "assistant"}]}

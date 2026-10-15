@@ -82,6 +82,7 @@ public sealed record Idrak.Audio.Abstractions.AudioEncoderOptions : System.IEqua
   public AudioEncoderOptions()
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Abstraction.Generation.EncoderWeights Weights { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, (int[], float[])>? Trained { get; init; }
 
 public static class Idrak.Audio.Abstractions.AudioEncoders
   public static Idrak.Audio.Abstractions.IAudioEncoder For(string path)
@@ -246,6 +247,13 @@ public interface Idrak.Audio.Abstractions.IAudioLanguageEncoder : System.IDispos
 public interface Idrak.Audio.Abstractions.IAudioSplitter
   public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioPiece> Split(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.AudioSplitOptions options)
   public string Name { get; }
+
+public interface Idrak.Audio.Abstractions.IAudioTuningPart
+  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios, bool checkpointing)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Train(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
+  public void SetTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, bool training)
 
 public interface Idrak.Audio.Abstractions.ICtcSpeechModel : Idrak.Audio.Abstractions.ISpeechRecognizer, Idrak.Audio.Abstractions.ITrainableSpeechModel, System.IDisposable
   public Idrak.Abstraction.Tensor Logits(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
@@ -634,7 +642,7 @@ public static class Idrak.Audio.Abstractions.VoiceStores
 public static class Idrak.Audio.AudioLanguage
   public static Idrak.Audio.Abstractions.PretrainedAudio? Attach(Idrak.Models.PretrainedModel model, string? architecture = null, System.Collections.Generic.List<string>? notes = null)
 
-public sealed class Idrak.Audio.ChatAudioParts : Idrak.Abstraction.Generation.ISoftPartSource, System.IDisposable
+public sealed class Idrak.Audio.ChatAudioParts : Idrak.Abstraction.Generation.ISoftPartSource, Idrak.Abstraction.Generation.ITrainableSoftParts, System.IDisposable
   public ChatAudioParts(Idrak.Audio.Abstractions.PretrainedAudio audio, Idrak.Audio.Abstractions.IAudioLanguageEncoder? encoder = null, Idrak.Abstraction.Generation.IFeatureCache? cache = null, string? checkpoint = null)
   public Idrak.Abstraction.Generation.FeatureCacheKey Key(Idrak.Audio.Abstractions.ChatAudio audio)
   public Idrak.Abstraction.Generation.IFeatureCache Cache { get; }
@@ -642,8 +650,13 @@ public sealed class Idrak.Audio.ChatAudioParts : Idrak.Abstraction.Generation.IS
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
   public Idrak.Audio.Abstractions.IAudioLanguageEncoder Encoder { get; }
   public Idrak.Audio.Abstractions.PretrainedAudio Audio { get; }
+  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(System.Collections.Generic.IReadOnlyCollection<string> parts)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts, bool checkpointing)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Generation.ChatPart part)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Train(System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
   public int Width { get; }
   public long CacheHits { get; }
   public long Encoded { get; }
@@ -651,6 +664,7 @@ public sealed class Idrak.Audio.ChatAudioParts : Idrak.Abstraction.Generation.IS
   public string Checkpoint { get; }
   public string Kind { get; }
   public void Dispose()
+  public void SetTraining(bool training)
 
 public static class Idrak.Audio.CtcAlignment
   public static Idrak.Audio.CtcPath Viterbi(Idrak.Abstraction.Tensor logProbs, System.ReadOnlySpan<int> labels, int blank = 0)

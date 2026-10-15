@@ -12,9 +12,11 @@ namespace Idrak.Audio;
 /// by the registered codecs, its blocks of soft tokens asked of the encoder once per sound (kept by the sound's hash),
 /// and its features encoded once per sound, options and encoder, kept in a feature cache (<see cref="IFeatureCache"/>,
 /// keyed by the sound's hash and the extractor's options) so a second turn or epoch encodes nothing (rule 75). Give it
-/// to <c>ChatGenerator.Parts</c> or <c>ChatTranscriptEncoder.Parts</c>.
+/// to <c>ChatGenerator.Parts</c> or <c>ChatTranscriptEncoder.Parts</c>. When the family's audio part trains
+/// (<see cref="IAudioTuningPart"/>) it is a trainable source too (<see cref="ITrainableSoftParts"/>): the training step
+/// reads its features with gradients, and while a part trains no features are cached (they change every step).
 /// </summary>
-public sealed class ChatAudioParts : ISoftPartSource, IDisposable
+public sealed class ChatAudioParts : ITrainableSoftParts
 {
     private readonly ConcurrentDictionary<string, IReadOnlyList<ImageTokenLayout>> _blocks = new(StringComparer.Ordinal);
     private readonly Lock _family = new();                       // the family's Blocks and Encode, one call at a time
@@ -36,6 +38,19 @@ public sealed class ChatAudioParts : ISoftPartSource, IDisposable
         _ownsCache = cache is null;
         Cache = cache ?? FeatureCaches.Create(FeatureCaches.Memory);
         Checkpoint = checkpoint ?? audio.Family;
+        _options = audio.Features.Options.ToJson().ToJsonString();
+    }
+
+    // A source over a model's part (the "audio" model part's Open): its encoder built with `options`, and the cache
+    // owned when `ownsCache` (both disposed with this).
+    internal ChatAudioParts(PretrainedAudio audio, AudioEncoderOptions options, IFeatureCache? cache, bool ownsCache)
+    {
+        Audio = audio ?? throw new ArgumentNullException(nameof(audio));
+        _ownsEncoder = true;
+        Encoder = audio.CreateEncoder(options);
+        _ownsCache = cache is null || ownsCache;
+        Cache = cache ?? FeatureCaches.Create(FeatureCaches.Memory);
+        Checkpoint = audio.Family;
         _options = audio.Features.Options.ToJson().ToJsonString();
     }
 
@@ -61,6 +76,81 @@ public sealed class ChatAudioParts : ISoftPartSource, IDisposable
 
     /// <inheritdoc />
     public string Kind => ChatParts.Audio;
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> TrainableParts => (Audio as IAudioTuningPart)?.TrainableParts ?? [];
+
+    /// <inheritdoc />
+    public IReadOnlyList<Tensor> Parameters { get; private set; } = [];
+
+    /// <inheritdoc />
+    public IReadOnlyList<Tensor> Train(IReadOnlyCollection<string> parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        if (Audio is not IAudioTuningPart tuning)
+        {
+            return parts.Count == 0 ? [] : throw new ArgumentException($"Audio family '{Audio.Family}' trains no parts (its audio part is not an IAudioTuningPart); asked for {string.Join(", ", parts)}.", nameof(parts));
+        }
+
+        lock (_family)
+        {
+            Parameters = tuning.Train(Encoder, parts);
+        }
+
+        return Parameters;
+    }
+
+    /// <inheritdoc />
+    public void SetTraining(bool training)
+    {
+        if (Audio is IAudioTuningPart tuning)
+        {
+            tuning.SetTraining(Encoder, training);
+        }
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<ImageFeatures> EncodeTraining(IReadOnlyList<ChatPart> parts, bool checkpointing)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        if (Audio is not IAudioTuningPart tuning)
+        {
+            return Encode(parts);
+        }
+
+        var decoded = new List<AudioData>(parts.Count);
+        foreach (var part in parts)
+        {
+            decoded.Add(Read(Of(part)));
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Inference);
+        IReadOnlyList<ImageFeatures> encoded;
+        lock (_family)
+        {
+            encoded = tuning.EncodeTraining(Encoder, decoded, checkpointing);
+        }
+
+        Interlocked.Add(ref _encoded, parts.Count);
+        Telemetry.InferenceStage(InferenceStageKind.Encoder, Encoder.Device, start, parts.Count, 0);
+        return encoded;
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<(string Name, int[] Shape, float[] Values)> Export(IReadOnlyCollection<string> parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        if (parts.Count == 0)
+        {
+            return [];
+        }
+
+        var tuning = Audio as IAudioTuningPart ?? throw new InvalidOperationException($"Audio family '{Audio.Family}' trains no parts.");
+        lock (_family)
+        {
+            return tuning.Export(Encoder, parts);
+        }
+    }
 
     /// <inheritdoc />
     public int Width => Encoder.Width;
@@ -118,7 +208,7 @@ public sealed class ChatAudioParts : ISoftPartSource, IDisposable
         for (int i = 0; i < audios.Length; i++)
         {
             var blocks = _blocks.TryGetValue(audios[i].Hash, out var known) ? known : null;
-            if (blocks is [var single] && Cache.TryGet(Key(audios[i]), Encoder.Device, out var cached))
+            if (Parameters.Count == 0 && blocks is [var single] && Cache.TryGet(Key(audios[i]), Encoder.Device, out var cached))
             {
                 if (cached.Rank == 2 && cached.Shape[0] == single.Tokens && cached.Shape[1] == Encoder.Width)
                 {
@@ -170,7 +260,7 @@ public sealed class ChatAudioParts : ISoftPartSource, IDisposable
                         }
                     }
 
-                    if (blocks.Count == 1)
+                    if (blocks.Count == 1 && Parameters.Count == 0)
                     {
                         Cache.Put(Key(audios[i]), own[0].Features);           // one block: cached as it is (several: encoded per call)
                     }
