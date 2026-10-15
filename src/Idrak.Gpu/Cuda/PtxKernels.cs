@@ -636,8 +636,9 @@ internal static partial class PtxKernels
         """);
 
     /// <summary>
-    /// out[0] += scale * sum(x). Grid-stride accumulation per thread, a shared-memory tree reduction
-    /// per block, then one atomic add per block. The caller zeroes out[0] first.
+    /// out[0] = scale * sum(x). Grid-stride accumulation per thread over a grid fixed by n, a shared-memory tree reduction
+    /// per block; one block stores the result, several store their sums in partials[block] for sum_blocks_f32 to add in
+    /// block order (rule 86: no atomics, the same bits on every run and card).
     /// </summary>
     private static void Sum(StringBuilder sb)
     {
@@ -645,6 +646,7 @@ internal static partial class PtxKernels
             .visible .entry sum_f32(
                 .param .u64 p_x,
                 .param .u64 p_out,
+                .param .u64 p_partials,
                 .param .u32 p_n,
                 .param .f32 p_scale
             )
@@ -699,11 +701,21 @@ internal static partial class PtxKernels
                 setp.ne.u32 %p3, %r3, 0;
                 @%p3 bra DONE;
                 ld.shared.f32 %f5, [%r7];
+                mov.u32 %r10, %nctaid.x;
+                setp.ne.u32 %p3, %r10, 1;
+                @%p3 bra PARTIAL;
                 ld.param.f32 %f6, [p_scale];
                 mul.f32 %f5, %f5, %f6;
                 ld.param.u64 %rd4, [p_out];
                 cvta.to.global.u64 %rd4, %rd4;
-                atom.global.add.f32 %f7, [%rd4], %f5;
+                st.global.f32 [%rd4], %f5;
+                bra DONE;
+            PARTIAL:
+                ld.param.u64 %rd5, [p_partials];
+                cvta.to.global.u64 %rd5, %rd5;
+                mul.wide.u32 %rd6, %r1, 4;
+                add.u64 %rd5, %rd5, %rd6;
+                st.global.f32 [%rd5], %f5;
             DONE:
                 ret;
             }

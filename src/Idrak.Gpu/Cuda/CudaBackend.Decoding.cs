@@ -27,9 +27,31 @@ internal sealed unsafe partial class CudaBackend
 
         if (dgamma is not null || dbeta is not null)
         {
+            // Chunks of rows in parallel; several chunks' sums are added in chunk order by fold_chunks_f32 (rule 86).
             const int Chunk = 64;
-            Launch(K("layernorm_bwd_params_f32"), (uint)((cols + _shapes.BlockSize - 1) / _shapes.BlockSize), (uint)((rows + Chunk - 1) / Chunk), 1, (uint)_shapes.BlockSize, 1,
-                P(x), P(dy), P(stats), dgamma is null ? 0UL : P(dgamma), dbeta is null ? 0UL : P(dbeta), U(rows), U(cols), U(Chunk));
+            int chunks = (rows + Chunk - 1) / Chunk;
+            var partials = chunks > 1 ? Allocate(2 * chunks * cols, zeroed: false) : null;
+            try
+            {
+                Launch(K("layernorm_bwd_params_f32"), (uint)((cols + _shapes.BlockSize - 1) / _shapes.BlockSize), (uint)chunks, 1, (uint)_shapes.BlockSize, 1,
+                    P(x), P(dy), P(stats), dgamma is null ? 0UL : P(dgamma), dbeta is null ? 0UL : P(dbeta), partials is null ? P(x) : P(partials), U(rows), U(cols), U(Chunk));
+                if (partials is not null)
+                {
+                    if (dgamma is not null)
+                    {
+                        Launch1D(K("fold_chunks_f32"), cols, P(partials), P(dgamma), U(cols), U(chunks), U(cols));
+                    }
+
+                    if (dbeta is not null)
+                    {
+                        Launch1D(K("fold_chunks_f32"), cols, P(partials) + (ulong)chunks * (ulong)cols * 4, P(dbeta), U(cols), U(chunks), U(cols));
+                    }
+                }
+            }
+            finally
+            {
+                partials?.Release();                                           // reused in stream order
+            }
         }
     }
 

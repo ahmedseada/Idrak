@@ -107,16 +107,18 @@ internal static partial class PtxKernels
             st.global.f32 [%rd9], %f9;
             """));
 
-        // dgamma / dbeta: thread = column (x = column block of BlockSize), grid y = chunks of `chunk` rows.
+        // dgamma / dbeta: thread = column (x = column block of BlockSize), grid y = chunks of `chunk` rows; one chunk adds to
+        // them, several store their sums in partials (dgamma's [chunk · cols + j], then dbeta's after chunks · cols) for
+        // fold_chunks_f32 (rule 86: no atomics).
         sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry layernorm_bwd_params_f32(
-                .param .u64 p_x, .param .u64 p_dy, .param .u64 p_stats, .param .u64 p_dgamma, .param .u64 p_dbeta,
+                .param .u64 p_x, .param .u64 p_dy, .param .u64 p_stats, .param .u64 p_dgamma, .param .u64 p_dbeta, .param .u64 p_partials,
                 .param .u32 p_rows, .param .u32 p_cols, .param .u32 p_chunk
             )
             {
-                .reg .pred %p<4>;
+                .reg .pred %p<6>;
                 .reg .b32 %r<16>;
-                .reg .b64 %rd<16>;
+                .reg .b64 %rd<20>;
                 .reg .f32 %f<12>;
                 ld.param.u64 %rd1, [p_x];
                 ld.param.u64 %rd2, [p_dy];
@@ -162,18 +164,37 @@ internal static partial class PtxKernels
                 add.u32 %r8, %r8, 1;
                 bra ROWS;
             ROWS_END:
+                mov.u32 %r11, %nctaid.y;
+                setp.ne.u32 %p4, %r11, 1;
+                @%p4 bra PARTIAL;
                 mul.wide.u32 %rd13, %r6, 4;
                 setp.eq.u64 %p3, %rd4, 0;
                 @%p3 bra NO_GAMMA;
                 cvta.to.global.u64 %rd4, %rd4;
                 add.u64 %rd14, %rd4, %rd13;
-                red.global.add.f32 [%rd14], %f1;
+                ld.global.f32 %f7, [%rd14];
+                add.f32 %f7, %f7, %f1;
+                st.global.f32 [%rd14], %f7;
             NO_GAMMA:
                 setp.eq.u64 %p3, %rd5, 0;
                 @%p3 bra DONE;
                 cvta.to.global.u64 %rd5, %rd5;
                 add.u64 %rd15, %rd5, %rd13;
-                red.global.add.f32 [%rd15], %f2;
+                ld.global.f32 %f8, [%rd15];
+                add.f32 %f8, %f8, %f2;
+                st.global.f32 [%rd15], %f8;
+                bra DONE;
+            PARTIAL:
+                ld.param.u64 %rd16, [p_partials];
+                cvta.to.global.u64 %rd16, %rd16;
+                mad.lo.u32 %r12, %r7, %r2, %r6;
+                mul.wide.u32 %rd17, %r12, 4;
+                add.u64 %rd17, %rd16, %rd17;
+                st.global.f32 [%rd17], %f1;
+                mul.lo.u32 %r13, %r11, %r2;
+                mul.wide.u32 %rd18, %r13, 4;
+                add.u64 %rd17, %rd17, %rd18;
+                st.global.f32 [%rd17], %f2;
             DONE:
                 ret;
             }
