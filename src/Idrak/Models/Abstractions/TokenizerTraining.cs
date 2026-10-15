@@ -32,6 +32,12 @@ public sealed record TokenizerTrainingOptions
 
     /// <summary>Threads that count words (0: one per processor).</summary>
     public int Workers { get; init; }
+
+    /// <summary>
+    /// How a line's end is read: "lf" (the default) reads "\r\n" as "\n", so a file trains the same tokenizer whichever
+    /// system wrote it; "keep" keeps the bytes as they are, "\r" included, as Hugging Face's <c>train_from_files</c> does.
+    /// </summary>
+    public string LineEnds { get; init; } = "lf";
 }
 
 /// <summary>Where a <see cref="ITokenizerTrainer"/> is: counting words in the files, then merging.</summary>

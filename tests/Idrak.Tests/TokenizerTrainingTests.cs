@@ -15,6 +15,7 @@ internal static partial class Tests
         ("tokenizer training: bpe merging until no pair is left (minimum frequency 1) gives Hugging Face's merges through every tie", TokenizerTrainingFull),
         ("tokenizer training: bpe with the metaspace pre-tokenizer learns Hugging Face's vocabulary and merges and encodes as it does", TokenizerTrainingMetaspace),
         ("tokenizer training: a trained tokenizer saved as tokenizer.json loads back to the same ids, passes the tokenizer contract, and a loaded file saves to the same vocabulary and merges", TokenizerTrainingSave),
+        ("tokenizer training: a file with Windows line ends (CRLF) trains the tokenizer its LF copy trains (byte level and metaspace), LineEnds \"keep\" learns the \\r as Hugging Face does, and another value is refused", TokenizerTrainingLineEnds),
         ("tokenizer training: the registry names bpe, refuses an unregistered trainer, bad options and missing files, and one worker counts the same words as many", TokenizerTrainingRegistry),
     ];
 
@@ -173,5 +174,40 @@ internal static partial class Tests
         var stages = new System.Collections.Concurrent.ConcurrentQueue<TokenizerTrainingProgress>();
         bpe.Train([corpus], options with { VocabularySize = 300 }, new SynchronousProgress<TokenizerTrainingProgress>(stages.Enqueue));
         Check(stages.Any(p => p.Stage == "words" && p.Done == p.Total) && stages.Any(p => p.Stage == "merges"), "progress for both stages");
+    }
+
+    private static void TokenizerTrainingLineEnds(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // host work: once
+        }
+
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-line-ends-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string[] lines = ["the quick brown fox", "jumps over the lazy dog", "a quick fox, a lazy dog", "مرحبا بكم في إدراك", "the end"];
+            string lf = Path.Combine(folder, "lf.txt"), crlf = Path.Combine(folder, "crlf.txt");
+            File.WriteAllText(lf, string.Join("\n", lines) + "\n");
+            File.WriteAllText(crlf, string.Join("\r\n", lines) + "\r\n");
+            var trainer = TokenizerTrainers.Get(TokenizerTrainers.Bpe);
+            static string[] Vocabulary(BpeTokenizer t) => [.. Enumerable.Range(0, t.VocabularySize).Select(t.TokenOf)];
+            foreach (string pre in new[] { TokenizerTrainers.ByteLevel, TokenizerTrainers.Metaspace })
+            {
+                var options = new TokenizerTrainingOptions { VocabularySize = 300, MinFrequency = 1, PreTokenizer = pre, Workers = 1 };
+                var fromLf = Vocabulary(trainer.Train([lf], options));
+                var fromCrlf = Vocabulary(trainer.Train([crlf], options));
+                Check(fromLf.SequenceEqual(fromCrlf), $"{pre}: the CRLF file gives the LF file's {fromLf.Length} tokens in order (got {fromCrlf.Length})");
+                var kept = Vocabulary(trainer.Train([crlf], options with { LineEnds = "keep" }));
+                Check(!kept.SequenceEqual(fromLf), $"{pre}: LineEnds \"keep\" learns the \\r of the CRLF file");
+            }
+
+            ThrowsNaming<ArgumentException>(() => trainer.Train([lf], new TokenizerTrainingOptions { LineEnds = "cr" }), "an unknown LineEnds", "LineEnds", "'cr'");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     }
 }
