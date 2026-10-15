@@ -154,6 +154,34 @@ public sealed class Idrak.Audio.Abstractions.AudioPartKind : Idrak.Abstraction.G
   public string Name { get; }
   public void Write(Idrak.Abstraction.Generation.ChatPart part, System.Text.Json.Nodes.JsonObject json)
 
+public readonly record struct Idrak.Audio.Abstractions.AudioPiece : System.IEquatable<Idrak.Audio.Abstractions.AudioPiece>
+  public AudioPiece(int Start, int Length)
+  public int End { get; }
+  public int Length { get; init; }
+  public int Start { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.AudioSplitOptions : System.IEquatable<Idrak.Audio.Abstractions.AudioSplitOptions>
+  public AudioSplitOptions()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public double HopSeconds { get; init; }
+  public double MaxSeconds { get; init; }
+  public double MinSeconds { get; init; }
+  public double MinSilenceSeconds { get; init; }
+  public double PadSeconds { get; init; }
+  public float SilenceDecibels { get; init; }
+  public void Check()
+
+public static class Idrak.Audio.Abstractions.AudioSplitters
+  public const string Seconds = "seconds"
+  public const string Silence = "silence"
+  public static Idrak.Audio.Abstractions.IAudioSplitter Get(string name)
+  public static Idrak.Audio.Abstractions.IAudioSplitter? Default(string name)
+  public static Idrak.Audio.Abstractions.IAudioSplitter? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.IAudioSplitter splitter)
+
 public sealed record Idrak.Audio.Abstractions.ChatAudio : Idrak.Abstraction.Generation.ChatPart, System.IEquatable<Idrak.Audio.Abstractions.ChatAudio>
   public Idrak.Audio.Abstractions.AudioData Decode()
   public System.ReadOnlyMemory<byte> Data { get; }
@@ -218,6 +246,10 @@ public interface Idrak.Audio.Abstractions.IAudioLanguageEncoder : System.IDispos
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Audio.Abstractions.AudioData audio)
   public int Width { get; }
+
+public interface Idrak.Audio.Abstractions.IAudioSplitter
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioPiece> Split(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.AudioSplitOptions options)
+  public string Name { get; }
 
 public interface Idrak.Audio.Abstractions.ICtcSpeechModel : Idrak.Audio.Abstractions.ISpeechRecognizer, System.IDisposable
   public Idrak.Abstraction.Module Network { get; }
@@ -390,6 +422,7 @@ public static class Idrak.Audio.Abstractions.SpeechSynthesisModels
 public sealed record Idrak.Audio.Abstractions.SpeechSynthesisOptions : System.IEquatable<Idrak.Audio.Abstractions.SpeechSynthesisOptions>
   public Idrak.Audio.Abstractions.VoiceConversionOptions? Conversion { get; init; }
   public SpeechSynthesisOptions()
+  public double? DecoderSeconds { get; init; }
   public float Rate { get; init; }
   public float? DurationNoiseScale { get; init; }
   public float? NoiseScale { get; init; }
@@ -511,6 +544,7 @@ public sealed record Idrak.Audio.Abstractions.VoiceConsent : System.IEquatable<I
 public sealed record Idrak.Audio.Abstractions.VoiceConversionOptions : System.IEquatable<Idrak.Audio.Abstractions.VoiceConversionOptions>
   public VoiceConversionOptions()
   public double MaxSeconds { get; init; }
+  public double? DecoderSeconds { get; init; }
   public float Tau { get; init; }
   public float[]? Source { get; init; }
   public int Seed { get; init; }

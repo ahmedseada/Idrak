@@ -24,9 +24,15 @@ the clips' SHA-256s, seconds and agreements, and embedding.safetensors), and `Vo
 `SpeechSynthesisOptions.Voice` as a checkpoint's speaker first, else as an installed voice (converted, a checkpoint of
 its own, or a named speaker).
 
-Planned next (the plan's phases): resampling and log-mel features on every device (S2), the "audio" chat part (S3),
-speech recognition and synthesis contracts with their families as plug-ins (S4, S5), training (S6) and the command
-line (S7).
+Splitting (phase S7): `AudioSplitters`, a registry of `IAudioSplitter`s with "silence" (the pieces between pauses: each
+frame's energy against the loudest frame's, in one pass over each channel; pauses shorter than `MinSilenceSeconds` stay
+inside a piece, `PadSeconds` of silence kept on both sides, a piece over `MaxSeconds` cut again at its quietest frame)
+and "seconds" (pieces of a fixed length) built in; `AudioSplitOptions` holds every setting. `SpeechSynthesisOptions` and
+`VoiceConversionOptions` gained `DecoderSeconds` (the decoder's piece for one call; null: the model's own setting).
+
+The command line (`idrak help audio`): `idrak transcribe`, `idrak speak`, `idrak voice add|list|show|remove|export|import`,
+`idrak data audio`, `idrak data mel`, and `--audio` on `idrak run` and `idrak chat`. The other phases are in
+plans/21-audio.md.
 
 ```csharp
 var audio = AudioCodecs.Load("clip.wav", channels: 1);   // mono, as the file's rate
