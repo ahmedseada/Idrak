@@ -376,6 +376,20 @@ public sealed class Idrak.Audio.ChatAudioParts : Idrak.Abstraction.Generation.IS
   public string Kind { get; }
   public void Dispose()
 
+public sealed class Idrak.Audio.FlacCodec : Idrak.Audio.Abstractions.IAudioCodec
+  public FlacCodec(Idrak.Audio.FlacOptions? options = null)
+  public Idrak.Audio.Abstractions.AudioData Decode(System.ReadOnlySpan<byte> file)
+  public Idrak.Audio.Abstractions.AudioInfo? ReadInfo(System.ReadOnlySpan<byte> header)
+  public Idrak.Audio.FlacOptions Options { get; }
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public string Name { get; }
+
+public sealed record Idrak.Audio.FlacOptions : System.IEquatable<Idrak.Audio.FlacOptions>
+  public FlacOptions()
+  public bool CheckCrc { get; init; }
+  public bool KeepCutEnd { get; init; }
+  public int FramesPerTask { get; init; }
+
 public sealed record Idrak.Audio.GriffinLimOptions : System.IEquatable<Idrak.Audio.GriffinLimOptions>
   public GriffinLimOptions()
   public bool RandomPhase { get; init; }

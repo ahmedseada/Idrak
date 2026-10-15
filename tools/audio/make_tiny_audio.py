@@ -2,13 +2,14 @@
 features, a tiny random Whisper-style model and transformers' outputs for it, a tiny CTC recognizer's loss, gradients
 and alignments, a tiny VITS synthesizer's waveform, and transcript records.
 
-    python -m venv audio && audio/bin/pip install torch torchaudio transformers tokenizers safetensors numpy
+    python -m venv audio && audio/bin/pip install torch torchaudio transformers tokenizers safetensors numpy soundfile
     audio/bin/python tools/audio/make_tiny_audio.py tests/Idrak.Tests/data/audio
 
 Nothing is downloaded: the signals are generated here, the models are built from configs with seeded weights, the
 tokenizer is trained here. Reruns write the same bytes (fixed seeds, one thread, deterministic algorithms, sorted
 JSON) on the same machine and library versions; manifest.json records the versions and each file's SHA-256.
---sections wav runs the part that needs numpy only (the WAV files), for a machine without torch.
+--sections wav runs the part that needs numpy only (the WAV files), for a machine without torch; --sections flac needs
+soundfile (libsndfile with libFLAC) and numpy.
 """
 import argparse
 import json
@@ -23,7 +24,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "resample", "features", "whisper", "ctc", "vits", "transcripts"]
+SECTIONS = ["wav", "flac", "resample", "features", "whisper", "ctc", "vits", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -178,6 +179,69 @@ def write_wavs(out):
     put("bad-truncated", data, None, RATE)
     data, _ = wav_bytes(base, RATE, "pcm16", channels=1, no_fmt=True)
     put("bad-no-fmt", data, None, RATE)
+    dump_json(os.path.join(folder, "files.json"), files)
+    return files
+
+
+# ------------------------------------------------------------------ FLAC files (soundfile: libsndfile with libFLAC)
+
+def write_flacs(out):
+    """FLAC files of the WAV section's signal, each with the integer samples it holds (as floats, the integer over
+    2^(bits-1)) in a .npy: the default level, level 0 (fixed predictors only) and level 8 (LPC up to order 12, exhaustive),
+    stereo (libFLAC's left/side, right/side or mid/side), 8, 16 and 24 bits, 44.1 kHz, a stereo file of silence then
+    full-scale noise then the tone (constant and verbatim subframes), a file whose samples are all multiples of 4 (wasted
+    bits), and two damaged copies: one cut inside a frame, one with a byte of the first frame's data flipped (its CRC)."""
+    import soundfile as sf
+    folder = os.path.join(out, "flac")
+    os.makedirs(folder, exist_ok=True)
+    base = signal(RATE)
+    files = {}
+
+    def put(name, ints, bits, rate, level=None):
+        # ints: [channels, n] at `bits`; soundfile takes int16 for 8 and 16 bits (8: the value in the high byte) and int32
+        # for 24 (the value in the high three bytes), as libsndfile scales them.
+        subtype = {8: "PCM_S8", 16: "PCM_16", 24: "PCM_24"}[bits]
+        frames = np.ascontiguousarray(ints.T)
+        data = (frames << 8).astype(np.int16) if bits == 8 else frames.astype(np.int16) if bits == 16 else (frames << 8).astype(np.int32)
+        path = os.path.join(folder, name + ".flac")
+        kwargs = {} if level is None else {"compression_level": level}
+        sf.write(path, data, rate, format="FLAC", subtype=subtype, **kwargs)
+        decoded = (ints / float(1 << (bits - 1))).astype(np.float32)
+        back, _ = sf.read(path, dtype="int32", always_2d=True)                    # libsndfile's own decoding agrees
+        assert np.array_equal(back.T >> (32 - bits), ints), name
+        save_npy(folder, name + ".npy", decoded)
+        files[name] = {"rate": rate, "channels": int(ints.shape[0]), "samples": int(ints.shape[1]), "bits": bits}
+        return path
+
+    def ints(samples, bits):
+        full = 1 << (bits - 1)
+        return np.clip(np.round(samples * full), -full, full - 1).astype(np.int64)
+
+    mono = base[:1]
+    put("pcm16", ints(mono, 16), 16, RATE)
+    put("fixed16", ints(mono, 16), 16, RATE, level=0.0)
+    put("lpc16", ints(mono, 16), 16, RATE, level=1.0)
+    put("stereo16", ints(base, 16), 16, RATE)
+    put("pcm8", ints(mono, 8), 8, RATE)
+    put("pcm24", ints(mono, 24), 24, RATE)
+    put("rate44k", ints(signal(44100)[:1], 16), 16, 44100)
+    n = base.shape[1]
+    rng = np.random.default_rng(31)
+    mixed = np.zeros((2, n))
+    q = n // 4
+    mixed[:, q:2 * q] = rng.uniform(-1, 1, (2, q))                                 # full-scale noise: verbatim
+    mixed[:, 2 * q:] = base[:, 2 * q:]
+    put("mixed16", ints(mixed, 16), 16, RATE)
+    put("wasted16", ints(mono, 16) & ~3, 16, RATE)
+    with open(os.path.join(folder, "pcm16.flac"), "rb") as f:
+        whole = f.read()
+    with open(os.path.join(folder, "bad-truncated.flac"), "wb") as f:
+        f.write(whole[: len(whole) // 2])
+    first = whole.index(b"\xff\xf8", 42)                                         # the first frame (after the metadata)
+    flipped = bytearray(whole)
+    flipped[first + 40] ^= 0x5A
+    with open(os.path.join(folder, "bad-crc.flac"), "wb") as f:
+        f.write(bytes(flipped))
     dump_json(os.path.join(folder, "files.json"), files)
     return files
 
@@ -453,7 +517,7 @@ def write_transcripts(out):
 
 def manifest(out, sections):
     versions = {"python": platform.python_version(), "numpy": np.__version__}
-    for name in ["torch", "torchaudio", "transformers", "tokenizers", "safetensors"]:
+    for name in ["torch", "torchaudio", "transformers", "tokenizers", "safetensors", "soundfile"]:
         try:
             versions[name] = __import__(name).__version__
         except ImportError:
@@ -465,6 +529,10 @@ def manifest(out, sections):
                 continue
             p = os.path.join(root, n)
             files[os.path.relpath(p, out).replace(os.sep, "/")] = {"bytes": os.path.getsize(p), "sha256": sha256(p)}
+    previous = os.path.join(out, "manifest.json")
+    if os.path.exists(previous):                                              # a run of some sections keeps the others'
+        with open(previous, encoding="utf-8") as f:
+            sections = sorted(set(sections) | set(json.load(f).get("sections", [])), key=SECTIONS.index)
     dump_json(os.path.join(out, "manifest.json"), {"versions": versions, "sections": sections, "files": files})
 
 
@@ -478,6 +546,8 @@ def main():
     extractor = None
     if "wav" in sections:
         write_wavs(args.out)
+    if "flac" in sections:
+        write_flacs(args.out)
     if "resample" in sections:
         write_resample(args.out)
     if "features" in sections:
