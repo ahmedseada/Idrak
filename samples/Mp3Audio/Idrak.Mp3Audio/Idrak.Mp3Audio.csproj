@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Mp3Audio, MPEG audio decoding (MP3 and MP2) as an audio codec plug-in: Mp3Codec is an IAudioCodec registered in
-       AudioCodecs, so AudioCodecs.Decode, ChatAudio and every reader of sound files take .mp3 once it is registered.
+  <!-- Mp3Audio, MPEG audio decoding (MP3 and MP2) and MP3 encoding as an audio plug-in: Mp3Codec is an IAudioCodec registered in
+       AudioCodecs, so AudioCodecs.Decode, ChatAudio and every reader of sound files take .mp3 once it is registered;
+       Mp3Encoder is an IAudioEncoder registered in AudioEncoders, so AudioEncoders.Save writes .mp3 (written from the ISO
+       specifications, no LAME or shine code).
        Load it in the command line with -P Idrak.Mp3Audio.dll, or reference it and call Mp3AudioPlugin.Register() in an
        app. The decoder is a port of minimp3 (CC0). It references Idrak.Audio as a package, as an outside plug-in does;
        in this repository it comes from the clone (IdrakFromSource, samples/Directory.Build.props). -->
