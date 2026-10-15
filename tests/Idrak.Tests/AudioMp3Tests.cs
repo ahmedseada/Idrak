@@ -18,10 +18,59 @@ internal static partial class Tests
         ("audio codecs: mp3: every MP3 and MP2 of the fixture (LAME and shine; MPEG-1, 2 and 2.5; mono, stereo and joint stereo; CBR and VBR; Layer II) decodes to ffmpeg's samples within 1e-4 and its exact length (a LAME or Lavc tag's delay and padding trimmed); its header is read from the first bytes", d => { if (d == Device.Cpu) AudioMp3Fixture(); }),
         ("audio codecs: mp3: ID3v2 and ID3v1 tags are skipped, a file cut inside a frame gives its whole frames, Gapless off gives every decoded sample, junk before the stream and a lost sync are passed over, Layer I and bytes of no format are refused, and the parallel decode equals decoding in order bit for bit", d => { if (d == Device.Cpu) AudioMp3Edges(); }),
         ("audio codecs: mp3: the plug-in registers mp3 in AudioCodecs (asked before the library's codecs; ChatAudio and AudioCodecs.Load read .mp3 and .mp2) and Unregister removes it; the codec suite passes on the fixture; minutes of sound decode into one block at the speed reported", d => { if (d == Device.Cpu) AudioMp3PluginAndSuite(); }),
+        ("audio codecs: mp3: a WAV file whose samples hold MPEG frames is read by the WAV codec (from its path: the codecs listing .wav are asked first; from its bytes: a RIFF file is never MPEG frames), an MP3 file named .wav still decodes as MP3, and junk before fewer frames in a row than SyncFramesAfterJunk is refused", d => { if (d == Device.Cpu) AudioMp3NotInOtherFormats(); }),
     ];
 
     // ffmpeg's samples, clamped to [-1, 1] as AudioData's are (an MP3 overshoots full scale where the sound is loud).
     private static float[] Mp3Reference(string name) => [.. ReadNpyFloat32(AudioData($"mp3/{name}.npy")).Select(v => Math.Clamp(v, -1f, 1f))];
+
+    private static void AudioMp3NotInOtherFormats()
+    {
+        bool registered = AudioCodecs.Names.Contains("mp3");
+        Mp3AudioPlugin.Register();
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-mp3-other-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            byte[] mp3 = File.ReadAllBytes(AudioData("mp3/lame-16k-mono.mp3"));
+            int sync = 0;
+            while (sync + 1 < mp3.Length && !(mp3[sync] == 0xFF && (mp3[sync + 1] & 0xE0) == 0xE0))
+            {
+                sync++;
+            }
+
+            // A WAV file with 3000 bytes of real MPEG frames written over its samples (what a quiet recording's bytes can look like by chance).
+            byte[] wav = File.ReadAllBytes(AudioData("wav/pcm16.wav"));
+            Array.Copy(mp3, sync, wav, 44 + 2000, 3000);
+            string wavPath = Path.Combine(folder, "recording.wav");
+            File.WriteAllBytes(wavPath, wav);
+            var expected = AudioCodecs.Get("wav").Decode(wav);
+            var fromPath = AudioCodecs.Decode(wavPath);
+            Check(fromPath.SampleRate == expected.SampleRate && fromPath.Channels == expected.Channels && fromPath.Samples.AsSpan().SequenceEqual(expected.Samples),
+                $"the WAV file from its path: {fromPath.Channels} x {fromPath.Length} at {fromPath.SampleRate} Hz, the WAV codec gives {expected.Channels} x {expected.Length}");
+            var fromBytes = AudioCodecs.Decode(wav);
+            Check(fromBytes.Samples.AsSpan().SequenceEqual(expected.Samples), "the WAV file from its bytes (no extension): the WAV codec's samples");
+            Check(new Mp3Codec().ReadInfo(wav.AsSpan(0, Math.Min(wav.Length, AudioCodecs.HeaderBytes))) is null, "the MP3 codec does not take a RIFF file");
+
+            string misnamed = Path.Combine(folder, "song.wav");
+            File.WriteAllBytes(misnamed, mp3);
+            Check(AudioCodecs.Decode(misnamed).Samples.AsSpan().SequenceEqual(AudioCodecs.Decode(AudioData("mp3/lame-16k-mono.mp3")).Samples),
+                "an MP3 file named .wav: the WAV codec refuses it and the MP3 codec reads it");
+
+            byte[] junked = [.. Enumerable.Repeat((byte)0x55, 300), .. mp3.AsSpan(sync).ToArray()];
+            Check(new Mp3Codec().ReadInfo(junked.AsSpan(0, Math.Min(junked.Length, AudioCodecs.HeaderBytes))) is not null, "junk then a whole stream is MPEG audio");
+            Check(new Mp3Codec(new Mp3Options { SyncFramesAfterJunk = 1_000_000 }).ReadInfo(junked.AsSpan(0, Math.Min(junked.Length, AudioCodecs.HeaderBytes))) is null,
+                "junk then fewer frames in a row than SyncFramesAfterJunk is refused");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+            if (!registered)
+            {
+                Mp3AudioPlugin.Unregister();
+            }
+        }
+    }
 
     private static (string Name, JsonObject Entry)[] Mp3FixtureFiles()
     {

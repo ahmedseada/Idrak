@@ -27,6 +27,13 @@ AudioEncoders.Save("reply.mp3", audio);                      // the encoder's op
 - A lost sync (junk inside the stream) is passed over as minimp3 passes it: the frame before the junk, which no next
   header confirms, is dropped and the stream found again.
 
+
+**Telling MP3 from other formats.** The decoder passes over junk before the first frame, as minimp3 does, so on its own it
+could take a frame sync that quiet 16-bit samples hold by chance (`FF Fx` byte pairs) for an MP3 stream. `ReadInfo`
+therefore never claims a RIFF (WAV), FLAC, Ogg or MP4 file, and after junk it wants `Mp3Options.SyncFramesAfterJunk`
+(4) frame headers in a row, each where the one before ends. `AudioCodecs` also offers a file to the codecs that list
+its extension first, so a `.wav` recording is the WAV codec's.
+
 ## How it decodes
 
 The frame decoder is minimp3's (https://github.com/lieff/minimp3, CC0, public domain) ported to C#: the Huffman
