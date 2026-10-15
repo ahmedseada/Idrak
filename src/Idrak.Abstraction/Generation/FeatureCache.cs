@@ -7,15 +7,16 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Nlp.Abstractions;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
-/// What a cached image feature depends on, all of it: the image's bytes (their SHA-256, <see cref="ChatImage.Hash"/>), the
-/// transforms and the vision options it was prepared with (<see cref="TuningImages"/>), and the encoder that made it (its
-/// family, a hash of its checkpoint, the precision of its weights), and which stage's output it is. Change any and the
-/// cache misses: a cached feature is never one of another image, preparation or encoder.
+/// What a cached feature depends on, all of it: the part's bytes (their SHA-256, as <see cref="ChatImage.Hash"/> gives an
+/// image's), the transforms and the options it was prepared with (Idrak.Nlp's <c>TuningImages</c> for an image), and the
+/// encoder that made it (its family, a hash of its checkpoint, the precision of its weights), and which stage's output
+/// it is. Change any and the cache misses: a cached feature is never one of another part, preparation or encoder. Idrak.Nlp
+/// keys an image's (<c>FeatureCacheKey.For</c>), Idrak.Audio a sound's.
 /// </summary>
-/// <param name="Image">The SHA-256 of the image's encoded bytes, as <see cref="ChatImage.Hash"/> gives it.</param>
+/// <param name="Image">The SHA-256 of the part's encoded bytes, as <see cref="ChatImage.Hash"/> gives an image's.</param>
 /// <param name="Transforms">The image transforms' text (<see cref="ImageTransformPipeline.ToString"/>; "" for none).</param>
 /// <param name="VisionOptions">The vision options' text (<see cref="VisionOptions.ToString"/>; "none" for none).</param>
 /// <param name="Family">The vision family's name (the architecture name).</param>
@@ -35,14 +36,6 @@ public sealed record FeatureCacheKey(string Image, string Transforms, string Vis
     /// keeps when the tower itself trains (its output changes every step, its input does not).
     /// </summary>
     public const string PixelsStage = "pixels";
-
-    /// <summary>The key of <paramref name="image"/> prepared by <paramref name="images"/> and encoded by the encoder described.</summary>
-    public static FeatureCacheKey For(ChatImage image, TuningImages images, string family, string checkpoint, string dtype, string stage = TowerStage)
-    {
-        ArgumentNullException.ThrowIfNull(image);
-        ArgumentNullException.ThrowIfNull(images);
-        return new FeatureCacheKey(image.Hash, images.Pipeline.ToString(), images.VisionOptions.ToString(), family, checkpoint, dtype, stage);
-    }
 
     /// <summary>
     /// The key as 64 lowercase hex digits (the SHA-256 of its fields written as a JSON array): a file name for a cache that
@@ -71,7 +64,8 @@ public sealed record FeatureCacheOptions
 }
 
 /// <summary>
-/// A store of image features (the frozen vision tower's output, so a fine-tune encodes each image once, not every epoch),
+/// A store of encoded features (the frozen vision tower's output, so a fine-tune encodes each image once, not every epoch;
+/// a sound's soft tokens, so a chat encodes each sound once),
 /// by <see cref="FeatureCacheKey"/>. Values go in as tensors on any device and come out as new tensors on the device asked
 /// for, which the caller owns; the cache keeps its own copy (float32), so what was put can be disposed. A cache may forget
 /// entries (a bounded one evicts the least recently used): a miss is never an error, and a hit is exactly what was put.
@@ -105,7 +99,7 @@ public interface IFeatureCache : IDisposable
 }
 
 /// <summary>
-/// The kinds of feature cache, by name (ignoring case). The library's:
+/// The kinds of feature cache, by name (ignoring case). The library's (Idrak.Nlp registers them):
 /// <list type="bullet">
 /// <item><see cref="Memory"/>: in this process's memory, least recently used entries evicted to stay within a byte
 /// budget (<see cref="FeatureCacheOptions.Budget"/>, or half of the system memory available when it is made).</item>
@@ -126,16 +120,10 @@ public static class FeatureCaches
     /// <summary>The cache on disk.</summary>
     public const string Disk = "disk";
 
-    private static readonly SlotTable<string, Func<FeatureCacheOptions, IFeatureCache>> Table = BuiltIn();
+    private static readonly SlotTable<string, Func<FeatureCacheOptions, IFeatureCache>> Table = new(nameof(FeatureCaches),
+        (slot, app, library) => options => slot.Call(() => app(options), () => library(options), effects: true), StringComparer.OrdinalIgnoreCase);
 
-    private static SlotTable<string, Func<FeatureCacheOptions, IFeatureCache>> BuiltIn()
-    {
-        var table = new SlotTable<string, Func<FeatureCacheOptions, IFeatureCache>>(nameof(FeatureCaches),
-            (slot, app, library) => options => slot.Call(() => app(options), () => library(options), effects: true), StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault(Memory, options => new MemoryFeatureCache(options));
-        table.RegisterDefault(Disk, options => new DiskFeatureCache(options));
-        return table;
-    }
+    static FeatureCaches() => LibraryDefaults.Ensure(typeof(FeatureCaches));
 
     /// <summary>
     /// The folder the disk cache uses unless told otherwise: <c>features</c> under the library's cache folder

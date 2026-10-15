@@ -84,7 +84,11 @@ public static partial class Stft
     /// the centre padding trimmed, the result cut or zero-padded to <paramref name="length"/> when given (otherwise
     /// <see cref="SamplesFor"/>).
     /// </summary>
-    /// <exception cref="ArgumentException">The window-square envelope is zero somewhere the output keeps (the window and hop do not cover the signal).</exception>
+    /// <remarks>
+    /// A sample at either end that no frame weights above zero (without centring, the first sample under a periodic
+    /// window's zero) has nothing to recover and comes back as 0; torch refuses such a transform outright.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The window-square envelope is zero between covered samples (the hop leaves a gap the window does not cover), or everywhere.</exception>
     public static float[] Inverse(ReadOnlySpan<float> real, ReadOnlySpan<float> imaginary, int frames, AudioFeatureOptions options, int? length = null)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -159,13 +163,30 @@ public static partial class Stft
         int kept = options.Center ? full - 2 * (size / 2) : full;
         int target = length ?? kept;
         int copied = Math.Min(kept, target);
+        const double Uncovered = 1e-11;
+        int firstCovered = 0, lastCovered = copied - 1;
+        while (firstCovered < copied && envelope[start + firstCovered] <= Uncovered)
+        {
+            firstCovered++;
+        }
+
+        while (lastCovered >= firstCovered && envelope[start + lastCovered] <= Uncovered)
+        {
+            lastCovered--;
+        }
+
+        if (copied > 0 && firstCovered == copied)
+        {
+            throw new ArgumentException($"The window ({options.Window}, {size}) with hop {hop} covers none of the {copied} samples; the transform cannot be inverted.", nameof(options));
+        }
+
         var samples = new float[target];
-        for (int n = 0; n < copied; n++)
+        for (int n = firstCovered; n <= lastCovered; n++)                        // the uncovered ends stay 0
         {
             double e = envelope[start + n];
-            if (e <= 1e-11)
+            if (e <= Uncovered)
             {
-                throw new ArgumentException($"The window ({options.Window}, {size}) with hop {hop} leaves sample {n} uncovered (envelope {e}); the transform cannot be inverted there.", nameof(options));
+                throw new ArgumentException($"The window ({options.Window}, {size}) with hop {hop} leaves sample {n} uncovered (envelope {e}) between covered samples; the transform cannot be inverted there.", nameof(options));
             }
 
             samples[n] = (float)(sum[start + n] / e);

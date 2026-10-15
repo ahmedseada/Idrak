@@ -130,7 +130,8 @@ internal static partial class Tests
         Check(ChatParts.Origin("audio") == Overrides.Library && ChatParts.Default("audio") is AudioPartKind && ChatParts.Get("audio") is AudioPartKind
               && ChatParts.Names.Contains("audio"), "the library's audio kind");
         var json = ChatParts.ToJson(fromFile);
-        Check(json.ToJsonString() == $"{{\"type\":\"audio\",\"media_type\":\"audio/wav\",\"data\":\"{Convert.ToBase64String(wav)}\"}}" && ChatParts.FromJson(json) == fromFile, json.ToJsonString()[..60]);
+        var expectedJson = new JsonObject { ["type"] = "audio", ["media_type"] = "audio/wav", ["data"] = Convert.ToBase64String(wav) };   // the serializer's own escaping of base64's '+'
+        Check(json.ToJsonString() == expectedJson.ToJsonString() && ChatParts.FromJson(json) == fromFile, $"the part's JSON: {json.ToJsonString()[..60]}…");
         Throws<FormatException>(() => ChatParts.FromJson(new JsonObject { ["type"] = "audio" }), "audio with no data");
         Throws<FormatException>(() => ChatParts.FromJson(new JsonObject { ["type"] = "audio", ["data"] = "***" }), "bad base64");
         var library = ChatParts.Default("audio")!;
@@ -228,18 +229,28 @@ internal static partial class Tests
 
         var format = TuningDataFormats.Get("sharegpt");
         Check(TuningDataFormats.Detect(file).Name == "sharegpt", "detected");
-        CheckRead(format.Read(file), "from the file's folder");
-        using (var pending = format.ReadPending(file))
-        {
-            Check(pending.Count == expected.Count && pending.Images == 0, "pending: counted");
-            CheckRead(Enumerable.Range(0, pending.Count).Select(pending.Read), "pending");
-        }
-
-        // The same records elsewhere, with the audios root a folder, then a zip; images root alone serves audio too.
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-audio-chat-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         try
         {
+            // The fixture's paths are relative to the audio folder: a copy with its sounds beside it reads from its own folder.
+            string beside = Path.Combine(folder, "beside", "train.jsonl");
+            foreach (var (path, _) in expected.DistinctBy(e => e.Item1))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(folder, "beside", path))!);
+                File.Copy(AudioData(path), Path.Combine(folder, "beside", path));
+            }
+
+            File.Copy(file, beside);
+            CheckRead(format.Read(beside), "from the file's folder");
+            using (var pending = format.ReadPending(beside))
+            {
+                Check(pending.Count == expected.Count && pending.Images == 0, "pending: counted");
+                CheckRead(Enumerable.Range(0, pending.Count).Select(pending.Read), "pending");
+            }
+
+            // The same records with no sounds beside them: the audios root a folder, then a zip; the images root alone serves audio too.
+            CheckRead(format.Read(file, new TuningDataOptions { Audios = AudioData("") }), "the fixture with its audios root");
             string copy = Path.Combine(folder, "train.jsonl");
             File.Copy(file, copy);
             CheckRead(format.Read(copy, new TuningDataOptions { Audios = AudioData("") }), "an audios root");
@@ -254,7 +265,7 @@ internal static partial class Tests
             }
 
             CheckRead(format.Read(copy, new TuningDataOptions { Audios = zip }), "a zip");
-            ThrowsNaming<InvalidDataException>(() => format.Read(copy, new TuningDataOptions { Audios = Path.Combine(folder, "none") }).ToList(), "a root that is not there", "neither a folder nor a .zip");
+            ThrowsNaming<DirectoryNotFoundException>(() => format.Read(copy, new TuningDataOptions { Audios = Path.Combine(folder, "none") }).ToList(), "a root that is not there", "audios root", "neither a folder nor a .zip");
 
             // The messages format: a path, a bare part with the list, a marker in a text part, and a data URL.
             string wav = AudioData("wav/pcm16.wav");
@@ -334,7 +345,7 @@ internal static partial class Tests
               && sequence.Parts.SelectMany(p => p.Blocks).SequenceEqual([(positions[0], 2), (positions[1], 2)]) && sequence.Parts.Sum(p => p.Tokens) == 4 && sequence.Images.Count == 0,
             $"parts' blocks [{string.Join(", ", sequence.Parts.SelectMany(p => p.Blocks))}] at the runs of soft tokens [{string.Join(", ", positions)}]");
         int trained = sequence.Trained.Count(t => t);
-        var answers = tokenizer.Encode("hello<|im_end|>\n").Count + tokenizer.Encode("again<|im_end|>\n").Count;
+        var answers = tokenizer.Encode("hello<|im_end|>").Count + tokenizer.Encode("again<|im_end|>").Count;   // a trained turn ends at its end marker
         Check(trained == answers && !sequence.Trained.Take(positions[0] + 3).Any(t => t), $"trained {trained} tokens, the answers take {answers}; nothing before the first sound");
         Check(source.EncodeCalls.Count == 0, "the encoder encodes nothing");
 
@@ -380,7 +391,8 @@ internal static partial class Tests
         var two = new ChatRequest([new ChatMessage("user", [audio, new ChatText(" then "), ChatAudio.FromFile(AudioData("wav/rate8k.wav")), new ChatText(" Transcribe both.")])],
             Options: request.Options);
         Check(chat.Chat(two).Done && source.EncodeCalls[^1].Count == 2 && model.Tokenizer.Encode(chat.RenderPrompt(two)).Count(i => i == 6) == 6, "two sounds");
-        Check(chat.Chat(new ChatRequest([new ChatMessage("user", "hi")], Options: request.Options)).Done && source.EncodeCalls.Count == 2, "text alone encodes nothing");
+        int calls = source.EncodeCalls.Count;                                    // the requests' calls and the test's own one above
+        Check(chat.Chat(new ChatRequest([new ChatMessage("user", "hi")], Options: request.Options)).Done && source.EncodeCalls.Count == calls, $"text alone encodes nothing: {source.EncodeCalls.Count - calls} call(s)");
 
         // Batches: ChatBatch takes text only; StreamBatch answers requests with sounds one by one.
         ThrowsNaming<NotSupportedException>(() => chat.ChatBatch([request]), "ChatBatch", "soft parts");

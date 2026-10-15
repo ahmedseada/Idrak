@@ -720,8 +720,8 @@ public sealed class ChatTranscriptEncoder
                 transcript = fitted;
             }
 
-            var (tokens, trained, images, _) = Tokens(transcript, turns);
-            return Sequence(tokens, trained, images, maxLength);
+            var (tokens, trained, images, parts, _) = Tokens(transcript, turns);
+            return Sequence(tokens, trained, images, parts, maxLength);
         }
 
         return Answer("chosen") is { } chosen && Answer("rejected") is { } rejected ? new PreferencePair(chosen, rejected) : null;

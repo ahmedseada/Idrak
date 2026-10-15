@@ -50,8 +50,8 @@ static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, IToken
 Conformance.Check(Drive(MySampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create))).ThrowIfFailed();
 ```
 
-The fine-tuning data formats (`ITuningDataFormat`) and feature caches (`IFeatureCache`) live in Idrak.Nlp too, so they
-are checked the same way: a format as its reading, a cache wrapped in `FeatureCacheUnderTest`:
+The fine-tuning data formats (`ITuningDataFormat`) live in Idrak.Nlp too, and the feature caches (`IFeatureCache`, in
+Idrak.Abstraction with Idrak.Nlp's built-ins) are checked the same way: a format as its reading, a cache wrapped in `FeatureCacheUnderTest`:
 
 ```csharp
 var format = TuningDataFormats.Get("sharegpt");

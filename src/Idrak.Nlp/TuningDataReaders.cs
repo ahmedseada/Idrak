@@ -270,18 +270,18 @@ internal sealed class TuningImageSource : IDisposable
     private readonly string? _stem;       // the zip's file name without its extension
     private readonly Dictionary<string, ZipArchiveEntry?>? _endings;   // every trailing part of every entry's path; null: several entries end so
 
-    /// <summary>Throws when <paramref name="images"/> is given and is neither a folder nor a .zip file.</summary>
-    public static void CheckRoot(string? images)
+    /// <summary>Throws when <paramref name="images"/> is given and is neither a folder nor a .zip file (named as the <paramref name="what"/> root).</summary>
+    public static void CheckRoot(string? images, string what = "images")
     {
         if (images is not null && !Directory.Exists(images) && !(File.Exists(images) && string.Equals(Path.GetExtension(images), ".zip", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new DirectoryNotFoundException($"The images root {images} is neither a folder nor a .zip file.");
+            throw new DirectoryNotFoundException($"The {what} root {images} is neither a folder nor a .zip file.");
         }
     }
 
-    public TuningImageSource(string dataPath, string? images)
+    public TuningImageSource(string dataPath, string? images, string what = "images")
     {
-        CheckRoot(images);
+        CheckRoot(images, what);
         string root = images ?? Path.GetDirectoryName(Path.GetFullPath(dataPath)) ?? ".";
         if (images is not null && File.Exists(images) && string.Equals(Path.GetExtension(images), ".zip", StringComparison.OrdinalIgnoreCase))
         {
@@ -624,7 +624,7 @@ internal static class TuningRecordImages
 
     // Where sounds come from: their own root when given, else where the images come from.
     private static TuningImageSource AudioSource(string path, TuningDataOptions? options, TuningImageSource images) =>
-        options?.Audios is { } root ? new TuningImageSource(path, root) : images;
+        options?.Audios is { } root ? new TuningImageSource(path, root, "audios") : images;
 
     public static PendingConversations ReadPending(string path, TuningDataOptions? options, Func<JsonObject, string, PendingRecord> pending)
     {

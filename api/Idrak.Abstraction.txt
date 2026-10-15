@@ -1310,6 +1310,8 @@ public readonly record struct Idrak.Abstraction.Diagnostics.InferenceStage : Sys
   public string Device { get; init; }
 
 public enum Idrak.Abstraction.Diagnostics.InferenceStageKind : int
+  AudioDecode = 7
+  AudioFeatures = 9
   CacheAllocation = 6
   DecodeChunk = 4
   Encoder = 2
@@ -1317,6 +1319,7 @@ public enum Idrak.Abstraction.Diagnostics.InferenceStageKind : int
   ImageDecode = 0
   ImageTransforms = 1
   Prefill = 3
+  Resample = 8
 
 public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstraction.Diagnostics.ITelemetryHook, System.IAsyncDisposable, System.IDisposable
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
@@ -1749,6 +1752,7 @@ public abstract record Idrak.Abstraction.Generation.ChatPart : System.IEquatable
   public abstract string Kind { get; }
 
 public static class Idrak.Abstraction.Generation.ChatParts
+  public const string Audio = "audio"
   public const string Image = "image"
   public const string Text = "text"
   public static Idrak.Abstraction.Generation.ChatPart FromJson(System.Text.Json.Nodes.JsonNode? json)
@@ -1862,6 +1866,7 @@ public sealed record Idrak.Abstraction.Generation.DecoderSpec : System.IEquatabl
   public void Describe(Idrak.Abstraction.Module model)
 
 public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDisposable
+  public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor)? MemoryOf(object owner)
   public DecodingContext(Idrak.Abstraction.Device device, int batch, int capacity, Idrak.Abstraction.Generation.KeyValueFormat format = (Idrak.Abstraction.Generation.KeyValueFormat)0)
   public DecodingContext(Idrak.Abstraction.Device device, int batch, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout)
   public Idrak.Abstraction.ComputeGraph CaptureStep(System.Action step)
@@ -1891,20 +1896,65 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public int LengthOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public int SlidingWindowSteps { get; set; }
   public long CacheBytes { get; }
+  public long MemoryBytes { get; }
   public void BeginStep(int steps)
   public void CancelStep()
+  public void ClearMemory()
   public void Dispose()
   public void EndStep(int steps)
+  public void ReorderRows(System.Collections.Generic.IReadOnlyList<int> sources)
   public void ReplayStep(Idrak.Abstraction.ComputeGraph graph, int steps = 1)
   public void Reset()
+  public void SetMemory(object owner, Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values)
   public void SetRotaryOffsets(System.Collections.Generic.IReadOnlyList<int>? offsets, int from)
   public void SetRowStarts(System.Collections.Generic.IReadOnlyList<int>? starts)
   public void Truncate(int length)
+
+public sealed record Idrak.Abstraction.Generation.EncoderDecoderSpec : System.IEquatable<Idrak.Abstraction.Generation.EncoderDecoderSpec>
+  public EncoderDecoderSpec(Idrak.Abstraction.Generation.DecoderSpec Decoder, System.Text.Json.Nodes.JsonObject Encoder)
+  public Idrak.Abstraction.Generation.DecoderSpec Decoder { get; init; }
+  public System.Text.Json.Nodes.JsonObject Encoder { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public static Idrak.Abstraction.Generation.EncoderDecoderSpec FromJson(System.Text.Json.Nodes.JsonObject json)
+  public static bool IsDescription(System.Text.Json.Nodes.JsonObject json)
 
 public enum Idrak.Abstraction.Generation.EncoderWeights : int
   AsStored = 0
   BFloat16 = 2
   Float32 = 1
+
+public sealed record Idrak.Abstraction.Generation.FeatureCacheKey : System.IEquatable<Idrak.Abstraction.Generation.FeatureCacheKey>
+  public FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage = "tower")
+  public System.Text.Json.Nodes.JsonArray ToJson()
+  public const string FeaturesStage = "features"
+  public const string PixelsStage = "pixels"
+  public const string TowerStage = "tower"
+  public string Checkpoint { get; init; }
+  public string DType { get; init; }
+  public string Family { get; init; }
+  public string Id { get; }
+  public string Image { get; init; }
+  public string Stage { get; init; }
+  public string Transforms { get; init; }
+  public string VisionOptions { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.FeatureCacheOptions : System.IEquatable<Idrak.Abstraction.Generation.FeatureCacheOptions>
+  public FeatureCacheOptions()
+  public long? Budget { get; init; }
+  public string? Folder { get; init; }
+
+public static class Idrak.Abstraction.Generation.FeatureCaches
+  public const string Disk = "disk"
+  public const string Memory = "memory"
+  public static Idrak.Abstraction.Generation.IFeatureCache Create(string name, Idrak.Abstraction.Generation.FeatureCacheOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache> Get(string name)
+  public static System.Func<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache>? Default(string name)
+  public static bool Unregister(string name)
+  public static string DefaultFolder { get; }
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache> create)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public enum Idrak.Abstraction.Generation.FeedForwardActivation : int
   Gelu = 1
@@ -1952,6 +2002,9 @@ public sealed record Idrak.Abstraction.Generation.GenerationStats : System.IEqua
   public int GeneratedTokens { get; init; }
   public int PromptTokens { get; init; }
 
+public interface Idrak.Abstraction.Generation.IBinaryPartKind : Idrak.Abstraction.Generation.IChatPartKind
+  public Idrak.Abstraction.Generation.ChatPart FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
+
 public interface Idrak.Abstraction.Generation.IChatModel
   public (default) System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.ChatChunk> StreamAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
@@ -1960,6 +2013,15 @@ public interface Idrak.Abstraction.Generation.IChatPartKind
   public Idrak.Abstraction.Generation.ChatPart Read(System.Text.Json.Nodes.JsonObject json)
   public string Name { get; }
   public void Write(Idrak.Abstraction.Generation.ChatPart part, System.Text.Json.Nodes.JsonObject json)
+
+public interface Idrak.Abstraction.Generation.IFeatureCache : System.IDisposable
+  public bool Contains(Idrak.Abstraction.Generation.FeatureCacheKey key)
+  public bool Put(Idrak.Abstraction.Generation.FeatureCacheKey key, Idrak.Abstraction.Tensor value)
+  public bool TryGet(Idrak.Abstraction.Generation.FeatureCacheKey key, Idrak.Abstraction.Device device, out Idrak.Abstraction.Tensor? value)
+  public int Count { get; }
+  public long Bytes { get; }
+  public string Name { get; }
+  public void Clear()
 
 public interface Idrak.Abstraction.Generation.IImageAttentionRule
   public Idrak.Abstraction.KeySpans Spans(int rows, System.Collections.Generic.IReadOnlyList<(int, int)> blocks, int window)
@@ -1974,6 +2036,14 @@ public interface Idrak.Abstraction.Generation.IImagePromptFormat
   public int ImageToken { get; }
   public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout>> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public string Name { get; }
+
+public interface Idrak.Abstraction.Generation.ISoftPartSource
+  public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
+  public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Generation.ChatPart part)
+  public int Width { get; }
+  public string Kind { get; }
 
 public interface Idrak.Abstraction.Generation.ITextModel
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
