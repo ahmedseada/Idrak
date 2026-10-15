@@ -319,7 +319,8 @@ def write_mp3s(out):
 def write_voices(out):
     """A tiny random OpenVoice converter (openvoice-cli's SynthesizerTrn with n_speakers 0: the reference encoder, the
     posterior encoder, the flows and the HiFi-GAN decoder), saved as model.safetensors (the state dict, weight norm's
-    weight_g and weight_v as stored, as tools/audio/convert_openvoice.py writes it), with OpenVoice's config.json; and its outputs: the linear spectrogram of wav/pcm16, the speaker embeddings of the
+    weight_g and weight_v as stored, as tools/audio/convert_openvoice.py writes it) and as checkpoint.pth
+    (torch.save({"model": state_dict}), as OpenVoice ships it), with OpenVoice's config.json; and its outputs: the linear spectrogram of wav/pcm16, the speaker embeddings of the
     source and of two target clips (and their mean, as extract_se takes it), and the conversion of the source to the
     target with tau 0 (no noise), zero_g on (OpenVoice v2) and off (v1). The reference encoder's six weight-normed
     convolutions get gains of ten times the drawn ones' size: at the drawn gains (about 0.16 a filter) the signal fades
@@ -350,6 +351,7 @@ def write_voices(out):
     model = build(True)
     state = {k: v.contiguous() for k, v in model.state_dict().items()}
     save_file(state, os.path.join(folder, "model.safetensors"))
+    torch.save({"model": state}, os.path.join(folder, "checkpoint.pth"))         # as OpenVoice ships it: read by PyTorchCheckpointReader
     dump_json(os.path.join(folder, "config.json"), config)
 
     def spec(samples):

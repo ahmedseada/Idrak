@@ -6,7 +6,7 @@ using Idrak.Data;
 
 namespace Idrak.Cli.Shared;
 
-/// <summary>How <c>idrak pull</c> reads a model name: "owner/name", "owner/name:TAG" (a GGUF file by its quantization tag), "owner/name/file.gguf", a URL.</summary>
+/// <summary>How <c>idrak pull</c> reads a model name: "owner/name", "owner/name:TAG" (a GGUF file by its quantization tag), "owner/name/file.gguf", "owner/name/folder" (a model below the top level), a URL.</summary>
 internal static class PullTarget
 {
     /// <summary>"owner/name:Q4_K_M" → ("owner/name", "Q4_K_M"); a name without a tag → (name, null).</summary>
@@ -29,17 +29,25 @@ internal static class PullTarget
         var parts = model.Split('/');
         return parts.Length > 2 && model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) ? ($"{parts[0]}/{parts[1]}", string.Join('/', parts[2..])) : null;
     }
+
+    /// <summary>"owner/name/sub/folder" → ("owner/name", "sub/folder"), or null when <paramref name="model"/> is not one (a .gguf file, a path, a URL, "owner/name").</summary>
+    public static (string Repo, string Folder)? SplitFolder(string model)
+    {
+        if (model.Contains("://", StringComparison.Ordinal) || Path.IsPathRooted(model) || model.StartsWith('.') || File.Exists(model) || Directory.Exists(model)
+            || model.Contains('\\') || model.Contains(':') || model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var parts = model.Trim('/').Split('/');
+        return parts.Length > 2 && parts.All(p => p.Length > 0) ? ($"{parts[0]}/{parts[1]}", string.Join('/', parts[2..])) : null;
+    }
 }
 
 /// <summary>Hugging Face hub calls the model commands share (pull, search, verify), through the library's <see cref="Downloader"/>.</summary>
 internal static class Hub
 {
     // The files HuggingFaceModels.DownloadAsync takes of a transformers model (kept the same, so a pull is what loading reads).
-    private static readonly string[] Wanted = ["config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
-        "added_tokens.json", "chat_template.jinja", "chat_template.json", "model.safetensors.index.json",
-        "preprocessor_config.json", "processor_config.json",
-        "vocab.json", "merges.txt", "vocab.txt", "tokenizer.model"];   // the tokenizers without a tokenizer.json (VITS's vocab.json, BPE, WordPiece, SentencePiece)
-
     /// <summary>A file of a hub repository with its size and, for large (LFS) files, its SHA-256.</summary>
     public sealed record HubFile(string Path, long Size, string? Sha256);
 
@@ -47,31 +55,27 @@ internal static class Hub
     public static string? Token(CommandContext context) => HuggingFace.Token(context.Option("--token") ?? context.Config.Get("hf_token"));
 
     /// <summary>
-    /// The files loading reads of a transformers model (config, tokenizer, chat template and the safetensors weights), as
-    /// <c>ModelSource</c> chooses them; null when the repository holds no config.json at its top level.
+    /// The files loading reads of the model in <paramref name="subfolder"/> ("" for the top level): the library's own
+    /// choice (<see cref="HuggingFaceModels.ChooseFiles"/>: config, tokenizer, chat template, and the safetensors or one
+    /// PyTorch checkpoint); null when the level holds no config.json (a GGUF repository, say).
     /// </summary>
-    public static List<HubFile>? TransformersFiles(string repo, IReadOnlyList<HubFile> files)
+    public static List<HubFile>? TransformersFiles(string repo, IReadOnlyList<HubFile> files, string subfolder = "")
     {
-        var root = files.Where(f => !f.Path.Contains('/')).ToList();
-        if (!root.Any(f => f.Path == "config.json"))
+        string prefix = subfolder.Trim('/') is { Length: > 0 } sub ? sub + "/" : "";
+        if (!files.Any(f => f.Path == prefix + "config.json"))
         {
             return null;
         }
 
-        var chosen = root.Where(f => Wanted.Contains(f.Path)).ToList();
-        var safetensors = root.Where(f => f.Path.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase)).ToList();
-        if (safetensors.Count == 0)
+        var byPath = files.ToDictionary(f => f.Path, StringComparer.Ordinal);
+        try
         {
-            throw new InvalidOperationException(root.Any(f => f.Path.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
-                ? $"{repo} has only PyTorch .bin weights; Idrak reads safetensors (look for a safetensors version of the model)."
-                : $"{repo} has no safetensors weights.");
+            return [.. HuggingFaceModels.ChooseFiles(repo, [.. files.Select(f => new RepoFile(f.Path, f.Size))], subfolder).Select(f => byPath[f.Path])];
         }
-
-        bool sharded = root.Any(f => f.Path == "model.safetensors.index.json");
-        chosen.AddRange(sharded
-            ? safetensors.Where(f => !f.Path.StartsWith("consolidated", StringComparison.Ordinal))
-            : safetensors.Any(f => f.Path == "model.safetensors") ? safetensors.Where(f => f.Path == "model.safetensors") : safetensors);
-        return chosen;
+        catch (FileNotFoundException e)
+        {
+            throw new InvalidOperationException(e.Message, e);
+        }
     }
 
     /// <summary>Every file of a model repository at <paramref name="commit"/>, with sizes and LFS hashes.</summary>

@@ -7,16 +7,18 @@ namespace Idrak.Models;
 
 /// <summary>
 /// The model-loading built-ins Idrak registers (from <c>LibraryRegistrations</c>, each when its registry is first used): the checkpoint formats (safetensors,
-/// GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF families and
+/// PyTorch zip checkpoints read without running them, GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF families and
 /// pre-tokenizer patterns, and the pretrained model families. Idrak.Data adds the Hugging Face model source.
 /// </summary>
 internal static class LibraryModelFormats
 {
     // Both registries ask the most recently registered first: registered in reverse, they are asked GGUF (whose prepared
-    // folders are model folders too) before safetensors, and folder, store, then gguf.
+    // folders are model folders too), then a PyTorch checkpoint (a folder with one and no safetensors), before safetensors
+    // (any folder), and folder, store, then gguf.
     public static void RegisterCheckpointFormats()
     {
         CheckpointFormats.Register(new SafeTensorsCheckpointFormat());
+        CheckpointFormats.Register(new PyTorchCheckpointFormat());
         CheckpointFormats.Register(new GgufCheckpointFormat());
     }
 

@@ -1583,6 +1583,20 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public string? MergeAdapter { get; init; }
   public string? PackedFormatName { get; init; }
 
+public sealed class Idrak.Models.PyTorchCheckpointReader : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
+  public Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
+  public System.Collections.Generic.IEnumerable<string> Names { get; }
+  public bool Contains(string name)
+  public float[] Read(string name)
+  public int[] ShapeOf(string name)
+  public static Idrak.Models.PyTorchCheckpointReader Open(string path, string? root = null)
+  public static System.Collections.Generic.IReadOnlyList<string> Extensions { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> WrapperKeys { get; }
+  public static bool IsCheckpoint(string path)
+  public string Path { get; }
+  public string? Root { get; }
+  public void Dispose()
+
 public sealed record Idrak.Models.SafeTensorInfo : System.IEquatable<Idrak.Models.SafeTensorInfo>
   public Idrak.Models.SafeTensorType Type { get; init; }
   public SafeTensorInfo(string Name, Idrak.Models.SafeTensorType Type, int[] Shape, long Offset, long Length, string File)
