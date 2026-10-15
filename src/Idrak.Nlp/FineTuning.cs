@@ -221,6 +221,33 @@ public sealed class ChatTranscriptEncoder
     /// </summary>
     public TuningVision? Vision { get; init; }
 
+    /// <summary>
+    /// The sources of soft tokens for the other kinds of message part (an audio part through Idrak.Audio's
+    /// <c>ChatAudioParts</c>; one <see cref="ISoftPartSource"/> per kind): each part's marker is expanded by its source's
+    /// format to its blocks of soft tokens, as generation does, and the sequences record the parts with their blocks'
+    /// positions (<see cref="TrainingSequence.Parts"/>). None (the default): a transcript with such a part is refused.
+    /// </summary>
+    public IReadOnlyList<ISoftPartSource> Parts
+    {
+        get => _parts;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            foreach (var source in value)
+            {
+                ArgumentNullException.ThrowIfNull(source, nameof(value));
+                if (source.Kind is ChatParts.Text or ChatParts.Image || value.Count(s => s.Kind == source.Kind) > 1)
+                {
+                    throw new ArgumentException($"Parts holds one source per kind other than text and image; '{source.Kind}' is {(source.Kind is ChatParts.Text or ChatParts.Image ? "not one" : "given twice")}.", nameof(value));
+                }
+            }
+
+            _parts = value;
+        }
+    }
+
+    private IReadOnlyList<ISoftPartSource> _parts = [];
+
     /// <summary>The rendered transcript and the character ranges [start, end) of the assistant's turns in it.</summary>
     public (string Text, IReadOnlyList<(int Start, int End)> Spans) Render(ChatTranscript transcript)
     {
@@ -265,13 +292,13 @@ public sealed class ChatTranscriptEncoder
     /// <exception cref="InvalidDataException">An image lies in an assistant turn (images are read, never trained on).</exception>
     public TrainingSequence? Encode(ChatTranscript transcript, int maxLength)
     {
-        var (tokens, trained, images, turns) = Tokens(transcript);
+        var (tokens, trained, images, parts, turns) = Tokens(transcript);
         if (tokens.Count > maxLength + 1 && ShortenToFit && Shortened(transcript, tokens.Count, Answers(trained, turns, transcript), maxLength) is { } fitted)
         {
             return fitted;
         }
 
-        return Sequence(tokens, trained, images, maxLength);
+        return Sequence(tokens, trained, images, parts, maxLength);
     }
 
     // The tokens of the assistant's turns (every turn trained: Tokens' default), when they are exactly the transcript's
@@ -295,18 +322,23 @@ public sealed class ChatTranscriptEncoder
 
     // The first maxLength + 1 tokens as a sequence (null when nothing trainable remains), with the image blocks that lie
     // whole among its inputs (the cut moves back to the start of the first block that does not).
-    private static TrainingSequence? Sequence(List<int> tokens, List<bool> trained, List<TrainingImage> images, int maxLength)
+    private static TrainingSequence? Sequence(List<int> tokens, List<bool> trained, List<TrainingImage> images, List<TrainingPart> parts, int maxLength)
     {
         int keep = Math.Min(tokens.Count, maxLength + 1);
-        if (images.Count == 0)
+        if (images.Count == 0 && parts.Count == 0)
         {
             var text = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]);
             return text.TrainedTokens > 0 ? text : null;
         }
 
-        if (images.SelectMany(i => i.Blocks).FirstOrDefault(b => b.Position + b.Tokens > keep - 1) is { Tokens: > 0 } cut)
+        // The cut moves back to the start of the first block (of an image or a part) that does not lie whole among the inputs.
+        foreach (var block in images.SelectMany(i => i.Blocks).Concat(parts.SelectMany(p => p.Blocks)).OrderBy(b => b.Position))
         {
-            keep = Math.Min(keep, cut.Position);
+            if (block.Position + block.Tokens > keep - 1)
+            {
+                keep = Math.Min(keep, block.Position);
+                break;
+            }
         }
 
         var kept = new List<TrainingImage>(images.Count);
@@ -323,7 +355,21 @@ public sealed class ChatTranscriptEncoder
             }
         }
 
-        var sequence = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]) { Images = kept.Count == 0 ? [] : kept };
+        var keptParts = new List<TrainingPart>(parts.Count);
+        foreach (var part in parts)
+        {
+            var blocks = part.Blocks.Where(b => b.Position + b.Tokens <= keep - 1).ToList();
+            if (blocks.Count == part.Blocks.Count)
+            {
+                keptParts.Add(part);
+            }
+            else if (blocks.Count > 0)
+            {
+                keptParts.Add(part with { Blocks = blocks });
+            }
+        }
+
+        var sequence = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]) { Images = kept.Count == 0 ? [] : kept, Parts = keptParts.Count == 0 ? [] : keptParts };
         return sequence.TrainedTokens > 0 ? sequence : null;
     }
 
@@ -335,7 +381,7 @@ public sealed class ChatTranscriptEncoder
     public ChatTranscript? Fit(ChatTranscript transcript, int maxLength)
     {
         ArgumentNullException.ThrowIfNull(transcript);
-        var (tokens, trained, _, turns) = Tokens(transcript);
+        var (tokens, trained, _, _, turns) = Tokens(transcript);
         if (tokens.Count <= maxLength + 1)
         {
             return transcript;
@@ -346,20 +392,20 @@ public sealed class ChatTranscriptEncoder
 
     private TrainingSequence? Shortened(ChatTranscript transcript, int total, int answers, int maxLength)
     {
-        var (fitted, tokens, trained, images) = ShortenedTranscript(transcript, total, answers, maxLength);
-        return fitted is null ? null : Sequence(tokens, trained, images, maxLength);
+        var (fitted, tokens, trained, images, parts) = ShortenedTranscript(transcript, total, answers, maxLength);
+        return fitted is null ? null : Sequence(tokens, trained, images, parts, maxLength);
     }
 
     // Cuts the end of the last user message before the last assistant turn until everything fits: a first cut from the
     // tokens over, then 10% less each time the estimate falls short (tokens do not map to characters exactly). `total` is
     // the whole transcript's count of tokens (tokenized once, by the caller); `answers` the assistant turns' (-1: unknown):
     // when they alone pass the budget no cut can fit, and nothing more is rendered.
-    private (ChatTranscript? Transcript, List<int> Tokens, List<bool> Trained, List<TrainingImage> Images) ShortenedTranscript(ChatTranscript transcript, int total,
+    private (ChatTranscript? Transcript, List<int> Tokens, List<bool> Trained, List<TrainingImage> Images, List<TrainingPart> Parts) ShortenedTranscript(ChatTranscript transcript, int total,
         int answers, int maxLength)
     {
         if (answers > maxLength + 1)
         {
-            return (null, [], [], []);
+            return (null, [], [], [], []);
         }
 
         var messages = transcript.Messages;
@@ -385,7 +431,7 @@ public sealed class ChatTranscriptEncoder
 
         if (answer < 0 || user < 0 || messages[user].Content.Length == 0)
         {
-            return (null, [], [], []);
+            return (null, [], [], [], []);
         }
 
         string content = messages[user].Content;
@@ -397,15 +443,15 @@ public sealed class ChatTranscriptEncoder
             var shorter = messages.ToArray();
             shorter[user] = shorter[user] with { Content = content[..length] };
             var candidate = transcript with { Messages = shorter };
-            var (tokens, trained, images, _) = Tokens(candidate);
+            var (tokens, trained, images, parts, _) = Tokens(candidate);
             if (tokens.Count <= maxLength + 1)
             {
-                return (candidate, tokens, trained, images);
+                return (candidate, tokens, trained, images, parts);
             }
 
             if (length == 0)
             {
-                return (null, [], [], []);
+                return (null, [], [], [], []);
             }
 
             length = length * 9 / 10;
@@ -415,7 +461,7 @@ public sealed class ChatTranscriptEncoder
     // Every token of the rendered transcript (each image's marker expanded to its blocks of image tokens), the assistant's
     // turns marked as trained (only the last `answerTurns` of them when given), the images with their blocks' positions,
     // and how many assistant turns the text holds.
-    private (List<int> Tokens, List<bool> Trained, List<TrainingImage> Images, int Turns) Tokens(ChatTranscript transcript, int answerTurns = int.MaxValue)
+    private (List<int> Tokens, List<bool> Trained, List<TrainingImage> Images, List<TrainingPart> Parts, int Turns) Tokens(ChatTranscript transcript, int answerTurns = int.MaxValue)
     {
         var (text, spans) = Render(transcript);
         List<ChatImage>? images = null;
@@ -429,6 +475,25 @@ public sealed class ChatTranscriptEncoder
             layouts = [.. images.Select(i => vision.Blocks(i))];
             text = vision.Expand(text, layouts, Tokenizer);
             spans = Spans(text);
+        }
+
+        // The parts of other kinds, each kind's in the order the template renders them, expanded by their source.
+        List<(ISoftPartSource Source, List<ChatPart> Parts, List<IReadOnlyList<ImageTokenLayout>> Layouts)>? soft = null;
+        foreach (var part in transcript.Messages.SelectMany(m => m.Parts))
+        {
+            if (part is ChatText or ChatImage || soft?.Any(s => s.Source.Kind == part.Kind) == true)
+            {
+                continue;
+            }
+
+            var source = _parts.FirstOrDefault(s => s.Kind == part.Kind) ?? throw new InvalidOperationException(
+                $"The transcript holds a '{part.Kind}' part ({part}), and the encoder has no source for that kind: set ChatTranscriptEncoder.Parts "
+                + "(an ISoftPartSource per kind, such as Idrak.Audio's ChatAudioParts for audio) to train on it.");
+            var own = transcript.Messages.SelectMany(m => m.Parts).Where(p => p.Kind == source.Kind).ToList();
+            var ownLayouts = own.Select(source.Blocks).ToList();
+            text = source.Format.Expand(text, ownLayouts, Tokenizer);
+            spans = Spans(text);
+            (soft ??= []).Add((source, own, ownLayouts));
         }
 
         int firstTrained = Math.Max(0, spans.Count - answerTurns);
@@ -462,7 +527,65 @@ public sealed class ChatTranscriptEncoder
         }
 
         Add(position, text.Length, false);
-        return (tokens, trained, images is null ? [] : Locate(tokens, trained, images, layouts!), spans.Count);
+        var parts = new List<TrainingPart>();
+        foreach (var (source, own, ownLayouts) in soft ?? [])
+        {
+            parts.AddRange(LocateParts(tokens, trained, source, own, ownLayouts));
+        }
+
+        return (tokens, trained, images is null ? [] : Locate(tokens, trained, images, layouts!), parts, spans.Count);
+    }
+
+    // Where each part's blocks of soft tokens lie in the tokens (as Locate finds images), in the parts' order; a part next
+    // to a trained token is refused: parts are read, not trained on.
+    private static List<TrainingPart> LocateParts(List<int> tokens, List<bool> trained, ISoftPartSource source, List<ChatPart> parts, List<IReadOnlyList<ImageTokenLayout>> layouts)
+    {
+        int softToken = source.Format.ImageToken;
+        var located = new List<TrainingPart>(parts.Count);
+        int at = 0;
+        for (int k = 0; k < parts.Count; k++)
+        {
+            var blocks = new List<(int Position, int Tokens)>(layouts[k].Count);
+            foreach (var layout in layouts[k])
+            {
+                while (at < tokens.Count && tokens[at] != softToken)
+                {
+                    at++;
+                }
+
+                int end = at;
+                while (end < tokens.Count && end < at + layout.Tokens && tokens[end] == softToken)
+                {
+                    end++;
+                }
+
+                if (end - at != layout.Tokens)
+                {
+                    throw new InvalidDataException($"'{source.Kind}' part {k + 1} of the transcript: {end - at} soft tokens at {at} where its block takes {layout.Tokens} "
+                        + "(the text holds the soft token of its own, or the tokenizer does not keep it whole).");
+                }
+
+                for (int i = Math.Max(0, at - 1); i < Math.Min(tokens.Count, end + 1); i++)
+                {
+                    if (trained[i])
+                    {
+                        throw new InvalidDataException($"'{source.Kind}' part {k + 1} of the transcript lies in an assistant turn: parts are read in the prompt, never trained on.");
+                    }
+                }
+
+                blocks.Add((at, layout.Tokens));
+                at = end;
+            }
+
+            located.Add(new TrainingPart(parts[k], blocks));
+        }
+
+        if (tokens.IndexOf(softToken, at) is var extra and >= 0)
+        {
+            throw new InvalidDataException($"The transcript's text holds '{source.Kind}' soft tokens past its {parts.Count} part(s) (at {extra}).");
+        }
+
+        return located;
     }
 
     // Where each image's blocks lie in the tokens: the image tokens, in order, taken block by block by their counts (so
@@ -2181,6 +2304,7 @@ public static class FineTuner
         {
             if (!batch.HasImages(sequences))
             {
+                ThrowIfParts(sequences, batch);
                 return null;
             }
 
@@ -2189,6 +2313,7 @@ public static class FineTuner
                 throw new InvalidOperationException("The sequences hold images and no vision side is given (FineTuningOptions.Vision, TuningVision.Create).");
             }
 
+            ThrowIfParts(sequences, batch);
             var distinct = new List<TrainingImage>();
             var index = new Dictionary<(string, TuningImages), int>();
             foreach (var image in batch.Sequences.SelectMany(i => sequences[i].Images))
@@ -2228,6 +2353,20 @@ public static class FineTuner
             }
 
             return new StepImages(images, vision.Attention);
+        }
+
+        // Sequences with parts of other kinds (audio) carry their soft tokens as plain ids until the training step reads
+        // their sources (plan 21, S6): training on them silently would train the soft tokens as text, so it is refused.
+        private static void ThrowIfParts(IReadOnlyList<TrainingSequence> sequences, Batch batch)
+        {
+            foreach (int i in batch.Sequences)
+            {
+                if (sequences[i].Parts.Count > 0)
+                {
+                    throw new NotSupportedException($"Sequence {i} holds {sequences[i].Parts.Count} '{sequences[i].Parts[0].Kind}' part(s): the training step does not read "
+                        + "soft parts other than images yet (plan 21, S6 wires the parts' sources into the step); train on text and images, or wait for S6.");
+                }
+            }
         }
     }
 

@@ -184,6 +184,17 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks a short-time Fourier transform (Idrak.Audio's <c>Stft</c>, or one of your own, given as <see cref="StftUnderTest"/>)
+    /// on signals the suite makes (<see cref="AudioFeatureSuite"/>): the frame count and bins, zero power on silence, a
+    /// tone's bin, Parseval's identity per frame, the same spectra again. Six random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckStft(StftUnderTest stft, int sampleRate = 16000, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(stft);
+        return Check(stft, new AudioFeatureSuite(sampleRate), options ?? new ContractCheckOptions { RandomCases = 6 });
+    }
+
+    /// <summary>
     /// Checks an image model family (Idrak.Vision's <c>IImageModelFamily</c>, given as its loading: a checkpoint's path in, the
     /// loaded model wrapped as <see cref="ImageModelUnderTest"/> out) on checkpoints of its own
     /// (<see cref="ImageModelFamilySuite"/>): it loads, predicts finite outputs, the same every time, from several threads,

@@ -250,7 +250,8 @@ public sealed class JinjaChatTemplate : ChatTemplate
     }
 
     /// <summary>
-    /// The kinds of message parts the template renders: text, and "image" when it writes something for an image part. A
+    /// The kinds of message parts the template renders: text, and each registered kind ("image", "audio", an app's) the
+    /// template writes something for. A
     /// message with an image is given to the template as Hugging Face gives it, its content a list of parts
     /// (<c>{"type": "image"}</c>, <c>{"type": "text", "text": ...}</c>); a text-only message keeps a string. Found by
     /// rendering a probe: a user turn whose content is one text part must render as the same text given as a string (the
@@ -270,10 +271,30 @@ public sealed class JinjaChatTemplate : ChatTemplate
             var text = new Dictionary<string, object?> { ["type"] = "text", ["text"] = Probe };
             string plain = RenderValues(Turn(Probe), [], null, addGenerationPrompt: false);
             string parts = RenderValues(Turn(new List<object?> { text }), [], null, addGenerationPrompt: false);
-            string image = RenderValues(Turn(new List<object?> { new Dictionary<string, object?> { ["type"] = "image" }, text }), [], null, addGenerationPrompt: false);
-            if (plain == parts && image != parts && image.Contains(Probe, StringComparison.Ordinal))
+            if (plain != parts)
             {
-                return System.Collections.Frozen.FrozenSet.Create(StringComparer.Ordinal, ChatParts.Text, ChatParts.Image);
+                return ChatParts.TextOnly;                                      // the template does not read lists of parts
+            }
+
+            // Every registered kind but text (image, audio, an app's): one the template writes something for.
+            var kinds = new List<string> { ChatParts.Text };
+            foreach (string kind in ChatParts.Names)
+            {
+                if (kind == ChatParts.Text)
+                {
+                    continue;
+                }
+
+                string with = RenderValues(Turn(new List<object?> { new Dictionary<string, object?> { ["type"] = kind }, text }), [], null, addGenerationPrompt: false);
+                if (with != parts && with.Contains(Probe, StringComparison.Ordinal))
+                {
+                    kinds.Add(kind);
+                }
+            }
+
+            if (kinds.Count > 1)
+            {
+                return System.Collections.Frozen.FrozenSet.Create(StringComparer.Ordinal, [.. kinds]);
             }
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException or FormatException or KeyNotFoundException or InvalidCastException)

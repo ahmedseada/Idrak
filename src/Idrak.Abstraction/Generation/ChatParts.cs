@@ -189,12 +189,27 @@ public interface IChatPartKind
 }
 
 /// <summary>
+/// A kind of message part whose parts are made from bytes as received (a sound, a video, a document): what a bridge
+/// that holds the bytes of a block it cannot name the type of (the MCP bridge's audio blocks, a tuning data file's
+/// <c>"audios"</c> list) makes a part with, through the kind registered under the name alone
+/// (<see cref="ChatParts.Find"/>), so nothing names the package that brings the part type.
+/// </summary>
+public interface IBinaryPartKind : IChatPartKind
+{
+    /// <summary>A part of this kind holding a copy of <paramref name="data"/>, of <paramref name="mediaType"/> when given (else read from the bytes when the kind can).</summary>
+    /// <exception cref="ArgumentException">The bytes are empty.</exception>
+    ChatPart FromBytes(ReadOnlySpan<byte> data, string? mediaType = null);
+}
+
+/// <summary>
 /// The kinds of message parts, by name, and what every chat model and template shares about them: the JSON they are
 /// saved in (<see cref="ToJson"/>, <see cref="FromJson"/>) and the check that a model or template takes every part it is
 /// given (<see cref="ThrowIfUnsupported(IChatModel, ChatRequest, string?)"/>). Library defaults:
 /// <list type="bullet">
 /// <item>"text" (<see cref="ChatText"/>): <c>{"type": "text", "text": "…"}</c>.</item>
 /// <item>"image" (<see cref="ChatImage"/>): <c>{"type": "image", "media_type": "image/png", "data": "&lt;base64&gt;"}</c>.</item>
+/// <item>"audio" (Idrak.Audio's <c>ChatAudio</c>, registered by that package when the application ships it):
+/// <c>{"type": "audio", "media_type": "audio/wav", "data": "&lt;base64&gt;"}</c>.</item>
 /// </list>
 /// Register another with <see cref="Register"/>; registering a built-in name overrides the built-in, which stays behind it
 /// until <see cref="Unregister"/>. Writing and reading a part is one call, so an app's kind can fall back to the
@@ -208,10 +223,15 @@ public static class ChatParts
     /// <summary>The kind of image parts.</summary>
     public const string Image = "image";
 
+    /// <summary>The kind of audio parts (Idrak.Audio's <c>ChatAudio</c>; a library default only when that package is shipped).</summary>
+    public const string Audio = "audio";
+
     /// <summary>The kinds a text-only model or template takes: "text". The default of <see cref="IChatModel.PartKinds"/>.</summary>
     public static IReadOnlySet<string> TextOnly { get; } = FrozenSet.Create(StringComparer.Ordinal, Text);
 
     private static readonly SlotTable<string, IChatPartKind> Table = BuiltIn();
+
+    static ChatParts() => LibraryDefaults.Ensure(typeof(ChatParts));   // the packages' kinds (Idrak.Audio's "audio"), on first use
 
     private static SlotTable<string, IChatPartKind> BuiltIn()
     {

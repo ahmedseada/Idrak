@@ -166,6 +166,10 @@ public sealed class DecodingContext : IDisposable
     private readonly Dictionary<object, KeyValueCache> _caches = new(ReferenceEqualityComparer.Instance);
     private Tensor? _iota;
 
+    // The memory of the cross-attention layers (an encoder's output projected to each layer's keys and values, once per
+    // sequence), by layer: read by every decoding step, owned by this context.
+    private readonly Dictionary<object, (Tensor Keys, Tensor Values)> _memories = new(ReferenceEqualityComparer.Instance);
+
     // The sliding windows' caches (SlidingWindowSteps), one group per window length.
     private readonly List<SlidingWindow> _windows = [];
     private int _slidingSteps;
@@ -212,6 +216,130 @@ public sealed class DecodingContext : IDisposable
 
     /// <summary>Device memory used by the key/value caches created so far, in bytes.</summary>
     public long CacheBytes => _caches.Values.Sum(c => c.Bytes);
+
+    /// <summary>Device memory used by the cross-attention memories (<see cref="SetMemory"/>), in bytes.</summary>
+    public long MemoryBytes => _memories.Values.Sum(m => 4L * (m.Keys.Size + m.Values.Size));
+
+    /// <summary>
+    /// Holds the memory of <paramref name="owner"/> (a cross-attention layer): an encoder's output projected to that layer's
+    /// keys and values, [batch · heads, memory, headDim] each, computed once per sequence and read by every decoding step
+    /// (<see cref="MemoryOf"/>). The context takes ownership; an earlier memory of the same layer is disposed. It stays
+    /// through <see cref="Reset"/> (the same sound decoded again from position 0) until <see cref="ClearMemory"/> or
+    /// <see cref="Dispose"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">Keys and values are not [rows, memory, headDim] alike, or not on this context's device.</exception>
+    public void SetMemory(object owner, Tensor keys, Tensor values)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(keys);
+        ArgumentNullException.ThrowIfNull(values);
+        if (keys.Rank != 3 || !keys.Shape.SequenceEqual(values.Shape) || keys.Device != Device || values.Device != Device)
+        {
+            throw new ArgumentException($"A memory's keys and values are [rows, memory, headDim] alike on {Device}; got {Tensor.FormatShape(keys.Shape)} on {keys.Device} and {Tensor.FormatShape(values.Shape)} on {values.Device}.");
+        }
+
+        if (_memories.TryGetValue(owner, out var earlier))
+        {
+            earlier.Keys.Dispose();
+            earlier.Values.Dispose();
+        }
+
+        _memories[owner] = (keys, values);
+    }
+
+    /// <summary>The memory held for <paramref name="owner"/> (<see cref="SetMemory"/>), or null when none is.</summary>
+    public (Tensor Keys, Tensor Values)? MemoryOf(object owner)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        return _memories.TryGetValue(owner, out var memory) ? memory : null;
+    }
+
+    /// <summary>Frees every memory set with <see cref="SetMemory"/> (a new sound's encoder output replaces them).</summary>
+    public void ClearMemory()
+    {
+        foreach (var (keys, values) in _memories.Values)
+        {
+            keys.Dispose();
+            values.Dispose();
+        }
+
+        _memories.Clear();
+    }
+
+    /// <summary>
+    /// Reorders the rows of every cache: row b takes the positions of row <paramref name="sources"/>[b] (a beam search
+    /// keeping the best beams; a row may be taken by several). Every format's rows are copied as they are packed (keys,
+    /// values and scales), so it works for the int8 and bfloat16 formats and one's own. Between steps only; the
+    /// cross-attention memories, the same for every row, are not touched.
+    /// </summary>
+    /// <exception cref="ArgumentException">Not one source per row, or a source outside the batch.</exception>
+    /// <exception cref="InvalidOperationException">A step is open.</exception>
+    public void ReorderRows(IReadOnlyList<int> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        if (sources.Count != Batch)
+        {
+            throw new ArgumentException($"One source row per row ({Batch}), got {sources.Count}.", nameof(sources));
+        }
+
+        if (InStep)
+        {
+            throw new InvalidOperationException("Reorder the rows between steps.");
+        }
+
+        bool identity = true;
+        for (int b = 0; b < Batch; b++)
+        {
+            if (sources[b] < 0 || sources[b] >= Batch)
+            {
+                throw new ArgumentException($"Row {b} takes row {sources[b]}, outside the {Batch} rows.", nameof(sources));
+            }
+
+            identity &= sources[b] == b;
+        }
+
+        if (identity)
+        {
+            return;
+        }
+
+        foreach (var cache in _caches.Values)
+        {
+            int rows = cache.Keys.Shape[0];
+            if (rows % Batch != 0)
+            {
+                throw new InvalidOperationException($"A cache of {rows} rows does not split over {Batch} sequences.");
+            }
+
+            // Row r of the cache belongs to sequence r / perRow: it takes the same head of the source sequence.
+            int perRow = rows / Batch;
+            var index = new float[rows];
+            for (int r = 0; r < rows; r++)
+            {
+                index[r] = sources[r / perRow] * perRow + r % perRow;
+            }
+
+            using var indices = Tensor.From(index, [rows], Device);
+            Gather(cache.Keys, indices);
+            Gather(cache.Values, indices);
+            Gather(cache.KeyScales, indices);
+            Gather(cache.ValueScales, indices);
+        }
+
+        // The rows gathered whole, whatever each element packs (a copy: the gather reads every row before the write).
+        static void Gather(Tensor? rows, Tensor indices)
+        {
+            if (rows is null)
+            {
+                return;
+            }
+
+            int n = rows.Shape[0];
+            using var table = rows.Reshape(n, rows.Size / n);
+            using var gathered = table.EmbeddingLookup(indices);
+            rows.CopyFrom(gathered);
+        }
+    }
 
     /// <summary>
     /// The key/value cache of <paramref name="layer"/> (an attention layer this context has decoded through), or null
@@ -714,6 +842,7 @@ public sealed class DecodingContext : IDisposable
         }
 
         _caches.Clear();
+        ClearMemory();
         foreach (var window in _windows)
         {
             window.Dispose();

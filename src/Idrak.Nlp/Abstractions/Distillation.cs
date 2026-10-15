@@ -44,9 +44,17 @@ public sealed record TrainingSequence(int[] Tokens, bool[] Trained)
     /// </summary>
     public IReadOnlyList<TrainingImage> Images { get; init; } = [];
 
-    /// <summary>Equal when both hold the same token, trained and image lists (the cached count is not compared).</summary>
+    /// <summary>
+    /// The parts of other kinds in the sequence's prompt (an audio part, through <see cref="Idrak.Nlp.ChatTranscriptEncoder.Parts"/>),
+    /// in order: each part as received and where its blocks of soft tokens lie in <see cref="Tokens"/>. Empty (the
+    /// default) for text and images.
+    /// </summary>
+    public IReadOnlyList<TrainingPart> Parts { get; init; } = [];
+
+    /// <summary>Equal when both hold the same token, trained, image and part lists (the cached count is not compared).</summary>
     public bool Equals(TrainingSequence? other) =>
-        other is not null && ReferenceEquals(Tokens, other.Tokens) && ReferenceEquals(Trained, other.Trained) && ReferenceEquals(Images, other.Images);
+        other is not null && ReferenceEquals(Tokens, other.Tokens) && ReferenceEquals(Trained, other.Trained) && ReferenceEquals(Images, other.Images)
+        && ReferenceEquals(Parts, other.Parts);
 
     /// <inheritdoc />
     public override int GetHashCode() => HashCode.Combine(Tokens, Trained);
@@ -72,6 +80,23 @@ public sealed record TrainingImage(ChatImage Image, Idrak.Nlp.TuningImages Prepa
     /// in the order of <see cref="Blocks"/>; null for a family whose image tokens take the next positions as text does.
     /// </summary>
     public IReadOnlyList<float[]?>? AxisPositions { get; init; }
+}
+
+/// <summary>
+/// A part of another kind (<see cref="ChatPart.Kind"/>: "audio", say) of a <see cref="TrainingSequence"/>, the shape of
+/// <see cref="TrainingImage"/> without the preparation: the part as received (its bytes; its features made by the
+/// <see cref="ISoftPartSource"/> of its kind when a step needs them) and each of its blocks of soft tokens with its first
+/// position in the sequence's tokens and its token count. The soft tokens and the markers around them are never trained.
+/// </summary>
+/// <param name="Part">The part as received.</param>
+/// <param name="Blocks">Each block's first position in the tokens and its token count, in the order the source gives the blocks.</param>
+public sealed record TrainingPart(ChatPart Part, IReadOnlyList<(int Position, int Tokens)> Blocks)
+{
+    /// <summary>The part's kind.</summary>
+    public string Kind => Part.Kind;
+
+    /// <summary>The soft tokens of all its blocks.</summary>
+    public int Tokens => Blocks.Sum(b => b.Tokens);
 }
 
 /// <summary>

@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Testing;
 /// again to an equal part, the same every time, writing leaves the "type" as it was, and it agrees with the library's kind
 /// of the same name (<see cref="ChatParts.Default(string)"/>): the same parts read and the same JSON written.
 /// </summary>
-/// <param name="kind">The kind's name ("image", or a kind of your own).</param>
+/// <param name="kind">The kind's name ("image", "audio", or a kind of your own).</param>
 /// <param name="samples">
 /// Parts of the kind as JSON objects, each with its "type"; the built-in kinds have their own, a kind of your own needs
 /// some.
@@ -59,6 +59,18 @@ public sealed class ChatPartKindSuite(string kind, IReadOnlyList<JsonObject>? sa
 
                 json["data"] = Convert.ToBase64String(bytes);
                 return Case($"random image of {bytes.Length} bytes", json);
+            case ChatParts.Audio:
+                var sound = new byte[random.Next(1, large ? 1 << 20 : 4096)];
+                random.NextBytes(sound);
+                string? audioType = random.Next(3) switch { 0 => "audio/wav", 1 => "audio/flac", _ => null };
+                var audio = new JsonObject { ["type"] = Kind };
+                if (audioType is not null)
+                {
+                    audio["media_type"] = audioType;
+                }
+
+                audio["data"] = Convert.ToBase64String(sound);
+                return Case($"random audio of {sound.Length} bytes", audio);
             default:
                 return Case("a sample", _samples[random.Next(_samples.Count)]);
         }
@@ -119,6 +131,12 @@ public sealed class ChatPartKindSuite(string kind, IReadOnlyList<JsonObject>? sa
             new() { ["type"] = kind, ["media_type"] = "image/png", ["data"] = Convert.ToBase64String([0x89, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10, 0, 0]) },
             new() { ["type"] = kind, ["data"] = Convert.ToBase64String([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]) },
             new() { ["type"] = kind, ["media_type"] = "image/x-own", ["data"] = Convert.ToBase64String([1]) },
+        ],
+        ChatParts.Audio =>
+        [
+            new() { ["type"] = kind, ["media_type"] = "audio/wav", ["data"] = Convert.ToBase64String([(byte)'R', (byte)'I', (byte)'F', (byte)'F', 4, 0, 0, 0, (byte)'W', (byte)'A', (byte)'V', (byte)'E']) },
+            new() { ["type"] = kind, ["data"] = Convert.ToBase64String([(byte)'f', (byte)'L', (byte)'a', (byte)'C', 0, 0, 0, 34]) },
+            new() { ["type"] = kind, ["media_type"] = "audio/x-own", ["data"] = Convert.ToBase64String([1]) },
         ],
         _ => null,
     };

@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Nlp.Abstractions;
 
-/// <summary>Where a tuning data file's images are found (<see cref="ITuningDataFormat.Read"/>).</summary>
+/// <summary>Where a tuning data file's images and sounds are found (<see cref="ITuningDataFormat.Read"/>).</summary>
 public sealed record TuningDataOptions
 {
     /// <summary>
@@ -15,6 +15,14 @@ public sealed record TuningDataOptions
     /// the data file's folder. Absolute paths in the data are read as they are.
     /// </summary>
     public string? Images { get; init; }
+
+    /// <summary>
+    /// Where the data's relative audio paths (an <c>"audios"</c> list, <c>&lt;audio&gt;</c> markers) are looked up: a
+    /// folder or a <c>.zip</c> file, as <see cref="Images"/>. Null: where the images are (<see cref="Images"/>, else the
+    /// data file's folder). Audio parts are made by the "audio" kind registered in <see cref="ChatParts"/> (Idrak.Audio's);
+    /// a file with audio and no such kind is refused naming it.
+    /// </summary>
+    public string? Audios { get; init; }
 }
 
 /// <summary>
@@ -123,10 +131,12 @@ public sealed class PendingConversations : IDisposable
 /// chat; see <see cref="ChatTranscript.FromJson"/>). Image parts are the chat JSON's (<c>{"type": "image", "data":
 /// base64}</c>), a path (<c>{"type": "image", "path" | "image": "page.png"}</c>, <c>{"type": "image_url",
 /// "image_url": {"url": "page.png" | "data:..."}}</c>), or bare (<c>{"type": "image"}</c>) taking the record's next
-/// <c>"images"</c> entry; with an <c>"images"</c> list, each <c>&lt;image&gt;</c> in a text takes the next entry too.</item>
-/// <item><see cref="ShareGpt"/>: ShareGPT's <c>{"conversations": [{"from", "value"}], "system", "images"}</c> as
-/// LlamaFactory writes it: each <c>&lt;image&gt;</c> in a turn's text becomes the next entry of <c>"images"</c>, in
-/// place and in order, and the counts must agree.</item>
+/// <c>"images"</c> entry; with an <c>"images"</c> list, each <c>&lt;image&gt;</c> in a text takes the next entry too.
+/// Audio parts the same way (<c>{"type": "audio", "path": "a.wav"}</c>, bare ones and <c>&lt;audio&gt;</c> markers
+/// taking the record's <c>"audios"</c> list).</item>
+/// <item><see cref="ShareGpt"/>: ShareGPT's <c>{"conversations": [{"from", "value"}], "system", "images", "audios"}</c> as
+/// LlamaFactory writes it: each <c>&lt;image&gt;</c> (<c>&lt;audio&gt;</c>) in a turn's text becomes the next entry of
+/// <c>"images"</c> (<c>"audios"</c>), in place and in order, and the counts must agree.</item>
 /// </list>
 /// Both read JSON Lines or a JSON array (LlamaFactory's <c>train.json</c>), streamed record by record. Image paths are
 /// relative to the data file's folder, or to <see cref="TuningDataOptions.Images"/> (a folder or a zip). Another format is
