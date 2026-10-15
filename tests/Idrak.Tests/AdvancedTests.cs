@@ -92,7 +92,7 @@ internal static partial class Tests
             GradCheck(d, [2, 3, 5], t => (ln.Forward(t) * w).Sum(), scale: 2f);
             ParameterGradCheck(ln, x, y => (y * w).Sum());
         }),
-        ("embedding lookup and gradient", EmbeddingBehaviour),
+        ("embedding lookup and gradient: repeated ids add up, each id's rows in position order on every device (the CPU's gradient bit for bit, the same on every run)", EmbeddingBehaviour),
         ("conv2d matches direct convolution", ConvReference),
         ("gradient: conv2d (stride 2, padding 1) input and weights", d =>
         {
@@ -312,6 +312,27 @@ internal static partial class Tests
         (y * 2f).Sum().Backward();
         var grad = embedding.Weight.Grad!.ToArray();
         AssertClose([2, 2, 2, 0, 0, 0, 2, 2, 2, 0, 0, 0, 4, 4, 4], grad, 0, "embedding gradient accumulates repeated ids");
+
+        // Many repeated ids and rows whose sum depends on the order: each id's rows are added in position order on every
+        // device (no atomics), so the gradient is the CPU's bit for bit and the same on every run.
+        const int Count = 3000, Dim = 40, Vocabulary = 9;
+        var random = new Random(34);
+        var idValues = Enumerable.Range(0, Count).Select(_ => (float)random.Next(Vocabulary)).ToArray();
+        var upstream = RandomArray(random, Count * Dim);
+        float[] Gradient(Device on)
+        {
+            using var weight = Tensor.From(new float[Vocabulary * Dim], [Vocabulary, Dim], on, requiresGrad: true);
+            using (var scope = new TensorScope())
+            {
+                (weight.EmbeddingLookup(Tensor.From(idValues, [Count], on)) * Tensor.From(upstream, [Count, Dim], on)).Sum().Backward();
+            }
+
+            return weight.Grad!.ToArray();
+        }
+
+        var first = Gradient(device);
+        Check(first.AsSpan().SequenceEqual(Gradient(device)), $"the embedding gradient of {Count} positions over {Vocabulary} ids repeats exactly on {device}");
+        Check(first.AsSpan().SequenceEqual(Gradient(Device.Cpu)), $"the embedding gradient on {device} is the CPU's bit for bit (each id's rows added in position order)");
     }
 
     private static void ConvReference(Device device)
