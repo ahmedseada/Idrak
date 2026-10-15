@@ -1,0 +1,56 @@
+{
+ "fixed16": {
+  "bits": 16,
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "lpc16": {
+  "bits": 16,
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "mixed16": {
+  "bits": 16,
+  "channels": 2,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "pcm16": {
+  "bits": 16,
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "pcm24": {
+  "bits": 24,
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "pcm8": {
+  "bits": 8,
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "rate44k": {
+  "bits": 16,
+  "channels": 1,
+  "rate": 44100,
+  "samples": 66150
+ },
+ "stereo16": {
+  "bits": 16,
+  "channels": 2,
+  "rate": 16000,
+  "samples": 24000
+ },
+ "wasted16": {
+  "bits": 16,
+  "channels": 1,
+  "rate": 16000,
+  "samples": 24000
+ }
+}

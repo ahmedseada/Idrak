@@ -12,6 +12,10 @@ Built so far (phase S1):
 - "wav": RIFF/WAVE, PCM 8 to 32 bits, float 32 and 64, WAVE_FORMAT_EXTENSIBLE, chunks before `data` skipped, a data
   chunk larger than the file cut to the file; RF64 and compressed variants refused by name. The encoder writes PCM 8 to
   32 bits and float 32, extensible past two channels or 16 bits.
+- "flac" (decode only): 4 to 32 bits, every subframe kind (constant, verbatim, fixed, LPC), wasted bits, the stereo
+  pairs; an ID3v2 tag before the stream skipped; frames found by their sync code and decoded in parallel, every CRC
+  checked (a damaged frame refused by number). `FlacOptions`: `KeepCutEnd` (a file cut inside its last frame keeps its
+  whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3, Ogg and AAC are plug-ins (`AudioCodecs.Register`).
 
 Planned next (the plan's phases): resampling and log-mel features on every device (S2), the "audio" chat part (S3),
 speech recognition and synthesis contracts with their families as plug-ins (S4, S5), training (S6) and the command

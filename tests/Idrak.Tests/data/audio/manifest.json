@@ -44,6 +44,90 @@
    "bytes": 121532,
    "sha256": "990531a04230f1b299dceb86213f2ff1bcae4b849b3048d826c8b442a5d010dc"
   },
+  "flac/bad-crc.flac": {
+   "bytes": 19850,
+   "sha256": "faf04db1571f50d0b13ef60d5c169e5f9ff3867515a3190494d684d3906f1ff1"
+  },
+  "flac/bad-truncated.flac": {
+   "bytes": 9925,
+   "sha256": "a167ccaeabf4051c910579f4df589324452aae60a25141f0b63e2e7f6cc88757"
+  },
+  "flac/files.json": {
+   "bytes": 760,
+   "sha256": "145eb42c968b8466d7be2395e622a5a1453ba1395ca07ea6557304a741fbef00"
+  },
+  "flac/fixed16.flac": {
+   "bytes": 27768,
+   "sha256": "cad172166358905b7414efb08ae595b721e1f43514e46043081b6928b4bd746b"
+  },
+  "flac/fixed16.npy": {
+   "bytes": 96128,
+   "sha256": "47229867f6c65240405598114a06b9256b5e02f0b5660e10242376ae8c29af39"
+  },
+  "flac/lpc16.flac": {
+   "bytes": 16848,
+   "sha256": "1f84e31f606a1439cb5bc87b6c386fcc27d9cbd8564ea0c992e79d2afa205e3d"
+  },
+  "flac/lpc16.npy": {
+   "bytes": 96128,
+   "sha256": "47229867f6c65240405598114a06b9256b5e02f0b5660e10242376ae8c29af39"
+  },
+  "flac/mixed16.flac": {
+   "bytes": 42701,
+   "sha256": "43e81133309a613a56375617910361a28a904d4c9cefdb0e8927c61da56d96cd"
+  },
+  "flac/mixed16.npy": {
+   "bytes": 192128,
+   "sha256": "4da9d17e78c65673fe5e9ac163fb0ed799367f0fd83c2270195d79c5fcb2577c"
+  },
+  "flac/pcm16.flac": {
+   "bytes": 19850,
+   "sha256": "2620f8e95b9469a6078a84c80907f6237c21c996ae4872ede0ff4ce12f31fffd"
+  },
+  "flac/pcm16.npy": {
+   "bytes": 96128,
+   "sha256": "47229867f6c65240405598114a06b9256b5e02f0b5660e10242376ae8c29af39"
+  },
+  "flac/pcm24.flac": {
+   "bytes": 38847,
+   "sha256": "abfe450743b7fb93daf30de16a5f093dd865d00e0b6b0e32b84d8d9a1038b2ea"
+  },
+  "flac/pcm24.npy": {
+   "bytes": 96128,
+   "sha256": "0a91bd5b458c0ece4152cb7f4c176bb3dc1c8a4509e85a54507f20659d33a26a"
+  },
+  "flac/pcm8.flac": {
+   "bytes": 10154,
+   "sha256": "940ab3b3f5b8bbabfd6cc88c51286f0f14880a966a9052570b349976d417de52"
+  },
+  "flac/pcm8.npy": {
+   "bytes": 96128,
+   "sha256": "0d6d453b465c69348271e3d84793aeb24256edc3004574dbb30debb23d681ef1"
+  },
+  "flac/rate44k.flac": {
+   "bytes": 45104,
+   "sha256": "3adfaa2c004733c09185c4ffb1870afa83d70c47cc335fe7d43a471e4ed43469"
+  },
+  "flac/rate44k.npy": {
+   "bytes": 264728,
+   "sha256": "8858298255f00aa96e067ca8a35c64e3c94da080ce7c2522bda69306e55e860a"
+  },
+  "flac/stereo16.flac": {
+   "bytes": 35800,
+   "sha256": "358e3f968efed10e585ebcf53c8493a6fe2a4a77ffd6c50e464f006e52bc2772"
+  },
+  "flac/stereo16.npy": {
+   "bytes": 192128,
+   "sha256": "48ab6aacd550899884287c072259b464dc14e3301b9f5b84e10d5c005d8c67e8"
+  },
+  "flac/wasted16.flac": {
+   "bytes": 14902,
+   "sha256": "cbb1e5b78e6617cc798440d6e6e863458b7d275f03b23b32f21f129f867d2dd8"
+  },
+  "flac/wasted16.npy": {
+   "bytes": 96128,
+   "sha256": "da1eb3d714e30e4471a4e0a2d72a39db5449e2f2beefbd569529ddc6f7e363a0"
+  },
   "resample/rate44k-16k.npy": {
    "bytes": 96128,
    "sha256": "c0cb75608ad4da530b765dc45dea990109f5a6c47a75d779aeb23a3d36c795f3"
@@ -247,6 +331,7 @@
  },
  "sections": [
   "wav",
+  "flac",
   "resample",
   "features",
   "whisper",
@@ -258,6 +343,7 @@
   "numpy": "2.5.4",
   "python": "3.13.16",
   "safetensors": "0.8.0",
+  "soundfile": "0.14.0",
   "tokenizers": "0.23.3",
   "torch": "2.14.1+cu130",
   "torchaudio": "2.11.0+cu130",

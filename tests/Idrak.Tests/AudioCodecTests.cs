@@ -79,7 +79,7 @@ internal static partial class Tests
 
         Throws<InvalidDataException>(() => AudioCodecs.Decode("not a wav"u8.ToArray()), "bytes of no registered format are refused");
         Check(AudioCodecs.ReadInfo("RIFF"u8.ToArray()) is null, "a file shorter than a header is not a wav");
-        Throws<NotSupportedException>(() => AudioCodecs.Get("flac"), "an unregistered codec name");
+        Throws<NotSupportedException>(() => AudioCodecs.Get("mp3"), "an unregistered codec name");
     }
 
     private static void AudioWavEncodes(Device device)
