@@ -1,0 +1,92 @@
+{
+ "lame-11k": {
+  "channels": 2,
+  "file": "lame-11k.mp3",
+  "rate": 11025,
+  "samples": 16537
+ },
+ "lame-12k-mono": {
+  "channels": 1,
+  "file": "lame-12k-mono.mp3",
+  "rate": 12000,
+  "samples": 18000
+ },
+ "lame-16k-mono": {
+  "channels": 1,
+  "file": "lame-16k-mono.mp3",
+  "rate": 16000,
+  "samples": 24000
+ },
+ "lame-22k-mono": {
+  "channels": 1,
+  "file": "lame-22k-mono.mp3",
+  "rate": 22050,
+  "samples": 33075
+ },
+ "lame-8k-mono": {
+  "channels": 1,
+  "file": "lame-8k-mono.mp3",
+  "rate": 8000,
+  "samples": 12000
+ },
+ "lame-joint44k": {
+  "channels": 2,
+  "file": "lame-joint44k.mp3",
+  "rate": 44100,
+  "samples": 66150
+ },
+ "lame-notag44k": {
+  "channels": 2,
+  "file": "lame-notag44k.mp3",
+  "rate": 44100,
+  "samples": 67968
+ },
+ "lame-stereo48k": {
+  "channels": 2,
+  "file": "lame-stereo48k.mp3",
+  "rate": 48000,
+  "samples": 72000
+ },
+ "lame-vbr24k": {
+  "channels": 2,
+  "file": "lame-vbr24k.mp3",
+  "rate": 24000,
+  "samples": 36000
+ },
+ "lame-vbr32k-mono": {
+  "channels": 1,
+  "file": "lame-vbr32k-mono.mp3",
+  "rate": 32000,
+  "samples": 48000
+ },
+ "mp2-24k-mono": {
+  "channels": 1,
+  "file": "mp2-24k-mono.mp2",
+  "rate": 24000,
+  "samples": 36864
+ },
+ "mp2-44k": {
+  "channels": 2,
+  "file": "mp2-44k.mp2",
+  "rate": 44100,
+  "samples": 66816
+ },
+ "shine32k-mono": {
+  "channels": 1,
+  "file": "shine32k-mono.mp3",
+  "rate": 32000,
+  "samples": 47855
+ },
+ "shine44k": {
+  "channels": 2,
+  "file": "shine44k.mp3",
+  "rate": 44100,
+  "samples": 65135
+ },
+ "tagged44k": {
+  "channels": 2,
+  "file": "tagged44k.mp3",
+  "rate": 44100,
+  "samples": 66150
+ }
+}

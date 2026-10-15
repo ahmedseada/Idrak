@@ -122,12 +122,25 @@ public static class AudioCodecs
                 length = stream.ReadAtLeast(head.AsSpan(0, HeaderBytes), HeaderBytes, throwOnEndOfStream: false);
             }
 
+            byte[]? whole = null;
             foreach (var codec in Registry.Values)
             {
-                if (codec.ReadInfo(head.AsSpan(0, length)) is { } info)
+                if (codec.ReadInfo(head.AsSpan(0, length)) is not { } info)
                 {
-                    // The data chunk lies past the first bytes (a long LIST chunk before it): ask with all of them.
-                    return info.Samples < 0 && length == HeaderBytes ? codec.ReadInfo(File.ReadAllBytes(path)) : info;
+                    continue;
+                }
+
+                // The data lies past the first bytes (a long LIST chunk, a large ID3 tag): ask with all of them; a codec that
+                // then finds the file is not its own leaves it to the next.
+                if (info.Samples >= 0 || length < HeaderBytes)
+                {
+                    return info;
+                }
+
+                whole ??= File.ReadAllBytes(path);
+                if (codec.ReadInfo(whole) is { } full)
+                {
+                    return full;
                 }
             }
 
@@ -148,9 +161,19 @@ public static class AudioCodecs
         var header = file[..Math.Min(file.Length, HeaderBytes)];
         foreach (var codec in Registry.Values)
         {
-            if (codec.ReadInfo(header) is { } info)
+            if (codec.ReadInfo(header) is not { } info)
             {
-                return info.Samples < 0 && file.Length > header.Length ? codec.ReadInfo(file) : info;
+                continue;
+            }
+
+            if (info.Samples >= 0 || file.Length == header.Length)
+            {
+                return info;
+            }
+
+            if (codec.ReadInfo(file) is { } full)
+            {
+                return full;                                                    // not its own after all: the next codec is asked
             }
         }
 
@@ -194,7 +217,9 @@ public static class AudioCodecs
         var header = bytes[..Math.Min(bytes.Length, HeaderBytes)];
         foreach (var codec in Registry.Values)
         {
-            if (codec.ReadInfo(header) is not null)
+            // A codec that knows the first bytes decodes the file; one that needs all of them to be sure (a large tag
+            // before the sound) and then finds it is not its own leaves it to the next.
+            if (codec.ReadInfo(header) is { } info && (info.Samples >= 0 || bytes.Length == header.Length || codec.ReadInfo(bytes) is not null))
             {
                 try
                 {

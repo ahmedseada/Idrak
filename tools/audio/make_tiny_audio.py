@@ -9,7 +9,8 @@ Nothing is downloaded: the signals are generated here, the models are built from
 tokenizer is trained here. Reruns write the same bytes (fixed seeds, one thread, deterministic algorithms, sorted
 JSON) on the same machine and library versions; manifest.json records the versions and each file's SHA-256.
 --sections wav runs the part that needs numpy only (the WAV files), for a machine without torch; --sections flac needs
-soundfile (libsndfile with libFLAC) and numpy.
+soundfile (libsndfile with libFLAC) and numpy; --sections mp3 needs ffmpeg (with libmp3lame and libshine) and soundfile
+(libsndfile with mpg123, a second decoder the first is checked against).
 """
 import argparse
 import json
@@ -24,7 +25,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "resample", "features", "whisper", "ctc", "vits", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "vits", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -242,6 +243,73 @@ def write_flacs(out):
     flipped[first + 40] ^= 0x5A
     with open(os.path.join(folder, "bad-crc.flac"), "wb") as f:
         f.write(bytes(flipped))
+    dump_json(os.path.join(folder, "files.json"), files)
+    return files
+
+
+# ------------------------------------------------------------------ MP3 and MP2 files (ffmpeg's encoders and decoder)
+
+def write_mp3s(out):
+    """MPEG audio files of the WAV section's signal through ffmpeg (LAME, shine, ffmpeg's Layer II encoder), each with
+    ffmpeg's decoding (mp3float; gapless: a LAME tag's delay and padding trimmed) as float32 [channels, samples] in a
+    .npy. mpg123 (through libsndfile) decodes each too: the two decoders must agree within 2e-4 and in length, so the
+    reference is not one decoder's quirk."""
+    import subprocess
+    import tempfile
+    import soundfile as sf
+    folder = os.path.join(out, "mp3")
+    os.makedirs(folder, exist_ok=True)
+    files = {}
+    work = tempfile.mkdtemp()
+
+    def source(rate, channels):
+        path = os.path.join(work, f"s{rate}-{channels}.wav")
+        if not os.path.exists(path):
+            x = signal(rate)[:channels]
+            sf.write(path, np.ascontiguousarray(x.T), rate, subtype="FLOAT")
+        return path
+
+    def ffmpeg(*args):
+        subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", *args], check=True)
+
+    def decode(path, channels):
+        raw = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", path, "-f", "f32le", "-c:a", "pcm_f32le", "-"],
+                             check=True, capture_output=True).stdout
+        return np.frombuffer(raw, dtype="<f4").reshape(-1, channels).T.copy()
+
+    def put(name, rate, channels, encoder_args, ext="mp3", extra=(), mpg123=True):
+        path = os.path.join(folder, f"{name}.{ext}")
+        ffmpeg("-i", source(rate, channels), *encoder_args, *extra, path)
+        ref = decode(path, channels)
+        if mpg123 and ext == "mp3":
+            other, _ = sf.read(path, dtype="float32", always_2d=True)
+            other = other.T
+            assert other.shape == ref.shape, (name, other.shape, ref.shape)
+            assert np.abs(other - ref).max() < 2e-4, (name, float(np.abs(other - ref).max()))
+        save_npy(folder, f"{name}.npy", ref.astype(np.float32))
+        files[name] = {"file": f"{name}.{ext}", "rate": rate, "channels": channels, "samples": int(ref.shape[1])}
+
+    lame, shine = ["-c:a", "libmp3lame"], ["-c:a", "libshine"]
+    put("lame-joint44k", 44100, 2, lame + ["-b:a", "128k"])
+    put("lame-stereo48k", 48000, 2, lame + ["-b:a", "192k", "-joint_stereo", "0"])
+    put("lame-vbr32k-mono", 32000, 1, lame + ["-q:a", "2"])
+    put("lame-22k-mono", 22050, 1, lame + ["-b:a", "64k"])
+    put("lame-vbr24k", 24000, 2, lame + ["-q:a", "4"])
+    put("lame-16k-mono", 16000, 1, lame + ["-b:a", "32k"])
+    put("lame-8k-mono", 8000, 1, lame + ["-b:a", "16k"])
+    put("lame-11k", 11025, 2, lame + ["-b:a", "32k"])
+    put("lame-12k-mono", 12000, 1, lame + ["-b:a", "24k"])
+    put("lame-notag44k", 44100, 2, lame + ["-b:a", "128k", "-write_xing", "0"], mpg123=False)
+    put("shine44k", 44100, 2, shine + ["-b:a", "128k"], mpg123=False)
+    put("shine32k-mono", 32000, 1, shine + ["-b:a", "64k"], mpg123=False)
+    put("tagged44k", 44100, 2, lame + ["-b:a", "128k", "-write_id3v1", "1", "-id3v2_version", "3", "-metadata", "title=Idrak fixture",
+                                         "-metadata", "artist=make_tiny_audio.py"])
+    put("mp2-44k", 44100, 2, ["-c:a", "mp2", "-b:a", "192k"], ext="mp2")
+    put("mp2-24k-mono", 24000, 1, ["-c:a", "mp2", "-b:a", "64k"], ext="mp2")
+    with open(os.path.join(folder, "lame-joint44k.mp3"), "rb") as f:
+        whole = f.read()
+    with open(os.path.join(folder, "bad-truncated.mp3"), "wb") as f:
+        f.write(whole[: len(whole) // 2 + 37])                                # cut inside a frame
     dump_json(os.path.join(folder, "files.json"), files)
     return files
 
@@ -575,6 +643,8 @@ def main():
         write_wavs(args.out)
     if "flac" in sections:
         write_flacs(args.out)
+    if "mp3" in sections:
+        write_mp3s(args.out)
     if "resample" in sections:
         write_resample(args.out)
     if "features" in sections:
