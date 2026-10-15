@@ -56,3 +56,15 @@ through the encoder, and the testing kit's `SpeechRecognizerSuite`. On the CPU:
 ```
 IDRAK_DEVICES=cpu IDRAK_FILTER="audio asr" dotnet run -c Release --no-build --project tests/Idrak.Tests
 ```
+
+## Trying it on a real checkpoint
+
+`samples/WhisperSpeech/transcribe.cs` transcribes a WAV, FLAC or MP3 file through the plug-in (until `idrak transcribe`,
+plan 21 S7), printing the segments, the text and the cold and warm timings:
+
+```powershell
+cd D:\Projects\Idrak
+dotnet run --project src\Idrak.Cli -c Release -- pull openai/whisper-small
+$whisper = (Get-ChildItem "$env:USERPROFILE\.cache\idrak\downloads\huggingface\models\openai\whisper-small" -Directory | Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+dotnet run samples\WhisperSpeech\transcribe.cs -c Release -- $whisper sample-en.wav --language en --timestamps --device cuda
+```
