@@ -97,6 +97,16 @@ public sealed record PageStyle
 
     /// <summary>Colour pages: tinted paper, blue signatures and stamps (else grey).</summary>
     public bool Color { get; init; } = true;
+
+    /// <summary>
+    /// How often a page is cut to its drawn parts (0 to 1; 0, the default: the whole page): the box around every part,
+    /// with <see cref="CropPadding"/> of paper around it, so the text fills the image (for a reader learning from
+    /// scratch, the text and not the paper). The text is unchanged: every drawn part is inside the box.
+    /// </summary>
+    public float Crop { get; init; }
+
+    /// <summary>The paper kept around a cut page's parts, in pixels (a range: each page its own).</summary>
+    public (float Min, float Max) CropPadding { get; init; } = (8, 24);
 }
 
 /// <summary>A drawn part of a page: what it is, its text and its box (pixels).</summary>

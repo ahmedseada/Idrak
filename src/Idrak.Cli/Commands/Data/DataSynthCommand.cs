@@ -48,7 +48,8 @@ internal sealed class DataSynthCommand : Command
                                   times; a name twice, twice as often)
               --grey P            the share of pages in grey (0.3)
               --page SETTINGS     page settings, KEY=VALUE,...: width, height, size, spacing, margin, ink, justify,
-                                  color, rule, emblem, stamp, blue-signature, header-font (ranges as MIN..MAX)
+                                  color, rule, emblem, stamp, blue-signature, header-font, crop (a chance
+                                  the page is cut to its text), crop-padding (pixels; ranges as MIN..MAX)
               --records NAME      the input's record format: sharegpt, messages or text (found from the input)
               --full-text KEY     the answer's key holding the page text (the first full_text..., else the longest text)
               --prompt TEXT       the question of records made from plain text ("Extract the text.")
