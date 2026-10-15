@@ -44,30 +44,68 @@ internal sealed class HifiGanDecoder : IDisposable
         _post = weights.Conv("decoder.conv_post", channels >> stages, 1, 7, 3);
     }
 
-    /// <summary>The samples [1, T · hop] of the latents [F, T], with the speaker's embedding [E, 1] (null for one speaker).</summary>
+    /// <summary>
+    /// The samples [1, T · hop] of the latents [F, T], with the speaker's embedding [E, 1] (null for one speaker). With
+    /// gradients off, each stage and each residual block's step runs in a scope of its own that keeps only its result,
+    /// so the device holds a few tensors of the widest stage at a time, not every intermediate of the pass (rule 76);
+    /// with gradients on, every intermediate stays for the backward pass.
+    /// </summary>
     public Tensor Forward(Tensor latents, Tensor? speaker)
     {
-        var x = _pre.Forward(latents);
-        if (speaker is not null && _cond is not null)
+        bool release = !Autograd.IsEnabled;
+        Tensor x;
+        using (var first = release ? new TensorScope() : null)
         {
-            x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), x.Shape[1]);
+            x = _pre.Forward(latents);
+            if (speaker is not null && _cond is not null)
+            {
+                x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), x.Shape[1]);
+            }
+
+            first?.Keep(x);
         }
 
         int kernels = _config.ResblockKernelSizes.Length;
         for (int i = 0; i < _upsamplers.Length; i++)
         {
-            x = _upsamplers[i].Forward(VitsOps.LeakyRelu(x, _config.LeakyReluSlope));
-            Tensor? sum = null;
-            for (int j = 0; j < kernels; j++)
+            var previous = x;
+            using (var stage = release ? new TensorScope() : null)
             {
-                var y = _blocks[i * kernels + j].Forward(x);
-                sum = sum is null ? y : sum + y;
+                var up = _upsamplers[i].Forward(VitsOps.LeakyRelu(x, _config.LeakyReluSlope));
+                Tensor? sum = null;
+                for (int j = 0; j < kernels; j++)
+                {
+                    using var block = release ? new TensorScope() : null;
+                    var y = _blocks[i * kernels + j].Forward(up, release);
+                    var total = sum is null ? y : sum + y;
+                    block?.Keep(total);
+                    if (release && sum is not null && stage!.Owns(sum))
+                    {
+                        TensorScope.Untrack(sum).Dispose();                     // the previous partial sum is not needed again
+                    }
+
+                    sum = total;
+                }
+
+                x = kernels == 1 ? sum! : sum! * (1f / kernels);
+                stage?.Keep(x);
             }
 
-            x = kernels == 1 ? sum! : sum! * (1f / kernels);
+            if (release && !ReferenceEquals(previous, latents))
+            {
+                TensorScope.Untrack(previous).Dispose();                         // the stage before is not needed again
+            }
         }
 
-        return _post.Forward(VitsOps.LeakyRelu(x, _config.FinalLeakyReluSlope)).Tanh();
+        using var last = release ? new TensorScope() : null;
+        var samples = _post.Forward(VitsOps.LeakyRelu(x, _config.FinalLeakyReluSlope)).Tanh();
+        last?.Keep(samples);
+        if (release)
+        {
+            TensorScope.Untrack(x).Dispose();
+        }
+
+        return samples;
     }
 
     public void Dispose()
@@ -97,13 +135,27 @@ internal sealed class HifiGanDecoder : IDisposable
             }
         }
 
-        public Tensor Forward(Tensor x)
+        // With `release`, each step in its own scope keeping only the new x, and an x a previous step made released once replaced.
+        public Tensor Forward(Tensor x, bool release)
         {
+            var input = x;
             for (int i = 0; i < _convs1.Length; i++)
             {
-                var h = _convs1[i].Forward(VitsOps.LeakyRelu(x, _slope));
-                h = _convs2[i].Forward(VitsOps.LeakyRelu(h, _slope));
-                x = h + x;
+                Tensor next;
+                using (var step = release ? new TensorScope() : null)
+                {
+                    var h = _convs1[i].Forward(VitsOps.LeakyRelu(x, _slope));
+                    h = _convs2[i].Forward(VitsOps.LeakyRelu(h, _slope));
+                    next = h + x;
+                    step?.Keep(next);
+                }
+
+                if (release && !ReferenceEquals(x, input))
+                {
+                    TensorScope.Untrack(x).Dispose();
+                }
+
+                x = next;
             }
 
             return x;
