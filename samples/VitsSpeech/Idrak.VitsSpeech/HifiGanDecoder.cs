@@ -42,6 +42,73 @@ internal sealed class HifiGanDecoder : IDisposable
         }
 
         _post = weights.Conv("decoder.conv_post", channels >> stages, 1, 7, 3);
+        ContextFrames = Context(config);
+    }
+
+    /// <summary>
+    /// The latent frames on each side that an output sample depends on (the receptive field of the convolutions and the
+    /// transposed convolutions, in frames, rounded up, plus two): a piece decoded with this much context on both sides
+    /// gives the samples a whole pass gives.
+    /// </summary>
+    public int ContextFrames { get; }
+
+    /// <summary>
+    /// The samples of the latents [F, T] on the host. With gradients off and <paramref name="chunkFrames"/> above 0 and
+    /// below T, the latents are decoded in pieces of that many frames, each with <see cref="ContextFrames"/> of context
+    /// on both sides that is cut away again: the device holds one piece's tensors, whatever the length (rule 76). A
+    /// piece the device has no memory for (<see cref="ResourceLimitExceededException"/>) is decoded again in halves.
+    /// </summary>
+    public float[] Samples(Tensor latents, Tensor? speaker, int chunkFrames)
+    {
+        int frames = latents.Shape[1], hop = _config.HopLength;
+        if (chunkFrames <= 0 || frames <= chunkFrames || Autograd.IsEnabled)
+        {
+            return Forward(latents, speaker).ToArray();
+        }
+
+        var output = new float[(long)frames * hop];
+        int chunk = chunkFrames;
+        for (int start = 0; start < frames;)
+        {
+            int count = Math.Min(chunk, frames - start);
+            int from = Math.Max(0, start - ContextFrames), to = Math.Min(frames, start + count + ContextFrames);
+            try
+            {
+                using var scope = new TensorScope();
+                var piece = Forward(latents.Narrow(1, from, to - from), speaker).ToArray();
+                piece.AsSpan((start - from) * hop, count * hop).CopyTo(output.AsSpan(start * hop));
+                start += count;
+            }
+            catch (ResourceLimitExceededException) when (chunk > 2 * ContextFrames)
+            {
+                chunk /= 2;                                                      // short of device memory: smaller pieces, the same samples
+            }
+        }
+
+        return output;
+    }
+
+    // One side of the receptive field, in latent frames: conv_pre's half kernel; per stage the transposed convolution's
+    // reach (its kernel over its stride, in the stage's input frames) and the widest residual block's (each dilated pair's
+    // half kernels, in the stage's samples); conv_post's half kernel at the output rate.
+    private static int Context(VitsConfig config)
+    {
+        double frames = 3, rate = 1;
+        for (int i = 0; i < config.UpsampleRates.Length; i++)
+        {
+            frames += Math.Ceiling((double)config.UpsampleKernelSizes[i] / config.UpsampleRates[i]) / rate;
+            rate *= config.UpsampleRates[i];
+            double widest = 0;
+            for (int j = 0; j < config.ResblockKernelSizes.Length; j++)
+            {
+                int half = (config.ResblockKernelSizes[j] - 1) / 2;
+                widest = Math.Max(widest, config.ResblockDilationSizes[j].Sum(d => half * d + half));
+            }
+
+            frames += widest / rate;
+        }
+
+        return (int)Math.Ceiling(frames + 3 / rate) + 2;
     }
 
     /// <summary>

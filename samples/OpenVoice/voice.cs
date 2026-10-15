@@ -10,7 +10,7 @@
 // voice.cs: install a person's voice and speak with it (plan 21, S9 route B), until `idrak voice` (S7) takes its place.
 //   dotnet run samples/OpenVoice/voice.cs -- add NAME --converter DIR --consent TEXT [--speaker WHO] [--language ar]... [--keep-clips] [--device cuda] CLIP...
 //   dotnet run samples/OpenVoice/voice.cs -- list | show NAME | remove NAME | export NAME ZIP | import ZIP|DIR
-//   dotnet run samples/OpenVoice/voice.cs -- speak MODEL TEXT --voice NAME [--tau 0.3] [--conversion auto|off|NAME] [--device cuda] [-o out.wav]
+//   dotnet run samples/OpenVoice/voice.cs -- speak MODEL TEXT --voice NAME [--tau 0.3] [--conversion auto|off|NAME] [--decoder-seconds 10] [--device cuda] [-o out.wav]
 // Voices live in IDRAK_VOICES, else voices/ under IDRAK_CACHE or ~/.cache/idrak. Clips: WAV, FLAC or MP3, 1 to 3 minutes in all.
 using System.Diagnostics;
 using Idrak.Abstraction;
@@ -106,6 +106,10 @@ switch (args[0])
         string model = positional[0], text = positional[1], output = One("-o") ?? "voice.wav";
         Step($"loading {model} on {device}");
         using var voiced = new VoicedSynthesizer(SpeechSynthesisModels.Load(model, new SpeechSynthesisLoadOptions { Device = device }), store);
+        if (voiced.Synthesizer is VitsSynthesizer vits && One("--decoder-seconds") is { } pieceSeconds)
+        {
+            vits.DecoderChunkSeconds = double.Parse(pieceSeconds, System.Globalization.CultureInfo.InvariantCulture);   // 0: one pass
+        }
         var speech = new SpeechSynthesisOptions
         {
             Voice = One("--voice"),
