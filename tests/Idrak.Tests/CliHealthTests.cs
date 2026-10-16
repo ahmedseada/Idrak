@@ -576,6 +576,9 @@ internal static partial class Tests
         // Progress text, byte amounts and questions without a terminal.
         Check(ProgressLine.Format("pull", 512L << 20, 1L << 30, TimeSpan.FromSeconds(4), ProgressUnit.Bytes) == "pull   50%  512 MB / 1.00 GB  128 MB/s  4s left",
             $"progress: {ProgressLine.Format("pull", 512L << 20, 1L << 30, TimeSpan.FromSeconds(4), ProgressUnit.Bytes)}");
+        Check(ProgressLine.Format("training", 88, 8000, TimeSpan.FromSeconds(316.8), ProgressUnit.Items) == "training    1%  88 / 8,000  3.6 s each  7h 54m left"
+              && ProgressLine.Rate(2.64, ProgressUnit.Items) == "2.6/s" && ProgressLine.Rate(1234.5, ProgressUnit.Items) == "1,234/s",
+            $"slow items: {ProgressLine.Format("training", 88, 8000, TimeSpan.FromSeconds(316.8), ProgressUnit.Items)} (a step of seconds read \"0/s\")");
         Check(Units.Bytes(1536) == "1.5 KB" && Units.Duration(TimeSpan.FromSeconds(185)) == "3m 05s", "bytes and durations");
         Check(Cli("logout", "github", "--dry-run", "-C", Path.Combine(folder, "c.json")).Exit == 0, "logout --dry-run");
         Directory.Delete(folder, true);

@@ -145,7 +145,8 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
     public void Dispose() => Finish();
 
     /// <summary>
-    /// The line's text: "label  45%  12.3 MB / 27.0 MB  3.1 MB/s  4s left" (without a total: "label  12.3 MB  3.1 MB/s").
+    /// The line's text: "label  45%  12.3 MB / 27.0 MB  3.1 MB/s  4s left" (without a total: "label  12.3 MB  3.1 MB/s");
+    /// slow items read "88 / 8,000  3.6 s each  7h 48m left".
     /// </summary>
     public static string Format(string label, long done, long? total, TimeSpan elapsed, ProgressUnit unit)
     {
@@ -169,7 +170,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 
         if (seconds >= 0.2 && rate > 0)
         {
-            parts.Add($"{Amount((long)rate, unit)}/s");
+            parts.Add(Rate(rate, unit));
             if (total is long all && all > done)
             {
                 parts.Add($"{Units.Duration(TimeSpan.FromSeconds((all - done) / rate))} left");
@@ -178,6 +179,18 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 
         return string.Join("  ", parts);
     }
+
+    /// <summary>
+    /// A rate as the unit shows it: bytes as "3.1 MB/s"; items as "1,234/s", "2.6/s" under ten a second, and "3.6 s each"
+    /// under one (a slow step would otherwise read "0/s").
+    /// </summary>
+    public static string Rate(double perSecond, ProgressUnit unit) => unit switch
+    {
+        ProgressUnit.Bytes => $"{Units.Bytes((long)perSecond)}/s",
+        _ when perSecond < 1 => string.Create(CultureInfo.InvariantCulture, $"{1 / perSecond:0.0} s each"),
+        _ when perSecond < 10 => string.Create(CultureInfo.InvariantCulture, $"{perSecond:0.0}/s"),
+        _ => $"{Amount((long)perSecond, unit)}/s",
+    };
 
     /// <summary>An amount as the unit shows it (bytes as "12.3 MB", items as "1,234").</summary>
     public static string Amount(long value, ProgressUnit unit) => unit switch
