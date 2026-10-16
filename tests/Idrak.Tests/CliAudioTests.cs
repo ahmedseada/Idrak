@@ -71,8 +71,8 @@ internal static partial class Tests
             using (var recognizer = SpeechModels.Load(model, new SpeechModelOptions { Device = device }))
             {
                 var audio = AudioCodecs.Decode(wav);
-                plain = recognizer.Transcribe(audio);
-                timed = recognizer.Transcribe(audio, new TranscriptionOptions { Timestamps = true });
+                plain = recognizer.Transcribe(audio, TranscribeCommand.Defaults);   // the command's defaults: OpenAI's guards on
+                timed = recognizer.Transcribe(audio, TranscribeCommand.Defaults with { Timestamps = true });
             }
 
             WhisperSpeechPlugin.Unregister();                                    // the commands register it through -P

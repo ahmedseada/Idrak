@@ -21,6 +21,8 @@ internal static partial class Tests
         ("audio asr: the Whisper plug-in loads tiny-whisper: the encoder output and the first step's logits within 1e-4 of transformers', the language detected from one step (ar, with its logits), the prompts with and without timestamps; an unknown language, and the architecture without the plug-in, refused naming the registry", AudioAsrFixture),
         ("audio asr: greedy and beam-4 decoding give transformers' ids exactly (12 tokens, the end token suppressed first), and with timestamps (the timestamp rules) greedy and beam-4 do too; the int8 and bfloat16 caches run the same beam search", AudioAsrDecoding),
         ("audio asr: Transcribe on pcm16.wav gives the greedy reference's tokens and text, the language detected; chunks of 0.75 s equal two calls on the halves joined, TranscribeStream equals the chunked call, stereo and 44.1 kHz sound mixed and resampled; the timestamps' segment; the stats and progress; device bytes the same after every call from the second; cold and warm times", AudioAsrTranscribe),
+        ("audio asr: BeamSearch.Sample draws the first token by softmax(logits / T) (6000 draws within 0.025), rows sample apart and end at the end token, best first, suppressed tokens never drawn, a temperature of 0 refused", AudioAsrSampling),
+        ("audio asr: Whisper's guards (OpenAI's transcribe): the no-speech check leaves out a segment taken for silence (threshold 1 keeps all, 0 with an unsure decoding drops all) from the step after <|startoftranscript|>; the temperature fallback decodes an unsure segment again at the next temperature; the compression ratio of a loop above 2.4", AudioAsrGuards),
         ("audio asr: three segments through the encoder at once give each segment's output alone within 1e-5", AudioAsrBatch),
         ("audio asr: CrossAttention equals a loop over the heads (softmax over every memory position), the cached path (SetMemory, ForwardCached) equals Forward, one memory serves several rows, a padded batch of memories (per-sequence lengths) equals each sequence alone and its padding gets no gradient; gradients to the input, the memory and every projection by finite differences on the CPU", AudioAsrCrossAttention),
         ("audio asr: BeamSearch on the tiny Llama gives a reference beam search's hypotheses and scores (the whole sequences re-run, no cache): greedy, an end token, length penalties 0, 1 and 2, the least length, no repeated bigrams, without early stopping; the kit's speech recognizer suite passes on the Whisper plug-in", AudioAsrBeamSearch),
@@ -102,7 +104,88 @@ internal static partial class Tests
                 $"the {format} cache's beam search on {device}: [{string.Join(" ", hypotheses.FirstOrDefault()?.Tokens ?? [])}] (float32 [{string.Join(" ", beamIds)}]), the same twice");
         }
 
-        ThrowsNaming<NotSupportedException>(() => recognizer.Decode(encoded, beamPrompt, new TranscriptionOptions { Temperature = 0.5f }), "sampling", "Temperature");
+        // Sampling: BestOf samples, best first, the same seed the same samples, and a near-zero temperature the greedy ids.
+        var sampled = recognizer.Decode(encoded, beamPrompt, new TranscriptionOptions { Temperature = 0.7f, BestOf = 3, MaxTokens = beamIds.Length, Seed = 4 });
+        var resampled = recognizer.Decode(encoded, beamPrompt, new TranscriptionOptions { Temperature = 0.7f, BestOf = 3, MaxTokens = beamIds.Length, Seed = 4 });
+        var (greedyPrompt, greedyIds) = WhisperReference("greedy-ids");
+        var cold = recognizer.Decode(encoded, greedyPrompt, new TranscriptionOptions { Temperature = 1e-4f, BestOf = 2, MaxTokens = greedyIds.Length });
+        Check(sampled.Count == 3 && sampled.Zip(resampled).All(p => p.First.Tokens.SequenceEqual(p.Second.Tokens)) && sampled.Zip(sampled.Skip(1)).All(p => p.First.Score >= p.Second.Score)
+              && cold.All(h => h.Tokens.SequenceEqual(greedyIds)),
+            $"sampling on {device}: 3 samples best first, the same with the same seed, at temperature 1e-4 the greedy ids [{string.Join(" ", cold.FirstOrDefault()?.Tokens ?? [])}] for [{string.Join(" ", greedyIds)}]");
+    }
+
+    private static void AudioAsrGuards(Device device)
+    {
+        using var recognizer = TinyWhisper(device);
+        var audio = AudioCodecs.Decode(AudioData("wav/pcm16.wav"));
+        var plain = recognizer.Transcribe(audio);
+
+        // The no-speech check: a threshold of 1 leaves everything, one of 0 with every decoding "unsure" leaves out every segment.
+        var kept = recognizer.Transcribe(audio, new TranscriptionOptions { NoSpeechThreshold = 1f });
+        var dropped = recognizer.Transcribe(audio, new TranscriptionOptions { NoSpeechThreshold = 0f, LogProbThreshold = float.MaxValue });
+        Check(kept.Text == plain.Text && dropped.Segments.Count == 0 && dropped.Text.Length == 0,
+            $"the no-speech check on {device}: threshold 1 '{kept.Text}' (plain '{plain.Text}'), threshold 0 and unsure {dropped.Segments.Count} segments");
+
+        // The no-speech probability: the softmax of the step after <|startoftranscript|> at the no-speech token.
+        using (var noGrad = Autograd.NoGrad())
+        using (var scope = new TensorScope())
+        {
+            var features = recognizer.Features.Extract(audio, device).Transpose();
+            using var encoded = recognizer.Encode(features);
+            var prompt = recognizer.Prompt("ar");
+            var logits = recognizer.Logits(encoded, [recognizer.Config.StartToken]);
+            double max = logits.Max(), sum = logits.Sum(x => Math.Exp(x - max));
+            double expected = Math.Exp(logits[recognizer.Config.NoSpeechToken] - max) / sum;
+            float p = recognizer.NoSpeechProbability(encoded, prompt);
+            Check(Math.Abs(p - expected) < 1e-6 && p is >= 0 and <= 1 && recognizer.Config.NoSpeechToken == recognizer.Config.NoTimestampsToken - 1,
+                $"the no-speech probability on {device}: {p}, the step's softmax {expected}");
+        }
+
+        // The fallback: a decoding always "unsure" goes on to the next temperature; one temperature on, the sampled text.
+        var fallback = recognizer.Transcribe(audio, new TranscriptionOptions { TemperatureFallback = [0.7f], LogProbThreshold = float.MaxValue, Seed = 2 });
+        var hot = recognizer.Transcribe(audio, new TranscriptionOptions { Temperature = 0.7f, Seed = 2 });
+        var sure = recognizer.Transcribe(audio, new TranscriptionOptions { TemperatureFallback = [0.7f], LogProbThreshold = float.MinValue, CompressionRatioThreshold = float.MaxValue });
+        Check(fallback.Text == hot.Text && sure.Text == plain.Text, $"the fallback on {device}: '{fallback.Text}' (sampled at 0.7 '{hot.Text}'); not needed, the greedy text '{sure.Text}'");
+
+        // The compression ratio: a loop compresses far better than a sentence.
+        double loop = WhisperRecognizer.CompressionRatio(string.Concat(Enumerable.Repeat("شكرا لكم ", 40)));
+        double sentence = WhisperRecognizer.CompressionRatio("أعيش في مدينة كبيرة وأحب أن أمشي في شوارعها القديمة في المساء");
+        Check(loop > 2.4 && sentence < 2.4 && WhisperRecognizer.CompressionRatio("") == 0, $"compression ratios: a loop {loop:F2}, a sentence {sentence:F2}");
+    }
+
+    private static void AudioAsrSampling(Device device)
+    {
+        if (device != Device.Cpu)
+        {
+            return;                                                             // host-side sampling over a fixed step: once
+        }
+
+        // A step that gives the same logits on every row and position: token 2 ends; the first draws follow softmax(logits / T).
+        float[] first = [1f, 0.5f, -1f, 0.2f];
+        Tensor Step(Tensor ids, DecodingContext context) => Tensor.From([.. Enumerable.Range(0, ids.Shape[0]).SelectMany(_ => first)], [ids.Shape[0], first.Length], Device.Cpu);
+        var options = new BeamOptions { Beams = 1, MaxTokens = 1, EndToken = 2 };
+        using var context = new DecodingContext(Device.Cpu, 1, 8);
+        var random = new Random(11);
+        const float T = 0.8f;
+        var counts = new int[first.Length];
+        const int Draws = 6000;
+        for (int i = 0; i < Draws; i++)
+        {
+            var h = BeamSearch.Sample(Step, context, [0], options, T, random);
+            counts[h.Count == 0 ? 2 : h[0].Tokens.Count == 0 ? 2 : h[0].Tokens[0]]++;
+        }
+
+        double z = first.Sum(x => Math.Exp(x / T));
+        var expected = first.Select(x => Math.Exp(x / T) / z).ToArray();
+        double worst = counts.Select((c, i) => Math.Abs((double)c / Draws - expected[i])).Max();
+        Check(worst < 0.025, $"the first draws' frequencies [{string.Join(" ", counts.Select(c => ((double)c / Draws).ToString("F3", System.Globalization.CultureInfo.InvariantCulture)))}] against softmax(logits / {T}) [{string.Join(" ", expected.Select(e => e.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)))}]");
+
+        // Rows sample apart, end at the end token, are ranked by mean log-probability; a forbidden token is never drawn.
+        using var rows = new DecodingContext(Device.Cpu, 4, 32);
+        var many = BeamSearch.Sample(Step, rows, [0], new BeamOptions { Beams = 4, MaxTokens = 20, EndToken = 2, SuppressTokens = [3] }, 1f, new Random(5));
+        Check(many.Count == 4 && many.All(h => !h.Tokens.Contains(3) && !h.Tokens.Contains(2)) && many.Zip(many.Skip(1)).All(p => p.First.Score >= p.Second.Score),
+            $"four rows: {string.Join(" | ", many.Select(h => string.Join(",", h.Tokens) + $" {h.Score:F3}"))}");
+        Throws<ArgumentException>(() => BeamSearch.Sample(Step, rows, [0], new BeamOptions { Beams = 4, MaxTokens = 2, EndToken = 2 }, 0f, new Random(1)), "a temperature of 0");
     }
 
     private static void AudioAsrTranscribe(Device device)

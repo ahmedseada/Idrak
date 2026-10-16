@@ -561,6 +561,18 @@ after the second segment equal to after the first (rule 77); cold and warm stage
 **Risks.** Real checkpoints are bfloat16 or float16 with `proj_out` tied; v3 uses 128 mels (a config value); the
 temperature fallback changes outputs run to run only when `Temperature > 0` (seeded samplers keep it repeatable).
 
+**S4 addition: Whisper's guards (2026-10-16).** The owner's phone recordings showed Whisper's known inventions on
+near-silent windows (a clip just over 30 s gave «ترجمة نانسي قنقر», «اشتركوا في القناة»; a noise clip «موسيقى»). Built as
+OpenAI's transcribe has them: `BeamSearch.Sample` in the library (rows sampled apart from softmax(log-probabilities /
+T) under the search's own filters, ranked like the search, seeded); `TranscriptionOptions.NoSpeechThreshold` (null: off),
+`BestOf` (5) and `Seed`; the Whisper plug-in decodes at the options' temperature and then each `TemperatureFallback`
+while the text compresses better than `CompressionRatioThreshold` or its mean log-probability is under
+`LogProbThreshold`, leaves out a segment whose <|nospeech|> probability after <|startoftranscript|> (the token before
+<|notimestamps|>, as transformers takes it) is above the threshold while unsure, and does not carry a hot (above 0.5)
+decoding's text into the next chunk. The library keeps its defaults (no fallback, no check: transformers' references
+hold); `idrak transcribe` turns them on (0.2-1.0, best of 5, 0.6; `--no-fallback`, `--keep-silence` and every threshold
+as options). Tests: "audio asr: BeamSearch.Sample" and "audio asr: Whisper's guards".
+
 ## Phase S5: text-to-speech contracts and a family plug-in
 
 **Which open architecture (decision 3).** Recommended: **VITS as shipped by MMS-TTS** (`facebook/mms-tts-<lang>`,

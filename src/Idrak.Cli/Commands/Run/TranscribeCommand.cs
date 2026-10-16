@@ -51,7 +51,17 @@ internal sealed class TranscribeCommand : Command
               --overlap-seconds S  seconds each chunk overlaps the one before with --chunk-seconds (default 1)
               --no-carry         do not give a chunk's text to the next as its prompt
               --prompt TEXT      text given to the model before the first segment (names, spellings)
-              --temperature T    sampling temperature (0, the default: greedy or beam; a family may not sample)
+              --temperature T    the first decoding's temperature (0, the default: greedy or beam; above 0: sampling)
+              --fallback T,T...  temperatures tried in turn when a segment's text loops (compresses better than
+                                 --compression-ratio-threshold) or the model is unsure of it (mean log-probability
+                                 under --logprob-threshold); default 0.2,0.4,0.6,0.8,1.0, as Whisper's own tool
+              --no-fallback      decode each segment once (at --temperature)
+              --best-of N        samples drawn at a temperature above 0, the likeliest kept (default 5)
+              --compression-ratio-threshold C  the text's compression ratio that counts as a loop (default 2.4)
+              --logprob-threshold L  the mean log-probability under which a decoding is tried again (default -1)
+              --no-speech-threshold P  leave out a segment the model takes for silence: its no-speech probability
+                                 above P while unsure of its text (default 0.6; what it writes there is often invented)
+              --keep-silence     no no-speech check: every segment's text is kept
               --batch N          segments encoded together at most (default: measured on the device)
               --memory-fraction F  the share of the device's free memory a batch of segments may take (default 0.5)
               --bf16, --no-bf16  run the encoder in bfloat16 where the device has it (the default), or in float32
@@ -74,10 +84,17 @@ internal sealed class TranscribeCommand : Command
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--language", "--task", "--beam", "--length-penalty", "--max-tokens", "--chunk-seconds", "--overlap-seconds", "--prompt", "--temperature", "--batch",
-        "--memory-fraction", "--weights", "--kv", "--out",
+        "--memory-fraction", "--weights", "--kv", "--out", "--fallback", "--best-of", "--compression-ratio-threshold", "--logprob-threshold", "--no-speech-threshold",
     ];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--timestamps", "--no-carry", "--bf16", "--no-bf16", "--no-timestamp-rules", "--no-suppress", "--no-warm"];
+    public override IReadOnlyCollection<string> Flags { get; } =
+        ["--timestamps", "--no-carry", "--bf16", "--no-bf16", "--no-timestamp-rules", "--no-suppress", "--no-warm", "--no-fallback", "--keep-silence"];
+
+    /// <summary>
+    /// The command's defaults: the library's, with OpenAI Whisper's guards on (the temperature fallback and the
+    /// no-speech check), which the library leaves off.
+    /// </summary>
+    internal static TranscriptionOptions Defaults => new() { TemperatureFallback = [0.2f, 0.4f, 0.6f, 0.8f, 1f], NoSpeechThreshold = 0.6f };
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
         new Dictionary<string, string> { ["-l"] = "--language", ["-o"] = "--out", ["-w"] = "--weights", ["-k"] = "--kv" };
@@ -204,7 +221,7 @@ internal sealed class TranscribeCommand : Command
 
     private static TranscriptionOptions Options(CommandContext context, string format)
     {
-        var d = new TranscriptionOptions();
+        var d = Defaults;
         if (context.Flag("--bf16") && context.Flag("--no-bf16"))
         {
             throw new UsageException("Give --bf16 or --no-bf16, not both.");
@@ -230,11 +247,30 @@ internal sealed class TranscribeCommand : Command
             CarryText = !context.Flag("--no-carry"),
             Prompt = context.Option("--prompt"),
             Temperature = (float)AudioFiles.Number(context, "--temperature", d.Temperature, 0),
+            TemperatureFallback = context.Flag("--no-fallback") ? [] : context.Option("--fallback") is { } ladder ? Temperatures(ladder) : d.TemperatureFallback,
+            BestOf = context.IntOption("--best-of", d.BestOf) is > 0 and var bestOf ? bestOf : throw new UsageException("--best-of needs a whole number above 0."),
+            CompressionRatioThreshold = (float)AudioFiles.Number(context, "--compression-ratio-threshold", d.CompressionRatioThreshold, 0),
+            LogProbThreshold = (float)AudioFiles.Number(context, "--logprob-threshold", d.LogProbThreshold),
+            NoSpeechThreshold = context.Flag("--keep-silence") ? null : (float)AudioFiles.Number(context, "--no-speech-threshold", d.NoSpeechThreshold ?? 0.6, 0, 1),
+            Seed = context.IntOption("--seed", d.Seed),
             MaxBatch = context.IntOption("--batch", d.MaxBatch) is >= 0 and var batch ? batch : throw new UsageException("--batch needs a whole number, 0 or more."),
             MemoryFraction = AudioFiles.Number(context, "--memory-fraction", d.MemoryFraction, double.Epsilon, 1),
             BFloat16 = !context.Flag("--no-bf16"),
             SuppressTokens = !context.Flag("--no-suppress"),
         };
+    }
+
+    // "0.2,0.4,1" → the temperatures, each 0 or more.
+    private static float[] Temperatures(string text)
+    {
+        var values = new List<float>();
+        foreach (string part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            values.Add(float.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out float t) && t >= 0 && float.IsFinite(t) ? t
+                : throw new UsageException($"--fallback takes temperatures 0 or more separated by commas (0.2,0.4,0.6), not '{part}'."));
+        }
+
+        return [.. values];
     }
 
     private static EncoderWeights Weights(string? text) => text?.ToLowerInvariant() switch

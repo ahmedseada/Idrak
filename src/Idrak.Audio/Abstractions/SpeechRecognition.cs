@@ -66,6 +66,20 @@ public sealed record TranscriptionOptions
     /// <summary>A segment whose mean log-probability is below this is decoded again at the next temperature.</summary>
     public float LogProbThreshold { get; init; } = -1f;
 
+    /// <summary>
+    /// A segment the model takes for silence is left out: its no-speech probability (where the family has one, such as
+    /// Whisper's &lt;|nospeech|&gt; after the start token) above this while its mean log-probability is under
+    /// <see cref="LogProbThreshold"/> (OpenAI Whisper's rule; what it would write there is often invented text). Such a
+    /// segment is not decoded again either. Null: no check (the default here; OpenAI's is 0.6).
+    /// </summary>
+    public float? NoSpeechThreshold { get; init; }
+
+    /// <summary>The samples drawn at a temperature above 0, the likeliest kept (OpenAI Whisper's best_of).</summary>
+    public int BestOf { get; init; } = 5;
+
+    /// <summary>The seed of the sampling at temperatures above 0 (the same sound, options and seed give the same text).</summary>
+    public int Seed { get; init; }
+
     /// <summary>Text given to the model before the first segment (names, spellings, style), where the family has a prompt token.</summary>
     public string? Prompt { get; init; }
 
