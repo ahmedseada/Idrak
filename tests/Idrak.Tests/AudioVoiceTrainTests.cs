@@ -23,6 +23,7 @@ internal static partial class Tests
         ("audio voice train: a trained folder installs as a voice of kind checkpoint (consent required, a folder without config.json refused, the training files left out, an installed name kept unless overwritten); VoicedSynthesizer speaks it with its own model, the samples the folder's own; export and import give it back, a checkpoint voice without its model refused", AudioVoiceTrainInstall),
         ("audio voice train: idrak voice train on the CPU fine-tunes the tiny VITS model on tone speech and installs the voice (refused without consent or a trainable base), voice show names its base and steps, speak --voice gives the checkpoint's samples; --resume and idrak resume add steps and install again; its help has examples, every option and lines under 120 characters", AudioVoiceTrainCli),
         ("audio voice train: the stochastic duration predictor's flows forward (training) then in reverse (speaking) give the log-durations back within 1e-4: VITS's order, no flip after the element-wise affine (transformers' forward flips there, and a model fine-tuned that way speaks with durations it was not trained on)", AudioVoiceTrainDurationFlows),
+        ("audio voice train: Frozen [\"decoder\"] keeps the decoder's tensors bit for bit while the other parts train, takes them out of the generator's parameters and saves them in the run's options; a part VITS does not have is refused naming its parts", AudioVoiceTrainFrozen),
         ("audio voice train: a short CPU run of the tiny VITS model on tone speech lowers its mel L1 (the mean of the last 5 steps under 0.8 of the first 5; step time printed)", AudioVoiceTrainSmoke),
     ];
 
@@ -353,6 +354,59 @@ internal static partial class Tests
             using var trained = SpeechSynthesisModels.Load(Path.Combine(root, "run-a", "checkpoint-4"), new SpeechSynthesisLoadOptions { Device = device });
             var spoken = trained.Speak("abc", new SpeechSynthesisOptions { NoiseScale = 0, DurationNoiseScale = 0 }).Audio;
             Check(trained is VitsSynthesizer && spoken.Length > 0 && spoken.Samples.All(float.IsFinite), "the checkpoint speaks as a VITS model");
+        }
+        finally
+        {
+            VitsSpeechPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void AudioVoiceTrainFrozen(Device device)
+    {
+        string root = TempFolder("vits-frozen");
+        VitsSpeechPlugin.Register();
+        try
+        {
+            var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 37, maxLetters: 4);
+            var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
+            var options = VitsToneTraining(Path.Combine(root, "cache")) with { Steps = 2 };
+            using (var model = LoadVitsTrain(device))
+            {
+                Check(model.Parts.Order().SequenceEqual(["decoder", "duration_predictor", "flow", "posterior_encoder", "text_encoder"]),
+                    $"VITS names its parts: {string.Join(", ", model.Parts)}");
+                ThrowsNaming<ArgumentException>(() => AdversarialSynthesisTrainer.Train(model, train, null,
+                    options with { Adversarial = options.Adversarial! with { Frozen = ["vocoder"] } }, Path.Combine(root, "none")), "no part 'vocoder'", "decoder", "flow");
+            }
+
+            using (var model = LoadVitsTrain(device))
+            {
+                int all = model.Generator.Parameters().Count();
+                var result = AdversarialSynthesisTrainer.Train(model, train, null, options with { Adversarial = options.Adversarial! with { Frozen = ["decoder"] } }, Path.Combine(root, "run"));
+                int trained = model.Generator.Parameters().Count();
+                Check(result.Steps == 2 && result.Losses.All(float.IsFinite) && trained < all, $"{result.Steps} steps; {trained} of {all} tensors trained");
+            }
+
+            using var before = Idrak.Models.SafeTensorsReader.Open(Path.Combine(VitsTrainData("model"), "model.safetensors"));
+            using var after = Idrak.Models.SafeTensorsReader.Open(Path.Combine(root, "run", "checkpoint-2", "model.safetensors"));
+            int kept = 0, moved = 0;
+            foreach (string name in ((Idrak.Abstraction.Formats.ITensorStore)before).Names)
+            {
+                bool same = before.Read(name).AsSpan().SequenceEqual(after.Read(name));
+                if (name.StartsWith("decoder.", StringComparison.Ordinal))
+                {
+                    Check(same, $"the frozen decoder's {name} changed");
+                    kept++;
+                }
+                else if (!same)
+                {
+                    moved++;
+                }
+            }
+
+            Check(kept > 0 && moved > 0, $"{kept} decoder tensors kept, {moved} other tensors trained");
+            var state = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "run", "checkpoint-2", SpeechTrainer.StateFile)))!.ToJsonString();
+            Check(state.Contains("\"frozen\":[\"decoder\"]", StringComparison.Ordinal), "the run's options keep the frozen parts (a resume freezes them too)");
         }
         finally
         {

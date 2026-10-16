@@ -86,6 +86,12 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
     public Module Generator => Training.Generator;
 
     /// <inheritdoc />
+    public IReadOnlyList<string> Parts => Training.Generator.Parts;
+
+    /// <inheritdoc />
+    public void Freeze(IReadOnlyCollection<string> parts) => Training.Generator.Freeze(parts);
+
+    /// <inheritdoc />
     IAudioFeatureExtractor IAdversarialSpeechSynthesizer.Features => Training.Features;
 
     /// <inheritdoc />

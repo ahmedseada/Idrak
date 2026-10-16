@@ -66,6 +66,13 @@ public sealed record AdversarialSynthesisOptions
     /// </summary>
     public JsonObject? Discriminator { get; init; }
 
+    /// <summary>
+    /// The generator's parts kept as the base has them (<see cref="IAdversarialSpeechSynthesizer.Parts"/> names them; for
+    /// VITS "decoder" keeps the base's waveform generator, which the mel loss and young discriminators barely see above a
+    /// few kHz): their weights take no gradient and no optimizer state. Empty, the default: every part trains.
+    /// </summary>
+    public IReadOnlyList<string> Frozen { get; init; } = [];
+
     /// <summary>The options as JSON (<see cref="FromJson"/> reads it back).</summary>
     public JsonObject ToJson() => new()
     {
@@ -73,7 +80,7 @@ public sealed record AdversarialSynthesisOptions
         ["adversarial_weight"] = AdversarialWeight, ["feature_matching_weight"] = FeatureMatchingWeight, ["mels"] = Mels,
         ["mel_min_frequency"] = MelMinFrequency, ["mel_max_frequency"] = MelMaxFrequency, ["discriminator_learning_rate"] = DiscriminatorLearningRate,
         ["beta1"] = Beta1, ["beta2"] = Beta2, ["epsilon"] = Epsilon, ["keep_generator_pass"] = KeepGeneratorPass,
-        ["discriminator"] = Discriminator?.DeepClone(),
+        ["discriminator"] = Discriminator?.DeepClone(), ["frozen"] = new JsonArray([.. Frozen.Select(p => (JsonNode?)p)]),
     };
 
     /// <summary>Options from their JSON (<see cref="ToJson"/>); a key missing keeps the default.</summary>
@@ -98,6 +105,7 @@ public sealed record AdversarialSynthesisOptions
             Epsilon = (float?)json["epsilon"] ?? d.Epsilon,
             KeepGeneratorPass = (bool?)json["keep_generator_pass"] ?? d.KeepGeneratorPass,
             Discriminator = json["discriminator"] is JsonObject description ? (JsonObject)description.DeepClone() : null,
+            Frozen = json["frozen"] is JsonArray frozen ? [.. frozen.Select(p => (string)p!)] : [],
         };
     }
 
@@ -216,6 +224,23 @@ public interface IAdversarialSpeechSynthesizer : ISpeechSynthesizer
 
     /// <summary>The files of a saved folder only training reads (the discriminators), left out when the folder is installed as a voice.</summary>
     IReadOnlyList<string> TrainingFiles { get; }
+
+    /// <summary>The generator's parts <see cref="Freeze"/> can keep as they are, in the order the model reads them (none: it trains whole).</summary>
+    IReadOnlyList<string> Parts => [];
+
+    /// <summary>
+    /// Keeps <paramref name="parts"/> (of <see cref="Parts"/>) as they are for training: their weights take no gradient
+    /// and leave <see cref="Generator"/>'s parameters, so the optimizer neither steps nor holds state for them; they are
+    /// saved unchanged. Called once, before the trainer reads the parameters.
+    /// </summary>
+    /// <exception cref="ArgumentException">A part is not one of <see cref="Parts"/>.</exception>
+    void Freeze(IReadOnlyCollection<string> parts)
+    {
+        if (parts.Count > 0)
+        {
+            throw new ArgumentException($"A {Architecture} model keeps no part fixed (it names no parts); train it whole, without frozen parts.", nameof(parts));
+        }
+    }
 
     /// <summary>Writes the model (and its discriminators, as <see cref="TrainingFiles"/>) as a folder <c>SpeechSynthesisModels.Load</c> reads, the weights as they are now.</summary>
     void Save(string folder);
