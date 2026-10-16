@@ -516,6 +516,78 @@
    "bytes": 27692,
    "sha256": "db48de8ab23a6d562e86dea41083b500a1d1650181b7ca5813dfe68ce0b1be04"
   },
+  "tiny-vits-speakers-det/config.json": {
+   "bytes": 1534,
+   "sha256": "c7a15ffc23942175dba972a134bad410f9fdff8dd34d6d6bdafd94a82f0d6b22"
+  },
+  "tiny-vits-speakers-det/model.safetensors": {
+   "bytes": 410900,
+   "sha256": "4d10962db2a92c70d9d9a283a3edc932d43ebb3405b0c434c7c5e57f1e3a6202"
+  },
+  "tiny-vits-speakers-det/reference/input.json": {
+   "bytes": 224,
+   "sha256": "7072bc9b433a22a8032cbc907695034c8c63a17127e3330f9e54c3706993319c"
+  },
+  "tiny-vits-speakers-det/reference/waveform-0.npy": {
+   "bytes": 512,
+   "sha256": "691b76124dfc9288a8708cb6a9ed04d65b7066c0d90f8e121c069b0c98d4d7ad"
+  },
+  "tiny-vits-speakers-det/reference/waveform-1.npy": {
+   "bytes": 512,
+   "sha256": "3bb194f46dcb531421e823986bb06282eeb7f1ae00fd2861209b7f62e4001127"
+  },
+  "tiny-vits-speakers-det/reference/waveform-2.npy": {
+   "bytes": 640,
+   "sha256": "789904c1c9e201270935212941a8b9fa5902004ceff481b60ab4fdca1a2814e0"
+  },
+  "tiny-vits-speakers-det/speakers.json": {
+   "bytes": 30,
+   "sha256": "9182aec1c0757ee55c3652b42b66086e3e8440b700f284d910e4764d41a1edf2"
+  },
+  "tiny-vits-speakers-det/tensors.json": {
+   "bytes": 11826,
+   "sha256": "a3e0a7a28055625a278f9d7b9d67501cfdae1c1ab734f7b9fa4b6f62fb5011ef"
+  },
+  "tiny-vits-speakers-det/vocab.json": {
+   "bytes": 193,
+   "sha256": "a8c335b3edf501e0c9032930ca7c08d289c7741a8fd855504d9e447920cbfdc0"
+  },
+  "tiny-vits-speakers/config.json": {
+   "bytes": 1533,
+   "sha256": "b44a85da565afd5eeda36c58fe2405af0b1f96e6daea8489a1b44a679cfd300f"
+  },
+  "tiny-vits-speakers/model.safetensors": {
+   "bytes": 453872,
+   "sha256": "0b5d67be77d5b9432850264d79aa470ee75473559e858b469fc42ccf7ab48f48"
+  },
+  "tiny-vits-speakers/reference/input.json": {
+   "bytes": 226,
+   "sha256": "b34d0b3b801017104e2c2f1c5d072ca2929f5c331aafa20850a6775bed3acdaa"
+  },
+  "tiny-vits-speakers/reference/waveform-0.npy": {
+   "bytes": 832,
+   "sha256": "16781ddc9b54766d2e5a4dca9917c120935d0aba7ac5343980e80726940863a5"
+  },
+  "tiny-vits-speakers/reference/waveform-1.npy": {
+   "bytes": 832,
+   "sha256": "129015166797fcfffc83a231337fbb7797bc05d1798934d507b58c9d6306c745"
+  },
+  "tiny-vits-speakers/reference/waveform-2.npy": {
+   "bytes": 832,
+   "sha256": "898af76dc32bf9a69067a4f163c3fae90bd5d37122daa999a526f1a651bbe4c3"
+  },
+  "tiny-vits-speakers/speakers.json": {
+   "bytes": 30,
+   "sha256": "9182aec1c0757ee55c3652b42b66086e3e8440b700f284d910e4764d41a1edf2"
+  },
+  "tiny-vits-speakers/tensors.json": {
+   "bytes": 18990,
+   "sha256": "d4ee81091c4014344685612d71d73ba27019de47d0dcc2e82b14bfc9ece50442"
+  },
+  "tiny-vits-speakers/vocab.json": {
+   "bytes": 193,
+   "sha256": "a8c335b3edf501e0c9032930ca7c08d289c7741a8fd855504d9e447920cbfdc0"
+  },
   "tiny-vits/config.json": {
    "bytes": 1533,
    "sha256": "e760368738850cfa3c1a022b8c77e787ba8bb68fd18f2b7fb441bfdafbd5d749"
@@ -837,6 +909,7 @@
   "audio-language",
   "tts",
   "vits",
+  "vits-speakers",
   "voices",
   "vits-train",
   "transcripts"

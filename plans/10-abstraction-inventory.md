@@ -283,7 +283,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | Device | Methods overridden |
 |---|---|
 | `CpuBackend` | 130 of 176 |
-| `CudaBackend` | 171 of 176 |
+| `CudaBackend` | 172 of 176 |
 | `HipBackend` | 23 of 176 |
 | `VulkanBackend` | 128 of 176 |
 
@@ -405,7 +405,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `MatMulLowRankKernel(11)` | virtual |  | ✓ |  |  |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |
-| `MaxPoolBackwardKernel(4)` | virtual |  |  |  | ✓ |
+| `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  | ✓ |
 | `MaxPoolKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `MulAddKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `NormApplyKernel(7)` | virtual | ✓ | ✓ |  | ✓ |

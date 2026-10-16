@@ -32,14 +32,29 @@ decoded again in halves. Within a piece, with gradients off, each stage and resi
 with the same samples bit for bit (and 93 s against 149 s). With gradients on, one pass, every intermediate kept.
 
 Every size, rate and scale is read from `config.json` (`VitsConfig`); `SpeechSynthesisOptions` carries the rate, the two
-noise scales (null: the checkpoint's), the seed, the voice (multi-speaker checkpoints: the speaker index), the output
+noise scales (null: the checkpoint's), the seed, the voice (multi-speaker checkpoints: the speaker), the output
 rate (resampled) and the sentence split (`MaxCharacters`: the pieces of `SpeakStream`).
+
+## Recorded speakers (plan 21, S9 route A)
+
+A multi-speaker checkpoint (`num_speakers` and `speaker_embedding_size` in config.json, VCTK's shape) speaks each of
+its recorded speakers: the speaker's row of `embed_speaker` conditions the duration predictor, every WaveNet layer of
+the flow and the decoder, as transformers' `VitsModel` does with a `speaker_id`. `Voices` lists them by the names of a
+`speakers.json` beside config.json (a list in index order, `["p225", "p226"]`, or a map of names to indices; speakers
+it leaves out keep their indices), else by index: as far as this plug-in knows, a hub checkpoint's config holds only
+the count, so write the names yourself when you know them. `--voice` (`SpeechSynthesisOptions.Voice`) takes a name in
+any case or an index; no voice speaks the first speaker. `idrak speak MODEL --list-voices` lists them;
+`VoicedSynthesizer` looks for a checkpoint speaker before the installed voices. Only single-speaker checkpoints
+fine-tune (route C, below).
 
 ## Checked against the fixture
 
 `tests/Idrak.Tests/data/audio/tiny-vits` (a seeded `VitsModel`, hidden 32, 2 layers, 2 heads, flow 32, upsampling
 4 × 4) with `noise_scale` 0 and `noise_scale_duration` 0: the ids of "abc ab" give `reference/waveform.npy` (112
 samples) within 1e-4 (`IDRAK_FILTER="audio tts"`). The owner runs a real MMS-TTS checkpoint on the GPUs.
+`tiny-vits-speakers` and `tiny-vits-speakers-det` (three speakers, an 8-wide embedding; the stochastic and the
+deterministic duration predictor) give transformers' waveform of each speaker within 1e-3 of its largest sample
+(`IDRAK_FILTER="audio voices: recorded speakers"`).
 
 ## Romanisation (decision 3 of plan 21)
 
@@ -98,7 +113,7 @@ been listened to. The discriminators start new, so for the first thousand steps 
 and the sound can get worse before it gets better. From clean, accurately transcribed speech, a few thousand steps
 should give a voice recognisably the person's with the base model's pronunciation; Arabic goes through uroman
 romanisation (no diacritics) as MMS was trained, so its pronunciation errors stay. Fine-tuning runs without dropout (a
-later setting). On CUDA the convolution's backward does not yet sum in a fixed order, so runs are not bit for bit there.
+later setting). The convolution's backward sums in a fixed order on CUDA too, so runs resume bit for bit there.
 
 ## Not done
 

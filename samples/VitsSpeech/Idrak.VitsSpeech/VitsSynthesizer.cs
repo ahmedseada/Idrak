@@ -44,7 +44,7 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
         if (config.SpeakerEmbeddingSize > 0 && config.Speakers > 1)
         {
             _speakers = weights.Tensor("embed_speaker.weight", config.Speakers, config.SpeakerEmbeddingSize);
-            _voices = [.. Enumerable.Range(0, config.Speakers).Select(i => i.ToString(CultureInfo.InvariantCulture))];
+            _voices = SpeakerNames(folder, config.Speakers);
         }
         else
         {
@@ -133,8 +133,50 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
     /// <inheritdoc />
     public int SampleRate => Config.SamplingRate;
 
-    /// <inheritdoc />
+    /// <summary>
+    /// The checkpoint's recorded speakers (route A of plan 21's S9), by name: those of <see cref="SpeakersFile"/> beside
+    /// config.json (VCTK's p225, ... as an app writes them; the hub's config.json holds only their count), else their
+    /// indices. <see cref="SpeechSynthesisOptions.Voice"/> takes a name (any case) or an index; without a voice the
+    /// first speaker speaks (the contract's default). Empty for a single-speaker checkpoint.
+    /// </summary>
     public IReadOnlyList<string> Voices => _voices;
+
+    /// <summary>
+    /// The speakers' names beside config.json: a JSON array in index order (<c>["p225", "p226"]</c>) or an object of
+    /// names and indices (<c>{"p225": 0}</c>); speakers it leaves out keep their indices.
+    /// </summary>
+    public const string SpeakersFile = "speakers.json";
+
+    // The speakers' names: speakers.json's, else the indices.
+    private static string[] SpeakerNames(string? folder, int count)
+    {
+        var names = Enumerable.Range(0, count).Select(i => i.ToString(CultureInfo.InvariantCulture)).ToArray();
+        string? path = folder is null ? null : Path.Combine(folder, SpeakersFile);
+        if (path is null || !File.Exists(path))
+        {
+            return names;
+        }
+
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path));
+        IEnumerable<(string? Name, int Index)> given = json switch
+        {
+            System.Text.Json.Nodes.JsonArray list => list.Select((n, i) => ((string?)n, i)),
+            System.Text.Json.Nodes.JsonObject map => map.Select(p => ((string?)p.Key, p.Value is System.Text.Json.Nodes.JsonValue v && v.TryGetValue(out int i) ? i : -1)),
+            _ => throw new InvalidDataException($"{path} is a list of the speakers' names in index order, or an object of names and indices."),
+        };
+        foreach (var (name, index) in given)
+        {
+            if (string.IsNullOrWhiteSpace(name) || (uint)index >= (uint)count)
+            {
+                throw new InvalidDataException($"{path}: '{name}' at {index} is not a name of one of the checkpoint's {count} speakers (0 to {count - 1}).");
+            }
+
+            names[index] = name;
+        }
+
+        var repeated = names.GroupBy(n => n, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
+        return repeated is null ? names : throw new InvalidDataException($"{path} names two speakers '{repeated.Key}'.");
+    }
 
     /// <summary>
     /// The seconds of sound the decoder makes in one piece (each piece with its context, so the samples are a whole
@@ -310,7 +352,8 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
         return (samples, durations, modelTime, Stopwatch.GetElapsedTime(decoderStart));
     }
 
-    // The speaker's embedding as a column [E, 1], or null for a single-speaker model.
+    // The speaker's embedding as a column [E, 1] (the first speaker's when no voice is asked for), or null for a
+    // single-speaker model.
     private Tensor? Speaker(string? voice)
     {
         if (_speakers is null)
@@ -323,14 +366,31 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
             return null;
         }
 
-        int index = 0;
-        if (voice is not null && (!int.TryParse(voice, NumberStyles.Integer, CultureInfo.InvariantCulture, out index) || index < 0 || index >= _voices.Length))
+        return _speakers.EmbeddingLookup(VitsOps.Indices([voice is null ? 0 : SpeakerIndex(voice)], Device)).Transpose();
+    }
+
+    /// <summary>The index of speaker <paramref name="voice"/>: one of <see cref="Voices"/> (any case), or an index.</summary>
+    /// <exception cref="ArgumentException">Not a speaker of this model; the message lists them.</exception>
+    public int SpeakerIndex(string voice)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(voice);
+        int named = Array.FindIndex(_voices, n => n.Equals(voice, StringComparison.OrdinalIgnoreCase));
+        if (named >= 0)
         {
-            throw new ArgumentException($"Voice '{voice}' is not one of this model's {_voices.Length} speakers (0 to {_voices.Length - 1}).", nameof(voice));
+            return named;
         }
 
-        return _speakers.EmbeddingLookup(VitsOps.Indices([index], Device)).Transpose();
+        if (int.TryParse(voice, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index) && (uint)index < (uint)_voices.Length)
+        {
+            return index;
+        }
+
+        throw new ArgumentException(_voices.Length == 0
+            ? $"This model has one voice; '{voice}' was asked for."
+            : $"Voice '{voice}' is not one of this model's {_voices.Length} speakers ({Listed(_voices)}, or 0 to {_voices.Length - 1}).", nameof(voice));
     }
+
+    private static string Listed(string[] names) => names.Length <= 12 ? string.Join(", ", names) : $"{string.Join(", ", names.Take(12))}, …";
 
     /// <inheritdoc />
     public void Dispose()

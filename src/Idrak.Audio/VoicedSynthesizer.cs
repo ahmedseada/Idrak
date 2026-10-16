@@ -54,12 +54,16 @@ public sealed class VoicedSynthesizer : ISpeechSynthesizer
     /// <summary>The checkpoint's speakers, then the installed voices of the store (the given one, or "folder").</summary>
     public IReadOnlyList<string> Voices => [.. _synthesizer.Voices, .. (_store ?? VoiceStores.Get()).List().Select(v => v.Name)];
 
+    // A speaker of the checkpoint: one of its voices (any case), or the index of one.
+    private bool IsSpeaker(string name) => _synthesizer.Voices.Contains(name, StringComparer.OrdinalIgnoreCase)
+        || int.TryParse(name, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int index) && index < _synthesizer.Voices.Count;
+
     /// <summary>How <paramref name="options"/>' voice resolves: who speaks, with what options, and the conversion after (null converter: none).</summary>
     public (ISpeechSynthesizer Speaker, SpeechSynthesisOptions Options, IVoiceConverter? Converter, float[]? Target) Resolve(SpeechSynthesisOptions? options = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         options ??= new SpeechSynthesisOptions();
-        if (options.Voice is not { } name || _synthesizer.Voices.Contains(name, StringComparer.Ordinal))
+        if (options.Voice is not { } name || IsSpeaker(name))
         {
             return (_synthesizer, options, null, null);
         }
