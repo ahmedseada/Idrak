@@ -1176,6 +1176,14 @@ pace (about 5 frames a letter, 600 steps at 2e-3), the spoken lengths now come w
 drifted to 15% long and rising). The owner's run again decides the real checkpoint; the hiss in its pauses (about
 -42 dB against -78 dB in the recordings, the same at noise 0) is looked at after it.
 
+**The fix on the owner's card (2026-10-16).** mms-tts-ara fine-tuned 3000 steps on one 8.5 s phone recording (48 kHz
+WAV, unprocessed source): the sentence spoken in 8.58 s against 8.48 s recorded (9.4 against 9.6 characters a second;
+the run before the fix spoke a piece 2.6 times too fast), the pitch 106 Hz against 104 (90-129 against 90-128), the
+pitch movement 3.2 against 2.9 semitones, the pauses where the owner made them (0.70 and 0.58 s against 0.66 and
+0.64). The owner: "a big big improvement". Route B (OpenVoice v2 on the same clip) for comparison: the pitch matched,
+the pace the base speaker's (7.7 characters a second), the melody flatter (2.4), brighter (centroid 1419 against 1295
+Hz). Still open: the fine-tuned model's pauses hiss at -44 dB under its peak against -55 in the recording.
+
 ## Order and parallelism
 
 S0 → S1 → S2 (one agent: S2 needs S1's `AudioData`) and S3 (a second agent: it needs S1's part type only) → S4 (the core
