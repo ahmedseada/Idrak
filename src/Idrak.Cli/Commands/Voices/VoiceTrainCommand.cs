@@ -392,7 +392,9 @@ internal sealed class VoiceTrainCommand : Command
     {
         public void Report(SpeechTrainingProgress p)
         {
-            if (p.Stage != "step" && p.Evaluation is null)
+            // A step's last report ("step") carries its held-out score too, so the "evaluate" and "checkpoint" reports
+            // before it print nothing: one line a step.
+            if (p.Stage != "step")
             {
                 return;
             }

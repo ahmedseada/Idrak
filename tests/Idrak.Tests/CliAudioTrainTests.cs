@@ -149,6 +149,12 @@ internal static partial class Tests
                 $"runs show of a run with held-out scores: {scoredRun["history"]} best {scoredRun["bestEpoch"]}");
             var scoredText = TrainCli("runs", "show", scored);
             Check(scoredText.Out.Contains("val_cer", StringComparison.Ordinal) && scoredText.Out.Contains("metric cer", StringComparison.Ordinal), $"runs show text: {scoredText.Out}");
+            // Scored and saved every step, the text run still prints one line a step, the held-out score on it.
+            var printed = TrainCli(["pretrain", model, "--data", transcripts, "--eval", transcripts, "--eval-every", "1", "--save-every", "1", "-o", Path.Combine(root, "printed"),
+                "-P", IdrakAudioPluginPath, "-d", d, .. CliToneTrainingArgs(3)]);
+            var stepLines = (printed.Out + "\n" + printed.Err).Split('\n').Where(l => l.TrimStart().StartsWith("step ", StringComparison.Ordinal)).ToList();
+            Check(printed.Code == 0 && stepLines.Count == 3 && stepLines.All(l => l.Contains("held-out", StringComparison.Ordinal)),
+                $"one line a step, each with its held-out score (a step's evaluate and checkpoint reports print nothing): {printed.Code} {string.Join(" | ", stepLines)} {printed.Err}");
             var refused = TrainCli("pretrain", model, "--data", transcripts, "--tokens", "tokens.bin", "-o", Path.Combine(root, "x"), "-P", IdrakAudioPluginPath);
             Check(refused.Code == 2 && refused.Err.Contains("--tokens", StringComparison.Ordinal) && refused.Err.Contains("speech model", StringComparison.Ordinal),
                 $"a text option on a speech model: {refused.Code} {refused.Err}");
