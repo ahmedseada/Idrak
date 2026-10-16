@@ -182,7 +182,7 @@ internal sealed partial class CpuBackend
                 for (int j = 0; j < cols; j++)
                 {
                     float v = xv[o + j] + bv[j];
-                    yv[o + j] = 0.5f * v * (1f + MathF.Tanh(GeluK * (v + GeluC * v * v * v)));
+                    yv[o + j] = 0.5f * v * (1f + CpuMath.Tanh(GeluK * (v + GeluC * v * v * v)));
                 }
             }
         });

@@ -147,8 +147,26 @@ internal static partial class VulkanKernels
     // One workgroup per row: group g takes rows g, g + groups, … (uniform within the group, so barriers are allowed).
     private static void EachRow(KernelBuilder k, Val rows, Action<Val> body) => k.For(k.GroupX, rows, body, k.GroupsX);
 
-    // tanh(u) = 1 - 2 / (e^(2u) + 1): saturates cleanly to ±1 where e^(2u) overflows or underflows (as the CPU's vector path).
-    private static Val Tanh(KernelBuilder k, Val u) => 1f - 2f / (k.Exp(u + u) + 1f);
+    // tanh as the CPU's (TanhRational): the clamped input's odd rational, ±1 past |u| = 9, NaN kept where the driver keeps
+    // NaNs. A small tanh keeps its relative precision, and no exponential is needed.
+    private static Val Tanh(KernelBuilder k, Val u)
+    {
+        var (a, b) = (TanhRational.A, TanhRational.B);
+        var c = k.Min(k.Max(u, k.Float(-TanhRational.Clamp)), k.Float(TanhRational.Clamp));
+        var x2 = c * c;
+        var p = k.Fma(x2, k.Float(a[6]), k.Float(a[5]));
+        for (int i = 4; i >= 0; i--)
+        {
+            p = k.Fma(x2, p, k.Float(a[i]));
+        }
+
+        var q = k.Fma(x2, k.Float(b[3]), k.Float(b[2]));
+        q = k.Fma(x2, q, k.Float(b[1]));
+        q = k.Fma(x2, q, k.Float(b[0]));
+        var r = p * c / q;
+        r = k.Select(u > TanhRational.Saturated, k.Float(1f), k.Select(u < -TanhRational.Saturated, k.Float(-1f), r));
+        return k.Select(u.Eq(u), r, u);
+    }
 
     private static Val Sigmoid(KernelBuilder k, Val x) => 1f / (1f + k.Exp(-x));
 

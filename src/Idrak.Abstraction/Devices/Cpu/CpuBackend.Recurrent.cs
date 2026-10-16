@@ -94,11 +94,7 @@ internal sealed partial class CpuBackend
 
     private static Vector<float> SigmoidLanes(Vector<float> x) => Vector<float>.One / (Vector<float>.One + Vector.Exp(-x));
 
-    private static Vector<float> TanhLanes(Vector<float> x)
-    {
-        var two = new Vector<float>(2f);
-        return Vector<float>.One - two / (Vector.Exp(x * two) + Vector<float>.One);
-    }
+    private static Vector<float> TanhLanes(Vector<float> x) => CpuMath.Tanh(x);
 
     // An LSTM step for rows [start, end): reads the step's projected row and the recurrent product, updates the cell and
     // hidden states in place, writes the output row and (training) the gates and the cell.
@@ -146,9 +142,9 @@ internal sealed partial class CpuBackend
 
                 for (; j < h; j++)
                 {
-                    float input = SigmoidOf(p[j] + q[j]), forget = SigmoidOf(p[h + j] + q[h + j]), candidate = MathF.Tanh(p[2 * h + j] + q[2 * h + j]);
+                    float input = SigmoidOf(p[j] + q[j]), forget = SigmoidOf(p[h + j] + q[h + j]), candidate = CpuMath.Tanh(p[2 * h + j] + q[2 * h + j]);
                     float outputGate = SigmoidOf(p[3 * h + j] + q[3 * h + j]);
-                    float next = forget * c[j] + input * candidate, state = outputGate * MathF.Tanh(next);
+                    float next = forget * c[j] + input * candidate, state = outputGate * CpuMath.Tanh(next);
                     c[j] = next;
                     hid[j] = state;
                     o[j] = state;
@@ -223,7 +219,7 @@ internal sealed partial class CpuBackend
                 {
                     float input = g[j], forget = g[h + j], candidate = g[2 * h + j], outputGate = g[3 * h + j];
                     float dState = dh[j] + (dy.IsEmpty ? 0f : dy[j]);
-                    float t = MathF.Tanh(c[j]);
+                    float t = CpuMath.Tanh(c[j]);
                     float dNext = dc[j] + dState * outputGate * (1f - t * t);
                     float before = cp.IsEmpty ? 0f : cp[j];
                     float di = dNext * candidate * input * (1f - input), df = dNext * before * forget * (1f - forget);
@@ -285,7 +281,7 @@ internal sealed partial class CpuBackend
                 {
                     float reset = SigmoidOf(p[j] + q[j]), update = SigmoidOf(p[h + j] + q[h + j]);
                     float term = q[2 * h + j] + (b.IsEmpty ? 0f : b[j]);
-                    float candidate = MathF.Tanh(p[2 * h + j] + reset * term);
+                    float candidate = CpuMath.Tanh(p[2 * h + j] + reset * term);
                     float state = (1f - update) * candidate + update * hid[j];
                     hid[j] = state;
                     o[j] = state;

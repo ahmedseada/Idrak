@@ -773,7 +773,7 @@ internal sealed partial class CpuBackend
             case 1:
             {
                 const float K = 0.7978845608f, C = 0.044715f;
-                float t = MathF.Tanh(K * (g + C * g * g * g));
+                float t = CpuMath.Tanh(K * (g + C * g * g * g));
                 return (0.5f * g * (1f + t), 0.5f * (1f + t) + 0.5f * g * (1f - t * t) * K * (1f + 3f * C * g * g));
             }
 

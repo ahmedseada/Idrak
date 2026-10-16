@@ -14,7 +14,7 @@ internal static partial class Tests
     [
         ("audio tts: Stft.Inverse gives a random signal back from ComplexOnHost within 1e-4 away from the edges (centred and not), SamplesFor names the length, and a hop the window does not cover is refused", AudioTtsInverseStft),
         ("audio tts: Griffin-Lim on a tone's magnitudes gives a tone of the same frequency, finite and of the frames' length; the same spectrogram and seed twice give the same samples; the vocoder registry has griffin-lim as the library default and makes it from a log-mel whose peak band is the tone's", AudioTtsGriffinLim),
-        ("audio tts: the VITS plug-in loads tiny-vits and speaks the fixture's ids with noise 0 within 1e-4 of reference/waveform.npy at the config's rate (the durations' frames times the hop), the same twice, Rate 2 no longer, text through the tokenizer equal to the ids, SpeakStream joined equal to Speak, the WAV saved and read back; without the plug-in the family is refused", AudioTtsVitsFixture),
+        ("audio tts: the VITS plug-in loads tiny-vits and speaks the fixture's ids with noise 0 within 1e-3 of reference/waveform.npy's largest sample (not silent) at the config's rate (the durations' frames times the hop), the same twice, Rate 2 no longer, text through the tokenizer equal to the ids, SpeakStream joined equal to Speak, the WAV saved and read back; without the plug-in the family is refused", AudioTtsVitsFixture),
         ("audio tts: the VITS decoder in pieces (DecoderChunkSeconds) with its context frames on both sides gives one pass's samples within 1e-6 (pieces of 3, 7 and 50 frames, through Synthesize and the vocoder), where 50 frames decoded without context differ near the cut 100 times more; on the CPU its peak memory stays within 1.5 times while the latents grow fivefold", AudioTtsDecoderPieces),
         ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, phonemizes for a phonemize checkpoint through TextPhonemizers (the language from tokenizer_config.json, punctuation kept in place; an unregistered phonemizer and espeak-ng not found refused naming the remedy), romanises Arabic for a uroman checkpoint (uroman's output exactly on the tool's cases) and refuses a script no romanizer covers, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
     ];
@@ -149,7 +149,10 @@ internal static partial class Tests
             var (audio, durations) = vits.Synthesize(ids, deterministic);
             Check(audio.SampleRate == 16000 && audio.Channels == 1, $"the sound is {audio.Channels} x {audio.Length} at {audio.SampleRate} Hz");
             Check(audio.Length == durations.Sum() * 16 && audio.Length == expected.Length, $"{audio.Length} samples for durations [{string.Join(", ", durations)}] (x 16), the reference has {expected.Length}");
-            AssertClose(expected, audio.Samples, 1e-4f, "the waveform against reference/waveform.npy");
+            // Relative to the reference's largest sample (about 6e-5 here, under any absolute tolerance), and not silent.
+            float largest = expected.Max(MathF.Abs);
+            Check(largest > 0 && audio.Samples.Max(MathF.Abs) >= 0.5f * largest, $"the waveform is not silent: largest {audio.Samples.Max(MathF.Abs):G3}, the reference's {largest:G3}");
+            AssertClose(expected, audio.Samples, 1e-3f * largest, $"the waveform against reference/waveform.npy (largest sample {largest:G3})");
 
             var (again, _) = vits.Synthesize(ids, deterministic);
             Check(again.Samples.AsSpan().SequenceEqual(audio.Samples), "the same ids twice give the same samples");
