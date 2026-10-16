@@ -40,9 +40,13 @@ internal static class ModelCache
     /// </summary>
     public static Downloader Downloader(CommandContext context, bool refresh = false) => Http.Downloader(context, refresh: refresh);
 
+    // The weights that make a pulled subfolder a model folder (safetensors, or a PyTorch checkpoint read without running it).
+    private static readonly string[] SubfolderWeights = ["*.safetensors", "*.pth", "*.bin", "*.pt"];
+
     /// <summary>
-    /// Every model in the cache, newest use first: Idrak's downloads and GGUF files; with <paramref name="all"/> also the
-    /// folders prepared from GGUF files and the models in Hugging Face's own cache.
+    /// Every model in the cache, newest use first: Idrak's downloads and GGUF files (a repository's model folders pulled
+    /// as owner/name/FOLDER by that name); with <paramref name="all"/> also the folders prepared from GGUF files and the
+    /// models in Hugging Face's own cache.
     /// </summary>
     public static List<Entry> Scan(string cacheFolder, bool all = false)
     {
@@ -66,14 +70,32 @@ internal static class ModelCache
                             entries.Add(new Entry($"{id}/{file}", "gguf", gguf, commit, new FileInfo(gguf).Length, GgufFormat(gguf), LastUse(uses, gguf), true));
                         }
 
+                        bool parts = Directory.EnumerateFiles(revision, "*.part", SearchOption.AllDirectories).Any();
                         bool complete = File.Exists(System.IO.Path.Combine(revision, "config.json"))
-                                        && Directory.EnumerateFiles(revision, "*.safetensors").Any()
-                                        && !Directory.EnumerateFiles(revision, "*.part", SearchOption.AllDirectories).Any();
+                                        && Directory.EnumerateFiles(revision, "*.safetensors").Any() && !parts;
                         if (complete)
                         {
                             entries.Add(new Entry(id, "huggingface", revision, commit, FolderBytes(revision), SafeTensorsFormat(revision), LastUse(uses, revision), true));
                         }
-                        else if (ggufs.Length == 0 || Directory.EnumerateFiles(revision, "*.part", SearchOption.AllDirectories).Any())
+
+                        // A repository's own model folders, pulled as owner/name/FOLDER (a converter beside its base, a
+                        // model per subfolder): each folder under the revision with config.json and weights, by that name.
+                        int folders = 0;
+                        foreach (string config in Directory.EnumerateFiles(revision, "config.json", SearchOption.AllDirectories))
+                        {
+                            string folder = System.IO.Path.GetDirectoryName(config)!;
+                            if (string.Equals(folder, revision, StringComparison.Ordinal) || parts || !SubfolderWeights.Any(w => Directory.EnumerateFiles(folder, w).Any()))
+                            {
+                                continue;
+                            }
+
+                            string sub = System.IO.Path.GetRelativePath(revision, folder).Replace('\\', '/');
+                            entries.Add(new Entry($"{id}/{sub}", "huggingface", folder, commit, FolderBytes(folder),
+                                Directory.EnumerateFiles(folder, "*.safetensors").Any() ? SafeTensorsFormat(folder) : "pytorch", LastUse(uses, folder), true));
+                            folders++;
+                        }
+
+                        if (!complete && (ggufs.Length == 0 && folders == 0 || parts))
                         {
                             entries.Add(new Entry(id, "partial", revision, commit, FolderBytes(revision), "partial download", LastUse(uses, revision), true));
                         }

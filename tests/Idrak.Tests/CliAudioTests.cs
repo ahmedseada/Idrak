@@ -196,6 +196,22 @@ internal static partial class Tests
             var clips = installed["clips"]!.AsArray();
             Check(clips.Count == 2 && clips.All(c => (bool)c!["flagged"]!) && (string?)clips[0]!["file"] == "stereo16.wav", $"the clips, all flagged under 1: {clips}");
 
+            // A converter pulled as a repository's subfolder (owner/name/FOLDER, OpenVoiceV2/converter's layout: no
+            // config.json at the revision's top, a .pth checkpoint) is listed and found by that id.
+            string cache = Path.Combine(root, "cache"), pulled = Path.Combine(cache, "downloads", "huggingface", "models", "test", "openvoice", "0123456789ab", "converter");
+            Directory.CreateDirectory(pulled);
+            foreach (string file in new[] { "config.json", "checkpoint.pth" })
+            {
+                File.Copy(Path.Combine(converter, file), Path.Combine(pulled, file));
+            }
+
+            var cached = AudioCliJson("list", "--cache", cache);
+            Check(cached["models"]!.AsArray().Any(m => (string?)m!["name"] == "test/openvoice/converter" && (string?)m["kind"] == "huggingface"), $"the pulled subfolder listed by its id: {cached}");
+            var fromCache = AudioCli("voice", "add", "cached", "--from", pcm, "--converter", "test/openvoice/converter", "--cache", cache, "-P", OpenVoicePluginPath, "--voices", store,
+                "--consent", Consent, "-d", d);
+            Check(fromCache.Code == 0 && fromCache.Out.Contains("installed 'cached'", StringComparison.Ordinal), $"voice add --converter owner/name/FOLDER from the cache: {fromCache.Out}\n{fromCache.Err}");
+            Check(AudioCli("voice", "remove", "cached", "--voices", store).Code == 0, "the cached converter's voice removed");
+
             var text = AudioCli("voice", "show", "tester", "--voices", store);
             Check(text.Code == 0 && text.Out.Contains(Consent, StringComparison.Ordinal) && text.Out.Contains("agreement", StringComparison.Ordinal) && !text.Out.Contains("<- far", StringComparison.Ordinal),
                 $"voice show (agreements under the default 0.8 flagged only): {text.Out}");
