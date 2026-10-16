@@ -285,16 +285,12 @@ internal static partial class PtxKernels
             st.global.f32 [%a_y], %f3;
             """);
 
-        // tanh(x) = 1 - 2 / (2^(2x * log2(e)) + 1)
+        // tanh as the CPU's (TanhOf).
         Elementwise(sb, "tanh_f32", ["x", "y"], [],
             $"""
             ld.global.f32 %f1, [%a_x];
-            mul.f32 %f2, %f1, {F(2.8853900817779268f)};
-            ex2.approx.ftz.f32 %f2, %f2;
-            add.f32 %f2, %f2, {One};
-            rcp.rn.f32 %f3, %f2;
-            fma.rn.f32 %f4, %f3, {F(-2f)}, {One};
-            st.global.f32 [%a_y], %f4;
+            {TanhOf("%f6", "%f1", "%f2", "%f3", "%f4", "%f5", "%p1")}
+            st.global.f32 [%a_y], %f6;
             """);
 
         Elementwise(sb, "relu_f32", ["x", "y"], [],
@@ -500,6 +496,36 @@ internal static partial class PtxKernels
     }
 
     /// <summary>Formats a float as a PTX hexadecimal literal (bit-exact).</summary>
+    // target = tanh(x) as the CPU computes it, bit for bit (TanhRational): the clamped input's odd rational, with mul.rn so
+    // the products are not contracted into FMAs the CPU does not take, and div.rn; ±1 past |x| = 9 and NaN kept. Uses the
+    // f32 scratch registers s0-s3 and the predicate p; x is read again at the end, so it must not be one of them.
+    private static string TanhOf(string target, string x, string s0, string s1, string s2, string s3, string p)
+    {
+        var (a, b) = (TanhRational.A, TanhRational.B);
+        return $"""
+            max.f32 {s0}, {x}, {F(-TanhRational.Clamp)};
+            min.f32 {s0}, {s0}, {F(TanhRational.Clamp)};
+            mul.rn.f32 {s1}, {s0}, {s0};
+            fma.rn.f32 {s2}, {s1}, {F(a[6])}, {F(a[5])};
+            fma.rn.f32 {s2}, {s1}, {s2}, {F(a[4])};
+            fma.rn.f32 {s2}, {s1}, {s2}, {F(a[3])};
+            fma.rn.f32 {s2}, {s1}, {s2}, {F(a[2])};
+            fma.rn.f32 {s2}, {s1}, {s2}, {F(a[1])};
+            fma.rn.f32 {s2}, {s1}, {s2}, {F(a[0])};
+            mul.rn.f32 {s2}, {s2}, {s0};
+            fma.rn.f32 {s3}, {s1}, {F(b[3])}, {F(b[2])};
+            fma.rn.f32 {s3}, {s1}, {s3}, {F(b[1])};
+            fma.rn.f32 {s3}, {s1}, {s3}, {F(b[0])};
+            div.rn.f32 {target}, {s2}, {s3};
+            setp.gt.f32 {p}, {x}, {F(TanhRational.Saturated)};
+            @{p} mov.f32 {target}, {One};
+            setp.lt.f32 {p}, {x}, {F(-TanhRational.Saturated)};
+            @{p} mov.f32 {target}, {F(-1f)};
+            setp.nan.f32 {p}, {x}, {x};
+            @{p} mov.f32 {target}, {x};
+            """;
+    }
+
     private static string F(float value) => "0f" + BitConverter.SingleToUInt32Bits(value).ToString("X8", CultureInfo.InvariantCulture);
 
     /// <summary>

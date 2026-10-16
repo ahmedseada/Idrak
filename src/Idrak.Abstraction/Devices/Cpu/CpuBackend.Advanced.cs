@@ -927,9 +927,8 @@ internal sealed partial class CpuBackend
     private const float GeluK = 0.7978845608f;
     private const float GeluC = 0.044715f;
 
-    /// <summary>tanh(u) = 1 - 2 / (e^(2u) + 1), vectorized; saturates cleanly to ±1.</summary>
-    private static Vector<float> TanhVector(Vector<float> u) =>
-        Vector<float>.One - new Vector<float>(2f) / (Vector.Exp(u + u) + Vector<float>.One);
+    /// <summary>tanh of each lane (<see cref="CpuMath.Tanh(Vector{float})"/>).</summary>
+    private static Vector<float> TanhVector(Vector<float> u) => CpuMath.Tanh(u);
 
     private readonly struct GeluLoop(float[] x, float[] y) : IRangeKernel
     {
@@ -952,7 +951,7 @@ internal sealed partial class CpuBackend
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
             {
                 float v = xs[i];
-                ys[i] = 0.5f * v * (1f + MathF.Tanh(GeluK * (v + GeluC * v * v * v)));
+                ys[i] = 0.5f * v * (1f + CpuMath.Tanh(GeluK * (v + GeluC * v * v * v)));
             }
         }
     }
@@ -984,7 +983,7 @@ internal sealed partial class CpuBackend
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
             {
                 float v = xs[i];
-                float t = MathF.Tanh(GeluK * (v + GeluC * v * v * v));
+                float t = CpuMath.Tanh(GeluK * (v + GeluC * v * v * v));
                 float derivative = 0.5f * (1f + t) + 0.5f * v * (1f - t * t) * GeluK * (1f + 3f * GeluC * v * v);
                 ds[i] += gs[i] * derivative;
             }

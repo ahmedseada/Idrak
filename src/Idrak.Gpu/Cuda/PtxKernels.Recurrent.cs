@@ -897,12 +897,6 @@ internal static partial class PtxKernels
         rcp.rn.f32 {target}, %f22;
         """;
 
-    // tanh(x) as tanh_f32 computes it (uses %f22).
-    private static string Tanh(string target, string x) => $"""
-        mul.f32 %f22, {x}, {F(2.8853900817779268f)};
-        ex2.approx.ftz.f32 %f22, %f22;
-        add.f32 %f22, %f22, {One};
-        rcp.rn.f32 %f22, %f22;
-        fma.rn.f32 {target}, %f22, {F(-2f)}, {One};
-        """;
+    // tanh(x) as tanh_f32 computes it (uses %f22-%f25 and %p4).
+    private static string Tanh(string target, string x) => TanhOf(target, x, "%f22", "%f23", "%f24", "%f25", "%p4");
 }

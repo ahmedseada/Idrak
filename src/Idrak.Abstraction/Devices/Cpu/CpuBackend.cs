@@ -600,17 +600,14 @@ internal sealed partial class CpuBackend : Backend
             var ys = y.AsSpan(start, end - start);
             var xv = MemoryMarshal.Cast<float, Vector<float>>(xs);
             var yv = MemoryMarshal.Cast<float, Vector<float>>(ys);
-            var one = Vector<float>.One;
-            var two = new Vector<float>(2f);
             for (int i = 0; i < xv.Length; i++)
             {
-                // tanh(x) = 1 - 2 / (e^(2x) + 1); saturates cleanly to +-1 when e^(2x) overflows or underflows.
-                yv[i] = one - two / (Vector.Exp(xv[i] * two) + one);
+                yv[i] = CpuMath.Tanh(xv[i]);
             }
 
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
             {
-                ys[i] = MathF.Tanh(xs[i]);
+                ys[i] = CpuMath.Tanh(xs[i]);
             }
         }
     }
