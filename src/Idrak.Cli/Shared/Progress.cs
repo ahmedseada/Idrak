@@ -54,7 +54,8 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 
     public long? Total { get; set; }
 
-    public ProgressUnit Unit { get; }
+    /// <summary>What the counts are (a stage may change it: bytes read, then items made).</summary>
+    public ProgressUnit Unit { get; set; }
 
     /// <summary>Whether the line is drawn.</summary>
     public bool Enabled { get; }

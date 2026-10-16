@@ -154,6 +154,37 @@ internal static partial class Tests
                     $"--align writes the library's {expected.Count} alignments ({written.Count})");
             }
 
+            // The same utterances as a folder of name.wav + name.txt: --align on the folder (no -o: alignments.jsonl inside it),
+            // and data tokenizer --from the transcripts and the folder, each as the library reads them.
+            string pairs = Path.Combine(root, "pairs");
+            Directory.CreateDirectory(pairs);
+            foreach (var row in File.ReadAllLines(transcripts).Where(l => l.Length > 0).Select(l => JsonNode.Parse(l)!.AsObject()))
+            {
+                string name = (string)row["audio"]!;
+                File.Copy(Path.Combine(Path.GetDirectoryName(transcripts)!, name), Path.Combine(pairs, name));
+                File.WriteAllText(Path.Combine(pairs, Path.ChangeExtension(name, ".txt")), (string)row["text"]!);
+            }
+
+            var folderAlignment = AudioCliJson("data", "audio", pairs, "--align", model, "-P", IdrakAudioPluginPath, "-d", d);
+            string folderAlignments = Path.Combine(pairs, "alignments.jsonl");
+            Check((string?)folderAlignment["source"] == SpeechSources.AudioFolder && File.Exists(folderAlignments), $"data audio FOLDER --align: {folderAlignment}");
+            using (var ctc = (IdrakAudioCtcModel)SpeechModels.Load(model, new SpeechModelOptions { Device = device }))
+            {
+                var expected = SpeechAlignments.Align(ctc, new SpeechSource(SpeechSources.AudioFolder, [Path.GetFullPath(pairs)])).Alignments;
+                var written = SpeechAlignments.Read(folderAlignments);
+                Check(written.Count == expected.Count && written.Zip(expected).All(p => p.First.Audio == p.Second.Audio && p.First.Starts.AsSpan().SequenceEqual(p.Second.Starts)),
+                    $"--align on a folder writes the library's {expected.Count} alignments of it ({written.Count})");
+            }
+
+            int alphabet = string.Concat(texts).Distinct().Count() + 2;
+            foreach (string data in (string[])[transcripts, pairs])
+            {
+                string tokenizerFile = Path.Combine(root, $"from-{Path.GetFileName(data)}.json");
+                var learned = AudioCliJson("data", "tokenizer", "--from", data, "--vocab", alphabet.ToString(System.Globalization.CultureInfo.InvariantCulture), "--min-frequency", "1",
+                    "--pre-tokenizer", "metaspace", "--no-special", "--workers", "1", "-o", tokenizerFile);
+                Check(BpeTokenizer.Load(tokenizerFile).ToJson().ToJsonString() == tokenizer.ToJson().ToJsonString(), $"data tokenizer --from {Path.GetFileName(data)} learns the library's tokenizer of the texts: {learned}");
+            }
+
             // A synthesizer trained on them.
             string tts = Path.Combine(root, "tts");
             CreateToneTts(tts, tokenizer, Device.Cpu).Dispose();
