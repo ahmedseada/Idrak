@@ -404,6 +404,12 @@ internal sealed class RunsShowCommand : Command
             context.Write($"Settings  model {sp["model"]} · {sp["trainer"]} ({sp["objective"]}) · {o?["steps"]} steps · {o?["optimizer"]} {o?["learning_rate"]} · "
                           + $"{o?["batch_seconds"]} s a batch · metric {o?["metric"]} · seed {o?["seed"]}");
         }
+        else if (run.Settings is { } vp && (string?)vp["format"] == Voices.VoiceTrainCommand.RunFormat)
+        {
+            var o = vp["options"];
+            context.Write($"Settings  voice {vp["name"]} · from {vp["base"]} · {o?["steps"]} steps · {o?["optimizer"]} {o?["learning_rate"]} · "
+                          + $"{o?["batch_seconds"]} s a batch · held-out {(vp["evaluation"] is null ? "none" : "mel error")} · seed {o?["seed"]}");
+        }
         else if (run.Settings is { } s)
         {
             context.Write($"Settings  data {s["data"]} · task {(string?)s["task"] ?? "auto"} · {s["optimizer"]} {s["learning_rate"]} · batch {s["batch"]} · epochs {s["epochs"]} · validation {s["validation"]} · seed {s["seed"]}");
@@ -434,7 +440,9 @@ internal sealed class RunsShowCommand : Command
 
             context.Write("");
             var metrics = run.Epochs.SelectMany(e => e.ValidationMetrics.Keys.Select(k => "val_" + k).Concat(e.Metrics.Keys)).Distinct().ToList();
-            var shown = context.Verbose || run.Epochs.Count <= 12 ? run.Epochs : [.. run.Epochs.Take(5), .. run.Epochs.TakeLast(5)];
+            // The first and last rows, and every row with a held-out score (a long step log scores at its checkpoints only).
+            var shown = context.Verbose || run.Epochs.Count <= 12 ? run.Epochs
+                : [.. run.Epochs.Where((e, i) => i < 5 || i >= run.Epochs.Count - 5 || e.ValidationLoss is not null)];
             context.Table([unit == "step" ? "Step" : "Epoch", "Loss", "Validation loss", .. metrics, "LR", "ms", ""], shown.Select(e => (IReadOnlyList<string>)
             [
                 e.Epoch.ToString(CultureInfo.InvariantCulture), RunLog.Format(e.Loss), RunLog.Format(e.ValidationLoss),

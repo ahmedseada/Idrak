@@ -132,6 +132,12 @@ internal sealed class RunLog
 
         string? folder = System.IO.Path.GetFileName(path) == "log.jsonl" ? System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)) : null;
         string runFile = folder is null ? "" : System.IO.Path.Combine(folder, "run.json");
+        var settings = File.Exists(runFile) ? JsonNode.Parse(File.ReadAllText(runFile)) as JsonObject : null;
+        if (folder is not null && epochs.Count == 0)
+        {
+            HeldOut(steps, folder, settings);
+        }
+
         return new RunLog
         {
             Name = folder is not null ? System.IO.Path.GetFileName(folder) : System.IO.Path.GetFileNameWithoutExtension(path),
@@ -139,11 +145,58 @@ internal sealed class RunLog
             Folder = folder,
             Started = started,
             Completed = completed,
-            Settings = File.Exists(runFile) ? JsonNode.Parse(File.ReadAllText(runFile)) as JsonObject : null,
+            Settings = settings,
             Epochs = epochs.Count > 0 || steps.Count == 0 ? epochs : steps,
             Unit = epochs.Count > 0 || steps.Count == 0 ? "epoch" : "step",
             Time = time,
         };
+    }
+
+    // A speech or voice run's held-out scores, which its log does not carry: the newest checkpoint's train-state.json
+    // lists every one so far ({"step", "score"}). Each joins its step as the validation loss and as val_METRIC (the
+    // run's metric: a voice run's mel error, a recognizer's CER or WER), so Best picks the step by the held-out score.
+    private static void HeldOut(List<LoggedEpoch> steps, string folder, JsonObject? settings)
+    {
+        string? state = Directory.EnumerateDirectories(folder, "checkpoint-*")
+            .Select(d => (Folder: d, Step: int.TryParse(System.IO.Path.GetFileName(d)["checkpoint-".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out int n) ? n : -1))
+            .Where(c => c.Step >= 0 && File.Exists(System.IO.Path.Combine(c.Folder, Idrak.Audio.SpeechTrainer.StateFile)))
+            .OrderByDescending(c => c.Step).Select(c => System.IO.Path.Combine(c.Folder, Idrak.Audio.SpeechTrainer.StateFile)).FirstOrDefault();
+        JsonArray? scores;
+        try
+        {
+            scores = state is null ? null : (JsonNode.Parse(File.ReadAllText(state)) as JsonObject)?["evaluations"] as JsonArray;
+        }
+        catch (JsonException)
+        {
+            return;                                                                 // a state file being written
+        }
+
+        if (scores is null || scores.Count == 0)
+        {
+            return;
+        }
+
+        string metric = (string?)settings?["format"] == Commands.Voices.VoiceTrainCommand.RunFormat ? "mel" : (string?)settings?["options"]?["metric"] ?? "score";
+        foreach (var node in scores.OfType<JsonObject>())
+        {
+            if ((int?)node["step"] is not int step || (double?)node["score"] is not double score)
+            {
+                continue;
+            }
+
+            var values = new Dictionary<string, double> { [metric] = score };
+            int at = steps.FindLastIndex(e => e.Epoch == step);
+            if (at >= 0)
+            {
+                steps[at] = steps[at] with { ValidationLoss = score, ValidationMetrics = values };
+            }
+            else
+            {
+                steps.Add(new LoggedEpoch(step, null, score, new Dictionary<string, double>(), values, 0, 0, false));
+            }
+        }
+
+        steps.Sort((a, b) => a.Epoch.CompareTo(b.Epoch));
     }
 
     private static Dictionary<string, double> Values(JsonNode? node) =>
