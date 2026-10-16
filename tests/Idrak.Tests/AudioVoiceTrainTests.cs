@@ -23,7 +23,7 @@ internal static partial class Tests
         ("audio voice train: a trained folder installs as a voice of kind checkpoint (consent required, a folder without config.json refused, the training files left out, an installed name kept unless overwritten); VoicedSynthesizer speaks it with its own model, the samples the folder's own; export and import give it back, a checkpoint voice without its model refused", AudioVoiceTrainInstall),
         ("audio voice train: idrak voice train on the CPU fine-tunes the tiny VITS model on tone speech and installs the voice (refused without consent or a trainable base), voice show names its base and steps, speak --voice gives the checkpoint's samples; --resume and idrak resume add steps and install again; its help has examples, every option and lines under 120 characters", AudioVoiceTrainCli),
         ("audio voice train: the stochastic duration predictor's flows forward (training) then in reverse (speaking) give the log-durations back within 1e-4: VITS's order, no flip after the element-wise affine (transformers' forward flips there, and a model fine-tuned that way speaks with durations it was not trained on)", AudioVoiceTrainDurationFlows),
-        ("audio voice train: Frozen [\"decoder\"] keeps the decoder's tensors bit for bit while the other parts train, takes them out of the generator's parameters and saves them in the run's options; a part VITS does not have is refused naming its parts", AudioVoiceTrainFrozen),
+        ("audio voice train: Frozen [\"decoder\"] keeps the decoder's tensors bit for bit while the other parts train, takes them out of the generator's parameters and saves them in the run's options; a sub-part by its tensors' prefix (decoder.upsampler) keeps only those; a part VITS does not have is refused naming its parts", AudioVoiceTrainFrozen),
         ("audio voice train: a short CPU run of the tiny VITS model on tone speech lowers its mel L1 (the mean of the last 5 steps under 0.8 of the first 5; step time printed)", AudioVoiceTrainSmoke),
     ];
 
@@ -376,7 +376,7 @@ internal static partial class Tests
                 Check(model.Parts.Order().SequenceEqual(["decoder", "duration_predictor", "flow", "posterior_encoder", "text_encoder"]),
                     $"VITS names its parts: {string.Join(", ", model.Parts)}");
                 ThrowsNaming<ArgumentException>(() => AdversarialSynthesisTrainer.Train(model, train, null,
-                    options with { Adversarial = options.Adversarial! with { Frozen = ["vocoder"] } }, Path.Combine(root, "none")), "no part 'vocoder'", "decoder", "flow");
+                    options with { Adversarial = options.Adversarial! with { Frozen = ["vocoder"] } }, Path.Combine(root, "none")), "no part 'vocoder'", "decoder", "flow", "decoder.upsampler");
             }
 
             using (var model = LoadVitsTrain(device))
@@ -405,6 +405,22 @@ internal static partial class Tests
             }
 
             Check(kept > 0 && moved > 0, $"{kept} decoder tensors kept, {moved} other tensors trained");
+
+            // A sub-part by its tensors' prefix: the upsamplers kept, the rest of the decoder trained.
+            using (var model = LoadVitsTrain(device))
+            {
+                AdversarialSynthesisTrainer.Train(model, train, null, options with { Adversarial = options.Adversarial! with { Frozen = ["decoder.upsampler"] } },
+                    Path.Combine(root, "sub"));
+            }
+
+            using (var sub = Idrak.Models.SafeTensorsReader.Open(Path.Combine(root, "sub", "checkpoint-2", "model.safetensors")))
+            {
+                var names = ((Idrak.Abstraction.Formats.ITensorStore)before).Names.ToList();
+                bool upsamplersKept = names.Where(n => n.StartsWith("decoder.upsampler.", StringComparison.Ordinal)).All(n => before.Read(n).AsSpan().SequenceEqual(sub.Read(n)));
+                bool restMoved = names.Where(n => n.StartsWith("decoder.", StringComparison.Ordinal) && !n.StartsWith("decoder.upsampler.", StringComparison.Ordinal))
+                    .Any(n => !before.Read(n).AsSpan().SequenceEqual(sub.Read(n)));
+                Check(upsamplersKept && restMoved, $"Frozen [decoder.upsampler]: upsamplers kept {upsamplersKept}, the rest of the decoder trained {restMoved}");
+            }
             var state = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "run", "checkpoint-2", SpeechTrainer.StateFile)))!.ToJsonString();
             Check(state.Contains("\"frozen\":[\"decoder\"]", StringComparison.Ordinal), "the run's options keep the frozen parts (a resume freezes them too)");
         }

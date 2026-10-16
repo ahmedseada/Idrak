@@ -229,7 +229,8 @@ public interface IAdversarialSpeechSynthesizer : ISpeechSynthesizer
     IReadOnlyList<string> Parts => [];
 
     /// <summary>
-    /// Keeps <paramref name="parts"/> (of <see cref="Parts"/>) as they are for training: their weights take no gradient
+    /// Keeps <paramref name="parts"/> (of <see cref="Parts"/>, or a family's finer names for parts of them: VITS takes a
+    /// prefix of its tensors' names, such as "decoder.upsampler") as they are for training: their weights take no gradient
     /// and leave <see cref="Generator"/>'s parameters, so the optimizer neither steps nor holds state for them; they are
     /// saved unchanged. Called once, before the trainer reads the parameters.
     /// </summary>
