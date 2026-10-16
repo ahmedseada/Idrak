@@ -12,6 +12,12 @@ namespace Idrak.Gpu.Vulkan;
 // run. Buffers: log-probabilities, targets (ids as floats), meta (per sequence: input length, target length, target
 // offset, as ints), then the outputs and scratch; push constants: steps, batch, classes, blank, batchFirst, zeroInfinity,
 // states (the scratch rows' stride: the longest sequence's 2L + 1).
+//
+// No infinity is computed with: a state no path reaches holds Never (a large finite negative), and "reached" is a
+// comparison with Reached. A driver may assume floats are finite unless the shader asks it to preserve infinities and
+// NaNs (SPIR-V's SignedZeroInfNanPreserve, not on every device), and then folds a test against -∞ to true; the sums of
+// such a kernel go wrong on that driver alone. A sequence no path covers still reports +∞ (or 0 with zeroInfinity), as
+// the CPU does.
 internal static partial class VulkanKernels
 {
     private static IEnumerable<(string, Func<SpirvKernel>)> CtcKernels()
@@ -58,35 +64,43 @@ internal static partial class VulkanKernels
         public Val Label(Val j) => K.Clamp(Targets[Offset + j].ToInt(), K.Int(0), Classes - 1);
     }
 
-    private static readonly float NegInf = float.NegativeInfinity;
+    // The log of a probability no path reaches (finite: see the header), and the bound under which a value is that.
+    private const float Never = -1e30f, Reached = -1e29f;
 
-    // log(e^a + e^b + e^c) with one logarithm; -∞ when all three are.
+    // A loss at least this large is a sequence no path covers (+∞ on the CPU).
+    private const float Uncovered = 1e29f;
+
+    // log(e^a + e^b + e^c) with one logarithm; Never when none of the three is reached.
     private static Val LogSum3(KernelBuilder k, Val a, Val b, Val c)
     {
         var m = k.Max(a, k.Max(b, c));
-        var finite = m > NegInf;
-        var safe = k.Select(finite, m, k.Float(0f));
+        var reached = m > Reached;
+        var safe = k.Select(reached, m, k.Float(0f));
         var sum = k.Exp(a - safe) + k.Exp(b - safe) + k.Exp(c - safe);
-        return k.Select(finite, safe + k.Log(sum), k.Float(NegInf));
+        return k.Select(reached, safe + k.Log(sum), k.Float(Never));
     }
+
+    // A log-probability read as a reachable value or Never (a class of probability 0 gives -∞ from the log-softmax).
+    private static Val Bounded(KernelBuilder k, Val logProb) => k.Max(logProb, k.Float(Never));
 
     // α of step t at state s from the row of step t - 1 (read through `previous`).
     private static Val AlphaStep(KernelBuilder k, CtcSequence q, Val t, Val s, Func<Val, Val> previous)
     {
         var c = q.Class(s);
         var a = previous(s);
-        var b = k.Select(s > 0, previous(k.Max(s - 1, k.Int(0))), k.Float(NegInf));
+        var b = k.Select(s > 0, previous(k.Max(s - 1, k.Int(0))), k.Float(Never));
         var skipAllowed = (s > 1) & c.Ne(q.Blank) & c.Ne(q.Class(k.Max(s - 2, k.Int(0))));
-        var skip = k.Select(skipAllowed, previous(k.Max(s - 2, k.Int(0))), k.Float(NegInf));
+        var skip = k.Select(skipAllowed, previous(k.Max(s - 2, k.Int(0))), k.Float(Never));
         var sum = LogSum3(k, a, b, skip);
-        return k.Select(sum > NegInf, sum + q.LogProb(t, c), k.Float(NegInf));
+        var value = sum + Bounded(k, q.LogProb(t, c));
+        return k.Select((sum > Reached) & (value > Reached), value, k.Float(Never));
     }
 
-    // α of step 0 at state s: the blank and the first label, -∞ elsewhere.
+    // α of step 0 at state s: the blank and the first label, Never elsewhere.
     private static Val AlphaStart(KernelBuilder k, CtcSequence q, Val s)
     {
-        var v = k.Local(NegInf);
-        k.If(s < 2, () => v.V = q.LogProb(k.Int(0), q.Class(s)));
+        var v = k.Local(Never);
+        k.If(s < 2, () => v.V = Bounded(k, q.LogProb(k.Int(0), q.Class(s))));
         return v.V;
     }
 
@@ -141,9 +155,10 @@ internal static partial class VulkanKernels
                 k.If(k.LocalX.Eq(0), () =>
                 {
                     var end = Read(last + q.States - 1);
-                    var before = k.Select(q.States > 1, Read(last + k.Max(q.States - 2, k.Int(0))), k.Float(NegInf));
-                    var nll = -LogSum3(k, end, before, k.Float(NegInf));
-                    losses[n] = k.Select(q.ZeroInfinity.Ne(0) & (nll >= float.PositiveInfinity), k.Float(0f), nll);
+                    var before = k.Select(q.States > 1, Read(last + k.Max(q.States - 2, k.Int(0))), k.Float(Never));
+                    var nll = -LogSum3(k, end, before, k.Float(Never));
+                    var uncovered = nll >= Uncovered;
+                    losses[n] = k.Select(uncovered, k.Select(q.ZeroInfinity.Ne(0), k.Float(0f), k.Float(float.PositiveInfinity)), nll);
                 });
                 Barrier(k, shared);
             }, () => k.If(k.LocalX.Eq(0), () => losses[n] = k.Select(q.Labels.Eq(0) | q.ZeroInfinity.Ne(0), k.Float(0f), k.Float(float.PositiveInfinity))));
@@ -206,9 +221,9 @@ internal static partial class VulkanKernels
                     k.BufferBarrier();
                 });
                 var lastRow = alphaBase + (q.Length - 1) * q.Stride;
-                var nll = -LogSum3(k, alpha[lastRow + q.States - 1], k.Select(q.States > 1, alpha[lastRow + k.Max(q.States - 2, k.Int(0))], k.Float(NegInf)),
-                    k.Float(NegInf));
-                k.If(!(q.ZeroInfinity.Ne(0) & (nll >= float.PositiveInfinity)), () =>
+                var nll = -LogSum3(k, alpha[lastRow + q.States - 1], k.Select(q.States > 1, alpha[lastRow + k.Max(q.States - 2, k.Int(0))], k.Float(Never)),
+                    k.Float(Never));
+                k.If(!(q.ZeroInfinity.Ne(0) & (nll >= Uncovered)), () =>
                 {
                     // β backwards, a row at a time (alternating), with the gradient of each step.
                     var t = k.Local(q.Length - 1);
@@ -220,16 +235,17 @@ internal static partial class VulkanKernels
                         {
                             var c = q.Class(s);
                             var last = step.Eq(q.Length - 1);
-                            var start = k.Select((s >= q.States - 2), q.LogProb(step, c), k.Float(NegInf));
+                            var start = k.Select((s >= q.States - 2), Bounded(k, q.LogProb(step, c)), k.Float(Never));
                             var a = Beta(next + s);
-                            var b = k.Select(s + 1 < q.States, Beta(next + k.Min(s + 1, q.States - 1)), k.Float(NegInf));
+                            var b = k.Select(s + 1 < q.States, Beta(next + k.Min(s + 1, q.States - 1)), k.Float(Never));
                             var skipAllowed = (s + 2 < q.States) & c.Ne(q.Blank) & c.Ne(q.Class(k.Min(s + 2, q.States - 1)));
-                            var skip = k.Select(skipAllowed, Beta(next + k.Min(s + 2, q.States - 1)), k.Float(NegInf));
+                            var skip = k.Select(skipAllowed, Beta(next + k.Min(s + 2, q.States - 1)), k.Float(Never));
                             var value = k.Local(start);
                             k.If(!last, () =>
                             {
                                 var sum = LogSum3(k, a, b, skip);
-                                value.V = k.Select(sum > NegInf, sum + q.LogProb(step, c), k.Float(NegInf));
+                                var reached = sum + Bounded(k, q.LogProb(step, c));
+                                value.V = k.Select((sum > Reached) & (reached > Reached), reached, k.Float(Never));
                             });
                             SetBeta(current + s, value.V);
                         });
@@ -237,10 +253,10 @@ internal static partial class VulkanKernels
 
                         // The step's largest α·β (log), then each state's share e^(α + β - top).
                         var row = alphaBase + step * q.Stride;
-                        var mine = k.Local(NegInf);
+                        var mine = k.Local(2 * Never);
                         k.For(k.LocalX, q.States, Block, s => mine.V = k.Max(mine.V, alpha[row + s] + Beta(current + s)));
                         var top = k.ReduceMax(scratch, mine.V);
-                        var finite = top > NegInf;
+                        var finite = top > Reached;
                         k.For(k.LocalX, q.States, Block, s => SetTerm(s, k.Select(finite, k.Exp(alpha[row + s] + Beta(current + s) - top), k.Float(0f))));
                         Barrier(k, shared);
 

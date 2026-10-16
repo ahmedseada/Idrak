@@ -47,6 +47,17 @@ any case or an index; no voice speaks the first speaker. `idrak speak MODEL --li
 `VoicedSynthesizer` looks for a checkpoint speaker before the installed voices. Only single-speaker checkpoints
 fine-tune (route C, below).
 
+### Checkpoints that read phonemes
+
+VCTK's and LJSpeech's checkpoints set `phonemize` in tokenizer_config.json: they were trained on espeak's IPA, as
+transformers' `VitsTokenizer` makes it through the `phonemizer` package. `VitsTokenizer` phonemizes such text first
+through `TextPhonemizers`: built in, `EspeakNgPhonemizer` runs the **espeak-ng program, which you install** (the
+plug-in carries none): `espeak-ng -q --ipa -v LANGUAGE` on each stretch of text between punctuation, the marks kept in
+place (the package's `preserve_punctuation`), white space collapsed. The program is `IDRAK_ESPEAK` (its full path) or
+`espeak-ng` on the PATH; the voice is tokenizer_config.json's `language` (else en-us, what transformers asks for), or
+`IDRAK_ESPEAK_VOICE`. Register another phonemizer (`ITextPhonemizer`) with `TextPhonemizers.Register`, and pick one by
+name with `VitsTokenizer.Phonemizer`. The espeak program's output is close to the package's, not checked equal to it.
+
 ## Checked against the fixture
 
 `tests/Idrak.Tests/data/audio/tiny-vits` (a seeded `VitsModel`, hidden 32, 2 layers, 2 heads, flow 32, upsampling
