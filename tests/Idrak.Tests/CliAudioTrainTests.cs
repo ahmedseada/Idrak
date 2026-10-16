@@ -136,6 +136,19 @@ internal static partial class Tests
             Check((float)resumed["final_loss"]! == reference.Losses[3] && (int)resumed["steps"]! == 4, $"resume --steps 2 ends at the four-step run's loss {reference.Losses[3]}: {resumed}");
             var shown = TrainCli("runs", "show", run);
             Check(shown.Code == 0 && shown.Out.Contains("recognizer (ctc)", StringComparison.Ordinal), $"runs show: {shown.Out} {shown.Err}");
+
+            // Held-out scores (kept in the checkpoints' train-state.json, not the log) join their steps: val_cer, and the
+            // best step is the one with the lowest held-out score.
+            string scored = Path.Combine(root, "scored");
+            TrainCliJson(["pretrain", model, "--data", transcripts, "--eval", transcripts, "--eval-every", "1", "--save-every", "1", "-o", scored, "-P", IdrakAudioPluginPath, "-d", d,
+                .. CliToneTrainingArgs(3)]);
+            var scoredRun = TrainCliJson("runs", "show", scored);
+            var withScores = scoredRun["history"]!.AsArray().Where(e => e!["val_loss"] is not null).ToList();
+            var lowest = withScores.MinBy(e => (double)e!["val_loss"]!);
+            Check(withScores.Count >= 2 && withScores.All(e => e!["val_metrics"]!["cer"] is not null) && (int?)scoredRun["bestEpoch"] == (int?)lowest?["epoch"],
+                $"runs show of a run with held-out scores: {scoredRun["history"]} best {scoredRun["bestEpoch"]}");
+            var scoredText = TrainCli("runs", "show", scored);
+            Check(scoredText.Out.Contains("val_cer", StringComparison.Ordinal) && scoredText.Out.Contains("metric cer", StringComparison.Ordinal), $"runs show text: {scoredText.Out}");
             var refused = TrainCli("pretrain", model, "--data", transcripts, "--tokens", "tokens.bin", "-o", Path.Combine(root, "x"), "-P", IdrakAudioPluginPath);
             Check(refused.Code == 2 && refused.Err.Contains("--tokens", StringComparison.Ordinal) && refused.Err.Contains("speech model", StringComparison.Ordinal),
                 $"a text option on a speech model: {refused.Code} {refused.Err}");

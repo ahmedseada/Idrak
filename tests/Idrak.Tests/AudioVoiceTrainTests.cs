@@ -487,6 +487,9 @@ internal static partial class Tests
             var shown = AudioCliJson("voice", "show", "tester", "--voices", store);
             Check((string?)shown["kind"] == VoiceKinds.Checkpoint && (int?)shown["training"]!["steps"] == 2 && (string?)shown["base"] == VitsTrainData("model")
                 && (string?)shown["consent"]!["statement"] == Consent, $"voice show: {shown}");
+            var runShown = AudioCli("runs", "show", run);
+            Check(runShown.Code == 0 && runShown.Out.Contains("Settings  voice tester", StringComparison.Ordinal) && runShown.Out.Contains("2 steps", StringComparison.Ordinal)
+                && !runShown.Out.Contains("task auto", StringComparison.Ordinal), $"runs show of a voice run names its voice, base and steps: {runShown.Out}");
 
             string wav = Path.Combine(root, "tester.wav");
             var spoken = AudioCli("speak", "-P", VitsPlugin, AudioData("tiny-vits"), "abc ab", "--voice", "tester", "--voices", store, "--noise", "0", "--duration-noise", "0", "-o", wav, "-d", d);
