@@ -245,6 +245,196 @@ public static class BeamSearch
         return [.. finished.Select(f => new BeamHypothesis(f.Tokens, (float)f.Score, (float)f.LogProb))];
     }
 
+    /// <summary>
+    /// Samples <see cref="BeamOptions.Beams"/> continuations of <paramref name="prompt"/> at once (each row its own
+    /// sample, OpenAI Whisper's <c>best_of</c>): at every step each live row's token is drawn from the softmax of its
+    /// filtered log-probabilities divided by <paramref name="temperature"/>, the same filters as the search (suppressed
+    /// tokens, the least length, the n-gram rule, <paramref name="filter"/>); a row ends at the end token. The
+    /// hypotheses best first, ranked like the search's (the log-probability sum, of the untempered distribution, over
+    /// the length to the power of <see cref="BeamOptions.LengthPenalty"/>). The same <paramref name="random"/> state
+    /// gives the same samples.
+    /// </summary>
+    /// <param name="step">The decoder's step (ids [rows, steps] → logits [rows, 1, vocabulary] or [rows, vocabulary]).</param>
+    /// <param name="context">The decoding context (batch = <see cref="BeamOptions.Beams"/>; a memory set on it stays).</param>
+    /// <param name="prompt">The tokens every row starts from (at least one).</param>
+    /// <param name="options">The rows (Beams), the length bounds, the end token and the suppressions.</param>
+    /// <param name="temperature">Above 0: how flat the distribution drawn from is.</param>
+    /// <param name="random">The source of the draws.</param>
+    /// <param name="filter">A rule applied to each row's logits before the draw, or null.</param>
+    /// <param name="cancellationToken">Stops the sampling; what was decoded so far is returned.</param>
+    /// <exception cref="ArgumentException">The context's batch is not the rows, the prompt is empty, or the temperature is not above 0.</exception>
+    public static IReadOnlyList<BeamHypothesis> Sample(Func<Tensor, DecodingContext, Tensor> step, DecodingContext context, IReadOnlyList<int> prompt, BeamOptions options,
+        float temperature, Random random, LogitsFilter? filter = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(step);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(prompt);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(random);
+        int rows = options.Beams;
+        if (rows <= 0 || context.Batch != rows)
+        {
+            throw new ArgumentException($"The context decodes {context.Batch} rows; the sampling draws {rows} (make the context with batch = Beams).");
+        }
+
+        if (prompt.Count == 0)
+        {
+            throw new ArgumentException("The prompt holds at least one token.", nameof(prompt));
+        }
+
+        if (!(temperature > 0f) || !float.IsFinite(temperature))
+        {
+            throw new ArgumentException($"Sampling needs a temperature above 0, not {temperature}; a temperature of 0 is Decode's greedy or beam search.", nameof(temperature));
+        }
+
+        var sequences = new List<int>[rows];
+        var logProbs = new double[rows];
+        var live = new bool[rows];
+        for (int r = 0; r < rows; r++)
+        {
+            sequences[r] = new List<int>(Math.Max(0, options.MaxTokens));
+            live[r] = true;
+        }
+
+        var results = new List<(List<int> Tokens, double LogProb, int Length)>(rows);
+        if (options.MaxTokens <= 0)
+        {
+            return [];
+        }
+
+        var promptIds = new float[rows * prompt.Count];
+        for (int r = 0; r < rows; r++)
+        {
+            for (int i = 0; i < prompt.Count; i++)
+            {
+                promptIds[r * prompt.Count + i] = prompt[i];
+            }
+        }
+
+        var ids = new float[rows];
+        int vocabulary = 0;
+        float[]? logits = null;
+        context.Reset();
+        try
+        {
+            logits = Logits(step, context, promptIds, [rows, prompt.Count], rows, ref vocabulary);
+            for (int s = 0; s < options.MaxTokens && !cancellationToken.IsCancellationRequested; s++)
+            {
+                int alive = 0;
+                for (int r = 0; r < rows; r++)
+                {
+                    if (!live[r])
+                    {
+                        ids[r] = options.EndToken >= 0 ? options.EndToken : 0;    // a finished row's input: read, not kept
+                        continue;
+                    }
+
+                    var row = logits.AsSpan(r * vocabulary, vocabulary);
+                    Filter(row, s, prompt, sequences[r], options, filter);
+                    int token = Draw(row, temperature, random);
+                    if (token < 0)
+                    {
+                        live[r] = false;                                           // every token forbidden: the row ends here
+                        results.Add((sequences[r], logProbs[r], Math.Max(1, sequences[r].Count)));
+                        continue;
+                    }
+
+                    logProbs[r] += row[token];
+                    if (token == options.EndToken)
+                    {
+                        live[r] = false;
+                        results.Add((sequences[r], logProbs[r], s + 1));
+                        continue;
+                    }
+
+                    sequences[r].Add(token);
+                    ids[r] = token;
+                    alive++;
+                }
+
+                if (alive == 0)
+                {
+                    break;
+                }
+
+                if (s + 1 == options.MaxTokens)
+                {
+                    break;
+                }
+
+                ArrayPool<float>.Shared.Return(logits);
+                logits = null;
+                logits = Logits(step, context, ids, [rows, 1], rows, ref vocabulary);
+            }
+        }
+        finally
+        {
+            if (logits is not null)
+            {
+                ArrayPool<float>.Shared.Return(logits);
+            }
+        }
+
+        for (int r = 0; r < rows; r++)
+        {
+            if (live[r] && sequences[r].Count > 0)
+            {
+                results.Add((sequences[r], logProbs[r], sequences[r].Count));        // ran out of length or was cancelled
+            }
+        }
+
+        return [.. results.Select(x => new BeamHypothesis(x.Tokens, (float)(x.LogProb / Math.Pow(x.Length, options.LengthPenalty)), (float)x.LogProb))
+            .OrderByDescending(h => h.Score)];
+    }
+
+    // One token drawn from softmax(row / temperature) over the row's finite entries (log-probabilities), in double; -1
+    // when none is finite.
+    private static int Draw(ReadOnlySpan<float> row, float temperature, Random random)
+    {
+        double max = double.NegativeInfinity;
+        foreach (float x in row)
+        {
+            if (!float.IsNegativeInfinity(x) && !float.IsNaN(x))
+            {
+                max = Math.Max(max, x / (double)temperature);
+            }
+        }
+
+        if (double.IsNegativeInfinity(max))
+        {
+            return -1;
+        }
+
+        double sum = 0;
+        foreach (float x in row)
+        {
+            if (!float.IsNegativeInfinity(x) && !float.IsNaN(x))
+            {
+                sum += Math.Exp(x / (double)temperature - max);
+            }
+        }
+
+        double target = random.NextDouble() * sum, running = 0;
+        int last = -1;
+        for (int t = 0; t < row.Length; t++)
+        {
+            float x = row[t];
+            if (float.IsNegativeInfinity(x) || float.IsNaN(x))
+            {
+                continue;
+            }
+
+            last = t;
+            running += Math.Exp(x / (double)temperature - max);
+            if (running > target)
+            {
+                return t;
+            }
+        }
+
+        return last;                                                            // the rounding of the last sum
+    }
+
     // The step's logits of every row read back into a pooled buffer (returned by the caller), the step's tensors freed.
     private static float[] Logits(Func<Tensor, DecodingContext, Tensor> step, DecodingContext context, float[] ids, int[] shape, int beams, ref int vocabulary)
     {

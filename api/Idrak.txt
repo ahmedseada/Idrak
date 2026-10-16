@@ -288,6 +288,7 @@ public sealed record Idrak.Generation.BeamOptions : System.IEquatable<Idrak.Gene
 
 public static class Idrak.Generation.BeamSearch
   public static System.Collections.Generic.IReadOnlyList<Idrak.Generation.BeamHypothesis> Decode(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Generation.DecodingContext, Idrak.Abstraction.Tensor> step, Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int> prompt, Idrak.Generation.BeamOptions options, Idrak.Generation.LogitsFilter? filter = null, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Generation.BeamHypothesis> Sample(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Generation.DecodingContext, Idrak.Abstraction.Tensor> step, Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int> prompt, Idrak.Generation.BeamOptions options, float temperature, System.Random random, Idrak.Generation.LogitsFilter? filter = null, System.Threading.CancellationToken cancellationToken = default)
 
 public delegate void Idrak.Generation.LogitsFilter(int step, System.ReadOnlySpan<int> generated, System.Span<float> logits)
 

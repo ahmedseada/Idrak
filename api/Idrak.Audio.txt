@@ -603,10 +603,13 @@ public sealed record Idrak.Audio.Abstractions.TranscriptionOptions : System.IEqu
   public float LengthPenalty { get; init; }
   public float LogProbThreshold { get; init; }
   public float Temperature { get; init; }
+  public float? NoSpeechThreshold { get; init; }
   public int Beams { get; init; }
+  public int BestOf { get; init; }
   public int MaxBatch { get; init; }
   public int MaxTokens { get; init; }
   public int MinTokens { get; init; }
+  public int Seed { get; init; }
   public string Task { get; init; }
   public string? Language { get; init; }
   public string? Prompt { get; init; }

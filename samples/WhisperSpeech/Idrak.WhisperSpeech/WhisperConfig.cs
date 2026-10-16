@@ -70,6 +70,12 @@ public sealed partial record WhisperConfig
     /// <summary>The token that opens a prompt of earlier text (&lt;|startofprev|&gt;), or null when the checkpoint has none.</summary>
     public int? PrevToken { get; init; }
 
+    /// <summary>
+    /// The token whose probability after &lt;|startoftranscript|&gt; says there is no speech (&lt;|nospeech|&gt;, or
+    /// &lt;|nocaptions|&gt; in the first checkpoints): the one just before &lt;|notimestamps|&gt;, as transformers takes it.
+    /// </summary>
+    public required int NoSpeechToken { get; init; }
+
     /// <summary>The language tokens by code ("en" → the id of &lt;|en|&gt;).</summary>
     public required IReadOnlyDictionary<string, int> Languages { get; init; }
 
@@ -170,6 +176,7 @@ public sealed partial record WhisperConfig
             EndToken = Token("eos_token_id", "<|endoftext|>"),
             NoTimestampsToken = noTimestamps,
             PrevToken = Id("prev_sot_token_id") ?? Added("<|startofprev|>"),
+            NoSpeechToken = Added("<|nospeech|>") ?? Added("<|nocaptions|>") ?? noTimestamps - 1,
             Languages = languages,
             Tasks = tasks,
             SuppressTokens = Ids("suppress_tokens"),

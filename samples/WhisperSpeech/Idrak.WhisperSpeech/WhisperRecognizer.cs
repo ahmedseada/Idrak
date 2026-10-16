@@ -170,18 +170,20 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
     /// Decodes one segment from <paramref name="prompt"/> over <paramref name="encoded"/> ([1, positions, dim]): the
     /// hypotheses best first (greedy for one beam), each with the generated tokens.
     /// </summary>
-    public IReadOnlyList<BeamHypothesis> Decode(Tensor encoded, IReadOnlyList<int> prompt, TranscriptionOptions? options = null, CancellationToken cancellationToken = default)
+    /// <remarks>
+    /// At <see cref="TranscriptionOptions.Temperature"/> above 0 the hypotheses are <see cref="TranscriptionOptions.BestOf"/>
+    /// samples (<see cref="BeamSearch.Sample"/>), drawn from <paramref name="random"/> (null: one seeded with
+    /// <see cref="TranscriptionOptions.Seed"/>).
+    /// </remarks>
+    public IReadOnlyList<BeamHypothesis> Decode(Tensor encoded, IReadOnlyList<int> prompt, TranscriptionOptions? options = null, CancellationToken cancellationToken = default,
+        Random? random = null)
     {
         ArgumentNullException.ThrowIfNull(encoded);
         ArgumentNullException.ThrowIfNull(prompt);
         ThrowIfDisposed();
         options ??= new TranscriptionOptions();
-        if (options.Temperature > 0f)
-        {
-            throw new NotSupportedException("Sampling (Temperature above 0) is not in this family yet: set Temperature 0 for greedy or beam decoding.");
-        }
-
-        int beams = Math.Max(1, options.Beams);
+        bool sampling = options.Temperature > 0f;
+        int beams = sampling ? Math.Max(1, options.BestOf) : Math.Max(1, options.Beams);
         int room = Config.MaxTargetPositions - prompt.Count;
         if (room <= 0)
         {
@@ -207,8 +209,96 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
             cross.SetMemory(encoded, context);                               // the encoder's output projected once per segment
         }
 
-        return BeamSearch.Decode((ids, ctx) => Decoder.ForwardCached(ids, ctx), context, prompt, beamOptions, filter, cancellationToken);
+        return sampling
+            ? BeamSearch.Sample((ids, ctx) => Decoder.ForwardCached(ids, ctx), context, prompt, beamOptions, options.Temperature, random ?? new Random(options.Seed), filter, cancellationToken)
+            : BeamSearch.Decode((ids, ctx) => Decoder.ForwardCached(ids, ctx), context, prompt, beamOptions, filter, cancellationToken);
     }
+
+    /// <summary>
+    /// The probability the model gives &lt;|nospeech|&gt; right after &lt;|startoftranscript|&gt; of <paramref name="prompt"/>
+    /// (the earlier text before it included), over <paramref name="encoded"/>: OpenAI Whisper's no_speech_prob.
+    /// </summary>
+    public float NoSpeechProbability(Tensor encoded, IReadOnlyList<int> prompt)
+    {
+        ArgumentNullException.ThrowIfNull(prompt);
+        int start = -1;
+        for (int i = 0; i < prompt.Count && start < 0; i++)
+        {
+            start = prompt[i] == Config.StartToken ? i : -1;
+        }
+
+        var logits = Logits(encoded, start >= 0 ? [.. prompt.Take(start + 1)] : [Config.StartToken]);
+        if ((uint)Config.NoSpeechToken >= (uint)logits.Length)
+        {
+            return 0f;
+        }
+
+        double max = double.NegativeInfinity, sum = 0;
+        foreach (float x in logits)
+        {
+            max = Math.Max(max, x);
+        }
+
+        foreach (float x in logits)
+        {
+            sum += Math.Exp(x - max);
+        }
+
+        return (float)(Math.Exp(logits[Config.NoSpeechToken] - max) / sum);
+    }
+
+    /// <summary>
+    /// The text's UTF-8 bytes over their zlib-compressed size: OpenAI Whisper's compression ratio, high (above about 2.4)
+    /// for a decoding caught in a repetition loop.
+    /// </summary>
+    public static double CompressionRatio(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        if (bytes.Length == 0)
+        {
+            return 0;
+        }
+
+        using var compressed = new MemoryStream();
+        using (var zlib = new System.IO.Compression.ZLibStream(compressed, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        {
+            zlib.Write(bytes);
+        }
+
+        return (double)bytes.Length / compressed.Length;
+    }
+
+    // One segment as OpenAI Whisper's transcribe decodes it: at the options' temperature, then each of the fallback
+    // temperatures while the text compresses too well (a loop) or the mean log-probability is too low, unless the model
+    // takes the segment for silence; the hypothesis kept, the no-speech probability (when asked for) and the temperature used.
+    private (BeamHypothesis? Best, float? NoSpeech, float Temperature) DecodeSegment(Tensor encoded, IReadOnlyList<int> prompt, TranscriptionOptions options, Random random,
+        CancellationToken cancellationToken)
+    {
+        float? noSpeech = options.NoSpeechThreshold is null ? null : NoSpeechProbability(encoded, prompt);
+        bool silent = noSpeech is { } p && p > options.NoSpeechThreshold;
+        BeamHypothesis? best = null;
+        float used = options.Temperature;
+        foreach (float temperature in (float[])[options.Temperature, .. options.TemperatureFallback])
+        {
+            best = Decode(encoded, prompt, options with { Temperature = temperature }, cancellationToken, random).FirstOrDefault();
+            used = temperature;
+            if (best is null || silent)
+            {
+                break;
+            }
+
+            string text = Decode([.. best.Tokens.Where(t => !Tokenizer.IsSpecial(t) && t < Config.EndToken)]);
+            if (CompressionRatio(text) <= options.CompressionRatioThreshold && Average(best) >= options.LogProbThreshold)
+            {
+                break;
+            }
+        }
+
+        return (best, noSpeech, used);
+    }
+
+    private static float Average(BeamHypothesis hypothesis) => hypothesis.Tokens.Count == 0 ? 0f : hypothesis.LogProb / hypothesis.Tokens.Count;
 
     // transformers' WhisperTimeStampLogitsProcessor: a timestamp opens and closes each phrase (after a lone timestamp
     // comes text, after a pair a timestamp or the end), timestamps never go back, the first one lies within the
@@ -326,6 +416,7 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
         var segments = new List<TranscriptSegment>();
         TimeSpan features = TimeSpan.Zero, encoder = TimeSpan.Zero, decoder = TimeSpan.Zero;
         string? language = options.Language, carried = options.Prompt;
+        var random = new Random(options.Seed);
         for (int i = 0; i < count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -352,16 +443,20 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
             start = total.Elapsed;
             language ??= DetectLanguage(encoded);
             var prompt = Prompt(language, options.Task, options.Timestamps, options.CarryText ? carried : options.Prompt);
-            var best = Decode(encoded, prompt, options, cancellationToken).FirstOrDefault();
+            var (best, noSpeech, temperature) = DecodeSegment(encoded, prompt, options, random, cancellationToken);
             decoder += total.Elapsed - start;
-            if (best is null)
+            if (best is null || noSpeech is { } p && p > options.NoSpeechThreshold && Average(best) < options.LogProbThreshold)
             {
-                continue;
+                continue;                                                          // silence: what the model would write there is invented
             }
 
             var found = Segments(best, offset, (double)length / rate, options.Timestamps);
             segments.AddRange(found);
-            if (found.Count > 0)
+            if (temperature > 0.5f)
+            {
+                carried = options.Prompt;                                          // a hot decoding is not the next chunk's prompt (OpenAI's reset)
+            }
+            else if (found.Count > 0)
             {
                 carried = string.Join(" ", found.Select(s => s.Text)).Trim();
             }
