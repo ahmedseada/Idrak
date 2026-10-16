@@ -35,6 +35,55 @@ public static class StoredWeights
     }
 
     /// <summary>
+    /// Whether projection weights read from <paramref name="names"/> are kept as IEEE half precision under
+    /// <paramref name="weights"/>: <see cref="EncoderWeights.Float16"/> always, <see cref="EncoderWeights.AsStored"/>
+    /// when every one of them is stored as float16, otherwise never.
+    /// </summary>
+    public static bool KeepsFloat16(ITensorStore store, EncoderWeights weights, params IEnumerable<string> names)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(names);
+        return weights switch
+        {
+            EncoderWeights.Float16 => true,
+            EncoderWeights.AsStored => names.All(n => store.FormatOf(n) == WeightFormat.Float16),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// The precision projection weights read from <paramref name="names"/> keep under <paramref name="weights"/>:
+    /// bfloat16 (<see cref="KeepsBFloat16"/>), float16 (<see cref="KeepsFloat16"/>) or float32.
+    /// </summary>
+    public static WeightFormat Kept(ITensorStore store, EncoderWeights weights, params IEnumerable<string> names)
+    {
+        var list = names as IReadOnlyCollection<string> ?? [.. names];
+        return KeepsBFloat16(store, weights, list) ? WeightFormat.BFloat16 : KeepsFloat16(store, weights, list) ? WeightFormat.Float16 : WeightFormat.Float32;
+    }
+
+    /// <summary>
+    /// A <see cref="Layers.Linear"/> layer y = x · W (+ b) from host values W [<paramref name="inputs"/>, <paramref name="outputs"/>]
+    /// kept in <paramref name="kept"/>: bfloat16 or float16 weights (fixed; rounded to nearest, exact for the values a
+    /// checkpoint of that precision stores), else float32 weights that train. The bias stays as given.
+    /// </summary>
+    public static Linear Linear(float[] values, int inputs, int outputs, Tensor? bias, WeightFormat kept, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(device);
+        if (values.Length != inputs * outputs)
+        {
+            throw new ArgumentException($"{values.Length} values do not fill [{inputs}, {outputs}].", nameof(values));
+        }
+
+        return kept switch
+        {
+            WeightFormat.BFloat16 => Layers.Linear.FromBFloat16(BFloat16Weight.FromValues(values, inputs, outputs, device), bias),
+            WeightFormat.Float16 => Layers.Linear.FromPacked(Float16Weight.FromValues(values, inputs, outputs, device), bias),
+            _ => Layers.Linear.FromWeights(Tensor.Persistent(values, [inputs, outputs], device, requiresGrad: true), bias),
+        };
+    }
+
+    /// <summary>
     /// A <see cref="Layers.Linear"/> layer y = x · W (+ b) from host values W [<paramref name="inputs"/>, <paramref name="outputs"/>]:
     /// bfloat16 weights (fixed) when <paramref name="bfloat16"/>, else float32 weights that train. The bias stays as given.
     /// </summary>
@@ -145,7 +194,7 @@ public static class StoredWeights
                 return Layers.Linear.FromBFloat16(stored, bias);
             }
 
-            return Linear(store.ReadTransposed(weight), shape[1], shape[0], bias, bfloat16, device);
+            return Linear(store.ReadTransposed(weight), shape[1], shape[0], bias, bfloat16 ? WeightFormat.BFloat16 : Kept(store, weights, weight), device);
         }
         catch
         {

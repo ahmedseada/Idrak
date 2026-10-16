@@ -4902,6 +4902,97 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// y[m, n] = x[m, k] · w[k, n] with w stored as IEEE half-precision pairs packed into 32-bit words along each row (as
+    /// <see cref="BFloat16MatMul"/> packs bfloat16: word c of row r holds columns 2c in its low half and 2c + 1 in its high
+    /// half; rows have ⌈n / 2⌉ words). By default the weights are widened exactly into a temporary (<see cref="Float16Dequantize"/>)
+    /// and the float32 product runs on them: the values and the sums of a float32 layer holding the same weights.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Float16MatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Float16MatMulKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Float16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            Float16MatMulKernel(x, packed, y, m, n, k);
+        }
+        else
+        {
+            Float16MatMulRegistered(x, packed, y, m, n, k);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16MatMulRegistered(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.Float16MatMul) is OperationKernels.Float16MatMul kernel)
+        {
+            kernel(this, x, packed, y, m, n, k);
+        }
+        else
+        {
+            Float16MatMulKernel(x, packed, y, m, n, k);
+        }
+    }
+
+    /// <summary>
+    /// w[k, n] = the float32 values of half-precision weights packed as in <see cref="Float16MatMul"/>: exact for every
+    /// half (subnormals, infinities and NaNs included).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Float16Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Float16DequantizeKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Float16Dequantize(Storage packed, Storage w, int k, int n)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            Float16DequantizeKernel(packed, w, k, n);
+        }
+        else
+        {
+            Float16DequantizeRegistered(packed, w, k, n);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16DequantizeRegistered(Storage packed, Storage w, int k, int n)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.Float16Dequantize) is OperationKernels.Float16Dequantize kernel)
+        {
+            kernel(this, packed, w, k, n);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Float16Dequantize))
+        {
+            Float16DequantizeKernel(packed, w, k, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Float16Dequantize);
+        try
+        {
+            Float16DequantizeKernel(packed, w, k, n);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Float16DequantizeOnHost(packed, w, k, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Float16Dequantize (the default body of Float16DequantizeKernel), for RetryOnHost.
+    private void Float16DequantizeOnHost(Storage packed, Storage w, int k, int n)
+    {
+        using var h = new HostCall(this, "Float16Dequantize");
+        CpuBackend.Instance.Float16Dequantize(h[packed], h[w], k, n);
+    }
+
+    /// <summary>
     /// Rounds x [n] to bfloat16 (to nearest, ties to even), two values per word as <see cref="BFloat16Dequantize"/> reads
     /// them back with k = 1: packed holds (n + 1) / 2 words.
     /// </summary>

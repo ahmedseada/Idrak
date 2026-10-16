@@ -74,6 +74,41 @@ public sealed partial class Tensor
     /// [..., k] × <paramref name="weight"/> ([k, n], bfloat16) → [..., n]. Few rows read the bfloat16 weights directly;
     /// more expand them to float32 once. Gradients flow to this tensor (the weights are fixed).
     /// </summary>
+    // input [..., k] · W [k, n] for half-precision weights: widened on the device and the float32 product (Backend.Float16MatMul);
+    // the input's gradient through the same widened values.
+    internal Tensor MatMulFloat16(Float16Weight weight)
+    {
+        this.ThrowIfDisposed();
+        int k = weight.Rows, n = weight.Columns;
+        if (this.Rank < 2 || this._shape[^1] != k)
+        {
+            throw new ArgumentException($"MatMul with a float16 [{k}, {n}] weight needs [..., {k}], got {Tensor.FormatShape(this._shape)}.");
+        }
+
+        if (weight.Packed.Device != this.Device)
+        {
+            throw new ArgumentException($"The float16 weight is on {weight.Packed.Device}, the input on {this.Device}.");
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var flat = this.Rank == 2 ? this : this.Reshape(-1, k);
+        int m = flat._shape[0];
+        var y = Tensor.Empty([m, n], this.Device);
+        this.Backend.Float16MatMul(flat.Storage, weight.Packed.Storage, y.Storage, m, n, k);
+        if (Tensor.WillRecord(flat))
+        {
+            y.Record("matmul_f16", g =>
+            {
+                using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
+                weight.Packed.Backend.Float16Dequantize(weight.Packed.Storage, w.Storage, k, n);
+                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
+            }, flat);
+        }
+
+        var result = this.Rank == 2 ? y : y.Reshape([.. this._shape[..^1], n]);
+        return Tensor.Traced("matmul_f16", result, start);
+    }
+
     internal Tensor MatMulBFloat16(BFloat16Weight weight)
     {
         this.ThrowIfDisposed();

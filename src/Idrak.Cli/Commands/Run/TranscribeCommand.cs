@@ -67,7 +67,8 @@ internal sealed class TranscribeCommand : Command
               --bf16, --no-bf16  run the encoder in bfloat16 where the device has it (the default), or in float32
               --no-timestamp-rules  the model's raw timestamp choices (default: the family's rules over them)
               --no-suppress      the model's raw choices (default: the family's lists of tokens never chosen)
-          -w, --weights FORMAT   the projection weights: as-stored (default), f32 or bf16
+          -w, --weights FORMAT   the projection weights: as-stored (default: a float16 checkpoint's stay float16), f32,
+                                 bf16 or f16
           -k, --kv FORMAT        the decoder's key/value cache: float32 (default), int8 or bf16
           -o, --out FILE|DIR     write the result: FILE for one input, else a folder of NAME.EXT
               --format F         text (default), json, srt or vtt (also taken from -o FILE's extension)
@@ -278,7 +279,8 @@ internal sealed class TranscribeCommand : Command
         null or "as-stored" or "stored" => EncoderWeights.AsStored,
         "f32" or "float32" => EncoderWeights.Float32,
         "bf16" or "bfloat16" => EncoderWeights.BFloat16,
-        _ => throw new UsageException($"--weights takes as-stored, f32 or bf16, not '{text}'."),
+        "f16" or "float16" => EncoderWeights.Float16,
+        _ => throw new UsageException($"--weights takes as-stored, f32, bf16 or f16, not '{text}'."),
     };
 
     private static KeyValueFormat Cache(string? text) => text?.ToLowerInvariant() switch

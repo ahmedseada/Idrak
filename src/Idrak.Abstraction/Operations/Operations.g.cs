@@ -121,46 +121,48 @@ internal static class OperationIndex
     public const int Int8MatMul = 105;
     public const int BFloat16MatMul = 106;
     public const int BFloat16Dequantize = 107;
-    public const int PackBFloat16 = 108;
-    public const int Int8Dequantize = 109;
-    public const int Int4MatMul = 110;
-    public const int Int4Dequantize = 111;
-    public const int RmsNorm = 112;
-    public const int RmsNormBackward = 113;
-    public const int Rope = 114;
-    public const int RmsNormAffine = 115;
-    public const int AddRmsNormAffine = 116;
-    public const int RmsNormRope = 117;
-    public const int RmsNormRopePair = 118;
-    public const int NormRopeHeads = 119;
-    public const int SoftmaxCrossEntropyRows = 120;
-    public const int GatedActivation = 121;
-    public const int GatedActivationBackward = 122;
-    public const int GatedActivationPacked = 123;
-    public const int GatedActivationBackwardPacked = 124;
-    public const int KeyValueWriteInt8 = 125;
-    public const int AttentionScoresInt8 = 126;
-    public const int AttentionContextInt8 = 127;
-    public const int AttentionDecode = 128;
-    public const int AttentionInt8 = 129;
-    public const int AttentionBFloat16 = 130;
-    public const int KeyValueWriteBFloat16 = 131;
-    public const int AttentionTiledBackward = 132;
-    public const int AttentionSegmented = 133;
-    public const int AttentionRows = 134;
-    public const int AttentionSegmentedBackward = 135;
-    public const int AttentionTiled = 136;
-    public const int AttentionSpans = 137;
-    public const int AttentionSpansStrided = 138;
-    public const int AttentionSpansBackward = 139;
-    public const int DecoderMask = 140;
-    public const int KeyValueWrite = 141;
-    public const int SampleRows = 142;
-    public const int PenalizeRows = 143;
-    public const int HistoryPush = 144;
+    public const int Float16MatMul = 108;
+    public const int Float16Dequantize = 109;
+    public const int PackBFloat16 = 110;
+    public const int Int8Dequantize = 111;
+    public const int Int4MatMul = 112;
+    public const int Int4Dequantize = 113;
+    public const int RmsNorm = 114;
+    public const int RmsNormBackward = 115;
+    public const int Rope = 116;
+    public const int RmsNormAffine = 117;
+    public const int AddRmsNormAffine = 118;
+    public const int RmsNormRope = 119;
+    public const int RmsNormRopePair = 120;
+    public const int NormRopeHeads = 121;
+    public const int SoftmaxCrossEntropyRows = 122;
+    public const int GatedActivation = 123;
+    public const int GatedActivationBackward = 124;
+    public const int GatedActivationPacked = 125;
+    public const int GatedActivationBackwardPacked = 126;
+    public const int KeyValueWriteInt8 = 127;
+    public const int AttentionScoresInt8 = 128;
+    public const int AttentionContextInt8 = 129;
+    public const int AttentionDecode = 130;
+    public const int AttentionInt8 = 131;
+    public const int AttentionBFloat16 = 132;
+    public const int KeyValueWriteBFloat16 = 133;
+    public const int AttentionTiledBackward = 134;
+    public const int AttentionSegmented = 135;
+    public const int AttentionRows = 136;
+    public const int AttentionSegmentedBackward = 137;
+    public const int AttentionTiled = 138;
+    public const int AttentionSpans = 139;
+    public const int AttentionSpansStrided = 140;
+    public const int AttentionSpansBackward = 141;
+    public const int DecoderMask = 142;
+    public const int KeyValueWrite = 143;
+    public const int SampleRows = 144;
+    public const int PenalizeRows = 145;
+    public const int HistoryPush = 146;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 145;
+    public const int Count = 147;
 }
 
 /// <summary>
@@ -1000,6 +1002,22 @@ public static class OperationKernels
     /// w[k, n] = the float32 values of bfloat16 weights packed as in <see cref="Backend.BFloat16MatMul"/>.
     /// </summary>
     public delegate void BFloat16Dequantize(Backend backend, Storage packed, Storage w, int k, int n);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.Float16MatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[m, n] = x[m, k] · w[k, n] with w stored as IEEE half-precision pairs packed into 32-bit words along each row (as
+    /// <see cref="Backend.BFloat16MatMul"/> packs bfloat16: word c of row r holds columns 2c in its low half and 2c + 1 in its high
+    /// half; rows have ⌈n / 2⌉ words). By default the weights are widened exactly into a temporary (<see cref="Backend.Float16Dequantize"/>)
+    /// and the float32 product runs on them: the values and the sums of a float32 layer holding the same weights.
+    /// </summary>
+    public delegate void Float16MatMul(Backend backend, Storage x, Storage packed, Storage y, int m, int n, int k);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.Float16Dequantize"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// w[k, n] = the float32 values of half-precision weights packed as in <see cref="Backend.Float16MatMul"/>: exact for every
+    /// half (subnormals, infinities and NaNs included).
+    /// </summary>
+    public delegate void Float16Dequantize(Backend backend, Storage packed, Storage w, int k, int n);
 
     /// <summary>
     /// A kernel for <see cref="Ops.PackBFloat16"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -2135,6 +2153,22 @@ public static partial class Ops
         new("BFloat16Dequantize", "BFloat16DequantizeKernel", "Storage,Storage,Int32,Int32", OperationIndex.BFloat16Dequantize, typeof(OperationKernels.BFloat16Dequantize), KernelSource.Host);
 
     /// <summary>
+    /// y[m, n] = x[m, k] · w[k, n] with w stored as IEEE half-precision pairs packed into 32-bit words along each row (as
+    /// <see cref="Backend.BFloat16MatMul"/> packs bfloat16: word c of row r holds columns 2c in its low half and 2c + 1 in its high
+    /// half; rows have ⌈n / 2⌉ words). By default the weights are widened exactly into a temporary (<see cref="Backend.Float16Dequantize"/>)
+    /// and the float32 product runs on them: the values and the sums of a float32 layer holding the same weights.
+    /// </summary>
+    public static readonly Operation Float16MatMul =
+        new("Float16MatMul", "Float16MatMulKernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.Float16MatMul, typeof(OperationKernels.Float16MatMul), KernelSource.Composed);
+
+    /// <summary>
+    /// w[k, n] = the float32 values of half-precision weights packed as in <see cref="Backend.Float16MatMul"/>: exact for every
+    /// half (subnormals, infinities and NaNs included).
+    /// </summary>
+    public static readonly Operation Float16Dequantize =
+        new("Float16Dequantize", "Float16DequantizeKernel", "Storage,Storage,Int32,Int32", OperationIndex.Float16Dequantize, typeof(OperationKernels.Float16Dequantize), KernelSource.Host);
+
+    /// <summary>
     /// Rounds x [n] to bfloat16 (to nearest, ties to even), two values per word as <see cref="Backend.BFloat16Dequantize"/> reads
     /// them back with k = 1: packed holds (n + 1) / 2 words.
     /// </summary>
@@ -2539,6 +2573,8 @@ public static partial class Ops
         Int8MatMul,
         BFloat16MatMul,
         BFloat16Dequantize,
+        Float16MatMul,
+        Float16Dequantize,
         PackBFloat16,
         Int8Dequantize,
         Int4MatMul,

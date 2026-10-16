@@ -1194,6 +1194,18 @@ internal sealed partial class VulkanBackend
         Grid("bf16_dequantize", (long)k * n, [packed, w], new Push(b).I(k).I(n).Bytes);
     }
 
+    public override void Float16DequantizeKernel(Storage packed, Storage w, int k, int n)
+    {
+        if (!Fit(packed, w))
+        {
+            base.Float16DequantizeKernel(packed, w, k, n);                    // larger than one binding: the host widens it
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[8];
+        Grid("f16_dequantize", (long)k * n, [packed, w], new Push(b).I(k).I(n).Bytes);
+    }
+
     public override void PackBFloat16Kernel(Storage x, Storage packed, int n)
     {
         if (!Fit(x, packed))

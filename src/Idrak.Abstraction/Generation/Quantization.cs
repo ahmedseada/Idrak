@@ -898,3 +898,112 @@ public sealed class BFloat16Weight : PackedWeight
     /// <inheritdoc />
     public override void Dispose() => Packed.Dispose();
 }
+
+/// <summary>
+/// IEEE half-precision weights of a <c>Linear</c> layer, as a float16 checkpoint stores them (about 3 significant
+/// digits, range ±65504), in half the memory of float32. Every product widens them exactly
+/// (<c>Backend.Float16Dequantize</c>) and runs the float32 one, so the layer computes what a float32 layer holding the
+/// checkpoint's values computes, bit for bit. Not a built-in <see cref="PackedWeight.Format"/>: the fused projections
+/// of the built-in formats never see it, and every layer holding it runs <see cref="MatMul"/>. Two values per 32-bit
+/// word along each row, as <see cref="BFloat16Weight"/> packs bfloat16.
+/// </summary>
+public sealed class Float16Weight : PackedWeight
+{
+    /// <summary>The format's name.</summary>
+    public const string FormatName = "float16";
+
+    private Float16Weight(Tensor packed, int rows, int columns)
+    {
+        Packed = packed;
+        Rows = rows;
+        Columns = columns;
+    }
+
+    /// <inheritdoc />
+    public override string Name => FormatName;
+
+    /// <inheritdoc />
+    public override Device Device => Packed.Device;
+
+    /// <inheritdoc />
+    public override int Rows { get; }
+
+    /// <inheritdoc />
+    public override int Columns { get; }
+
+    /// <inheritdoc />
+    public override long Bytes => 4L * Packed.Size;
+
+    /// <summary>The values, two per element along each row (rows padded to an even number of columns).</summary>
+    public Tensor Packed { get; private set; }
+
+    /// <summary>input [..., rows] · W → [..., columns]: the half values widened on the device, then the float32 product.</summary>
+    public override Tensor MatMul(Tensor input) => input.MatMulFloat16(this);
+
+    /// <summary>
+    /// Rounds host values [rows, columns] to half precision (to nearest, ties to even: exact for values a float16
+    /// checkpoint stores) and uploads only those.
+    /// </summary>
+    public static Float16Weight FromValues(ReadOnlySpan<float> values, int rows, int columns, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        if (values.Length != rows * columns)
+        {
+            throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
+        }
+
+        int stride = (columns + 1) / 2 * 2;
+        var halves = new ushort[rows * stride];
+        for (int r = 0; r < rows; r++)
+        {
+            var row = values.Slice(r * columns, columns);
+            var target = halves.AsSpan(r * stride, columns);
+            for (int j = 0; j < columns; j++)
+            {
+                target[j] = BitConverter.HalfToUInt16Bits((Half)row[j]);
+            }
+        }
+
+        var packed = MemoryMarshal.Cast<ushort, float>(halves);
+        return new Float16Weight(Tensor.Persistent(packed, [packed.Length], device, requiresGrad: false), rows, columns);
+    }
+
+    /// <summary>Rounds a float weight matrix [rows, columns] (on its device) to half precision.</summary>
+    public static Float16Weight Convert(Tensor weight)
+    {
+        ArgumentNullException.ThrowIfNull(weight);
+        if (weight.Rank != 2)
+        {
+            throw new ArgumentException($"float16 weights need a matrix, got {Tensor.FormatShape(weight.Shape)}.", nameof(weight));
+        }
+
+        return FromValues(weight.ToArray(), weight.Shape[0], weight.Shape[1], weight.Device);
+    }
+
+    /// <summary>Room for half values [rows, columns] on <paramref name="device"/>, for loading stored values into.</summary>
+    public static Float16Weight Empty(int rows, int columns, Device device)
+    {
+        int stride = (columns + 1) / 2 * 2;
+        return new Float16Weight(Tensor.PersistentZeros([rows * stride / 2], device), rows, columns);
+    }
+
+    /// <summary>The float weights, [rows, columns], on the same device.</summary>
+    public override Tensor Dequantize()
+    {
+        var w = Tensor.Empty([Rows, Columns], Packed.Device, track: false);   // the kernel writes every value: not zeroed first
+        DequantizeInto(w.Storage);
+        return w;
+    }
+
+    /// <inheritdoc />
+    public override void DequantizeInto(Storage destination) => Packed.Backend.Float16Dequantize(Packed.Storage, destination, Rows, Columns);
+
+    /// <inheritdoc />
+    protected override void MoveTo(Device device, Func<Tensor, Device, Tensor> move) => Packed = move(Packed, device);
+
+    /// <inheritdoc />
+    public override IEnumerable<Tensor> Buffers() => [Packed];
+
+    /// <inheritdoc />
+    public override void Dispose() => Packed.Dispose();
+}

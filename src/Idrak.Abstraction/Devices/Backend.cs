@@ -1738,6 +1738,36 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// y[m, n] = x[m, k] · w[k, n] with w stored as IEEE half-precision pairs packed into 32-bit words along each row (as
+    /// <see cref="BFloat16MatMul"/> packs bfloat16: word c of row r holds columns 2c in its low half and 2c + 1 in its high
+    /// half; rows have ⌈n / 2⌉ words). By default the weights are widened exactly into a temporary (<see cref="Float16Dequantize"/>)
+    /// and the float32 product runs on them: the values and the sums of a float32 layer holding the same weights.
+    /// </summary>
+    public virtual void Float16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
+        var w = Allocate(k * n, zeroed: false);
+        try
+        {
+            Float16Dequantize(packed, w, k, n);
+            MatMul(x, w, y, m, n, k, false, false, 0f);
+        }
+        finally
+        {
+            w.Release();
+        }
+    }
+
+    /// <summary>
+    /// w[k, n] = the float32 values of half-precision weights packed as in <see cref="Float16MatMul"/>: exact for every
+    /// half (subnormals, infinities and NaNs included).
+    /// </summary>
+    public virtual void Float16DequantizeKernel(Storage packed, Storage w, int k, int n)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.Float16Dequantize(h[packed], h[w], k, n);
+    }
+
+    /// <summary>
     /// Rounds x [n] to bfloat16 (to nearest, ties to even), two values per word as <see cref="BFloat16Dequantize"/> reads
     /// them back with k = 1: packed holds (n + 1) / 2 words.
     /// </summary>

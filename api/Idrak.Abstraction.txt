@@ -767,6 +767,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void DropoutKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float p, uint seed)
   public virtual void ExtremumBackwardKernel(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
   public virtual void FillKernel(Idrak.Abstraction.Devices.Storage y, int n, float value)
+  public virtual void Float16DequantizeKernel(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage w, int k, int n)
+  public virtual void Float16MatMulKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
   public virtual void GatedActivationBackwardKernel(Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dgate, Idrak.Abstraction.Devices.Storage dup, int n, int kind, int flags)
   public virtual void GatedActivationBackwardPackedKernel(Idrak.Abstraction.Devices.Storage packedGate, Idrak.Abstraction.Devices.Storage packedUp, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dgate, Idrak.Abstraction.Devices.Storage dup, int n, int kind, int flags)
   public virtual void GatedActivationKernel(Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage y, int n, int kind)
@@ -884,6 +886,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void Evict(Idrak.Abstraction.Devices.Storage storage, System.Action<Idrak.Abstraction.Devices.Storage>? recompute)
   public void ExtremumBackward(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
   public void Fill(Idrak.Abstraction.Devices.Storage y, int n, float value)
+  public void Float16Dequantize(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage w, int k, int n)
+  public void Float16MatMul(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
   public void GatedActivation(Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage y, int n, int kind)
   public void GatedActivationBackward(Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dgate, Idrak.Abstraction.Devices.Storage dup, int n, int kind, int flags)
   public void GatedActivationBackwardPacked(Idrak.Abstraction.Devices.Storage packedGate, Idrak.Abstraction.Devices.Storage packedUp, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dgate, Idrak.Abstraction.Devices.Storage dup, int n, int kind, int flags)
@@ -1955,6 +1959,7 @@ public sealed record Idrak.Abstraction.Generation.EncoderDecoderSpec : System.IE
 public enum Idrak.Abstraction.Generation.EncoderWeights : int
   AsStored = 0
   BFloat16 = 2
+  Float16 = 3
   Float32 = 1
 
 public sealed record Idrak.Abstraction.Generation.FeatureCacheKey : System.IEquatable<Idrak.Abstraction.Generation.FeatureCacheKey>
@@ -1994,6 +1999,23 @@ public enum Idrak.Abstraction.Generation.FeedForwardActivation : int
   Gelu = 1
   Relu = 2
   Silu = 0
+
+public sealed class Idrak.Abstraction.Generation.Float16Weight : Idrak.Abstraction.Generation.PackedWeight
+  public Idrak.Abstraction.Tensor Packed { get; }
+  public const string FormatName = "float16"
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Tensor Dequantize()
+  public override Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
+  public override int Columns { get; }
+  public override int Rows { get; }
+  public override long Bytes { get; }
+  public override string Name { get; }
+  public override void DequantizeInto(Idrak.Abstraction.Devices.Storage destination)
+  public override void Dispose()
+  public static Idrak.Abstraction.Generation.Float16Weight Convert(Idrak.Abstraction.Tensor weight)
+  public static Idrak.Abstraction.Generation.Float16Weight Empty(int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.Float16Weight FromValues(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
 
 public sealed record Idrak.Abstraction.Generation.GenerationChunk : System.IEquatable<Idrak.Abstraction.Generation.GenerationChunk>
   public GenerationChunk(string Text, bool Done = false, string? DoneReason = null, Idrak.Abstraction.Generation.GenerationStats? Stats = null)
@@ -2875,6 +2897,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.DropoutBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.ExtremumBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Fill (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.Float16Dequantize (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.Float16MatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Float8MatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Float8QuantizeWeight (below)
   nested Idrak.Abstraction.Operations.OperationKernels.FusedAdamW (below)
@@ -3075,6 +3099,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.DropoutBackwa
 public delegate void Idrak.Abstraction.Operations.OperationKernels.ExtremumBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Fill(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage y, int n, float value)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.Float16Dequantize(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage w, int k, int n)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.Float16MatMul(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.Float8MatMul(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, int m, int k, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage scales, int n, Idrak.Abstraction.Devices.Storage y, float beta)
 
@@ -3314,6 +3342,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation DropoutBackward
   public static readonly Idrak.Abstraction.Operations.Operation ExtremumBackward
   public static readonly Idrak.Abstraction.Operations.Operation Fill
+  public static readonly Idrak.Abstraction.Operations.Operation Float16Dequantize
+  public static readonly Idrak.Abstraction.Operations.Operation Float16MatMul
   public static readonly Idrak.Abstraction.Operations.Operation Float8MatMul
   public static readonly Idrak.Abstraction.Operations.Operation Float8QuantizeWeight
   public static readonly Idrak.Abstraction.Operations.Operation FusedAdamW

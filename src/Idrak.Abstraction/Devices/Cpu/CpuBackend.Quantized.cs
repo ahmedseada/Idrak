@@ -270,6 +270,75 @@ internal sealed partial class CpuBackend
         });
     }
 
+    public override void Float16DequantizeKernel(Storage packed, Storage w, int k, int n)
+    {
+        float[] wv = D(w);
+        int stride = (n + 1) / 2 * 2;
+        For(k, (long)k * n, (first, last) =>
+        {
+            var halves = MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
+            for (int r = first; r < last; r++)
+            {
+                WidenFloat16(halves.Slice(r * stride, n), wv.AsSpan(r * n, n));
+            }
+        });
+    }
+
+    /// <summary>
+    /// target[j] = the float32 value of IEEE half source[j], exact for every half: normal halves by moving the exponent
+    /// and mantissa, subnormals as mantissa · 2⁻²⁴ (a normal float32, so no reliance on denormal arithmetic), infinities
+    /// and NaNs kept (the mantissa moved). Whole vectors at a time.
+    /// </summary>
+    internal static void WidenFloat16(ReadOnlySpan<ushort> source, Span<float> target)
+    {
+        int j = 0;
+        var bits = MemoryMarshal.Cast<float, uint>(target);
+        if (Vector.IsHardwareAccelerated)
+        {
+            var exponentMask = new Vector<uint>(0x1Fu);
+            var mantissaMask = new Vector<uint>(0x3FFu);
+            var signMask = new Vector<uint>(0x8000u);
+            var bias = new Vector<uint>(112u);
+            var all = new Vector<uint>(31u);
+            var infinity = new Vector<uint>(0x7F800000u);
+            var tiny = new Vector<float>(1f / 16777216f);                      // 2^-24
+            for (; j <= source.Length - Vector<ushort>.Count; j += Vector<ushort>.Count)
+            {
+                Vector.Widen(new Vector<ushort>(source[j..]), out var low, out var high);
+                Widen(low).CopyTo(bits[j..]);
+                Widen(high).CopyTo(bits[(j + Vector<uint>.Count)..]);
+            }
+
+            Vector<uint> Widen(Vector<uint> h)
+            {
+                var e = (h >> 10) & exponentMask;
+                var m = h & mantissaMask;
+                var sign = (h & signMask) << 16;
+                var normal = sign | ((e + bias) << 23) | (m << 13);
+                var special = sign | infinity | (m << 13);
+                var subnormal = sign | Vector.AsVectorUInt32(Vector.ConvertToSingle(m) * tiny);
+                return Vector.ConditionalSelect(Vector.Equals(e, Vector<uint>.Zero), subnormal, Vector.ConditionalSelect(Vector.Equals(e, all), special, normal));
+            }
+        }
+
+        for (; j < source.Length; j++)
+        {
+            target[j] = HalfToSingle(source[j]);
+        }
+    }
+
+    /// <summary>The float32 value of the IEEE half with bits <paramref name="h"/> (exactly; see <see cref="WidenFloat16"/>).</summary>
+    internal static float HalfToSingle(ushort h)
+    {
+        uint e = (uint)(h >> 10) & 0x1Fu, m = h & 0x3FFu, sign = (uint)(h & 0x8000) << 16;
+        return e switch
+        {
+            0 => BitConverter.UInt32BitsToSingle(sign | BitConverter.SingleToUInt32Bits(m / 16777216f)),
+            31 => BitConverter.UInt32BitsToSingle(sign | 0x7F800000u | m << 13),
+            _ => BitConverter.UInt32BitsToSingle(sign | (e + 112) << 23 | m << 13),
+        };
+    }
+
     // target[j] = the float32 value of bfloat16 source[j] (its bits in the high half), whole vectors at a time.
     private static void WidenBFloat16(ReadOnlySpan<ushort> source, Span<float> target)
     {

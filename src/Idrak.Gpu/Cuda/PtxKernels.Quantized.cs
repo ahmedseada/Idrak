@@ -10,7 +10,7 @@ namespace Idrak.Gpu.Cuda;
 // row padded to n4 = ceil(n / 4) words), with one float scale per column: w[k, j] = q[k, j] · scale[j].
 internal static partial class PtxKernels
 {
-    public static readonly string[] QuantizedNames = ["int8_matmul_f32", "int8_dequant_f32", "kv_write_int8", "attn_scores_int8", "attn_context_int8", "int8_gemv_f32", "int8_gemv_finish_f32", "bf16_gemv_f32", "bf16_dequant_f32", "int4_gemv_f32", "int4_dequant_f32", "int8_gemv_multi_f32", "bf16_gemv_multi_f32", "int4_gemv_multi_f32", "int8_gemv_silu_f32", "bf16_gemv_silu_f32", "int4_gemv_silu_f32", "int8_gemv_gelu_f32", "bf16_gemv_gelu_f32", "int4_gemv_gelu_f32", "int8_gemv_addnorm_f32", "bf16_gemv_addnorm_f32", "int4_gemv_addnorm_f32", "int8_gemv_multi_act_f32", "bf16_gemv_multi_act_f32", "int4_gemv_multi_act_f32", "int8_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32"];
+    public static readonly string[] QuantizedNames = ["int8_matmul_f32", "int8_dequant_f32", "kv_write_int8", "attn_scores_int8", "attn_context_int8", "int8_gemv_f32", "int8_gemv_finish_f32", "bf16_gemv_f32", "bf16_dequant_f32", "f16_dequant_f32", "int4_gemv_f32", "int4_dequant_f32", "int8_gemv_multi_f32", "bf16_gemv_multi_f32", "int4_gemv_multi_f32", "int8_gemv_silu_f32", "bf16_gemv_silu_f32", "int4_gemv_silu_f32", "int8_gemv_gelu_f32", "bf16_gemv_gelu_f32", "int4_gemv_gelu_f32", "int8_gemv_addnorm_f32", "bf16_gemv_addnorm_f32", "int4_gemv_addnorm_f32", "int8_gemv_multi_act_f32", "bf16_gemv_multi_act_f32", "int4_gemv_multi_act_f32", "int8_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32"];
 
     /// <summary>Rows of an int4 weight matrix that share one scale per column.</summary>
     public const int Int4Group = 32;
@@ -92,6 +92,29 @@ internal static partial class PtxKernels
             and.b32 %r10, %r5, 0xFFFF0000;
             mov.b32 %f2, %r10;
             st.global.f32 [%rd1+4], %f2;
+            """);
+
+        // w[r, 2c], w[r, 2c + 1] = the IEEE half pair in packed word (r, c) widened (cvt.f32.f16: exact, subnormals kept).
+        Elementwise(sb, "f16_dequant_f32", ["q", "w"], [("u32", "words"), ("u32", "cols")], """
+            {
+            .reg .b16 %hl, %hh;
+            ld.global.u32 %r5, [%a_q];
+            div.u32 %r6, %i, %s_words;
+            rem.u32 %r7, %i, %s_words;
+            shl.b32 %r8, %r7, 1;
+            mad.lo.u32 %r9, %r6, %s_cols, %r8;
+            mul.wide.u32 %rd1, %r9, 4;
+            add.u64 %rd1, %rd1, %b_w;
+            mov.b32 {%hl, %hh}, %r5;
+            cvt.f32.f16 %f1, %hl;
+            st.global.f32 [%rd1], %f1;
+            add.u32 %r11, %r8, 1;
+            setp.ge.u32 %p1, %r11, %s_cols;
+            @%p1 bra F16_DONE;
+            cvt.f32.f16 %f2, %hh;
+            st.global.f32 [%rd1+4], %f2;
+            F16_DONE:
+            }
             """);
 
         // y[i] = scale[i % cols] · Σ_s part[s, i] over the k splits of int8_gemv_f32, in split order.
