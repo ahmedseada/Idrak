@@ -1593,8 +1593,11 @@ def vits_spectrogram(torch, samples, n_fft, hop):
 
 
 def vits_sdp_nll(torch, sdp, hidden, durations, noise):
-    """transformers' VitsStochasticDurationPredictor forward (reverse False) on one utterance (no padding), with the
-    posterior's noise given: nll + log q."""
+    """VITS's stochastic duration predictor forward (training) on one utterance (no padding), with the posterior's noise
+    given: nll + log q, on transformers' VitsStochasticDurationPredictor's weights. In VITS's order: no flip after the
+    element-wise affine (its flows are [affine, conv flow, flip, conv flow, flip, ...]), the order whose inverse is
+    the reverse transformers and VITS speak with; transformers' own forward flips after the affine too, which trains
+    flows that its reverse does not undo (a model fine-tuned that way speaks with durations it was not trained on)."""
     import torch.nn.functional as F
     mask = torch.ones(1, 1, hidden.shape[2])
     inputs = sdp.conv_pre(torch.detach(hidden))
@@ -1605,9 +1608,10 @@ def vits_sdp_nll(torch, sdp, hidden, durations, noise):
     h = sdp.post_conv_proj(h) * mask
     latents_posterior = noise[None]
     logdet_q = 0
-    for flow in sdp.post_flows:
+    for i, flow in enumerate(sdp.post_flows):
         latents_posterior, logdet = flow(latents_posterior, mask, global_conditioning=inputs + h)
-        latents_posterior = torch.flip(latents_posterior, [1])
+        if i > 0:
+            latents_posterior = torch.flip(latents_posterior, [1])
         logdet_q = logdet_q + logdet
     first, second = torch.split(latents_posterior, [1, 1], dim=1)
     logdet_q = logdet_q + torch.sum(F.logsigmoid(first) + F.logsigmoid(-first), [1, 2])
@@ -1616,9 +1620,10 @@ def vits_sdp_nll(torch, sdp, hidden, durations, noise):
     first = torch.log(torch.clamp_min(first, 1e-5))
     logdet = torch.sum(-first, [1, 2])
     latents = torch.cat([first, second], dim=1)
-    for flow in sdp.flows:
+    for i, flow in enumerate(sdp.flows):
         latents, ld = flow(latents, mask, global_conditioning=inputs)
-        latents = torch.flip(latents, [1])
+        if i > 0:
+            latents = torch.flip(latents, [1])
         logdet = logdet + ld
     nll = torch.sum(0.5 * (math.log(2 * math.pi) + latents ** 2), [1, 2]) - logdet
     return (nll + logq)[0]

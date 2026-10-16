@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
@@ -21,6 +22,7 @@ internal static partial class Tests
         ("audio voice train: AdversarialSynthesisTrainer fine-tunes the tiny VITS model on tone speech: a run stopped after step 2 and resumed from checkpoint-2 gives the whole run's losses, generator and discriminators bit for bit (its state naming the adversarial objective and options); a run that does not keep the generator's pass gives the same losses; the checkpoint speaks as a VITS model; a feature augmentation refused", AudioVoiceTrainResume),
         ("audio voice train: a trained folder installs as a voice of kind checkpoint (consent required, a folder without config.json refused, the training files left out, an installed name kept unless overwritten); VoicedSynthesizer speaks it with its own model, the samples the folder's own; export and import give it back, a checkpoint voice without its model refused", AudioVoiceTrainInstall),
         ("audio voice train: idrak voice train on the CPU fine-tunes the tiny VITS model on tone speech and installs the voice (refused without consent or a trainable base), voice show names its base and steps, speak --voice gives the checkpoint's samples; --resume and idrak resume add steps and install again; its help has examples, every option and lines under 120 characters", AudioVoiceTrainCli),
+        ("audio voice train: the stochastic duration predictor's flows forward (training) then in reverse (speaking) give the log-durations back within 1e-4: VITS's order, no flip after the element-wise affine (transformers' forward flips there, and a model fine-tuned that way speaks with durations it was not trained on)", AudioVoiceTrainDurationFlows),
         ("audio voice train: a short CPU run of the tiny VITS model on tone speech lowers its mel L1 (the mean of the last 5 steps under 0.8 of the first 5; step time printed)", AudioVoiceTrainSmoke),
     ];
 
@@ -254,6 +256,31 @@ internal static partial class Tests
             {
                 Directory.Delete(root, recursive: true);
             }
+        }
+        finally
+        {
+            VitsSpeechPlugin.Unregister();
+        }
+    }
+
+    private static void AudioVoiceTrainDurationFlows(Device device)
+    {
+        VitsSpeechPlugin.Register();
+        try
+        {
+            using var model = LoadVitsTrain(device);
+            var predictor = (VitsStochasticDurationPredictor)model.StochasticDurations;
+            var random = new Random(7);
+            int c = model.Config.HiddenSize, t = 9;
+            float[] Uniform(int n, float bound) => [.. Enumerable.Range(0, n).Select(_ => (float)((random.NextDouble() * 2 - 1) * bound))];
+            using var scope = new TensorScope();
+            var x = predictor.Conditioning(Tensor.From(Uniform(c * t, 1f), [c, t], device), null);
+            float[] logDurations = Uniform(t, 2f), pair = Uniform(t, 2f);
+            var prior = predictor.Prior(Tensor.From([.. logDurations, .. pair], [2, t], device), x, out _);
+            var back = predictor.Reverse(prior.ToArray(), x);
+            float worst = logDurations.Zip(back, (a, b) => MathF.Abs(a - b)).Max();
+            Check(worst < 1e-4f, $"the duration flows forward then in reverse give log-durations {string.Join(" ", back.Select(v => v.ToString("F4", CultureInfo.InvariantCulture)))} "
+                + $"for {string.Join(" ", logDurations.Select(v => v.ToString("F4", CultureInfo.InvariantCulture)))} (off by {worst:G3}): training's flow order is not the inverse of speaking's");
         }
         finally
         {

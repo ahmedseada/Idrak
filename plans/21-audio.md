@@ -1144,6 +1144,18 @@ against the hub here), and a multi-speaker checkpoint is not fine-tuned (route C
   the base model's pronunciation; Arabic is spoken through uroman romanisation without diacritics, as MMS was trained,
   so its pronunciation errors stay. No dropout during fine-tuning (a later setting). The owner's listening decides.
 
+**S9 route C: the duration flows' order (2026-10-16).** The owner's first real run (mms-tts-ara on 4 minutes of their
+recordings) spoke far too fast: one of their pieces, 3.26 s recorded and 5.30 s from the base, took 1.25 s at
+checkpoint-500 (1.55 s at 2000), with the randomness off. The stochastic duration predictor's training direction
+followed transformers' forward, which flips the channels after the element-wise affine too; VITS's flows are [affine,
+conv flow, flip, conv flow, flip, ...] and the reverse both speak with is that order's inverse, so training fitted
+flows that speaking does not undo. Now in VITS's order (the duration flows and their posterior); the fixture's
+reference (`vits_sdp_nll`) the same, vits-train/reference regenerated (the weights unchanged). New test: the flows
+forward then in reverse give the log-durations back within 1e-4. On the tiny model trained on tone speech of a known
+pace (about 5 frames a letter, 600 steps at 2e-3), the spoken lengths now come within 5% of the clips' (the old order
+drifted to 15% long and rising). The owner's run again decides the real checkpoint; the hiss in its pauses (about
+-42 dB against -78 dB in the recordings, the same at noise 0) is looked at after it.
+
 ## Order and parallelism
 
 S0 → S1 → S2 (one agent: S2 needs S1's `AudioData`) and S3 (a second agent: it needs S1's part type only) → S4 (the core
