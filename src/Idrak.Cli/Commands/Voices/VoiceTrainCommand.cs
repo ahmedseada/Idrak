@@ -64,7 +64,8 @@ internal sealed class VoiceTrainCommand : Command
               --mels N            the mel loss's bands (default 80)
               --discriminator F   new discriminators' description (JSON; default the base's, else VITS's)
               --freeze PARTS      parts kept as the base has them, comma-separated (VITS: decoder keeps its waveform
-                                  generator; text_encoder, flow, duration_predictor, posterior_encoder; default none)
+                                  generator, decoder.upsampler and decoder.conv_pre its frame-to-sample layers; also
+                                  text_encoder, flow, duration_predictor, posterior_encoder; default none)
               --schedule NAME     the rate's schedule: constant, cosine, linear, wsd (default constant)
               --warmup F          the share of the steps the rate warms up over (default 0)
               --optimizer NAME    adamw, adam, sgd (default adamw, betas 0.8 and 0.99)

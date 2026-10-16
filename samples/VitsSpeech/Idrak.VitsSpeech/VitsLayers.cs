@@ -219,24 +219,30 @@ internal sealed class VitsParameterSet(string name, IReadOnlyList<VitsParameter>
     /// <summary>The parts: the first segment of the tensors' names ("text_encoder", "flow", "decoder", …), in reading order.</summary>
     public IReadOnlyList<string> Parts => [.. parameters.Select(p => Part(p.Name)).Distinct(StringComparer.Ordinal)];
 
-    /// <summary>Keeps these parts' tensors as they are: no gradient, and out of <see cref="Parameters"/>.</summary>
+    /// <summary>
+    /// Keeps these parts' tensors as they are: no gradient, and out of <see cref="Parameters"/>. A part, or a sub-part
+    /// named by its tensors' prefix ("decoder.upsampler": the decoder's transposed convolutions).
+    /// </summary>
     public void Freeze(IReadOnlyCollection<string> parts)
     {
-        var known = Parts;
         foreach (string part in parts)
         {
-            if (!known.Contains(part, StringComparer.Ordinal))
+            if (!parameters.Any(p => Within(p.Name, part)))
             {
-                throw new ArgumentException($"VITS has no part '{part}' to freeze; its parts are {string.Join(", ", known)}.", nameof(parts));
+                throw new ArgumentException($"VITS has no part '{part}' to freeze; its parts are {string.Join(", ", Parts)}, or a sub-part by its tensors' name "
+                    + "prefix (decoder.upsampler, decoder.conv_pre, decoder.resblocks, ...).", nameof(parts));
             }
         }
 
-        foreach (var p in parameters.Where(p => parts.Contains(Part(p.Name))))
+        foreach (var p in parameters.Where(p => parts.Any(part => Within(p.Name, part))))
         {
             p.Tensor.RequiresGrad = false;
             _frozen.Add(p.Name);
         }
     }
+
+    private static bool Within(string tensor, string part) =>
+        tensor.Length > part.Length ? tensor.StartsWith(part, StringComparison.Ordinal) && tensor[part.Length] == '.' : tensor == part;
 
     protected override Tensor ForwardCore(Tensor input) => throw new NotSupportedException($"{name} lists the trained tensors; the model's layers run them.");
 
