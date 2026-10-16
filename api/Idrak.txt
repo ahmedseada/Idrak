@@ -1612,11 +1612,14 @@ public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
 
 public static class Idrak.Models.StoredWeights
+  public static Idrak.Abstraction.Formats.WeightFormat Kept(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
   public static Idrak.Layers.BatchNorm BatchNorm(Idrak.Abstraction.Formats.ITensorStore store, string name, float epsilon = 1E-05f, float momentum = 0.1f, Idrak.Abstraction.Device? device = null)
   public static Idrak.Layers.Conv2d Conv2d(Idrak.Abstraction.Formats.ITensorStore store, string name, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, Idrak.Abstraction.Device? device = null)
   public static Idrak.Layers.Linear Linear(Idrak.Abstraction.Formats.ITensorStore store, string name, Idrak.Abstraction.Generation.EncoderWeights weights = (Idrak.Abstraction.Generation.EncoderWeights)0, Idrak.Abstraction.Device? device = null)
+  public static Idrak.Layers.Linear Linear(float[] values, int inputs, int outputs, Idrak.Abstraction.Tensor? bias, Idrak.Abstraction.Formats.WeightFormat kept, Idrak.Abstraction.Device device)
   public static Idrak.Layers.Linear Linear(float[] values, int inputs, int outputs, Idrak.Abstraction.Tensor? bias, bool bfloat16, Idrak.Abstraction.Device device)
   public static bool KeepsBFloat16(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
+  public static bool KeepsFloat16(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
 
 public static class Idrak.ModuleFiles
   public static void Load(this Idrak.Abstraction.Module module, System.IO.Stream stream)

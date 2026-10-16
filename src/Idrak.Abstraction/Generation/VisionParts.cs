@@ -90,8 +90,9 @@ public sealed record VisionEncoderOptions
 public enum EncoderWeights
 {
     /// <summary>
-    /// As the checkpoint stores them (core's <c>ITensorStore.FormatOf</c>): bfloat16 weights as bfloat16, anything else
-    /// as float32. The computation is the float32 one either way (the same weight values, float32 activations and sums).
+    /// As the checkpoint stores them (core's <c>ITensorStore.FormatOf</c>): bfloat16 weights as bfloat16, float16 ones as
+    /// float16 (widened exactly for each product), anything else as float32. The computation is the float32 one either
+    /// way (the same weight values, float32 activations and sums).
     /// </summary>
     AsStored,
 
@@ -100,6 +101,12 @@ public enum EncoderWeights
 
     /// <summary>Projection weights in bfloat16, rounded to nearest when the checkpoint stores them wider.</summary>
     BFloat16,
+
+    /// <summary>
+    /// Projection weights in IEEE half precision (exact for a float16 checkpoint, rounded to nearest from a wider one),
+    /// widened exactly for each product: the float32 computation in half the memory.
+    /// </summary>
+    Float16,
 }
 
 /// <summary>

@@ -58,7 +58,7 @@ internal static class WhisperWeights
     {
         var packed = new float[dim * 3 * dim];
         var bias = new float[3 * dim];
-        bool anyBias = false, bfloat16 = weights == EncoderWeights.BFloat16;
+        bool anyBias = false;
         string[] parts = ["q_proj", "k_proj", "v_proj"];
         for (int p = 0; p < 3; p++)
         {
@@ -75,7 +75,6 @@ internal static class WhisperWeights
                 values.AsSpan(i * dim, dim).CopyTo(packed.AsSpan(i * 3 * dim + p * dim, dim));
             }
 
-            bfloat16 |= weights == EncoderWeights.AsStored && store.FormatOf(name) == WeightFormat.BFloat16;
             string biasName = prefix + parts[p] + ".bias";
             if (store.Contains(biasName))
             {
@@ -84,7 +83,9 @@ internal static class WhisperWeights
             }
         }
 
-        return StoredWeights.Linear(packed, dim, 3 * dim, anyBias ? Tensor.Persistent(bias, [3 * dim], device, requiresGrad: true) : null, bfloat16, device);
+        // The three keep one precision: the one each stored tensor allows (a bfloat16 or float16 checkpoint's own, as stored).
+        var kept = StoredWeights.Kept(store, weights, parts.Select(part => prefix + part + ".weight"));
+        return StoredWeights.Linear(packed, dim, 3 * dim, anyBias ? Tensor.Persistent(bias, [3 * dim], device, requiresGrad: true) : null, kept, device);
     }
 
     /// <summary>The feed-forward activation named by the configuration.</summary>

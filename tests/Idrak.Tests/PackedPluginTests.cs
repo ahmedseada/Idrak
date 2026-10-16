@@ -15,8 +15,78 @@ internal static partial class Tests
         ("packed plugins: the built-in formats are registered; an unknown name lists them; a format of one's own registers, packs by name and has no built-in Format", PackedPluginRegistry),
         ("packed plugins: the PackedFormat overload makes the built-in weights from the same table the registry starts from, even with a built-in name replaced; weight file formats encode and decode through their codecs (float32 exact, float16 and bfloat16 rounding, NaN, unknown format bytes)", PackedBuiltInsAndWeightCodecs),
         ("packed plugins: a Linear layer holding a format of one's own (expanded default product, and its own product) matches the float product at 1 and 70 rows, with the input's gradient; ToFloat32, Save/Load and moving between devices", PackedPluginLinear),
+        ("packed plugins: float16 weights: every one of the 65536 halves widens exactly (Float16Dequantize on the device, as .NET's Half); the product at 1, 3 and 70 rows and the input's gradient equal a float32 layer holding the same values bit for bit; a float16 checkpoint loads as float16 (half the bytes) under AsStored and as float32 under Float32", PackedFloat16),
         ("packed plugins: a decoder built with a format of one's own decodes token by token (and through a recorded step) like the built-in bfloat16 decoder, and trains a LoRA adapter", PackedPluginDecoder),
     ];
+
+    private static void PackedFloat16(Device device)
+    {
+        // Every bit pattern, widened by the device kernel, against .NET's own conversion (NaNs: NaN with the same payload).
+        var all = new float[65536];
+        for (int h = 0; h < all.Length; h++)
+        {
+            all[h] = (float)BitConverter.UInt16BitsToHalf((ushort)h);
+        }
+
+        using (var every = Float16Weight.FromValues(all, 1, all.Length, device))
+        using (var widened = every.Dequantize())
+        {
+            var got = widened.ToArray();
+            int wrong = 0, first = -1;
+            for (int h = 0; h < all.Length; h++)
+            {
+                if (BitConverter.SingleToUInt32Bits(got[h]) != BitConverter.SingleToUInt32Bits(all[h]))
+                {
+                    wrong++;
+                    first = first < 0 ? h : first;
+                }
+            }
+
+            Check(wrong == 0, $"float16 widening on {device}: {wrong} of 65536 halves differ from .NET's (first 0x{first:X4}: {(first >= 0 ? got[first] : 0)} for {(first >= 0 ? all[first] : 0)})");
+        }
+
+        // The product and the input's gradient: the float32 layer's, bit for bit (the same values, the same float32 product).
+        var random = new Random(16);
+        const int K = 37, N = 29;
+        var values = Enumerable.Range(0, K * N).Select(_ => (float)(Half)(float)(random.NextDouble() * 2 - 1)).ToArray();
+        using var half = Linear.FromPacked(Float16Weight.FromValues(values, K, N, device));
+        using var full = Linear.FromWeights(Tensor.Persistent(values, [K, N], device, requiresGrad: false));
+        foreach (int m in new[] { 1, 3, 70 })
+        {
+            var x = Enumerable.Range(0, m * K).Select(_ => (float)(random.NextDouble() * 2 - 1)).ToArray();
+            using var a = Tensor.From(x, [m, K], device, requiresGrad: true);
+            using var b = Tensor.From(x, [m, K], device, requiresGrad: true);
+            using var ya = half.Forward(a);
+            using var yb = full.Forward(b);
+            Check(ya.ToArray().SequenceEqual(yb.ToArray()), $"float16 product at {m} rows on {device}: the float32 layer's bit for bit");
+            ya.Sum().Backward();
+            yb.Sum().Backward();
+            Check(a.Grad!.ToArray().SequenceEqual(b.Grad!.ToArray()), $"float16 input gradient at {m} rows on {device}: the float32 layer's");
+        }
+
+        // A float16 checkpoint: AsStored keeps its projection at 2 bytes a weight, Float32 widens it; the same outputs.
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-f16-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string file = Path.Combine(folder, "model.safetensors");
+            var stored = Enumerable.Range(0, N * K).Select(i => values[i % K * N + i / K]).ToArray();   // [out, in], as PyTorch stores it
+            Idrak.Models.SafeTensorsWriter.Write(file, [("proj.weight", [N, K], stored)], Idrak.Models.SafeTensorType.F16);
+            using var store = Idrak.Models.SafeTensorsReader.Open(file);
+            using var kept = Idrak.Models.StoredWeights.Linear(store, "proj", EncoderWeights.AsStored, device);
+            using var wide = Idrak.Models.StoredWeights.Linear(store, "proj", EncoderWeights.Float32, device);
+            var x = Enumerable.Range(0, 2 * K).Select(_ => (float)(random.NextDouble() * 2 - 1)).ToArray();
+            using var input = Tensor.From(x, [2, K], device);
+            using var ky = kept.Forward(input);
+            using var wy = wide.Forward(input);
+            Check(kept.PackedWeight is Float16Weight { Bytes: var bytes } && bytes <= 2L * ((N + 1) / 2 * 2) * K && wide.PackedWeight is null && ky.ToArray().SequenceEqual(wy.ToArray()),
+                $"a float16 checkpoint on {device}: AsStored keeps {kept.PackedWeight?.Name ?? "float32"} ({kept.PackedWeight?.Bytes} bytes), Float32 widens it, the same outputs");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
 
     private const string PluginExpanded = "test-bf16-expanded", PluginOwnProduct = "test-bf16-own-product";
 

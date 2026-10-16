@@ -99,6 +99,20 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
+        // w[i] = the IEEE half of column j in row r widened (exact: see Float16At).
+        yield return ("f16_dequantize", () =>
+        {
+            var k = new KernelBuilder("f16_dequantize", Block);
+            var (packed, w) = (k.Buffer("packed"), k.Buffer("w"));
+            var (rows, n) = (k.PushInt("k"), k.PushInt("n"));
+            Grid(k, rows * n, i =>
+            {
+                var (r, j) = (i / n, i % n);
+                w[i] = Float16At(k, packed, r * ((n + 1) / 2) + (j >> 1), j);
+            });
+            return k.Build();
+        });
+
         // Word i of packed = x[2i], x[2i + 1] rounded to bfloat16 (to nearest, ties to even; low half first; 0 past n).
         yield return ("bf16_pack", () =>
         {
@@ -555,6 +569,22 @@ internal static partial class VulkanKernels
     {
         var word = packed.UInt(wordIndex);
         return k.Select((j & 1).Eq(1), word & k.UInt(0xFFFF0000u), word << 16).AsFloat();
+    }
+
+    // The IEEE half of column j (low half of the word for even j) as float32, exactly: normal halves by moving the
+    // exponent and mantissa, subnormals as mantissa · 2^-24 (a normal float32: nothing depends on the device keeping
+    // denormals), infinities and NaNs kept. Integer work only, then one bitcast.
+    private static Val Float16At(KernelBuilder k, Buf packed, Val wordIndex, Val j)
+    {
+        var word = packed.UInt(wordIndex);
+        var h = k.Select((j & 1).Eq(1), word >> 16, word & k.UInt(0xFFFFu));
+        var e = (h >> 10) & k.UInt(0x1Fu);
+        var m = h & k.UInt(0x3FFu);
+        var sign = (h & k.UInt(0x8000u)) << 16;
+        var normal = sign | ((e + k.UInt(112u)) << 23) | (m << 13);
+        var special = sign | k.UInt(0x7F800000u) | (m << 13);
+        var subnormal = sign | (m.ToFloat() * (1f / 16777216f)).AsUInt();
+        return k.Select(e.Eq(k.UInt(0u)), subnormal, k.Select(e.Eq(k.UInt(31u)), special, normal)).AsFloat();
     }
 
     // The bfloat16 bits of v (as uint in the low half): to nearest, ties to even; NaN → 0x7FC0.

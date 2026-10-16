@@ -86,6 +86,12 @@ internal sealed unsafe partial class CudaBackend
         Launch1D(K("bf16_dequant_f32"), k * words, P(packed), P(w), U(words), U(n), U(k * words));
     }
 
+    public override void Float16DequantizeKernel(Storage packed, Storage w, int k, int n)
+    {
+        int words = (n + 1) / 2;
+        Launch1D(K("f16_dequant_f32"), k * words, P(packed), P(w), U(words), U(n), U(k * words));
+    }
+
     /// <summary>Benchmarks only: the k splits of prompt-sized packed products on tensor cores instead of the heuristic's.</summary>
     internal static int? PackedSplits { get; set; }
 
