@@ -11,6 +11,10 @@ These are the owner's standing rules. They hold in every session, after every co
   limits, per-call work once, a fixed summation order, the declared block) apply to every GPU kernel.
 - **Speed and memory first.** They are the library's main goal. A slow or memory-heavy path found in the library is
   fixed in the library, without asking whether to; an app or sample never works around it.
+- **Use all available resources unless the user sets a limit.** The library may take every core, the whole device
+  memory and the room it measures; using most of a card is not a fault in itself. Only a limit the user sets
+  (`ComputeResources`, an option, an environment variable) bounds it. A "memory-heavy path" is one that wastes memory
+  for what it does, not one that uses the room it was given.
 - **Card-agnostic.** Nothing is tuned for, or assumes, a specific GPU, card or memory size. Measure the device at run
   time; never hardcode a card, a vendor path or a GB budget in code, comments, tests, docs or advice.
 - **Abstraction always.** New behaviour goes through a contract plus a `SlotTable` registry (decision 10). Keep the
