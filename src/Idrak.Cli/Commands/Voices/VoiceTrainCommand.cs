@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Cli.Commands.Train;
 using Idrak.Cli.Shared;
+using Idrak.Diagnostics;
 
 namespace Idrak.Cli.Commands.Voices;
 
@@ -79,6 +81,8 @@ internal sealed class VoiceTrainCommand : Command
               --resume RUN        continue a voice run from its latest checkpoint (--steps N: N more)
           -o, --out RUN           the run folder (default CACHE/runs/DATE-voice-NAME)
               --no-install        train only; install later with --resume RUN --steps 0
+              --profile           time steps instead of training: 3 warm-up, 3 timed, 2 with every GPU kernel timed
+                                  (the step's GPU time against its wall time; nothing installed)
               --overwrite         replace an installed voice of the same name
         """ + "\n" + VoiceText.StoreHelp + "\n" + """
 
@@ -97,7 +101,7 @@ internal sealed class VoiceTrainCommand : Command
         "--warmup", "--optimizer", "--clip", "--save-every", "--keep", "--eval-every", "--log-every", "--feature-cache", "--resume", "--out", "--voices",
     ];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite", "--no-install"];
+    public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite", "--no-install", "--profile"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-l"] = "--language", ["-o"] = "--out" };
 
@@ -124,7 +128,7 @@ internal sealed class VoiceTrainCommand : Command
         string baseArgument = context.Option("--base") ?? throw new UsageException("Missing --base MODEL (the synthesizer to fine-tune; its plug-in given with -P).");
         string baseFolder = Directory.Exists(baseArgument) ? Path.GetFullPath(baseArgument) : ModelChoices.Resolve(context, baseArgument);
         var store = AudioFiles.VoiceStore(context);
-        if (store.Find(name) is { } existing && !context.Flag("--overwrite") && !context.Flag("--no-install"))
+        if (store.Find(name) is { } existing && !context.Flag("--overwrite") && !context.Flag("--no-install") && !context.Flag("--profile"))
         {
             throw new UsageException($"Voice '{existing.Name}' is installed already at {existing.Folder}; give --overwrite to replace it, or another NAME.");
         }
@@ -132,6 +136,23 @@ internal sealed class VoiceTrainCommand : Command
         var train = Source(context, context.Option("--from") ?? throw new UsageException("Give the recordings with --from DATA (transcripts, or a folder of name.wav + name.txt)."));
         var evaluation = context.Option("--eval") is { } eval ? Source(context, eval) : null;
         var options = Options(context, Defaults(), resuming: false);
+        if (context.Flag("--profile"))
+        {
+            using var profiled = Load(context, baseFolder);
+            string scratch = Path.Combine(Path.GetTempPath(), $"idrak-voice-profile-{Environment.ProcessId}");
+            try
+            {
+                return Profile(context, profiled, train, options, scratch);
+            }
+            finally
+            {
+                if (Directory.Exists(scratch))
+                {
+                    Directory.Delete(scratch, recursive: true);
+                }
+            }
+        }
+
         string run = Path.GetFullPath(context.Option("--out")
             ?? Path.Combine(RunLog.RunsFolder(context), string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyyMMdd-HHmmss}-voice-{name}")));
         if (Directory.Exists(run) && SpeechTrainer.LatestCheckpoint(run) is not null)
@@ -297,6 +318,55 @@ internal sealed class VoiceTrainCommand : Command
         synthesizer.Dispose();
         throw new UsageException($"{folder} holds a {synthesizer.GetType().Name}, which its family does not train against discriminators (no IAdversarialSpeechSynthesizer); "
             + "voice train fine-tunes a VITS checkpoint (-P Idrak.VitsSpeech.dll).");
+    }
+
+    // --profile: 3 warm-up steps, 3 timed by the clock, 2 with every GPU kernel timed (slower, so timed apart): how much of
+    // a step the device works, and on what.
+    private static int Profile(CommandContext context, IAdversarialSpeechSynthesizer model, SpeechSource train, SpeechTrainingOptions options, string scratch)
+    {
+        const int Warm = 3, Timed = 3, Profiled = 2;
+        var device = model.Device;
+        context.Write($"profiling on {device}: {Warm} warm-up steps, {Timed} timed, {Profiled} with every GPU kernel timed…");
+        long started = 0;
+        double wallMs = 0, audioPerSecond = 0;
+        IReadOnlyList<GpuProfileEntry> kernels = [];
+        var progress = new SyncProgress<SpeechTrainingProgress>(p =>
+        {
+            if (p.Stage != "step")
+            {
+                return;
+            }
+
+            if (p.Step == Warm)
+            {
+                device.Synchronize();
+                started = Stopwatch.GetTimestamp();
+            }
+            else if (p.Step == Warm + Timed)
+            {
+                device.Synchronize();
+                wallMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds / Timed;
+                audioPerSecond = p.AudioSecondsPerSecond;
+                GpuProfiler.Start(device);
+            }
+            else if (p.Step == Warm + Timed + Profiled)
+            {
+                kernels = GpuProfiler.Stop(device);
+            }
+        });
+        AdversarialSynthesisTrainer.Train(model, train, null, options with { Steps = Warm + Timed + Profiled, EvaluateEvery = 0, SaveEvery = 0 }, scratch, null, progress);
+        if (kernels.Count == 0)
+        {
+            context.Write(FormattableString.Invariant($"per step: {wallMs:F0} ms ({audioPerSecond:F1}x real time); kernel times need a device that times them (cuda)"));
+            return ExitCodes.Ok;
+        }
+
+        context.Write(GpuProfiler.Format(kernels, rows: 30).TrimEnd());
+        double gpuMs = kernels.Sum(k => k.Milliseconds) / Profiled;
+        long launches = kernels.Sum(k => k.Calls) / Profiled;
+        context.Write(FormattableString.Invariant(
+            $"per step: {wallMs:F0} ms by the clock ({audioPerSecond:F1}x real time), {gpuMs:F0} ms of kernels in {launches:N0} launches: the device works {Math.Min(1, gpuMs / Math.Max(1e-9, wallMs)):P0} of the step"));
+        return ExitCodes.Ok;
     }
 
     // Trains, then installs the run's last checkpoint as the voice (unless --no-install).
