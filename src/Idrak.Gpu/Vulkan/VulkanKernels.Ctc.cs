@@ -251,13 +251,30 @@ internal static partial class VulkanKernels
                         });
                         Barrier(k, shared);
 
-                        // The step's largest α·β (log), then each state's share e^(α + β - top).
+                        // Each state's paths through the step, u = α + β - log y (α and β both hold y), the step's largest, and
+                        // each state's share e^(u - top) (an invocation reads back only its own states' u before the barrier).
+                        // Every step's paths sum to p(labels), so the shares are divided by their own step's total rather than
+                        // scaled by e^(top + nll): in float, α and β carry an error of order their size (hundreds over a long
+                        // sequence) that the total shares and e^nll does not; the CPU runs in double.
                         var row = alphaBase + step * q.Stride;
-                        var mine = k.Local(2 * Never);
-                        k.For(k.LocalX, q.States, Block, s => mine.V = k.Max(mine.V, alpha[row + s] + Beta(current + s)));
+                        var mine = k.Local(3 * Never);
+                        k.For(k.LocalX, q.States, Block, s =>
+                        {
+                            var u = alpha[row + s] + Beta(current + s) - Bounded(k, q.LogProb(step, q.Class(s)));
+                            SetTerm(s, u);
+                            mine.V = k.Max(mine.V, u);
+                        });
                         var top = k.ReduceMax(scratch, mine.V);
                         var finite = top > Reached;
-                        k.For(k.LocalX, q.States, Block, s => SetTerm(s, k.Select(finite, k.Exp(alpha[row + s] + Beta(current + s) - top), k.Float(0f))));
+                        var totalPart = k.Local(0f);
+                        k.For(k.LocalX, q.States, Block, s =>
+                        {
+                            var share = k.Select(finite, k.Exp(Term(s) - top), k.Float(0f));
+                            SetTerm(s, share);
+                            totalPart.V = totalPart.V + share;
+                        });
+                        var total = k.ReduceSum(scratch, totalPart.V);
+                        var inverse = k.Select(finite, k.Float(1f) / k.Max(total, k.Float(1f)), k.Float(0f));   // reached: the top's share is 1
                         Barrier(k, shared);
 
                         // The blank's sum over the even states (the workgroup's reduction), each label's over its occurrences in
@@ -268,7 +285,7 @@ internal static partial class VulkanKernels
                         k.If(k.LocalX.Eq(0), () =>
                         {
                             var at = (k.Select(q.BatchFirst.Ne(0), q.N * q.Steps + step, step * q.Batch + q.N)) * q.Classes + q.Blank;
-                            gradient[at] = gradient[at] - scale * (blankSum * k.Exp(top + nll - q.LogProbs[at]));
+                            gradient[at] = gradient[at] - scale * (blankSum * inverse);
                         });
                         k.For(k.LocalX, q.Labels, Block, j =>
                         {
@@ -280,7 +297,7 @@ internal static partial class VulkanKernels
                                 var sum = k.Local(0f);
                                 k.For(j, q.Labels, 1, i => k.If(q.Label(i).Eq(c), () => sum.V = sum.V + Term(2 * i + 1)));
                                 var at = (k.Select(q.BatchFirst.Ne(0), q.N * q.Steps + step, step * q.Batch + q.N)) * q.Classes + c;
-                                gradient[at] = gradient[at] - scale * (sum.V * k.Exp(top + nll - q.LogProbs[at]));
+                                gradient[at] = gradient[at] - scale * (sum.V * inverse);
                             });
                         });
                         Barrier(k, shared);
