@@ -412,6 +412,8 @@ internal static class SpeechPretraining
     // The live line, and a line every N steps (loss, rate, real-time factor, memory, time left, the held-out score).
     private sealed class Reports(CommandContext context, ProgressLine line, int every) : IProgress<SpeechTrainingProgress>
     {
+        private double? _micro;
+
         public void Report(SpeechTrainingProgress p)
         {
             // A step's last report ("step") carries its held-out score too, so the "evaluate" and "checkpoint" reports
@@ -420,6 +422,16 @@ internal static class SpeechPretraining
             {
                 return;
             }
+
+            // The device ran out of memory: say so when it happens (the run's notes repeat it at the end).
+            if (_micro is { } before && p.MicroBatchSeconds < before)
+            {
+                line.Erase();
+                context.Write(FormattableString.Invariant(
+                    $"step {p.Step}: out of device memory, now micro-batches of {p.MicroBatchSeconds:0.##} audio seconds (gradients added up: the same result, slower)"));
+            }
+
+            _micro = p.MicroBatchSeconds;
 
             line.Report(p.Step);
             if (every > 0 && (p.Step % every == 0 || p.Step == p.Steps) || p.Evaluation is not null)

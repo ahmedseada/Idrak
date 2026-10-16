@@ -130,6 +130,9 @@ internal sealed class VitsDiscriminators : IDisposable
     /// <summary>The description's file in a model folder.</summary>
     public const string ConfigFile = "discriminator.json";
 
+    /// <summary>The weight-normed filters of the discriminators' layers (bound for a step's half).</summary>
+    internal IReadOnlyList<WeightNormed> Normed => _weights.Normed;
+
     private readonly Stack[] _scales, _periods;
     private readonly VitsWeights _weights;
 
