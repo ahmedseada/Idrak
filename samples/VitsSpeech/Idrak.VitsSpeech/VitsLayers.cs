@@ -193,11 +193,38 @@ internal sealed record VitsParameter(string Name, Tensor Tensor, int[] Stored, b
 /// <summary>A model's trained tensors as a <see cref="Module"/> (what the trainers take); its layers compute, it does not, and they own the tensors.</summary>
 internal sealed class VitsParameterSet(string name, IReadOnlyList<VitsParameter> parameters) : Module
 {
+    private readonly HashSet<string> _frozen = new(StringComparer.Ordinal);
+
+    /// <summary>Every tensor, frozen or not (what a checkpoint saves).</summary>
     public IReadOnlyList<VitsParameter> Named => parameters;
+
+    /// <summary>The parts: the first segment of the tensors' names ("text_encoder", "flow", "decoder", …), in reading order.</summary>
+    public IReadOnlyList<string> Parts => [.. parameters.Select(p => Part(p.Name)).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>Keeps these parts' tensors as they are: no gradient, and out of <see cref="Parameters"/>.</summary>
+    public void Freeze(IReadOnlyCollection<string> parts)
+    {
+        var known = Parts;
+        foreach (string part in parts)
+        {
+            if (!known.Contains(part, StringComparer.Ordinal))
+            {
+                throw new ArgumentException($"VITS has no part '{part}' to freeze; its parts are {string.Join(", ", known)}.", nameof(parts));
+            }
+        }
+
+        foreach (var p in parameters.Where(p => parts.Contains(Part(p.Name))))
+        {
+            p.Tensor.RequiresGrad = false;
+            _frozen.Add(p.Name);
+        }
+    }
 
     protected override Tensor ForwardCore(Tensor input) => throw new NotSupportedException($"{name} lists the trained tensors; the model's layers run them.");
 
-    public override IEnumerable<Tensor> Parameters() => parameters.Select(p => p.Tensor);
+    public override IEnumerable<Tensor> Parameters() => parameters.Where(p => !_frozen.Contains(p.Name)).Select(p => p.Tensor);
+
+    private static string Part(string tensor) => tensor.IndexOf('.') is int dot and > 0 ? tensor[..dot] : tensor;
 
     public override string ToString() => name;
 

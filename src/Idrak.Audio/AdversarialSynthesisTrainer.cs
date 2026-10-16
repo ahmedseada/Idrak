@@ -49,8 +49,14 @@ public static class AdversarialSynthesisTrainer
                 + "give a synthesizer sound augmentations only (\"speed\", \"noise\").", nameof(options));
         }
 
-        return SpeechTrainer.Run(new AdversarialTrainee(model, options, options.Adversarial ?? new AdversarialSynthesisOptions()), train, evaluation, options, outputFolder,
-            resume, progress, cancellationToken, trace);
+        var adversarial = options.Adversarial ?? new AdversarialSynthesisOptions();
+        model.Freeze(adversarial.Frozen);
+        if (adversarial.Frozen.Count > 0)
+        {
+            trace?.Invoke($"frozen: {string.Join(", ", adversarial.Frozen)}");
+        }
+
+        return SpeechTrainer.Run(new AdversarialTrainee(model, options, adversarial), train, evaluation, options, outputFolder, resume, progress, cancellationToken, trace);
     }
 
     /// <summary>
