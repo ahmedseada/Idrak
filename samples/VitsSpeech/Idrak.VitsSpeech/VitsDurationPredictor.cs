@@ -79,10 +79,14 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     }
 
     /// <summary>
-    /// The training loss of the durations (transformers' forward direction, reverse false): the negative log-likelihood
-    /// of each token's frames <paramref name="durations"/> [1, T] under the flows conditioned on <paramref name="hidden"/>
-    /// [C, T] (detached: the text encoder gets no gradient from it, as in VITS), dequantized by the posterior flows over
-    /// <paramref name="noise"/> [2, T], plus the posterior's log-density: a scalar, summed over the tokens.
+    /// The training loss of the durations (the forward direction, reverse false): the negative log-likelihood of each
+    /// token's frames <paramref name="durations"/> [1, T] under the flows conditioned on <paramref name="hidden"/> [C, T]
+    /// (detached: the text encoder gets no gradient from it, as in VITS), dequantized by the posterior flows over
+    /// <paramref name="noise"/> [2, T], plus the posterior's log-density: a scalar, summed over the tokens. The flows run
+    /// in VITS's order, no flip after the element-wise affine ([affine, conv flow, flip, conv flow, flip, ...]): the order
+    /// whose inverse is the reverse <see cref="LogDurations"/> speaks with. transformers' forward flips after the affine
+    /// too, which trains flows its reverse does not undo: a model fine-tuned that way speaks with durations it was not
+    /// trained on (far shorter ones on a real checkpoint).
     /// </summary>
     public Tensor Loss(Tensor hidden, Tensor durations, Tensor noise) => Nll(hidden, durations, noise);
 
@@ -90,13 +94,12 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     {
         var posterior = _posterior ?? throw new InvalidOperationException("The duration predictor was loaded to speak; load the model with SpeechSynthesisLoadOptions.Training to train it.");
         int t = hidden.Shape[1];
-        var x = _proj.Forward(_dds.Forward(_pre.Forward(hidden), null));               // the conditioning of every flow, [C, T]
+        var x = Conditioning(hidden, null);
         var h = posterior.Proj.Forward(posterior.Dds.Forward(posterior.Pre.Forward(durations), null));
 
-        // The posterior: the noise through its flows (each after which the channels flip), conditioned on both.
+        // The posterior: the noise through the affine, then its flows (each after which the channels flip), conditioned on both.
         var conditioning = x + h;
         var latents = Affine(noise, posterior.LogScale, posterior.Translate, t, out var logDetQ);
-        latents = Flip(latents);
         foreach (var flow in posterior.Flows)
         {
             latents = flow.Forward(latents, conditioning, out var logDet);
@@ -120,19 +123,42 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
 
         // The durations dequantized by the posterior's first channel, through the flows to the prior.
         var dequantized = (durations - first.Sigmoid()).Clamp(1e-5f, float.PositiveInfinity).Log();
-        var logDetSum = dequantized.Sum() * -1f;
-        latents = Affine(Tensor.Concat([dequantized, second], 0), _logScaleParameter!, _translateParameter!, t, out var affineDet);
-        latents = Flip(latents);
-        logDetSum = logDetSum + affineDet;
-        foreach (var flow in _flows)
-        {
-            latents = flow.Forward(latents, x, out var logDet);
-            latents = Flip(latents);
-            logDetSum = logDetSum + logDet;
-        }
-
+        latents = Prior(Tensor.Concat([dequantized, second], 0), x, out var flowsDet);
+        var logDetSum = dequantized.Sum() * -1f + flowsDet;
         var nll = (latents.Square() * 0.5f).Sum() + (float)(0.5 * latents.Size * Math.Log(2 * Math.PI)) - logDetSum;
         return nll + logQ;
+    }
+
+    /// <summary>The conditioning of every flow [C, T] from the hidden states [C, T] and the speaker's embedding [E, 1] (null for one speaker).</summary>
+    internal Tensor Conditioning(Tensor hidden, Tensor? speaker)
+    {
+        var x = _pre.Forward(hidden);
+        if (speaker is not null && _cond is not null)
+        {
+            x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), hidden.Shape[1]);
+        }
+
+        return _proj.Forward(_dds.Forward(x, null));
+    }
+
+    /// <summary>
+    /// The flows forward (training): latents [2, T] (the log-durations and their pair) through the element-wise affine,
+    /// then each spline flow followed by a flip, conditioned on <paramref name="x"/> [C, T]; the log-determinant summed.
+    /// <see cref="Reverse"/> takes the result back to the log-durations.
+    /// </summary>
+    internal Tensor Prior(Tensor latents, Tensor x, out Tensor logDet)
+    {
+        int t = latents.Shape[1];
+        var logScale = _logScaleParameter ?? throw new InvalidOperationException("The duration predictor was loaded to speak; load the model with SpeechSynthesisLoadOptions.Training to train it.");
+        latents = Affine(latents, logScale, _translateParameter!, t, out logDet);
+        foreach (var flow in _flows)
+        {
+            latents = flow.Forward(latents, x, out var flowDet);
+            latents = Flip(latents);
+            logDet = logDet + flowDet;
+        }
+
+        return latents;
     }
 
     // transformers' VitsElementwiseAffine forward: translate + exp(log_scale) · x per channel, its log-determinant T · Σ log_scale.
@@ -148,15 +174,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     public float[] LogDurations(Tensor hidden, Tensor? speaker, float noiseScale, Random random)
     {
         int t = hidden.Shape[1], channels = _config.DepthSeparableChannels;
-        var logScale = _logScaleParameter?.ToArray() ?? _logScale;               // a model in training speaks with its weights as they are now
-        var translate = _translateParameter?.ToArray() ?? _translate;
-        var x = _pre.Forward(hidden);
-        if (speaker is not null && _cond is not null)
-        {
-            x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), t);
-        }
-
-        x = _proj.Forward(_dds.Forward(x, null));                                // the conditioning of every flow, [C, T]
+        var x = Conditioning(hidden, speaker);                                   // the conditioning of every flow, [C, T]
 
         // The latents [channels, T]: noise times the scale (none at scale 0).
         var latents = new float[channels * t];
@@ -167,6 +185,20 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
                 latents[i] = (float)(VitsNoise.Normal(random) * noiseScale);
             }
         }
+
+        return Reverse(latents, x);
+    }
+
+    /// <summary>
+    /// The flows in reverse (speaking) on latents [channels, T] on the host (overwritten), conditioned on <paramref name="x"/>
+    /// [C, T]: the log-durations [T]. The first spline flow is left out, as transformers and VITS leave it: forward, it
+    /// changes only the second channel, which the affine keeps apart from the log-durations.
+    /// </summary>
+    internal float[] Reverse(float[] latents, Tensor x)
+    {
+        int t = x.Shape[1], channels = _config.DepthSeparableChannels;
+        var logScale = _logScaleParameter?.ToArray() ?? _logScale;               // a model in training speaks with its weights as they are now
+        var translate = _translateParameter?.ToArray() ?? _translate;
 
         // reversed(flows)[:-2] + [reversed(flows)[-1]]: the spline flows from the last down to the second, then the affine.
         for (int i = _flows.Length - 1; i >= 1; i--)

@@ -762,7 +762,7 @@
   },
   "vits-train/reference/grads-generator-step1.safetensors": {
    "bytes": 170792,
-   "sha256": "f234c117b2d24d4c182d09c3ded83d353cd5d60e997b7a0b99a5c766648177ec"
+   "sha256": "467e90a13ec9e0a695e71b9bd75c05d27933fb6099cbf8b799786745c8f0755f"
   },
   "vits-train/reference/neg-cent-0.npy": {
    "bytes": 608,
@@ -781,12 +781,12 @@
    "sha256": "ebb96e7bc5a513bccb0f986df54b4f5a2e337d4f269d4453d1a99fe74fa23d43"
   },
   "vits-train/reference/steps.json": {
-   "bytes": 1724,
-   "sha256": "a49f389821cbe297e92478368b4a378d3e4779648df486e0a9a43b36e297f7e3"
+   "bytes": 1723,
+   "sha256": "c8cb0565bcb1187632748d7c282e0d876dbe1a3629472030e8a3732d48206261"
   },
   "vits-train/reference/weights-step3.safetensors": {
    "bytes": 170792,
-   "sha256": "4ff6ca0cff54ef1564561b6ba02d31541ca7e90d3d5b7bdb0e7a11649008f24d"
+   "sha256": "f189d3832c3d8c770de94195963fda04a90d8ec271799f95c96302916dde1b36"
   },
   "wav/bad-no-fmt.wav": {
    "bytes": 48020,
