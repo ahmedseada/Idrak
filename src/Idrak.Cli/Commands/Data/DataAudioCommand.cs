@@ -35,8 +35,10 @@ internal sealed class DataAudioCommand : Command
         text is the whole file's). --stats prints the lengths (with a histogram), rates and channels, of the inputs
         alone without -o. --align MODEL then writes alignments.jsonl beside the manifest: where each label of every
         piece's text is spoken, from a CTC speech model's best paths (the durations a synthesizer trains on, idrak
-        pretrain --durations); given transcripts files (.jsonl) instead of sounds, it aligns their rows as the trainer
-        reads them (--audio DIR|ZIP where their sounds are) and converts nothing.
+        pretrain --durations); given speech data instead of sounds to convert (transcripts files, .jsonl, or folders and
+        zips of name.wav beside name.txt, with no conversion option), it aligns those utterances as the trainers read
+        them (--audio DIR|ZIP where a transcripts file's sounds are) and converts nothing; -o is then the folder
+        alignments.jsonl goes in (default: the folder given, or the transcripts file's).
 
         Arguments:
           FILE|DIR               sound files, folders (all subfolders) or globs
@@ -65,6 +67,7 @@ internal sealed class DataAudioCommand : Command
               --align MODEL      write alignments.jsonl from a CTC speech model (its plug-in given with -P)
               --align-seconds S  audio seconds in one pass of the model while aligning (default 60)
               --audio DIR|ZIP    where the sounds of transcripts files given to --align are (default: beside each file)
+              --source KIND      the speech data's kind for --align (transcripts or audio-folder; told from the paths)
 
         Examples:
           idrak data audio recordings/ -o clips --rate 16000 --mono
@@ -74,12 +77,13 @@ internal sealed class DataAudioCommand : Command
           idrak data audio corpus/ --stats
           idrak data audio rec/ -o clips --rate 16000 --mono --transcripts texts.tsv --align my-ctc -P Idrak.IdrakAudio.dll
           idrak data audio train.jsonl --audio clips.zip --align my-ctc -o aligned -P Idrak.IdrakAudio.dll
+          idrak data audio pieces/ --align my-ctc -P Idrak.IdrakAudio.dll
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--out", "--rate", "--bits", "--type", "--split", "--silence-db", "--min-silence", "--pad-seconds", "--hop-seconds", "--min-seconds", "--max-seconds",
-        "--resample-width", "--rolloff", "--transcripts", "--align", "--align-seconds", "--audio",
+        "--resample-width", "--rolloff", "--transcripts", "--align", "--align-seconds", "--audio", "--source",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--mono", "--stats"];
@@ -95,23 +99,28 @@ internal sealed class DataAudioCommand : Command
 
         string? output = context.Option("--out");
         bool stats = context.Flag("--stats");
+        if (context.Option("--align") is { } aligner && AlignsOnly(context))
+        {
+            // Speech data as the trainers read it (transcripts files, folders or zips of pairs), aligned, nothing converted.
+            var paths = context.Positional.Select(Path.GetFullPath).ToList();
+            var given = new SpeechSource(context.Option("--source") ?? Idrak.Cli.Commands.Train.SpeechPretraining.Kind(paths), paths)
+            {
+                Audio = context.Option("--audio") is { } a ? Path.GetFullPath(a) : null,
+            };
+            string folder = output ?? (paths.Count == 1 && Directory.Exists(paths[0]) ? paths[0] : Path.GetDirectoryName(paths[0])!);
+            var aligned = Align(context, aligner, given, folder);
+            context.WriteJson(new JsonObject { ["out"] = folder, ["source"] = given.Kind, ["alignments"] = aligned });
+            return ExitCodes.Ok;
+        }
+
         if (output is null && !stats)
         {
             throw new UsageException("Missing -o, --out DIR (the folder to write), or --stats to describe the files only.");
         }
 
-        if (context.Option("--align") is { } aligner && context.Positional.All(p => p.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
+        if ((context.Option("--audio") is not null || context.Option("--source") is not null) && context.Option("--align") is null)
         {
-            // Transcripts files: their rows aligned as the speech trainer reads them, nothing converted.
-            var given = new SpeechSource(SpeechSources.Transcripts, [.. context.Positional.Select(Path.GetFullPath)]) { Audio = context.Option("--audio") is { } a ? Path.GetFullPath(a) : null };
-            var aligned = Align(context, aligner, given, output ?? throw new UsageException("--align needs -o, --out DIR (where alignments.jsonl is written)."));
-            context.WriteJson(new JsonObject { ["out"] = output, ["alignments"] = aligned });
-            return ExitCodes.Ok;
-        }
-
-        if (context.Option("--audio") is not null && context.Option("--align") is null)
-        {
-            throw new UsageException("--audio says where the sounds of transcripts files given to --align are; give --align MODEL with .jsonl transcripts.");
+            throw new UsageException("--audio and --source describe speech data given to --align; give --align MODEL with transcripts or a folder of name.wav + name.txt.");
         }
 
         var inputs = Inputs(context.Positional);
@@ -323,6 +332,17 @@ internal sealed class DataAudioCommand : Command
 
         context.WriteJson(json);
         return ExitCodes.Ok;
+    }
+
+    // Whether --align reads the inputs as speech data (nothing converted): transcripts files, or folders and zips with no
+    // conversion option asked for (a conversion writes the pieces first, then aligns them).
+    private static bool AlignsOnly(CommandContext context)
+    {
+        bool transcripts = context.Positional.All(p => p.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".json", StringComparison.OrdinalIgnoreCase));
+        bool converts = context.Flag("--mono") || context.Flag("--stats")
+            || new[] { "--rate", "--bits", "--type", "--split", "--transcripts", "--min-seconds", "--max-seconds" }.Any(o => context.Option(o) is not null);
+        bool folders = context.Positional.All(p => Directory.Exists(p) || p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+        return transcripts || folders && !converts || context.Option("--source") is not null;
     }
 
     // Aligns `source` with the CTC model at `model` into DIR/alignments.jsonl: progress per batch, the notes, the count.

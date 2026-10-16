@@ -229,7 +229,7 @@ internal static class SpeechPretraining
     }
 
     // A source's kind from its paths: folders and zips hold name.wav beside name.txt, files are transcripts.
-    private static string Kind(IReadOnlyList<string> paths) =>
+    internal static string Kind(IReadOnlyList<string> paths) =>
         paths.All(p => Directory.Exists(p) || p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) ? SpeechSources.AudioFolder : SpeechSources.Transcripts;
 
     // A config's source with its paths relative to the config's folder.
