@@ -10,7 +10,7 @@ namespace Idrak.VitsSpeech;
 /// The character tokenizer of a VITS checkpoint (transformers' <c>VitsTokenizer</c>): <c>vocab.json</c> maps each
 /// symbol to its id; <c>tokenizer_config.json</c> (optional) says whether the text is lower-cased
 /// (<c>normalize</c>), whether a blank is put between symbols (<c>add_blank</c>, the pad token's id), whether the
-/// checkpoint expects phonemes (<c>phonemize</c>: refused, the library carries no phonemizer) or romanised text
+/// checkpoint expects phonemes (<c>phonemize</c>: the text phonemized first by a <see cref="TextPhonemizers"/> entry, espeak-ng by default) or romanised text
 /// (<c>is_uroman</c>: non-Latin text is romanised first by the <see cref="TextRomanizers"/> entry that covers its
 /// script, Arabic built in; a script none covers is refused). Each flag can be changed after loading.
 /// </summary>
@@ -52,8 +52,18 @@ public sealed class VitsTokenizer
     /// <summary>The blank's id (the pad token's).</summary>
     public int BlankId { get; set; }
 
-    /// <summary>The checkpoint expects phonemes: encoding is refused, since the library carries no phonemizer.</summary>
+    /// <summary>
+    /// The checkpoint expects phonemes (transformers' <c>phonemize</c>): the text is phonemized first by
+    /// <see cref="Phonemizer"/> (in <see cref="TextPhonemizers"/>; espeak-ng by default, which the user installs), its
+    /// white space collapsed, and the phonemes tokenized as characters.
+    /// </summary>
     public bool Phonemize { get; set; }
+
+    /// <summary>The phonemizer for <see cref="Phonemize"/> checkpoints: a name in <see cref="TextPhonemizers"/>, or null (the default) for the most recently registered.</summary>
+    public string? Phonemizer { get; set; }
+
+    /// <summary>The language the phonemizer reads the text in: tokenizer_config.json's <c>language</c>, else "en-us" (what transformers asks espeak for).</summary>
+    public string PhonemeLanguage { get; set; } = "en-us";
 
     /// <summary>The checkpoint expects romanised (uroman) text: non-Latin text is romanised before it is tokenized.</summary>
     public bool IsUroman { get; set; }
@@ -85,6 +95,10 @@ public sealed class VitsTokenizer
             tokenizer.AddBlank = config["add_blank"]?.GetValue<bool>() ?? true;            // transformers' default when the file exists
             tokenizer.Phonemize = config["phonemize"]?.GetValue<bool>() ?? false;
             tokenizer.IsUroman = config["is_uroman"]?.GetValue<bool>() ?? false;
+            if (config["language"] is JsonValue language && language.TryGetValue(out string? languageName) && !string.IsNullOrWhiteSpace(languageName))
+            {
+                tokenizer.PhonemeLanguage = languageName;
+            }
             if (config["pad_token"] is JsonValue pad && pad.TryGetValue(out string? padToken) && padToken is not null && tokenizer._ids.TryGetValue(padToken, out int padId))
             {
                 tokenizer.BlankId = padId;
@@ -95,16 +109,15 @@ public sealed class VitsTokenizer
     }
 
     /// <summary>The ids of <paramref name="text"/> (normalised and interspersed with blanks as the flags say).</summary>
-    /// <exception cref="NotSupportedException">The checkpoint expects phonemes, or romanised text and the text is not Latin.</exception>
+    /// <exception cref="NotSupportedException">The checkpoint expects phonemes and the phonemizer cannot run, or romanised text and no romanizer covers the text.</exception>
     public int[] Encode(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (Phonemize)
         {
-            throw new NotSupportedException("This checkpoint's tokenizer_config.json sets \"phonemize\": the library carries no phonemizer; give it a checkpoint over characters (MMS-TTS), or set VitsTokenizer.Phonemize false to encode the characters as they are.");
+            text = Phonemes(text);
         }
-
-        if (IsUroman && HasNonLatin(text))
+        else if (IsUroman && HasNonLatin(text))
         {
             text = Romanize(text);
         }
@@ -146,6 +159,18 @@ public sealed class VitsTokenizer
         }
 
         return ids;
+    }
+
+    /// <summary>
+    /// <paramref name="text"/> as a <see cref="Phonemize"/> checkpoint reads it: lower-cased (transformers' normalisation),
+    /// phonemized by <see cref="Phonemizer"/> in <see cref="PhonemeLanguage"/>, white space collapsed.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The phonemizer is not registered or cannot run (the message says what it needs).</exception>
+    public string Phonemes(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var phonemizer = Phonemizer is { } name ? TextPhonemizers.Get(name) : TextPhonemizers.First();
+        return TextPhonemizers.Collapse(phonemizer.Phonemize(Normalize ? text.ToLowerInvariant() : text, PhonemeLanguage));
     }
 
     // transformers strips the normalised text: leading and trailing spaces go.

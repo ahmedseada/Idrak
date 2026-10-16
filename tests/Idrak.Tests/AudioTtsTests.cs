@@ -16,7 +16,7 @@ internal static partial class Tests
         ("audio tts: Griffin-Lim on a tone's magnitudes gives a tone of the same frequency, finite and of the frames' length; the same spectrogram and seed twice give the same samples; the vocoder registry has griffin-lim as the library default and makes it from a log-mel whose peak band is the tone's", AudioTtsGriffinLim),
         ("audio tts: the VITS plug-in loads tiny-vits and speaks the fixture's ids with noise 0 within 1e-4 of reference/waveform.npy at the config's rate (the durations' frames times the hop), the same twice, Rate 2 no longer, text through the tokenizer equal to the ids, SpeakStream joined equal to Speak, the WAV saved and read back; without the plug-in the family is refused", AudioTtsVitsFixture),
         ("audio tts: the VITS decoder in pieces (DecoderChunkSeconds) with its context frames on both sides gives one pass's samples within 1e-6 (pieces of 3, 7 and 50 frames, through Synthesize and the vocoder), where 50 frames decoded without context differ near the cut 100 times more; on the CPU its peak memory stays within 1.5 times while the latents grow fivefold", AudioTtsDecoderPieces),
-        ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, refuses phonemes, romanises Arabic for a uroman checkpoint (uroman's output exactly on the tool's cases) and refuses a script no romanizer covers, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
+        ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, phonemizes for a phonemize checkpoint through TextPhonemizers (the language from tokenizer_config.json, punctuation kept in place; an unregistered phonemizer and espeak-ng not found refused naming the remedy), romanises Arabic for a uroman checkpoint (uroman's output exactly on the tool's cases) and refuses a script no romanizer covers, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
     ];
 
     private static string TinyVits => AudioData("tiny-vits");
@@ -193,6 +193,22 @@ internal static partial class Tests
         }
     }
 
+    // A phonemizer of the test: each letter of the text to one of the fixture's symbols, the last call recorded.
+    private sealed class TestPhonemizer : ITextPhonemizer
+    {
+        public string Name => "tts-test-phonemes";
+
+        public (string Text, string Language) Asked { get; private set; }
+
+        public static string Of(string text) => new([.. text.Select(c => char.IsLetter(c) ? (char)('a' + c % 7) : c)]);
+
+        public string Phonemize(string text, string language)
+        {
+            Asked = (text, language);
+            return Of(text);
+        }
+    }
+
     private static void AudioTtsVitsTokenizer(Device device)
     {
         if (device.Type != DeviceType.Cpu)
@@ -208,8 +224,32 @@ internal static partial class Tests
         Check(tokenizer.Encode("ab").SequenceEqual([0, 2, 0, 3, 0]), $"blanks interspersed: [{string.Join(", ", tokenizer.Encode("ab"))}]");
         tokenizer.AddBlank = false;
         tokenizer.Phonemize = true;
-        Check(ThrowsSaying<NotSupportedException>(() => tokenizer.Encode("ab"), "phonemize"), "a phonemizing checkpoint is refused naming the flag");
+        var phonemes = new TestPhonemizer();
+        TextPhonemizers.Register(phonemes);
+        try
+        {
+            tokenizer.PhonemeLanguage = "en-gb";
+            var phonemized = tokenizer.Encode("Hi, Bo!");
+            Check(phonemes.Asked == ("hi, bo!", "en-gb"), $"the phonemizer reads the lowered text in the tokenizer's language: {phonemes.Asked}");
+            tokenizer.Phonemize = false;
+            Check(phonemized.SequenceEqual(tokenizer.Encode(TestPhonemizer.Of("hi, bo!"))), "the phonemes are tokenized as characters");
+            tokenizer.Phonemize = true;
+            tokenizer.Phonemizer = "no-such-phonemizer";
+            Check(ThrowsSaying<NotSupportedException>(() => tokenizer.Encode("ab"), "TextPhonemizers.Register"), "an unregistered phonemizer is refused naming the registry");
+            tokenizer.Phonemizer = TextPhonemizers.EspeakNg;
+        }
+        finally
+        {
+            TextPhonemizers.Unregister(phonemes.Name);
+        }
+
+        var missing = new EspeakNgPhonemizer { Executable = Path.Combine(Path.GetTempPath(), $"no-espeak-{Guid.NewGuid():N}") };
+        Check(ThrowsSaying<NotSupportedException>(() => missing.Phonemize("hello", "en-us"), EspeakNgPhonemizer.ExecutableVariable), "espeak-ng not found is refused naming IDRAK_ESPEAK");
+        Check(TextPhonemizers.KeepingPunctuation("Hello, my  world!  Yes", w => $"<{w}>") == "<Hello>, <my world>! <Yes>"
+              && TextPhonemizers.KeepingPunctuation("«a» b", w => w.ToUpperInvariant()) == "«A» B", "punctuation kept in place between the phonemized stretches, white space collapsed");
+        Check(VitsTokenizer.Read(TinyVits).PhonemeLanguage == "en-us", "without tokenizer_config.json's language the phonemizer reads en-us");
         tokenizer.Phonemize = false;
+        tokenizer.Phonemizer = null;
         tokenizer.IsUroman = true;
         Check(tokenizer.Encode("ab").SequenceEqual([2, 3]), "a uroman checkpoint accepts Latin text");
         Check(tokenizer.Romanize("بكا بك") == "bka bk" && tokenizer.Encode("بكا بك").SequenceEqual(tokenizer.Encode("bka bk")), $"Arabic is romanised before its ids: {tokenizer.Romanize("بكا بك")}");
