@@ -188,7 +188,10 @@ internal sealed class DataTokenizerCommand : Command
                 throw new UsageException(e.Message);
             }
 
-            line.Finish();
+            // Merging stops early when no pair is left (a text small for the vocabulary): say so, not a bar stuck short of 100%.
+            line.Finish(line.Label == "merging" && line.Total is { } wanted && line.Done < wanted
+                ? string.Create(CultureInfo.InvariantCulture, $"merging  {line.Done:N0} of {wanted:N0} tokens: no pair left to merge (the text is small for --vocab {wanted})")
+                : null);
         }
 
         tokenizer.Save(output);

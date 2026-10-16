@@ -947,6 +947,26 @@ The comparison is `tune evaluate` style: `idrak transcribe` of the loaded model 
 with `--metric cer` (`transcribe --truth work\val\manifest.jsonl --metric cer` prints both), recorded in the "as
 built" section with the stage times and peak bytes.
 
+**S8 as run (2026-10-16, the owner's machine, CUDA).** The data: 4 m 12 s of the owner's Arabic speech in 73 pieces
+(`data audio` from D:\Recordings, Whisper drafts as the texts, 5 pieces held out). Every stage ran end to end:
+
+| Stage | Size | Run | Result |
+|---|---|---|---|
+| Whisper drafts (`transcribe`, warm) | - | about x0.05 real time a piece, 1.74 GB peak | texts with errors ("نحبا" for "مرحبا"), not corrected |
+| `data tokenizer` (speech) | 128 tokens | 0.0 s | - |
+| CTC from scratch (`pretrain`, ctc) | 5.03 M | 5000 steps in 2.1 min, 352 MiB | train loss 6.6e-6, held-out CER 0.839: the 68 clips memorized |
+| `data audio --align` | - | 68 utterances in 1.2 s | alignments.jsonl |
+| TTS from scratch (durations) | 8.35 M | 5000 steps in 6.9 min, about 950x real time, 1236 MiB | loss 0.02; speaks (griffin-lim) |
+| Audio-language from scratch | 3.30 M | 2000 steps in 10.3 min, 348 MiB | loss 0.0000; a held-out clip gives text-like noise |
+| Route C, `voice train` from mms-tts-ara | 36.28 M | 2000 steps in 2 h, about 9.2x real time, 13999 MiB | the owner's timbre; far too fast (fixed since, below) and a hiss in the pauses |
+
+What it shows: the chain works on a real card and real speech; 4 minutes is far too little for a model trained from
+scratch (each memorizes its clips), which is what the section "What a from-scratch audio model is, honestly" expects.
+Route C found a bug (the duration flows' order, "S9 route C: the duration flows' order" below) and a hiss to look at
+after the run again. Small things it showed: the tokenizer's progress counted tokens as bytes (fixed: "merging", tokens;
+a text too small for --vocab now says so instead of stopping short of 100%), and `runs show` of a speech run picks its
+best step by the training loss and prints no validation column. Still to run: route C again, after the fix.
+
 ## Phase S9: voices (a real person's voice, installed by name)
 
 **Why.** MMS-TTS gives one synthetic voice per language. The owner wants speech in a natural voice: a real person's,
