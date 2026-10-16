@@ -2,12 +2,15 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
-// Image operations on the CPU: depthwise convolutions (one input channel per group) as direct loops, average pooling and
-// its gradient, and image resampling with per-channel normalization. Other convolutions take the composed path (patches
-// and the tiled products, Backend.Convolution.cs).
+// Image operations on the CPU: depthwise convolutions (one input channel per group) and 1-D convolutions (one row, stride
+// 1, one group: sound) as direct loops, average pooling and its gradient, and image resampling with per-channel
+// normalization. Other convolutions take the composed path (patches and the tiled products, Backend.Convolution.cs).
 internal sealed partial class CpuBackend
 {
     // A depthwise convolution (one input channel per group, any number of filters per channel) runs as direct loops: the
@@ -16,6 +19,17 @@ internal sealed partial class CpuBackend
 
     public override void ConvolutionKernel(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
     {
+        if (Direct1D(in g, groups))
+        {
+            DirectConvolution1D(D(x), D(weight), bias is null ? null : D(bias), D(y), in g, filters);
+            if (ActivationOp(activation) is { } act)
+            {
+                Unary(act, y, y, g.N * filters * g.OW);
+            }
+
+            return;
+        }
+
         if (!Depthwise(in g, groups))
         {
             base.ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
@@ -39,6 +53,151 @@ internal sealed partial class CpuBackend
         if (ActivationOp(activation) is { } op)
         {
             Unary(op, y, y, g.N * filters * outputs);
+        }
+    }
+
+    // A 1-D convolution (one row, stride 1, one group, any window, dilation and padding: a sound's channels over time)
+    // runs directly: each task copies the input under one stretch of outputs (every channel, zeros outside the sound) and
+    // sums its filters' taps over it, four filters and two vectors of outputs at a time. The composed path's patches are
+    // the window's length times the input (11 taps over 32 channels of 57,344 samples: 80 MB a call, written and read
+    // again) and its product has only as many columns as filters.
+    private static bool Direct1D(in ConvGeometry g, int groups) =>
+        groups == 1 && g.H == 1 && g.KH == 1 && g.PH == 0 && g.PadBottom == 0 && g.SW == 1 && g.OW > 0 && g.N > 0;
+
+    // The floats of the input copy a task sums over (its channels' stretch), sized to stay in a core's cache.
+    private const int DirectTileFloats = 1 << 16;
+
+    // The register block: four filters by two vectors of outputs (8 accumulators; measured faster than 4 x 3 and than
+    // 512-bit vectors on a 4-core AVX-512 x64).
+    private const int DirectFilters = 4, DirectVectors = 2;
+
+    private static void DirectConvolution1D(float[] x, float[] w, float[]? bias, float[] y, in ConvGeometry g, int filters)
+    {
+        int channels = g.C, taps = g.KW, outputs = g.OW, span = (taps - 1) * g.DW, step = DirectVectors * Vector<float>.Count;
+        int tile = Math.Max(step, (DirectTileFloats / channels - span) / step * step);
+        tile = Math.Min(tile, (outputs + step - 1) / step * step);
+        int tiles = (outputs + tile - 1) / tile, blocks = (filters + DirectFilters - 1) / DirectFilters;
+
+        // Split the filters too when the stretches alone do not give every core several tasks.
+        int chunks = Math.Clamp((ComputeResources.MaxCpuThreads * 4 + g.N * tiles - 1) / (g.N * tiles), 1, blocks);
+        int perChunk = (blocks + chunks - 1) / chunks;
+        int row = tile + span;
+        var geo = g;
+        For(g.N * tiles * chunks, (long)g.N * filters * outputs * channels * taps, (start, end) =>
+        {
+            float[] input = ArrayPool<float>.Shared.Rent(channels * row);
+            try
+            {
+                int filled = -1;
+                for (int task = start; task < end; task++)
+                {
+                    int chunk = task % chunks, stretch = task / chunks, n = stretch / tiles, first = stretch % tiles * tile;
+                    if (stretch != filled)
+                    {
+                        DirectInput(x, input, in geo, n, first - geo.PW, row);
+                        filled = stretch;
+                    }
+
+                    int count = Math.Min(tile, outputs - first);
+                    for (int b = chunk * perChunk, last = Math.Min(blocks, (chunk + 1) * perChunk); b < last; b++)
+                    {
+                        DirectFilterBlock(input, w, bias, y, in geo, filters, n, b * DirectFilters, first, count, row);
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(input);
+            }
+        });
+    }
+
+    // input[c, j] = x[n, c, from + j] for j in [0, row), 0 outside the sound.
+    private static void DirectInput(float[] x, float[] input, in ConvGeometry g, int n, int from, int row)
+    {
+        int width = g.W;
+        int lo = Math.Clamp(-from, 0, row), hi = Math.Clamp(width - from, lo, row);
+        for (int c = 0; c < g.C; c++)
+        {
+            var target = input.AsSpan(c * row, row);
+            target[..lo].Clear();
+            if (hi > lo)
+            {
+                x.AsSpan((n * g.C + c) * width + from + lo, hi - lo).CopyTo(target[lo..hi]);
+            }
+
+            target[hi..].Clear();
+        }
+    }
+
+    // Outputs [first, first + count) of up to four filters from f: bias + Σ over the channels, then the taps, of
+    // weight · input, two vectors of outputs at a time (the last ones written as far as count).
+    private static void DirectFilterBlock(float[] input, float[] w, float[]? bias, float[] y, in ConvGeometry g, int filters, int n, int f, int first, int count,
+        int row)
+    {
+        int lanes = Vector<float>.Count, step = DirectVectors * lanes, channels = g.C, taps = g.KW, dilation = g.DW, outputs = g.OW, patch = channels * taps;
+        int rows = Math.Min(DirectFilters, filters - f);
+        ref float wr0 = ref w[f * patch];
+        ref float wr1 = ref w[(f + Math.Min(1, rows - 1)) * patch];
+        ref float wr2 = ref w[(f + Math.Min(2, rows - 1)) * patch];
+        ref float wr3 = ref w[(f + Math.Min(3, rows - 1)) * patch];
+        float b0 = bias?[f] ?? 0f, b1 = rows > 1 ? bias?[f + 1] ?? 0f : 0f, b2 = rows > 2 ? bias?[f + 2] ?? 0f : 0f, b3 = rows > 3 ? bias?[f + 3] ?? 0f : 0f;
+        ref float source = ref MemoryMarshal.GetArrayDataReference(input);
+        Span<float> spill = stackalloc float[step];
+        for (int o = 0; o < count; o += step)
+        {
+            Vector<float> a00 = new(b0), a01 = a00, a10 = new(b1), a11 = a10, a20 = new(b2), a21 = a20, a30 = new(b3), a31 = a30;
+            for (int c = 0; c < channels; c++)
+            {
+                int at = c * row + o, wc = c * taps;
+                for (int k = 0; k < taps; k++, at += dilation)
+                {
+                    var x0 = Vector.LoadUnsafe(ref source, (nuint)at);
+                    var x1 = Vector.LoadUnsafe(ref source, (nuint)(at + lanes));
+                    var w0 = new Vector<float>(Unsafe.Add(ref wr0, wc + k));
+                    var w1 = new Vector<float>(Unsafe.Add(ref wr1, wc + k));
+                    var w2 = new Vector<float>(Unsafe.Add(ref wr2, wc + k));
+                    var w3 = new Vector<float>(Unsafe.Add(ref wr3, wc + k));
+                    a00 = Vector.FusedMultiplyAdd(x0, w0, a00);
+                    a01 = Vector.FusedMultiplyAdd(x1, w0, a01);
+                    a10 = Vector.FusedMultiplyAdd(x0, w1, a10);
+                    a11 = Vector.FusedMultiplyAdd(x1, w1, a11);
+                    a20 = Vector.FusedMultiplyAdd(x0, w2, a20);
+                    a21 = Vector.FusedMultiplyAdd(x1, w2, a21);
+                    a30 = Vector.FusedMultiplyAdd(x0, w3, a30);
+                    a31 = Vector.FusedMultiplyAdd(x1, w3, a31);
+                }
+            }
+
+            int length = Math.Min(step, count - o), outAt = (n * filters + f) * outputs + first + o;
+            DirectStore(a00, a01, y.AsSpan(outAt, length), spill);
+            if (rows > 1)
+            {
+                DirectStore(a10, a11, y.AsSpan(outAt + outputs, length), spill);
+            }
+
+            if (rows > 2)
+            {
+                DirectStore(a20, a21, y.AsSpan(outAt + 2 * outputs, length), spill);
+            }
+
+            if (rows > 3)
+            {
+                DirectStore(a30, a31, y.AsSpan(outAt + 3 * outputs, length), spill);
+            }
+        }
+    }
+
+    // Two vectors of outputs into target (as many as it holds).
+    private static void DirectStore(Vector<float> v0, Vector<float> v1, Span<float> target, Span<float> spill)
+    {
+        int lanes = Vector<float>.Count;
+        var into = target.Length == DirectVectors * lanes ? target : spill;
+        v0.CopyTo(into);
+        v1.CopyTo(into[lanes..]);
+        if (target.Length != DirectVectors * lanes)
+        {
+            spill[..target.Length].CopyTo(target);
         }
     }
 
