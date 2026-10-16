@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "tts", "vits", "voices", "vits-train", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "tts", "vits", "vits-speakers", "voices", "vits-train", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -1390,6 +1390,55 @@ def write_vits(out):
     dump_json(os.path.join(folder, "tensors.json"), index)
 
 
+# ------------------------------------------------------------------ vits-speakers: recorded speakers (plan 21, S9 route A)
+
+def write_vits_speakers(out):
+    """Two tiny multi-speaker VitsModels (VCTK's shape: num_speakers and speaker_embedding_size, the speaker embedding
+    conditioning the duration predictor, the flow and the decoder), one with the stochastic duration predictor and one
+    with the deterministic one, and transformers' waveform of the same ids as each speaker (noise 0).
+    speakers.json names the speakers in index order, as an app gives VCTK's (the hub's config holds only their count)."""
+    from transformers import VitsConfig, VitsModel
+    torch = torch_setup()
+    symbols = list("_ abcdefghijklmnopqrstuvwx")[:20]
+    vocab = {s: i for i, s in enumerate(symbols)}
+    names = ["p225", "p226", "p227"]
+    for folder_name, stochastic, seed in (("tiny-vits-speakers", True, 2041), ("tiny-vits-speakers-det", False, 2042)):
+        folder = os.path.join(out, folder_name)
+        os.makedirs(folder, exist_ok=True)
+        dump_json(os.path.join(folder, "vocab.json"), vocab)
+        dump_json(os.path.join(folder, "speakers.json"), names)
+        config = VitsConfig(vocab_size=len(symbols), hidden_size=32, num_hidden_layers=2, num_attention_heads=2, ffn_dim=64,
+                            flow_size=32, prior_encoder_num_flows=1, prior_encoder_num_wavenet_layers=2, posterior_encoder_num_wavenet_layers=2,
+                            upsample_rates=[4, 4], upsample_kernel_sizes=[8, 8], upsample_initial_channel=32, resblock_kernel_sizes=[3],
+                            resblock_dilation_sizes=[[1, 3]], spectrogram_bins=65, hop_length=16, speaker_embedding_size=8, num_speakers=len(names),
+                            noise_scale=0.0, noise_scale_duration=0.0, wavenet_dilation_rate=1, wavenet_kernel_size=3,
+                            use_stochastic_duration_prediction=stochastic, duration_predictor_num_flows=2, duration_predictor_filter_channels=32,
+                            depth_separable_num_layers=1)
+        model = VitsModel(config)
+        randomize(model, torch, seed)
+        gen = torch.Generator().manual_seed(seed + 1)
+        with torch.no_grad():                                                 # speakers far enough apart that their sounds differ
+            for name, p in model.named_parameters():
+                if name.startswith("embed_speaker") or (".cond" in name and p.dim() > 1):
+                    p.copy_(torch.randn(p.shape, generator=gen) * (1.0 if name.startswith("embed_speaker") else 0.3))
+        model.eval()
+        model.save_pretrained(folder, safe_serialization=True)
+        ids = torch.tensor([[vocab[c] for c in "abc ab"]])
+        ref = os.path.join(folder, "reference")
+        os.makedirs(ref, exist_ok=True)
+        lengths = {}
+        with torch.no_grad():
+            for speaker in range(len(names)):
+                output = model(ids, speaker_id=torch.tensor([speaker]))
+                tag = str(speaker)
+                save_npy(ref, f"waveform-{tag}.npy", output.waveform[0].numpy().astype(np.float32))
+                lengths[tag] = int(output.waveform.shape[1])
+        dump_json(os.path.join(ref, "input.json"), {"text": "abc ab", "ids": ids[0].tolist(), "noise_scale": 0.0, "noise_scale_duration": 0.0,
+                                                    "speakers": names, "waveform_samples": lengths})
+        index, _ = safetensors_index(os.path.join(folder, "model.safetensors"))
+        dump_json(os.path.join(folder, "tensors.json"), index)
+
+
 # ------------------------------------------------------------------ vits-train: fine-tuning a VITS checkpoint (plan 21, S9 route C)
 
 # The settings of the tiny run: the decoder's segment in frames, the loss weights (VITS's c_mel 45, c_kl 1, the duration,
@@ -1818,6 +1867,8 @@ def main():
         write_tts(args.out)
     if "vits" in sections:
         write_vits(args.out)
+    if "vits-speakers" in sections:
+        write_vits_speakers(args.out)
     if "voices" in sections:
         write_voices(args.out)
     if "vits-train" in sections:
