@@ -16,6 +16,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] VisionLayersGroup =
     [
         ("vision layers: ConvTranspose2d (rectangular, strided, padded, output padding, dilation, groups; a square decoder step) matches PyTorch's output and gradients (input, weight, bias)", TransposedConvMatchesPyTorch),
+        ("vision layers: 1-D convolutions (one row, stride 1: dilated, padded unevenly, more channels than one stretch of the CPU's direct kernel holds, filters not a multiple of four, outputs shorter than a vector, a batch, a fused ReLU) equal the window's sum in double", Convolution1DMatchesSums),
         ("vision layers: gradient: ConvTranspose2d against finite differences (input and weights; grouped, dilated, without bias)", TransposedConvGradients),
         ("vision layers: Upsample nearest and bilinear (corners aligned or not; scale factors 2, 1.5, (1.7, 2.3); sizes up and down) matches PyTorch's output and input gradient", UpsampleMatchesPyTorch),
         ("vision layers: gradient: nearest and bilinear interpolation against finite differences", UpsampleGradients),
@@ -74,6 +75,60 @@ internal static partial class Tests
         Expect<ArgumentOutOfRangeException>(() => new ConvTranspose2d(2, 2, 3, stride: 2, outputPadding: 2), "an output padding not below the stride");
         Expect<ArgumentException>(() => new ConvTranspose2d(4, 6, (3, 3), groups: 4), "groups that do not divide the outputs");
         Expect<ArgumentException>(() => ConvTranspose2d.FromWeights(Tensor.Zeros([2, 3, 3, 3], device), Tensor.Zeros([2], device), (3, 3)), "a bias of the wrong size");
+    }
+
+    // The CPU runs these on its direct 1-D kernel (no patches); every device must give the plain sum over the window.
+    private static void Convolution1DMatchesSums(Device device)
+    {
+        var random = new Random(31);
+        (int N, int C, int W, int Filters, int K, int D, int Left, int Right, bool Relu)[] cases =
+        [
+            (2, 3, 50, 6, 5, 2, 4, 1, false),     // a batch, dilated, padded unevenly
+            (1, 1, 7, 1, 11, 1, 5, 5, false),     // outputs shorter than a vector, more padding than input
+            (1, 40, 300, 9, 3, 5, 5, 5, true),    // filters not a multiple of four, a fused ReLU
+            (1, 600, 130, 5, 7, 1, 3, 3, false),  // more channels than one stretch holds: several stretches
+            (1, 32, 2000, 8, 11, 3, 15, 15, false),
+        ];
+        foreach (var (n, c, w, filters, k, d, left, right, relu) in cases)
+        {
+            var g = new ConvGeometry(n, c, 1, w, 1, k, 1, 1, 0, left) { DW = d, PadRight = right };
+            var xs = RandomArray(random, n * c * w);
+            var ws = RandomArray(random, filters * c * k);
+            var bs = RandomArray(random, filters);
+            using var x = Tensor.From(xs, [n, c, 1, w], device);
+            using var weight = Tensor.From(ws, [filters, c * k], device);
+            using var bias = Tensor.From(bs, [filters], device);
+            using var y = x.Convolution(weight, bias, g, activation: relu ? ConvActivation.Relu : ConvActivation.None);
+            int outputs = g.OW;
+            var expected = new float[n * filters * outputs];
+            for (int b = 0; b < n; b++)
+            {
+                for (int f = 0; f < filters; f++)
+                {
+                    for (int o = 0; o < outputs; o++)
+                    {
+                        double sum = bs[f];
+                        for (int ch = 0; ch < c; ch++)
+                        {
+                            for (int t = 0; t < k; t++)
+                            {
+                                int at = o - left + t * d;
+                                if (at >= 0 && at < w)
+                                {
+                                    sum += (double)ws[(f * c + ch) * k + t] * xs[(b * c + ch) * w + at];
+                                }
+                            }
+                        }
+
+                        expected[(b * filters + f) * outputs + o] = (float)(relu ? Math.Max(sum, 0) : sum);
+                    }
+                }
+            }
+
+            string what = $"{device}: [{n}, {c}, {w}] by {filters} filters of {k} taps, dilation {d}, padding {left} and {right}{(relu ? ", ReLU" : "")}";
+            Check(y.Shape.SequenceEqual([n, filters, 1, outputs]), $"{what}: shape {string.Join("x", y.Shape.ToArray())}");
+            AssertClose(expected, y.ToArray(), 1e-4f, what);
+        }
     }
 
     private static void TransposedConvGradients(Device device)

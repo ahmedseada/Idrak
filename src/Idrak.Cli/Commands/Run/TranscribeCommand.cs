@@ -316,7 +316,7 @@ internal sealed class TranscribeCommand : Command
     private static string StageLine(string label, string file, TranscriptionStats s) => string.Create(CultureInfo.InvariantCulture,
         $"{label} {file}: {AudioFiles.Seconds(s.AudioDuration.TotalSeconds)} of sound in {s.Total.TotalMilliseconds:0} ms (decode {s.Decode.TotalMilliseconds:0}, "
         + $"features {s.Features.TotalMilliseconds:0}, encoder {s.Encoder.TotalMilliseconds:0}, decoder {s.Decoder.TotalMilliseconds:0} ms), "
-        + $"x{s.Total.TotalSeconds / Math.Max(1e-9, s.AudioDuration.TotalSeconds):0.000} real time, {s.Segments} segment(s) in batches of {s.Batch}, "
+        + $"{AudioFiles.Pace(s.Total.TotalSeconds / Math.Max(1e-9, s.AudioDuration.TotalSeconds))}, {s.Segments} segment(s) in batches of {s.Batch}, "
         + $"peak device memory {Units.Bytes(s.PeakDeviceBytes)}");
 
     /// <summary>A transcription as JSON: the file, the text, the language, the segments and the stage times.</summary>

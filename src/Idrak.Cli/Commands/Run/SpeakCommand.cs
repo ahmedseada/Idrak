@@ -132,7 +132,7 @@ internal sealed class SpeakCommand : Command
 
             context.Write(string.Create(CultureInfo.InvariantCulture,
                 $"wrote {output} ({AudioFiles.Seconds(audio.Duration.TotalSeconds)} at {audio.SampleRate} Hz, {AudioFiles.BitsName(bits)}-bit{(speech.Voice is null ? "" : $", voice {speech.Voice}")}; "
-                + $"x{cold.RealTimeFactor:0.00} real time)"));
+                + $"{AudioFiles.Pace(cold.RealTimeFactor)})"));
             var json = new JsonObject
             {
                 ["model"] = choice.Model,
@@ -231,7 +231,7 @@ internal sealed class SpeakCommand : Command
 
     private static string StageLine(string label, SynthesisStats stats, AudioData audio) => string.Create(CultureInfo.InvariantCulture,
         $"{label}: text {stats.Text.TotalMilliseconds:0} ms, model {stats.Model.TotalMilliseconds:0} ms, decoder {stats.Vocoder.TotalMilliseconds:0} ms, "
-        + $"conversion {stats.Conversion.TotalMilliseconds:0} ms; {AudioFiles.Seconds(audio.Duration.TotalSeconds)} of sound, x{stats.RealTimeFactor:0.000} real time, "
+        + $"conversion {stats.Conversion.TotalMilliseconds:0} ms; {AudioFiles.Seconds(audio.Duration.TotalSeconds)} of sound, {AudioFiles.Pace(stats.RealTimeFactor)}, "
         + $"peak device memory {Units.Bytes(stats.PeakDeviceBytes)}");
 
     private static JsonObject StatsJson(SynthesisStats stats) => new()

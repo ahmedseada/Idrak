@@ -150,6 +150,13 @@ internal static class AudioFiles
     /// <summary>A number of seconds for people: "1.50 s".</summary>
     public static string Seconds(double seconds) => string.Create(CultureInfo.InvariantCulture, $"{seconds:0.00} s");
 
+    /// <summary>
+    /// How fast sound was made or read against its length, as the trainers print it: "3.6x real time" for 3.6 s of sound a
+    /// second ("0.5x" is slower than real time). <paramref name="realTimeFactor"/> is the time taken over the sound's length.
+    /// </summary>
+    public static string Pace(double realTimeFactor) =>
+        realTimeFactor > 0 ? string.Create(CultureInfo.InvariantCulture, $"{1 / realTimeFactor:0.0#}x real time") : "faster than measured";
+
     /// <summary>A positive number option (seconds, a share, a scale), or <paramref name="fallback"/> when absent.</summary>
     public static double Number(CommandContext context, string option, double fallback, double min = double.NegativeInfinity, double max = double.PositiveInfinity)
     {
