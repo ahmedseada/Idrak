@@ -1182,7 +1182,9 @@ the run before the fix spoke a piece 2.6 times too fast), the pitch 106 Hz again
 pitch movement 3.2 against 2.9 semitones, the pauses where the owner made them (0.70 and 0.58 s against 0.66 and
 0.64). The owner: "a big big improvement". Route B (OpenVoice v2 on the same clip) for comparison: the pitch matched,
 the pace the base speaker's (7.7 characters a second), the melody flatter (2.4), brighter (centroid 1419 against 1295
-Hz). Still open: the fine-tuned model's pauses hiss at -44 dB under its peak against -55 in the recording.
+Hz). The pauses are as quiet as the recording's: what read as -44 dB under the peak is a constant offset of about
+15 sample units (-67 dBFS, inaudible); without it the pauses hold 5.4 units of noise against the recording's 5.8
+(the base model's 34.5). The first run's broadband hiss (d-2000, about 20 dB louder) went with the wrong durations.
 
 ## Order and parallelism
 
