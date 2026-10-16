@@ -17,6 +17,7 @@ namespace Idrak.VitsSpeech;
 internal sealed class VitsWeights(ITensorStore store, Device device, bool trainable = false)
 {
     private readonly List<VitsParameter> _trained = [];
+    private readonly List<WeightNormed> _normed = [];
 
     public Device Device { get; } = device;
 
@@ -25,6 +26,21 @@ internal sealed class VitsWeights(ITensorStore store, Device device, bool traina
 
     /// <summary>Every tensor read as a parameter (when <see cref="Trainable"/>), in reading order.</summary>
     public IReadOnlyList<VitsParameter> Trained => _trained;
+
+    /// <summary>The weight-normed filters of the layers read (training), to bind for a step's half (<see cref="WeightNormed"/>).</summary>
+    public IReadOnlyList<WeightNormed> Normed => _normed;
+
+    private WeightNormed? Register(Tensor? gain, Tensor direction)
+    {
+        if (gain is null)
+        {
+            return null;
+        }
+
+        var normed = new WeightNormed(gain, direction);
+        _normed.Add(normed);
+        return normed;
+    }
 
     public bool Contains(string name) => store.Contains(name);
 
@@ -92,7 +108,8 @@ internal sealed class VitsWeights(ITensorStore store, Device device, bool traina
         int[] expected = kernel.Height == 1 ? [outChannels, inChannels / groups, kernel.Width] : [outChannels, inChannels / groups, kernel.Height, kernel.Width];
         var (weight, gain) = Filters(prefix, expected, outChannels, columns);
         var bias = store.Contains(prefix + ".bias") ? Tensor(prefix + ".bias", outChannels) : null;
-        return new Conv1d(Conv2d.FromWeights(weight, bias, kernel, stride, padding, dilation, groups), gain);
+        var conv = Conv2d.FromWeights(weight, bias, kernel, stride, padding, dilation, groups);
+        return new Conv1d(conv, Register(gain, conv.Weight));
     }
 
     /// <summary>w[o] = g[o] · v[o] / ‖v[o]‖ over every dimension but the first (PyTorch's weight_norm with dim 0).</summary>
@@ -130,7 +147,8 @@ internal sealed class VitsWeights(ITensorStore store, Device device, bool traina
     {
         var (weight, gain) = Filters(prefix, [inChannels, outChannels, kernel], inChannels, outChannels * kernel);
         var bias = store.Contains(prefix + ".bias") ? Tensor(prefix + ".bias", outChannels) : null;
-        return new ConvTranspose1d(ConvTranspose2d.FromWeights(weight, bias, (1, kernel), (1, stride), (0, padding)), gain);
+        var conv = ConvTranspose2d.FromWeights(weight, bias, (1, kernel), (1, stride), (0, padding));
+        return new ConvTranspose1d(conv, Register(gain, conv.Weight));
     }
 
     // A convolution's filters as [rows, columns] (rows the first stored dimension): {prefix}.weight, else a weight norm's
@@ -236,7 +254,7 @@ internal sealed class VitsParameterSet(string name, IReadOnlyList<VitsParameter>
 /// <c>[N, C, H, W]</c>. With a weight norm's gains (training), the filters are <c>g · v / ‖v‖</c> of the layer's
 /// directions, made per pass so their gradients reach both.
 /// </summary>
-internal sealed class Conv1d(Conv2d conv, Tensor? gain = null) : IDisposable
+internal sealed class Conv1d(Conv2d conv, WeightNormed? normed = null) : IDisposable
 {
     public int InChannels => conv.InChannels;
 
@@ -250,37 +268,119 @@ internal sealed class Conv1d(Conv2d conv, Tensor? gain = null) : IDisposable
 
     public Tensor Forward4(Tensor x)
     {
-        if (gain is null)
+        if (normed is null)
         {
             return conv.Forward(x);
         }
 
-        return x.Convolution(VitsOps.WeightNorm(gain, conv.Weight), conv.Bias, conv.Geometry(x.Shape[0], x.Shape[2], x.Shape[3]), conv.Groups);
+        return x.Convolution(normed.Weight, conv.Bias, conv.Geometry(x.Shape[0], x.Shape[2], x.Shape[3]), conv.Groups);
     }
 
     public void Dispose()
     {
         conv.Dispose();
-        gain?.Dispose();
+        normed?.Dispose();
     }
 }
 
 /// <summary>A transposed convolution over time on <c>[C, T]</c>, through the library's <see cref="ConvTranspose2d"/> (weight-normed per pass in training, as <see cref="Conv1d"/>).</summary>
-internal sealed class ConvTranspose1d(ConvTranspose2d conv, Tensor? gain = null) : IDisposable
+internal sealed class ConvTranspose1d(ConvTranspose2d conv, WeightNormed? normed = null) : IDisposable
 {
     public int OutChannels => conv.OutChannels;
 
     public Tensor Forward(Tensor x)
     {
         var x4 = x.Reshape(1, x.Shape[0], 1, x.Shape[1]);
-        var y = gain is null ? conv.Forward(x4) : x4.ConvolutionTranspose(VitsOps.WeightNorm(gain, conv.Weight), conv.Bias, conv.Geometry(1, 1, x.Shape[1]), conv.Groups);
+        var y = normed is null ? conv.Forward(x4) : x4.ConvolutionTranspose(normed.Weight, conv.Bias, conv.Geometry(1, 1, x.Shape[1]), conv.Groups);
         return y.Reshape(y.Shape[1], y.Shape[3]);
     }
 
     public void Dispose()
     {
         conv.Dispose();
-        gain?.Dispose();
+        normed?.Dispose();
+    }
+}
+
+/// <summary>
+/// A layer's weight-normed filters g · v / ‖v‖ (training). Unbound, each pass makes them (and keeps their graph); bound
+/// (<see cref="Bind"/>), they are made once for a step's half and shared by its passes: a leaf whose gradient the passes add
+/// up, handed to g and v once by <see cref="Flush"/>. The same gradient as made per pass, with one copy of the filters
+/// instead of one per utterance and pass (a kept pass per utterance held a copy of every layer's).
+/// </summary>
+internal sealed class WeightNormed(Tensor gain, Tensor direction) : IDisposable
+{
+    private Tensor? _bound;
+
+    /// <summary>Whether the filters are bound for the current half.</summary>
+    public bool Bound => _bound is not null;
+
+    /// <summary>The filters: the bound ones, else made now.</summary>
+    public Tensor Weight => _bound ?? VitsOps.WeightNorm(gain, direction);
+
+    /// <summary>Makes the filters once (a leaf taking gradients when g or v does: frozen layers' are constants).</summary>
+    public void Bind()
+    {
+        Unbind();
+        Tensor filters;
+        using (Autograd.NoGrad())
+        {
+            filters = TensorScope.Untrack(VitsOps.WeightNorm(gain, direction));
+        }
+
+        filters.RequiresGrad = gain.RequiresGrad || direction.RequiresGrad;
+        _bound = filters;
+    }
+
+    /// <summary>Gives the bound filters' gathered gradient to g and v (one backward through the norm).</summary>
+    public void Flush()
+    {
+        if (_bound?.Grad is { } gradient && (gain.RequiresGrad || direction.RequiresGrad))
+        {
+            using var filters = VitsOps.WeightNorm(gain, direction);
+            filters.Backward(gradient);
+        }
+    }
+
+    /// <summary>Drops the bound filters (passes make them again).</summary>
+    public void Unbind()
+    {
+        _bound?.Dispose();
+        _bound = null;
+    }
+
+    public void Dispose()
+    {
+        Unbind();
+        gain.Dispose();
+    }
+}
+
+/// <summary>The weight-normed filters of one model's layers, bound, flushed and dropped together.</summary>
+internal static class WeightNormedLayers
+{
+    public static void Bind(IReadOnlyList<WeightNormed> layers)
+    {
+        foreach (var layer in layers)
+        {
+            layer.Bind();
+        }
+    }
+
+    public static void Flush(IReadOnlyList<WeightNormed> layers)
+    {
+        foreach (var layer in layers)
+        {
+            layer.Flush();
+        }
+    }
+
+    public static void Unbind(IReadOnlyList<WeightNormed> layers)
+    {
+        foreach (var layer in layers)
+        {
+            layer.Unbind();
+        }
     }
 }
 

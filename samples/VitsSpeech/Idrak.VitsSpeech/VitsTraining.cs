@@ -158,9 +158,12 @@ internal sealed class VitsTraining : IDisposable
     private readonly ConcurrentDictionary<(Device, int, float, float), (Tensor Mel, Tensor Basis)> _filters = new();
     private VitsDiscriminators? _discriminators;
 
+    private readonly VitsWeights _weights;
+
     public VitsTraining(VitsSynthesizer model, VitsWeights weights)
     {
         _model = model;
+        _weights = weights;
         Generator = new VitsParameterSet("VITS generator", weights.Trained);
         Features = new VitsTrainingFeatures(model.Config);
     }
@@ -401,7 +404,30 @@ internal sealed class VitsTraining : IDisposable
     {
         private readonly UtterancePass?[] _kept = new UtterancePass?[batch.Frames.Count];
 
+        // The weight-normed filters are made once a half (WeightNormed): the discriminators' for their half (gradients
+        // gathered, then handed to g and v), the generator's for its passes (kept from the discriminators' half to the
+        // generator's when the passes are kept, else made again there), each dropped at its half's end.
         public float Discriminate()
+        {
+            WeightNormedLayers.Bind(owner._weights.Normed);
+            WeightNormedLayers.Bind(discriminators.Normed);
+            try
+            {
+                float total = Discriminators();
+                WeightNormedLayers.Flush(discriminators.Normed);
+                return total;
+            }
+            finally
+            {
+                WeightNormedLayers.Unbind(discriminators.Normed);
+                if (!keep)
+                {
+                    WeightNormedLayers.Unbind(owner._weights.Normed);
+                }
+            }
+        }
+
+        private float Discriminators()
         {
             float total = 0;
             for (int i = 0; i < _kept.Length; i++)
@@ -449,6 +475,12 @@ internal sealed class VitsTraining : IDisposable
                 p.RequiresGrad = false;                                          // the generator's half gives the discriminators no gradient
             }
 
+            if (!keep || owner._weights.Normed.Any(n => !n.Bound))
+            {
+                WeightNormedLayers.Bind(owner._weights.Normed);
+            }
+
+            WeightNormedLayers.Bind(discriminators.Normed);                       // constants this half
             try
             {
                 for (int i = 0; i < _kept.Length; i++)
@@ -493,15 +525,24 @@ internal sealed class VitsTraining : IDisposable
             }
             finally
             {
+                WeightNormedLayers.Unbind(discriminators.Normed);
                 foreach (var p in parameters)
                 {
                     p.RequiresGrad = true;
                 }
             }
 
+            WeightNormedLayers.Flush(owner._weights.Normed);
+            WeightNormedLayers.Unbind(owner._weights.Normed);
+
             return terms;
         }
 
-        public void Dispose() => Array.Clear(_kept);
+        public void Dispose()
+        {
+            Array.Clear(_kept);
+            WeightNormedLayers.Unbind(owner._weights.Normed);
+            WeightNormedLayers.Unbind(discriminators.Normed);
+        }
     }
 }
