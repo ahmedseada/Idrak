@@ -37,8 +37,9 @@ internal sealed class PretrainCommand : Command
         synthesizer) trains on transcribed speech instead: --data transcripts.jsonl ({"audio", "text"} rows; a folder or
         zip of name.wav beside name.txt) with --audio DIR|ZIP, the step, rate and checkpoint options below, and these:
         --batch-seconds S (audio seconds a step, 160), --metric cer|wer (the held-out score), --decoder greedy|beam and
-        --beam N (how a CTC model reads the held-out sounds), --augment speed,noise,spec-mask, --min-seconds and
-        --max-seconds S (utterances left out), --skip-missing (rows whose sound is missing), --source KIND (the speech
+        --beam N (how a CTC model reads the held-out sounds), --augment speed,noise,spec-mask, --clean
+        highpass,denoise,trim,normalize (every recording cleaned before its features; --clean-settings F its JSON),
+        --min-seconds and --max-seconds S (utterances left out), --skip-missing (rows whose sound is missing), --source KIND (the speech
         source kind; told from the paths), --feature-cache memory|disk|none (disk); a synthesizer reads --durations
         alignments.jsonl (idrak data audio --align MODEL writes it) and --duration-weight W (1); a CTC recognizer learns
         from a CTC --teacher's frame posteriors with --alpha and --temperature (0.5, 2). -C takes the trainer's options

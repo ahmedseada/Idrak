@@ -60,6 +60,10 @@ internal sealed class DataAudioCommand : Command
                                  pieces of S (default 0: no limit)
               --resample-width N the resampler's kernel half-width in zero crossings (default 6)
               --rolloff F        the resampler's cutoff as a share of the lower rate's Nyquist frequency (default 0.99)
+              --clean STAGES     every piece cleaned before it is written, comma-separated, in order: highpass (DC and
+                                 rumble out), denoise (the noise floor gated off), trim (silence at the ends cut),
+                                 normalize (speech levelled), or a registered cleaner's name (default none)
+              --clean-settings F the stages' settings as JSON, a file or inline (default the library's)
               --transcripts FILE the texts: JSON Lines rows with "file" (or "audio", "path", "name", "id") and "text"
                                  (or "transcript", "sentence"), or lines of NAME<tab>TEXT or NAME|TEXT; matched by file
                                  name, then by name without extension
@@ -83,7 +87,7 @@ internal sealed class DataAudioCommand : Command
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--out", "--rate", "--bits", "--type", "--split", "--silence-db", "--min-silence", "--pad-seconds", "--hop-seconds", "--min-seconds", "--max-seconds",
-        "--resample-width", "--rolloff", "--transcripts", "--align", "--align-seconds", "--audio", "--source",
+        "--resample-width", "--rolloff", "--clean", "--clean-settings", "--transcripts", "--align", "--align-seconds", "--audio", "--source",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--mono", "--stats"];
@@ -175,6 +179,17 @@ internal sealed class DataAudioCommand : Command
             Rolloff = AudioFiles.Number(context, "--rolloff", new ResampleOptions().Rolloff, double.Epsilon, 1),
         };
         var transcripts = context.Option("--transcripts") is { } transcriptFile ? Transcripts(transcriptFile) : null;
+        IAudioCleaner[] cleaners;
+        try
+        {
+            cleaners = [.. AudioFiles.CleaningStages(context, []).Select(AudioCleaners.Get)];
+        }
+        catch (NotSupportedException e)
+        {
+            throw new UsageException($"--clean: {e.Message}");
+        }
+
+        var cleaning = AudioFiles.CleaningSettings(context, new AudioCleaningOptions());
 
         var sources = new List<(string Path, double Seconds, int Rate, int Channels)>();
         var pieces = new List<(string Name, double Seconds, int Rate, int Channels)>();
@@ -241,6 +256,11 @@ internal sealed class DataAudioCommand : Command
                     var cut = cuts[i];
                     string name = (splitter is null ? stem : string.Create(CultureInfo.InvariantCulture, $"{stem}-{i + 1:D4}")) + extension;
                     var piece = cut.Start == 0 && cut.Length == audio.Length ? audio : audio.Slice(cut.Start, cut.Length);
+                    foreach (var cleaner in cleaners)
+                    {
+                        piece = cleaner.Clean(piece, cleaning);                 // start and end below stay the piece's cut in the source
+                    }
+
                     AudioFiles.Save(Path.Combine(output, name), piece, encoder!, bits);
                     double seconds = piece.Duration.TotalSeconds;
                     pieces.Add((name, seconds, piece.SampleRate, piece.Channels));
@@ -340,7 +360,7 @@ internal sealed class DataAudioCommand : Command
     {
         bool transcripts = context.Positional.All(p => p.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".json", StringComparison.OrdinalIgnoreCase));
         bool converts = context.Flag("--mono") || context.Flag("--stats")
-            || new[] { "--rate", "--bits", "--type", "--split", "--transcripts", "--min-seconds", "--max-seconds" }.Any(o => context.Option(o) is not null);
+            || new[] { "--rate", "--bits", "--type", "--split", "--clean", "--transcripts", "--min-seconds", "--max-seconds" }.Any(o => context.Option(o) is not null);
         bool folders = context.Positional.All(p => Directory.Exists(p) || p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
         return transcripts || folders && !converts || context.Option("--source") is not null;
     }

@@ -30,6 +30,14 @@ inside a piece, `PadSeconds` of silence kept on both sides, a piece over `MaxSec
 and "seconds" (pieces of a fixed length) built in; `AudioSplitOptions` holds every setting. `SpeechSynthesisOptions` and
 `VoiceConversionOptions` gained `DecoderSeconds` (the decoder's piece for one call; null: the model's own setting).
 
+Cleaning: `AudioCleaners`, a registry of `IAudioCleaner` stages a recording goes through before it is used, with
+"highpass" (a second-order Butterworth high-pass: DC and rumble out), "denoise" (spectral gating: each frequency's noise
+floor read from its quietest frames and gated off through the STFT and back, at most `DenoiseFloorDecibels`), "trim"
+(the silence at both ends cut, a pad kept) and "normalize" (the speech level brought to `TargetDecibels`, the peak under
+`PeakCeiling`) built in; `AudioCleaningOptions` holds every setting, and `Settings` for a plug-in's stage (a model that
+isolates the voice registers under the same contract). The speech trainers run `SpeechTrainingOptions.Cleaning` over
+every utterance before its features (cached under the cleaning), and `idrak data audio --clean` writes cleaned files.
+
 The command line (`idrak help audio`): `idrak transcribe`, `idrak speak`, `idrak voice add|list|show|remove|export|import`,
 `idrak data audio`, `idrak data mel`, and `--audio` on `idrak run` and `idrak chat`. The other phases are in
 plans/21-audio.md.

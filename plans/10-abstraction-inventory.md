@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
-| `Idrak.Audio` | 27 | 2 | 14 | 43 | 0 |
+| `Idrak.Audio` | 28 | 2 | 15 | 45 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -231,6 +231,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Audio.Abstractions.AudioAugmentations` | registry | public | — |  | noise, spec-mask, speed | Audio | Audio |
+| `Idrak.Audio.Abstractions.AudioCleaners` | registry | public | — |  | denoise, highpass, normalize, trim | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, wav | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | wav | — | Audio |
 | `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio | Audio |
@@ -239,6 +240,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer` | interface | public | Module | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioAugmentation` | interface | public | — | NoiseAugmentation, SpecMaskAugmentation, SpeedAugmentation |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioCleaner` | interface | public | — | DenoiseCleaner, HighPassCleaner, NormalizeCleaner, TrimCleaner |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCodec` | interface | public | — | AudioCodecs.GuardedCodec, FlacCodec, WavCodec |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioEncoder` | interface | public | — | AudioEncoders.GuardedEncoder, WavEncoder |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioFamily` | interface | public | — | — |  | Audio | Audio |

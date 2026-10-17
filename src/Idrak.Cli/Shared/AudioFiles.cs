@@ -16,6 +16,39 @@ namespace Idrak.Cli.Shared;
 /// </summary>
 internal static class AudioFiles
 {
+    /// <summary>--clean STAGES: the cleaning stages named, comma-separated (<see cref="AudioCleaners"/> names, in order), else <paramref name="otherwise"/>.</summary>
+    public static IReadOnlyList<string> CleaningStages(CommandContext context, IReadOnlyList<string> otherwise) =>
+        context.Option("--clean") is { } clean ? [.. clean.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)] : otherwise;
+
+    /// <summary>--clean-settings F: the stages' settings from a JSON file, or inline JSON, else <paramref name="otherwise"/>.</summary>
+    /// <exception cref="UsageException">Neither a file nor a JSON object, or a value out of range.</exception>
+    public static AudioCleaningOptions CleaningSettings(CommandContext context, AudioCleaningOptions otherwise)
+    {
+        if (context.Option("--clean-settings") is not { } settings)
+        {
+            return otherwise;
+        }
+
+        string text = File.Exists(settings) ? File.ReadAllText(settings) : settings;
+        AudioCleaningOptions options;
+        try
+        {
+            options = AudioCleaningOptions.FromJson(System.Text.Json.Nodes.JsonNode.Parse(text) as System.Text.Json.Nodes.JsonObject
+                ?? throw new UsageException($"--clean-settings: {settings} is not a JSON object."));
+            options.Check();
+        }
+        catch (System.Text.Json.JsonException e)
+        {
+            throw new UsageException($"--clean-settings: {settings} is neither a file nor JSON: {e.Message}");
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException($"--clean-settings: {e.Message}");
+        }
+
+        return options;
+    }
+
     /// <summary>The argument that stands for standard input.</summary>
     public const string StandardInputName = "-";
 
