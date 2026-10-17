@@ -82,7 +82,7 @@ internal sealed class VoiceTrainCommand : Command
           -o, --out RUN           the run folder (default CACHE/runs/DATE-voice-NAME)
               --no-install        train only; install later with --resume RUN --steps 0
               --profile           time steps instead of training: after a first pass over the recordings, 3 timed and 2
-                                  with every GPU kernel timed (the step's GPU time against its wall time; nothing installed)
+                                  with every GPU kernel timed (wall time, launches, kernel times; nothing installed)
               --overwrite         replace an installed voice of the same name
         """ + "\n" + VoiceText.StoreHelp + "\n" + """
 
@@ -321,7 +321,7 @@ internal sealed class VoiceTrainCommand : Command
     }
 
     // --profile: steps until the second pass over the recordings (the first takes every clip's training rows), then 3 timed
-    // by the clock and 2 with every GPU kernel timed (slower, so timed apart): how much of a step the device works, and on what.
+    // by the clock and 2 with every GPU kernel timed (slower, so timed apart): what a step takes, in how many launches, and on what.
     private static int Profile(CommandContext context, IAdversarialSpeechSynthesizer model, SpeechSource train, SpeechTrainingOptions options, string scratch)
     {
         const int Timed = 3, Profiled = 2;
@@ -380,8 +380,14 @@ internal sealed class VoiceTrainCommand : Command
         context.Write(GpuProfiler.Format(kernels, rows: 40).TrimEnd());
         double gpuMs = kernels.Sum(k => k.Milliseconds) / Profiled;
         long launches = kernels.Sum(k => k.Calls) / Profiled;
+        // Each kernel is timed alone (drained, between two events), so a small one reads its start-up too: the sum bounds the
+        // device's work from above, and a sum past the clock means the host's launches, not the device, set the step's time.
+        double perLaunchUs = wallMs * 1000 / Math.Max(1, launches);
         context.Write(FormattableString.Invariant(
-            $"per step: {wallMs:F0} ms by the clock ({audioPerSecond:F1}x real time), {gpuMs:F0} ms of kernels in {launches:N0} launches: the device works {Math.Min(1, gpuMs / Math.Max(1e-9, wallMs)):P0} of the step"));
+            $"per step: {wallMs:F0} ms by the clock in {launches:N0} launches ({perLaunchUs:F1} µs a launch; the run so far {audioPerSecond:F1}x real time)"));
+        context.Write(gpuMs >= wallMs
+            ? FormattableString.Invariant($"the kernels, each timed alone with its start-up, add up to {gpuMs:F0} ms, more than the step: launching them sets its time, so fewer launches make it faster")
+            : FormattableString.Invariant($"the kernels, each timed alone with its start-up, add up to {gpuMs:F0} ms: the device works at most {gpuMs / Math.Max(1e-9, wallMs):P0} of the step, the host the rest"));
         return ExitCodes.Ok;
     }
 
