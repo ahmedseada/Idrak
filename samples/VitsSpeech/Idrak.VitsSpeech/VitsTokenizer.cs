@@ -3,6 +3,7 @@
 
 using System.Text;
 using System.Text.Json.Nodes;
+using Idrak.Audio;
 
 namespace Idrak.VitsSpeech;
 
@@ -215,7 +216,7 @@ public sealed class VitsTokenizer
     }
 
     // A letter past Latin Extended-B: a script uroman would romanise.
-    internal static bool IsNonLatinLetter(Rune rune) => Rune.IsLetter(rune) && rune.Value > 0x024F;
+    internal static bool IsNonLatinLetter(Rune rune) => TextRomanizers.IsNonLatinLetter(rune);
 
     private static bool HasNonLatin(string text)
     {

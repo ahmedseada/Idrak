@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
-| `Idrak.Audio` | 28 | 2 | 15 | 45 | 0 |
+| `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -259,6 +259,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.ISpeechSynthesisObjective` | interface | public | Tensor | DurationSynthesisObjective |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechSynthesizer` | interface | public | Device | VoicedSynthesizer |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechTrainingObjective` | interface | public | Tensor | CtcObjective, Seq2SeqObjective |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ITextPhonemizer` | interface | public | — | EspeakNgPhonemizer |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ITextRomanizer` | interface | public | — | UromanArabicRomanizer |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer` | interface | public | Module, Tensor | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, Vocoders.GuardedVocoder |  | Audio | Audio |
@@ -272,6 +274,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.SpeechSynthesisObjectives` | registry | public | — |  | durations | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechTrainee` | abstract class | internal | Device, Module, Tensor | AdversarialSynthesisTrainer.AdversarialTrainee, SpeechSynthesisTrainer.SynthesisTrainee, SpeechTrainer.RecognizerTrainee |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechTrainingObjectives` | registry | public | — |  | ctc, seq2seq | Audio | Audio |
+| `Idrak.Audio.Abstractions.TextPhonemizers` | registry | public | — |  | espeak-ng | Audio | Audio |
+| `Idrak.Audio.Abstractions.TextRomanizers` | registry | public | — |  | uroman-arabic | — | Audio |
 | `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | — | Audio |
 | `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.VoiceStores` | registry | public | — |  | folder | Audio | Audio |

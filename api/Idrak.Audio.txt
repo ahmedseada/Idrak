@@ -420,6 +420,15 @@ public interface Idrak.Audio.Abstractions.ISpeechTrainingObjective
   public string Name { get; }
   public string Refused { get; }
 
+public interface Idrak.Audio.Abstractions.ITextPhonemizer
+  public string Name { get; }
+  public string Phonemize(string text, string language)
+
+public interface Idrak.Audio.Abstractions.ITextRomanizer
+  public bool Covers(System.Text.Rune rune)
+  public string Name { get; }
+  public string Romanize(string text)
+
 public interface Idrak.Audio.Abstractions.ITrainableSpeechModel : Idrak.Audio.Abstractions.ISpeechRecognizer, System.IDisposable
   public Idrak.Abstraction.Module Network { get; }
   public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
@@ -612,6 +621,29 @@ public sealed record Idrak.Audio.Abstractions.SynthesisStats : System.IEquatable
   public System.TimeSpan Vocoder { get; init; }
   public double RealTimeFactor { get; init; }
   public long PeakDeviceBytes { get; init; }
+
+public static class Idrak.Audio.Abstractions.TextPhonemizers
+  public const string EspeakNg = "espeak-ng"
+  public const string Marks = ";:,.!?¡¿—…\"«»“”(){}[]"
+  public static Idrak.Audio.Abstractions.ITextPhonemizer First()
+  public static Idrak.Audio.Abstractions.ITextPhonemizer Get(string name)
+  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Collapse(string text)
+  public static string KeepingPunctuation(string text, System.Func<string, string> phonemize, string marks = ";:,.!?¡¿—…\"«»“”(){}[]")
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.ITextPhonemizer phonemizer)
+
+public static class Idrak.Audio.Abstractions.TextRomanizers
+  public const string UromanArabic = "uroman-arabic"
+  public static Idrak.Audio.Abstractions.ITextRomanizer Get(string name)
+  public static Idrak.Audio.Abstractions.ITextRomanizer? Default(string name)
+  public static Idrak.Audio.Abstractions.ITextRomanizer? For(string text)
+  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
+  public static bool IsNonLatinLetter(System.Text.Rune rune)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.ITextRomanizer romanizer)
 
 public sealed record Idrak.Audio.Abstractions.TranscriptSegment : System.IEquatable<Idrak.Audio.Abstractions.TranscriptSegment>
   public System.Collections.Generic.IReadOnlyList<int> Tokens { get; init; }
@@ -856,6 +888,15 @@ public sealed class Idrak.Audio.DurationSynthesisObjective : Idrak.Audio.Abstrac
   public static Idrak.Abstraction.Tensor Loss(Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer model, Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, System.Collections.Generic.IReadOnlyList<int[]> labels, System.Collections.Generic.IReadOnlyList<int[]> durations, float durationWeight = 1f, Idrak.Audio.Abstractions.SpeechForwardOptions? forward = null)
   public string Name { get; }
   public string Refused { get; }
+
+public sealed class Idrak.Audio.EspeakNgPhonemizer : Idrak.Audio.Abstractions.ITextPhonemizer
+  public EspeakNgPhonemizer()
+  public System.TimeSpan Timeout { get; init; }
+  public const string ExecutableVariable = "IDRAK_ESPEAK"
+  public const string VoiceVariable = "IDRAK_ESPEAK_VOICE"
+  public string Executable { get; init; }
+  public string Name { get; }
+  public string Phonemize(string text, string language)
 
 public sealed class Idrak.Audio.FlacCodec : Idrak.Audio.Abstractions.IAudioCodec
   public FlacCodec(Idrak.Audio.FlacOptions? options = null)
@@ -1215,6 +1256,19 @@ public static class Idrak.Audio.Stft
   public static int SamplesFor(int frames, Idrak.Audio.Abstractions.AudioFeatureOptions options)
   public static void ComplexOnHost(System.ReadOnlySpan<float> samples, Idrak.Audio.Abstractions.AudioFeatureOptions options, System.Span<float> real, System.Span<float> imaginary)
   public static void PowerOnHost(System.ReadOnlySpan<float> samples, Idrak.Audio.Abstractions.AudioFeatureOptions options, System.Span<float> power)
+
+public static class Idrak.Audio.Subtitles
+  public static string Render(Idrak.Audio.Abstractions.Transcription transcription, bool vtt)
+  public static string Srt(Idrak.Audio.Abstractions.Transcription transcription)
+  public static string Timestamp(double seconds, bool vtt)
+  public static string Vtt(Idrak.Audio.Abstractions.Transcription transcription)
+
+public sealed class Idrak.Audio.UromanArabicRomanizer : Idrak.Audio.Abstractions.ITextRomanizer
+  public UromanArabicRomanizer()
+  public bool Covers(System.Text.Rune rune)
+  public static string Version { get; }
+  public string Name { get; }
+  public string Romanize(string text)
 
 public sealed class Idrak.Audio.VoicedSynthesizer : Idrak.Audio.Abstractions.ISpeechSynthesizer, System.IDisposable
   public (Idrak.Audio.Abstractions.AudioData, Idrak.Audio.Abstractions.SynthesisStats) Speak(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)

@@ -124,17 +124,17 @@ internal sealed class VlmCheckCommand : Command
 
         // The reference's arrays.
         string Array(string file) => Path.Combine(folder, file);
-        long[] promptIds = Npy.ReadInt64(Array("input_ids.npy")).Values;
+        long[] promptIds = NpyFile.ReadInt64(Array("input_ids.npy")).Values;
         int[] ids = [.. promptIds.Select(i => (int)i)];
-        int[] generated = [.. Npy.ReadInt64(Array("generated_ids.npy")).Values.Select(i => (int)i)];
-        var (genTopIds, _) = Npy.ReadInt64(Array("gen_top_ids.npy"));
-        var (genTopLogits, _) = Npy.ReadFloat32(Array("gen_top_logits.npy"));
-        var (tfTopIds, _) = Npy.ReadInt64(Array("tf_top_ids.npy"));
-        var (tfTopLogits, _) = Npy.ReadFloat32(Array("tf_top_logits.npy"));
-        var (refPixels, pixelShape) = Npy.ReadFloat32(Array("pixel_values.npy"));
-        var (refHidden, hiddenShape) = Npy.ReadFloat32(Array("vision_last_hidden_state.npy"));
-        var (refFeatures, featureShape) = Npy.ReadFloat32(Array("image_features.npy"));
-        (float[] Values, int[] Shape) fullRows = File.Exists(Array("gen_full_logits.npy")) ? Npy.ReadFloat32(Array("gen_full_logits.npy")) : ([], [0, 0]);
+        int[] generated = [.. NpyFile.ReadInt64(Array("generated_ids.npy")).Values.Select(i => (int)i)];
+        var (genTopIds, _) = NpyFile.ReadInt64(Array("gen_top_ids.npy"));
+        var (genTopLogits, _) = NpyFile.ReadFloat32(Array("gen_top_logits.npy"));
+        var (tfTopIds, _) = NpyFile.ReadInt64(Array("tf_top_ids.npy"));
+        var (tfTopLogits, _) = NpyFile.ReadFloat32(Array("tf_top_logits.npy"));
+        var (refPixels, pixelShape) = NpyFile.ReadFloat32(Array("pixel_values.npy"));
+        var (refHidden, hiddenShape) = NpyFile.ReadFloat32(Array("vision_last_hidden_state.npy"));
+        var (refFeatures, featureShape) = NpyFile.ReadFloat32(Array("image_features.npy"));
+        (float[] Values, int[] Shape) fullRows = File.Exists(Array("gen_full_logits.npy")) ? NpyFile.ReadFloat32(Array("gen_full_logits.npy")) : ([], [0, 0]);
         int steps = Math.Min(generated.Length, context.IntOption("--steps", generated.Length));
         if (steps < 1)
         {

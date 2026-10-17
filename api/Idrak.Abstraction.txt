@@ -1666,6 +1666,14 @@ public static class Idrak.Abstraction.Formats.ModelSources
   public static void Register(Idrak.Abstraction.Formats.IModelSource source)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public static class Idrak.Abstraction.Formats.NpyFile
+  public static (float[], int[]) ReadFloat32(string path)
+  public static (long[], int[]) ReadInt64(string path)
+  public static void Write(string path, System.Collections.Generic.IReadOnlyList<float[]> rows, int columns)
+  public static void Write(string path, System.ReadOnlySpan<float> values, System.Collections.Generic.IReadOnlyList<int> shape)
+  public static void WriteFloat32(System.IO.Stream stream, System.ReadOnlySpan<float> values)
+  public static void WriteHeader(System.IO.Stream stream, string header)
+
 public sealed class Idrak.Abstraction.Formats.TensorDictionary : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public System.Collections.Generic.IEnumerable<string> Names { get; }
   public TensorDictionary()
@@ -3720,6 +3728,10 @@ public sealed class Idrak.Abstraction.SlotTable<TKey, TValue> where TKey : notnu
   public void Register(TKey key, TValue value, System.Reflection.Assembly? registeredBy = null, object? implementation = null)
   public void RegisterDefault(TKey key, TValue value, int version = 1, string? since = null)
   public void SetPolicy(TKey key, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed class Idrak.Abstraction.SyncProgress<T> : System.IProgress<T>
+  public SyncProgress(System.Action<T> report)
+  public void Report(T value)
 
 public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
