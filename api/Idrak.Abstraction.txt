@@ -836,6 +836,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void SumSquaresKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage total, int n)
   public virtual void UnaryBackwardKernel(Idrak.Abstraction.Devices.UnaryOp op, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n)
   public virtual void UnaryKernel(Idrak.Abstraction.Devices.UnaryOp op, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n)
+  public virtual void WeightNormBackwardKernel(Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage dweight, Idrak.Abstraction.Devices.Storage? dgain, Idrak.Abstraction.Devices.Storage? ddirection, int rows, int columns)
+  public virtual void WeightNormKernel(Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage weight, int rows, int columns)
   public virtual void WhereBackwardKernel(Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
   public virtual void WhereKernel(Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage y, int n)
   public void AdamStep(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, int n, float lr, float beta1, float beta2, float eps)
@@ -955,6 +957,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void SumSquares(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage total, int n)
   public void Unary(Idrak.Abstraction.Devices.UnaryOp op, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n)
   public void UnaryBackward(Idrak.Abstraction.Devices.UnaryOp op, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n)
+  public void WeightNorm(Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage weight, int rows, int columns)
+  public void WeightNormBackward(Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage dweight, Idrak.Abstraction.Devices.Storage? dgain, Idrak.Abstraction.Devices.Storage? ddirection, int rows, int columns)
   public void Where(Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage y, int n)
   public void WhereBackward(Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
 
@@ -2994,6 +2998,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.SumSquares (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Unary (below)
   nested Idrak.Abstraction.Operations.OperationKernels.UnaryBackward (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.WeightNorm (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.WeightNormBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Where (below)
   nested Idrak.Abstraction.Operations.OperationKernels.WhereBackward (below)
 
@@ -3291,6 +3297,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.Unary(Idrak.A
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.UnaryBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.UnaryOp op, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.WeightNorm(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage weight, int rows, int columns)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.WeightNormBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage dweight, Idrak.Abstraction.Devices.Storage? dgain, Idrak.Abstraction.Devices.Storage? ddirection, int rows, int columns)
+
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Where(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage y, int n)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.WhereBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
@@ -3445,6 +3455,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation SumSquares
   public static readonly Idrak.Abstraction.Operations.Operation Unary
   public static readonly Idrak.Abstraction.Operations.Operation UnaryBackward
+  public static readonly Idrak.Abstraction.Operations.Operation WeightNorm
+  public static readonly Idrak.Abstraction.Operations.Operation WeightNormBackward
   public static readonly Idrak.Abstraction.Operations.Operation Where
   public static readonly Idrak.Abstraction.Operations.Operation WhereBackward
 
@@ -3804,6 +3816,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor TokenDivergenceRows(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, int[] rows, float[] weights, System.Func<int, int, Idrak.Abstraction.Tensor> teacher, float temperature, int chunkRows)
   public static Idrak.Abstraction.Tensor Traced(string operation, Idrak.Abstraction.Tensor output, long start)
   public static Idrak.Abstraction.Tensor Uniform(System.ReadOnlySpan<int> shape, float low, float high, System.Random? random = null, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
+  public static Idrak.Abstraction.Tensor WeightNorm(Idrak.Abstraction.Tensor gain, Idrak.Abstraction.Tensor direction)
   public static Idrak.Abstraction.Tensor Where(Idrak.Abstraction.Tensor condition, Idrak.Abstraction.Tensor a, Idrak.Abstraction.Tensor b)
   public static Idrak.Abstraction.Tensor Zeros(System.ReadOnlySpan<int> shape, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor op_Addition(Idrak.Abstraction.Tensor a, Idrak.Abstraction.Tensor b)

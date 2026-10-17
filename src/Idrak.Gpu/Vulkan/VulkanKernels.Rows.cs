@@ -138,6 +138,54 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
+        // w = gain[r] · x / ‖x‖ per row (weight normalization along the first axis).
+        yield return (Named("weight_norm"), () =>
+        {
+            var k = new KernelBuilder(Named("weight_norm"), Block);
+            var (gain, x, w) = (k.Buffer("gain"), k.Buffer("x"), k.Buffer("w"));
+            var (rows, cols) = (k.PushInt("rows"), k.PushInt("cols"));
+            var work = new RowWork(k, narrow);
+            work.Each(rows, r =>
+            {
+                var o = r * cols;
+                var sum = work.RowSum(cols, j => x[o + j] * x[o + j]);
+                var scale = gain[r] / k.Sqrt(sum);
+                work.Columns(cols, j => w[o + j] = x[o + j] * scale);
+            });
+            return k.Build();
+        });
+
+        // With n = ‖x‖ and dot = Σ dw · x per row: dgain[r] += dot / n (flags & 1), dx += gain[r] / n · (dw − x · dot / n²) (flags & 2).
+        yield return (Named("weight_norm_backward"), () =>
+        {
+            var k = new KernelBuilder(Named("weight_norm_backward"), Block);
+            var (gain, x, dw, dgain, dx) = (k.Buffer("gain"), k.Buffer("x"), k.Buffer("dw"), k.Buffer("dgain"), k.Buffer("dx"));
+            var (rows, cols, flags) = (k.PushInt("rows"), k.PushInt("cols"), k.PushInt("flags"));
+            var work = new RowWork(k, narrow);
+            work.Each(rows, r =>
+            {
+                var o = r * cols;
+                var squares = k.Local(0f);
+                var products = k.Local(0f);
+                work.Columns(cols, j =>
+                {
+                    squares.V = squares.V + x[o + j] * x[o + j];
+                    products.V = products.V + dw[o + j] * x[o + j];
+                });
+                var sumSquares = work.Sum(squares.V);
+                var dot = work.Sum(products.V);
+                var inverse = 1f / k.Sqrt(sumSquares);
+                k.If((flags & 1).Ne(0), () => work.Leader(() => dgain[r] = dgain[r] + dot * inverse));
+                k.If((flags & 2).Ne(0), () =>
+                {
+                    var scale = gain[r] * inverse;
+                    var along = scale * dot / sumSquares;
+                    work.Columns(cols, j => dx[o + j] = dx[o + j] + (dw[o + j] * scale - x[o + j] * along));
+                });
+            });
+            return k.Build();
+        });
+
         // y = x · inv · (gain[c] + offset) per row.
         yield return (Named("rms_norm_affine"), () =>
         {

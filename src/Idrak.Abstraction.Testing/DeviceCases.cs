@@ -467,6 +467,44 @@ public static partial class DeviceCases
             b.GroupReduce(x, null, Random(c, groups), null, outer, groups, inner);
         }
 
+        // Weight normalization along rows, w = g · v / ‖v‖, and its gradients against plain loops: a single element, odd
+        // lengths, rows past a block of threads, and each gradient alone.
+        foreach (var (rows, cols) in new[] { (1, 1), (3, 17), (5, 300), (c.Size(1, 32), c.Size(2, 300)) })
+        {
+            int n = rows * cols;
+            float[] g = c.Values(rows, 2f), v = c.Values(n, 3f), dw = c.Values(n), dg0 = c.Values(rows), dv0 = c.Values(n);
+            var expected = new float[n];
+            var expectedGain = (float[])dg0.Clone();
+            var expectedDirection = (float[])dv0.Clone();
+            for (int r = 0; r < rows; r++)
+            {
+                double sumSquares = 0, dot = 0;
+                for (int j = 0; j < cols; j++)
+                {
+                    sumSquares += (double)v[r * cols + j] * v[r * cols + j];
+                    dot += (double)dw[r * cols + j] * v[r * cols + j];
+                }
+
+                double norm = Math.Sqrt(sumSquares);
+                expectedGain[r] += (float)(dot / norm);
+                for (int j = 0; j < cols; j++)
+                {
+                    expected[r * cols + j] = (float)(g[r] * v[r * cols + j] / norm);
+                    expectedDirection[r * cols + j] += (float)(g[r] / norm * (dw[r * cols + j] - v[r * cols + j] * dot / sumSquares));
+                }
+            }
+
+            Storage gain = c.Storage(g), direction = c.Storage(v), weight = c.Zeros(n), dweight = c.Storage(dw);
+            b.WeightNorm(gain, direction, weight, rows, cols);
+            c.ExpectClose(expected, Read(weight), 1e-5f, $"weight norm of {rows} x {cols}");
+            Storage dgain = c.Storage(dg0), ddirection = c.Storage(dv0);
+            b.WeightNormBackward(gain, direction, dweight, dgain, ddirection, rows, cols);
+            c.ExpectClose(expectedGain, Read(dgain), 1e-4f, $"weight norm of {rows} x {cols}: the gains' gradient");
+            c.ExpectClose(expectedDirection, Read(ddirection), 1e-4f, $"weight norm of {rows} x {cols}: the directions' gradient");
+            b.WeightNormBackward(gain, direction, dweight, c.Storage(dg0), null, rows, cols);
+            b.WeightNormBackward(gain, direction, dweight, null, c.Storage(dv0), rows, cols);
+        }
+
         foreach (var (rows, cols) in new[] { (1, 1), (3, 17), (c.Size(1, 32), c.Size(2, 300)) })
         {
             int n = rows * cols;

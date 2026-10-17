@@ -14,7 +14,7 @@ internal static partial class PtxKernels
         "exp_f32", "exp_bwd_f32", "log_f32", "log_bwd_f32", "gelu_f32", "gelu_bwd_f32", "gelu_erf_f32", "gelu_erf_bwd_f32", "inv_sqrt_f32",
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
-        "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32",
+        "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32", "weight_norm_f32", "weight_norm_bwd_f32",
         "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
         "permute_f32", "copy2d_f32", "sum_axis_f32", "broadcast_axis_f32",
     ];
@@ -385,6 +385,79 @@ internal static partial class PtxKernels
         }
     }
 
+    // Weight normalization along rows: one block of RowThreads per row, the row's sum of squares through a block
+    // reduction of fixed shape (the same order on every device), then the row scaled by gain / ‖row‖.
+    private static void WeightNormKernels(StringBuilder sb)
+    {
+        const string RowStart = """
+            mul.lo.u32 %r5, %row, %s_cols;
+            mul.wide.u32 %rd1, %r5, 4;
+            add.u64 %rd2, %b_direction, %rd1;
+            """;
+
+        // weight = gain[r] · direction / ‖direction‖ per row.
+        RowBlock(sb, "weight_norm_f32", ["gain", "direction", "weight"], [("u32", "cols")],
+            RowStart + $"""
+            add.u64 %rd3, %b_weight, %rd1;
+            sub.u64 %rd6, %rd3, %rd2;
+            mov.f32 %f1, {Zero};
+            """ + "\n" + StridedLoop("WN", "%rd2", "%s_cols", "fma.rn.f32 %f1, %f2, %f2, %f1;") + "\n"
+            + BlockReduce("WNSUM", "%f1", "add", Zero) + "\n" + """
+            sqrt.rn.f32 %f1, %f1;
+            ld.global.f32 %f3, [%a_gain];
+            div.rn.f32 %f1, %f3, %f1;
+            """ + "\n" + StridedLoop("WW", "%rd2", "%s_cols", """
+            mul.f32 %f2, %f2, %f1;
+            add.u64 %rd7, %rd5, %rd6;
+            st.global.f32 [%rd7], %f2;
+            """));
+
+        // With n = ‖direction‖ and dot = Σ dweight · direction per row: dgain[r] += dot / n (flags & 1) and
+        // ddirection += gain[r] / n · (dweight − direction · dot / n²) (flags & 2).
+        RowBlock(sb, "weight_norm_bwd_f32", ["gain", "direction", "dweight", "dgain", "ddirection"], [("u32", "cols"), ("u32", "flags")],
+            RowStart + $"""
+            add.u64 %rd3, %b_dweight, %rd1;
+            sub.u64 %rd6, %rd3, %rd2;
+            add.u64 %rd4, %b_ddirection, %rd1;
+            sub.u64 %rd8, %rd4, %rd2;
+            mov.f32 %f1, {Zero};
+            mov.f32 %f11, {Zero};
+            """ + "\n" + StridedLoop("WB", "%rd2", "%s_cols", """
+            fma.rn.f32 %f1, %f2, %f2, %f1;
+            add.u64 %rd7, %rd5, %rd6;
+            ld.global.f32 %f3, [%rd7];
+            fma.rn.f32 %f11, %f3, %f2, %f11;
+            """) + "\n" + BlockReduce("WBS", "%f1", "add", Zero) + "\n" + BlockReduce("WBD", "%f11", "add", Zero) + "\n" + """
+            sqrt.rn.f32 %f4, %f1;
+            rcp.rn.f32 %f5, %f4;
+            ld.global.f32 %f6, [%a_gain];
+            mul.f32 %f7, %f6, %f5;
+            mul.f32 %f8, %f11, %f5;
+            mul.f32 %f9, %f7, %f11;
+            div.rn.f32 %f9, %f9, %f1;
+            and.b32 %r7, %s_flags, 1;
+            setp.ne.u32 %p5, %r7, 0;
+            setp.eq.u32 %p6, %tx, 0;
+            and.pred %p5, %p5, %p6;
+            @%p5 ld.global.f32 %f12, [%a_dgain];
+            @%p5 add.f32 %f12, %f12, %f8;
+            @%p5 st.global.f32 [%a_dgain], %f12;
+            and.b32 %r8, %s_flags, 2;
+            setp.eq.u32 %p7, %r8, 0;
+            @%p7 bra DONE;
+            """ + "\n" + StridedLoop("WV", "%rd2", "%s_cols", """
+            add.u64 %rd7, %rd5, %rd6;
+            ld.global.f32 %f3, [%rd7];
+            mul.f32 %f13, %f3, %f7;
+            mul.f32 %f14, %f2, %f9;
+            sub.f32 %f13, %f13, %f14;
+            add.u64 %rd9, %rd5, %rd8;
+            ld.global.f32 %f15, [%rd9];
+            add.f32 %f15, %f15, %f13;
+            st.global.f32 [%rd9], %f15;
+            """));
+    }
+
     private static void Normalization(StringBuilder sb)
     {
         // Mean, variance and 1/sqrt(var + eps) of each group; one block per group, two passes over its elements.
@@ -491,6 +564,7 @@ internal static partial class PtxKernels
             """);
 
         SplitGroupKernels(sb);
+        WeightNormKernels(sb);
 
         const string Group = """
             div.u32 %r5, %i, %s_inner;

@@ -451,6 +451,86 @@ internal sealed partial class CpuBackend
     }
 
 
+    public override void WeightNormKernel(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        float[] g = D(gain), v = D(direction), w = D(weight);
+        For(rows, (long)rows * columns * 3, (start, end) =>
+        {
+            for (int r = start; r < end; r++)
+            {
+                var row = v.AsSpan(r * columns, columns);
+                float scale = (float)(g[r] / Math.Sqrt(Moments(row, row).SumProduct));
+                ScaleInto(row, w.AsSpan(r * columns, columns), scale);
+            }
+        });
+    }
+
+    public override void WeightNormBackwardKernel(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        float[] g = D(gain), v = D(direction), dw = D(dweight);
+        float[]? dg = dgain is null ? null : D(dgain), dv = ddirection is null ? null : D(ddirection);
+        if (dg is null && dv is null)
+        {
+            return;
+        }
+
+        For(rows, (long)rows * columns * 6, (start, end) =>
+        {
+            for (int r = start; r < end; r++)
+            {
+                var row = v.AsSpan(r * columns, columns);
+                var grad = dw.AsSpan(r * columns, columns);
+                double sumSquares = Moments(row, row).SumProduct, dot = Moments(grad, row).SumProduct;
+                double inverseNorm = 1.0 / Math.Sqrt(sumSquares);
+                if (dg is not null)
+                {
+                    dg[r] += (float)(dot * inverseNorm);
+                }
+
+                if (dv is not null)
+                {
+                    float scale = (float)(g[r] * inverseNorm), along = (float)(g[r] * inverseNorm * dot / sumSquares);
+                    AxpyPair(grad, scale, row, -along, dv.AsSpan(r * columns, columns));
+                }
+            }
+        });
+    }
+
+    // y = scale · x over a row (SIMD, scalar tail).
+    private static void ScaleInto(ReadOnlySpan<float> x, Span<float> y, float scale)
+    {
+        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
+        var yv = MemoryMarshal.Cast<float, Vector<float>>(y);
+        for (int i = 0; i < xv.Length; i++)
+        {
+            yv[i] = xv[i] * scale;
+        }
+
+        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
+        {
+            y[i] = x[i] * scale;
+        }
+    }
+
+    // y += a · x + b · z over a row (SIMD, scalar tail).
+    private static void AxpyPair(ReadOnlySpan<float> x, float a, ReadOnlySpan<float> z, float b, Span<float> y)
+    {
+        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
+        var zv = MemoryMarshal.Cast<float, Vector<float>>(z);
+        var yv = MemoryMarshal.Cast<float, Vector<float>>(y);
+        var av = new Vector<float>(a);
+        var bv = new Vector<float>(b);
+        for (int i = 0; i < xv.Length; i++)
+        {
+            yv[i] = Vector.FusedMultiplyAdd(zv[i], bv, Vector.FusedMultiplyAdd(xv[i], av, yv[i]));
+        }
+
+        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
+        {
+            y[i] = MathF.FusedMultiplyAdd(z[i], b, MathF.FusedMultiplyAdd(x[i], a, y[i]));
+        }
+    }
+
     public override void InvSqrtKernel(Storage x, Storage y, int n, float eps)
     {
         float[] xv = D(x), yv = D(y);

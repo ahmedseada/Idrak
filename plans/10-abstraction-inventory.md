@@ -278,16 +278,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 170 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (149, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 172 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (151, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 133 of 180 |
-| `CudaBackend` | 175 of 180 |
-| `HipBackend` | 23 of 180 |
-| `VulkanBackend` | 131 of 180 |
+| `CpuBackend` | 135 of 182 |
+| `CudaBackend` | 177 of 182 |
+| `HipBackend` | 23 of 182 |
+| `VulkanBackend` | 133 of 182 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -469,6 +469,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `UnaryKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Upload(2)` | abstract | ✓ | ✓ | ✓ | ✓ |
+| `WeightNormBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `WeightNormKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `WhereBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `WhereKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 
