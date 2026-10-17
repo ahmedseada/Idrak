@@ -6,6 +6,7 @@ using Idrak.Audio.Abstractions;
 using Idrak.Audio.Layers;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Vision;
 
 // The generic layers and tensor operations that came out of the speech plug-ins: padding and flips, convolutions over
 // time with a weight-norm parametrization, padded batches, the in-memory tensor store, weight-norm folding.
@@ -18,6 +19,7 @@ internal static partial class Tests
         ("layers: PaddedSequences gives masks per channel count, rows and key bias that outlive the scope they are first asked in and go with Dispose; TensorDictionary round-trips tensors by name and refuses a mismatched shape; StoredWeights folds a weight norm and finds both naming schemes", PaddedBatchesAndStores),
         ("layers: StoredLayers reads a store's convolutions, transposed convolutions, linears, norms and 1 × 1 projections under their stored names (trainable: every tensor a parameter listed in Trained, a weight norm kept as gain and direction); WaveNet, ResidualCouplingBlock (forward then reverse the identity within 1e-5, with and without a speaker) and PosteriorEncoder (means at noise 0) built from it; a batch with masks equals the sequences alone", AudioLayersFromStored),
         ("layers: HifiGanGenerator decodes long latents in pieces with context equal to one pass within 1e-5 and halves a piece the device refuses; HifiGanDiscriminators created from a seed give a score and a map per layer per discriminator, save and reload bit for bit under VITS's names, and refuse sound that is not [B, L]; the GAN losses equal plain loops", HifiGanLayers),
+        ("layers: VisionTransformerEncoder built from a store of every tensor Expected names gives [images, patches, dim], its Tensors round-trip the store bit for bit (q, k, v split from the fused projection), Load takes the names given and sets the values, the checkpointed pass equals the plain one, a wrong shape and an unknown activation are refused; PatchGrid.AveragePool equals a loop", VisionTransformerFromStored),
         ("layers: RelativePositionAttention with window 0 equals scaled-dot-product attention from the same projections within 1e-5, zero relative embeddings change nothing, the trained path (embeddings as parameters) equals the speaking path and gives them gradients; MonotonicAlignment finds the best monotonic path and its durations; DifferentiableLogMel equals the host STFT's log-mel within 1e-4", AttentionAlignmentAndMel),
     ];
 
@@ -583,6 +585,121 @@ internal static partial class Tests
             var two = DifferentiableLogMel.Compute(Tensor.From([.. samples, .. samples], [2, samples.Length], device), basis, mel, Size, Hop);
             AssertClose(expected, two.ToArray()[(frames * Mels)..], 1e-4f, "a batch's second row");
             ThrowsNaming<ArgumentException>(() => DifferentiableLogMel.Basis(Size, new float[3]), "values for frames");
+        }
+    }
+
+    private static void VisionTransformerFromStored(Device device)
+    {
+        var random = new Random(8);
+        var config = new VisionTransformerConfig { Dim = 16, FfDim = 32, Layers = 2, Heads = 2, ImageSize = 12, PatchSize = 4, Channels = 3, Activation = "gelu" };
+        using var store = new TensorDictionary();
+        var expected = VisionTransformerEncoder.Expected(config, "tower.").ToList();
+        foreach (var (name, shape) in expected)
+        {
+            int size = shape.Aggregate(1, (a, b) => a * b);
+            float bound = name.EndsWith("norm1.weight", StringComparison.Ordinal) || name.EndsWith("norm2.weight", StringComparison.Ordinal) || name.EndsWith("post_layernorm.weight", StringComparison.Ordinal) ? 0.1f : 0.3f;
+            store.Add(name, shape, [.. Enumerable.Range(0, size).Select(_ => (random.NextSingle() * 2 - 1) * bound)]);
+        }
+
+        Check(expected.Count == 3 + 2 * 16 + 2, $"{expected.Count} tensors expected");
+        using var encoder = VisionTransformerEncoder.FromTensors(config, store, "tower.", device, EncoderWeights.Float32);
+        Check(encoder.Config.Patches == 9 && encoder.Layers.Count == 2 && encoder.LayerWeights.Count == 2 && encoder.ToString().Contains("9 patches"), encoder.ToString());
+
+        // The tensors come back as stored, name for name and bit for bit.
+        var back = encoder.Tensors("tower.").ToList();
+        Check(back.Select(t => t.Name).SequenceEqual(expected.Select(t => t.Name)), "Tensors gives Expected's names in order");
+        foreach (var (name, shape, values) in back)
+        {
+            Check(shape.SequenceEqual(store.ShapeOf(name)) && values.SequenceEqual(store.Read(name)), $"{name} round-trips");
+        }
+
+        // Load sets what it is given, under the stored layout, and names what it took.
+        var replaced = new Dictionary<string, float[]>(StringComparer.Ordinal)
+        {
+            ["tower.encoder.layers.1.self_attn.k_proj.weight"] = [.. Enumerable.Range(0, 16 * 16).Select(i => i * 0.001f)],
+            ["tower.encoder.layers.0.mlp.fc2.bias"] = [.. Enumerable.Range(0, 16).Select(i => (float)i)],
+            ["tower.post_layernorm.bias"] = new float[16],
+            ["elsewhere.weight"] = [1f],
+        };
+        var taken = encoder.Load("tower.", replaced);
+        Check(taken.Count == 3 && !taken.Contains("elsewhere.weight"), $"took {string.Join(", ", taken)}");
+        var after = encoder.Tensors("tower.").ToDictionary(t => t.Name, t => t.Values, StringComparer.Ordinal);
+        Check(after["tower.encoder.layers.1.self_attn.k_proj.weight"].SequenceEqual(replaced["tower.encoder.layers.1.self_attn.k_proj.weight"]), "k_proj set inside the fused projection");
+        Check(after["tower.encoder.layers.1.self_attn.q_proj.weight"].SequenceEqual(store.Read("tower.encoder.layers.1.self_attn.q_proj.weight")), "q_proj untouched beside it");
+        Check(after["tower.encoder.layers.0.mlp.fc2.bias"].SequenceEqual(replaced["tower.encoder.layers.0.mlp.fc2.bias"]) && after["tower.post_layernorm.bias"].All(v => v == 0f), "the bias and the norm set");
+
+        // The pass: [images, patches, dim]; checkpointed layers give the same output and gradients.
+        float[] pixels = [.. Enumerable.Range(0, 2 * 3 * 12 * 12).Select(_ => random.NextSingle() * 2 - 1)];
+        using var x = Tensor.From(pixels, [2, 3, 12, 12], device);
+        float[] plain, checkpointed, plainGrad, checkpointedGrad;
+        using (new TensorScope())
+        {
+            var y = encoder.ForwardTraining(x, checkpointed: false);
+            Check(y.Shape.SequenceEqual([2, 9, 16]), $"out {Tensor.FormatShape(y.Shape)}");
+            plain = y.ToArray();
+            y.Sum().Backward();
+            plainGrad = encoder.PostNorm.Gamma.Grad!.ToArray();
+            encoder.PostNorm.Gamma.ZeroGrad();
+            var z = encoder.ForwardTraining(x, checkpointed: true);
+            checkpointed = z.ToArray();
+            z.Sum().Backward();
+            checkpointedGrad = encoder.PostNorm.Gamma.Grad!.ToArray();
+            encoder.PostNorm.Gamma.ZeroGrad();
+            using (Autograd.NoGrad())
+            {
+                AssertClose(plain, encoder.Forward(x).ToArray(), 1e-6f, "Forward equals the training pass");
+                AssertClose(plain[..(9 * 16)], encoder.Forward(x.Narrow(0, 0, 1).Reshape(3, 12, 12)).ToArray(), 1e-5f, "one image [channels, size, size]");
+            }
+        }
+
+        AssertClose(plain, checkpointed, 1e-6f, "the checkpointed pass's output");
+        AssertClose(plainGrad, checkpointedGrad, 1e-5f, "the checkpointed pass's gradient");
+
+        // Refusals: a tensor of the wrong shape, an unknown activation, pixels of another size.
+        using (var wrong = new TensorDictionary())
+        {
+            foreach (var (name, shape) in expected)
+            {
+                wrong.Add(name, name.EndsWith("position_embedding.weight", StringComparison.Ordinal) ? [8, 16] : shape, new float[name.EndsWith("position_embedding.weight", StringComparison.Ordinal) ? 8 * 16 : shape.Aggregate(1, (a, b) => a * b)]);
+            }
+
+            ThrowsNaming<InvalidDataException>(() => VisionTransformerEncoder.FromTensors(config, wrong, "tower.", device).Dispose(), "expected [9, 16]");
+        }
+
+        ThrowsNaming<InvalidDataException>(() => (config with { Activation = "swish" }).Checked(), "not one a vision transformer takes");
+        ThrowsNaming<ArgumentException>(() => encoder.Forward(Tensor.From(new float[3 * 8 * 8], [1, 3, 8, 8], device)).Dispose(), "[images, 3, 12, 12]");
+
+        // The grid pooled 3 x 3 over a 6 x 6 grid against a loop.
+        float[] grid = [.. Enumerable.Range(0, 36 * 4).Select(_ => random.NextSingle())];
+        using var g = Tensor.From(grid, [1, 36, 4], device);
+        var pooled = new float[4 * 4];
+        for (int r = 0; r < 2; r++)
+        {
+            for (int c = 0; c < 2; c++)
+            {
+                for (int d = 0; d < 4; d++)
+                {
+                    float sum = 0;
+                    for (int i = 0; i < 3; i++)
+                    {
+                        for (int j = 0; j < 3; j++)
+                        {
+                            sum += grid[((r * 3 + i) * 6 + c * 3 + j) * 4 + d];
+                        }
+                    }
+
+                    pooled[(r * 2 + c) * 4 + d] = sum / 9;
+                }
+            }
+        }
+
+        using (new TensorScope())
+        {
+            var p = PatchGrid.AveragePool(g, 3);
+            Check(p.Shape.SequenceEqual([1, 4, 4]), $"pooled {Tensor.FormatShape(p.Shape)}");
+            AssertClose(pooled, p.ToArray(), 1e-6f, "3 x 3 average pooling of the grid");
+            Check(ReferenceEquals(PatchGrid.AveragePool(g, 1), g), "pool size 1 is the input");
+            ThrowsNaming<ArgumentException>(() => PatchGrid.AveragePool(g, 4).Dispose(), "divisible by 4");
         }
     }
 }

@@ -61,6 +61,13 @@ public sealed record IdrakVisionConfig
     /// <summary>Image tokens of an image (the pooled grid).</summary>
     public int TokensPerImage => (PatchesPerSide / PoolSize) * (PatchesPerSide / PoolSize);
 
+    /// <summary>The tower's shape as the library's <see cref="Idrak.Vision.VisionTransformerEncoder"/> takes it.</summary>
+    public Idrak.Vision.VisionTransformerConfig ToTransformer() => new()
+    {
+        Dim = Dim, FfDim = FfDim, Layers = Layers, Heads = Heads, ImageSize = ImageSize, PatchSize = PatchSize, Channels = Channels,
+        LayerNormEpsilon = LayerNormEpsilon, Activation = Activation,
+    };
+
     /// <summary>Checks the sizes fit together.</summary>
     /// <exception cref="InvalidDataException">They do not.</exception>
     public IdrakVisionConfig Checked()
@@ -80,7 +87,7 @@ public sealed record IdrakVisionConfig
             throw new InvalidDataException($"vision_config: image_size {ImageSize} is not a whole number of patches of {PatchSize}, pooled {PoolSize} x {PoolSize}.");
         }
 
-        _ = Layers2.Activation(Activation);
+        _ = ToTransformer().Checked();
         _ = Layers2.Activation(ProjectorActivation);
         return this;
     }
@@ -127,15 +134,8 @@ public sealed record IdrakVisionConfig
 /// <param name="TokensPerImage">Soft tokens of an image.</param>
 public sealed record IdrakVisionTokens(int ImageToken, int? BeginImage, int? EndImage, int TokensPerImage);
 
-// The activations the tower and projector take, by their configuration names.
+// The activation the projector takes, by its configuration name (the tower's names: the library's VisionTransformerConfig).
 internal static class Layers2
 {
-    public static Func<Module> Activation(string name) => name switch
-    {
-        "gelu_pytorch_tanh" or "gelu_new" or "gelu_fast" => () => new Idrak.Layers.GELU(),
-        "gelu" => () => new Idrak.Layers.ExactGELU(),
-        "quick_gelu" => () => new Idrak.Layers.QuickGELU(),
-        "relu" => () => new Idrak.Layers.ReLU(),
-        _ => throw new InvalidDataException($"Activation '{name}' is not one IdrakVision takes (gelu_pytorch_tanh, gelu, quick_gelu, relu)."),
-    };
+    public static Func<Module> Activation(string name) => new Idrak.Vision.VisionTransformerConfig { Activation = name }.ActivationFactory();
 }

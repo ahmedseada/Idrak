@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
+using Idrak.Vision;
 
 namespace Idrak.Gemma3Vision;
 
@@ -285,7 +286,12 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     {
         device ??= Device.Default;
         using var tensors = OpenTensors();
-        var encoder = SiglipVisionEncoder.FromTensors(Encoder, tensors, "vision.", device, tower);
+        if (Encoder.UseHead)
+        {
+            throw new NotSupportedException("vision_config: vision_use_head (SigLIP's attention-pooling head) is not supported; vision-language models use the patch outputs.");
+        }
+
+        var encoder = VisionTransformerEncoder.FromTensors(Encoder.ToTransformer(), tensors, "vision.", device, tower);
         try
         {
             var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device, projectorWeights);
@@ -379,7 +385,7 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
             return tensors;
         }
 
-        foreach (var (name, (values, _)) in TowerValues(own.Encoder))
+        foreach (var (name, _, values) in own.Encoder.Tensors("vision."))
         {
             int[] stored = [.. Tensors[name].Shape];                                     // the convolution's [dim, channels, patch, patch], not the layer's flat rows
             if (values.Length != stored.Aggregate(1, (a, b) => a * b))
@@ -444,7 +450,7 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
                 }
             }
 
-            SetTower(own.Encoder, tower.ToDictionary(n => n, n => tensors[Tensors[n].Stored].ToArray(), StringComparer.Ordinal));
+            own.Encoder.Load("vision.", tower.ToDictionary(n => n, n => tensors[Tensors[n].Stored].ToArray(), StringComparer.Ordinal));
             taken.AddRange(tower.Select(n => Tensors[n].Stored));
         }
 
@@ -472,128 +478,6 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
 
     // SigLIP's tensors under this part's names (vision.…).
     private IEnumerable<string> TowerTensorNames() => Tensors.Keys.Where(k => k.StartsWith("vision.", StringComparison.Ordinal)).Order(StringComparer.Ordinal);
-
-    // Every SigLIP tensor of the encoder by its name here, in the checkpoint's layout: Linear weights [in, out] transposed
-    // to [out, in], the fused [dim, 3·dim] q, k, v projection split into q_proj, k_proj and v_proj.
-    private static IEnumerable<(string Name, (float[] Values, int[] Shape))> TowerValues(SiglipVisionEncoder tower)
-    {
-        int dim = tower.Config.Dim;
-        yield return ("vision.embeddings.patch_embedding.weight", (tower.Patches.Weight.ToArray(), [.. tower.Patches.Weight.Shape]));
-        yield return ("vision.embeddings.patch_embedding.bias", (tower.Patches.Bias!.ToArray(), [dim]));
-        yield return ("vision.embeddings.position_embedding.weight", (tower.PositionEmbedding.ToArray(), [.. tower.PositionEmbedding.Shape]));
-        for (int i = 0; i < tower.LayerWeights.Count; i++)
-        {
-            var w = tower.LayerWeights[i];
-            string l = $"vision.encoder.layers.{i}";
-            yield return ($"{l}.layer_norm1.weight", (w.Norm1.Gamma.ToArray(), [dim]));
-            yield return ($"{l}.layer_norm1.bias", (w.Norm1.Beta.ToArray(), [dim]));
-            float[] qkv = w.Qkv.Weight.ToArray(), qkvBias = w.Qkv.Bias!.ToArray();
-            string[] parts = ["q_proj", "k_proj", "v_proj"];
-            for (int part = 0; part < 3; part++)
-            {
-                var weight = new float[dim * dim];
-                for (int input = 0; input < dim; input++)
-                {
-                    for (int output = 0; output < dim; output++)
-                    {
-                        weight[output * dim + input] = qkv[input * 3 * dim + part * dim + output];
-                    }
-                }
-
-                yield return ($"{l}.self_attn.{parts[part]}.weight", (weight, [dim, dim]));
-                yield return ($"{l}.self_attn.{parts[part]}.bias", (qkvBias[(part * dim)..((part + 1) * dim)], [dim]));
-            }
-
-            foreach (var (name, layer) in new[] { ("self_attn.out_proj", w.Output), ("mlp.fc1", w.Fc1), ("mlp.fc2", w.Fc2) })
-            {
-                yield return ($"{l}.{name}.weight", (Transpose(layer.Weight.ToArray(), layer.InFeatures, layer.OutFeatures), [layer.OutFeatures, layer.InFeatures]));
-                yield return ($"{l}.{name}.bias", (layer.Bias!.ToArray(), [layer.OutFeatures]));
-            }
-
-            yield return ($"{l}.layer_norm2.weight", (w.Norm2.Gamma.ToArray(), [dim]));
-            yield return ($"{l}.layer_norm2.bias", (w.Norm2.Beta.ToArray(), [dim]));
-        }
-
-        yield return ("vision.post_layernorm.weight", (tower.PostNorm.Gamma.ToArray(), [dim]));
-        yield return ("vision.post_layernorm.bias", (tower.PostNorm.Beta.ToArray(), [dim]));
-    }
-
-    // Puts SigLIP tensors (names here, the checkpoint's layout) into the encoder: the inverse of TowerValues.
-    private static void SetTower(SiglipVisionEncoder tower, Dictionary<string, float[]> values)
-    {
-        int dim = tower.Config.Dim;
-        void Set(string name, Tensor target, Func<float[], float[]>? layout = null)
-        {
-            if (values.TryGetValue(name, out var v))
-            {
-                target.Load(layout is null ? v : layout(v));
-            }
-        }
-
-        Set("vision.embeddings.patch_embedding.weight", tower.Patches.Weight);
-        Set("vision.embeddings.patch_embedding.bias", tower.Patches.Bias!);
-        Set("vision.embeddings.position_embedding.weight", tower.PositionEmbedding);
-        for (int i = 0; i < tower.LayerWeights.Count; i++)
-        {
-            var w = tower.LayerWeights[i];
-            string l = $"vision.encoder.layers.{i}";
-            Set($"{l}.layer_norm1.weight", w.Norm1.Gamma);
-            Set($"{l}.layer_norm1.bias", w.Norm1.Beta);
-            string[] parts = ["q_proj", "k_proj", "v_proj"];
-            if (parts.Any(p => values.ContainsKey($"{l}.self_attn.{p}.weight") || values.ContainsKey($"{l}.self_attn.{p}.bias")))
-            {
-                float[] qkv = w.Qkv.Weight.ToArray(), qkvBias = w.Qkv.Bias!.ToArray();
-                for (int part = 0; part < 3; part++)
-                {
-                    if (values.TryGetValue($"{l}.self_attn.{parts[part]}.weight", out var weight))
-                    {
-                        for (int input = 0; input < dim; input++)
-                        {
-                            for (int output = 0; output < dim; output++)
-                            {
-                                qkv[input * 3 * dim + part * dim + output] = weight[output * dim + input];
-                            }
-                        }
-                    }
-
-                    if (values.TryGetValue($"{l}.self_attn.{parts[part]}.bias", out var bias))
-                    {
-                        bias.CopyTo(qkvBias, part * dim);
-                    }
-                }
-
-                w.Qkv.Weight.Load(qkv);
-                w.Qkv.Bias!.Load(qkvBias);
-            }
-
-            foreach (var (name, layer) in new[] { ("self_attn.out_proj", w.Output), ("mlp.fc1", w.Fc1), ("mlp.fc2", w.Fc2) })
-            {
-                Set($"{l}.{name}.weight", layer.Weight, v => Transpose(v, layer.OutFeatures, layer.InFeatures));
-                Set($"{l}.{name}.bias", layer.Bias!);
-            }
-
-            Set($"{l}.layer_norm2.weight", w.Norm2.Gamma);
-            Set($"{l}.layer_norm2.bias", w.Norm2.Beta);
-        }
-
-        Set("vision.post_layernorm.weight", tower.PostNorm.Gamma);
-        Set("vision.post_layernorm.bias", tower.PostNorm.Beta);
-    }
-
-    // [rows, columns] row-major to [columns, rows].
-    private static float[] Transpose(float[] values, int rows, int columns)
-    {
-        var result = new float[values.Length];
-        for (int r = 0; r < rows; r++)
-        {
-            for (int c = 0; c < columns; c++)
-            {
-                result[c * rows + r] = values[r * columns + c];
-            }
-        }
-
-        return result;
-    }
 
     private static Tensor Host(float[] values, int[] shape) => Tensor.From(values, shape, Device.Cpu);
 
@@ -689,6 +573,13 @@ public sealed record SiglipVisionConfig
 
     /// <summary>Patches in the image (the encoder's sequence length).</summary>
     public int Patches => PatchesPerSide * PatchesPerSide;
+
+    /// <summary>The same shape as the library's <see cref="VisionTransformerEncoder"/> takes.</summary>
+    public VisionTransformerConfig ToTransformer() => new()
+    {
+        Dim = Dim, FfDim = FfDim, Layers = Layers, Heads = Heads, ImageSize = ImageSize, PatchSize = PatchSize, Channels = Channels,
+        LayerNormEpsilon = LayerNormEpsilon, Activation = Activation,
+    };
 
     /// <summary>Reads a <c>vision_config</c> (transformers' <c>SiglipVisionConfig</c> defaults for absent keys).</summary>
     public static SiglipVisionConfig FromJson(JsonObject? config)
