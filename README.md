@@ -307,7 +307,7 @@ src/Idrak.Vision/                   optional package (Idrak.Imaging): ImageModel
                                     segmentation) under Abstractions/
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
 src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/ in ten groups, shared helpers
-                                    under Shared/: the environment table, saved variables, Arabic shaping and bidi)
+                                    under Shared/: the environment table, saved variables, the right-to-left renderer)
 samples/
   Idrak.Samples.Xor                 the classic XOR problem
   Idrak.Samples.HousePrices         regression: predict house prices from a CSV file

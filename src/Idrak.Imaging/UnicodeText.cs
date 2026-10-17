@@ -1,24 +1,15 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Imaging.Shaping;
+
 namespace Idrak.Imaging;
 
-/// <summary>The Unicode bidirectional classes (UAX #9).</summary>
-internal enum BidiClass : byte
-{
-    L, R, AL, EN, ES, ET, AN, CS, NSM, BN, B, S, WS, ON, LRE, LRO, RLE, RLO, PDF, LRI, RLI, FSI, PDI,
-}
-
-/// <summary>The Unicode joining types (ArabicShaping.txt): non-joining, right, left, dual, join-causing, transparent.</summary>
-internal enum JoiningType : byte
-{
-    U, R, L, D, C, T,
-}
-
 /// <summary>
-/// The Unicode properties text shaping reads that .NET does not give: script, bidirectional class, joining type,
-/// canonical combining class, Indic categories and bidi mirrors, from tables made by tools/unicode/make_text_tables.py
-/// (UnicodeText.Data.cs). Each is a binary search over range starts; nothing is allocated.
+/// The Unicode properties text shaping and the bidirectional algorithm read that .NET does not give: script, bidirectional
+/// class, joining type, canonical combining class, Indic categories, bidi mirrors and paired brackets, and the Arabic
+/// presentation forms, from tables made by tools/unicode/make_text_tables.py (UnicodeText.Data.cs). Each is a binary
+/// search over sorted spans; nothing is allocated.
 /// </summary>
 internal static partial class UnicodeText
 {
@@ -28,7 +19,7 @@ internal static partial class UnicodeText
     /// <summary>A code point's bidirectional class.</summary>
     public static BidiClass Bidi(int codePoint) => (BidiClass)Find(BidiStarts, BidiValues, codePoint);
 
-    /// <summary>A code point's joining type (U for most).</summary>
+    /// <summary>A code point's joining type (U for most; T for marks and format characters, as the derived property gives it).</summary>
     public static JoiningType Joining(int codePoint) => (JoiningType)Find(JoiningStarts, JoiningValues, codePoint);
 
     /// <summary>A code point's canonical combining class (0 for a base character).</summary>
@@ -40,7 +31,7 @@ internal static partial class UnicodeText
     /// <summary>A code point's Indic positional category ("Left", "Top", ...; "NA").</summary>
     public static string IndicPositional(int codePoint) => PositionalNames[Find(PositionalStarts, PositionalValues, codePoint)];
 
-    /// <summary>The bidi mirror of a code point ("(" for ")"), or the code point itself.</summary>
+    /// <summary>The bidi mirror of a code point ("(" for ")", BidiMirroring.txt), or the code point itself.</summary>
     public static int Mirror(int codePoint)
     {
         var pairs = Mirrors;
@@ -65,6 +56,37 @@ internal static partial class UnicodeText
         }
 
         return codePoint;
+    }
+
+    /// <summary>Whether a code point is a paired bracket (BidiBrackets.txt), with its pair and whether it opens.</summary>
+    public static bool Bracket(int codePoint, out int pair, out bool opening)
+    {
+        var table = Brackets;
+        int lo = 0, hi = table.Length / 3 - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >>> 1;
+            int key = table[3 * mid];
+            if (key == codePoint)
+            {
+                pair = table[3 * mid + 1];
+                opening = table[3 * mid + 2] == 1;
+                return true;
+            }
+
+            if (key < codePoint)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
+        }
+
+        pair = 0;
+        opening = false;
+        return false;
     }
 
     /// <summary>Whether a code point is a default-ignorable one shaping hides (zero width joiners and marks, bidi controls, variation selectors).</summary>
@@ -121,6 +143,38 @@ internal static partial class UnicodeText
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// All four presentation forms of an Arabic letter in one search: <paramref name="forms"/> (four values) gets the isolated,
+    /// final, initial and medial forms, 0 where Unicode has none; false (and all zeros) for a code point with no forms.
+    /// </summary>
+    public static bool AllPresentationForms(int codePoint, Span<int> forms)
+    {
+        forms.Clear();
+        var table = PresentationForms;
+        int lo = 0, hi = table.Length / 3;                                     // the first entry at or after the letter's first form
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >>> 1;
+            if (table[3 * mid] < codePoint)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
+        }
+
+        bool any = false;
+        for (int i = lo; i < table.Length / 3 && table[3 * i] == codePoint; i++)
+        {
+            forms[table[3 * i + 1]] = table[3 * i + 2];
+            any = true;
+        }
+
+        return any;
     }
 
     /// <summary>The lam-alef ligature of lam and <paramref name="alef"/> (isolated, or final when the lam joins the letter before), or null.</summary>

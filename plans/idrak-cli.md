@@ -588,14 +588,16 @@ against its conformance data, and the result is plain characters (presentation f
 Presentation Forms-B draws joined, one cell each. What it cannot control is the font (a console font without Arabic
 shows boxes) and terminals that misreport themselves (`--lang-render` overrides).
 
-How it works (src/Idrak.Cli/Shared):
+How it works (src/Idrak.Cli/Shared, on Idrak.Imaging's text classes since plan 22, row 6f):
 
-- `Bidi.cs`: the Unicode Bidirectional Algorithm (UAX #9) for one paragraph, complete: explicit embeddings,
-  overrides and isolates (X1-X10), weak types (W1-W7), paired brackets (N0), neutrals (N1-N2), implicit levels
-  (I1-I2), line rules L1 and L2. `ArabicShaping.cs`: each Arabic letter to its isolated, initial, medial or final
-  presentation form by the joining types of ArabicShaping.txt (vowel marks transparent), lam-alef to its isolated or
-  final ligature. `UnicodeTables.cs`: the bidirectional classes, brackets, mirrors, joining types and presentation
-  forms, generated from the Unicode Character Database 18.0 by tools/unicode/make_tables.py (no runtime dependency).
+- Idrak.Imaging `Shaping/Bidi.cs`: the Unicode Bidirectional Algorithm (UAX #9) for one paragraph, complete: explicit
+  embeddings, overrides and isolates (X1-X10), weak types (W1-W7), paired brackets (N0), neutrals (N1-N2), implicit
+  levels (I1-I2), line rules L1 and L2; the one implementation the tool and the library's text layout share.
+  `Shaping/ArabicPresentationForms.cs`: each Arabic letter to its isolated, initial, medial or final presentation form
+  by the joining types of ArabicShaping.txt (vowel marks transparent, a zero width non-joiner breaking the join),
+  lam-alef to its isolated or final ligature. `UnicodeText.Data.cs`: the scripts, bidirectional classes, brackets,
+  mirrors, joining types, combining classes, Indic categories and presentation forms, generated from the Unicode
+  Character Database 18.0 by tools/unicode/make_text_tables.py (no runtime dependency).
 - `VisualText.cs`: a line is split at its column gaps (two or more spaces, as tables, name-value lines and help items
   are laid out); each part is shaped, reordered as a paragraph of its own whose direction is that of its first strong
   letter (P2, P3), has its marks put after their base (L3) and its brackets mirrored in right-to-left runs (L4); parts
