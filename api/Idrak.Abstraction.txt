@@ -1666,6 +1666,18 @@ public static class Idrak.Abstraction.Formats.ModelSources
   public static void Register(Idrak.Abstraction.Formats.IModelSource source)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed class Idrak.Abstraction.Formats.TensorDictionary : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
+  public System.Collections.Generic.IEnumerable<string> Names { get; }
+  public TensorDictionary()
+  public bool Contains(string name)
+  public bool Remove(string name)
+  public float[] Read(string name)
+  public int Count { get; }
+  public int[] ShapeOf(string name)
+  public void Add(string name, Idrak.Abstraction.Tensor tensor)
+  public void Add(string name, System.ReadOnlySpan<int> shape, float[] values)
+  public void Dispose()
+
 public enum Idrak.Abstraction.Formats.WeightFormat : int
   BFloat16 = 2
   Float16 = 1
@@ -3482,6 +3494,11 @@ public enum Idrak.Abstraction.PackedFormat : int
   Int4 = 1
   Int8 = 0
 
+public enum Idrak.Abstraction.PaddingMode : int
+  Reflect = 1
+  Replicate = 2
+  Zeros = 0
+
 public sealed class Idrak.Abstraction.ResourceLimitExceededException : System.Exception
   public ResourceLimitExceededException(string message)
 
@@ -3726,6 +3743,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor EmbeddingLookup(Idrak.Abstraction.Tensor indices)
   public Idrak.Abstraction.Tensor Exp()
   public Idrak.Abstraction.Tensor Flatten(int startDim = 1)
+  public Idrak.Abstraction.Tensor Flip(int dim)
   public Idrak.Abstraction.Tensor Gelu()
   public Idrak.Abstraction.Tensor GeluErf()
   public Idrak.Abstraction.Tensor GroupAffine(Idrak.Abstraction.Tensor? scale, Idrak.Abstraction.Tensor? shift, int groups, int inner)
@@ -3747,6 +3765,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Narrow(int dim, int start, int length)
   public Idrak.Abstraction.Tensor Normalize(int outer, int groups, int inner, float eps, out Idrak.Abstraction.Tensor mean, out Idrak.Abstraction.Tensor variance)
   public Idrak.Abstraction.Tensor NormalizeWith(Idrak.Abstraction.Tensor mean, Idrak.Abstraction.Tensor invStd, int outer, int groups, int inner)
+  public Idrak.Abstraction.Tensor Pad(int dim, int before, int after, Idrak.Abstraction.PaddingMode mode = (Idrak.Abstraction.PaddingMode)0)
   public Idrak.Abstraction.Tensor Permute(scoped params System.ReadOnlySpan<int> dims)
   public Idrak.Abstraction.Tensor Pow(float exponent)
   public Idrak.Abstraction.Tensor Relu()

@@ -85,6 +85,9 @@ internal sealed class VoiceTrainCommand : Command
               --eval-every N      score --eval every N steps (default: at the end)
               --log-every N       a progress line every N steps (default 10)
               --feature-cache C   disk, memory or none (default disk: a second pass takes no spectra)
+              --checkpointing, --no-checkpointing
+                                  keep only each block's output in the forward pass and run the block again in the backward
+                                  pass (less memory, a longer step; default on), or keep every activation
               --seed N            the draws' and the order's seed (default 0)
               --resume RUN        continue a voice run from its latest checkpoint (--steps N: N more)
           -o, --out RUN           the run folder (default CACHE/runs/DATE-voice-NAME)
@@ -109,7 +112,7 @@ internal sealed class VoiceTrainCommand : Command
         "--warmup", "--optimizer", "--clip", "--save-every", "--keep", "--eval-every", "--log-every", "--feature-cache", "--resume", "--out", "--voices",
     ];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite", "--no-install", "--profile"];
+    public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite", "--no-install", "--profile", "--checkpointing", "--no-checkpointing"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-l"] = "--language", ["-o"] = "--out" };
 
@@ -269,6 +272,7 @@ internal sealed class VoiceTrainCommand : Command
             LearningRate = Real(context, "--lr", start.LearningRate),
             BatchSeconds = context.Option("--batch-seconds") is { } batch && batch.Equals("auto", StringComparison.OrdinalIgnoreCase) ? 0 : Real(context, "--batch-seconds", (float)start.BatchSeconds),
             Schedule = context.Option("--schedule") ?? start.Schedule,
+            Checkpointing = context.Flag("--no-checkpointing") ? false : context.Flag("--checkpointing") || start.Checkpointing,
             WarmupFraction = Real(context, "--warmup", start.WarmupFraction),
             Optimizer = context.Option("--optimizer") ?? start.Optimizer,
             MaxGradientNorm = Real(context, "--clip", start.MaxGradientNorm),

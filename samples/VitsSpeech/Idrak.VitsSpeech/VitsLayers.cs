@@ -3,6 +3,7 @@
 
 using Idrak.Abstraction.Formats;
 using Idrak.Layers;
+using Idrak.Models;
 
 namespace Idrak.VitsSpeech;
 
@@ -17,7 +18,7 @@ namespace Idrak.VitsSpeech;
 internal sealed class VitsWeights(ITensorStore store, Device device, bool trainable = false)
 {
     private readonly List<VitsParameter> _trained = [];
-    private readonly List<WeightNormed> _normed = [];
+    private readonly List<WeightNorm> _normed = [];
 
     public Device Device { get; } = device;
 
@@ -27,17 +28,17 @@ internal sealed class VitsWeights(ITensorStore store, Device device, bool traina
     /// <summary>Every tensor read as a parameter (when <see cref="Trainable"/>), in reading order.</summary>
     public IReadOnlyList<VitsParameter> Trained => _trained;
 
-    /// <summary>The weight-normed filters of the layers read (training), to bind for a step's half (<see cref="WeightNormed"/>).</summary>
-    public IReadOnlyList<WeightNormed> Normed => _normed;
+    /// <summary>The weight-normed filters of the layers read (training), to bind for a step's half (<see cref="WeightNorm"/>).</summary>
+    public IReadOnlyList<WeightNorm> Normed => _normed;
 
-    private WeightNormed? Register(Tensor? gain, Tensor direction)
+    private WeightNorm? Register(Tensor? gain, Tensor direction)
     {
         if (gain is null)
         {
             return null;
         }
 
-        var normed = new WeightNormed(gain, direction);
+        var normed = new WeightNorm(gain, direction);
         _normed.Add(normed);
         return normed;
     }
@@ -112,36 +113,6 @@ internal sealed class VitsWeights(ITensorStore store, Device device, bool traina
         return new Conv1d(conv, Register(gain, conv.Weight));
     }
 
-    /// <summary>w[o] = g[o] · v[o] / ‖v[o]‖ over every dimension but the first (PyTorch's weight_norm with dim 0).</summary>
-    public static float[] FoldWeightNorm(float[] gains, float[] directions, int[] shape)
-    {
-        int rows = shape[0], columns = directions.Length / rows;
-        if (gains.Length != rows)
-        {
-            throw new InvalidDataException($"A weight norm's gains hold {gains.Length} values for {rows} filters.");
-        }
-
-        var folded = new float[directions.Length];
-        for (int o = 0; o < rows; o++)
-        {
-            double norm = 0;
-            var row = directions.AsSpan(o * columns, columns);
-            for (int i = 0; i < columns; i++)
-            {
-                norm += (double)row[i] * row[i];
-            }
-
-            double scale = gains[o] / Math.Sqrt(norm);
-            var target = folded.AsSpan(o * columns, columns);
-            for (int i = 0; i < columns; i++)
-            {
-                target[i] = (float)(row[i] * scale);
-            }
-        }
-
-        return folded;
-    }
-
     /// <summary>A transposed convolution over time from <c>{prefix}.weight</c> [in, out, k] (or a weight norm's gains and directions) and <c>{prefix}.bias</c>.</summary>
     public ConvTranspose1d ConvTranspose(string prefix, int inChannels, int outChannels, int kernel, int stride, int padding)
     {
@@ -179,7 +150,7 @@ internal sealed class VitsWeights(ITensorStore store, Device device, bool traina
 
         if (!Trainable)
         {
-            return (Abstraction.Tensor.Persistent(FoldWeightNorm(Read(g), Read(v!), shape), [rows, columns], Device), null);
+            return (Abstraction.Tensor.Persistent(StoredWeights.FoldWeightNorm(Read(g), Read(v!), shape), [rows, columns], Device), null);
         }
 
         var gains = Read(g);
@@ -250,290 +221,6 @@ internal sealed class VitsParameterSet(string name, IReadOnlyList<VitsParameter>
 }
 
 /// <summary>
-/// A convolution through the library's <see cref="Conv2d"/>: over time on <c>[C, T]</c> (as <c>[1, C, 1, T]</c>), or on
-/// <c>[N, C, H, W]</c>. With a weight norm's gains (training), the filters are <c>g · v / ‖v‖</c> of the layer's
-/// directions, made per pass so their gradients reach both.
-/// </summary>
-internal sealed class Conv1d(Conv2d conv, WeightNormed? normed = null) : IDisposable
-{
-    public int InChannels => conv.InChannels;
-
-    public int OutChannels => conv.OutChannels;
-
-    public Tensor Forward(Tensor x)
-    {
-        var y = Forward4(x.Reshape(1, x.Shape[0], 1, x.Shape[1]));
-        return y.Reshape(y.Shape[1], y.Shape[3]);
-    }
-
-    /// <summary>The convolution over a batch [B, C, T]: [B, out, T'] (one launch for the batch).</summary>
-    public Tensor Forward3(Tensor x)
-    {
-        var y = Forward4(x.Reshape(x.Shape[0], x.Shape[1], 1, x.Shape[2]));
-        return y.Reshape(y.Shape[0], y.Shape[1], y.Shape[3]);
-    }
-
-    public Tensor Forward4(Tensor x)
-    {
-        if (normed is null)
-        {
-            return conv.Forward(x);
-        }
-
-        return x.Convolution(normed.Weight, conv.Bias, conv.Geometry(x.Shape[0], x.Shape[2], x.Shape[3]), conv.Groups);
-    }
-
-    public void Dispose()
-    {
-        conv.Dispose();
-        normed?.Dispose();
-    }
-}
-
-/// <summary>A transposed convolution over time on <c>[C, T]</c>, through the library's <see cref="ConvTranspose2d"/> (weight-normed per pass in training, as <see cref="Conv1d"/>).</summary>
-internal sealed class ConvTranspose1d(ConvTranspose2d conv, WeightNormed? normed = null) : IDisposable
-{
-    public int OutChannels => conv.OutChannels;
-
-    public Tensor Forward(Tensor x)
-    {
-        var y = Forward3(x.Reshape(1, x.Shape[0], x.Shape[1]));
-        return y.Reshape(y.Shape[1], y.Shape[2]);
-    }
-
-    /// <summary>The transposed convolution over a batch [B, C, T]: [B, out, T · stride].</summary>
-    public Tensor Forward3(Tensor x)
-    {
-        int batch = x.Shape[0], length = x.Shape[2];
-        var x4 = x.Reshape(batch, x.Shape[1], 1, length);
-        var y = normed is null ? conv.Forward(x4) : x4.ConvolutionTranspose(normed.Weight, conv.Bias, conv.Geometry(batch, 1, length), conv.Groups);
-        return y.Reshape(batch, y.Shape[1], y.Shape[3]);
-    }
-
-    public void Dispose()
-    {
-        conv.Dispose();
-        normed?.Dispose();
-    }
-}
-
-/// <summary>
-/// A padded batch's lengths along time: which positions of [B, C, T] (or rows of [B·T, …]) belong to an utterance. The
-/// masks the layers multiply by are made once per channel count and kept for the pass (the scope they are made in owns
-/// them, as it owns the pass's other tensors). Null in the layers' signatures stands for one utterance with nothing
-/// padded (speaking), where no mask is applied at all.
-/// </summary>
-internal sealed class VitsMask : IDisposable
-{
-    private readonly int[] _lengths;
-    private readonly Device _device;
-    private readonly Dictionary<int, Tensor> _byChannels = [];
-    private readonly Dictionary<int, Tensor> _keys = [];
-    private Tensor? _rows;
-
-    public VitsMask(IReadOnlyList<int> lengths, int length, Device device)
-    {
-        _lengths = [.. lengths];
-        Length = length;
-        _device = device;
-        Positions = _lengths.Sum();
-    }
-
-    /// <summary>The utterances.</summary>
-    public int Batch => _lengths.Length;
-
-    /// <summary>The padded length.</summary>
-    public int Length { get; }
-
-    /// <summary>Each utterance's length.</summary>
-    public IReadOnlyList<int> Lengths => _lengths;
-
-    /// <summary>The positions that belong to an utterance, over the batch.</summary>
-    public int Positions { get; }
-
-    /// <summary>The mask [B, channels, T]: 1 within each utterance's length, 0 after.</summary>
-    public Tensor Of(int channels)
-    {
-        if (!_byChannels.TryGetValue(channels, out var mask))
-        {
-            var values = new float[Batch * channels * Length];
-            for (int b = 0; b < Batch; b++)
-            {
-                for (int c = 0; c < channels; c++)
-                {
-                    values.AsSpan((b * channels + c) * Length, _lengths[b]).Fill(1f);
-                }
-            }
-
-            _byChannels[channels] = mask = TensorScope.Untrack(Tensor.From(values, [Batch, channels, Length], _device));   // outlives the block it is first asked in
-        }
-
-        return mask;
-    }
-
-    /// <summary>x [B, C, T] with its padding zeroed.</summary>
-    public Tensor Apply(Tensor x) => x * Of(x.Shape[1]);
-
-    /// <summary>The mask of the rows [B·T]: 1 for a position within its utterance, 0 for padding.</summary>
-    public Tensor Rows
-    {
-        get
-        {
-            if (_rows is null)
-            {
-                var values = new float[Batch * Length];
-                for (int b = 0; b < Batch; b++)
-                {
-                    values.AsSpan(b * Length, _lengths[b]).Fill(1f);
-                }
-
-                _rows = TensorScope.Untrack(Tensor.From(values, [Batch * Length], _device));
-            }
-
-            return _rows;
-        }
-    }
-
-    /// <summary>x [B·T, features] with its padded rows zeroed (one row-wise scale).</summary>
-    public Tensor ApplyRows(Tensor x) => x.GroupAffine(Rows, null, Batch * Length, x.Shape[1]);
-
-    /// <summary>The attention bias [B·heads, T, T]: 0 where the key is within its utterance, -1e4 where it is padding (VITS's masked_fill before the softmax).</summary>
-    public Tensor Keys(int heads)
-    {
-        if (!_keys.TryGetValue(heads, out var keys))
-        {
-            var values = new float[Batch * heads * Length * Length];
-            for (int b = 0; b < Batch; b++)
-            {
-                for (int h = 0; h < heads; h++)
-                {
-                    for (int i = 0; i < Length; i++)
-                    {
-                        values.AsSpan(((b * heads + h) * Length + i) * Length + _lengths[b], Length - _lengths[b]).Fill(-1e4f);
-                    }
-                }
-            }
-
-            _keys[heads] = keys = TensorScope.Untrack(Tensor.From(values, [Batch * heads, Length, Length], _device));
-        }
-
-        return keys;
-    }
-
-    /// <summary>Releases the mask tensors: after the pass's backward step, which reads them (they belong to no scope).</summary>
-    public void Dispose()
-    {
-        foreach (var mask in _byChannels.Values)
-        {
-            mask.Dispose();
-        }
-
-        foreach (var keys in _keys.Values)
-        {
-            keys.Dispose();
-        }
-
-        _rows?.Dispose();
-        _byChannels.Clear();
-        _keys.Clear();
-        _rows = null;
-    }
-}
-
-/// <summary>
-/// A layer's weight-normed filters g · v / ‖v‖ (training). Unbound, each pass makes them (and keeps their graph); bound
-/// (<see cref="Bind"/>), they are made once for a step's half and shared by its passes: a leaf whose gradient the passes add
-/// up, handed to g and v once by <see cref="Flush"/>. The same gradient as made per pass, with one copy of the filters
-/// instead of one per utterance and pass (a kept pass per utterance held a copy of every layer's).
-/// </summary>
-internal sealed class WeightNormed(Tensor gain, Tensor direction) : IDisposable
-{
-    private Tensor? _bound;
-
-    /// <summary>Whether the filters are bound for the current half.</summary>
-    public bool Bound => _bound is not null;
-
-    /// <summary>The filters: the bound ones, else made now.</summary>
-    public Tensor Weight => _bound ?? VitsOps.WeightNorm(gain, direction);
-
-    /// <summary>
-    /// Makes the filters once (no graph: the norm's intermediates go at once; <see cref="Flush"/> works the gradient out
-    /// itself), a leaf taking gradients when g or v does: frozen layers' are constants.
-    /// </summary>
-    public void Bind()
-    {
-        Unbind();
-        Tensor filters;
-        using (Autograd.NoGrad())
-        using (new TensorScope())
-        {
-            filters = TensorScope.Untrack(VitsOps.WeightNorm(gain, direction));
-        }
-
-        filters.RequiresGrad = gain.RequiresGrad || direction.RequiresGrad;
-        _bound = filters;
-    }
-
-    /// <summary>
-    /// Gives the bound filters' gathered gradient ∂w to g and v in closed form, without a second pass through the norm:
-    /// with w = g · v / ‖v‖ per row, ∂g = ⟨∂w, v⟩ / ‖v‖ and ∂v = (g / ‖v‖) · (∂w − v · ⟨∂w, v⟩ / ‖v‖²), both in the one
-    /// kernel behind <see cref="Tensor.WeightNorm"/>'s backward step.
-    /// </summary>
-    public void Flush()
-    {
-        if (_bound?.Grad is not { } gradient || !(gain.RequiresGrad || direction.RequiresGrad))
-        {
-            return;
-        }
-
-        int rows = direction.Shape[0], columns = direction.Size / rows;
-        direction.Backend.WeightNormBackward(gain.Storage, direction.Storage, gradient.Storage,
-            gain.RequiresGrad ? gain.GradStorage() : null, direction.RequiresGrad ? direction.GradStorage() : null, rows, columns);
-    }
-
-    /// <summary>Drops the bound filters (passes make them again).</summary>
-    public void Unbind()
-    {
-        _bound?.Dispose();
-        _bound = null;
-    }
-
-    public void Dispose()
-    {
-        Unbind();
-        gain.Dispose();
-    }
-}
-
-/// <summary>The weight-normed filters of one model's layers, bound, flushed and dropped together.</summary>
-internal static class WeightNormedLayers
-{
-    public static void Bind(IReadOnlyList<WeightNormed> layers)
-    {
-        foreach (var layer in layers)
-        {
-            layer.Bind();
-        }
-    }
-
-    public static void Flush(IReadOnlyList<WeightNormed> layers)
-    {
-        foreach (var layer in layers)
-        {
-            layer.Flush();
-        }
-    }
-
-    public static void Unbind(IReadOnlyList<WeightNormed> layers)
-    {
-        foreach (var layer in layers)
-        {
-            layer.Unbind();
-        }
-    }
-}
-
-/// <summary>
 /// Activation checkpointing of the model's blocks on the current thread (<c>AdversarialSynthesisBatch.Checkpointing</c>):
 /// inside the scope, a block whose forward records gradients keeps only its output and runs again in the backward pass
 /// (<see cref="Checkpointing.Checkpoint"/>): the decoder's residual blocks, the WaveNets of the posterior encoder and the
@@ -580,93 +267,10 @@ internal static class VitsOps
         _ => throw new NotSupportedException($"hidden_act '{name}' is not supported (relu, gelu, gelu_new, silu)."),
     };
 
-    /// <summary>x [C, T] or [B, C, T] padded with zeros along time: <paramref name="left"/> columns before, <paramref name="right"/> after.</summary>
-    public static Tensor PadTime(Tensor x, int left, int right)
-    {
-        if (left == 0 && right == 0)
-        {
-            return x;
-        }
-
-        int time = x.Shape.Length - 1;
-        int[] Pad(int columns) => x.Shape.Length == 3 ? [x.Shape[0], x.Shape[1], columns] : [x.Shape[0], columns];
-        var parts = new List<Tensor>(3);
-        if (left > 0)
-        {
-            parts.Add(Tensor.Zeros(Pad(left), x.Device));
-        }
-
-        parts.Add(x);
-        if (right > 0)
-        {
-            parts.Add(Tensor.Zeros(Pad(right), x.Device));
-        }
-
-        return Tensor.Concat(parts, time);
-    }
-
     /// <summary>A column [C, 1] repeated over <paramref name="columns"/> columns: [C, columns].</summary>
     public static Tensor ExpandColumns(Tensor column, int columns) => column.MatMul(Tensor.Ones([1, columns], column.Device));
 
-    /// <summary>
-    /// g · v / ‖v‖ per row: the directions [rows, columns] scaled by the gains [rows, 1] over each row's norm (PyTorch's
-    /// weight_norm, dim 0), one kernel each way (<see cref="Tensor.WeightNorm"/>).
-    /// </summary>
-    public static Tensor WeightNorm(Tensor gain, Tensor direction) => Tensor.WeightNorm(gain, direction);
-
-    /// <summary>
-    /// The samples [B, L] padded at the end by reflection to <paramref name="length"/> (torch's <c>F.pad(x, (0, n), "reflect")</c>):
-    /// the samples and a gather of the mirrored end, so the padding's gradient reaches the samples it copies.
-    /// </summary>
-    public static Tensor ReflectEnd(Tensor samples, int length)
-    {
-        int n = samples.Shape[1];
-        if (length == n)
-        {
-            return samples;
-        }
-
-        var tail = new int[length - n];
-        for (int k = 0; k < tail.Length; k++)
-        {
-            tail[k] = n - 2 - k;
-        }
-
-        return Tensor.Concat([samples, Edge(samples.Shape[0] == 1 ? samples.Reshape(n, 1) : samples.Transpose(), tail)], 1);
-    }
-
-    /// <summary>
-    /// The samples [B, L] reflect-padded by <paramref name="pad"/> at both ends (the edge sample not repeated): the samples
-    /// with a gather of the mirrored edges on each side. Gathering only the edges keeps the gather's gradient (a scatter in
-    /// position order) to the padding's length, not the sound's (where it cost a pass over every earlier position).
-    /// </summary>
-    public static Tensor Reflect(Tensor samples, int pad)
-    {
-        int n = samples.Shape[1];
-        if (pad == 0)
-        {
-            return samples;
-        }
-
-        var left = new int[pad];
-        var right = new int[pad];
-        for (int i = 0; i < pad; i++)
-        {
-            left[i] = pad - i;
-            right[i] = n - 2 - i;
-        }
-
-        var columns = samples.Shape[0] == 1 ? samples.Reshape(n, 1) : samples.Transpose();   // [L, B]: the samples as rows to gather
-        return Tensor.Concat([Edge(columns, left), samples, Edge(columns, right)], 1);
-    }
-
     // The samples [B, L] at the positions `columns` as [B, columns.Length]: a gather of the rows of the samples transposed.
-    private static Tensor Edge(Tensor transposed, int[] columns)
-    {
-        var picked = transposed.EmbeddingLookup(Indices(columns, transposed.Device));   // [columns, B]
-        return transposed.Shape[1] == 1 ? picked.Reshape(1, columns.Length) : picked.Transpose();
-    }
-
     /// <summary>A float tensor of integer indices [count] on <paramref name="device"/> (what the library's gathers take).</summary>
     public static Tensor Indices(ReadOnlySpan<int> indices, Device device)
     {
@@ -679,33 +283,6 @@ internal static class VitsOps
         return Tensor.From(values, [values.Length], device);
     }
 
-    /// <summary>The rows of x [R, C] in reverse order, or each utterance's rows of [B, R, T] (torch.flip over the channel axis for channels-first data).</summary>
-    public static Tensor FlipRows(Tensor x)
-    {
-        if (x.Shape.Length == 2)
-        {
-            int rows = x.Shape[0];
-            var reversed = new int[rows];
-            for (int r = 0; r < rows; r++)
-            {
-                reversed[r] = rows - 1 - r;
-            }
-
-            return x.EmbeddingLookup(Indices(reversed, x.Device));
-        }
-
-        int batch = x.Shape[0], channels = x.Shape[1], t = x.Shape[2];
-        var order = new int[batch * channels];
-        for (int b = 0; b < batch; b++)
-        {
-            for (int c = 0; c < channels; c++)
-            {
-                order[b * channels + c] = b * channels + channels - 1 - c;
-            }
-        }
-
-        return x.Reshape(batch * channels, t).EmbeddingLookup(Indices(order, x.Device)).Reshape(batch, channels, t);
-    }
 }
 
 /// <summary>
@@ -746,7 +323,7 @@ internal sealed class VitsDilatedDepthSeparableConv : IDisposable
     /// A batch x [B, C, T] (+ conditioning [B, C, T]) through the layers with the batch's mask, each dilated convolution
     /// reading the padding as zeros: [B, C, T], zero over the padding (transformers' masking).
     /// </summary>
-    public Tensor Forward(Tensor x, Tensor? conditioning, VitsMask? mask)
+    public Tensor Forward(Tensor x, Tensor? conditioning, PaddedSequences? mask)
     {
         if (conditioning is not null)
         {
@@ -755,9 +332,9 @@ internal sealed class VitsDilatedDepthSeparableConv : IDisposable
 
         for (int i = 0; i < _dilated.Length; i++)
         {
-            var h = _dilated[i].Forward3(mask is null ? x : mask.Apply(x));
+            var h = _dilated[i].Forward(mask is null ? x : mask.Apply(x));
             h = ExactGELU.Apply(Norm(_norms1[i], h));
-            h = _pointwise[i].Forward3(h);
+            h = _pointwise[i].Forward(h);
             h = ExactGELU.Apply(Norm(_norms2[i], h));
             x = x + h;
         }
@@ -815,7 +392,7 @@ internal sealed class VitsWaveNet : IDisposable
     /// A batch x [B, C, T] (zero over its padding) with the speaker's embedding [E, 1] (one utterance only) and the batch's
     /// mask: the skip sum [B, C, T], the residual and the sum zeroed over the padding as VITS does.
     /// </summary>
-    public Tensor Forward(Tensor x, Tensor? speaker, VitsMask? mask)
+    public Tensor Forward(Tensor x, Tensor? speaker, PaddedSequences? mask)
     {
         int batch = x.Shape[0], t = x.Shape[2];
         Tensor? conditioning = speaker is not null && _cond is not null ? _cond.Forward(speaker) : null;   // [2C · layers, 1]
@@ -827,14 +404,14 @@ internal sealed class VitsWaveNet : IDisposable
         Tensor? output = null;
         for (int i = 0; i < _in.Length; i++)
         {
-            var h = _in[i].Forward3(x);                                          // [B, 2C, T]
+            var h = _in[i].Forward(x);                                          // [B, 2C, T]
             if (conditioning is not null)
             {
                 h = h + VitsOps.ExpandColumns(conditioning.Narrow(0, i * 2 * _channels, 2 * _channels), t).Reshape(1, 2 * _channels, t);
             }
 
             var acts = Tensor.GatedActivation(h.Narrow(1, 0, _channels), h.Narrow(1, _channels, _channels), FeedForwardActivation.TanhSigmoid);   // one kernel each way
-            var resSkip = _resSkip[i].Forward3(acts);
+            var resSkip = _resSkip[i].Forward(acts);
             if (i < _in.Length - 1)
             {
                 x = x + resSkip.Narrow(1, 0, _channels);

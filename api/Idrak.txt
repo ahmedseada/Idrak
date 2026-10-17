@@ -694,6 +694,24 @@ public sealed class Idrak.Layers.ChannelNormalize : Idrak.Abstraction.Module
 public static class Idrak.Layers.Checkpointing
   public static Idrak.Abstraction.Tensor Checkpoint(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> forward, Idrak.Abstraction.Tensor input)
 
+public sealed class Idrak.Layers.Conv1d : Idrak.Abstraction.Module
+  public Conv1d(Idrak.Layers.Conv2d convolution, Idrak.Layers.WeightNorm? weightNorm = null)
+  public Conv1d(int inChannels, int outChannels, int kernel, int stride = 1, int padding = 0, int dilation = 1, int groups = 1, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public Idrak.Abstraction.Tensor Weight { get; }
+  public Idrak.Abstraction.Tensor? Bias { get; }
+  public Idrak.Layers.Conv2d Convolution { get; }
+  public Idrak.Layers.WeightNorm? WeightNorm { get; }
+  public int Dilation { get; }
+  public int Groups { get; }
+  public int InChannels { get; }
+  public int Kernel { get; }
+  public int OutChannels { get; }
+  public int Padding { get; }
+  public int Stride { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override string ToString()
+  public override void Dispose()
+
 public sealed class Idrak.Layers.Conv2d : Idrak.Abstraction.Module
   public Conv2d(int inChannels, int outChannels, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public Conv2d(int inChannels, int outChannels, int kernelSize, int stride = 1, int padding = 0, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
@@ -719,6 +737,21 @@ public sealed class Idrak.Layers.Conv2d : Idrak.Abstraction.Module
   public override string ToString()
   public static Idrak.Layers.Conv2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1)
   public static Idrak.Layers.Conv2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, int kernelSize, int stride = 1, int padding = 0)
+
+public sealed class Idrak.Layers.ConvTranspose1d : Idrak.Abstraction.Module
+  public ConvTranspose1d(Idrak.Layers.ConvTranspose2d convolution, Idrak.Layers.WeightNorm? weightNorm = null)
+  public ConvTranspose1d(int inChannels, int outChannels, int kernel, int stride = 1, int padding = 0, int outputPadding = 0, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public Idrak.Abstraction.Tensor Weight { get; }
+  public Idrak.Abstraction.Tensor? Bias { get; }
+  public Idrak.Layers.ConvTranspose2d Convolution { get; }
+  public Idrak.Layers.WeightNorm? WeightNorm { get; }
+  public int InChannels { get; }
+  public int Kernel { get; }
+  public int OutChannels { get; }
+  public int Stride { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override string ToString()
+  public override void Dispose()
 
 public sealed class Idrak.Layers.ConvTranspose2d : Idrak.Abstraction.Module
   public (int, int) OutputSize(int height, int width)
@@ -1095,6 +1128,19 @@ public sealed class Idrak.Layers.PackedSequences : System.IDisposable
 public readonly struct Idrak.Layers.PackedSequences.Scope : System.IDisposable
   public void Dispose()
 
+public sealed class Idrak.Layers.PaddedSequences : System.IDisposable
+  public Idrak.Abstraction.Tensor Apply(Idrak.Abstraction.Tensor x)
+  public Idrak.Abstraction.Tensor ApplyRows(Idrak.Abstraction.Tensor x)
+  public Idrak.Abstraction.Tensor Keys(int heads)
+  public Idrak.Abstraction.Tensor Of(int channels)
+  public Idrak.Abstraction.Tensor Rows { get; }
+  public PaddedSequences(System.Collections.Generic.IReadOnlyList<int> lengths, int length, Idrak.Abstraction.Device device)
+  public System.Collections.Generic.IReadOnlyList<int> Lengths { get; }
+  public int Batch { get; }
+  public int Length { get; }
+  public int Positions { get; }
+  public void Dispose()
+
 public sealed class Idrak.Layers.PositionEmbedding : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Abstraction.Tensor Weight { get; }
@@ -1191,6 +1237,20 @@ public sealed class Idrak.Layers.Upsample : Idrak.Abstraction.Module
   public bool AlignCorners { get; }
   public override string ToString()
   public static Idrak.Layers.Upsample ToSize((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
+
+public sealed class Idrak.Layers.WeightNorm : System.IDisposable
+  public Idrak.Abstraction.Tensor Direction { get; }
+  public Idrak.Abstraction.Tensor Gain { get; }
+  public Idrak.Abstraction.Tensor Weight { get; }
+  public WeightNorm(Idrak.Abstraction.Tensor gain, Idrak.Abstraction.Tensor direction)
+  public bool Bound { get; }
+  public static void Bind(System.Collections.Generic.IEnumerable<Idrak.Layers.WeightNorm> norms)
+  public static void Flush(System.Collections.Generic.IEnumerable<Idrak.Layers.WeightNorm> norms)
+  public static void Unbind(System.Collections.Generic.IEnumerable<Idrak.Layers.WeightNorm> norms)
+  public void Bind()
+  public void Dispose()
+  public void Flush()
+  public void Unbind()
 
 public enum Idrak.LossReduction : int
   Mean = 0
@@ -1614,6 +1674,7 @@ public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
 
 public static class Idrak.Models.StoredWeights
+  public static (string, string)? WeightNormNames(Idrak.Abstraction.Formats.ITensorStore store, string prefix)
   public static Idrak.Abstraction.Formats.WeightFormat Kept(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
   public static Idrak.Layers.BatchNorm BatchNorm(Idrak.Abstraction.Formats.ITensorStore store, string name, float epsilon = 1E-05f, float momentum = 0.1f, Idrak.Abstraction.Device? device = null)
   public static Idrak.Layers.Conv2d Conv2d(Idrak.Abstraction.Formats.ITensorStore store, string name, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, Idrak.Abstraction.Device? device = null)
@@ -1622,6 +1683,7 @@ public static class Idrak.Models.StoredWeights
   public static Idrak.Layers.Linear Linear(float[] values, int inputs, int outputs, Idrak.Abstraction.Tensor? bias, bool bfloat16, Idrak.Abstraction.Device device)
   public static bool KeepsBFloat16(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
   public static bool KeepsFloat16(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
+  public static float[] FoldWeightNorm(System.ReadOnlySpan<float> gains, System.ReadOnlySpan<float> directions, System.ReadOnlySpan<int> shape)
 
 public static class Idrak.ModuleFiles
   public static void Load(this Idrak.Abstraction.Module module, System.IO.Stream stream)

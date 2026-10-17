@@ -108,6 +108,57 @@ public static class StoredWeights
     }
 
     /// <summary>
+    /// The names of a weight-normed tensor's gains and directions under <paramref name="prefix"/>, in either of PyTorch's
+    /// schemes (<c>prefix.parametrizations.weight.original0</c> and <c>original1</c>, or the older <c>prefix.weight_g</c>
+    /// and <c>prefix.weight_v</c>), or null when the store holds a plain <c>prefix.weight</c> (or nothing).
+    /// </summary>
+    public static (string Gains, string Directions)? WeightNormNames(ITensorStore store, string prefix)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        if (store.Contains(prefix + ".parametrizations.weight.original1"))
+        {
+            return (prefix + ".parametrizations.weight.original0", prefix + ".parametrizations.weight.original1");
+        }
+
+        return store.Contains(prefix + ".weight_v") ? (prefix + ".weight_g", prefix + ".weight_v") : null;
+    }
+
+    /// <summary>
+    /// The weight w[o] = g[o] · v[o] / ‖v[o]‖ of a weight norm folded on the host (PyTorch's <c>weight_norm</c> with dim 0:
+    /// one gain per row of <paramref name="shape"/>'s first dimension, the norm over every other dimension), for a model
+    /// that speaks without training the parametrization.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The gains do not count the rows.</exception>
+    public static float[] FoldWeightNorm(ReadOnlySpan<float> gains, ReadOnlySpan<float> directions, ReadOnlySpan<int> shape)
+    {
+        int rows = shape.Length == 0 ? 1 : shape[0], columns = rows == 0 ? 0 : directions.Length / rows;
+        if (gains.Length != rows)
+        {
+            throw new InvalidDataException($"A weight norm's gains hold {gains.Length} values for {rows} filters.");
+        }
+
+        var folded = new float[directions.Length];
+        for (int o = 0; o < rows; o++)
+        {
+            double norm = 0;
+            var row = directions.Slice(o * columns, columns);
+            for (int i = 0; i < columns; i++)
+            {
+                norm += (double)row[i] * row[i];
+            }
+
+            double scale = gains[o] / Math.Sqrt(norm);
+            var target = folded.AsSpan(o * columns, columns);
+            for (int i = 0; i < columns; i++)
+            {
+                target[i] = (float)(row[i] * scale);
+            }
+        }
+
+        return folded;
+    }
+
+    /// <summary>
     /// A <see cref="Layers.Conv2d"/> from PyTorch's tensors <c>{name}.weight</c> [out, in / groups, kh, kw] and, when the
     /// checkpoint has it, <c>{name}.bias</c> [out]; the kernel size comes from the weight. The weight is read once, straight
     /// into the layer's [out, in / groups · kh · kw] tensor (float32: a convolution has no narrower form; a bfloat16

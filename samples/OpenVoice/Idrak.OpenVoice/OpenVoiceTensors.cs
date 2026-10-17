@@ -3,6 +3,8 @@
 
 using Idrak.Abstraction.Formats;
 
+using Idrak.Models;
+
 namespace Idrak.OpenVoice;
 
 /// <summary>
@@ -36,7 +38,7 @@ internal sealed class OpenVoiceTensors(ITensorStore store) : ITensorStore
 
         if (Folded(name) is { } v && store.Contains(v + "_v"))
         {
-            return VitsWeights.FoldWeightNorm(store.Read(v + "_g"), store.Read(v + "_v"), store.ShapeOf(v + "_v"));
+            return StoredWeights.FoldWeightNorm(store.Read(v + "_g"), store.Read(v + "_v"), store.ShapeOf(v + "_v"));
         }
 
         throw new InvalidDataException($"The checkpoint has no tensor '{mapped}' (read as '{name}').");

@@ -81,7 +81,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, pytorch, safetensors | Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, PyTorchCheckpointFormat, SafeTensorsCheckpointFormat |  | Abstraction, Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
-| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, SafeTensorsReader |  | Abstraction, Audio, Idrak, Nlp, Vision | Abstraction |
+| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, SafeTensorsReader, TensorDictionary |  | Abstraction, Audio, Idrak, Nlp, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ChatPart` | abstract class | public | — | ChatAudio, ChatImage, ChatText, PendingAudio, PendingImage |  | Abstraction, AspNetCore, Audio, Idrak, Imaging, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | audio, image, text | Abstraction, AspNetCore, Audio, Idrak, Mcp, Nlp | Abstraction |
@@ -121,7 +121,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.TokenSamplers` | registry | public | — |  | default | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, wer | Abstraction, Audio, Nlp | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, +34 |  | Abstraction, AspNetCore, Audio, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, +36 |  | Abstraction, AspNetCore, Audio, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Data, Gpu, Idrak, Imaging, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |

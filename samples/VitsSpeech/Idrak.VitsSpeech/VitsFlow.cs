@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers;
+
 namespace Idrak.VitsSpeech;
 
 /// <summary>
@@ -27,7 +29,7 @@ internal sealed class VitsFlow : IDisposable
     {
         for (int i = _layers.Length - 1; i >= 0; i--)
         {
-            z = _layers[i].Reverse(VitsOps.FlipRows(z), speaker);
+            z = _layers[i].Reverse(z.Flip(z.Shape.Length == 2 ? 0 : 1), speaker);
         }
 
         return z;
@@ -40,11 +42,11 @@ internal sealed class VitsFlow : IDisposable
     /// A batch of acoustic latents [B, F, T] (zero over the padding) to the prior's, with the speaker's embedding [E, 1]
     /// (one utterance only) and the batch's mask: each coupling layer's shift is zeroed over the padding, as VITS does.
     /// </summary>
-    public Tensor Forward(Tensor z, Tensor? speaker, VitsMask? mask)
+    public Tensor Forward(Tensor z, Tensor? speaker, PaddedSequences? mask)
     {
         for (int i = 0; i < _layers.Length; i++)
         {
-            z = VitsOps.FlipRows(_layers[i].Forward(z, speaker, mask));
+            z = _layers[i].Forward(z, speaker, mask).Flip(1);
         }
 
         return z;
@@ -77,7 +79,7 @@ internal sealed class VitsFlow : IDisposable
             return Tensor.Concat([first, second - Mean(first.Reshape(1, _half, t), speaker, null).Reshape(_half, t)], 0);
         }
 
-        public Tensor Forward(Tensor z, Tensor? speaker, VitsMask? mask)
+        public Tensor Forward(Tensor z, Tensor? speaker, PaddedSequences? mask)
         {
             var first = z.Narrow(1, 0, _half);
             var second = z.Narrow(1, _half, _half);
@@ -86,15 +88,15 @@ internal sealed class VitsFlow : IDisposable
         }
 
         // The shift [B, half, T] the first half conditions, zero over the padding.
-        private Tensor Mean(Tensor first, Tensor? speaker, VitsMask? mask)
+        private Tensor Mean(Tensor first, Tensor? speaker, PaddedSequences? mask)
         {
-            var h = _pre.Forward3(first);
+            var h = _pre.Forward(first);
             if (mask is not null)
             {
                 h = mask.Apply(h);
             }
 
-            var shift = _post.Forward3(_waveNet.Forward(h, speaker, mask));
+            var shift = _post.Forward(_waveNet.Forward(h, speaker, mask));
             return mask is null ? shift : mask.Apply(shift);
         }
 

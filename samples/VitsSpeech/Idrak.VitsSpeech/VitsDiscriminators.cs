@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Formats;
 using Idrak.Models;
+using Idrak.Layers;
 
 namespace Idrak.VitsSpeech;
 
@@ -131,7 +132,7 @@ internal sealed class VitsDiscriminators : IDisposable
     public const string ConfigFile = "discriminator.json";
 
     /// <summary>The weight-normed filters of the discriminators' layers (bound for a step's half).</summary>
-    internal IReadOnlyList<WeightNormed> Normed => _weights.Normed;
+    internal IReadOnlyList<WeightNorm> Normed => _weights.Normed;
 
     private readonly Stack[] _scales, _periods;
     private readonly VitsWeights _weights;
@@ -167,7 +168,7 @@ internal sealed class VitsDiscriminators : IDisposable
     public static VitsDiscriminators Create(VitsDiscriminatorConfig config, Device device, int seed)
     {
         var random = new Random(seed);
-        var tensors = new VitsTensorDictionary();
+        var tensors = new TensorDictionary();
         void Draw(string prefix, int[] shape)
         {
             int rows = shape[0], columns = shape.Skip(1).Aggregate(1, (a, b) => a * b);
@@ -251,7 +252,7 @@ internal sealed class VitsDiscriminators : IDisposable
         foreach (var (stack, period) in _periods.Zip(Config.Periods))
         {
             int length = sound.Shape[1], padded = (length + period - 1) / period * period;
-            var folded = VitsOps.ReflectEnd(sound, padded).Reshape(batch, 1, padded / period, period);
+            var folded = sound.Pad(1, 0, padded - sound.Shape[1], PaddingMode.Reflect).Reshape(batch, 1, padded / period, period);
             var (score, map) = stack.Forward(folded, Config.LeakyReluSlope);
             scores.Add(score);
             maps.Add(map);
@@ -310,11 +311,11 @@ internal sealed class VitsDiscriminators : IDisposable
             var maps = new List<Tensor>(convs.Length + 1);
             foreach (var conv in convs)
             {
-                x = VitsOps.LeakyRelu(conv.Forward4(x), slope);
+                x = VitsOps.LeakyRelu(conv.Forward(x), slope);
                 maps.Add(x);
             }
 
-            x = post.Forward4(x);
+            x = post.Forward(x);
             maps.Add(x);
             return (x.Reshape(1, x.Size), maps);
         }
@@ -324,33 +325,5 @@ internal sealed class VitsDiscriminators : IDisposable
             foreach (var conv in convs) conv.Dispose();
             post.Dispose();
         }
-    }
-}
-
-/// <summary>Tensors held in memory by name, as a <see cref="ITensorStore"/> (new discriminators before their first save).</summary>
-internal sealed class VitsTensorDictionary : ITensorStore
-{
-    private readonly Dictionary<string, (int[] Shape, float[] Values)> _tensors = new(StringComparer.Ordinal);
-
-    public IEnumerable<string> Names => _tensors.Keys;
-
-    public void Add(string name, int[] shape, float[] values)
-    {
-        if (shape.Aggregate(1, (a, b) => a * b) != values.Length)
-        {
-            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"{name}: {values.Length} values for {Tensor.FormatShape(shape)}."));
-        }
-
-        _tensors[name] = (shape, values);
-    }
-
-    public bool Contains(string name) => _tensors.ContainsKey(name);
-
-    public int[] ShapeOf(string name) => _tensors[name].Shape;
-
-    public float[] Read(string name) => _tensors[name].Values;
-
-    public void Dispose()
-    {
     }
 }
