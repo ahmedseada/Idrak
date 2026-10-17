@@ -12,7 +12,8 @@ the rules of `docs/optimization.md` (rules 70-87) and the fix workflow of `CLAUD
 Public API only (what an app sees; a measurement it cannot take is a telemetry gap to fill, rule 78), every device
 `IDRAK_DEVICES` names, cold and warm apart (rule 76), launches counted through the operations telemetry, peak memory
 read from `ComputeResources`, rows written as JSON and compared run to run (`-- compare before.json after.json`).
-Sections: `ops`, `matmul`, `train-decoder`, `infer-decoder`, `train-speech`, `memory` (stress). See `benches/README.md`.
+Sections: `ops`, `matmul`, `train-decoder`, `infer-decoder`, `train-speech`, `memory` (stress); the settings are in the
+header of `benches/Idrak.Benches/Program.cs`.
 The kernel-level benches that reach into the backends' internals stay in the test runner (`--bench-gemm`, ...), since
 `Idrak.Abstraction` grants its internals to the tests only (the inventory test enforces it).
 
@@ -26,6 +27,22 @@ Baseline on the 4-thread CPU container (small size), the slow spots the first ru
 | gelu (erf) | 1.1 | scalar erf and exp (step 8: vector loops, 9.6 GB/s) |
 | sum over rows (inner = 1) | 2.0 | a span per element in the short-run branch |
 | softmax, layer norm | 1.7-1.9 | scalar mean/variance/exp loops (steps 2 and 8: 7.5 and 11 GB/s) |
+
+First GPU run (the owner's CUDA card, 16 GiB and 70 SMs, medium size, 2026-10-17; the device is the measurement's context,
+nothing is tuned to it):
+
+| Section | Measured | What it says |
+|---|---|---|
+| ops, 8M elements | exp, tanh, gelu, leaky relu, add, mul 780-820 GB/s; softmax and layer norm 710-730 GB/s | at the card's bandwidth: memory-bound, as they should be |
+| ops, `sum over rows [rows, 1024]` | 40 GB/s at 1M elements; 105 µs at 1M and at 8M alike | `sum_axis_f32` ran one thread per output row, each walking its row serially with its neighbours a row apart. Fixed: `sum_axis_rows_f32`, a warp a row reading coalesced and summing in a fixed butterfly order (inner 1, rows of a warp's lanes or more) |
+| ops, small sizes | tanh, gelu, leaky relu 30-35 µs at 65k and at 1M where exp and add took 8-13; mul 35 µs at 65k and 12 at 1M | not the kernels (their PTX is as plain as exp's): the driver's submission latency on one call a round, charged to a 10 µs kernel. The ops section now queues `IDRAK_BENCH_CALLS` calls a round (default 8) with one sync |
+| matmul | 1024³ 14.3 TFLOPS, 4096 × 1024 × 4096 17.7; GEMV 1 × 2048 × 8192 0.088 ms (760 GB/s, bandwidth-bound); conv 3×3 64→64 9.1 TFLOPS, 7×7 s2 8.8, 1-D k11 9.5; the first product cold 67 ms | float32 products at a fair share of the card's rate; the decoder's bfloat16 paths run on the tensor cores |
+| train-decoder, large | out of memory: 1.64 B parameters and a batch of 8 × 1024 do not fit a 16 GiB device | the bench crashed. Now it halves the batch until the device holds a step and names the batch in the row, or skips with the reason when the model itself does not fit; every section skips on `ResourceLimitExceededException` |
+| memory, varied shapes | 20,000 allocations, 159,709 MiB asked, 206 MiB peak in use, 662 MiB cached after, 15.2 µs an allocation | the pool keeps about three times the peak as cached blocks of the sizes it saw; reclaimable (`ReleaseCachedMemory`, and released before a failed allocation retries), so not waste, but the first thing to measure if a step ever runs out |
+| memory, conv net step | batch 8: 2.1 ms, 3,782 images/s; batch 256: 41.9 ms, 2,112 MiB, 6,104 images/s; 256 (the largest tried) fit | throughput rises with the batch to the end of the sweep |
+| memory, causal attention 8 heads × 64 | 4,096 steps 2.3 ms, 8,192 8.2 ms, 16,384 30.3 ms; peak 8, 16, 32 MiB | time quadratic, memory linear: the tiled kernel keeps no score matrix |
+
+Open from this run: the Vulkan `sum_axis` has the same thread-per-output loop (to measure on lavapipe and fix the same way); `train-speech` on the real model and clips (the first run named placeholder folders).
 
 ## 2. Resource caps found (src/, by the survey)
 
@@ -103,4 +120,4 @@ tensor stores, and the kernel and registry lookups per launch; each is measured 
 | 6h | Item 7: MP3 into Idrak.Audio or a companion `Idrak.Audio.Mp3` package (size, licence): the owner's call | waiting on the owner |
 | 8 | CPU math kernels: the library's own vector exp (`CpuMath.Exp`, 256- and 512-bit; the runtime's `Vector.Exp` is not inlined and runs unoptimized for its first hundreds of calls), every range kernel compiled optimized at its first call (`AggressiveOptimization`), erf-GELU, SiLU, sqrt, sin, cos and sign as vector loops forward and backward, the scale-mask softmax's pass and the softmax backward row vectorized; the bench warms up 30 calls before timing (`IDRAK_BENCH_WARMUP`). Warm µs on the 4-thread CPU, 16k / 262k elements: exp 72 → 14 / 672 → 131, erf-GELU 577 → 34 / 1,587 → 219, softmax 103 → 18 / 1,108 → 281, exp forward and backward 1,349 → 610 | done |
 | 9 | Mask folding: measured and dropped (section 4). The speech bench on the MMS-sized model, four clips a step: `mul` 375 launches, 105 ms; `bwd mul` 316, 51 ms; `conv2d` 545, 9,448 ms; `bwd conv2d` 352, 11,628 ms; the step 17.9 s warm | dropped |
-| 7 | Measure every step with the benches; record the numbers here | ongoing |
+| 7 | Measure every step with the benches; record the numbers here (section 1: the CPU baseline and the first GPU run, with what each exposed and what was fixed) | ongoing |

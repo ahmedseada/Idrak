@@ -33,55 +33,88 @@ internal static class DecoderBench
         var spec = Spec(settings.Size);
         var (batch, tokens) = TrainingShape(settings.Size);
         var random = new Random(3);
-        using var model = spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device });
+        Sequential model;
+        try
+        {
+            model = spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device });
+        }
+        catch (ResourceLimitExceededException e)
+        {
+            Console.WriteLine($"   skipped: the {settings.Size.ToString().ToLowerInvariant()} model does not fit {device} ({e.Message}); IDRAK_BENCH_SIZE names a smaller one");
+            return;
+        }
+
+        using var disposeModel = model;
         model.Train();
         long parameters = model.Parameters().Sum(p => (long)p.Size);
-        var optimizer = new AdamW(model.Parameters(), 1e-4f);
-        Console.WriteLine($"   {parameters / 1e6:F1} M parameters, batch {batch} x {tokens} tokens");
-
-        float[] ids = [.. Enumerable.Range(0, batch * tokens).Select(_ => (float)random.Next(spec.Vocabulary))];
-        float[] next = [.. Enumerable.Range(0, batch * tokens).Select(_ => (float)random.Next(spec.Vocabulary))];
-        using var input = Tensor.From(ids, [batch, tokens], device);
-        using var targets = Tensor.From(next, [batch * tokens], device);
-        using var weights = Tensor.Ones([batch * tokens], device);
+        using var optimizer = new AdamW(model.Parameters(), 1e-4f);
         int layers = model.Count - 1;
         var head = model[^1];
 
-        void Step(bool checkpointing)
+        // The batch the size names, halved until the device holds a step (the row says which), as a trainer does.
+        while (true)
         {
-            optimizer.ZeroGrad();
-            var hidden = checkpointing ? Checkpointed(model, input, layers) : model.ForwardFirst(input, layers);
-            var rows = hidden.Reshape(batch * tokens, spec.Dim);
-            using var loss = Losses.TokenCrossEntropy(rows, h => head.Forward(h), targets, weights, 1f / (batch * tokens));
-            loss.Backward();
-            optimizer.ClipAndStep(1f);
-        }
+            Console.WriteLine($"   {parameters / 1e6:F1} M parameters, batch {batch} x {tokens} tokens");
+            float[] ids = [.. Enumerable.Range(0, batch * tokens).Select(_ => (float)random.Next(spec.Vocabulary))];
+            float[] next = [.. Enumerable.Range(0, batch * tokens).Select(_ => (float)random.Next(spec.Vocabulary))];
+            using var input = Tensor.From(ids, [batch, tokens], device);
+            using var targets = Tensor.From(next, [batch * tokens], device);
+            using var weights = Tensor.Ones([batch * tokens], device);
+            int rows = batch * tokens;
 
-        foreach (bool checkpointing in (bool[])[false, true])
-        {
-            string label = checkpointing ? "step, checkpointed blocks" : "step";
-            var (cold, warm) = Bench.Time(device, () => Step(checkpointing), settings.Repeats, settings.Warmup);
-            var census = Bench.Count(() => Step(checkpointing));
-            long peak = Bench.PeakBytes(device, () => Step(checkpointing));
-            double tokensPerSecond = batch * tokens / (warm / 1000);
-            Console.WriteLine(Bench.Line(label, ("ms warm", Bench.F(warm, "0.0")), ("ms cold", Bench.F(cold, "0")), ("launches", census.Count.ToString()),
-                ("peak", Bench.Mib(peak)), ("tok/s", Bench.F(tokensPerSecond, "0"))));
-            report.Add(Section, label, device, "warm", warm, "ms");
-            report.Add(Section, label, device, "cold", cold, "ms");
-            report.Add(Section, label, device, "launches", census.Count, "launches");
-            report.Add(Section, label, device, "peak", peak / 1048576.0, "MiB");
-            report.Add(Section, label, device, "throughput", tokensPerSecond, "tok/s");
-            if (!checkpointing)
+            void Step(bool checkpointing)
             {
-                Console.WriteLine("   launches a step by operation (forward and backward apart, the top twelve):");
-                foreach (var (operation, count, elements, _) in census.ByCount.Take(12))
+                optimizer.ZeroGrad();
+                var hidden = checkpointing ? Checkpointed(model, input, layers) : model.ForwardFirst(input, layers);
+                var flat = hidden.Reshape(rows, spec.Dim);
+                using var loss = Losses.TokenCrossEntropy(flat, h => head.Forward(h), targets, weights, 1f / rows);
+                loss.Backward();
+                optimizer.ClipAndStep(1f);
+            }
+
+            try
+            {
+                foreach (bool checkpointing in (bool[])[false, true])
                 {
-                    Console.WriteLine(Bench.Line("   " + operation, ("/step", count.ToString()), ("MiB out", Bench.F(elements * 4.0 / 1048576, "0"))));
+                    string label = checkpointing ? $"step, checkpointed blocks, batch {batch}" : $"step, batch {batch}";
+                    var (cold, warm) = Bench.Time(device, () => Step(checkpointing), settings.Repeats, settings.Warmup);
+                    var census = Bench.Count(() => Step(checkpointing));
+                    long peak = Bench.PeakBytes(device, () => Step(checkpointing));
+                    double tokensPerSecond = rows / (warm / 1000);
+                    Console.WriteLine(Bench.Line(label, ("ms warm", Bench.F(warm, "0.0")), ("ms cold", Bench.F(cold, "0")), ("launches", census.Count.ToString()),
+                        ("peak", Bench.Mib(peak)), ("tok/s", Bench.F(tokensPerSecond, "0"))));
+                    report.Add(Section, label, device, "warm", warm, "ms");
+                    report.Add(Section, label, device, "cold", cold, "ms");
+                    report.Add(Section, label, device, "launches", census.Count, "launches");
+                    report.Add(Section, label, device, "peak", peak / 1048576.0, "MiB");
+                    report.Add(Section, label, device, "throughput", tokensPerSecond, "tok/s");
+                    if (!checkpointing)
+                    {
+                        Console.WriteLine("   launches a step by operation (forward and backward apart, the top twelve):");
+                        foreach (var (operation, count, elements, _) in census.ByCount.Take(12))
+                        {
+                            Console.WriteLine(Bench.Line("   " + operation, ("/step", count.ToString()), ("MiB out", Bench.F(elements * 4.0 / 1048576, "0"))));
+                        }
+                    }
                 }
+
+                return;
+            }
+            catch (ResourceLimitExceededException e) when (batch > 1)
+            {
+                optimizer.ZeroGrad();
+                ComputeResources.ReleaseCachedMemory(device);
+                Console.WriteLine($"   batch {batch} x {tokens} does not fit {device}: {FirstClause(e.Message)}; the batch halves");
+                batch /= 2;
             }
         }
+    }
 
-        optimizer.Dispose();
+    // The message up to its first colon or full stop: the device and "is out of memory", not the whole remedy.
+    private static string FirstClause(string message)
+    {
+        int cut = message.IndexOfAny([':', '.']);
+        return cut > 0 ? message[..cut] : message;
     }
 
     // Each block checkpointed: only its output kept, the block run again in the backward pass.
