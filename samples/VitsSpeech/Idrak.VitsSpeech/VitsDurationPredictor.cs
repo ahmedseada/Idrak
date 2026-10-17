@@ -5,14 +5,18 @@ using Idrak.Layers;
 
 namespace Idrak.VitsSpeech;
 
-/// <summary>How many frames each token lasts: the log-durations of the hidden states [C, T] (one utterance, no mask).</summary>
+/// <summary>How many frames each token lasts: the log-durations of the hidden states [C, T] (speaking: one utterance, no mask).</summary>
 internal interface IVitsDurationPredictor : IDisposable
 {
     /// <summary>The log-durations [T] of <paramref name="hidden"/> [C, T], with the speaker's embedding [E, 1] (null for one speaker) and the noise scale (the stochastic predictor draws from <paramref name="random"/>).</summary>
     float[] LogDurations(Tensor hidden, Tensor? speaker, float noiseScale, Random random);
 
-    /// <summary>The training loss of the tokens' frames <paramref name="durations"/> [1, T] given the hidden states [C, T] (detached by the caller) and the noise [2, T] a stochastic predictor draws: a scalar summed over the tokens.</summary>
-    Tensor Loss(Tensor hidden, Tensor durations, Tensor noise);
+    /// <summary>
+    /// The training loss of the tokens' frames <paramref name="durations"/> [B, 1, T] (1 over the padding) given a batch of
+    /// hidden states [B, C, T] (detached by the caller, zero over the padding), the noise [B, 2, T] a stochastic predictor
+    /// draws (zero over the padding) and the batch's mask (null: one utterance, unpadded): a scalar summed over the tokens.
+    /// </summary>
+    Tensor Loss(Tensor hidden, Tensor durations, Tensor noise, VitsMask? mask);
 }
 
 /// <summary>
@@ -88,72 +92,90 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     /// too, which trains flows its reverse does not undo: a model fine-tuned that way speaks with durations it was not
     /// trained on (far shorter ones on a real checkpoint).
     /// </summary>
-    public Tensor Loss(Tensor hidden, Tensor durations, Tensor noise) => Nll(hidden, durations, noise);
+    public Tensor Loss(Tensor hidden, Tensor durations, Tensor noise, VitsMask? mask) => Nll(hidden, durations, noise, mask);
 
-    public Tensor Nll(Tensor hidden, Tensor durations, Tensor noise)
+    public Tensor Nll(Tensor hidden, Tensor durations, Tensor noise, VitsMask? mask)
     {
         var posterior = _posterior ?? throw new InvalidOperationException("The duration predictor was loaded to speak; load the model with SpeechSynthesisLoadOptions.Training to train it.");
-        int t = hidden.Shape[1];
-        var x = Conditioning(hidden, null);
-        var h = posterior.Proj.Forward(posterior.Dds.Forward(posterior.Pre.Forward(durations), null));
+        int t = hidden.Shape[2], positions = mask?.Positions ?? t;
+        var x = Conditioning(hidden, null, mask);
+        var h = posterior.Proj.Forward3(posterior.Dds.Forward(posterior.Pre.Forward3(durations), null, mask));
+        if (mask is not null)
+        {
+            h = mask.Apply(h);
+        }
 
         // The posterior: the noise through the affine, then its flows (each after which the channels flip), conditioned on both.
         var conditioning = x + h;
-        var latents = Affine(noise, posterior.LogScale, posterior.Translate, t, out var logDetQ);
+        var latents = Affine(noise, posterior.LogScale, posterior.Translate, mask, positions, out var logDetQ);
         foreach (var flow in posterior.Flows)
         {
-            latents = flow.Forward(latents, conditioning, out var logDet);
+            latents = flow.Forward(latents, conditioning, mask, out var logDet);
             latents = Flip(latents);
             logDetQ = logDetQ + logDet;
         }
 
-        var first = latents.Narrow(0, 0, 1);
-        var second = latents.Narrow(0, 1, 1);
+        var first = latents.Narrow(1, 0, 1);                                     // [B, 1, T]
+        var second = latents.Narrow(1, 1, 1);
         var magnitude = first.Abs();
-        logDetQ = logDetQ - (magnitude + ((magnitude * -1f).Exp() + 1f).Log() * 2f).Sum();   // + logsigmoid(u) + logsigmoid(-u)
-        var noiseValues = noise.ToArray();
+        var sigmoids = magnitude + ((magnitude * -1f).Exp() + 1f).Log() * 2f;   // -(logsigmoid(u) + logsigmoid(-u))
+        logDetQ = logDetQ - (mask is null ? sigmoids : mask.Apply(sigmoids)).Sum();
+        var noiseValues = noise.ToArray();                                       // [B, 2, T]: the padding's noise is zero
         double noiseSquares = 0;
         foreach (float v in noiseValues)
         {
             noiseSquares += (double)v * v;
         }
 
-        float logQ0 = (float)(-0.5 * (noiseValues.Length * Math.Log(2 * Math.PI) + noiseSquares));
+        float logQ0 = (float)(-0.5 * (2 * positions * Math.Log(2 * Math.PI) + noiseSquares));
         var logQ = logDetQ * -1f + logQ0;
 
         // The durations dequantized by the posterior's first channel, through the flows to the prior.
         var dequantized = (durations - first.Sigmoid()).Clamp(1e-5f, float.PositiveInfinity).Log();
-        latents = Prior(Tensor.Concat([dequantized, second], 0), x, out var flowsDet);
-        var logDetSum = dequantized.Sum() * -1f + flowsDet;
-        var nll = (latents.Square() * 0.5f).Sum() + (float)(0.5 * latents.Size * Math.Log(2 * Math.PI)) - logDetSum;
+        latents = Prior(Tensor.Concat([dequantized, second], 1), x, mask, out var flowsDet);
+        var logDetSum = (mask is null ? dequantized : mask.Apply(dequantized)).Sum() * -1f + flowsDet;
+        var squares = latents.Square() * 0.5f;
+        var nll = (mask is null ? squares : mask.Apply(squares)).Sum() + (float)(0.5 * 2 * positions * Math.Log(2 * Math.PI)) - logDetSum;
         return nll + logQ;
     }
 
     /// <summary>The conditioning of every flow [C, T] from the hidden states [C, T] and the speaker's embedding [E, 1] (null for one speaker).</summary>
     internal Tensor Conditioning(Tensor hidden, Tensor? speaker)
     {
-        var x = _pre.Forward(hidden);
+        int c = hidden.Shape[0], t = hidden.Shape[1];
+        return Conditioning(hidden.Reshape(1, c, t), speaker, null).Reshape(c, t);
+    }
+
+    /// <summary>The conditioning of every flow [B, C, T] from a batch of hidden states [B, C, T] with the speaker's embedding (one utterance only) and the batch's mask, zero over the padding.</summary>
+    internal Tensor Conditioning(Tensor hidden, Tensor? speaker, VitsMask? mask)
+    {
+        var x = _pre.Forward3(hidden);
         if (speaker is not null && _cond is not null)
         {
-            x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), hidden.Shape[1]);
+            if (hidden.Shape[0] != 1)
+            {
+                throw new NotSupportedException("The duration predictor takes a speaker's embedding for one utterance at a time, not for a batch.");
+            }
+
+            x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), hidden.Shape[2]).Reshape(1, x.Shape[1], hidden.Shape[2]);
         }
 
-        return _proj.Forward(_dds.Forward(x, null));
+        var conditioning = _proj.Forward3(_dds.Forward(x, null, mask));
+        return mask is null ? conditioning : mask.Apply(conditioning);
     }
 
     /// <summary>
-    /// The flows forward (training): latents [2, T] (the log-durations and their pair) through the element-wise affine,
-    /// then each spline flow followed by a flip, conditioned on <paramref name="x"/> [C, T]; the log-determinant summed.
-    /// <see cref="Reverse"/> takes the result back to the log-durations.
+    /// The flows forward (training): latents [B, 2, T] (the log-durations and their pair) through the element-wise affine,
+    /// then each spline flow followed by a flip, conditioned on <paramref name="x"/> [B, C, T]; the log-determinant summed
+    /// over the tokens within the utterances. <see cref="Reverse"/> takes the result back to the log-durations.
     /// </summary>
-    internal Tensor Prior(Tensor latents, Tensor x, out Tensor logDet)
+    internal Tensor Prior(Tensor latents, Tensor x, VitsMask? mask, out Tensor logDet)
     {
-        int t = latents.Shape[1];
         var logScale = _logScaleParameter ?? throw new InvalidOperationException("The duration predictor was loaded to speak; load the model with SpeechSynthesisLoadOptions.Training to train it.");
-        latents = Affine(latents, logScale, _translateParameter!, t, out logDet);
+        latents = Affine(latents, logScale, _translateParameter!, mask, mask?.Positions ?? latents.Shape[2], out logDet);
         foreach (var flow in _flows)
         {
-            latents = flow.Forward(latents, x, out var flowDet);
+            latents = flow.Forward(latents, x, mask, out var flowDet);
             latents = Flip(latents);
             logDet = logDet + flowDet;
         }
@@ -161,15 +183,18 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         return latents;
     }
 
-    // transformers' VitsElementwiseAffine forward: translate + exp(log_scale) · x per channel, its log-determinant T · Σ log_scale.
-    private static Tensor Affine(Tensor x, Tensor logScale, Tensor translate, int t, out Tensor logDet)
+    // transformers' VitsElementwiseAffine forward on [B, 2, T]: translate + exp(log_scale) · x per channel (one row-wise
+    // affine over the channels), zero over the padding; its log-determinant is Σ log_scale over the tokens within the utterances.
+    private static Tensor Affine(Tensor x, Tensor logScale, Tensor translate, VitsMask? mask, int positions, out Tensor logDet)
     {
-        logDet = logScale.Sum() * t;
-        return VitsOps.ExpandColumns(translate, t) + VitsOps.ExpandColumns(logScale.Exp(), t) * x;
+        int channels = x.Shape[1], t = x.Shape[2];
+        logDet = logScale.Sum() * positions;
+        var y = x.GroupAffine(logScale.Reshape(channels).Exp(), translate.Reshape(channels), channels, t);
+        return mask is null ? y : mask.Apply(y);
     }
 
-    // torch.flip over the two channels of [2, T].
-    private static Tensor Flip(Tensor x) => Tensor.Concat([x.Narrow(0, 1, 1), x.Narrow(0, 0, 1)], 0);
+    // torch.flip over the two channels of [B, 2, T].
+    private static Tensor Flip(Tensor x) => Tensor.Concat([x.Narrow(1, 1, 1), x.Narrow(1, 0, 1)], 1);
 
     public float[] LogDurations(Tensor hidden, Tensor? speaker, float noiseScale, Random random)
     {
@@ -304,21 +329,35 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         }
 
         /// <summary>
-        /// The flow forward (training) on latents [2, T]: the second channel through the spline the first one conditions
-        /// (with <paramref name="conditioning"/> [C, T]), composed from tensor operations so its gradients reach every
-        /// input; the log-determinant summed over the tokens.
+        /// The flow forward (training) on latents [B, 2, T]: the second channel through the spline the first one conditions
+        /// (with <paramref name="conditioning"/> [B, C, T]), composed from tensor operations so its gradients reach every
+        /// input; the log-determinant summed over the tokens within the utterances (the batch's mask; null: unpadded).
         /// </summary>
-        public Tensor Forward(Tensor latents, Tensor conditioning, out Tensor logDet)
+        public Tensor Forward(Tensor latents, Tensor conditioning, VitsMask? mask, out Tensor logDet)
         {
-            int t = latents.Shape[1], bins = _config.DurationFlowBins;
-            var first = latents.Narrow(0, 0, _half);
-            var second = latents.Narrow(0, _half, _half);
-            var h = _proj.Forward(_dds.Forward(_pre.Forward(first), conditioning)).Transpose();   // [T, 3 bins - 1] (one channel)
+            int batch = latents.Shape[0], t = latents.Shape[2], bins = _config.DurationFlowBins;
+            var first = latents.Narrow(1, 0, _half);                                 // [B, 1, T]
+            var second = latents.Narrow(1, _half, _half);
+            var h = _proj.Forward3(_dds.Forward(_pre.Forward3(first), conditioning, mask));   // [B, 3 bins - 1, T] (one channel)
+            if (mask is not null)
+            {
+                h = mask.Apply(h);
+            }
+
+            var rows = h.Permute(0, 2, 1).Reshape(batch * t, 3 * bins - 1);        // [B·T, 3 bins - 1]
             float scale = 1f / MathF.Sqrt(_config.HiddenSize);
-            var (outputs, logAbsDet) = VitsSpline.Forward(second.Reshape(t, 1), h.Narrow(1, 0, bins) * scale, h.Narrow(1, bins, bins) * scale,
-                h.Narrow(1, 2 * bins, bins - 1), _config.DurationTailBound);
-            logDet = logAbsDet.Sum();
-            return Tensor.Concat([first, outputs.Reshape(1, t)], 0);
+            var (outputs, logAbsDet) = VitsSpline.Forward(second.Reshape(batch * t, 1), rows.Narrow(1, 0, bins) * scale, rows.Narrow(1, bins, bins) * scale,
+                rows.Narrow(1, 2 * bins, bins - 1), _config.DurationTailBound);
+            var moved = outputs.Reshape(batch, 1, t);
+            var determinant = logAbsDet.Reshape(batch, 1, t);
+            if (mask is not null)
+            {
+                moved = mask.Apply(moved);
+                determinant = mask.Apply(determinant);
+            }
+
+            logDet = determinant.Sum();
+            return Tensor.Concat([first, moved], 1);
         }
 
         /// <summary>latents [channels, T] on the host: the second half replaced by the spline's inverse, conditioned on the first half and <paramref name="conditioning"/> [C, T].</summary>
@@ -404,19 +443,25 @@ internal sealed class VitsDeterministicDurationPredictor : IVitsDurationPredicto
         return Predict(x).ToArray();                                             // [1, T]
     }
 
-    /// <summary>VITS's deterministic duration loss: Σ (log-duration predicted - log(frames + 1e-6))² over the tokens.</summary>
-    public Tensor Loss(Tensor hidden, Tensor durations, Tensor noise)
+    /// <summary>VITS's deterministic duration loss: Σ (log-duration predicted - log(frames + 1e-6))² over the tokens within the utterances.</summary>
+    public Tensor Loss(Tensor hidden, Tensor durations, Tensor noise, VitsMask? mask)
     {
         _ = noise;
-        return (Predict(hidden) - (durations + 1e-6f).Log()).Square().Sum();
+        var errors = (Predict3(hidden, mask) - (durations + 1e-6f).Log()).Square();
+        return (mask is null ? errors : mask.Apply(errors)).Sum();
     }
 
-    private Tensor Predict(Tensor x)
+    private Tensor Predict(Tensor x) => Predict3(x.Reshape(1, x.Shape[0], x.Shape[1]), null).Reshape(1, x.Shape[1]);
+
+    // [B, C, T] to the log-durations [B, 1, T]; the convolutions read the padding as zeros.
+    private Tensor Predict3(Tensor x, VitsMask? mask)
     {
-        x = _norm1.Forward(_conv1.Forward(x).Relu().Transpose()).Transpose();
-        x = _norm2.Forward(_conv2.Forward(x).Relu().Transpose()).Transpose();
-        return _proj.Forward(x);
+        x = Norm(_norm1, _conv1.Forward3(mask is null ? x : mask.Apply(x)).Relu());
+        x = Norm(_norm2, _conv2.Forward3(mask is null ? x : mask.Apply(x)).Relu());
+        return _proj.Forward3(mask is null ? x : mask.Apply(x));
     }
+
+    private static Tensor Norm(LayerNorm norm, Tensor h) => norm.Forward(h.Permute(0, 2, 1)).Permute(0, 2, 1);
 
     public void Dispose()
     {

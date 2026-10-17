@@ -25,8 +25,30 @@ internal sealed class VitsPosteriorEncoder : IDisposable
     /// <summary>The posterior's means and log-stddevs [F, T] each of the spectrogram [bins, T] with the speaker's embedding [E, 1] (training draws the latents from them).</summary>
     public (Tensor Means, Tensor LogStddevs) Stats(Tensor spectrogram, Tensor? speaker)
     {
-        var stats = _proj.Forward(_waveNet.Forward(_pre.Forward(spectrogram), speaker));   // [2F, T]
-        return (stats.Narrow(0, 0, _flowSize), stats.Narrow(0, _flowSize, _flowSize));
+        int t = spectrogram.Shape[1];
+        var (means, logs) = Stats(spectrogram.Reshape(1, spectrogram.Shape[0], t), speaker, null);
+        return (means.Reshape(_flowSize, t), logs.Reshape(_flowSize, t));
+    }
+
+    /// <summary>
+    /// A batch of spectrograms [B, bins, T] (zero over the padding) with the speaker's embedding [E, 1] (one utterance
+    /// only) and the batch's mask: the means and log-stddevs [B, F, T] each, zero over the padding.
+    /// </summary>
+    public (Tensor Means, Tensor LogStddevs) Stats(Tensor spectrograms, Tensor? speaker, VitsMask? mask)
+    {
+        var x = _pre.Forward3(spectrograms);
+        if (mask is not null)
+        {
+            x = mask.Apply(x);
+        }
+
+        var stats = _proj.Forward3(_waveNet.Forward(x, speaker, mask));        // [B, 2F, T]
+        if (mask is not null)
+        {
+            stats = mask.Apply(stats);
+        }
+
+        return (stats.Narrow(1, 0, _flowSize), stats.Narrow(1, _flowSize, _flowSize));
     }
 
     /// <summary>The latents [F, T] of the spectrogram [bins, T] with the speaker's embedding [E, 1]: the means, plus noise scaled by <paramref name="noiseScale"/> (none at 0).</summary>

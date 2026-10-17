@@ -9,7 +9,7 @@ namespace Idrak.VitsSpeech;
 /// <summary>
 /// transformers' <c>VitsTextEncoder</c>: the ids' embeddings scaled by √hidden, post-norm encoder layers (attention with
 /// a relative-position bias within <see cref="VitsConfig.WindowSize"/>, a convolutional feed-forward), then a projection
-/// to the prior's means and log-variances. One utterance at a time, so there is no padding and no mask.
+/// to the prior's means and log-variances. One utterance unpadded when speaking; a padded batch with masks when training.
 /// </summary>
 internal sealed class VitsTextEncoder : IDisposable
 {
@@ -46,15 +46,40 @@ internal sealed class VitsTextEncoder : IDisposable
     }
 
     /// <summary>The ids' hidden states [T, C], and the prior's means and log-variances [T, F] each.</summary>
-    public (Tensor Hidden, Tensor Means, Tensor LogVariances) Forward(ReadOnlySpan<int> ids)
+    public (Tensor Hidden, Tensor Means, Tensor LogVariances) Forward(ReadOnlySpan<int> ids) => Forward([ids.ToArray()], null);
+
+    /// <summary>
+    /// A batch of utterances' ids, padded to the mask's length (null: one utterance, nothing padded): the hidden states
+    /// [B·T, C] and the prior's means and log-variances [B·T, F] each, as rows, zero over the padding. The attention reads
+    /// no padded key and the feed-forward convolutions read the padding as zeros (VITS's masking), so each utterance's
+    /// rows are what it gets alone.
+    /// </summary>
+    public (Tensor Hidden, Tensor Means, Tensor LogVariances) Forward(IReadOnlyList<int[]> ids, VitsMask? mask)
     {
-        var x = _embed.EmbeddingLookup(VitsOps.Indices(ids, _embed.Device)) * MathF.Sqrt(_config.HiddenSize);
-        foreach (var layer in _layers)
+        int batch = ids.Count, t = mask?.Length ?? ids[0].Length;
+        var padded = new int[batch * t];                                         // the padding reads id 0; it is masked wherever it matters
+        for (int b = 0; b < batch; b++)
         {
-            x = layer.Forward(x);
+            ids[b].CopyTo(padded, b * t);
         }
 
-        var stats = _project.Forward(x);                                         // [T, 2F]
+        var x = _embed.EmbeddingLookup(VitsOps.Indices(padded, _embed.Device)) * MathF.Sqrt(_config.HiddenSize);   // [B·T, C]
+        if (mask is not null)
+        {
+            x = mask.ApplyRows(x);
+        }
+
+        foreach (var layer in _layers)
+        {
+            x = layer.Forward(x, batch, t, mask);
+        }
+
+        var stats = _project.Forward(x);                                         // [B·T, 2F]
+        if (mask is not null)
+        {
+            stats = mask.ApplyRows(stats);
+        }
+
         return (x, stats.Narrow(1, 0, _config.FlowSize), stats.Narrow(1, _config.FlowSize, _config.FlowSize));
     }
 
@@ -115,36 +140,43 @@ internal sealed class VitsTextEncoder : IDisposable
             _conv2 = weights.Conv($"{prefix}.feed_forward.conv_2", config.FfnDim, c, k, symmetric);
         }
 
-        public Tensor Forward(Tensor x)
+        // x [B·T, C] rows of a batch of `batch` utterances padded to `t` positions (the mask null for one, unpadded).
+        public Tensor Forward(Tensor x, int batch, int t, VitsMask? mask)
         {
-            x = _norm.Forward(x + Attention(x));
-            return _finalNorm.Forward(x + FeedForward(x));
+            x = _norm.Forward(x + Attention(x, batch, t, mask));
+            return _finalNorm.Forward(x + FeedForward(x, batch, t, mask));
         }
 
-        private Tensor Attention(Tensor x)
+        private Tensor Attention(Tensor x, int batch, int t, VitsMask? mask)
         {
-            int t = x.Shape[0], h = _config.Heads, c = _config.HiddenSize, d = c / h;
+            int h = _config.Heads, c = _config.HiddenSize, d = c / h, bh = batch * h;
             float scaling = 1f / MathF.Sqrt(d);
-            var q = (_q.Forward(x) * scaling).Reshape(t, h, d).Permute(1, 0, 2);   // [h, T, d]
-            var k = _k.Forward(x).Reshape(t, h, d).Permute(1, 0, 2);
-            var v = _v.Forward(x).Reshape(t, h, d).Permute(1, 0, 2);
-            var scores = q.MatMul(k, transposeB: true);                             // [h, T, T]
+            Tensor Heads(Tensor rows) => rows.Reshape(batch, t, h, d).Permute(0, 2, 1, 3).Reshape(bh, t, d);   // [B·h, T, d]
+            var q = Heads(_q.Forward(x) * scaling);
+            var k = Heads(_k.Forward(x));
+            var v = Heads(_v.Forward(x));
+            var scores = q.MatMul(k, transposeB: true);                             // [B·h, T, T]
             var tables = _relK is null ? default : _byLength.GetOrAdd(t, BuildTables);
             if (_relK is not null)
             {
                 var relK = RelativeTable(_relKParameter, tables.RelK, tables.Offsets, t, d, x.Device);
-                var relative = q.MatMul(relK, transposeB: true);                    // [h, T, 2T - 1]: query i against offset r - (T - 1)
-                scores = scores + RelativeToAbsolute(relative, h, t, x.Device);
+                var relative = q.MatMul(relK, transposeB: true);                    // [B·h, T, 2T - 1]: query i against offset r - (T - 1)
+                scores = scores + RelativeToAbsolute(relative, bh, t, x.Device);
+            }
+
+            if (mask is not null)
+            {
+                scores = scores + mask.Keys(h);                                     // no padded key is attended
             }
 
             var probs = scores.Softmax();
-            var output = probs.MatMul(v);                                            // [h, T, d]
+            var output = probs.MatMul(v);                                            // [B·h, T, d]
             if (_relV is not null)
             {
-                output = output + AbsoluteToRelative(probs, h, t, x.Device).MatMul(RelativeTable(_relVParameter, tables.RelV, tables.Offsets, t, d, x.Device));
+                output = output + AbsoluteToRelative(probs, bh, t, x.Device).MatMul(RelativeTable(_relVParameter, tables.RelV, tables.Offsets, t, d, x.Device));
             }
 
-            return _out.Forward(output.Permute(1, 0, 2).Reshape(t, c));
+            return _out.Forward(output.Reshape(batch, h, t, d).Permute(0, 2, 1, 3).Reshape(batch * t, c));
         }
 
         // [h, T, 2T - 1] by offset (r = j - i + T - 1) to [h, T, T] by key, and back (zeros where a key falls outside), with
@@ -202,11 +234,23 @@ internal sealed class VitsTextEncoder : IDisposable
             return (relK, relV, rows);
         }
 
-        private Tensor FeedForward(Tensor x)
+        // The convolutions over time read the padding as zeros (VITS multiplies by the mask before each).
+        private Tensor FeedForward(Tensor x, int batch, int t, VitsMask? mask)
         {
-            int k = _config.FfnKernelSize, left = k % 2 == 1 ? 0 : k / 2, right = k % 2 == 1 ? 0 : (k - 1) / 2;   // even kernels pad asymmetrically
-            var h = VitsOps.Activation(_config.HiddenAct, _conv1.Forward(VitsOps.PadTime(x.Transpose(), left, right)));
-            return _conv2.Forward(VitsOps.PadTime(h, left, right)).Transpose();
+            int c = _config.HiddenSize, k = _config.FfnKernelSize, left = k % 2 == 1 ? 0 : k / 2, right = k % 2 == 1 ? 0 : (k - 1) / 2;   // even kernels pad asymmetrically
+            var y = x.Reshape(batch, t, c).Permute(0, 2, 1);                       // [B, C, T]
+            if (mask is not null)
+            {
+                y = mask.Apply(y);
+            }
+
+            var h = VitsOps.Activation(_config.HiddenAct, _conv1.Forward3(VitsOps.PadTime(y, left, right)));
+            if (mask is not null)
+            {
+                h = mask.Apply(h);
+            }
+
+            return _conv2.Forward3(VitsOps.PadTime(h, left, right)).Permute(0, 2, 1).Reshape(batch * t, c);
         }
 
         public void Dispose()
