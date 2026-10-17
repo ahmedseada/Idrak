@@ -278,7 +278,7 @@ internal static partial class Tests
             using var scope = new TensorScope();
             var x = predictor.Conditioning(Tensor.From(Uniform(c * t, 1f), [c, t], device), null);
             float[] logDurations = Uniform(t, 2f), pair = Uniform(t, 2f);
-            var prior = predictor.Prior(Tensor.From([.. logDurations, .. pair], [2, t], device), x, out _);
+            var prior = predictor.Prior(Tensor.From([.. logDurations, .. pair], [1, 2, t], device), x.Reshape(1, c, t), null, out _);
             var back = predictor.Reverse(prior.ToArray(), x);
             float worst = logDurations.Zip(back, (a, b) => MathF.Abs(a - b)).Max();
             Check(worst < 1e-4f, $"the duration flows forward then in reverse give log-durations {string.Join(" ", back.Select(v => v.ToString("F4", CultureInfo.InvariantCulture)))} "

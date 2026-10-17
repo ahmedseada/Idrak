@@ -147,10 +147,11 @@ internal sealed record VitsDraws(float[] Posterior, float[] Duration, int Start)
 
 /// <summary>
 /// The training of a <see cref="VitsSynthesizer"/> loaded with <see cref="SpeechSynthesisLoadOptions.Training"/> (plan 21, S9
-/// route C), VITS's step on each utterance alone (no padding): the text encoder's prior, the posterior encoder on the
-/// linear spectrogram, its latents drawn and taken through the flow, the monotonic alignment search on the host for the
-/// durations, the KL of the posterior from the prior expanded to the frames, the stochastic duration predictor's loss,
-/// and the decoder on a random segment of the latents, whose sound is scored by the mel loss and the discriminators.
+/// route C), VITS's step on a micro-batch padded and masked as VITS trains it: the text encoder's prior, the posterior
+/// encoder on the linear spectrograms, their latents drawn and taken through the flow, the monotonic alignment search on
+/// the host for each utterance's durations, the KL of the posterior from the prior expanded to the frames, the stochastic
+/// duration predictor's loss, and the decoder on a random segment of each utterance's latents, whose sound is scored by
+/// the mel loss and the discriminators, all the segments as one batch.
 /// </summary>
 internal sealed class VitsTraining : IDisposable
 {
@@ -304,86 +305,144 @@ internal sealed class VitsTraining : IDisposable
     // One utterance's generator pass (tests): the terms before their weights, the segment's sound made [1, L] and its real sound.
     internal sealed record UtterancePass(Tensor Kl, Tensor Nll, Tensor Mel, Tensor Made, Tensor Real, int[] Durations);
 
-    // One utterance's part of the pass that runs on its own length: the KL and duration terms before their weights, the
-    // decoder segment's latents [F, seg], the segment's real samples [1, seg · hop] and its mel target [seg, mels].
-    internal sealed record UtteranceTerms(Tensor Kl, Tensor Nll, Tensor Latents, Tensor Real, Tensor Target, int[] Durations);
-
-    // A micro-batch's generator pass: each utterance's KL and duration terms, and, for all of them as one batch (equal
-    // segments), the sound made [B, L], the real sound [B, L] and the mel loss (the mean over the batch, which is the mean
-    // of the utterances' means).
-    internal sealed record BatchPass(IReadOnlyList<Tensor> Kl, IReadOnlyList<Tensor> Nll, Tensor Mel, Tensor Made, Tensor Real, IReadOnlyList<int[]> Durations);
+    // A micro-batch's generator pass: the KL and duration terms summed over its utterances, and, for all of them as one
+    // batch (equal segments), the sound made [B, L], the real sound [B, L] and the mel loss (the mean over the batch, which
+    // is the mean of the utterances' means), with each utterance's durations.
+    internal sealed record BatchPass(Tensor Kl, Tensor Nll, Tensor Mel, Tensor Made, Tensor Real, IReadOnlyList<int[]> Durations);
 
     // Utterance i of the batch through the generator on its own (gradients as Autograd says).
     internal UtterancePass Pass(AdversarialSynthesisBatch batch, int i, AdversarialSynthesisOptions options)
     {
         var pass = PassAll(batch, options, [i]);
-        return new UtterancePass(pass.Kl[0], pass.Nll[0], pass.Mel, pass.Made, pass.Real, pass.Durations[0]);
+        return new UtterancePass(pass.Kl, pass.Nll, pass.Mel, pass.Made, pass.Real, pass.Durations[0]);
     }
 
-    // The utterances (all of the batch, or the ones given) through the generator: each on its own up to its segment's
-    // latents, then the decoder, the mel loss and the segments' sound as one batch, so every layer runs once a micro-batch.
+    // The utterances (all of the batch, or the ones given) through the generator as one padded batch, VITS's way: the
+    // text encoder, the posterior encoder and the flow with masks over the padding, the alignment search per utterance
+    // on the host, the KL and duration terms as masked sums, then every utterance's segment through the decoder, the mel
+    // loss and the discriminators together; every layer runs once a micro-batch. One utterance runs unpadded, unmasked.
     internal BatchPass PassAll(AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, IReadOnlyList<int>? utterances = null)
     {
         utterances ??= [.. Enumerable.Range(0, batch.Frames.Count)];
-        var terms = new UtteranceTerms[utterances.Count];
-        for (int u = 0; u < terms.Length; u++)
+        var config = _model.Config;
+        var device = _model.Device;
+        int count = utterances.Count, bins = Features.Bins, hop = Features.Hop, seg = options.SegmentFrames, flow = config.FlowSize, longest = batch.Features.Shape[1];
+        var labels = new int[count][];
+        var frames = new int[count];
+        var draws = new VitsDraws[count];
+        for (int b = 0; b < count; b++)
         {
-            terms[u] = Utterance(batch, utterances[u], options);
+            int i = utterances[b];
+            labels[b] = batch.Labels[i];
+            frames[b] = batch.Frames[i];
+            draws[b] = Draws?.Invoke(i, batch) ?? Draw(batch, i, seg);
         }
 
-        int count = terms.Length, flow = _model.Config.FlowSize, seg = options.SegmentFrames;
-        var latents = count == 1 ? terms[0].Latents.Reshape(1, flow, seg) : Tensor.Concat([.. terms.Select(t => t.Latents.Reshape(1, flow, seg))], 0);   // [B, F, seg]
-        var made = _model.Decoder.Forward(latents, null);                       // [B, seg · hop]
-        var real = count == 1 ? terms[0].Real : Tensor.Concat([.. terms.Select(t => t.Real)], 0);                 // [B, seg · hop]
-        var target = count == 1 ? terms[0].Target : Tensor.Concat([.. terms.Select(t => t.Target)], 0);           // [B · seg, mels]
-        var (melFilters, basis) = Filters(options);
-        var mel = (target - LogMel(made, basis, melFilters)).Abs().Mean();
-        return new BatchPass([.. terms.Select(t => t.Kl)], [.. terms.Select(t => t.Nll)], mel, made, real, [.. terms.Select(t => t.Durations)]);
-    }
+        int tokens = labels.Max(l => l.Length), length = frames.Max();
+        var tokenMask = count == 1 ? null : new VitsMask([.. labels.Select(l => l.Length)], tokens, device);
+        var frameMask = count == 1 ? null : new VitsMask(frames, length, device);
 
-    // Utterance i of the batch through the text encoder, the posterior encoder, the flow and the alignment search, on
-    // its own length: its KL and duration terms and what the batched decoder pass takes.
-    private UtteranceTerms Utterance(AdversarialSynthesisBatch batch, int i, AdversarialSynthesisOptions options)
-    {
-        var config = _model.Config;
-        int frames = batch.Frames[i], bins = Features.Bins, hop = Features.Hop, seg = options.SegmentFrames, longest = batch.Features.Shape[1];
-        var labels = batch.Labels[i];
-        var draws = Draws?.Invoke(i, batch) ?? Draw(batch, i, seg);
-        var rows = batch.Features.Narrow(0, i, 1).Reshape(longest, Features.Width).Narrow(0, 0, frames);   // [frames, bins + hop]
-        var spectrogram = rows.Narrow(1, 0, bins).Transpose();                   // [bins, frames]
-        var device = _model.Device;
+        // Each utterance's training rows: its spectrogram columns into [B, bins, length] (zero after its frames), its rows kept for the segment.
+        var rows = new Tensor[count];
+        var spectrograms = new Tensor[count];
+        for (int b = 0; b < count; b++)
+        {
+            var all = batch.Features.Narrow(0, utterances[b], 1).Reshape(longest, Features.Width);
+            rows[b] = all.Narrow(0, 0, frames[b]);                               // [frames, bins + hop]
+            spectrograms[b] = (count == 1 ? rows[b] : all.Narrow(0, 0, length)).Narrow(1, 0, bins).Reshape(1, length, bins);
+        }
 
-        var (hidden, means, logStddevs) = _model.Encoder.Forward(labels);        // [T, C], [T, F], [T, F]
-        var (posteriorMeans, posteriorLogs) = _model.Posterior.Stats(spectrogram, null);   // [F, frames]
-        var latents = posteriorMeans + Tensor.From(draws.Posterior, [config.FlowSize, frames], device) * posteriorLogs.Exp();
-        var prior = _model.Flow.Forward(latents, null);                         // [F, frames]
+        var spectrogram = (count == 1 ? spectrograms[0] : Tensor.Concat(spectrograms, 0)).Permute(0, 2, 1);   // [B, bins, length]
+        var (hidden, means, logStddevs) = _model.Encoder.Forward(labels, tokenMask);          // [B·T, C], [B·T, F], [B·T, F]
+        var (posteriorMeans, posteriorLogs) = _model.Posterior.Stats(spectrogram, null, frameMask);   // [B, F, length]
+        var posteriorNoise = new float[count * flow * length];                     // each utterance's draws over its frames, zero after
+        for (int b = 0; b < count; b++)
+        {
+            for (int f = 0; f < flow; f++)
+            {
+                draws[b].Posterior.AsSpan(f * frames[b], frames[b]).CopyTo(posteriorNoise.AsSpan((b * flow + f) * length, frames[b]));
+            }
+        }
 
-        // The alignment: each frame's log-likelihood under each token's prior, the best monotonic path on the host.
-        int[] path;
+        var latents = posteriorMeans + Tensor.From(posteriorNoise, [count, flow, length], device) * posteriorLogs.Exp();
+        var prior = _model.Flow.Forward(latents, null, frameMask);                  // [B, F, length]
+
+        // The alignment: each utterance's frames' log-likelihood under each of its tokens' prior, the best monotonic path on the host.
+        var paths = new int[count][];
+        var durations = new int[count][];
         using (Autograd.NoGrad())
         using (var scope = new TensorScope())
         {
-            var inverse = (logStddevs * -2f).Exp();                              // [T, F]
-            var perToken = (logStddevs * -1f - 0.5f * MathF.Log(2 * MathF.PI)).Sum(1) + (means.Square() * inverse * -0.5f).Sum(1);   // [T]
-            var priorT = prior.Transpose();                                       // [frames, F]
-            var scores = (priorT.Square() * -0.5f).MatMul(inverse, transposeB: true) + priorT.MatMul(means * inverse, transposeB: true) + perToken;   // [frames, T]
-            path = MonotonicAlignment.Search(scores.ToArray(), frames, labels.Length);
+            for (int b = 0; b < count; b++)
+            {
+                int t = labels[b].Length;
+                var meansB = means.Narrow(0, b * tokens, t);                        // [T, F]
+                var logsB = logStddevs.Narrow(0, b * tokens, t);
+                var priorT = prior.Narrow(0, b, 1).Reshape(flow, length).Narrow(1, 0, frames[b]).Transpose();   // [frames, F]
+                var inverse = (logsB * -2f).Exp();                                  // [T, F]
+                var perToken = (logsB * -1f - 0.5f * MathF.Log(2 * MathF.PI)).Sum(1) + (meansB.Square() * inverse * -0.5f).Sum(1);   // [T]
+                var scores = (priorT.Square() * -0.5f).MatMul(inverse, transposeB: true) + priorT.MatMul(meansB * inverse, transposeB: true) + perToken;   // [frames, T]
+                paths[b] = MonotonicAlignment.Search(scores.ToArray(), frames[b], t);
+                durations[b] = MonotonicAlignment.Durations(paths[b], t);
+            }
         }
 
-        var durations = MonotonicAlignment.Durations(path, labels.Length);
-        var index = VitsOps.Indices(path, device);
-        var expandedMeans = means.EmbeddingLookup(index).Transpose();            // [F, frames]
-        var expandedLogs = logStddevs.EmbeddingLookup(index).Transpose();
-        var kl = (expandedLogs - posteriorLogs - 0.5f + (prior - expandedMeans).Square() * 0.5f * (expandedLogs * -2f).Exp()).Sum();
-        var nll = _model.StochasticDurations.Loss(hidden.Transpose().Detach(), Tensor.From([.. durations.Select(d => (float)d)], [1, labels.Length], device),
-            Tensor.From(draws.Duration, [2, labels.Length], device));
+        // The KL of the posterior from the prior expanded to the frames, over the frames within the utterances.
+        var index = new int[count * length];
+        for (int b = 0; b < count; b++)
+        {
+            for (int n = 0; n < length; n++)
+            {
+                index[b * length + n] = b * tokens + (n < frames[b] ? paths[b][n] : 0);   // the padding reads any row: it is masked
+            }
+        }
 
-        // The decoder's segment: its latents, its real samples and its mel target (the decoder runs on the batch's segments together).
-        var segment = rows.Narrow(0, draws.Start, seg);
-        var real = segment.Narrow(1, bins, hop).Reshape(1, seg * hop);
-        var (melFilters, _) = Filters(options);
-        var target = segment.Narrow(1, 0, bins).MatMul(melFilters).Clamp(1e-5f, float.PositiveInfinity).Log();   // [seg, mels]
-        return new UtteranceTerms(kl, nll, latents.Narrow(1, draws.Start, seg), real, target, durations);
+        var gather = VitsOps.Indices(index, device);
+        var expandedMeans = means.EmbeddingLookup(gather).Reshape(count, length, flow).Permute(0, 2, 1);   // [B, F, length]
+        var expandedLogs = logStddevs.EmbeddingLookup(gather).Reshape(count, length, flow).Permute(0, 2, 1);
+        var klTerms = expandedLogs - posteriorLogs - 0.5f + (prior - expandedMeans).Square() * 0.5f * (expandedLogs * -2f).Exp();
+        var kl = (frameMask is null ? klTerms : frameMask.Apply(klTerms)).Sum();
+
+        // The duration predictor's loss over the tokens within the utterances (its durations padded with 1, its noise with 0).
+        var durationValues = new float[count * tokens];
+        var durationNoise = new float[count * 2 * tokens];
+        for (int b = 0; b < count; b++)
+        {
+            int t = labels[b].Length;
+            for (int n = 0; n < tokens; n++)
+            {
+                durationValues[b * tokens + n] = n < t ? durations[b][n] : 1f;
+            }
+
+            for (int c = 0; c < 2; c++)
+            {
+                draws[b].Duration.AsSpan(c * t, t).CopyTo(durationNoise.AsSpan((b * 2 + c) * tokens, t));
+            }
+        }
+
+        var nll = _model.StochasticDurations.Loss(hidden.Reshape(count, tokens, config.HiddenSize).Permute(0, 2, 1).Detach(),
+            Tensor.From(durationValues, [count, 1, tokens], device), Tensor.From(durationNoise, [count, 2, tokens], device), tokenMask);
+
+        // Every utterance's decoder segment: its latents [F, seg], its real samples and its mel target, then all as one batch.
+        var (melFilters, basis) = Filters(options);
+        var segments = new Tensor[count];
+        var reals = new Tensor[count];
+        var targets = new Tensor[count];
+        for (int b = 0; b < count; b++)
+        {
+            int start = draws[b].Start;
+            segments[b] = (count == 1 ? latents.Reshape(flow, length) : latents.Narrow(0, b, 1).Reshape(flow, length)).Narrow(1, start, seg).Reshape(1, flow, seg);
+            var segment = rows[b].Narrow(0, start, seg);
+            reals[b] = segment.Narrow(1, bins, hop).Reshape(1, seg * hop);
+            targets[b] = segment.Narrow(1, 0, bins).MatMul(melFilters).Clamp(1e-5f, float.PositiveInfinity).Log();   // [seg, mels]
+        }
+
+        var stacked = count == 1 ? segments[0] : Tensor.Concat(segments, 0);     // [B, F, seg]
+        var made = _model.Decoder.Forward(stacked, null);                        // [B, seg · hop]
+        var real = count == 1 ? reals[0] : Tensor.Concat(reals, 0);              // [B, seg · hop]
+        var target = count == 1 ? targets[0] : Tensor.Concat(targets, 0);        // [B · seg, mels]
+        var mel = (target - LogMel(made, basis, melFilters)).Abs().Mean();
+        return new BatchPass(kl, nll, mel, made, real, durations);
     }
 
     // The log-mel spectra [B · frames, mels] of the sound [B, L] as VITS's mel_spectrogram_torch takes it, differentiable:
@@ -559,8 +618,8 @@ internal sealed class VitsTraining : IDisposable
                 // the utterances' shares summed; the KL and duration terms are each utterance's own, summed.
                 float share = (float)batch.Frames.Count / batch.StepUtterances;
                 var mel = pass.Mel * (options.MelWeight * share);
-                var kl = pass.Kl.Aggregate((a, b) => a + b) * (options.KlWeight / batch.StepFrames);
-                var duration = pass.Nll.Aggregate((a, b) => a + b) * (options.DurationWeight / batch.StepLabels);
+                var kl = pass.Kl * (options.KlWeight / batch.StepFrames);
+                var duration = pass.Nll * (options.DurationWeight / batch.StepLabels);
                 var adv = adversarial! * (options.AdversarialWeight * share);
                 var fm = matching! * (options.FeatureMatchingWeight * share);
                 var loss = mel + kl + duration + adv + fm;
