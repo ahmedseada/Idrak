@@ -118,7 +118,7 @@ internal sealed class DataMelCommand : Command
                 }
 
                 string path = Path.Combine(output, Path.GetFileNameWithoutExtension(file) + ".npy");
-                Npy.Write(path, values, transpose ? [mels, frames] : [frames, mels]);
+                NpyFile.Write(path, values, transpose ? [mels, frames] : [frames, mels]);
                 written.Add((JsonNode)new JsonObject
                 {
                     ["file"] = file, ["out"] = path, ["frames"] = frames, ["mels"] = mels, ["seconds"] = Math.Round(audio.Duration.TotalSeconds, 4),

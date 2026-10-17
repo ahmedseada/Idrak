@@ -94,10 +94,10 @@ internal static partial class Tests
 
             string srt = Path.Combine(root, "talk.srt"), vtt = Path.Combine(root, "talk.vtt");
             Check(AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "-o", srt, "-d", d).Code == 0, "-o talk.srt");
-            Check(File.ReadAllText(srt) == TranscribeCommand.Subtitles(timed, vtt: false), $"the SRT from the timestamped segments: {File.ReadAllText(srt)}");
+            Check(File.ReadAllText(srt) == Subtitles.Srt(timed), $"the SRT from the timestamped segments: {File.ReadAllText(srt)}");
             var vttRun = AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "--format", "vtt", "-o", vtt, "-d", d);
             string cues = File.ReadAllText(vtt);
-            Check(vttRun.Code == 0 && cues.StartsWith("WEBVTT\n\n", StringComparison.Ordinal) && cues == TranscribeCommand.Subtitles(timed, vtt: true), $"--format vtt: {vttRun.Err} {cues}");
+            Check(vttRun.Code == 0 && cues.StartsWith("WEBVTT\n\n", StringComparison.Ordinal) && cues == Subtitles.Vtt(timed), $"--format vtt: {vttRun.Err} {cues}");
             foreach (var segment in timed.Segments.Where(s => s.Text.Trim().Length > 0))
             {
                 long ms = (long)Math.Round(segment.Start * 1000);
@@ -335,7 +335,7 @@ internal static partial class Tests
             var reference = ReadNpyFloat32(AudioData("features/log-mel.npy"));         // torch's [80, 3000]
             float largest = reference.Max(MathF.Abs);
             var mel = AudioCliJson("data", "mel", AudioData("wav/pcm16.wav"), "-o", root, "--preprocessor", AudioData("tiny-whisper/preprocessor_config.json"), "-d", device.ToString());
-            var (values, shape) = Idrak.Cli.Commands.Run.Npy.ReadFloat32(Path.Combine(root, "pcm16.npy"));
+            var (values, shape) = NpyFile.ReadFloat32(Path.Combine(root, "pcm16.npy"));
             Check(shape.SequenceEqual([3000, 80]) && (int)mel["files"]![0]!["frames"]! == 3000, $"[frames, mels]: [{string.Join(", ", shape)}]");
             var transposed = new float[values.Length];
             for (int f = 0; f < 3000; f++)
@@ -352,7 +352,7 @@ internal static partial class Tests
 
             string other = Path.Combine(root, "t");
             Check(AudioCli("data", "mel", AudioData("wav/pcm16.wav"), "-o", other, "--preprocessor", AudioData("tiny-whisper"), "--transpose", "-d", device.ToString()).Code == 0, "--transpose");
-            var (direct, directShape) = Idrak.Cli.Commands.Run.Npy.ReadFloat32(Path.Combine(other, "pcm16.npy"));
+            var (direct, directShape) = NpyFile.ReadFloat32(Path.Combine(other, "pcm16.npy"));
             Check(directShape.SequenceEqual([80, 3000]), $"[mels, frames]: [{string.Join(", ", directShape)}]");
             AssertClose(reference, direct, 1e-4f * largest, "data mel --transpose against transformers' input_features");
             var bad = AudioCli("data", "mel", AudioData("wav/pcm16.wav"), "-o", other, "--mel-scale", "bark");

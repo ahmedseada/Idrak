@@ -347,43 +347,10 @@ internal sealed class TranscribeCommand : Command
     private static string Render(string format, Transcription t, JsonObject json) => format switch
     {
         "json" => json.ToJsonString(CommandContext.JsonOutput) + "\n",
-        "srt" => Subtitles(t, vtt: false),
-        "vtt" => Subtitles(t, vtt: true),
+        "srt" => Subtitles.Srt(t),
+        "vtt" => Subtitles.Vtt(t),
         _ => t.Text.Trim() + "\n",
     };
-
-    /// <summary>
-    /// The segments as SubRip (numbered cues, HH:MM:SS,mmm) or WebVTT (a WEBVTT header, HH:MM:SS.mmm); segments without
-    /// text are left out.
-    /// </summary>
-    internal static string Subtitles(Transcription transcription, bool vtt)
-    {
-        var text = new StringBuilder(vtt ? "WEBVTT\n\n" : "");
-        int cue = 0;
-        foreach (var segment in transcription.Segments)
-        {
-            string words = segment.Text.Trim();
-            if (words.Length == 0)
-            {
-                continue;
-            }
-
-            if (!vtt)
-            {
-                text.Append(++cue).Append('\n');
-            }
-
-            text.Append(Time(segment.Start, vtt)).Append(" --> ").Append(Time(Math.Max(segment.Start, segment.End), vtt)).Append('\n').Append(words).Append("\n\n");
-        }
-
-        return text.ToString();
-    }
-
-    private static string Time(double seconds, bool vtt)
-    {
-        long ms = (long)Math.Round(Math.Max(0, seconds) * 1000);
-        return string.Create(CultureInfo.InvariantCulture, $"{ms / 3_600_000:00}:{ms / 60_000 % 60:00}:{ms / 1000 % 60:00}{(vtt ? '.' : ',')}{ms % 1000:000}");
-    }
 
     // UTF-8 without a BOM, whatever the console's code page.
     private static void Write(string path, string content)

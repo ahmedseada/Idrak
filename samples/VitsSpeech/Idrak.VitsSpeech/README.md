@@ -56,8 +56,8 @@ fine-tune (route C, below).
 
 VCTK's and LJSpeech's checkpoints set `phonemize` in tokenizer_config.json: they were trained on espeak's IPA, as
 transformers' `VitsTokenizer` makes it through the `phonemizer` package. `VitsTokenizer` phonemizes such text first
-through `TextPhonemizers`: built in, `EspeakNgPhonemizer` runs the **espeak-ng program, which you install** (the
-plug-in carries none): `espeak-ng -q --ipa -v LANGUAGE` on each stretch of text between punctuation, the marks kept in
+through the library's `TextPhonemizers` (Idrak.Audio): built in, `EspeakNgPhonemizer` runs the **espeak-ng program, which
+you install** (the library carries none): `espeak-ng -q --ipa -v LANGUAGE` on each stretch of text between punctuation, the marks kept in
 place (the package's `preserve_punctuation`), white space collapsed. The program is `IDRAK_ESPEAK` (its full path) or
 `espeak-ng` on the PATH; the voice is tokenizer_config.json's `language` (else en-us, what transformers asks for), or
 `IDRAK_ESPEAK_VOICE`. Register another phonemizer (`ITextPhonemizer`) with `TextPhonemizers.Register`, and pick one by
@@ -76,14 +76,15 @@ deterministic duration predictor) give transformers' waveform of each speaker wi
 
 MMS-TTS checkpoints for languages written in non-Latin scripts (Arabic among them: `facebook/mms-tts-ara`) set
 `is_uroman` in `tokenizer_config.json`: they were trained on text romanised by uroman, and expect the same at
-inference. `VitsTokenizer` romanises such text first, with the romanizer `TextRomanizers` holds for its script
-(`VitsTokenizer.Romanizer` names one instead):
+inference. `VitsTokenizer` romanises such text first, with the romanizer the library's `TextRomanizers` (Idrak.Audio) holds
+for its script (`VitsTokenizer.Romanizer` names one instead):
 
 - **"uroman-arabic"** (built in, `UromanArabicRomanizer`): uroman's romanisation of the Arabic script, every code point
   of the Arabic blocks and presentation forms plus the three sequences uroman romanises together without a language
   code (alef + fathatan "an", maddah + alef, a word-initial alef + Persian yeh). `tools/audio/make_uroman_table.py`
-  generates the table (`UromanArabicTable.cs`) and the cases `tests/Idrak.Tests/data/audio/uroman/arabic.json` from
-  uroman itself; the test checks the plug-in gives uroman's output on every case. So "مرحبا بكم في إدراك" reads
+  generates the table (`src/Idrak.Audio/SpeechText/UromanArabicTable.cs`) and the cases
+  `tests/Idrak.Tests/data/audio/uroman/arabic.json` from uroman itself; the test checks the library gives uroman's output
+  on every case. So "مرحبا بكم في إدراك" reads
   "mrhba bkm fy idrak", as the model was trained.
 - A script no registered romanizer covers is refused, naming `TextRomanizers.Register`: an app registers an
   `ITextRomanizer` for it (asked before the earlier ones), or gives Latin text.
