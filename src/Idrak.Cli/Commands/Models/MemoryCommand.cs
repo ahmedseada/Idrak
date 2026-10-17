@@ -29,6 +29,8 @@ internal sealed class MemoryCommand : Command
           -w, --weights F  weight formats to show (repeatable or comma-separated; default float32 and every registered
                            packed format: int8, int4, bfloat16, ...)
           -k, --kv F       KV cache formats (default every registered one: float32, int8, bfloat16, ...)
+          --head-weights F the output head's format beside -w when a loaded model is measured (bf16: the checkpoint's own
+                           scores, less memory than int8/int4 heads)
               --context N  the context length (default the model's longest)
               --batch N    sequences decoded together (default 1)
               --memory SIZE also compare with this much memory (e.g. 8G, 512M)

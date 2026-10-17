@@ -23,7 +23,7 @@ internal sealed class DataFontsCommand : Command
     public override string Summary => "Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz";
 
     public override string Usage => """
-        DIR|FILE... [--language CODE] [--script SCRIPT] [--lines FILE] [--write-lines FILE] [--harfbuzz REFS.json]
+        FONTS... [--language CODE] [--script NAME] [--lines FILE] [--write-lines OUT] [--harfbuzz JSON]
 
         Reads every font (.ttf, .otf, .ttc, folders searched through) and says for each: whether it reads, which
         characters of the sample it has no glyph for (a page with one of them is left out), its layout features for the

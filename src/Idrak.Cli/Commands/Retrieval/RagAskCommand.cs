@@ -26,6 +26,7 @@ internal sealed class RagAskCommand : Command
         "      --index INDEX     the index file (required)\n" +
         "  -m, --model MODEL     the chat model (required)\n" +
         "  -w, --weights FORMAT  its weight format; -k, --kv FORMAT: its key/value cache format\n" +
+        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory)\n" +
         "      --context N       its context length; --adapter DIR: merge an adapter first\n" +
         "      --top N           passages shown to the model (default 4)\n" +
         "  -s, --system TEXT     a system message\n" +

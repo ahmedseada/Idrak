@@ -34,6 +34,7 @@ internal sealed class BenchCommand : Command
         "GFLOP/s (2 x parameters per token) and the memory used on the device. Without one: the kernel benchmarks.\n\n" +
         "Options:\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (the model's weights; the gemv kernels)\n" +
+        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "  -k, --kv FORMAT       the key/value cache format (float32, int8, bfloat16 or a registered one)\n" +
         "      --context N       the model's context length\n" +
         "      --adapter DIR     merge a LoRA or DoRA adapter first\n" +

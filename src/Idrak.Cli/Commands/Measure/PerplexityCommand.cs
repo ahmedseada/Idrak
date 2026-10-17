@@ -25,6 +25,7 @@ internal sealed class PerplexityCommand : Command
         "the first of a window is scored. Lower is better; compare runs on the same text and window.\n\n" +
         "Options:\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format\n" +
+        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "      --context N       the model's context length; --adapter DIR: merge an adapter first\n" +
         "      --window N        tokens per window (default the context, at most 1024)\n" +
         "      --max-tokens N    score only the first N tokens of the text\n\n" +

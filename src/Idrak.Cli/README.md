@@ -406,7 +406,7 @@ subcommands work on local files.
 
 | Command | What it does |
 |---|---|
-| `idrak data` | Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, fonts, synth) |
+| `idrak data` | Datasets: show, count, download, build, preview, stats, convert, split, mix, text, fonts, synth, audio, mel |
 | `idrak data preview` | First rows, columns and their types of a data file (Parquet, JSON Lines, CSV) |
 | `idrak data validate` | Check rows against the shape a command expects (chat, preference or table), with the first bad rows |
 | `idrak data stats` | Row lengths in characters, words and tokens, a length histogram, and the rows over a context length |
