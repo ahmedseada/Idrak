@@ -110,10 +110,10 @@ internal static class DecoderBench
         }
     }
 
-    // The message up to its first colon or full stop: the device and "is out of memory", not the whole remedy.
+    // The message up to its first ": " (the device and "is out of memory"), not the counts and the remedy.
     private static string FirstClause(string message)
     {
-        int cut = message.IndexOfAny([':', '.']);
+        int cut = message.IndexOf(": ", StringComparison.Ordinal);
         return cut > 0 ? message[..cut] : message;
     }
 
