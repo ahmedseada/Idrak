@@ -182,6 +182,24 @@ internal static partial class VulkanKernels
 
     private static Val Gelu(KernelBuilder k, Val x) => 0.5f * x * (1f + Tanh(k, GeluK * k.Fma(GeluC * x * x, x, x)));
 
+    // erf within 1.5e-7 (Abramowitz and Stegun 7.1.26): sign(z) · (1 − t · poly(t) · e^(−z²)), t = 1 / (1 + p |z|).
+    private static Val Erf(KernelBuilder k, Val z)
+    {
+        var a = k.Abs(z);
+        var t = 1f / k.Fma(a, k.Float(0.3275911f), k.Float(1f));
+        var poly = k.Fma(t, k.Float(1.061405429f), k.Float(-1.453152027f));
+        poly = k.Fma(poly, t, k.Float(1.421413741f));
+        poly = k.Fma(poly, t, k.Float(-0.284496736f));
+        poly = k.Fma(poly, t, k.Float(0.254829592f));
+        var e = 1f - poly * t * k.Exp(-(a * a));
+        return k.Select(z < 0f, -e, e);
+    }
+
+    // The exact GELU, 0.5 x (1 + erf(x/√2)), and its slope 0.5 (1 + erf(x/√2)) + x e^(-x²/2) / √(2π).
+    private static Val GeluErf(KernelBuilder k, Val x) => 0.5f * x * (1f + Erf(k, x * 0.70710678f));
+
+    private static Val GeluErfSlope(KernelBuilder k, Val x) => 0.5f * (1f + Erf(k, x * 0.70710678f)) + x * 0.3989422804f * k.Exp(-0.5f * x * x);
+
     // d gelu(x) / dx.
     private static Val GeluSlope(KernelBuilder k, Val x)
     {
@@ -236,6 +254,7 @@ internal static partial class VulkanKernels
                         UnaryOp.Cos => k.Cos(Reduced(k, v)),
                         UnaryOp.Silu => v * Sigmoid(k, v),
                         UnaryOp.Sign => k.Select(v > 0f, k.Float(1f), k.Select(v < 0f, k.Float(-1f), v)),
+                        UnaryOp.GeluErf => GeluErf(k, v),
                         _ => Gelu(k, v),
                     };
                 });
@@ -269,6 +288,7 @@ internal static partial class VulkanKernels
                         UnaryOp.Cos => dx[i] - g * k.Sin(Reduced(k, x[i])),
                         UnaryOp.Silu => k.Fma(g, SiluSlope(k, x[i]), dx[i]),
                         UnaryOp.Sign => dx[i],
+                        UnaryOp.GeluErf => k.Fma(g, GeluErfSlope(k, x[i]), dx[i]),
                         _ => k.Fma(g, GeluSlope(k, x[i]), dx[i]),
                     };
                     dx[i] = d;

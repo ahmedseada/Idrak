@@ -160,7 +160,7 @@ internal sealed partial class CpuBackend : Backend
             case UnaryOp.Exp: Run(new ExpLoop(D(x), D(y)), n); break;
             case UnaryOp.Log: Run(new LogLoop(D(x), D(y)), n); break;
             case UnaryOp.Gelu: Run(new GeluLoop(D(x), D(y)), n); break;
-            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathLoop(op, D(x), D(y)), n); break;
+            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign or UnaryOp.GeluErf: Run(new MathLoop(op, D(x), D(y)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }
@@ -177,7 +177,7 @@ internal sealed partial class CpuBackend : Backend
             case UnaryOp.Exp: Run(new MulAddLoop(D(dy), D(y), D(dx)), n); break;
             case UnaryOp.Log: Run(new LogBackwardLoop(D(x), D(dy), D(dx)), n); break;
             case UnaryOp.Gelu: Run(new GeluBackwardLoop(D(x), D(dy), D(dx)), n); break;
-            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathBackwardLoop(op, D(x), D(y), D(dy), D(dx)), n); break;
+            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign or UnaryOp.GeluErf: Run(new MathBackwardLoop(op, D(x), D(y), D(dy), D(dx)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }

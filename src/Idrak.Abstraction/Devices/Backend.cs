@@ -50,6 +50,9 @@ public enum UnaryOp
 
     /// <summary>-1, 0 or 1 (its gradient is zero).</summary>
     Sign,
+
+    /// <summary>GELU, exact: 0.5·x·(1 + erf(x/√2)), the error function within 1.5e-7 (Abramowitz and Stegun 7.1.26).</summary>
+    GeluErf,
 }
 
 /// <summary>An element-wise function of two inputs (<see cref="Backend.Binary"/>, <see cref="Backend.ExtremumBackward"/>).</summary>

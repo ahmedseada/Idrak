@@ -154,7 +154,7 @@ public sealed partial class Tensor
 
     // ---------------------------------------------------------------- implementations
 
-    private static readonly string[] UnaryNames = ["sigmoid", "tanh", "relu", "square", "abs", "exp", "log", "gelu", "sqrt", "sin", "cos", "silu", "sign"];
+    private static readonly string[] UnaryNames = ["sigmoid", "tanh", "relu", "square", "abs", "exp", "log", "gelu", "sqrt", "sin", "cos", "silu", "sign", "gelu_erf"];
 
     private Tensor Unary(UnaryOp op)
     {

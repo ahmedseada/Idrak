@@ -91,14 +91,14 @@ public sealed class ExactGELU : Module
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) => Apply(input);
 
-    /// <summary>0.5 · x · (1 + erf(x / √2)) of <paramref name="x"/>.</summary>
+    /// <summary>0.5 · x · (1 + erf(x / √2)) of <paramref name="x"/>: one kernel (<see cref="Tensor.GeluErf"/>), its erf within 1.5e-7.</summary>
     public static Tensor Apply(Tensor x)
     {
         ArgumentNullException.ThrowIfNull(x);
-        return x * (Erf(x * (1f / MathF.Sqrt(2f))) * 0.5f + 0.5f);
+        return x.GeluErf();
     }
 
-    /// <summary>The error function of <paramref name="x"/>, element-wise, within 1.5e-7 (Abramowitz and Stegun 7.1.26).</summary>
+    /// <summary>The error function of <paramref name="x"/>, element-wise, within 1.5e-7 (Abramowitz and Stegun 7.1.26), composed from tensor operations.</summary>
     public static Tensor Erf(Tensor x)
     {
         ArgumentNullException.ThrowIfNull(x);

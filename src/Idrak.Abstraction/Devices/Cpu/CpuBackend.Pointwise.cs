@@ -55,10 +55,22 @@ internal sealed partial class CpuBackend
                 case UnaryOp.Sign:
                     for (int i = start; i < end; i++) y[i] = SignOf(x[i]);
                     break;
+                case UnaryOp.GeluErf:
+                    for (int i = start; i < end; i++) y[i] = 0.5f * x[i] * (1f + ErfOf(x[i] * 0.70710678f));
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(op));
             }
         }
+    }
+
+    /// <summary>erf(z) within 1.5e-7 (Abramowitz and Stegun 7.1.26): sign(z) · (1 − t · poly(t) · e^(−z²)), t = 1 / (1 + p |z|).</summary>
+    internal static float ErfOf(float z)
+    {
+        float a = MathF.Abs(z), t = 1f / (1f + 0.3275911f * a);
+        float poly = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;
+        float e = 1f - poly * MathF.Exp(-a * a);
+        return z < 0 ? -e : e;
     }
 
     // dx += dy · op'(x); sqrt's slope comes from y = sqrt(x), sign's is zero.
@@ -86,6 +98,14 @@ internal sealed partial class CpuBackend
 
                     break;
                 case UnaryOp.Sign:
+                    break;
+                case UnaryOp.GeluErf:
+                    for (int i = start; i < end; i++)
+                    {
+                        float v = x[i];                                           // 0.5 (1 + erf(x/√2)) + x e^(-x²/2) / √(2π)
+                        dx[i] += dy[i] * (0.5f * (1f + ErfOf(v * 0.70710678f)) + v * 0.3989422804f * MathF.Exp(-0.5f * v * v));
+                    }
+
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(op));
