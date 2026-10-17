@@ -2166,6 +2166,120 @@ public abstract partial class Backend
         CpuBackend.Instance.GroupReduce(h[a], h.Maybe(b), h[sumA], h.Maybe(sumAB), outer, groups, inner);
     }
 
+    /// <summary>
+    /// Weight normalization along the first axis: weight[r, :] = gain[r] · direction[r, :] / ‖direction[r, :]‖ over rows rows
+    /// of columns elements (the row norm and the scaling in one pass; no squared copy or row sums kept).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.WeightNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>WeightNormKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void WeightNorm(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            WeightNormKernel(gain, direction, weight, rows, columns);
+        }
+        else
+        {
+            WeightNormRegistered(gain, direction, weight, rows, columns);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormRegistered(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.WeightNorm) is OperationKernels.WeightNorm kernel)
+        {
+            kernel(this, gain, direction, weight, rows, columns);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.WeightNorm))
+        {
+            WeightNormKernel(gain, direction, weight, rows, columns);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.WeightNorm);
+        try
+        {
+            WeightNormKernel(gain, direction, weight, rows, columns);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            WeightNormOnHost(gain, direction, weight, rows, columns);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of WeightNorm (the default body of WeightNormKernel), for RetryOnHost.
+    private void WeightNormOnHost(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        using var h = new HostCall(this, "WeightNorm");
+        CpuBackend.Instance.WeightNorm(h[gain], h[direction], h[weight], rows, columns);
+    }
+
+    /// <summary>
+    /// The gradients of WeightNormKernel from dweight: with n = ‖direction[r, :]‖ and dot = Σ dweight · direction over row r,
+    /// dgain[r] += dot / n and ddirection[r, :] += gain[r] / n · (dweight − direction · dot / n²). Either gradient may be null.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.WeightNormBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>WeightNormBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void WeightNormBackward(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+        else
+        {
+            WeightNormBackwardRegistered(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormBackwardRegistered(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.WeightNormBackward) is OperationKernels.WeightNormBackward kernel)
+        {
+            kernel(this, gain, direction, dweight, dgain, ddirection, rows, columns);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.WeightNormBackward))
+        {
+            WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.WeightNormBackward);
+        try
+        {
+            WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            WeightNormBackwardOnHost(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of WeightNormBackward (the default body of WeightNormBackwardKernel), for RetryOnHost.
+    private void WeightNormBackwardOnHost(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        using var h = new HostCall(this, "WeightNormBackward");
+        CpuBackend.Instance.WeightNormBackward(h[gain], h[direction], h[dweight], h.Maybe(dgain), h.Maybe(ddirection), rows, columns);
+    }
+
     /// <summary>y = 1 / sqrt(x + eps).</summary>
     /// <remarks>Runs <see cref="Ops.InvSqrt"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>InvSqrtKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

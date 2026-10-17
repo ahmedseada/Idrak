@@ -81,6 +81,20 @@ internal sealed unsafe partial class CudaBackend
         Launch1D(K("group_scale_shift_f32"), n, P(x), Pn(scale), Pn(shift), P(y), U(groups), U(inner), U(flags), U(n));
     }
 
+    public override void WeightNormKernel(Storage gain, Storage direction, Storage weight, int rows, int columns) =>
+        LaunchRows(K("weight_norm_f32"), rows, P(gain), P(direction), P(weight), U(columns), U(rows));
+
+    public override void WeightNormBackwardKernel(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        int flags = (dgain is null ? 0 : 1) | (ddirection is null ? 0 : 2);
+        if (flags == 0)
+        {
+            return;
+        }
+
+        LaunchRows(K("weight_norm_bwd_f32"), rows, P(gain), P(direction), P(dweight), P(dgain ?? gain), P(ddirection ?? direction), U(columns), U(flags), U(rows));
+    }
+
     public override void GroupReduceKernel(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
         if (groups <= 0)

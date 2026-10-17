@@ -63,108 +63,110 @@ internal static class OperationIndex
     public const int NormBackward = 47;
     public const int GroupScaleShift = 48;
     public const int GroupReduce = 49;
-    public const int InvSqrt = 50;
-    public const int Gather = 51;
-    public const int GatherBFloat16 = 52;
-    public const int GatherBFloat16Columns = 53;
-    public const int OneHot = 54;
-    public const int ScatterAdd = 55;
-    public const int Im2Col = 56;
-    public const int Col2Im = 57;
-    public const int MaxPool = 58;
-    public const int MaxPoolBackward = 59;
-    public const int MaxPoolBackward2 = 60;
-    public const int Convolution = 61;
-    public const int ConvolutionBackwardInput = 62;
-    public const int ConvolutionBackwardWeight = 63;
-    public const int AvgPool = 64;
-    public const int AvgPoolBackward = 65;
-    public const int ResizeNormalize = 66;
-    public const int Interpolate2d = 67;
-    public const int Interpolate2dBackward = 68;
-    public const int AdaptiveAvgPool = 69;
-    public const int AdaptiveAvgPoolBackward = 70;
-    public const int AdaptiveMaxPool = 71;
-    public const int AdaptiveMaxPoolBackward = 72;
-    public const int CtcLoss = 73;
-    public const int CtcLossBackward = 74;
-    public const int LstmCell = 75;
-    public const int LstmCellBackward = 76;
-    public const int GruCell = 77;
-    public const int GruCellBackward = 78;
-    public const int LstmStep = 79;
-    public const int LstmStepBackward = 80;
-    public const int GruStep = 81;
-    public const int GruStepBackward = 82;
-    public const int LstmSequence = 83;
-    public const int LstmSequenceBackward = 84;
-    public const int GruSequence = 85;
-    public const int GruSequenceBackward = 86;
-    public const int BoxIouLoss = 87;
-    public const int BoxIouLossBackward = 88;
-    public const int SigmoidFocalLoss = 89;
-    public const int SigmoidFocalLossBackward = 90;
-    public const int Permute = 91;
-    public const int SumAxis = 92;
-    public const int BroadcastAxis = 93;
-    public const int SgdStep = 94;
-    public const int AdamStep = 95;
-    public const int AdamStep8Bit = 96;
-    public const int SumSquares = 97;
-    public const int FusedAdamW = 98;
-    public const int ClipFactor = 99;
-    public const int Dropout = 100;
-    public const int DropoutBackward = 101;
-    public const int ScaleMaskSoftmax = 102;
-    public const int LayerNormFused = 103;
-    public const int LayerNormTrain = 104;
-    public const int LayerNormBackward = 105;
-    public const int BiasGelu = 106;
-    public const int Int8MatMul = 107;
-    public const int BFloat16MatMul = 108;
-    public const int BFloat16Dequantize = 109;
-    public const int Float16MatMul = 110;
-    public const int Float16Dequantize = 111;
-    public const int PackBFloat16 = 112;
-    public const int Int8Dequantize = 113;
-    public const int Int4MatMul = 114;
-    public const int Int4Dequantize = 115;
-    public const int RmsNorm = 116;
-    public const int RmsNormBackward = 117;
-    public const int Rope = 118;
-    public const int RmsNormAffine = 119;
-    public const int AddRmsNormAffine = 120;
-    public const int RmsNormRope = 121;
-    public const int RmsNormRopePair = 122;
-    public const int NormRopeHeads = 123;
-    public const int SoftmaxCrossEntropyRows = 124;
-    public const int GatedActivation = 125;
-    public const int GatedActivationBackward = 126;
-    public const int GatedActivationPacked = 127;
-    public const int GatedActivationBackwardPacked = 128;
-    public const int KeyValueWriteInt8 = 129;
-    public const int AttentionScoresInt8 = 130;
-    public const int AttentionContextInt8 = 131;
-    public const int AttentionDecode = 132;
-    public const int AttentionInt8 = 133;
-    public const int AttentionBFloat16 = 134;
-    public const int KeyValueWriteBFloat16 = 135;
-    public const int AttentionTiledBackward = 136;
-    public const int AttentionSegmented = 137;
-    public const int AttentionRows = 138;
-    public const int AttentionSegmentedBackward = 139;
-    public const int AttentionTiled = 140;
-    public const int AttentionSpans = 141;
-    public const int AttentionSpansStrided = 142;
-    public const int AttentionSpansBackward = 143;
-    public const int DecoderMask = 144;
-    public const int KeyValueWrite = 145;
-    public const int SampleRows = 146;
-    public const int PenalizeRows = 147;
-    public const int HistoryPush = 148;
+    public const int WeightNorm = 50;
+    public const int WeightNormBackward = 51;
+    public const int InvSqrt = 52;
+    public const int Gather = 53;
+    public const int GatherBFloat16 = 54;
+    public const int GatherBFloat16Columns = 55;
+    public const int OneHot = 56;
+    public const int ScatterAdd = 57;
+    public const int Im2Col = 58;
+    public const int Col2Im = 59;
+    public const int MaxPool = 60;
+    public const int MaxPoolBackward = 61;
+    public const int MaxPoolBackward2 = 62;
+    public const int Convolution = 63;
+    public const int ConvolutionBackwardInput = 64;
+    public const int ConvolutionBackwardWeight = 65;
+    public const int AvgPool = 66;
+    public const int AvgPoolBackward = 67;
+    public const int ResizeNormalize = 68;
+    public const int Interpolate2d = 69;
+    public const int Interpolate2dBackward = 70;
+    public const int AdaptiveAvgPool = 71;
+    public const int AdaptiveAvgPoolBackward = 72;
+    public const int AdaptiveMaxPool = 73;
+    public const int AdaptiveMaxPoolBackward = 74;
+    public const int CtcLoss = 75;
+    public const int CtcLossBackward = 76;
+    public const int LstmCell = 77;
+    public const int LstmCellBackward = 78;
+    public const int GruCell = 79;
+    public const int GruCellBackward = 80;
+    public const int LstmStep = 81;
+    public const int LstmStepBackward = 82;
+    public const int GruStep = 83;
+    public const int GruStepBackward = 84;
+    public const int LstmSequence = 85;
+    public const int LstmSequenceBackward = 86;
+    public const int GruSequence = 87;
+    public const int GruSequenceBackward = 88;
+    public const int BoxIouLoss = 89;
+    public const int BoxIouLossBackward = 90;
+    public const int SigmoidFocalLoss = 91;
+    public const int SigmoidFocalLossBackward = 92;
+    public const int Permute = 93;
+    public const int SumAxis = 94;
+    public const int BroadcastAxis = 95;
+    public const int SgdStep = 96;
+    public const int AdamStep = 97;
+    public const int AdamStep8Bit = 98;
+    public const int SumSquares = 99;
+    public const int FusedAdamW = 100;
+    public const int ClipFactor = 101;
+    public const int Dropout = 102;
+    public const int DropoutBackward = 103;
+    public const int ScaleMaskSoftmax = 104;
+    public const int LayerNormFused = 105;
+    public const int LayerNormTrain = 106;
+    public const int LayerNormBackward = 107;
+    public const int BiasGelu = 108;
+    public const int Int8MatMul = 109;
+    public const int BFloat16MatMul = 110;
+    public const int BFloat16Dequantize = 111;
+    public const int Float16MatMul = 112;
+    public const int Float16Dequantize = 113;
+    public const int PackBFloat16 = 114;
+    public const int Int8Dequantize = 115;
+    public const int Int4MatMul = 116;
+    public const int Int4Dequantize = 117;
+    public const int RmsNorm = 118;
+    public const int RmsNormBackward = 119;
+    public const int Rope = 120;
+    public const int RmsNormAffine = 121;
+    public const int AddRmsNormAffine = 122;
+    public const int RmsNormRope = 123;
+    public const int RmsNormRopePair = 124;
+    public const int NormRopeHeads = 125;
+    public const int SoftmaxCrossEntropyRows = 126;
+    public const int GatedActivation = 127;
+    public const int GatedActivationBackward = 128;
+    public const int GatedActivationPacked = 129;
+    public const int GatedActivationBackwardPacked = 130;
+    public const int KeyValueWriteInt8 = 131;
+    public const int AttentionScoresInt8 = 132;
+    public const int AttentionContextInt8 = 133;
+    public const int AttentionDecode = 134;
+    public const int AttentionInt8 = 135;
+    public const int AttentionBFloat16 = 136;
+    public const int KeyValueWriteBFloat16 = 137;
+    public const int AttentionTiledBackward = 138;
+    public const int AttentionSegmented = 139;
+    public const int AttentionRows = 140;
+    public const int AttentionSegmentedBackward = 141;
+    public const int AttentionTiled = 142;
+    public const int AttentionSpans = 143;
+    public const int AttentionSpansStrided = 144;
+    public const int AttentionSpansBackward = 145;
+    public const int DecoderMask = 146;
+    public const int KeyValueWrite = 147;
+    public const int SampleRows = 148;
+    public const int PenalizeRows = 149;
+    public const int HistoryPush = 150;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 149;
+    public const int Count = 151;
 }
 
 /// <summary>
@@ -533,6 +535,20 @@ public static class OperationKernels
     /// sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.
     /// </summary>
     public delegate void GroupReduce(Backend backend, Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.WeightNorm"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Weight normalization along the first axis: weight[r, :] = gain[r] · direction[r, :] / ‖direction[r, :]‖ over rows rows
+    /// of columns elements (the row norm and the scaling in one pass; no squared copy or row sums kept).
+    /// </summary>
+    public delegate void WeightNorm(Backend backend, Storage gain, Storage direction, Storage weight, int rows, int columns);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.WeightNormBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradients of WeightNormKernel from dweight: with n = ‖direction[r, :]‖ and dot = Σ dweight · direction over row r,
+    /// dgain[r] += dot / n and ddirection[r, :] += gain[r] / n · (dweight − direction · dot / n²). Either gradient may be null.
+    /// </summary>
+    public delegate void WeightNormBackward(Backend backend, Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns);
 
     /// <summary>
     /// A kernel for <see cref="Ops.InvSqrt"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1696,6 +1712,20 @@ public static partial class Ops
         new("GroupReduce", "GroupReduceKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GroupReduce, typeof(OperationKernels.GroupReduce), KernelSource.Host);
 
     /// <summary>
+    /// Weight normalization along the first axis: weight[r, :] = gain[r] · direction[r, :] / ‖direction[r, :]‖ over rows rows
+    /// of columns elements (the row norm and the scaling in one pass; no squared copy or row sums kept).
+    /// </summary>
+    public static readonly Operation WeightNorm =
+        new("WeightNorm", "WeightNormKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.WeightNorm, typeof(OperationKernels.WeightNorm), KernelSource.Host);
+
+    /// <summary>
+    /// The gradients of WeightNormKernel from dweight: with n = ‖direction[r, :]‖ and dot = Σ dweight · direction over row r,
+    /// dgain[r] += dot / n and ddirection[r, :] += gain[r] / n · (dweight − direction · dot / n²). Either gradient may be null.
+    /// </summary>
+    public static readonly Operation WeightNormBackward =
+        new("WeightNormBackward", "WeightNormBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32", OperationIndex.WeightNormBackward, typeof(OperationKernels.WeightNormBackward), KernelSource.Host);
+
+    /// <summary>
     /// y = 1 / sqrt(x + eps).
     /// </summary>
     public static readonly Operation InvSqrt =
@@ -2541,6 +2571,8 @@ public static partial class Ops
         NormBackward,
         GroupScaleShift,
         GroupReduce,
+        WeightNorm,
+        WeightNormBackward,
         InvSqrt,
         Gather,
         GatherBFloat16,

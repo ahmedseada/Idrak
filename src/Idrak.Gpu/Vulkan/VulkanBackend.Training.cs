@@ -67,6 +67,36 @@ internal sealed partial class VulkanBackend
         GroupSums(1, a, b ?? a, outer, groups, inner, sumA, sumAB ?? sumA, sumA, sumAB is null ? 1 : 3, 0f);
     }
 
+    public override void WeightNormKernel(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        if (!Fit(gain, direction, weight))
+        {
+            base.WeightNormKernel(gain, direction, weight, rows, columns);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[8];
+        Rows("weight_norm", rows, columns, [gain, direction, weight], new Push(b).I(rows).I(columns).Bytes);
+    }
+
+    public override void WeightNormBackwardKernel(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        int flags = (dgain is null ? 0 : 1) | (ddirection is null ? 0 : 2);
+        if (flags == 0)
+        {
+            return;
+        }
+
+        if (!Fit(gain, direction, dweight, dgain ?? gain, ddirection ?? direction))
+        {
+            base.WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[12];
+        Rows("weight_norm_backward", rows, columns, [gain, direction, dweight, dgain ?? gain, ddirection ?? direction], new Push(b).I(rows).I(columns).I(flags).Bytes);
+    }
+
     public override void NormApplyKernel(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
         long n = (long)outer * groups * inner;

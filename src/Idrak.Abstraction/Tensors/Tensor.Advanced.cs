@@ -527,6 +527,35 @@ public sealed partial class Tensor
         return Traced("group_affine", y, start);
     }
 
+    /// <summary>
+    /// Weight normalization along the first axis (PyTorch's <c>weight_norm</c>, dim 0): <paramref name="direction"/>
+    /// [rows, …] with each row scaled by <paramref name="gain"/>'s element for it over the row's norm, g · v / ‖v‖. The gain
+    /// has one element per row, in any shape. One kernel forward and one back (both gradients at once): no squared copy,
+    /// row sums or scaled copy of the directions, where the composition from element-wise operations made five.
+    /// </summary>
+    public static Tensor WeightNorm(Tensor gain, Tensor direction)
+    {
+        gain.ThrowIfDisposed();
+        direction.ThrowIfDisposed();
+        CheckSameDevice(gain, direction);
+        if (direction._shape.Length == 0 || gain.Size != direction._shape[0])
+        {
+            throw new ArgumentException($"WeightNorm scales the rows of directions of shape {FormatShape(direction._shape)} by one gain each, but the gains have {gain.Size} elements.");
+        }
+
+        int rows = direction._shape[0], columns = rows == 0 ? 0 : direction.Size / rows;
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var weight = Empty(direction._shape, direction.Device);
+        direction.Backend.WeightNorm(gain.Storage, direction.Storage, weight.Storage, rows, columns);
+        if (WillRecord(gain, direction))
+        {
+            weight.Record("weight_norm", g => direction.Backend.WeightNormBackward(gain.Storage, direction.Storage, g.Storage,
+                gain.RequiresGrad ? gain.GradStorage() : null, direction.RequiresGrad ? direction.GradStorage() : null, rows, columns), gain, direction);
+        }
+
+        return Traced("weight_norm", weight, start);
+    }
+
     /// <summary>Embedding lookup: rows of this [vocabulary, dim] table selected by integer-valued <paramref name="indices"/>.</summary>
     public Tensor EmbeddingLookup(Tensor indices)
     {

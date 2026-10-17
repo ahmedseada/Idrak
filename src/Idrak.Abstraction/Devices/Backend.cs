@@ -1157,6 +1157,26 @@ public abstract partial class Backend
         CpuBackend.Instance.GroupReduce(h[a], h.Maybe(b), h[sumA], h.Maybe(sumAB), outer, groups, inner);
     }
 
+    /// <summary>
+    /// Weight normalization along the first axis: weight[r, :] = gain[r] · direction[r, :] / ‖direction[r, :]‖ over rows rows
+    /// of columns elements (the row norm and the scaling in one pass; no squared copy or row sums kept).
+    /// </summary>
+    public virtual void WeightNormKernel(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.WeightNorm(h[gain], h[direction], h[weight], rows, columns);
+    }
+
+    /// <summary>
+    /// The gradients of WeightNormKernel from dweight: with n = ‖direction[r, :]‖ and dot = Σ dweight · direction over row r,
+    /// dgain[r] += dot / n and ddirection[r, :] += gain[r] / n · (dweight − direction · dot / n²). Either gradient may be null.
+    /// </summary>
+    public virtual void WeightNormBackwardKernel(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.WeightNormBackward(h[gain], h[direction], h[dweight], h.Maybe(dgain), h.Maybe(ddirection), rows, columns);
+    }
+
     /// <summary>y = 1 / sqrt(x + eps).</summary>
     public virtual void InvSqrtKernel(Storage x, Storage y, int n, float eps)
     {
