@@ -86,6 +86,10 @@ internal sealed unsafe partial class VulkanBackend
     private const int TuningVersion = 1;
 
     private readonly Dictionary<VulkanTuneKey, int> _tuned = [];
+
+    // Convolution choices lent by the nearest measured class of the same shape (ComputeResources.TuningNeighbourOctaves):
+    // known for their keys, never saved and never lent on, so a choice reaches one neighbourhood and no further.
+    private readonly Dictionary<VulkanTuneKey, int> _lent = [];
     private bool _tuningLoaded;
 
     // While candidates are timed, choices they need themselves use what is already known (or the formula), so one
@@ -120,7 +124,52 @@ internal sealed unsafe partial class VulkanBackend
         lock (_tuned)
         {
             _tuned.Clear();
+            _lent.Clear();
             _tuningLoaded = true;
+        }
+    }
+
+    // A convolution's choice lent by the nearest known class of the same shape, the data-sized fields apart, within
+    // ComputeResources.TuningNeighbourOctaves of its positions (one of `candidates`); kept for the key once found.
+    private bool TryLent(VulkanTuneKey key, ReadOnlySpan<int> candidates, out int value)
+    {
+        lock (_tuned)
+        {
+            if (_lent.TryGetValue(key, out value))
+            {
+                return candidates.Contains(value);
+            }
+
+            double reach = ComputeResources.TuningNeighbourOctaves;
+            if (reach <= 0 || key.Op != VulkanTuneOp.Convolution)
+            {
+                return false;
+            }
+
+            long positions = ConvolutionShapes.Positions(key.A, key.D);
+            double best = double.MaxValue;
+            foreach (var (known, choice) in _tuned)
+            {
+                if (known.Op != key.Op || known.Variant != key.Variant || known.B != key.B || known.C != key.C || known.E != key.E || known.F != key.F
+                    || !candidates.Contains(choice))
+                {
+                    continue;
+                }
+
+                double distance = ConvolutionShapes.Octaves(positions, ConvolutionShapes.Positions(known.A, known.D));
+                if (distance <= reach && distance < best)
+                {
+                    (best, value) = (distance, choice);
+                }
+            }
+
+            if (best <= reach)
+            {
+                _lent[key] = value;
+                return true;
+            }
+
+            return false;
         }
     }
 
@@ -154,14 +203,14 @@ internal sealed unsafe partial class VulkanBackend
             return fallback;
         }
 
-        long started = Stopwatch.GetTimestamp();
+        long began = TuningBegan();
         try
         {
             return TuneTimed(key, candidates, fallback, run);
         }
         finally
         {
-            TuningMeasured(key.Op.ToString(), candidates.Length, Stopwatch.GetElapsedTime(started));
+            TuningMeasured(key.Op.ToString(), candidates.Length, began);
         }
     }
 

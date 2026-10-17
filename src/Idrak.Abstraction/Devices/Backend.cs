@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Devices.Cpu;
@@ -458,15 +459,29 @@ public abstract partial class Backend
         }
     }
 
+    [ThreadStatic]
+    private static int t_tuningDepth;
+
+    /// <summary>
+    /// Marks the start of a tuning this device measures: the timestamp <see cref="TuningMeasured"/> takes, the depth counted
+    /// so a tuning a candidate's run starts itself reports as nested.
+    /// </summary>
+    protected static long TuningBegan()
+    {
+        t_tuningDepth++;
+        return Stopwatch.GetTimestamp();
+    }
+
     /// <summary>
     /// Reports a tuning this device measured (<see cref="TuningCompleted"/>: <paramref name="operation"/> at a new shape
-    /// class, <paramref name="candidates"/> choices timed in <paramref name="duration"/>) to telemetry, while someone listens.
+    /// class, <paramref name="candidates"/> choices timed since <paramref name="began"/>) to telemetry, while someone listens.
     /// </summary>
-    protected void TuningMeasured(string operation, int candidates, TimeSpan duration)
+    protected void TuningMeasured(string operation, int candidates, long began)
     {
+        t_tuningDepth = Math.Max(0, t_tuningDepth - 1);
         if (Telemetry.IsEnabled(TelemetryLevel.Devices))
         {
-            Telemetry.Tuning(new TuningCompleted(Kind, operation, candidates, duration));
+            Telemetry.Tuning(new TuningCompleted(Kind, operation, candidates, Stopwatch.GetElapsedTime(began), t_tuningDepth > 0));
         }
     }
 

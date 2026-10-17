@@ -143,6 +143,11 @@ internal sealed partial class VulkanBackend
             return known;
         }
 
+        if (candidates.Length > 1 && TryLent(key, candidates, out int lent))
+        {
+            return lent;                                                   // the nearest measured class's choice
+        }
+
         measure = CanTune && candidates.Length > 1;
         return fallback;
     }

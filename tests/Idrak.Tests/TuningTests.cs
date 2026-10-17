@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Gpu.Cuda;
 using Idrak.Layers;
 
@@ -19,6 +20,7 @@ internal static partial class Tests
         ("tuning: decoding attention reads at least a measured number of positions per block (short caches on fewer blocks): every least chunk, split count and cache format gives the one-block result; lengths 64 ... capacity and chunk candidates", DecodeMinChunks),
         ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
         ("tuning: sizes that follow the data are keyed by size class (exact up to 32, then four classes a doubling, each within a quarter), so convolutions over batches of every width share a few measured choices", TuneSizeClasses),
+        ("tuning: a convolution at a size class none measured takes the choice of the nearest measured class of its shape within ComputeResources.TuningNeighbourOctaves (IDRAK_TUNE_NEIGHBOUR_OCTAVES) instead of measuring, a class farther away is measured, 0 measures every class, and the lent choice gives the CPU's result; each measured tuning is a TuningCompleted telemetry event", ConvNeighbourClasses),
         ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
     ];
 
@@ -96,6 +98,91 @@ internal static partial class Tests
             CudaBackend.PersistTuning = persist;
             cuda.ForgetTuning();
         }
+    }
+
+    private static void ConvNeighbourClasses(Device device)
+    {
+        if (device.Backend is not (CudaBackend or Idrak.Gpu.Vulkan.VulkanBackend))
+        {
+            return;                                                              // the CPU measures nothing
+        }
+
+        var r = new Random(23);
+        float[] values = [.. Enumerable.Range(0, 64 * 20000).Select(_ => r.NextSingle() * 2 - 1)];
+        float[] Run(Device on, int width)
+        {
+            using var layer = new Conv1d(64, 64, 5, padding: 2, device: on, random: new Random(5));
+            using var x = Tensor.From(values.AsSpan(0, 64 * width), [1, 64, width], on);
+            using var y = layer.Forward(x);
+            return y.ToArray();
+        }
+
+        var tunings = new TuningCounter();
+        var cuda = device.Backend as CudaBackend;
+        var vulkan = device.Backend as Idrak.Gpu.Vulkan.VulkanBackend;
+        void Forget()
+        {
+            cuda?.ForgetTuning();
+            vulkan?.ForgetTuning();
+        }
+
+        bool autotune = CudaBackend.Autotune, persist = CudaBackend.PersistTuning, vulkanAutotune = Idrak.Gpu.Vulkan.VulkanBackend.Autotune;
+        string? vulkanCache = Idrak.Gpu.Vulkan.VulkanBackend.TuningCacheFile;
+        double reach = ComputeResources.TuningNeighbourOctaves;
+        string cache = Path.Combine(Path.GetTempPath(), $"idrak-neighbour-tuning-{Environment.ProcessId}.tsv");
+        try
+        {
+            CudaBackend.PersistTuning = false;                                   // measure here, whatever an earlier run kept
+            CudaBackend.Autotune = true;
+            Idrak.Gpu.Vulkan.VulkanBackend.Autotune = true;
+            Idrak.Gpu.Vulkan.VulkanBackend.TuningCacheFile = cache;
+            ComputeResources.TuningNeighbourOctaves = 1;
+            Forget();
+            using (Telemetry.Subscribe(tunings))
+            {
+                Run(device, 4000);                                               // width class 4096: measured
+                int first = tunings.Convolutions;
+                if (first == 0)
+                {
+                    Console.WriteLine($"    (the shape offers one candidate on {device}: nothing to measure; skipped)");
+                    return;
+                }
+
+                var near = Run(device, 5000);                                    // class 5120, a quarter octave away: lent
+                Check(tunings.Convolutions == first, $"a class within an octave borrows the choice: {tunings.Convolutions - first} convolution tunings measured for it");
+                var cpu = Run(Device.Cpu, 5000);
+                AssertClose(near, cpu, 1e-3f * Math.Max(1f, cpu.Max(Math.Abs)), "the lent choice against the CPU");
+                Run(device, 20000);                                              // class 20480, 2.3 octaves away: measured
+                Check(tunings.Convolutions > first, "a class farther than the reach is measured");
+
+                ComputeResources.TuningNeighbourOctaves = 0;
+                Forget();
+                int before = tunings.Convolutions;
+                Run(device, 4000);
+                int measured = tunings.Convolutions;
+                Run(device, 5000);
+                Check(measured > before && tunings.Convolutions > measured, "with a reach of 0 every class is measured");
+            }
+        }
+        finally
+        {
+            CudaBackend.Autotune = autotune;
+            CudaBackend.PersistTuning = persist;
+            Idrak.Gpu.Vulkan.VulkanBackend.Autotune = vulkanAutotune;
+            Idrak.Gpu.Vulkan.VulkanBackend.TuningCacheFile = vulkanCache;
+            ComputeResources.TuningNeighbourOctaves = reach;
+            Forget();
+            File.Delete(cache);
+        }
+    }
+
+    private sealed class TuningCounter : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+        public int Convolutions { get; private set; }
+
+        public void OnTuning(in TuningCompleted e) => Convolutions += e.Operation == "Convolution" ? 1 : 0;
     }
 
     // Pure (no GPU): the comparison with an injected timer.

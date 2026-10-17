@@ -49,6 +49,12 @@ internal static class ConvolutionShapes
         return true;
     }
 
+    /// <summary>The positions of a key's data-sized fields: its images class times its height and width classes (<see cref="Key"/>'s A and D).</summary>
+    public static long Positions(int imagesClass, int heightWidth) => (long)imagesClass * (heightWidth >>> 16) * (heightWidth & 0xFFFF);
+
+    /// <summary>The distance in octaves between two keys' positions.</summary>
+    public static double Octaves(long positions, long other) => Math.Abs(Math.Log2(Math.Max(1, positions)) - Math.Log2(Math.Max(1, other)));
+
     /// <summary>A key's variant: the pass, the matrix precision (MixedPrecision), whether an activation is applied, the groups.</summary>
     public static int Variant(int pass, ConvActivation activation, int groups) =>
         pass | (int)MixedPrecision.Current << 2 | (activation == ConvActivation.None ? 0 : 1 << 4) | groups << 5;

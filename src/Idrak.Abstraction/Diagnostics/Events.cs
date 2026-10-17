@@ -271,7 +271,8 @@ public readonly record struct HostFallback(string Device, string Operation);
 /// <param name="Operation">What was tuned (a convolution's pass, a product's splits, a decoder step's tile, …).</param>
 /// <param name="Candidates">The choices measured.</param>
 /// <param name="Duration">The measuring, first runs and all.</param>
-public readonly record struct TuningCompleted(string Device, string Operation, int Candidates, TimeSpan Duration);
+/// <param name="Nested">Measured inside another tuning's candidate run (a choice that run needed itself): its time lies within the outer one's.</param>
+public readonly record struct TuningCompleted(string Device, string Operation, int Candidates, TimeSpan Duration, bool Nested);
 
 /// <summary>
 /// Published when an app's implementation of a slot threw, when <c>TelemetryLevel.Overrides</c> is enabled: under

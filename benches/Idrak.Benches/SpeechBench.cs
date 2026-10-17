@@ -53,7 +53,7 @@ internal static class SpeechBench
             };
             var census = new Census();
             var clock = Stopwatch.StartNew();
-            var progress = new StepTimes(clock, census);
+            var progress = new StepTimes(clock, census, device);
             string output = Path.Combine(work, "run-" + label.Replace(' ', '-'));
             if (Directory.Exists(output))
             {
@@ -173,11 +173,11 @@ internal static class SpeechBench
         return total / files.Length;
     }
 
-    private sealed class StepTimes(Stopwatch clock, Census census) : IProgress<SpeechTrainingProgress>
+    private sealed class StepTimes(Stopwatch clock, Census census, Device device) : IProgress<SpeechTrainingProgress>
     {
         private double _last, _lastTuning;
 
-        /// <summary>Each step: its seconds, the seconds of tuning in it, the audio seconds it trained.</summary>
+        /// <summary>Each step: its seconds (the device drained), the seconds of tuning in it, the audio seconds it trained.</summary>
         public List<(double Seconds, double Tuning, double Audio)> Steps { get; } = [];
 
         public void Report(SpeechTrainingProgress value)
@@ -187,6 +187,7 @@ internal static class SpeechBench
                 return;
             }
 
+            device.Backend.Synchronize();                                   // the step's queued work is the step's time, not the next one's
             double now = clock.Elapsed.TotalSeconds, tuning = census.TuningTime.TotalSeconds;
             Steps.Add((now - _last, tuning - _lastTuning, value.BatchAudioSeconds));
             (_last, _lastTuning) = (now, tuning);

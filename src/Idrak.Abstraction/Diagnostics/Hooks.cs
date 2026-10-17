@@ -128,7 +128,7 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
 
     /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) =>
-        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Device {e.Device} tuned {e.Operation}: {e.Candidates} candidates in {e.Duration.TotalMilliseconds:F0} ms (once per shape class)"));
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Device {e.Device} tuned {e.Operation}: {e.Candidates} candidates in {e.Duration.TotalMilliseconds:F0} ms (once per shape class{(e.Nested ? ", inside another tuning" : "")})"));
 
     /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) =>
@@ -561,6 +561,7 @@ public static class TelemetryJson
                 w.WriteString("operation", e.Operation);
                 w.WriteNumber("candidates", e.Candidates);
                 w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
+                w.WriteBoolean("nested", e.Nested);
                 break;
             case OverrideFailed e:
                 w.WriteString("event", "override_failed");
