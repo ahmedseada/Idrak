@@ -187,7 +187,8 @@ internal sealed unsafe partial class CudaBackend
     {
         value = 0;
         double reach = ComputeResources.TuningNeighbourOctaves;
-        if (reach <= 0 || !DataSized(key, out long positions, out var shape))
+        Span<long> extents = stackalloc long[4], others = stackalloc long[4];
+        if (reach <= 0 || !DataSized(key, extents, out var shape))
         {
             return false;
         }
@@ -197,12 +198,17 @@ internal sealed unsafe partial class CudaBackend
         {
             foreach (var (known, choice) in table)
             {
-                if (known.Op != key.Op || !DataSized(known, out long other, out var otherShape) || otherShape != shape || !candidates.Contains(choice))
+                if (known.Op != key.Op || !DataSized(known, others, out var otherShape) || otherShape != shape || !candidates.Contains(choice))
                 {
                     continue;
                 }
 
-                double distance = ConvolutionShapes.Octaves(positions, other);
+                double distance = 0;                                           // the farthest of the extents, in octaves
+                for (int i = 0; i < extents.Length; i++)
+                {
+                    distance = Math.Max(distance, ConvolutionShapes.Octaves(extents[i], others[i]));
+                }
+
                 if (distance <= reach && distance < best)
                 {
                     (best, value) = (distance, choice);
@@ -213,35 +219,36 @@ internal sealed unsafe partial class CudaBackend
         return best <= reach;
     }
 
-    // The fields of a key that follow the data (keyed by size class: a batch, rows, a length) as their product, and the
-    // key with them cleared (the shape apart from them), for the choices a neighbouring class may lend: convolutions,
-    // float32 and tensor-core products, attention. False for a key whose fields are all the model's.
-    private static bool DataSized(in TuneKey key, out long positions, out TuneKey shape)
+    // The fields of a key that may follow the data, as extents (a batch's positions, rows, a product's n and k: a product
+    // of attention scores has a sequence length in n or k, exact in the key), and the key with them cleared (the shape
+    // apart from them), for the choices a neighbouring shape may lend: convolutions, float32 and tensor-core products,
+    // attention. Extents left unused are 1. False for a key whose fields are all the model's.
+    private static bool DataSized(in TuneKey key, Span<long> extents, out TuneKey shape)
     {
+        extents.Fill(1);
         switch (key.Op)
         {
             case TuneOp.Convolution:                                           // images class; height and width classes
-                positions = ConvolutionShapes.Positions(key.A, key.D);
+                extents[0] = ConvolutionShapes.Positions(key.A, key.D);
                 shape = key with { A = 0, D = 0 };
                 return true;
-            case TuneOp.FloatTile:                                             // rows class; batch count class
-                positions = (long)key.A * key.D;
-                shape = key with { A = 0, D = 0 };
+            case TuneOp.FloatTile:                                             // rows class × batch count class; n; k
+                (extents[0], extents[1], extents[2]) = ((long)key.A * key.D, key.B, key.C);
+                shape = key with { A = 0, B = 0, C = 0, D = 0 };
                 return true;
-            case TuneOp.TensorSplits:                                          // rows class
-                positions = key.A;
-                shape = key with { A = 0 };
+            case TuneOp.TensorSplits:                                          // rows class; n; k; the output's leading dimension
+                (extents[0], extents[1], extents[2], extents[3]) = (key.A, key.B, key.C, key.D);
+                shape = key with { A = 0, B = 0, C = 0, D = 0 };
                 return true;
-            case TuneOp.SpanKernel or TuneOp.AttentionPath:                    // rows class; key rows class
-                positions = (long)key.B * key.C;
+            case TuneOp.SpanKernel or TuneOp.AttentionPath:                    // rows class × key rows class
+                extents[0] = (long)key.B * key.C;
                 shape = key with { B = 0, C = 0 };
                 return true;
             case TuneOp.SpanStrided:                                           // rows class
-                positions = key.B;
+                extents[0] = key.B;
                 shape = key with { B = 0 };
                 return true;
             default:
-                positions = 0;
                 shape = default;
                 return false;
         }
