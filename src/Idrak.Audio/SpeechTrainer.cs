@@ -95,6 +95,17 @@ public sealed record SpeechTrainingOptions
     /// <summary>The augmentations' settings.</summary>
     public AudioAugmentationOptions AugmentationOptions { get; init; } = new();
 
+    /// <summary>
+    /// The cleaning stages run over every utterance's sound (one channel at the features' rate) before its features are
+    /// taken and before the augmentations, in order: <see cref="AudioCleaners"/> names ("highpass", "denoise", "trim",
+    /// "normalize"). The cleaned features are the ones cached (the stages and their settings are part of the cache key);
+    /// the batches are planned and the pace measured by the recordings' lengths before trimming.
+    /// </summary>
+    public IReadOnlyList<string> Cleaning { get; init; } = [];
+
+    /// <summary>The cleaning stages' settings.</summary>
+    public AudioCleaningOptions CleaningOptions { get; init; } = new();
+
     /// <summary>The seed of the pass orders, the batches' order and the augmentations.</summary>
     public int Seed { get; init; }
 
@@ -154,7 +165,8 @@ public sealed record SpeechTrainingOptions
         ["max_gradient_norm"] = MaxGradientNorm, ["bf16_activations"] = BFloat16Activations, ["checkpointing"] = Checkpointing,
         ["save_every"] = SaveEvery, ["keep_checkpoints"] = KeepCheckpoints, ["evaluate_every"] = EvaluateEvery, ["metric"] = Metric,
         ["decoder"] = Decoder, ["beam_width"] = BeamWidth, ["augmentations"] = new JsonArray([.. Augmentations.Select(a => (JsonNode)a)]),
-        ["augmentation_options"] = AugmentationOptions.ToJson(), ["seed"] = Seed, ["feature_cache"] = FeatureCache,
+        ["augmentation_options"] = AugmentationOptions.ToJson(), ["cleaning"] = new JsonArray([.. Cleaning.Select(c => (JsonNode)c)]),
+        ["cleaning_options"] = CleaningOptions.ToJson(), ["seed"] = Seed, ["feature_cache"] = FeatureCache,
         ["feature_cache_folder"] = FeatureCacheFolder, ["workers"] = Workers, ["non_finite_steps"] = NonFiniteSteps,
         ["durations"] = Durations, ["duration_loss_weight"] = DurationLossWeight,
         ["distillation_alpha"] = DistillationAlpha, ["distillation_temperature"] = DistillationTemperature, ["adversarial"] = Adversarial?.ToJson(),
@@ -190,6 +202,8 @@ public sealed record SpeechTrainingOptions
             BeamWidth = (int?)json["beam_width"] ?? d.BeamWidth,
             Augmentations = json["augmentations"] is JsonArray augmentations ? [.. augmentations.Select(a => (string)a!)] : d.Augmentations,
             AugmentationOptions = json["augmentation_options"] is JsonObject augmentation ? AudioAugmentationOptions.FromJson(augmentation) : d.AugmentationOptions,
+            Cleaning = json["cleaning"] is JsonArray cleaning ? [.. cleaning.Select(c => (string)c!)] : d.Cleaning,
+            CleaningOptions = json["cleaning_options"] is JsonObject cleaningOptions ? AudioCleaningOptions.FromJson(cleaningOptions) : d.CleaningOptions,
             Seed = (int?)json["seed"] ?? d.Seed,
             FeatureCache = json.ContainsKey("feature_cache") ? (string?)json["feature_cache"] : d.FeatureCache,
             FeatureCacheFolder = (string?)json["feature_cache_folder"],
@@ -233,6 +247,12 @@ public sealed record SpeechTrainingOptions
         }
 
         AugmentationOptions.Check();
+        foreach (string name in Cleaning)
+        {
+            _ = AudioCleaners.Get(name);
+        }
+
+        CleaningOptions.Check();
         Adversarial?.Check();
         if (FeatureCache is { } cache)
         {
@@ -850,11 +870,14 @@ public static class SpeechTrainer
     }
 
     // Utterances to features on worker threads: the file read and hashed, the features from the cache when the utterance's
-    // sound is not augmented this pass, else decoded, mixed to one channel, resampled, augmented and taken (and cached);
-    // then the feature augmentations.
+    // sound is not augmented this pass, else decoded, mixed to one channel, resampled, cleaned, augmented and taken (and
+    // cached under the cleaning too); then the feature augmentations.
     private sealed class FeatureSource(IAudioFeatureExtractor extractor, IFeatureCache? cache, SpeechTrainingOptions options)
     {
         private readonly string _options = extractor.Options.ToJson().ToJsonString();
+        private readonly IAudioCleaner[] _cleaners = [.. options.Cleaning.Select(AudioCleaners.Get)];
+        private readonly string _cleaning = options.Cleaning.Count == 0 ? ""
+            : new JsonObject { ["cleaning"] = new JsonArray([.. options.Cleaning.Select(c => (JsonNode)c)]), ["options"] = options.CleaningOptions.ToJson() }.ToJsonString();
         private int _extracted, _cached;
 
         public int Extracted => Volatile.Read(ref _extracted);
@@ -887,7 +910,7 @@ public static class SpeechTrainer
 
             var bytes = reader.ReadBytes(utterance);
             FeatureCacheKey? key = cache is not null && !sound
-                ? new FeatureCacheKey(Convert.ToHexStringLower(SHA256.HashData(bytes)), "", _options, extractor.Name, "", "float32", FeatureStage) : null;
+                ? new FeatureCacheKey(Convert.ToHexStringLower(SHA256.HashData(bytes)), _cleaning, _options, extractor.Name, "", "float32", FeatureStage) : null;
             float[]? values = null;
             int frames = 0;
             if (key is not null && cache!.TryGet(key, Device.Cpu, out var hit))
@@ -912,6 +935,11 @@ public static class SpeechTrainer
                 }
 
                 audio = Resampler.Resample(audio, extractor.Options.SampleRate);
+                foreach (var cleaner in _cleaners)
+                {
+                    audio = cleaner.Clean(audio, options.CleaningOptions);
+                }
+
                 for (int a = 0; a < augmentations.Length; a++)
                 {
                     if (draws[a] is { } random && augmentations[a].Stage == AudioAugmentationStage.Sound)

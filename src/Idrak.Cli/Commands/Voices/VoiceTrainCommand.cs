@@ -71,6 +71,10 @@ internal sealed class VoiceTrainCommand : Command
                                   tell nothing apart for thousands of steps, and the voice trains on the mel loss alone)
               --freeze PARTS      parts kept as the base has them, comma-separated (VITS: decoder keeps its waveform
                                   generator; text_encoder, flow, duration_predictor, posterior_encoder; default none)
+              --clean STAGES      every recording cleaned before its features, comma-separated, in order: highpass (DC
+                                  and rumble out), denoise (the noise floor gated off), trim (silence at the ends cut),
+                                  normalize (speech levelled), or a registered cleaner's name (default none)
+              --clean-settings F  the stages' settings as JSON, a file or inline (default the library's)
               --schedule NAME     the rate's schedule: constant, cosine, linear, wsd (default constant)
               --warmup F          the share of the steps the rate warms up over (default 0)
               --optimizer NAME    adamw, adam, sgd (default adamw, betas 0.8 and 0.99)
@@ -100,7 +104,7 @@ internal sealed class VoiceTrainCommand : Command
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--from", "--audio", "--eval", "--base", "--consent", "--consent-file", "--speaker", "--language", "--steps", "--lr", "--discriminator-lr", "--batch-seconds",
-        "--segment-frames", "--mel-weight", "--kl-weight", "--duration-weight", "--adversarial-weight", "--feature-weight", "--mels", "--discriminator", "--discriminator-weights", "--freeze", "--schedule",
+        "--segment-frames", "--mel-weight", "--kl-weight", "--duration-weight", "--adversarial-weight", "--feature-weight", "--mels", "--discriminator", "--discriminator-weights", "--freeze", "--clean", "--clean-settings", "--schedule",
         "--warmup", "--optimizer", "--clip", "--save-every", "--keep", "--eval-every", "--log-every", "--feature-cache", "--resume", "--out", "--voices",
     ];
 
@@ -271,6 +275,8 @@ internal sealed class VoiceTrainCommand : Command
             KeepCheckpoints = context.IntOption("--keep", start.KeepCheckpoints),
             EvaluateEvery = context.IntOption("--eval-every", start.EvaluateEvery),
             FeatureCache = context.Option("--feature-cache") is { } cache ? cache.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : cache : start.FeatureCache,
+            Cleaning = AudioFiles.CleaningStages(context, start.Cleaning),
+            CleaningOptions = AudioFiles.CleaningSettings(context, start.CleaningOptions),
             Seed = context.Seed ?? start.Seed,
             Adversarial = a,
         };

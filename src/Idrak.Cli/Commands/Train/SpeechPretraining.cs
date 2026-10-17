@@ -26,7 +26,7 @@ internal static class SpeechPretraining
 
     /// <summary>The value options only a speech run reads.</summary>
     public static readonly string[] ValueOptions =
-        ["--batch-seconds", "--metric", "--augment", "--durations", "--duration-weight", "--min-seconds", "--max-seconds", "--decoder", "--beam", "--source"];
+        ["--batch-seconds", "--metric", "--augment", "--clean", "--clean-settings", "--durations", "--duration-weight", "--min-seconds", "--max-seconds", "--decoder", "--beam", "--source"];
 
     /// <summary>The flags only a speech run reads.</summary>
     public static readonly string[] Flags = ["--skip-missing"];
@@ -220,6 +220,8 @@ internal static class SpeechPretraining
             Decoder = context.Option("--decoder") ?? options.Decoder,
             BeamWidth = context.IntOption("--beam", options.BeamWidth),
             Augmentations = context.Option("--augment") is { } augment ? [.. augment.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)] : options.Augmentations,
+            Cleaning = AudioFiles.CleaningStages(context, options.Cleaning),
+            CleaningOptions = AudioFiles.CleaningSettings(context, options.CleaningOptions),
             Seed = context.Seed ?? options.Seed,
             FeatureCache = context.Option("--feature-cache") is { } cache ? cache.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : cache : options.FeatureCache,
             Durations = context.Option("--durations") is { } durations ? Path.GetFullPath(durations) : options.Durations,

@@ -77,6 +77,37 @@ public sealed record Idrak.Audio.Abstractions.AudioCheckpoint : System.IEquatabl
   public string Architecture { get; init; }
   public string? Folder { get; init; }
 
+public static class Idrak.Audio.Abstractions.AudioCleaners
+  public const string Denoise = "denoise"
+  public const string HighPass = "highpass"
+  public const string Normalize = "normalize"
+  public const string Trim = "trim"
+  public static Idrak.Audio.Abstractions.AudioData Apply(Idrak.Audio.Abstractions.AudioData audio, System.Collections.Generic.IEnumerable<string> stages, Idrak.Audio.Abstractions.AudioCleaningOptions options)
+  public static Idrak.Audio.Abstractions.IAudioCleaner Get(string name)
+  public static Idrak.Audio.Abstractions.IAudioCleaner? Default(string name)
+  public static Idrak.Audio.Abstractions.IAudioCleaner? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.IAudioCleaner cleaner)
+
+public sealed record Idrak.Audio.Abstractions.AudioCleaningOptions : System.IEquatable<Idrak.Audio.Abstractions.AudioCleaningOptions>
+  public AudioCleaningOptions()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public System.Text.Json.Nodes.JsonObject? Settings { get; init; }
+  public double DenoiseFloorDecibels { get; init; }
+  public double DenoiseStrength { get; init; }
+  public double DenoiseWindowSeconds { get; init; }
+  public double HighPassHertz { get; init; }
+  public double HopSeconds { get; init; }
+  public double NoiseQuantile { get; init; }
+  public double PeakCeiling { get; init; }
+  public double SilenceDecibels { get; init; }
+  public double TargetDecibels { get; init; }
+  public double TrimPadSeconds { get; init; }
+  public static Idrak.Audio.Abstractions.AudioCleaningOptions FromJson(System.Text.Json.Nodes.JsonObject json)
+  public void Check()
+
 public static class Idrak.Audio.Abstractions.AudioCodecs
   public const int HeaderBytes = 65536
   public static Idrak.Audio.Abstractions.AudioData Decode(System.ReadOnlySpan<byte> file)
@@ -269,6 +300,10 @@ public interface Idrak.Audio.Abstractions.IAudioAugmentation
   public (default) Idrak.Audio.Abstractions.AudioData Augment(Idrak.Audio.Abstractions.AudioData audio, System.Random random, Idrak.Audio.Abstractions.AudioAugmentationOptions options)
   public (default) void Augment(System.Span<float> features, int frames, int mels, System.Random random, Idrak.Audio.Abstractions.AudioAugmentationOptions options)
   public Idrak.Audio.Abstractions.AudioAugmentationStage Stage { get; }
+  public string Name { get; }
+
+public interface Idrak.Audio.Abstractions.IAudioCleaner
+  public Idrak.Audio.Abstractions.AudioData Clean(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.AudioCleaningOptions options)
   public string Name { get; }
 
 public interface Idrak.Audio.Abstractions.IAudioCodec
@@ -989,9 +1024,11 @@ public sealed record Idrak.Audio.SpeechTrainingCheckpoint : System.IEquatable<Id
 public sealed record Idrak.Audio.SpeechTrainingOptions : System.IEquatable<Idrak.Audio.SpeechTrainingOptions>
   public Idrak.Audio.Abstractions.AdversarialSynthesisOptions? Adversarial { get; init; }
   public Idrak.Audio.Abstractions.AudioAugmentationOptions AugmentationOptions { get; init; }
+  public Idrak.Audio.Abstractions.AudioCleaningOptions CleaningOptions { get; init; }
   public Idrak.Audio.Abstractions.ICtcSpeechModel? Teacher { get; init; }
   public SpeechTrainingOptions()
   public System.Collections.Generic.IReadOnlyList<string> Augmentations { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Cleaning { get; init; }
   public System.Text.Json.Nodes.JsonObject ToJson()
   public bool Checkpointing { get; init; }
   public bool HostOptimizer { get; init; }
