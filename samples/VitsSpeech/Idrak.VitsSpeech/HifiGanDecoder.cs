@@ -112,21 +112,28 @@ internal sealed class HifiGanDecoder : IDisposable
     }
 
     /// <summary>
-    /// The samples [1, T · hop] of the latents [F, T], with the speaker's embedding [E, 1] (null for one speaker). With
-    /// gradients off, each stage and each residual block's step runs in a scope of its own that keeps only its result,
-    /// so the device holds a few tensors of the widest stage at a time, not every intermediate of the pass (rule 76);
-    /// with gradients on, every intermediate stays for the backward pass.
+    /// The samples [1, T · hop] of the latents [F, T], or [B, T · hop] of a batch [B, F, T] (training: every utterance's
+    /// segment through each layer in one launch), with the speaker's embedding [E, 1] (null for one speaker; a batch
+    /// takes none). With gradients off, each stage and each residual block's step runs in a scope of its own that keeps
+    /// only its result, so the device holds a few tensors of the widest stage at a time, not every intermediate of the
+    /// pass (rule 76); with gradients on, every intermediate stays for the backward pass.
     /// </summary>
     public Tensor Forward(Tensor latents, Tensor? speaker)
     {
         bool release = !Autograd.IsEnabled;
+        int batch = latents.Shape.Length == 3 ? latents.Shape[0] : 1;
         Tensor x;
         using (var first = release ? new TensorScope() : null)
         {
-            x = _pre.Forward(latents);
+            x = _pre.Forward3(latents.Shape.Length == 3 ? latents : latents.Reshape(1, latents.Shape[0], latents.Shape[1]));
             if (speaker is not null && _cond is not null)
             {
-                x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), x.Shape[1]);
+                if (batch != 1)
+                {
+                    throw new NotSupportedException("The decoder takes a speaker's embedding for one utterance's latents at a time, not for a batch.");
+                }
+
+                x = x + VitsOps.ExpandColumns(_cond.Forward(speaker), x.Shape[2]).Reshape(1, x.Shape[1], x.Shape[2]);
             }
 
             first?.Keep(x);
@@ -138,7 +145,7 @@ internal sealed class HifiGanDecoder : IDisposable
             var previous = x;
             using (var stage = release ? new TensorScope() : null)
             {
-                var up = _upsamplers[i].Forward(VitsOps.LeakyRelu(x, _config.LeakyReluSlope));
+                var up = _upsamplers[i].Forward3(VitsOps.LeakyRelu(x, _config.LeakyReluSlope));
                 Tensor? sum = null;
                 for (int j = 0; j < kernels; j++)
                 {
@@ -165,7 +172,8 @@ internal sealed class HifiGanDecoder : IDisposable
         }
 
         using var last = release ? new TensorScope() : null;
-        var samples = _post.Forward(VitsOps.LeakyRelu(x, _config.FinalLeakyReluSlope)).Tanh();
+        var made = _post.Forward3(VitsOps.LeakyRelu(x, _config.FinalLeakyReluSlope)).Tanh();   // [B, 1, L]
+        var samples = made.Reshape(batch, made.Shape[2]);
         last?.Keep(samples);
         if (release)
         {
@@ -211,8 +219,8 @@ internal sealed class HifiGanDecoder : IDisposable
                 Tensor next;
                 using (var step = release ? new TensorScope() : null)
                 {
-                    var h = _convs1[i].Forward(VitsOps.LeakyRelu(x, _slope));
-                    h = _convs2[i].Forward(VitsOps.LeakyRelu(h, _slope));
+                    var h = _convs1[i].Forward3(VitsOps.LeakyRelu(x, _slope));
+                    h = _convs2[i].Forward3(VitsOps.LeakyRelu(h, _slope));
                     next = h + x;
                     step?.Keep(next);
                 }

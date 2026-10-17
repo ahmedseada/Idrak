@@ -224,9 +224,13 @@ internal sealed class VitsDiscriminators : IDisposable
         return new VitsDiscriminators(config, tensors, device);
     }
 
-    /// <summary>The scores of each discriminator for the sound [1, L] and each one's feature maps (every layer's output, the scores' layer last).</summary>
+    /// <summary>
+    /// The scores of each discriminator for the sound [B, L] (a batch of equal segments through each layer in one launch)
+    /// and each one's feature maps (every layer's output, the scores' layer last).
+    /// </summary>
     public (List<Tensor> Scores, List<List<Tensor>> Maps) Forward(Tensor sound)
     {
+        int batch = sound.Shape[0];
         var scores = new List<Tensor>(_scales.Length + _periods.Length);
         var maps = new List<List<Tensor>>(scores.Capacity);
         var x = sound;
@@ -235,11 +239,11 @@ internal sealed class VitsDiscriminators : IDisposable
             if (s > 0)
             {
                 int length = x.Shape[1];
-                x = x.Reshape(1, 1, 1, length).AvgPool(new ConvGeometry(1, 1, 1, length, 1, Config.PoolKernel, 1, Config.PoolStride, 0, Config.PoolPadding), countIncludePad: true);
-                x = x.Reshape(1, x.Shape[3]);
+                x = x.Reshape(batch, 1, 1, length).AvgPool(new ConvGeometry(batch, 1, 1, length, 1, Config.PoolKernel, 1, Config.PoolStride, 0, Config.PoolPadding), countIncludePad: true);
+                x = x.Reshape(batch, x.Shape[3]);
             }
 
-            var (score, map) = _scales[s].Forward(x.Reshape(1, 1, 1, x.Shape[1]), Config.LeakyReluSlope);
+            var (score, map) = _scales[s].Forward(x.Reshape(batch, 1, 1, x.Shape[1]), Config.LeakyReluSlope);
             scores.Add(score);
             maps.Add(map);
         }
@@ -247,7 +251,7 @@ internal sealed class VitsDiscriminators : IDisposable
         foreach (var (stack, period) in _periods.Zip(Config.Periods))
         {
             int length = sound.Shape[1], padded = (length + period - 1) / period * period;
-            var folded = VitsOps.ReflectEnd(sound, padded).Reshape(1, 1, padded / period, period);
+            var folded = VitsOps.ReflectEnd(sound, padded).Reshape(batch, 1, padded / period, period);
             var (score, map) = stack.Forward(folded, Config.LeakyReluSlope);
             scores.Add(score);
             maps.Add(map);
