@@ -948,42 +948,104 @@ internal static partial class PtxKernels
         // dtable[indices[i], :] += dy[i, :] in a fixed order, no atomics (rule 86): each id's rows are added in position
         // order, as the CPU and Vulkan add them, so the gradient is the same bit for bit run to run and device to device.
         // First pass, one thread per position: the next position with the same id (count when none) in the low 31 bits,
-        // the top bit set when no earlier position has it (the chain's head). A thread scans the ids from the start until
-        // an earlier copy of its own (then from after itself) and stops at the next one: index compares only, every thread
-        // of a warp reading the same id.
-        Elementwise(sb, "scatter_chain_u32", ["indices", "chain"], [("u32", "count"), ("u32", "maxindex")], """
-            ld.global.f32 %f1, [%a_indices];
-            cvt.rzi.u32.f32 %r5, %f1;
-            min.u32 %r5, %r5, %s_maxindex;
-            mov.u32 %r6, 0x80000000;
-            mov.u32 %r7, %s_count;
-            mov.u32 %r8, 0;
-            SCAN:
-            setp.ge.u32 %p1, %r8, %s_count;
-            @%p1 bra LINK;
-            setp.eq.u32 %p2, %r8, %i;
-            @%p2 bra STEP;
-            mul.wide.u32 %rd1, %r8, 4;
-            add.u64 %rd2, %b_indices, %rd1;
-            ld.global.f32 %f2, [%rd2];
-            cvt.rzi.u32.f32 %r9, %f2;
-            min.u32 %r9, %r9, %s_maxindex;
-            setp.ne.u32 %p3, %r9, %r5;
-            @%p3 bra STEP;
-            setp.gt.u32 %p4, %r8, %i;
-            @%p4 bra FOUND;
-            mov.u32 %r6, 0;
-            mov.u32 %r8, %i;
-            bra STEP;
-            FOUND:
-            mov.u32 %r7, %r8;
-            bra LINK;
-            STEP:
-            add.u32 %r8, %r8, 1;
-            bra SCAN;
+        // the top bit set when no earlier position has it (the chain's head). The block reads the ids a block's width at a
+        // time into shared memory (coalesced) and every thread compares its own against them there; a thread stops
+        // comparing once it has found the next copy (it has then seen every earlier position). Every thread meets each
+        // barrier, the ones past the positions too.
+        sb.Append("""
+            .visible .entry scatter_chain_u32(
+                .param .u64 p_indices,
+                .param .u64 p_chain,
+                .param .u32 p_count,
+                .param .u32 p_maxindex,
+                .param .u32 p_n
+            )
+            {
+                .reg .pred %p<8>;
+                .reg .f32 %f<4>;
+                .reg .b32 %r<24>;
+                .reg .b64 %rd<8>;
+                .shared .align 4 .u32 ids[1024];
+                ld.param.u64 %rd1, [p_indices];
+                cvta.to.global.u64 %rd1, %rd1;
+                ld.param.u64 %rd2, [p_chain];
+                cvta.to.global.u64 %rd2, %rd2;
+                ld.param.u32 %r1, [p_count];
+                ld.param.u32 %r2, [p_maxindex];
+                mov.u32 %r3, %tid.x;
+                mov.u32 %r4, %ntid.x;
+                mov.u32 %r5, %ctaid.x;
+                mad.lo.u32 %r6, %r5, %r4, %r3;
+                setp.lt.u32 %p1, %r6, %r1;
+                mov.u32 %r7, 0xFFFFFFFF;
+                @!%p1 bra OWN_DONE;
+                mul.wide.u32 %rd3, %r6, 4;
+                add.u64 %rd4, %rd1, %rd3;
+                ld.global.f32 %f1, [%rd4];
+                cvt.rzi.u32.f32 %r7, %f1;
+                min.u32 %r7, %r7, %r2;
+            OWN_DONE:
+                mov.u32 %r8, 0x80000000;
+                mov.u32 %r9, %r1;
+                mov.u32 %r10, 0;
+                mov.u32 %r17, ids;
+            TILE:
+                setp.ge.u32 %p2, %r10, %r1;
+                @%p2 bra LINK;
+                add.u32 %r11, %r10, %r3;
+                setp.lt.u32 %p3, %r11, %r1;
+                mov.u32 %r12, 0xFFFFFFFF;
+                @!%p3 bra STORE;
+                mul.wide.u32 %rd5, %r11, 4;
+                add.u64 %rd6, %rd1, %rd5;
+                ld.global.f32 %f2, [%rd6];
+                cvt.rzi.u32.f32 %r12, %f2;
+                min.u32 %r12, %r12, %r2;
+            STORE:
+                shl.b32 %r13, %r3, 2;
+                add.u32 %r14, %r17, %r13;
+                st.shared.u32 [%r14], %r12;
+                bar.sync 0;
+                sub.u32 %r15, %r1, %r10;
+                min.u32 %r15, %r15, %r4;
+                @!%p1 bra SYNC;
+                setp.lt.u32 %p4, %r9, %r1;
+                @%p4 bra SYNC;
+                mov.u32 %r16, 0;
+            CMP:
+                setp.ge.u32 %p5, %r16, %r15;
+                @%p5 bra SYNC;
+                shl.b32 %r18, %r16, 2;
+                add.u32 %r19, %r17, %r18;
+                ld.shared.u32 %r20, [%r19];
+                add.u32 %r21, %r10, %r16;
+                setp.ne.u32 %p6, %r20, %r7;
+                @%p6 bra NEXT;
+                setp.eq.u32 %p6, %r21, %r6;
+                @%p6 bra NEXT;
+                setp.lt.u32 %p7, %r21, %r6;
+                @%p7 bra EARLIER;
+                mov.u32 %r9, %r21;
+                bra SYNC;
+            EARLIER:
+                mov.u32 %r8, 0;
+            NEXT:
+                add.u32 %r16, %r16, 1;
+                bra CMP;
+            SYNC:
+                bar.sync 0;
+                add.u32 %r10, %r10, %r4;
+                bra TILE;
             LINK:
-            or.b32 %r10, %r7, %r6;
-            st.global.u32 [%a_chain], %r10;
+                @!%p1 bra DONE;
+                or.b32 %r22, %r9, %r8;
+                mul.wide.u32 %rd7, %r6, 4;
+                add.u64 %rd7, %rd2, %rd7;
+                st.global.u32 [%rd7], %r22;
+            DONE:
+                ret;
+            }
+
             """);
 
         // Second pass, one thread per (position, column) of a chain's head: the table's value plus each of the id's rows in

@@ -23,14 +23,29 @@ internal static class ConvolutionShapes
     {
         key = default;
         int images = TuneSizes.Class(g.N), height = TuneSizes.Class(g.H), width = TuneSizes.Class(g.W);
-        if (height >= 1 << 16 || width >= 1 << 16 || g.KH >= 1 << 8 || g.KW >= 1 << 8 || g.SH >= 1 << 4 || g.SW >= 1 << 4 || g.DH >= 1 << 4 || g.DW >= 1 << 4
-            || g.PH >= 1 << 8 || g.PW >= 1 << 8 || g.PadBottom >= 1 << 8 || g.PadRight >= 1 << 7 || groups >= 1 << 22)
+        if (height >= 1 << 16 || width >= 1 << 16 || groups >= 1 << 22)
         {
             return false;
         }
 
-        key = (images, g.C, filters, height << 16 | width, g.KH << 24 | g.KW << 16 | g.SH << 12 | g.SW << 8 | g.DH << 4 | g.DW,
-            g.PH << 23 | g.PW << 15 | g.PadBottom << 7 | g.PadRight);
+        if (g.KH < 1 << 8 && g.KW < 1 << 8 && g.SH < 1 << 4 && g.SW < 1 << 4 && g.DH < 1 << 4 && g.DW < 1 << 4
+            && g.PH < 1 << 8 && g.PW < 1 << 8 && g.PadBottom < 1 << 8 && g.PadRight < 1 << 7)
+        {
+            key = (images, g.C, filters, height << 16 | width, g.KH << 24 | g.KW << 16 | g.SH << 12 | g.SW << 8 | g.DH << 4 | g.DW,
+                g.PH << 23 | g.PW << 15 | g.PadBottom << 7 | g.PadRight);
+            return true;
+        }
+
+        // A window, stride, dilation or padding past the packed fields (a spectrogram's 1,024-sample window at a stride of
+        // 256): a stable 64-bit FNV-1a hash of them, the last field's top bit set so it never equals a packed key (whose top
+        // bit is clear), and the packed keys stored by earlier versions keep their meaning.
+        ulong hash = 14695981039346656037UL;
+        foreach (int v in (ReadOnlySpan<int>)[g.KH, g.KW, g.SH, g.SW, g.DH, g.DW, g.PH, g.PW, g.PadBottom, g.PadRight])
+        {
+            hash = (hash ^ (uint)v) * 1099511628211UL;
+        }
+
+        key = (images, g.C, filters, height << 16 | width, unchecked((int)hash), unchecked((int)(hash >> 32)) | int.MinValue);
         return true;
     }
 
