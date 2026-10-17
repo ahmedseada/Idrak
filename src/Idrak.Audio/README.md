@@ -45,7 +45,10 @@ sigmoid gate one kernel), `ResidualCouplingLayer` and `ResidualCouplingBlock` (m
 and `Reverse`), `PosteriorEncoder` (a spectrogram's latents' means and log-stddevs), `HifiGanResidualBlock` and
 `HifiGanGenerator` (`Samples` decodes long latents in pieces with `ContextFrames` of context, so device memory follows the
 piece), `HifiGanDiscriminators` with `HifiGanDiscriminatorConfig` (VITS's multi-period and HiFi-GAN's multi-scale
-discriminators, created from a seed or read from `discriminator.safetensors` or a release's `D_*.pth`, saved back). With
+discriminators, created from a seed or read from `discriminator.safetensors` or a release's `D_*.pth`, saved back),
+`HifiGanVocoder` (HiFi-GAN as an `IVocoder` read from a checkpoint folder under transformers' names, SpeechT5's and
+FastSpeech 2's vocoders among them, the log-mel standardized with the checkpoint's mean and scale; an app registers one
+by name with `HifiGanVocoder.RegisterFolder`, so any synthesizer that speaks through a vocoder can use it). With
 them `AdversarialLosses` (the least-squares GAN losses and feature matching), `MonotonicAlignment` (the search and its
 durations, on the host in float as VITS adds) and `DifferentiableLogMel` (the log-mel of sound as tensor operations, so a
 mel loss reaches the generator). A padded batch goes through them with `PaddedSequences` masks; each block the trainer

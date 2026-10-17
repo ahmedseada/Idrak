@@ -1007,6 +1007,41 @@ public sealed class Idrak.Audio.Layers.HifiGanResidualBlock : Idrak.Abstraction.
   public override void Dispose()
   public static Idrak.Audio.Layers.HifiGanResidualBlock FromStored(Idrak.Models.StoredLayers stored, string prefix, int channels, int kernel, System.Collections.Generic.IReadOnlyList<int> dilations, float slope)
 
+public sealed class Idrak.Audio.Layers.HifiGanVocoder : Idrak.Audio.Abstractions.IVocoder, System.IDisposable
+  public HifiGanVocoder(Idrak.Audio.Layers.HifiGanGenerator generator, Idrak.Audio.Layers.HifiGanVocoderConfig config, Idrak.Abstraction.Tensor? mean = null, Idrak.Abstraction.Tensor? scale = null)
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Audio.Abstractions.AudioData Synthesize(Idrak.Abstraction.Tensor logMel, Idrak.Abstraction.Device device)
+  public Idrak.Audio.Layers.HifiGanGenerator Generator { get; }
+  public Idrak.Audio.Layers.HifiGanVocoderConfig Config { get; }
+  public bool Normalizes { get; }
+  public const string DefaultName = "hifigan"
+  public double DecoderChunkSeconds { get; set; }
+  public int Mels { get; }
+  public int SampleRate { get; }
+  public override string ToString()
+  public static Idrak.Audio.Layers.HifiGanVocoder FromStored(Idrak.Models.StoredLayers stored, string prefix, Idrak.Audio.Layers.HifiGanVocoderConfig config)
+  public static Idrak.Audio.Layers.HifiGanVocoder Load(string path, Idrak.Abstraction.Device? device = null)
+  public static void RegisterFolder(string path, string name = "hifigan", Idrak.Abstraction.Device? device = null)
+  public string Name { get; }
+  public void Dispose()
+
+public sealed record Idrak.Audio.Layers.HifiGanVocoderConfig : System.IEquatable<Idrak.Audio.Layers.HifiGanVocoderConfig>
+  public HifiGanVocoderConfig()
+  public Idrak.Audio.Layers.HifiGanVocoderConfig Checked()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public bool NormalizeBefore { get; init; }
+  public float FinalLeakyReluSlope { get; init; }
+  public float LeakyReluSlope { get; init; }
+  public int Hop { get; }
+  public int Mels { get; init; }
+  public int SamplingRate { get; init; }
+  public int UpsampleInitialChannel { get; init; }
+  public int[] ResblockKernelSizes { get; init; }
+  public int[] UpsampleKernelSizes { get; init; }
+  public int[] UpsampleRates { get; init; }
+  public int[][] ResblockDilationSizes { get; init; }
+  public static Idrak.Audio.Layers.HifiGanVocoderConfig FromJson(System.Text.Json.Nodes.JsonObject config)
+
 public sealed class Idrak.Audio.Layers.PosteriorEncoder : Idrak.Abstraction.Module
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) Stats(Idrak.Abstraction.Tensor spectrogram, Idrak.Abstraction.Tensor? speaker)
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) Stats(Idrak.Abstraction.Tensor spectrograms, Idrak.Abstraction.Tensor? speaker, Idrak.Layers.PaddedSequences? mask)

@@ -96,6 +96,9 @@ public sealed class StoredLayers(ITensorStore store, Device device, bool trainab
     /// <summary>The weight-normed layers read (training), to bind for a step (<see cref="WeightNorm"/>).</summary>
     public IReadOnlyList<WeightNorm> Normed => _normed;
 
+    /// <summary><paramref name="prefix"/>.<paramref name="name"/>, or <paramref name="name"/> alone for an empty prefix (a checkpoint whose tensors sit at the root).</summary>
+    public static string Join(string prefix, string name) => string.IsNullOrEmpty(prefix) ? name : prefix + "." + name;
+
     /// <summary>Whether the store holds <paramref name="name"/>.</summary>
     public bool Contains(string name) => store.Contains(name);
 
