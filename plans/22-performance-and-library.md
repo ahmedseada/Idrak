@@ -73,8 +73,9 @@ means that code is generic.
 
 - WaveNet's gate `tanh(a) · sigmoid(b)` with its conditioning add: 3 launches forward, 4 back, per layer (32 layers a
   step): one gated operation.
-- Mask multiplies after every masked layer (`mul` 355 a step at four clips): fold into the producing kernels where a
-  kernel exists (layer norm, affine), else keep.
+- Mask multiplies after every masked layer (`mul` 355 a step at four clips): measured on the MMS-sized model (step 9),
+  the multiplies and their backward take 156 ms of a 17.9 s step on the CPU, under one percent, while the convolutions take
+  over ninety; no fused kernel pays for its code on three backends, so they stay as they are.
 - The CPU's exp, erf, softmax, layer norm and axis sums (section 1): vectorized loops, not fusions, but the same gain.
 
 ## 4b. Lookups (the owner's note: indices and hash tables for quick access)
@@ -96,4 +97,5 @@ tensor stores, and the kernel and registry lookups per launch; each is measured 
 | 6b | Library moves, batch 2 (section 3, items 2, 4 and 5): `StoredLayers`, `StoredParameter` and `ParameterSet` (Idrak.Models), `Random.NextGaussian`, `DilatedDepthSeparableConv`, `RationalQuadraticSpline`, `ConvolutionalSplineFlow`, `RelativePositionAttention`, `Checkpointing.RunBlock` (Idrak.Layers); `WaveNet`, `ResidualCouplingBlock`, `PosteriorEncoder`, `HifiGanGenerator`, `HifiGanDiscriminators` (Idrak.Audio.Layers), `AdversarialLosses`, `MonotonicAlignment`, `DifferentiableLogMel` (Idrak.Audio). The VITS plug-in keeps its tokenizer, text encoder, duration predictor's flow order and training step (five files gone); OpenVoice drops its VitsSpeech reference and builds the library layers from its own config. The torch fixture's step-1 losses and gradients, the three SGD steps and the conversion fixture match as before (within 1e-4); 16 layer tests, three new | done |
 | 6c | Library moves, batch 3: a library "hifigan" `IVocoder` over `HifiGanGenerator`, the convolutional feed-forward and the duration predictor's element-wise affine flow, the text encoder as a library layer; then section 3's items 6 (vision and text) and 7 (MP3, the owner's call) | next |
 | 8 | CPU math kernels: the library's own vector exp (`CpuMath.Exp`, 256- and 512-bit; the runtime's `Vector.Exp` is not inlined and runs unoptimized for its first hundreds of calls), every range kernel compiled optimized at its first call (`AggressiveOptimization`), erf-GELU, SiLU, sqrt, sin, cos and sign as vector loops forward and backward, the scale-mask softmax's pass and the softmax backward row vectorized; the bench warms up 30 calls before timing (`IDRAK_BENCH_WARMUP`). Warm µs on the 4-thread CPU, 16k / 262k elements: exp 72 → 14 / 672 → 131, erf-GELU 577 → 34 / 1,587 → 219, softmax 103 → 18 / 1,108 → 281, exp forward and backward 1,349 → 610 | done |
+| 9 | Mask folding: measured and dropped (section 4). The speech bench on the MMS-sized model, four clips a step: `mul` 375 launches, 105 ms; `bwd mul` 316, 51 ms; `conv2d` 545, 9,448 ms; `bwd conv2d` 352, 11,628 ms; the step 17.9 s warm | dropped |
 | 7 | Measure every step with the benches; record the numbers here | ongoing |
