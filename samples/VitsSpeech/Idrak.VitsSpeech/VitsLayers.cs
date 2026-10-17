@@ -266,6 +266,13 @@ internal sealed class Conv1d(Conv2d conv, WeightNormed? normed = null) : IDispos
         return y.Reshape(y.Shape[1], y.Shape[3]);
     }
 
+    /// <summary>The convolution over a batch [B, C, T]: [B, out, T'] (one launch for the batch).</summary>
+    public Tensor Forward3(Tensor x)
+    {
+        var y = Forward4(x.Reshape(x.Shape[0], x.Shape[1], 1, x.Shape[2]));
+        return y.Reshape(y.Shape[0], y.Shape[1], y.Shape[3]);
+    }
+
     public Tensor Forward4(Tensor x)
     {
         if (normed is null)
@@ -290,9 +297,17 @@ internal sealed class ConvTranspose1d(ConvTranspose2d conv, WeightNormed? normed
 
     public Tensor Forward(Tensor x)
     {
-        var x4 = x.Reshape(1, x.Shape[0], 1, x.Shape[1]);
-        var y = normed is null ? conv.Forward(x4) : x4.ConvolutionTranspose(normed.Weight, conv.Bias, conv.Geometry(1, 1, x.Shape[1]), conv.Groups);
-        return y.Reshape(y.Shape[1], y.Shape[3]);
+        var y = Forward3(x.Reshape(1, x.Shape[0], x.Shape[1]));
+        return y.Reshape(y.Shape[1], y.Shape[2]);
+    }
+
+    /// <summary>The transposed convolution over a batch [B, C, T]: [B, out, T · stride].</summary>
+    public Tensor Forward3(Tensor x)
+    {
+        int batch = x.Shape[0], length = x.Shape[2];
+        var x4 = x.Reshape(batch, x.Shape[1], 1, length);
+        var y = normed is null ? conv.Forward(x4) : x4.ConvolutionTranspose(normed.Weight, conv.Bias, conv.Geometry(batch, 1, length), conv.Groups);
+        return y.Reshape(batch, y.Shape[1], y.Shape[3]);
     }
 
     public void Dispose()
@@ -462,7 +477,7 @@ internal static class VitsOps
     }
 
     /// <summary>
-    /// The samples [1, L] padded at the end by reflection to <paramref name="length"/> (torch's <c>F.pad(x, (0, n), "reflect")</c>):
+    /// The samples [B, L] padded at the end by reflection to <paramref name="length"/> (torch's <c>F.pad(x, (0, n), "reflect")</c>):
     /// the samples and a gather of the mirrored end, so the padding's gradient reaches the samples it copies.
     /// </summary>
     public static Tensor ReflectEnd(Tensor samples, int length)
@@ -479,11 +494,11 @@ internal static class VitsOps
             tail[k] = n - 2 - k;
         }
 
-        return Tensor.Concat([samples, Edge(samples, tail)], 1);
+        return Tensor.Concat([samples, Edge(samples.Shape[0] == 1 ? samples.Reshape(n, 1) : samples.Transpose(), tail)], 1);
     }
 
     /// <summary>
-    /// The samples [1, L] reflect-padded by <paramref name="pad"/> at both ends (the edge sample not repeated): the samples
+    /// The samples [B, L] reflect-padded by <paramref name="pad"/> at both ends (the edge sample not repeated): the samples
     /// with a gather of the mirrored edges on each side. Gathering only the edges keeps the gather's gradient (a scatter in
     /// position order) to the padding's length, not the sound's (where it cost a pass over every earlier position).
     /// </summary>
@@ -503,12 +518,16 @@ internal static class VitsOps
             right[i] = n - 2 - i;
         }
 
-        return Tensor.Concat([Edge(samples, left), samples, Edge(samples, right)], 1);
+        var columns = samples.Shape[0] == 1 ? samples.Reshape(n, 1) : samples.Transpose();   // [L, B]: the samples as rows to gather
+        return Tensor.Concat([Edge(columns, left), samples, Edge(columns, right)], 1);
     }
 
-    // The samples at `rows` as [1, rows.Length].
-    private static Tensor Edge(Tensor samples, int[] rows) =>
-        samples.Reshape(samples.Shape[1], 1).EmbeddingLookup(Indices(rows, samples.Device)).Reshape(1, rows.Length);
+    // The samples [B, L] at the positions `columns` as [B, columns.Length]: a gather of the rows of the samples transposed.
+    private static Tensor Edge(Tensor transposed, int[] columns)
+    {
+        var picked = transposed.EmbeddingLookup(Indices(columns, transposed.Device));   // [columns, B]
+        return transposed.Shape[1] == 1 ? picked.Reshape(1, columns.Length) : picked.Transpose();
+    }
 
     /// <summary>A float tensor of integer indices [count] on <paramref name="device"/> (what the library's gathers take).</summary>
     public static Tensor Indices(ReadOnlySpan<int> indices, Device device)

@@ -242,14 +242,8 @@ internal sealed class VitsTraining : IDisposable
     public float MelError(AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options)
     {
         using var noGrad = Autograd.NoGrad();
-        double sum = 0;
-        for (int i = 0; i < batch.Frames.Count; i++)
-        {
-            using var scope = new TensorScope();
-            sum += Pass(batch, i, options).Mel.Item();
-        }
-
-        return (float)(sum / Math.Max(1, batch.Frames.Count));
+        using var scope = new TensorScope();
+        return batch.Frames.Count == 0 ? 0 : PassAll(batch, options).Mel.Item();
     }
 
     /// <summary>
@@ -307,11 +301,49 @@ internal sealed class VitsTraining : IDisposable
         }
     }
 
-    // One utterance's generator pass: the terms before their weights, the segment's sound made and its real sound.
+    // One utterance's generator pass (tests): the terms before their weights, the segment's sound made [1, L] and its real sound.
     internal sealed record UtterancePass(Tensor Kl, Tensor Nll, Tensor Mel, Tensor Made, Tensor Real, int[] Durations);
 
-    // Utterance i of the batch through the generator (gradients as Autograd says).
+    // One utterance's part of the pass that runs on its own length: the KL and duration terms before their weights, the
+    // decoder segment's latents [F, seg], the segment's real samples [1, seg · hop] and its mel target [seg, mels].
+    internal sealed record UtteranceTerms(Tensor Kl, Tensor Nll, Tensor Latents, Tensor Real, Tensor Target, int[] Durations);
+
+    // A micro-batch's generator pass: each utterance's KL and duration terms, and, for all of them as one batch (equal
+    // segments), the sound made [B, L], the real sound [B, L] and the mel loss (the mean over the batch, which is the mean
+    // of the utterances' means).
+    internal sealed record BatchPass(IReadOnlyList<Tensor> Kl, IReadOnlyList<Tensor> Nll, Tensor Mel, Tensor Made, Tensor Real, IReadOnlyList<int[]> Durations);
+
+    // Utterance i of the batch through the generator on its own (gradients as Autograd says).
     internal UtterancePass Pass(AdversarialSynthesisBatch batch, int i, AdversarialSynthesisOptions options)
+    {
+        var pass = PassAll(batch, options, [i]);
+        return new UtterancePass(pass.Kl[0], pass.Nll[0], pass.Mel, pass.Made, pass.Real, pass.Durations[0]);
+    }
+
+    // The utterances (all of the batch, or the ones given) through the generator: each on its own up to its segment's
+    // latents, then the decoder, the mel loss and the segments' sound as one batch, so every layer runs once a micro-batch.
+    internal BatchPass PassAll(AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, IReadOnlyList<int>? utterances = null)
+    {
+        utterances ??= [.. Enumerable.Range(0, batch.Frames.Count)];
+        var terms = new UtteranceTerms[utterances.Count];
+        for (int u = 0; u < terms.Length; u++)
+        {
+            terms[u] = Utterance(batch, utterances[u], options);
+        }
+
+        int count = terms.Length, flow = _model.Config.FlowSize, seg = options.SegmentFrames;
+        var latents = count == 1 ? terms[0].Latents.Reshape(1, flow, seg) : Tensor.Concat([.. terms.Select(t => t.Latents.Reshape(1, flow, seg))], 0);   // [B, F, seg]
+        var made = _model.Decoder.Forward(latents, null);                       // [B, seg · hop]
+        var real = count == 1 ? terms[0].Real : Tensor.Concat([.. terms.Select(t => t.Real)], 0);                 // [B, seg · hop]
+        var target = count == 1 ? terms[0].Target : Tensor.Concat([.. terms.Select(t => t.Target)], 0);           // [B · seg, mels]
+        var (melFilters, basis) = Filters(options);
+        var mel = (target - LogMel(made, basis, melFilters)).Abs().Mean();
+        return new BatchPass([.. terms.Select(t => t.Kl)], [.. terms.Select(t => t.Nll)], mel, made, real, [.. terms.Select(t => t.Durations)]);
+    }
+
+    // Utterance i of the batch through the text encoder, the posterior encoder, the flow and the alignment search, on
+    // its own length: its KL and duration terms and what the batched decoder pass takes.
+    private UtteranceTerms Utterance(AdversarialSynthesisBatch batch, int i, AdversarialSynthesisOptions options)
     {
         var config = _model.Config;
         int frames = batch.Frames[i], bins = Features.Bins, hop = Features.Hop, seg = options.SegmentFrames, longest = batch.Features.Shape[1];
@@ -346,26 +378,26 @@ internal sealed class VitsTraining : IDisposable
         var nll = _model.StochasticDurations.Loss(hidden.Transpose().Detach(), Tensor.From([.. durations.Select(d => (float)d)], [1, labels.Length], device),
             Tensor.From(draws.Duration, [2, labels.Length], device));
 
-        // The decoder on the segment, its log-mel against the real one's.
-        var made = _model.Decoder.Forward(latents.Narrow(1, draws.Start, seg), null);   // [1, seg · hop]
-        var real = rows.Narrow(0, draws.Start, seg).Narrow(1, bins, hop).Reshape(1, seg * hop);
-        var (melFilters, basis) = Filters(options);
-        var target = rows.Narrow(0, draws.Start, seg).Narrow(1, 0, bins).MatMul(melFilters).Clamp(1e-5f, float.PositiveInfinity).Log();   // [seg, mels]
-        var mel = (target - LogMel(made, basis, melFilters)).Abs().Mean();
-        return new UtterancePass(kl, nll, mel, made, real, durations);
+        // The decoder's segment: its latents, its real samples and its mel target (the decoder runs on the batch's segments together).
+        var segment = rows.Narrow(0, draws.Start, seg);
+        var real = segment.Narrow(1, bins, hop).Reshape(1, seg * hop);
+        var (melFilters, _) = Filters(options);
+        var target = segment.Narrow(1, 0, bins).MatMul(melFilters).Clamp(1e-5f, float.PositiveInfinity).Log();   // [seg, mels]
+        return new UtteranceTerms(kl, nll, latents.Narrow(1, draws.Start, seg), real, target, durations);
     }
 
-    // The log-mel spectrum [frames, mels] of the sound [1, L] as VITS's mel_spectrogram_torch takes it, differentiable:
+    // The log-mel spectra [B · frames, mels] of the sound [B, L] as VITS's mel_spectrogram_torch takes it, differentiable:
     // reflect-padded (a gather), the windowed DFT as a convolution with its cosine and sine filters, √(re² + im² + 1e-6),
     // the filterbank, log of at least 1e-5.
     internal Tensor LogMel(Tensor sound, Tensor basis, Tensor melFilters)
     {
-        int size = (Features.Bins - 1) * 2, bins = Features.Bins, hop = Features.Hop;
+        int size = (Features.Bins - 1) * 2, bins = Features.Bins, hop = Features.Hop, batch = sound.Shape[0];
         var padded = VitsOps.Reflect(sound, (size - hop) / 2);
         int length = padded.Shape[1], frames = (length - size) / hop + 1;
-        var spectrum = padded.Reshape(1, 1, 1, length).Convolution(basis, null, new ConvGeometry(1, 1, 1, length, 1, size, 1, hop, 0, 0)).Reshape(2 * bins, frames);
-        var magnitude = (spectrum.Narrow(0, 0, bins).Square() + spectrum.Narrow(0, bins, bins).Square() + 1e-6f).Sqrt();   // [bins, frames]
-        return magnitude.Transpose().MatMul(melFilters).Clamp(1e-5f, float.PositiveInfinity).Log();
+        var spectrum = padded.Reshape(batch, 1, 1, length).Convolution(basis, null, new ConvGeometry(batch, 1, 1, length, 1, size, 1, hop, 0, 0)).Reshape(batch, 2 * bins, frames);
+        var magnitude = (spectrum.Narrow(1, 0, bins).Square() + spectrum.Narrow(1, bins, bins).Square() + 1e-6f).Sqrt();   // [B, bins, frames]
+        var byFrame = batch == 1 ? magnitude.Reshape(bins, frames).Transpose() : magnitude.Permute(0, 2, 1).Reshape(batch * frames, bins);
+        return byFrame.MatMul(melFilters).Clamp(1e-5f, float.PositiveInfinity).Log();
     }
 
     // The mel filterbank [bins, mels] (librosa's, slaney scale and norm) and the DFT filters [2 · bins, n_fft] (cosines,
@@ -423,7 +455,7 @@ internal sealed class VitsTraining : IDisposable
     private sealed class Step(VitsTraining owner, AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, bool keep, VitsDiscriminators discriminators)
         : IAdversarialSynthesisStep
     {
-        private readonly UtterancePass?[] _kept = new UtterancePass?[batch.Frames.Count];
+        private BatchPass? _kept;
 
         // The weight-normed filters are made once a half (WeightNormed): the discriminators' for their half (gradients
         // gathered, then handed to g and v), the generator's for its passes (kept from the discriminators' half to the
@@ -448,39 +480,36 @@ internal sealed class VitsTraining : IDisposable
             }
         }
 
+        // The micro-batch's utterances as one batch of segments: each discriminator's mean over the batch is the mean of
+        // the utterances' means (equal segments), so the batch's share of the step's loss is the utterances' shares summed.
         private float Discriminators()
         {
-            float total = 0;
-            for (int i = 0; i < _kept.Length; i++)
+            using var scope = keep ? null : new TensorScope();
+            BatchPass pass;
+            if (keep)
             {
-                using var scope = keep ? null : new TensorScope();
-                UtterancePass pass;
-                if (keep)
+                pass = _kept = owner.PassAll(batch, options);
+            }
+            else
+            {
+                using (Autograd.NoGrad())
                 {
-                    pass = _kept[i] = owner.Pass(batch, i, options);
+                    pass = owner.PassAll(batch, options);
                 }
-                else
-                {
-                    using (Autograd.NoGrad())
-                    {
-                        pass = owner.Pass(batch, i, options);
-                    }
-                }
-
-                var (real, _) = discriminators.Forward(pass.Real);
-                var (made, _) = discriminators.Forward(pass.Made.Detach());
-                Tensor? loss = null;
-                for (int d = 0; d < real.Count; d++)
-                {
-                    var term = (real[d] * -1f + 1f).Square().Mean() + made[d].Square().Mean();
-                    loss = loss is null ? term : loss + term;
-                }
-
-                var share = loss! * (1f / batch.StepUtterances);
-                total += share.Item();
-                share.Backward();
             }
 
+            var (real, _) = discriminators.Forward(pass.Real);
+            var (made, _) = discriminators.Forward(pass.Made.Detach());
+            Tensor? loss = null;
+            for (int d = 0; d < real.Count; d++)
+            {
+                var term = (real[d] * -1f + 1f).Square().Mean() + made[d].Square().Mean();
+                loss = loss is null ? term : loss + term;
+            }
+
+            var share = loss! * ((float)batch.Frames.Count / batch.StepUtterances);
+            float total = share.Item();
+            share.Backward();
             return total;
         }
 
@@ -504,45 +533,44 @@ internal sealed class VitsTraining : IDisposable
             WeightNormedLayers.Bind(discriminators.Normed);                       // constants this half
             try
             {
-                for (int i = 0; i < _kept.Length; i++)
+                using var scope = keep ? null : new TensorScope();
+                var pass = _kept ?? owner.PassAll(batch, options);
+                _kept = null;
+                List<List<Tensor>> realMaps;
+                using (Autograd.NoGrad())
                 {
-                    using var scope = keep ? null : new TensorScope();
-                    var pass = _kept[i] ?? owner.Pass(batch, i, options);
-                    _kept[i] = null;
-                    List<List<Tensor>> realMaps;
-                    using (Autograd.NoGrad())
-                    {
-                        realMaps = discriminators.Forward(pass.Real).Maps;
-                    }
-
-                    var (scores, madeMaps) = discriminators.Forward(pass.Made);
-                    Tensor? adversarial = null, matching = null;
-                    for (int d = 0; d < scores.Count; d++)
-                    {
-                        var term = (scores[d] * -1f + 1f).Square().Mean();
-                        adversarial = adversarial is null ? term : adversarial + term;
-                        for (int l = 0; l < madeMaps[d].Count; l++)
-                        {
-                            var difference = (realMaps[d][l] - madeMaps[d][l]).Abs().Mean();
-                            matching = matching is null ? difference : matching + difference;
-                        }
-                    }
-
-                    float perUtterance = 1f / batch.StepUtterances;
-                    var mel = pass.Mel * (options.MelWeight * perUtterance);
-                    var kl = pass.Kl * (options.KlWeight / batch.StepFrames);
-                    var duration = pass.Nll * (options.DurationWeight / batch.StepLabels);
-                    var adv = adversarial! * (options.AdversarialWeight * perUtterance);
-                    var fm = matching! * (options.FeatureMatchingWeight * perUtterance);
-                    var loss = mel + kl + duration + adv + fm;
-                    terms["mel"] += mel.Item();
-                    terms["kl"] += kl.Item();
-                    terms["duration"] += duration.Item();
-                    terms["adversarial"] += adv.Item();
-                    terms["feature_matching"] += fm.Item();
-                    terms["generator"] += loss.Item();
-                    loss.Backward();
+                    realMaps = discriminators.Forward(pass.Real).Maps;
                 }
+
+                var (scores, madeMaps) = discriminators.Forward(pass.Made);
+                Tensor? adversarial = null, matching = null;
+                for (int d = 0; d < scores.Count; d++)
+                {
+                    var term = (scores[d] * -1f + 1f).Square().Mean();
+                    adversarial = adversarial is null ? term : adversarial + term;
+                    for (int l = 0; l < madeMaps[d].Count; l++)
+                    {
+                        var difference = (realMaps[d][l] - madeMaps[d][l]).Abs().Mean();
+                        matching = matching is null ? difference : matching + difference;
+                    }
+                }
+
+                // The batch's means are the utterances' means averaged (equal segments): the batch's share of the step is
+                // the utterances' shares summed; the KL and duration terms are each utterance's own, summed.
+                float share = (float)batch.Frames.Count / batch.StepUtterances;
+                var mel = pass.Mel * (options.MelWeight * share);
+                var kl = pass.Kl.Aggregate((a, b) => a + b) * (options.KlWeight / batch.StepFrames);
+                var duration = pass.Nll.Aggregate((a, b) => a + b) * (options.DurationWeight / batch.StepLabels);
+                var adv = adversarial! * (options.AdversarialWeight * share);
+                var fm = matching! * (options.FeatureMatchingWeight * share);
+                var loss = mel + kl + duration + adv + fm;
+                terms["mel"] += mel.Item();
+                terms["kl"] += kl.Item();
+                terms["duration"] += duration.Item();
+                terms["adversarial"] += adv.Item();
+                terms["feature_matching"] += fm.Item();
+                terms["generator"] += loss.Item();
+                loss.Backward();
             }
             finally
             {
@@ -561,7 +589,7 @@ internal sealed class VitsTraining : IDisposable
 
         public void Dispose()
         {
-            Array.Clear(_kept);
+            _kept = null;
             WeightNormedLayers.Unbind(owner._weights.Normed);
             WeightNormedLayers.Unbind(discriminators.Normed);
         }
