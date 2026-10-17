@@ -793,6 +793,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void LayerNormBackwardKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage stats, Idrak.Abstraction.Devices.Storage? dx, Idrak.Abstraction.Devices.Storage? dgamma, Idrak.Abstraction.Devices.Storage? dbeta, int rows, int cols)
   public virtual void LayerNormFusedKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage beta, Idrak.Abstraction.Devices.Storage y, int rows, int cols, float eps)
   public virtual void LayerNormTrainKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage beta, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage stats, int rows, int cols, float eps)
+  public virtual void LeakyReluBackwardKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float slope)
+  public virtual void LeakyReluKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float slope)
   public virtual void MatMulManyKernel(Idrak.Abstraction.Devices.Storage a, int m, int k, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, int)> products)
   public virtual void MaxPoolBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage argmax, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g)
   public virtual void MaxPoolBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage argmax, Idrak.Abstraction.Devices.Storage dx, int count)
@@ -912,6 +914,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void LayerNormBackward(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage stats, Idrak.Abstraction.Devices.Storage? dx, Idrak.Abstraction.Devices.Storage? dgamma, Idrak.Abstraction.Devices.Storage? dbeta, int rows, int cols)
   public void LayerNormFused(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage beta, Idrak.Abstraction.Devices.Storage y, int rows, int cols, float eps)
   public void LayerNormTrain(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage beta, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage stats, int rows, int cols, float eps)
+  public void LeakyRelu(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float slope)
+  public void LeakyReluBackward(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float slope)
   public void MatMul(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int m, int n, int k, bool transA, bool transB, float beta)
   public void MatMulMany(Idrak.Abstraction.Devices.Storage a, int m, int k, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, int)> products)
   public void MaxPool(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage argmax, in Idrak.Abstraction.Devices.ConvGeometry g)
@@ -2934,6 +2938,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.LayerNormBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LayerNormFused (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LayerNormTrain (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.LeakyRelu (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.LeakyReluBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LstmCell (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LstmCellBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LstmSequence (below)
@@ -3173,6 +3179,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.LayerNormFuse
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.LayerNormTrain(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage beta, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage stats, int rows, int cols, float eps)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.LeakyRelu(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float slope)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.LeakyReluBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float slope)
+
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.LstmCell(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage projected, Idrak.Abstraction.Devices.Storage recurrent, Idrak.Abstraction.Devices.Storage cell, Idrak.Abstraction.Devices.Storage hidden, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage? gates, Idrak.Abstraction.Devices.Storage? cells, int step, int steps, int batch, int hiddenSize)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.LstmCellBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage gates, Idrak.Abstraction.Devices.Storage cells, Idrak.Abstraction.Devices.Storage? dOutput, Idrak.Abstraction.Devices.Storage dHidden, Idrak.Abstraction.Devices.Storage dCell, Idrak.Abstraction.Devices.Storage dGates, Idrak.Abstraction.Devices.Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
@@ -3379,6 +3389,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation LayerNormBackward
   public static readonly Idrak.Abstraction.Operations.Operation LayerNormFused
   public static readonly Idrak.Abstraction.Operations.Operation LayerNormTrain
+  public static readonly Idrak.Abstraction.Operations.Operation LeakyRelu
+  public static readonly Idrak.Abstraction.Operations.Operation LeakyReluBackward
   public static readonly Idrak.Abstraction.Operations.Operation LstmCell
   public static readonly Idrak.Abstraction.Operations.Operation LstmCellBackward
   public static readonly Idrak.Abstraction.Operations.Operation LstmSequence
@@ -3707,6 +3719,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Interpolate((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false, (double, double)? scaleFactor = null)
   public Idrak.Abstraction.Tensor LayerNormFused(Idrak.Abstraction.Tensor gamma, Idrak.Abstraction.Tensor beta, float eps)
   public Idrak.Abstraction.Tensor LayerNormTrain(Idrak.Abstraction.Tensor gamma, Idrak.Abstraction.Tensor beta, float eps)
+  public Idrak.Abstraction.Tensor LeakyRelu(float slope)
   public Idrak.Abstraction.Tensor Log()
   public Idrak.Abstraction.Tensor LogSoftmax()
   public Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor other, bool transposeA = false, bool transposeB = false)

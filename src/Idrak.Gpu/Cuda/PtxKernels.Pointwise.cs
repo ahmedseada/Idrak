@@ -25,7 +25,7 @@ internal static partial class PtxKernels
     public static readonly string[] PointwiseNames =
     [
         "sqrt_f32", "sin_f32", "cos_f32", "silu_f32", "sign_f32", "sqrt_bwd_f32", "sin_bwd_f32", "cos_bwd_f32", "silu_bwd_f32",
-        "max_f32", "min_f32", "extremum_bwd_f32", "pow_f32", "pow_bwd_f32", "clamp_f32", "clamp_bwd_f32", "where_f32", "where_bwd_f32",
+        "max_f32", "min_f32", "extremum_bwd_f32", "pow_f32", "pow_bwd_f32", "clamp_f32", "clamp_bwd_f32", "leaky_relu_f32", "leaky_relu_bwd_f32", "where_f32", "where_bwd_f32",
     ];
 
     /// <summary>pow_f32 / pow_bwd_f32 flags (PowFlags): the exponent is an odd integer.</summary>
@@ -265,6 +265,29 @@ internal static partial class PtxKernels
             ld.global.f32 %f2, [%a_dy];
             ld.global.f32 %f3, [%a_dx];
             add.rn.f32 %f3, %f3, %f2;
+            st.global.f32 [%a_dx], %f3;
+            """);
+
+        // y = x where x > 0, slope · x elsewhere (a NaN is not > 0: slope · NaN stays NaN).
+        Elementwise(sb, "leaky_relu_f32", ["x", "y"], [("f32", "slope")],
+            $"""
+            ld.global.f32 %f1, [%a_x];
+            mul.f32 %f2, %f1, %s_slope;
+            setp.gt.f32 %p1, %f1, {Zero};
+            selp.f32 %f3, %f1, %f2, %p1;
+            st.global.f32 [%a_y], %f3;
+            """);
+
+        // dx += dy where x > 0, slope · dy elsewhere.
+        Elementwise(sb, "leaky_relu_bwd_f32", ["x", "dy", "dx"], [("f32", "slope")],
+            $"""
+            ld.global.f32 %f1, [%a_x];
+            ld.global.f32 %f2, [%a_dy];
+            ld.global.f32 %f3, [%a_dx];
+            mul.f32 %f4, %f2, %s_slope;
+            setp.gt.f32 %p1, %f1, {Zero};
+            selp.f32 %f4, %f2, %f4, %p1;
+            add.rn.f32 %f3, %f3, %f4;
             st.global.f32 [%a_dx], %f3;
             """);
 

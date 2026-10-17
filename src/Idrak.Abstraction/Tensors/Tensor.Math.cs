@@ -22,6 +22,31 @@ public sealed partial class Tensor
     /// <summary>Sigmoid linear unit (swish), x · sigmoid(x), element-wise.</summary>
     public Tensor Silu() => Unary(UnaryOp.Silu);
 
+    /// <summary>
+    /// The leaky ReLU: x where x &gt; 0, <paramref name="slope"/> · x elsewhere, for a slope in [0, 1) (one kernel, where
+    /// max(x, slope · x) is two and keeps the scaled copy for the backward pass). Its gradient is 1 where x &gt; 0 and the
+    /// slope elsewhere.
+    /// </summary>
+    public Tensor LeakyRelu(float slope)
+    {
+        if (!(slope >= 0f && slope < 1f))
+        {
+            throw new ArgumentOutOfRangeException(nameof(slope), slope, "The leaky ReLU's slope is in [0, 1).");
+        }
+
+        ThrowIfDisposed();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty(_shape, Device);
+        Backend.LeakyRelu(Storage, y.Storage, Size, slope);
+        if (WillRecord(this))
+        {
+            var x = this;
+            y.Record("leaky_relu", g => x.Backend.LeakyReluBackward(x.Storage, g.Storage, x.GradStorage(), x.Size, slope), x);
+        }
+
+        return Traced("leaky_relu", y, start);
+    }
+
     /// <summary>The exact GELU, 0.5 · x · (1 + erf(x / √2)), element-wise (<see cref="Gelu"/> is the tanh approximation).</summary>
     public Tensor GeluErf() => Unary(UnaryOp.GeluErf);
 

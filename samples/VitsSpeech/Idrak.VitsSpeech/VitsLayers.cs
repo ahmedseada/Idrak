@@ -530,8 +530,8 @@ internal static class WeightNormedLayers
 /// <summary>Element-wise pieces written from public tensor operations, so they run on every device.</summary>
 internal static class VitsOps
 {
-    /// <summary>max(x, slope · x): the leaky ReLU for a slope in [0, 1).</summary>
-    public static Tensor LeakyRelu(Tensor x, float slope) => slope == 0 ? x.Relu() : x.Maximum(x * slope);
+    /// <summary>The leaky ReLU for a slope in [0, 1): one kernel (<see cref="Tensor.LeakyRelu"/>), ReLU at 0.</summary>
+    public static Tensor LeakyRelu(Tensor x, float slope) => slope == 0 ? x.Relu() : x.LeakyRelu(slope);
 
     /// <summary>The feed-forward activation a config.json names.</summary>
     public static Tensor Activation(string name, Tensor x) => name switch

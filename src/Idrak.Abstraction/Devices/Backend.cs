@@ -710,6 +710,20 @@ public abstract partial class Backend
         CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
     }
 
+    /// <summary>y = x where x &gt; 0, slope · x elsewhere: the leaky ReLU, for a slope in [0, 1).</summary>
+    public virtual void LeakyReluKernel(Storage x, Storage y, int n, float slope)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.LeakyRelu(h[x], h[y], n, slope);
+    }
+
+    /// <summary>dx += dy where x &gt; 0, slope · dy elsewhere.</summary>
+    public virtual void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.LeakyReluBackward(h[x], h[dy], h[dx], n, slope);
+    }
+
     /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
     public virtual void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
     {

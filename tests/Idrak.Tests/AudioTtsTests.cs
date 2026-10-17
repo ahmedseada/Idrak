@@ -15,7 +15,7 @@ internal static partial class Tests
         ("audio tts: Stft.Inverse gives a random signal back from ComplexOnHost within 1e-4 away from the edges (centred and not), SamplesFor names the length, and a hop the window does not cover is refused", AudioTtsInverseStft),
         ("audio tts: Griffin-Lim on a tone's magnitudes gives a tone of the same frequency, finite and of the frames' length; the same spectrogram and seed twice give the same samples; the vocoder registry has griffin-lim as the library default and makes it from a log-mel whose peak band is the tone's", AudioTtsGriffinLim),
         ("audio tts: the VITS plug-in loads tiny-vits and speaks the fixture's ids with noise 0 within 1e-3 of reference/waveform.npy's largest sample (not silent) at the config's rate (the durations' frames times the hop), the same twice, Rate 2 no longer, text through the tokenizer equal to the ids, SpeakStream joined equal to Speak, the WAV saved and read back; without the plug-in the family is refused", AudioTtsVitsFixture),
-        ("audio tts: the VITS decoder in pieces (DecoderChunkSeconds) with its context frames on both sides gives one pass's samples within 1e-6 (pieces of 3, 7 and 50 frames, through Synthesize and the vocoder), where 50 frames decoded without context differ near the cut 100 times more; on the CPU its peak memory stays within 1.5 times while the latents grow fivefold", AudioTtsDecoderPieces),
+        ("audio tts: the VITS decoder in pieces (DecoderChunkSeconds) with its context frames on both sides gives one pass's samples within 1e-6 (pieces of 3, 7 and 50 frames, through Synthesize and the vocoder), where 50 frames decoded without context differ near the cut 100 times more; on the CPU its peak memory grows only by the latents' own copy while they grow fivefold", AudioTtsDecoderPieces),
         ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, phonemizes for a phonemize checkpoint through TextPhonemizers (the language from tokenizer_config.json, punctuation kept in place; an unregistered phonemizer and espeak-ng not found refused naming the remedy), romanises Arabic for a uroman checkpoint (uroman's output exactly on the tool's cases) and refuses a script no romanizer covers, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
     ];
 
@@ -378,8 +378,10 @@ internal static partial class Tests
                 return device.Backend.GetMemoryUsage().Peak - before;
             }
 
-            long small = Peak(400), large = Peak(2000);
-            Check(large <= small * 1.5, $"the decoder's peak memory in pieces of 50 frames: {small} bytes for 400 frames, {large} for 2000 (it should not grow with the length)");
+            // The vocoder holds one transposed copy of its latents; beyond that the pieces' working set is the same at any length.
+            long small = Peak(400), large = Peak(2000), latentsCopy = (2000 - 400) * flow * sizeof(float);
+            Check(large - small <= latentsCopy + small / 10,
+                $"the decoder's peak memory in pieces of 50 frames: {small} bytes for 400 frames, {large} for 2000; beyond the latents' own transposed copy ({latentsCopy} more bytes) it should not grow with the length");
         }
 
         model.DecoderChunkSeconds = 10;
