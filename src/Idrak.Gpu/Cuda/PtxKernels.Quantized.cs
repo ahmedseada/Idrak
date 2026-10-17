@@ -95,6 +95,20 @@ internal static partial class PtxKernels
             """);
 
         // w[r, 2c], w[r, 2c + 1] = the IEEE half pair in packed word (r, c) widened (cvt.f32.f16: exact, subnormals kept).
+        // A NaN half widens to the float NaN with its payload (sign | 0x7F800000 | mantissa << 13), as .NET's (float)Half and
+        // the CPU's widening: cvt.f32.f16 gives one canonical NaN for all of them.
+        static string KeepNaN(string f) => $"""
+            and.b32 %r13, %r12, 0x7C00;
+            and.b32 %r14, %r12, 0x3FF;
+            setp.eq.u32 %p2, %r13, 0x7C00;
+            setp.ne.and.u32 %p2, %r14, 0, %p2;
+            and.b32 %r15, %r12, 0x8000;
+            shl.b32 %r15, %r15, 16;
+            shl.b32 %r14, %r14, 13;
+            or.b32 %r15, %r15, %r14;
+            or.b32 %r15, %r15, 0x7F800000;
+            @%p2 mov.b32 {f}, %r15;
+            """;
         Elementwise(sb, "f16_dequant_f32", ["q", "w"], [("u32", "words"), ("u32", "cols")], """
             {
             .reg .b16 %hl, %hh;
@@ -107,15 +121,19 @@ internal static partial class PtxKernels
             add.u64 %rd1, %rd1, %b_w;
             mov.b32 {%hl, %hh}, %r5;
             cvt.f32.f16 %f1, %hl;
+            and.b32 %r12, %r5, 0xFFFF;
+            NAN_LOW
             st.global.f32 [%rd1], %f1;
             add.u32 %r11, %r8, 1;
             setp.ge.u32 %p1, %r11, %s_cols;
             @%p1 bra F16_DONE;
             cvt.f32.f16 %f2, %hh;
+            shr.u32 %r12, %r5, 16;
+            NAN_HIGH
             st.global.f32 [%rd1+4], %f2;
             F16_DONE:
             }
-            """);
+            """.Replace("NAN_LOW", KeepNaN("%f1"), StringComparison.Ordinal).Replace("NAN_HIGH", KeepNaN("%f2"), StringComparison.Ordinal));
 
         // y[i] = scale[i % cols] · Σ_s part[s, i] over the k splits of int8_gemv_f32, in split order.
         Elementwise(sb, "int8_gemv_finish_f32", ["part", "s", "y"], [("u32", "cols"), ("u32", "size"), ("u32", "splits")], $"""
