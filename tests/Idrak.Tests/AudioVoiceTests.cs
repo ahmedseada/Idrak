@@ -156,7 +156,7 @@ internal static partial class Tests
         using (new TensorScope())
         {
             var config = OpenVoiceConfig.FromJson(JsonNode.Parse(File.ReadAllText(Path.Combine(TinyOpenVoice, "config.json")))!.AsObject());
-            using var flow = new VitsFlow(new VitsWeights(new OpenVoiceTensors(store), device), config.ToVits());
+            using var flow = OpenVoiceConverter.Flow(new StoredLayers(new OpenVoiceTensors(store), device), config);
             var random = new Random(5);
             var values = new float[8 * 40];
             for (int i = 0; i < values.Length; i++)

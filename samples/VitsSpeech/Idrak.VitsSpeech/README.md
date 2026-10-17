@@ -18,18 +18,23 @@ AudioEncoders.Save("hello.wav", audio);
 | Part | Layers | Notes |
 |---|---|---|
 | Tokenizer (`VitsTokenizer`) | `vocab.json`, `tokenizer_config.json` | lower-cased and filtered to the vocabulary (`normalize`), a blank between symbols (`add_blank`, the pad id); `phonemize` is refused (no phonemizer in the library); `is_uroman` refuses non-Latin text (below) |
-| Text encoder (`VitsTextEncoder`) | `Embedding` × √hidden, `Linear` q/k/v/out, a relative-position bias within `window_size` (gathers over the scores with precomputed indices, the embeddings sliced per length), post-norm `LayerNorm`, a feed-forward of two `Conv2d` (1, k) convolutions with the configured activation; a projection to the prior's means and log-variances | one utterance per pass, so no padding mask |
-| Durations (`VitsStochasticDurationPredictor`) | pointwise convolutions, the dilated depth-separable convolution (depthwise `Conv2d` with groups, `LayerNorm`, exact GELU), the flows in reverse: the spline flows but the first, then the element-wise affine; the rational-quadratic spline inverted on the host in double | `noise_scale_duration` 0 gives deterministic durations; `use_stochastic_duration_prediction: false` uses `VitsDeterministicDurationPredictor` |
+| Text encoder (`VitsTextEncoder`) | `Embedding` × √hidden, the library's `RelativePositionAttention` (q/k/v/out `Linear`, a relative-position bias within `window_size`, the embeddings sliced per length when speaking and gathered as parameters when training), post-norm `LayerNorm`, a feed-forward of two `Conv1d` convolutions with the configured activation; a projection to the prior's means and log-variances | one utterance per pass when speaking; a padded batch with masks when training |
+| Durations (`VitsStochasticDurationPredictor`) | pointwise convolutions, the library's `DilatedDepthSeparableConv` (depthwise `Conv1d` with groups, `LayerNorm`, exact GELU), the flows in reverse: the library's `ConvolutionalSplineFlow`s but the first (`RationalQuadraticSpline` inverted on the host in double), then the element-wise affine | `noise_scale_duration` 0 gives deterministic durations; `use_stochastic_duration_prediction: false` uses `VitsDeterministicDurationPredictor` |
 | Length regulation | `ceil(exp(log duration) · length scale)` per token, the prior's rows gathered once per frame (`EmbeddingLookup` with precomputed indices) | `SpeechSynthesisOptions.Rate` = 1 / length scale; the total is at least one frame |
-| Flow (`VitsFlow`) | residual coupling in reverse: channels flipped, WaveNet (`Conv2d` with dilation, weight norm folded at load, tanh × sigmoid gates) | `noise_scale` 0 gives the means |
-| Decoder (`HifiGanDecoder`) | `Conv2d` (1, 7), per stage leaky ReLU (`Maximum(x, slope · x)`), `ConvTranspose2d` (1, k) stride (1, rate), the residual blocks averaged; the last leaky ReLU (0.01, PyTorch's default, a setting `final_leaky_relu_slope`), `Conv2d` (1, 7), tanh | also `VitsSynthesizer.Vocoder`, an `IVocoder` over the flow's latents |
+| Flow | the library's `ResidualCouplingBlock` (Idrak.Audio.Layers) in reverse: channels flipped, `WaveNet` (dilated `Conv1d`, weight norm folded at load, the tanh × sigmoid gate as one kernel) | `noise_scale` 0 gives the means |
+| Decoder | the library's `HifiGanGenerator`: `Conv1d` (7), per stage leaky ReLU, `ConvTranspose1d` (k, stride rate), the residual blocks averaged; the last leaky ReLU (0.01, PyTorch's default, a setting `final_leaky_relu_slope`), `Conv1d` (7), tanh | also `VitsSynthesizer.Vocoder`, an `IVocoder` over the flow's latents |
 
 **Memory.** The decoder makes the sound in pieces of `VitsSynthesizer.DecoderChunkSeconds` (10 s; 0: one pass), each
-with `ContextFrames` of latents on both sides (its receptive field, computed from config.json) that are cut away again,
+with `HifiGanGenerator.ContextFrames` of latents on both sides (its receptive field, computed from config.json) that are cut away again,
 so the samples are a whole pass's and the device holds one piece at a time; a piece the device has no memory for is
 decoded again in halves. Within a piece, with gradients off, each stage and residual step keeps only its result. For
 83 s of sound from an MMS-sized checkpoint on the CPU: one pass peaked 3915 MB above its start, pieces of 10 s 502 MB,
 with the same samples bit for bit (and 93 s against 149 s). With gradients on, one pass, every intermediate kept.
+
+The checkpoint is read by the library's `StoredLayers` (Idrak.Models) under transformers' tensor names, and the layers
+are built with their `FromStored` factories (prefixes `text_encoder`, `duration_predictor`, `flow`, `decoder`,
+`posterior_encoder`); the plug-in holds only what is VITS's own: the tokenizer, the text encoder's layer order, the
+duration predictor's flow order and the training step.
 
 Every size, rate and scale is read from `config.json` (`VitsConfig`); `SpeechSynthesisOptions` carries the rate, the two
 noise scales (null: the checkpoint's), the seed, the voice (multi-speaker checkpoints: the speaker), the output
@@ -83,12 +88,11 @@ inference. `VitsTokenizer` romanises such text first, with the romanizer `TextRo
 - A script no registered romanizer covers is refused, naming `TextRomanizers.Register`: an app registers an
   `ITextRomanizer` for it (asked before the earlier ones), or gives Latin text.
 
-## Reused by the OpenVoice converter (plan 21, S9)
+## Shared with the OpenVoice converter (plan 21, S9)
 
-`samples/OpenVoice` (a voice converter plug-in) reads OpenVoice's tensors under these layers' names and runs
-`VitsPosteriorEncoder` (transformers' `VitsPosteriorEncoder`: a spectrogram to latents, `spectrogram_bins` and
-`posterior_encoder_num_wavenet_layers` from config.json), `VitsFlow.Forward` (the coupling layers forward, the inverse of
-`Reverse`) and `HifiGanDecoder`. The project lets that assembly (and the tests) see its internal layers.
+`samples/OpenVoice` (a voice converter plug-in) reads OpenVoice's tensors under the same transformers names and builds
+the same library layers (`PosteriorEncoder`, `ResidualCouplingBlock.Forward` and `Reverse`, `HifiGanGenerator`); the
+two plug-ins share nothing but the library.
 
 ## Fine-tuning a voice (plan 21, S9 route C)
 
@@ -97,12 +101,12 @@ Loaded with `SpeechSynthesisLoadOptions.Training`, the synthesizer is an `IAdver
 
 | Part | What training does |
 |---|---|
-| Weights | every tensor a parameter under its stored name; weight norms kept as gains and directions, folded per pass; saved back to the checkpoint's own layout (`model.safetensors`, the other files copied) |
+| Weights | `StoredLayers` trainable: every tensor a parameter under its stored name (`ParameterSet`); weight norms kept as gains and directions (`WeightNorm`, bound once a step); saved back to the checkpoint's own layout (`model.safetensors`, the other files copied) |
 | Posterior | the linear spectrogram (VITS's `spectrogram_torch`) through the posterior encoder, latents drawn, the flow forward |
-| Durations | the monotonic alignment search on the host (`MonotonicAlignment`, VITS's recursion in float), the stochastic duration predictor's negative log-likelihood through its posterior flows (the spline composed from tensor operations); the deterministic predictor's squared log error when the checkpoint uses one |
-| Losses | mel L1 × 45, KL × 1 (over the batch's frames), duration × 1 (over its tokens), least-squares adversarial × 1, feature matching × 2: every weight a setting (`AdversarialSynthesisOptions`) |
+| Durations | the library's `MonotonicAlignment` search on the host (VITS's recursion in float), the stochastic duration predictor's negative log-likelihood through its posterior flows (`RationalQuadraticSpline.Forward` composed from tensor operations); the deterministic predictor's squared log error when the checkpoint uses one |
+| Losses | mel L1 × 45 (`DifferentiableLogMel`), KL × 1 (over the batch's frames), duration × 1 (over its tokens), least-squares adversarial × 1, feature matching × 2 (`AdversarialLosses`): every weight a setting (`AdversarialSynthesisOptions`) |
 | Decoder | a random segment of `SegmentFrames` latent frames (32 by default, 8192 samples at hop 256): memory follows the batch, not an utterance's length |
-| Discriminators | `VitsDiscriminators`: VITS's multi-period discriminator (a scale discriminator of grouped convolutions, periods 2, 3, 5, 7, 11), `scales` above 1 adds HiFi-GAN's pooled scales; weight-normed; `discriminator.json` lists every channel, kernel, stride, group and slope; read from the base folder when it holds `discriminator.safetensors`, else from the file `--discriminator-weights` names (a `discriminator.safetensors`, or the VITS and MMS releases' `D_*.pth` under its `weight_g` and `weight_v` names), else drawn new |
+| Discriminators | the library's `HifiGanDiscriminators` (`HifiGanDiscriminatorConfig`): VITS's multi-period discriminator (a scale discriminator of grouped convolutions, periods 2, 3, 5, 7, 11), `scales` above 1 adds HiFi-GAN's pooled scales; weight-normed; `discriminator.json` lists every channel, kernel, stride, group and slope; read from the base folder when it holds `discriminator.safetensors`, else from the file `--discriminator-weights` names (a `discriminator.safetensors`, or the VITS and MMS releases' `D_*.pth` under its `weight_g` and `weight_v` names), else drawn new |
 
 ```powershell
 idrak voice train ahmed --from D:\rec\transcripts.jsonl --base facebook/mms-tts-ara -P Idrak.VitsSpeech.dll -l ar `

@@ -3499,6 +3499,9 @@ public enum Idrak.Abstraction.PaddingMode : int
   Replicate = 2
   Zeros = 0
 
+public static class Idrak.Abstraction.RandomDraws
+  public static double NextGaussian(this System.Random random)
+
 public sealed class Idrak.Abstraction.ResourceLimitExceededException : System.Exception
   public ResourceLimitExceededException(string message)
 

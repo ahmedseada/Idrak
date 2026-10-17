@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Models;
 
 namespace Idrak.OpenVoice;
 
@@ -40,7 +41,7 @@ public sealed class OpenVoiceFamily : IVoiceConverterFamily
         ArgumentNullException.ThrowIfNull(checkpoint);
         ArgumentNullException.ThrowIfNull(options);
         var config = OpenVoiceConfig.FromJson(checkpoint.Config);
-        var weights = new VitsWeights(new OpenVoiceTensors(checkpoint.Tensors), options.Device ?? Device.Default);
+        var weights = new StoredLayers(new OpenVoiceTensors(checkpoint.Tensors), options.Device ?? Device.Default);
         return new OpenVoiceConverter(weights, config, checkpoint.Folder, checkpoint.Notes);
     }
 }

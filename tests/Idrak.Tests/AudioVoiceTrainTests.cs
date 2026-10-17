@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Cli;
+using Idrak.Models;
 using Idrak.VitsSpeech;
 
 // Plan 21, phase S9 route C: a voice trained on a person's recordings by fine-tuning a VITS checkpoint against
@@ -107,7 +108,7 @@ internal static partial class Tests
 
             var discriminators = model.Discriminators(options, 0);
             var named = model.Training.Opened!.Module.Named;
-            var generator = (VitsParameterSet)model.Generator;
+            var generator = (ParameterSet)model.Generator;
             using var sgdD = new Sgd(discriminators.Parameters(), (float)reference["discriminator_lr"]!);
             using var sgdG = new Sgd(model.Generator.Parameters(), (float)reference["generator_lr"]!);
             var steps = reference["steps"]!.AsArray();

@@ -5,67 +5,12 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Formats;
-using Idrak.Models;
 using Idrak.Audio;
+using Idrak.Audio.Layers;
 using Idrak.Layers;
+using Idrak.Models;
 
 namespace Idrak.VitsSpeech;
-
-/// <summary>
-/// VITS's monotonic alignment search (its <c>monotonic_align</c>): the path through an utterance's [frames, tokens]
-/// scores (each frame's log-likelihood under each token's prior) that visits every token in order, at least a frame each,
-/// with the largest sum; on the host, in float as the Cython code adds, so its paths are VITS's exactly.
-/// </summary>
-internal static class MonotonicAlignment
-{
-    /// <summary>The token of each frame along the best path of <paramref name="scores"/> [frames, tokens] (row-major); frames are at least tokens.</summary>
-    /// <exception cref="ArgumentException">Fewer frames than tokens, or the scores are not frames × tokens.</exception>
-    public static int[] Search(ReadOnlySpan<float> scores, int frames, int tokens)
-    {
-        if (tokens < 1 || frames < tokens || scores.Length != frames * tokens)
-        {
-            throw new ArgumentException($"The alignment search takes [frames, tokens] scores with at least as many frames as tokens; got {scores.Length} values for {frames} x {tokens}.");
-        }
-
-        var value = scores.ToArray();
-        const float Never = -1e9f;
-        for (int y = 0; y < frames; y++)
-        {
-            int last = Math.Min(tokens, y + 1);
-            for (int x = Math.Max(0, tokens + y - frames); x < last; x++)
-            {
-                float current = x == y ? Never : value[(y - 1) * tokens + x];
-                float previous = x == 0 ? y == 0 ? 0f : Never : value[(y - 1) * tokens + x - 1];
-                value[y * tokens + x] += Math.Max(previous, current);
-            }
-        }
-
-        var path = new int[frames];
-        int index = tokens - 1;
-        for (int y = frames - 1; y >= 0; y--)
-        {
-            path[y] = index;
-            if (index != 0 && (index == y || value[(y - 1) * tokens + index] < value[(y - 1) * tokens + index - 1]))
-            {
-                index--;
-            }
-        }
-
-        return path;
-    }
-
-    /// <summary>Each token's frames along <paramref name="path"/> (a frame's token).</summary>
-    public static int[] Durations(ReadOnlySpan<int> path, int tokens)
-    {
-        var durations = new int[tokens];
-        foreach (int token in path)
-        {
-            durations[token]++;
-        }
-
-        return durations;
-    }
-}
 
 /// <summary>
 /// The training rows of a VITS model (an <see cref="IAudioFeatureExtractor"/> named "vits-frames"): per frame of the
@@ -158,48 +103,48 @@ internal sealed class VitsTraining : IDisposable
 {
     private readonly VitsSynthesizer _model;
     private readonly ConcurrentDictionary<(Device, int, float, float), (Tensor Mel, Tensor Basis)> _filters = new();
-    private VitsDiscriminators? _discriminators;
+    private HifiGanDiscriminators? _discriminators;
 
-    private readonly VitsWeights _weights;
+    private readonly StoredLayers _weights;
 
-    public VitsTraining(VitsSynthesizer model, VitsWeights weights)
+    public VitsTraining(VitsSynthesizer model, StoredLayers weights)
     {
         _model = model;
         _weights = weights;
-        Generator = new VitsParameterSet("VITS generator", weights.Trained);
+        Generator = new ParameterSet("VITS generator", weights.Trained);
         Features = new VitsTrainingFeatures(model.Config);
     }
 
-    public VitsParameterSet Generator { get; }
+    public ParameterSet Generator { get; }
 
     public VitsTrainingFeatures Features { get; }
 
     /// <summary>Tests: the draws of each utterance (its position in the batch, the batch) instead of the seeded ones.</summary>
     internal Func<int, AdversarialSynthesisBatch, VitsDraws>? Draws { get; set; }
 
-    public VitsDiscriminators? Opened => _discriminators;
+    public HifiGanDiscriminators? Opened => _discriminators;
 
-    public VitsDiscriminators Discriminators(AdversarialSynthesisOptions options, int seed)
+    public HifiGanDiscriminators Discriminators(AdversarialSynthesisOptions options, int seed)
     {
         if (_discriminators is not null)
         {
             return _discriminators;
         }
 
-        var asked = options.Discriminator is { } description ? VitsDiscriminatorConfig.FromJson(description) : null;
+        var asked = options.Discriminator is { } description ? HifiGanDiscriminatorConfig.FromJson(description) : null;
         string? folder = _model.Folder;
-        if (folder is not null && File.Exists(Path.Combine(folder, VitsDiscriminators.WeightsFile)))
+        if (folder is not null && File.Exists(Path.Combine(folder, HifiGanDiscriminators.WeightsFile)))
         {
-            string configPath = Path.Combine(folder, VitsDiscriminators.ConfigFile);
-            var saved = File.Exists(configPath) ? VitsDiscriminatorConfig.FromJson(JsonNode.Parse(File.ReadAllText(configPath))!.AsObject()) : new VitsDiscriminatorConfig();
+            string configPath = Path.Combine(folder, HifiGanDiscriminators.ConfigFile);
+            var saved = File.Exists(configPath) ? HifiGanDiscriminatorConfig.FromJson(JsonNode.Parse(File.ReadAllText(configPath))!.AsObject()) : new HifiGanDiscriminatorConfig();
             if (asked is not null && asked.ToJson().ToJsonString() != saved.ToJson().ToJsonString())
             {
                 throw new ArgumentException($"{folder} holds discriminators of {saved.ToJson().ToJsonString()}, and the options describe {asked.ToJson().ToJsonString()}: "
                     + "train them as they are (no AdversarialSynthesisOptions.Discriminator), or from a folder without them.");
             }
 
-            using var reader = SafeTensorsReader.Open(Path.Combine(folder, VitsDiscriminators.WeightsFile));
-            _discriminators = new VitsDiscriminators(saved, reader, _model.Device);
+            using var reader = SafeTensorsReader.Open(Path.Combine(folder, HifiGanDiscriminators.WeightsFile));
+            _discriminators = new HifiGanDiscriminators(saved, reader, _model.Device);
         }
         else if (options.DiscriminatorWeights is { } file)
         {
@@ -210,12 +155,12 @@ internal sealed class VitsTraining : IDisposable
                 throw new FileNotFoundException($"No discriminators file {file} (AdversarialSynthesisOptions.DiscriminatorWeights).", file);
             }
 
-            string configPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file))!, VitsDiscriminators.ConfigFile);
-            var config = asked ?? (File.Exists(configPath) ? VitsDiscriminatorConfig.FromJson(JsonNode.Parse(File.ReadAllText(configPath))!.AsObject()) : new VitsDiscriminatorConfig());
+            string configPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file))!, HifiGanDiscriminators.ConfigFile);
+            var config = asked ?? (File.Exists(configPath) ? HifiGanDiscriminatorConfig.FromJson(JsonNode.Parse(File.ReadAllText(configPath))!.AsObject()) : new HifiGanDiscriminatorConfig());
             using ITensorStore store = PyTorchCheckpointReader.IsCheckpoint(file) ? PyTorchCheckpointReader.Open(file) : SafeTensorsReader.Open(file);
             try
             {
-                _discriminators = new VitsDiscriminators(config, store, _model.Device);
+                _discriminators = new HifiGanDiscriminators(config, store, _model.Device);
             }
             catch (InvalidDataException e)
             {
@@ -224,7 +169,7 @@ internal sealed class VitsTraining : IDisposable
         }
         else
         {
-            _discriminators = VitsDiscriminators.Create(asked ?? new VitsDiscriminatorConfig(), _model.Device, seed);
+            _discriminators = HifiGanDiscriminators.Create(asked ?? new HifiGanDiscriminatorConfig(), _model.Device, seed);
         }
 
         return _discriminators;
@@ -297,7 +242,7 @@ internal sealed class VitsTraining : IDisposable
         _discriminators?.Save(folder);
     }
 
-    public static IReadOnlyList<string> TrainingFiles { get; } = [VitsDiscriminators.WeightsFile, VitsDiscriminators.ConfigFile];
+    public static IReadOnlyList<string> TrainingFiles { get; } = [HifiGanDiscriminators.WeightsFile, HifiGanDiscriminators.ConfigFile];
 
     public void Dispose()
     {
@@ -338,7 +283,7 @@ internal sealed class VitsTraining : IDisposable
     // loss and the discriminators together; every layer runs once a micro-batch. One utterance runs unpadded, unmasked.
     internal BatchPass PassAll(AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, IReadOnlyList<int>? utterances = null)
     {
-        using var checkpoints = batch.Checkpointing ? VitsCheckpoints.Enter() : null;
+        using var checkpoints = batch.Checkpointing ? ActivationMemory.CheckpointBlocks() : (ActivationMemory.Scope?)null;
         utterances ??= [.. Enumerable.Range(0, batch.Frames.Count)];
         var config = _model.Config;
         var device = _model.Device;
@@ -461,19 +406,8 @@ internal sealed class VitsTraining : IDisposable
         return new BatchPass(kl, nll, mel, made, real, durations, tokenMask, frameMask);
     }
 
-    // The log-mel spectra [B · frames, mels] of the sound [B, L] as VITS's mel_spectrogram_torch takes it, differentiable:
-    // reflect-padded (a gather), the windowed DFT as a convolution with its cosine and sine filters, √(re² + im² + 1e-6),
-    // the filterbank, log of at least 1e-5.
-    internal Tensor LogMel(Tensor sound, Tensor basis, Tensor melFilters)
-    {
-        int size = (Features.Bins - 1) * 2, bins = Features.Bins, hop = Features.Hop, batch = sound.Shape[0];
-        var padded = sound.Pad(1, (size - hop) / 2, (size - hop) / 2, PaddingMode.Reflect);
-        int length = padded.Shape[1], frames = (length - size) / hop + 1;
-        var spectrum = padded.Reshape(batch, 1, 1, length).Convolution(basis, null, new ConvGeometry(batch, 1, 1, length, 1, size, 1, hop, 0, 0)).Reshape(batch, 2 * bins, frames);
-        var magnitude = (spectrum.Narrow(1, 0, bins).Square() + spectrum.Narrow(1, bins, bins).Square() + 1e-6f).Sqrt();   // [B, bins, frames]
-        var byFrame = batch == 1 ? magnitude.Reshape(bins, frames).Transpose() : magnitude.Permute(0, 2, 1).Reshape(batch * frames, bins);
-        return byFrame.MatMul(melFilters).Clamp(1e-5f, float.PositiveInfinity).Log();
-    }
+    // The log-mel spectra [B · frames, mels] of the sound [B, L] as VITS's mel_spectrogram_torch takes it (the library's differentiable log-mel).
+    internal Tensor LogMel(Tensor sound, Tensor basis, Tensor melFilters) => DifferentiableLogMel.Compute(sound, basis, melFilters, (Features.Bins - 1) * 2, Features.Hop);
 
     // The mel filterbank [bins, mels] (librosa's, slaney scale and norm) and the DFT filters [2 · bins, n_fft] (cosines,
     // then minus sines, of a periodic Hann window), once per device and mel setting.
@@ -484,18 +418,7 @@ internal sealed class VitsTraining : IDisposable
         {
             var mel = MelFilterbank.Build(Features.Options with { Mels = options.Mels, MinFrequency = options.MelMinFrequency, MaxFrequency = options.MelMaxFrequency });
             int size = Features.Options.WindowSize, bins = Features.Bins;
-            var window = Stft.Window("hann", size);
-            var basis = new float[2 * bins * size];
-            for (int k = 0; k < bins; k++)
-            {
-                for (int n = 0; n < size; n++)
-                {
-                    double angle = 2 * Math.PI * n * k / size;
-                    basis[k * size + n] = (float)(window[n] * Math.Cos(angle));
-                    basis[(bins + k) * size + n] = (float)(-window[n] * Math.Sin(angle));
-                }
-            }
-
+            var basis = DifferentiableLogMel.Basis(size, Stft.Window("hann", size));
             return (Tensor.Persistent(mel, [bins, options.Mels], device), Tensor.Persistent(basis, [2 * bins, size], device));
         });
     }
@@ -514,20 +437,20 @@ internal sealed class VitsTraining : IDisposable
         var posterior = new float[_model.Config.FlowSize * frames];
         for (int k = 0; k < posterior.Length; k++)
         {
-            posterior[k] = (float)VitsNoise.Normal(random);
+            posterior[k] = (float)random.NextGaussian();
         }
 
         var duration = new float[2 * tokens];
         for (int k = 0; k < duration.Length; k++)
         {
-            duration[k] = (float)VitsNoise.Normal(random);
+            duration[k] = (float)random.NextGaussian();
         }
 
         return new VitsDraws(posterior, duration, random.Next(frames - seg + 1));
     }
 
     // A micro-batch's step: the discriminators' half, then the generator's (VITS's losses, each utterance's share of the step's).
-    private sealed class Step(VitsTraining owner, AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, bool keep, VitsDiscriminators discriminators)
+    private sealed class Step(VitsTraining owner, AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, bool keep, HifiGanDiscriminators discriminators)
         : IAdversarialSynthesisStep
     {
         private BatchPass? _kept;
@@ -575,14 +498,7 @@ internal sealed class VitsTraining : IDisposable
 
             var (real, _) = discriminators.Forward(pass.Real);
             var (made, _) = discriminators.Forward(pass.Made.Detach());
-            Tensor? loss = null;
-            for (int d = 0; d < real.Count; d++)
-            {
-                var term = (real[d] * -1f + 1f).Square().Mean() + made[d].Square().Mean();
-                loss = loss is null ? term : loss + term;
-            }
-
-            var share = loss! * ((float)batch.Frames.Count / batch.StepUtterances);
+            var share = AdversarialLosses.LeastSquaresDiscriminator(real, made) * ((float)batch.Frames.Count / batch.StepUtterances);
             float total = share.Item();
             share.Backward();
             if (!keep)
@@ -623,17 +539,8 @@ internal sealed class VitsTraining : IDisposable
                 }
 
                 var (scores, madeMaps) = discriminators.Forward(pass.Made);
-                Tensor? adversarial = null, matching = null;
-                for (int d = 0; d < scores.Count; d++)
-                {
-                    var term = (scores[d] * -1f + 1f).Square().Mean();
-                    adversarial = adversarial is null ? term : adversarial + term;
-                    for (int l = 0; l < madeMaps[d].Count; l++)
-                    {
-                        var difference = (realMaps[d][l] - madeMaps[d][l]).Abs().Mean();
-                        matching = matching is null ? difference : matching + difference;
-                    }
-                }
+                var adversarial = AdversarialLosses.LeastSquaresGenerator(scores);
+                var matching = AdversarialLosses.FeatureMatching(realMaps, madeMaps);
 
                 // The batch's means are the utterances' means averaged (equal segments): the batch's share of the step is
                 // the utterances' shares summed; the KL and duration terms are each utterance's own, summed.
@@ -641,8 +548,8 @@ internal sealed class VitsTraining : IDisposable
                 var mel = pass.Mel * (options.MelWeight * share);
                 var kl = pass.Kl * (options.KlWeight / batch.StepFrames);
                 var duration = pass.Nll * (options.DurationWeight / batch.StepLabels);
-                var adv = adversarial! * (options.AdversarialWeight * share);
-                var fm = matching! * (options.FeatureMatchingWeight * share);
+                var adv = adversarial * (options.AdversarialWeight * share);
+                var fm = matching * (options.FeatureMatchingWeight * share);
                 var loss = mel + kl + duration + adv + fm;
                 terms["mel"] += mel.Item();
                 terms["kl"] += kl.Item();

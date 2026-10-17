@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Models;
+
 namespace Idrak.VitsSpeech;
 
 /// <summary>
@@ -48,7 +50,7 @@ public sealed class VitsSpeechFamily : ISpeechSynthesisFamily
             throw new NotSupportedException($"Training fine-tunes a single-speaker checkpoint (route C: one person's voice); this one has {config.Speakers} speakers.");
         }
 
-        var weights = new VitsWeights(checkpoint.Tensors, options.Device ?? Device.Default, options.Training);
+        var weights = new StoredLayers(checkpoint.Tensors, options.Device ?? Device.Default, options.Training);
         return new VitsSynthesizer(weights, config, tokenizer, checkpoint.Notes, checkpoint.Folder, checkpoint.Open);
     }
 }

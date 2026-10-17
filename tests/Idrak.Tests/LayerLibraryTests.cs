@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Audio;
+using Idrak.Audio.Abstractions;
+using Idrak.Audio.Layers;
 using Idrak.Layers;
 using Idrak.Models;
 
@@ -13,6 +16,9 @@ internal static partial class Tests
         ("layers: Tensor.Pad adds zeros, mirrored or repeated edges along any axis of a [2, 3, 5] (against plain arrays), refuses a reflection wider than the axis allows, and its gradient reaches the positions each padded value copies; Flip reverses an axis and its gradient", PaddingAndFlip),
         ("layers: Conv1d and ConvTranspose1d over [C, T] and [B, C, T] equal Conv2d and ConvTranspose2d over [B, C, 1, T]; a weight-normed Conv1d's weight is g · v / ‖v‖ and its bound step gives g and v the gradients of the per-pass norm within 1e-5", ConvolutionsOverTime),
         ("layers: PaddedSequences gives masks per channel count, rows and key bias that outlive the scope they are first asked in and go with Dispose; TensorDictionary round-trips tensors by name and refuses a mismatched shape; StoredWeights folds a weight norm and finds both naming schemes", PaddedBatchesAndStores),
+        ("layers: StoredLayers reads a store's convolutions, transposed convolutions, linears, norms and 1 × 1 projections under their stored names (trainable: every tensor a parameter listed in Trained, a weight norm kept as gain and direction); WaveNet, ResidualCouplingBlock (forward then reverse the identity within 1e-5, with and without a speaker) and PosteriorEncoder (means at noise 0) built from it; a batch with masks equals the sequences alone", AudioLayersFromStored),
+        ("layers: HifiGanGenerator decodes long latents in pieces with context equal to one pass within 1e-5 and halves a piece the device refuses; HifiGanDiscriminators created from a seed give a score and a map per layer per discriminator, save and reload bit for bit under VITS's names, and refuse sound that is not [B, L]; the GAN losses equal plain loops", HifiGanLayers),
+        ("layers: RelativePositionAttention with window 0 equals scaled-dot-product attention from the same projections within 1e-5, zero relative embeddings change nothing, the trained path (embeddings as parameters) equals the speaking path and gives them gradients; MonotonicAlignment finds the best monotonic path and its durations; DifferentiableLogMel equals the host STFT's log-mel within 1e-4", AttentionAlignmentAndMel),
     ];
 
     private static void PaddingAndFlip(Device device)
@@ -214,5 +220,369 @@ internal static partial class Tests
         Check(StoredWeights.WeightNormNames(store, "c") is ("c.parametrizations.weight.original0", "c.parametrizations.weight.original1"), "the parametrizations scheme found");
         AssertClose([7f * 0.6f, 7f * 0.8f, 0f, 8f], StoredWeights.FoldWeightNorm(store.Read("b.weight_g"), store.Read("b.weight_v"), store.ShapeOf("b.weight_v")), 1e-6f, "folded: each row scaled to its gain");
         ThrowsNaming<InvalidDataException>(() => StoredWeights.FoldWeightNorm([1f], [1f, 2f, 3f, 4f], [2, 2]), "1 values for 2");
+    }
+
+    // A store of uniform random tensors under the names the layers read: {prefix}.weight [shape] and {prefix}.bias [shape[0]].
+    private static void DrawLayer(TensorDictionary store, Random random, string prefix, int[] shape, bool bias = true, bool normed = false, int biasRows = -1)
+    {
+        int size = shape.Aggregate(1, (a, b) => a * b), rows = shape[0];
+        if (biasRows < 0)
+        {
+            biasRows = rows;                                                     // a transposed convolution's bias is its output channels, shape[1]
+        }
+
+        float bound = 1f / MathF.Sqrt(size / rows);
+        float[] values = [.. Enumerable.Range(0, size).Select(_ => (random.NextSingle() * 2 - 1) * bound)];
+        if (normed)
+        {
+            store.Add(prefix + ".weight_g", [rows, .. Enumerable.Repeat(1, shape.Length - 1)], [.. Enumerable.Range(0, rows).Select(_ => 0.5f + random.NextSingle())]);
+            store.Add(prefix + ".weight_v", shape, values);
+        }
+        else
+        {
+            store.Add(prefix + ".weight", shape, values);
+        }
+
+        if (bias)
+        {
+            store.Add(prefix + ".bias", [biasRows], [.. Enumerable.Range(0, biasRows).Select(_ => (random.NextSingle() * 2 - 1) * bound)]);
+        }
+    }
+
+    private static void DrawWaveNet(TensorDictionary store, Random random, string prefix, int channels, int layers, int kernel, int conditioning)
+    {
+        for (int i = 0; i < layers; i++)
+        {
+            DrawLayer(store, random, $"{prefix}.in_layers.{i}", [2 * channels, channels, kernel], normed: true);
+            DrawLayer(store, random, $"{prefix}.res_skip_layers.{i}", [i < layers - 1 ? 2 * channels : channels, channels, 1], normed: true);
+        }
+
+        if (conditioning > 0)
+        {
+            DrawLayer(store, random, $"{prefix}.cond_layer", [2 * channels * layers, conditioning, 1], normed: true);
+        }
+    }
+
+    private static void AudioLayersFromStored(Device device)
+    {
+        var random = new Random(3);
+        using var store = new TensorDictionary();
+        const int C = 4, Hidden = 6, Flow = 4, Bins = 9, E = 3, T = 7, Layers = 2, Kernel = 3;
+        DrawWaveNet(store, random, "wn", C, Layers, Kernel, 0);
+        for (int i = 0; i < 2; i++)
+        {
+            DrawLayer(store, random, $"flow.flows.{i}.conv_pre", [Hidden, Flow / 2, 1]);
+            DrawWaveNet(store, random, $"flow.flows.{i}.wavenet", Hidden, Layers, Kernel, E);
+            DrawLayer(store, random, $"flow.flows.{i}.conv_post", [Flow / 2, Hidden, 1]);
+        }
+
+        DrawLayer(store, random, "posterior_encoder.conv_pre", [Hidden, Bins, 1]);
+        DrawWaveNet(store, random, "posterior_encoder.wavenet", Hidden, Layers, Kernel, E);
+        DrawLayer(store, random, "posterior_encoder.conv_proj", [2 * Flow, Hidden, 1]);
+        DrawLayer(store, random, "lin", [5, C]);
+        DrawLayer(store, random, "proj", [5, C, 1]);
+        store.Add("norm.weight", [C], [1f, 1f, 1f, 1f]);
+        store.Add("norm.bias", [C], [0f, 0f, 0f, 0f]);
+        DrawLayer(store, random, "up", [C, 2, 4], normed: true, biasRows: 2);
+
+        // Trainable: every tensor read is a parameter under its stored name; a weight norm stays its gain and direction.
+        var trainable = new StoredLayers(store, device, trainable: true);
+        using var linear = trainable.Linear("lin", C, 5);
+        using var projection = trainable.ProjectionLinear("proj", C, 5);
+        using var norm = trainable.Norm("norm", C, 1e-5f);
+        using var up = trainable.ConvTranspose("up", C, 2, 4, 2, 1);
+        using var waveNet = WaveNet.FromStored(trainable, "wn", C, Layers, Kernel, 1, 0);
+        Check(trainable.Trained.Count == 2 + 2 + 2 + 3 + 3 * 2 * Layers && trainable.Normed.Count == 1 + 2 * Layers, $"{trainable.Trained.Count} parameters, {trainable.Normed.Count} weight norms");
+        Check(trainable.Trained.Any(p => p.Name == "up.weight_g" && p.Stored.SequenceEqual([C, 1, 1])) && trainable.Trained.Single(p => p.Name == "lin.weight").Transposed, "stored names and shapes kept");
+        Check(trainable.Trained.All(p => p.Tensor.RequiresGrad), "every parameter takes gradients");
+        ThrowsNaming<InvalidDataException>(() => trainable.Linear("lin", 5, 5), "the configuration says");
+        ThrowsNaming<InvalidDataException>(() => trainable.Tensor("nothing"), "no tensor 'nothing'");
+
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            var x = Tensor.From([.. Enumerable.Range(0, 2 * C * T).Select(_ => random.NextSingle() * 2 - 1)], [2, C, T], device);
+            var y = waveNet.Forward(x, null, null);
+            Check(y.Shape.SequenceEqual([2, C, T]), $"WaveNet out: {Tensor.FormatShape(y.Shape)}");
+            var first = waveNet.Forward(x.Narrow(0, 0, 1).Reshape(C, T), null);
+            AssertClose(y.ToArray()[..(C * T)], first.ToArray(), 1e-5f, "one sequence of the batch alone");
+            Check(up.Forward(x).Shape.SequenceEqual([2, 2, 2 * T]) && linear.Forward(x.Reshape(2 * T, C)).Shape[1] == 5 && projection.Forward(x.Reshape(2 * T, C)).Shape[1] == 5, "the other layers run");
+            Check(waveNet.ToString().Contains("2 layers") && waveNet.Channels == C, waveNet.ToString());
+        }
+
+        // Inference: weight norms folded once; the flow forward then reverse is the identity, with and without a speaker.
+        var stored = new StoredLayers(store, device);
+        using var flow = ResidualCouplingBlock.FromStored(stored, "flow", 2, Flow, Hidden, Layers, Kernel, 1, E);
+        using var posterior = PosteriorEncoder.FromStored(stored, "posterior_encoder", Bins, Hidden, Flow, Layers, Kernel, 1, E);
+        Check(stored.Trained.Count == 0 && stored.Normed.Count == 0, "nothing trained when read to speak");
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            float[] values = [.. Enumerable.Range(0, Flow * T).Select(_ => random.NextSingle() * 2 - 1)];
+            var z = Tensor.From(values, [Flow, T], device);
+            var speaker = Tensor.From([.. Enumerable.Range(0, E).Select(_ => random.NextSingle())], [E, 1], device);
+            AssertClose(values, flow.Reverse(flow.Forward(z, speaker), speaker).ToArray(), 1e-5f, "the flow forward then reverse with a speaker");
+            AssertClose(values, flow.Reverse(flow.Forward(z, null), null).ToArray(), 1e-5f, "the flow forward then reverse without one");
+            Check(!flow.Forward(z, speaker).ToArray().SequenceEqual(values), "the flow moves its second half");
+
+            // A padded batch of two sequences (7 and 5 frames) with masks: each one's rows are what it gets alone.
+            var shorter = Tensor.From(values, [Flow, T], device).Narrow(1, 0, 5);
+            var padded = Tensor.Concat([z.Reshape(1, Flow, T), shorter.Pad(1, 0, 2).Reshape(1, Flow, T)], 0);
+            using var mask = new PaddedSequences([T, 5], T, device);
+            var batched = flow.Forward(padded, null, mask).ToArray();
+            AssertClose(flow.Forward(z, null).ToArray(), batched[..(Flow * T)], 1e-5f, "the long sequence in the batch");
+            var alone = flow.Forward(shorter, null).ToArray();
+            for (int c = 0; c < Flow; c++)
+            {
+                AssertClose(alone[(c * 5)..((c + 1) * 5)], batched[(Flow * T + c * T)..(Flow * T + c * T + 5)], 1e-5f, $"the short sequence's channel {c} in the batch");
+                Check(batched[(Flow * T + c * T + 5)..(Flow * T + (c + 1) * T)].All(v => v == 0f), "zero over the padding");
+            }
+
+            var spectrogram = Tensor.From([.. Enumerable.Range(0, Bins * T).Select(_ => random.NextSingle())], [Bins, T], device);
+            var (means, logs) = posterior.Stats(spectrogram, speaker);
+            Check(means.Shape.SequenceEqual([Flow, T]) && logs.Shape.SequenceEqual([Flow, T]) && posterior.FlowSize == Flow, "the posterior's stats");
+            AssertClose(means.ToArray(), posterior.Forward(spectrogram, speaker, 0f, new Random(1)).ToArray(), 0f, "noise scale 0 gives the means");
+            Check(!posterior.Forward(spectrogram, speaker, 1f, new Random(1)).ToArray().SequenceEqual(means.ToArray()), "noise scale 1 draws");
+        }
+    }
+
+    private static void HifiGanLayers(Device device)
+    {
+        var random = new Random(4);
+        using var store = new TensorDictionary();
+        const int Flow = 3, Initial = 8;
+        int[] rates = [2, 2], kernels = [4, 4], resKernels = [3, 5];
+        int[][] dilations = [[1, 3], [1, 3]];
+        DrawLayer(store, random, "decoder.conv_pre", [Initial, Flow, 7]);
+        for (int i = 0; i < rates.Length; i++)
+        {
+            DrawLayer(store, random, $"decoder.upsampler.{i}", [Initial >> i, Initial >> (i + 1), kernels[i]], normed: true, biasRows: Initial >> (i + 1));
+            for (int j = 0; j < resKernels.Length; j++)
+            {
+                for (int d = 0; d < dilations[j].Length; d++)
+                {
+                    DrawLayer(store, random, $"decoder.resblocks.{i * resKernels.Length + j}.convs1.{d}", [Initial >> (i + 1), Initial >> (i + 1), resKernels[j]], normed: true);
+                    DrawLayer(store, random, $"decoder.resblocks.{i * resKernels.Length + j}.convs2.{d}", [Initial >> (i + 1), Initial >> (i + 1), resKernels[j]], normed: true);
+                }
+            }
+        }
+
+        DrawLayer(store, random, "decoder.conv_post", [1, Initial >> rates.Length, 7]);
+        using var generator = HifiGanGenerator.FromStored(new StoredLayers(store, device), "decoder", Flow, Initial, rates, kernels, resKernels, dilations, 0.1f, 0.01f, 0);
+        Check(generator.Hop == 4 && generator.ContextFrames == HifiGanGenerator.ContextFramesFor(rates, kernels, resKernels, dilations) && generator.ContextFrames > 3, $"hop {generator.Hop}, context {generator.ContextFrames} frames");
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            const int T = 60;
+            var latents = Tensor.From([.. Enumerable.Range(0, Flow * T).Select(_ => random.NextSingle() * 2 - 1)], [Flow, T], device);
+            var whole = generator.Forward(latents, null);
+            Check(whole.Shape.SequenceEqual([1, T * 4]), $"one pass: {Tensor.FormatShape(whole.Shape)}");
+            var pieces = generator.Samples(latents, null, 16);
+            AssertClose(whole.ToArray(), pieces, 1e-5f, "decoded in pieces of 16 frames with context");
+            var batch = generator.Forward(Tensor.Concat([latents.Reshape(1, Flow, T), latents.Reshape(1, Flow, T)], 0), null);
+            Check(batch.Shape.SequenceEqual([2, T * 4]), $"a batch: {Tensor.FormatShape(batch.Shape)}");
+            AssertClose(whole.ToArray(), batch.ToArray()[(T * 4)..], 1e-5f, "the batch's second row is the single pass");
+        }
+
+        // Discriminators drawn from a seed: a score and a map per layer per discriminator; saved and reloaded bit for bit.
+        var config = new HifiGanDiscriminatorConfig { Periods = [2, 3], PeriodChannels = [4, 8], Scales = 2, ScaleChannels = [4, 8], ScaleKernels = [15, 5], ScaleStrides = [1, 2], ScaleGroups = [1, 2] };
+        using var discriminators = HifiGanDiscriminators.Create(config, device, 11);
+        Check(discriminators.Module.Named.Count == 3 * (3 * 4) && discriminators.Normed.Count == 3 * 4, $"{discriminators.Module.Named.Count} tensors, {discriminators.Normed.Count} weight norms");
+        Check(discriminators.Module.Named.Any(p => p.Name == "discriminators.2.convs.0.parametrizations.weight.original1" && p.Stored.SequenceEqual([4, 1, 5, 1])), "the period discriminators follow the scales, under VITS's names");
+        float[] sound = [.. Enumerable.Range(0, 2 * 200).Select(_ => random.NextSingle() * 2 - 1)];
+        using (new TensorScope())
+        {
+            var x = Tensor.From(sound, [2, 200], device);
+            var (scores, maps) = discriminators.Forward(x);
+            Check(scores.Count == 4 && maps.Count == 4 && maps.All(m => m.Count == 3) && scores.All(s => s.Shape[0] == 1), $"{scores.Count} scores, maps of {string.Join(",", maps.Select(m => m.Count))}");
+            var (made, madeMaps) = discriminators.Forward(Tensor.From(sound, [2, 200], device) * 0.5f);
+            float plainD = 0, plainG = 0, plainF = 0;
+            for (int d = 0; d < 4; d++)
+            {
+                plainD += scores[d].ToArray().Select(v => (1 - v) * (1 - v)).Average() + made[d].ToArray().Select(v => v * v).Average();
+                plainG += made[d].ToArray().Select(v => (1 - v) * (1 - v)).Average();
+                for (int l = 0; l < 3; l++)
+                {
+                    plainF += maps[d][l].ToArray().Zip(madeMaps[d][l].ToArray(), (a, b) => MathF.Abs(a - b)).Average();
+                }
+            }
+
+            Check(MathF.Abs(AdversarialLosses.LeastSquaresDiscriminator(scores, made).Item() - plainD) <= 1e-5f * MathF.Abs(plainD), "the discriminator loss");
+            Check(MathF.Abs(AdversarialLosses.LeastSquaresGenerator(made).Item() - plainG) <= 1e-5f * MathF.Abs(plainG), "the generator's adversarial loss");
+            Check(MathF.Abs(AdversarialLosses.FeatureMatching(maps, madeMaps).Item() - plainF) <= 1e-5f * MathF.Abs(plainF), "the feature-matching loss");
+            ThrowsNaming<ArgumentException>(() => discriminators.Forward(x.Reshape(2, 1, 200)), "[B, L]");
+            ThrowsNaming<ArgumentException>(() => AdversarialLosses.LeastSquaresDiscriminator(scores, [made[0]]), "pair up");
+        }
+
+        string folder = TempFolder("hifigan-discriminators");
+        try
+        {
+            discriminators.Save(folder);
+            using var reader = SafeTensorsReader.Open(Path.Combine(folder, HifiGanDiscriminators.WeightsFile));
+            var again = HifiGanDiscriminatorConfig.FromJson(System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(folder, HifiGanDiscriminators.ConfigFile)))!.AsObject());
+            Check(again.ToJson().ToJsonString() == config.ToJson().ToJsonString(), "discriminator.json round-trips");
+            using var reloaded = new HifiGanDiscriminators(again, reader, device);
+            foreach (var (a, b) in discriminators.Module.Named.Zip(reloaded.Module.Named))
+            {
+                Check(a.Name == b.Name && a.Values().SequenceEqual(b.Values()), $"{a.Name} reloaded bit for bit");
+            }
+
+            ThrowsNaming<InvalidDataException>(() => HifiGanDiscriminatorConfig.FromJson(new System.Text.Json.Nodes.JsonObject { ["periods"] = new System.Text.Json.Nodes.JsonArray(0) }), "not positive");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void AttentionAlignmentAndMel(Device device)
+    {
+        var random = new Random(6);
+        using var store = new TensorDictionary();
+        const int C = 8, Heads = 2, D = C / Heads, T = 5, Window = 2;
+        foreach (string name in new[] { "q_proj", "k_proj", "v_proj", "out_proj" })
+        {
+            DrawLayer(store, random, "attn." + name, [C, C]);
+        }
+
+        store.Add("attn.emb_rel_k", [1, 2 * Window + 1, D], new float[(2 * Window + 1) * D]);
+        store.Add("attn.emb_rel_v", [1, 2 * Window + 1, D], new float[(2 * Window + 1) * D]);
+        float[] xValues = [.. Enumerable.Range(0, T * C).Select(_ => random.NextSingle() * 2 - 1)];
+        float[] plain, windowed;
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            var stored = new StoredLayers(store, device);
+            using var none = RelativePositionAttention.FromStored(stored, "attn", C, Heads, 0);
+            using var zeros = RelativePositionAttention.FromStored(stored, "attn", C, Heads, Window);
+            var x = Tensor.From(xValues, [T, C], device);
+            plain = none.Forward(x, 1, T, null).ToArray();
+            windowed = zeros.Forward(x, 1, T, null).ToArray();
+            AssertClose(plain, windowed, 1e-6f, "zero relative embeddings change nothing");
+
+            // Scaled dot-product attention from the same projections, head by head.
+            var q = stored.Linear("attn.q_proj", C, C).Forward(x).ToArray();
+            var k = stored.Linear("attn.k_proj", C, C).Forward(x).ToArray();
+            var v = stored.Linear("attn.v_proj", C, C).Forward(x).ToArray();
+            var merged = new float[T * C];
+            for (int h = 0; h < Heads; h++)
+            {
+                for (int i = 0; i < T; i++)
+                {
+                    var logits = new double[T];
+                    for (int j = 0; j < T; j++)
+                    {
+                        for (int d = 0; d < D; d++)
+                        {
+                            logits[j] += (double)q[i * C + h * D + d] * k[j * C + h * D + d];
+                        }
+
+                        logits[j] /= Math.Sqrt(D);
+                    }
+
+                    double max = logits.Max(), sum = logits.Sum(s => Math.Exp(s - max));
+                    for (int j = 0; j < T; j++)
+                    {
+                        double p = Math.Exp(logits[j] - max) / sum;
+                        for (int d = 0; d < D; d++)
+                        {
+                            merged[i * C + h * D + d] += (float)(p * v[j * C + h * D + d]);
+                        }
+                    }
+                }
+            }
+
+            var reference = stored.Linear("attn.out_proj", C, C).Forward(Tensor.From(merged, [T, C], device)).ToArray();
+            AssertClose(reference, plain, 1e-5f, "window 0 is scaled dot-product attention");
+            Check(none.ToString().Contains("2 heads") && zeros.Window == Window && none.Hidden == C, none.ToString());
+        }
+
+        // Non-zero embeddings: the speaking path (host slices) equals the trained path (parameters gathered), which gives them gradients.
+        store.Remove("attn.emb_rel_k");
+        store.Remove("attn.emb_rel_v");
+        store.Add("attn.emb_rel_k", [1, 2 * Window + 1, D], [.. Enumerable.Range(0, (2 * Window + 1) * D).Select(_ => random.NextSingle() - 0.5f)]);
+        store.Add("attn.emb_rel_v", [1, 2 * Window + 1, D], [.. Enumerable.Range(0, (2 * Window + 1) * D).Select(_ => random.NextSingle() - 0.5f)]);
+        using (new TensorScope())
+        {
+            using var speaking = RelativePositionAttention.FromStored(new StoredLayers(store, device), "attn", C, Heads, Window);
+            var trainable = new StoredLayers(store, device, trainable: true);
+            using var training = RelativePositionAttention.FromStored(trainable, "attn", C, Heads, Window);
+            float[] spoken;
+            using (Autograd.NoGrad())
+            {
+                spoken = speaking.Forward(Tensor.From(xValues, [T, C], device), 1, T, null).ToArray();
+            }
+
+            Check(!spoken.SequenceEqual(windowed), "the relative embeddings change the output");
+            var trained = training.Forward(Tensor.From(xValues, [T, C], device), 1, T, null);
+            AssertClose(spoken, trained.ToArray(), 1e-5f, "the trained path equals the speaking path");
+            trained.Sum().Backward();
+            var relK = trainable.Trained.Single(p => p.Name == "attn.emb_rel_k");
+            Check(relK.Tensor.Grad is { } g && g.ToArray().Any(v => v != 0f), "the relative keys take a gradient");
+            Check(training.Parameters().Count() == 10, $"{training.Parameters().Count()} parameters (4 weights, 4 biases, 2 relative tables)");
+
+            // A padded batch: the second sequence has 3 positions; its rows are what it gets alone.
+            using var mask = new PaddedSequences([T, 3], T, device);
+            using (Autograd.NoGrad())
+            {
+                var shorter = Tensor.From(xValues, [T, C], device).Narrow(0, 0, 3);
+                var batchRows = Tensor.Concat([Tensor.From(xValues, [T, C], device), shorter.Pad(0, 0, 2)], 0);
+                var rows = speaking.Forward(batchRows, 2, T, mask).ToArray();
+                AssertClose(spoken, rows[..(T * C)], 1e-5f, "the long sequence in the batch");
+                AssertClose(speaking.Forward(shorter, 1, 3, null).ToArray(), rows[(T * C)..((T + 3) * C)], 1e-5f, "the short sequence in the batch");
+            }
+        }
+
+        // The alignment: 4 frames over 2 tokens whose scores favour frames 0-2 on token 0 and frame 3 on token 1.
+        float[] scores = [1f, 0f, 1f, 0f, 1f, 0f, 0f, 1f];
+        var path = MonotonicAlignment.Search(scores, 4, 2);
+        Check(path.SequenceEqual([0, 0, 0, 1]) && MonotonicAlignment.Durations(path, 2).SequenceEqual([3, 1]), $"path {string.Join(" ", path)}");
+        Check(MonotonicAlignment.Search([0f, 1f, 0f, 1f], 2, 2).SequenceEqual([0, 1]), "every token gets a frame even against the scores");
+        ThrowsNaming<ArgumentException>(() => MonotonicAlignment.Search(new float[6], 2, 3), "at least as many frames as tokens");
+
+        // The differentiable log-mel against the host STFT of the same (reflect-padded) samples.
+        const int Size = 64, Hop = 16, Mels = 8, Rate = 1600;
+        var options = new AudioFeatureOptions { SampleRate = Rate, WindowSize = Size, HopSize = Hop, Window = "hann", Center = false, Mels = Mels, PadSeconds = null, Normalize = null, DynamicRange = null, Path = "host" };
+        float[] samples = [.. Enumerable.Range(0, 20 * Hop).Select(i => MathF.Sin(i * 0.3f) * 0.5f + (random.NextSingle() - 0.5f) * 0.1f)];
+        int pad = (Size - Hop) / 2;
+        var padded = new float[samples.Length + 2 * pad];
+        samples.CopyTo(padded.AsSpan(pad));
+        for (int i = 1; i <= pad; i++)
+        {
+            padded[pad - i] = samples[i];
+            padded[pad + samples.Length - 1 + i] = samples[samples.Length - 1 - i];
+        }
+
+        int bins = Size / 2 + 1, frames = Stft.FramesFor(padded.Length, options);
+        var power = new float[frames * bins];
+        Stft.PowerOnHost(padded, options, power);
+        var filters = MelFilterbank.Build(options);
+        var expected = new float[frames * Mels];
+        for (int f = 0; f < frames; f++)
+        {
+            for (int m = 0; m < Mels; m++)
+            {
+                double sum = 0;
+                for (int b = 0; b < bins; b++)
+                {
+                    sum += Math.Sqrt(power[f * bins + b] + 1e-6) * filters[b * Mels + m];
+                }
+
+                expected[f * Mels + m] = MathF.Log(MathF.Max((float)sum, 1e-5f));
+            }
+        }
+
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            var basis = Tensor.From(DifferentiableLogMel.Basis(Size, Stft.Window("hann", Size)), [2 * bins, Size], device);
+            var mel = Tensor.From(filters, [bins, Mels], device);
+            var logMel = DifferentiableLogMel.Compute(Tensor.From(samples, [1, samples.Length], device), basis, mel, Size, Hop);
+            Check(logMel.Shape.SequenceEqual([frames, Mels]) && frames == 20, $"{Tensor.FormatShape(logMel.Shape)} for {frames} frames");
+            AssertClose(expected, logMel.ToArray(), 1e-4f, "the differentiable log-mel against the host STFT's");
+            var two = DifferentiableLogMel.Compute(Tensor.From([.. samples, .. samples], [2, samples.Length], device), basis, mel, Size, Hop);
+            AssertClose(expected, two.ToArray()[(frames * Mels)..], 1e-4f, "a batch's second row");
+            ThrowsNaming<ArgumentException>(() => DifferentiableLogMel.Basis(Size, new float[3]), "values for frames");
+        }
     }
 }
