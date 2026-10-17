@@ -51,9 +51,12 @@ internal static class SpeechBench
                 Steps = steps, BatchSeconds = batchSeconds, LearningRate = 2e-5f, Schedule = "constant", FeatureCache = null,
                 Adversarial = new AdversarialSynthesisOptions(), SaveEvery = 0, KeepCheckpoints = 1,
             };
-            var census = new Census();
+            // One census for the first step (loading, the first tuning), another for the rest: the warm steps' launches and
+            // host time are read without the cold step's tuning in them.
+            var cold = new Census();
+            var warm = new Census();
             var clock = Stopwatch.StartNew();
-            var progress = new StepTimes(clock, census, device);
+            var progress = new StepTimes(clock, device, cold, warm);
             string output = Path.Combine(work, "run-" + label.Replace(' ', '-'));
             if (Directory.Exists(output))
             {
@@ -63,48 +66,61 @@ internal static class SpeechBench
             ComputeResources.ResetPeakMemoryUsage(device);
             long before = ComputeResources.GetMemoryUsage(device).InUse;
             SpeechTrainingResult result;
-            using (Telemetry.Subscribe(census))
+            using (progress)
             {
                 result = AdversarialSynthesisTrainer.Train(adversarial, new SpeechSource(SpeechSources.AudioFolder, [clips]), null, options, output, null, progress);
             }
 
             long peak = ComputeResources.GetMemoryUsage(device).Peak - before;
-            // The first step (loading, the first tuning) apart, and the last (it writes the checkpoint) when others remain:
-            // the fastest of the rest, with the audio it trained, is the step's time; the list shows the steps that tuned.
+            // The first step apart, and the last (it writes the checkpoint) when others remain: the fastest of the rest, with
+            // the audio it trained, is the step's time; the list shows the steps that tuned.
             var timed = progress.Steps.Skip(1).Take(Math.Max(1, progress.Steps.Count - 2)).ToList();
             var fastest = timed.Count > 0 ? timed.MinBy(s => s.Seconds) : progress.Steps.FirstOrDefault();
-            double warm = fastest.Seconds, cold = progress.Steps.FirstOrDefault().Seconds;
-            double launches = census.Count / (double)steps;
-            double speed = fastest.Audio > 0 ? fastest.Audio / warm : batchSeconds / warm;
-            Console.WriteLine(Bench.Line(label, ("s warm", Bench.F(warm, "0.00")), ("s cold", Bench.F(cold, "0.00")), ("launches/step", Bench.F(launches, "0")),
+            double warmSeconds = fastest.Seconds, coldSeconds = progress.Steps.FirstOrDefault().Seconds;
+            int warmSteps = Math.Max(1, progress.Steps.Count - 1);
+            double launches = warm.Count / (double)warmSteps;
+            double speed = fastest.Audio > 0 ? fastest.Audio / warmSeconds : batchSeconds / warmSeconds;
+            long tunings = cold.Tunings + warm.Tunings;
+            double tuningSeconds = (cold.TuningTime + warm.TuningTime).TotalSeconds;
+            Console.WriteLine(Bench.Line(label, ("s warm", Bench.F(warmSeconds, "0.00")), ("s cold", Bench.F(coldSeconds, "0.00")), ("launches/step", Bench.F(launches, "0")),
                 ("peak", Bench.Mib(peak)), ("x real time", Bench.F(speed, "0.0"))));
             Console.WriteLine("   steps: " + string.Join(", ", progress.Steps.Select(s => Bench.F(s.Seconds, "0.0") + (s.Tuning >= 0.05 ? $" (tuning {Bench.F(s.Tuning, "0.0")})" : "")))
-                + $" s; the fastest timed step trained {Bench.F(fastest.Audio, "0.0")} s of audio; {census.Tunings} tunings, {Bench.F(census.TuningTime.TotalSeconds, "0.0")} s in all");
+                + $" s; the fastest timed step trained {Bench.F(fastest.Audio, "0.0")} s of audio; {tunings} tunings, {Bench.F(tuningSeconds, "0.0")} s in all");
+            Console.WriteLine("   tunings in the first step: " + Tunings(cold) + "; in the steps after: " + Tunings(warm));
             foreach (string note in result.Notes)
             {
                 Console.WriteLine("   note: " + note);
             }
 
-            report.Add(Section, label, device, "warm", warm * 1000, "ms");
-            report.Add(Section, label, device, "cold", cold * 1000, "ms");
+            report.Add(Section, label, device, "warm", warmSeconds * 1000, "ms");
+            report.Add(Section, label, device, "cold", coldSeconds * 1000, "ms");
             report.Add(Section, label, device, "launches", launches, "launches");
             report.Add(Section, label, device, "peak", peak / 1048576.0, "MiB");
             report.Add(Section, label, device, "speed", speed, "x real time");
-            report.Add(Section, label, device, "tuning", census.TuningTime.TotalSeconds * 1000, "ms");
-            Console.WriteLine("   launches a step by operation (the top sixteen; ms: the host's time a step, launches and where it waited):");
-            foreach (var (operation, count, elements, time) in census.ByCount.Take(16))
+            report.Add(Section, label, device, "tuning", tuningSeconds * 1000, "ms");
+            report.Add(Section, label, device, "host time a warm step", warm.ByTime.Sum(o => o.Time.TotalMilliseconds) / warmSteps, "ms");
+            Console.WriteLine("   launches a warm step by operation (the top sixteen; ms: the host's time a step in its calls, launching and where it waited):");
+            foreach (var (operation, count, elements, time) in warm.ByCount.Take(16))
             {
-                Console.WriteLine(Bench.Line("   " + operation, ("/step", Bench.F(count / (double)steps, "0")), ("MiB out", Bench.F(elements * 4.0 / 1048576 / steps, "0")),
-                    ("ms", Bench.F(time.TotalMilliseconds / steps, "0"))));
-                report.Add(Section, $"{label}: {operation}", device, "launches", count / (double)steps, "launches");
+                Console.WriteLine(Bench.Line("   " + operation, ("/step", Bench.F(count / (double)warmSteps, "0")), ("MiB out", Bench.F(elements * 4.0 / 1048576 / warmSteps, "0")),
+                    ("ms", Bench.F(time.TotalMilliseconds / warmSteps, "0"))));
+                report.Add(Section, $"{label}: {operation}", device, "launches", count / (double)warmSteps, "launches");
             }
 
-            Console.WriteLine("   the host's time a step by operation (the top eight):");
-            foreach (var (operation, count, _, time) in census.ByTime.Take(8))
+            Console.WriteLine($"   the host's time a warm step by operation (the top eight of {Bench.F(warm.ByTime.Sum(o => o.Time.TotalMilliseconds) / warmSteps, "0")} ms in calls):");
+            foreach (var (operation, count, _, time) in warm.ByTime.Take(8))
             {
-                Console.WriteLine(Bench.Line("   " + operation, ("ms", Bench.F(time.TotalMilliseconds / steps, "0")), ("/step", Bench.F(count / (double)steps, "0"))));
+                Console.WriteLine(Bench.Line("   " + operation, ("ms", Bench.F(time.TotalMilliseconds / warmSteps, "0")), ("/step", Bench.F(count / (double)warmSteps, "0")),
+                    ("µs a call", Bench.F(time.TotalMilliseconds * 1000 / Math.Max(1, count), "0"))));
             }
         }
+    }
+
+    // "Convolution 212 (15.2 s), TensorSplits 40 (2.1 s)" or "none".
+    private static string Tunings(Census census)
+    {
+        var parts = census.TuningsByOperation.Select(t => $"{t.Operation} {t.Count} ({Bench.F(t.Time.TotalSeconds, "0.0")} s)").ToList();
+        return parts.Count == 0 ? "none" : string.Join(", ", parts);
     }
 
     // The tiny VITS fixture the training tests use, found from the build output folder.
@@ -173,8 +189,11 @@ internal static class SpeechBench
         return total / files.Length;
     }
 
-    private sealed class StepTimes(Stopwatch clock, Census census, Device device) : IProgress<SpeechTrainingProgress>
+    // The steps' times (the device drained first), each with the tuning in it and the audio it trained; the cold census
+    // listens through the first step, the warm one after it.
+    private sealed class StepTimes(Stopwatch clock, Device device, Census cold, Census warm) : IProgress<SpeechTrainingProgress>, IDisposable
     {
+        private IDisposable? _subscription = Telemetry.Subscribe(cold);
         private double _last, _lastTuning;
 
         /// <summary>Each step: its seconds (the device drained), the seconds of tuning in it, the audio seconds it trained.</summary>
@@ -188,9 +207,20 @@ internal static class SpeechBench
             }
 
             device.Backend.Synchronize();                                   // the step's queued work is the step's time, not the next one's
-            double now = clock.Elapsed.TotalSeconds, tuning = census.TuningTime.TotalSeconds;
+            double now = clock.Elapsed.TotalSeconds, tuning = (cold.TuningTime + warm.TuningTime).TotalSeconds;
             Steps.Add((now - _last, tuning - _lastTuning, value.BatchAudioSeconds));
             (_last, _lastTuning) = (now, tuning);
+            if (Steps.Count == 1)
+            {
+                _subscription?.Dispose();
+                _subscription = Telemetry.Subscribe(warm);
+            }
+        }
+
+        public void Dispose()
+        {
+            _subscription?.Dispose();
+            _subscription = null;
         }
     }
 }

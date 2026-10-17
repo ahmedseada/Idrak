@@ -244,6 +244,7 @@ internal static class Bench
 internal sealed class Census : ITelemetryHook
 {
     private readonly Dictionary<string, (long Count, long Elements, TimeSpan Time)> _byOperation = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (long Count, TimeSpan Time)> _tunings = new(StringComparer.Ordinal);
 
     public TelemetryLevel Levels => TelemetryLevel.Operations | TelemetryLevel.Devices;
 
@@ -264,13 +265,17 @@ internal sealed class Census : ITelemetryHook
     public IEnumerable<(string Operation, long Count, long Elements, TimeSpan Time)> ByTime =>
         _byOperation.OrderByDescending(p => p.Value.Time).Select(p => (p.Key, p.Value.Count, p.Value.Elements, p.Value.Time));
 
+    /// <summary>The tunings by what was tuned, most time first (nested ones counted, their time not).</summary>
+    public IEnumerable<(string Operation, long Count, TimeSpan Time)> TuningsByOperation =>
+        _tunings.OrderByDescending(p => p.Value.Time).Select(p => (p.Key, p.Value.Count, p.Value.Time));
+
     public void OnTuning(in TuningCompleted e)
     {
         Tunings++;
-        if (!e.Nested)
-        {
-            TuningTime += e.Duration;                                        // a nested one's time lies within the outer's
-        }
+        var t = _tunings.GetValueOrDefault(e.Operation);
+        var time = e.Nested ? TimeSpan.Zero : e.Duration;                   // a nested one's time lies within the outer's
+        _tunings[e.Operation] = (t.Count + 1, t.Time + time);
+        TuningTime += time;
     }
 
     public void OnOperation(in OperationCompleted e)
