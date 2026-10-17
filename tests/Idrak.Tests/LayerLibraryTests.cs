@@ -21,6 +21,7 @@ internal static partial class Tests
         ("layers: HifiGanGenerator decodes long latents in pieces with context equal to one pass within 1e-5 and halves a piece the device refuses; HifiGanDiscriminators created from a seed give a score and a map per layer per discriminator, save and reload bit for bit under VITS's names, and refuse sound that is not [B, L]; the GAN losses equal plain loops", HifiGanLayers),
         ("layers: VisionTransformerEncoder built from a store of every tensor Expected names gives [images, patches, dim], its Tensors round-trip the store bit for bit (q, k, v split from the fused projection), Load takes the names given and sets the values, the checkpointed pass equals the plain one, a wrong shape and an unknown activation are refused; PatchGrid.AveragePool equals a loop", VisionTransformerFromStored),
         ("layers: HifiGanVocoder reads transformers' root-level HiFi-GAN names (conv_pre, upsampler, resblocks, conv_post, mean, scale) from a store and from a saved folder, standardizes the log-mel and gives frames · hop samples equal to the generator's; registered under a name Vocoders.Create gives it back; another mel count and disagreeing lists are refused", HifiGanVocoderFromStored),
+        ("layers: ConvolutionalFeedForward (odd and even kernels, the activations by name) equals the convolutions written out and gives each sequence of a padded batch what it gets alone; ElementwiseAffineFlow forward then Reverse is the identity with the log-determinant Σ log scale · positions; Tensor.Indices holds integers exactly", FeedForwardAndAffine),
         ("layers: RelativePositionAttention with window 0 equals scaled-dot-product attention from the same projections within 1e-5, zero relative embeddings change nothing, the trained path (embeddings as parameters) equals the speaking path and gives them gradients; MonotonicAlignment finds the best monotonic path and its durations; DifferentiableLogMel equals the host STFT's log-mel within 1e-4", AttentionAlignmentAndMel),
     ];
 
@@ -776,5 +777,84 @@ internal static partial class Tests
         {
             Directory.Delete(folder, recursive: true);
         }
+    }
+
+    private static void FeedForwardAndAffine(Device device)
+    {
+        var random = new Random(10);
+        using var store = new TensorDictionary();
+        const int C = 4, F = 6, T = 5;
+        DrawLayer(store, random, "ff.conv_1", [F, C, 3]);
+        DrawLayer(store, random, "ff.conv_2", [C, F, 3]);
+        DrawLayer(store, random, "even.conv_1", [F, C, 4]);
+        DrawLayer(store, random, "even.conv_2", [C, F, 4]);
+        store.Add("flow.log_scale", [2, 1], [0.3f, -0.7f]);
+        store.Add("flow.translate", [2, 1], [1.5f, -0.25f]);
+        var stored = new StoredLayers(store, device);
+        float[] xs = [.. Enumerable.Range(0, 2 * T * C).Select(_ => random.NextSingle() * 2 - 1)];
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            using var odd = ConvolutionalFeedForward.FromStored(stored, "ff", C, F, 3, "gelu_new");
+            using var even = ConvolutionalFeedForward.FromStored(stored, "even", C, F, 4, "relu");
+            var x = Tensor.From(xs, [2 * T, C], device);
+            var y = odd.Forward(x, 2, T, null);
+            Check(y.Shape.SequenceEqual([2 * T, C]) && odd.Kernel == 3 && odd.ToString() == "ConvolutionalFeedForward(k3)", $"{Tensor.FormatShape(y.Shape)}");
+
+            // Written out: the convolutions over [B, C, T] with symmetric padding and the tanh GELU between.
+            var conv1 = stored.Conv("ff.conv_1", C, F, 3, 1);
+            var conv2 = stored.Conv("ff.conv_2", F, C, 3, 1);
+            var reference = conv2.Forward(conv1.Forward(x.Reshape(2, T, C).Permute(0, 2, 1)).Gelu()).Permute(0, 2, 1).Reshape(2 * T, C);
+            AssertClose(reference.ToArray(), y.ToArray(), 1e-5f, "the odd kernel's pass");
+
+            // The even kernel pads 2 before and 1 after, as transformers does: the output keeps the length.
+            var e = even.Forward(x, 2, T, null);
+            var c1 = stored.Conv("even.conv_1", C, F, 4, 0);
+            var c2 = stored.Conv("even.conv_2", F, C, 4, 0);
+            var expected = c2.Forward(c1.Forward(x.Reshape(2, T, C).Permute(0, 2, 1).Pad(-1, 2, 1)).Relu().Pad(-1, 2, 1)).Permute(0, 2, 1).Reshape(2 * T, C);
+            AssertClose(expected.ToArray(), e.ToArray(), 1e-5f, "the even kernel's pass");
+
+            // A padded batch (5 and 3 positions): the short sequence's rows are what it gets alone, the padding zero after conv_2's reach.
+            using var mask = new PaddedSequences([T, 3], T, device);
+            var shorter = Tensor.From(xs, [2 * T, C], device).Narrow(0, T, 3);
+            var padded = Tensor.Concat([Tensor.From(xs, [2 * T, C], device).Narrow(0, 0, T), shorter.Pad(0, 0, 2)], 0);
+            var rows = odd.Forward(padded, 2, T, mask).ToArray();
+            AssertClose(y.ToArray()[..(T * C)], rows[..(T * C)], 1e-5f, "the long sequence in the batch");
+            AssertClose(odd.Forward(shorter, 1, 3, null).ToArray(), rows[(T * C)..((T + 3) * C)], 1e-5f, "the short sequence in the batch");
+            ThrowsNaming<NotSupportedException>(() => ConvolutionalFeedForward.Activation("swishy"), "not supported");
+            Check(ConvolutionalFeedForward.Activation("quick_gelu")(Tensor.From([1f], [1], device)).ToArray()[0] is > 0.84f and < 0.86f, "quick_gelu(1) ≈ 0.846");
+        }
+
+        // The affine flow: forward (the batch's log-determinant) and the host inverse.
+        using var flow = ElementwiseAffineFlow.FromStored(stored, "flow", 2);
+        Check(flow.Channels == 2 && flow.ToString() == "ElementwiseAffineFlow(2 channels)", flow.ToString());
+        float[] latents = [.. Enumerable.Range(0, 2 * T).Select(_ => random.NextSingle() * 4 - 2)];
+        using (new TensorScope())
+        {
+            var z = Tensor.From(latents, [1, 2, T], device);
+            var moved = flow.Forward(z, null, T, out var logDet);
+            var expected = new float[latents.Length];
+            for (int c = 0; c < 2; c++)
+            {
+                for (int n = 0; n < T; n++)
+                {
+                    expected[c * T + n] = latents[c * T + n] * MathF.Exp(c == 0 ? 0.3f : -0.7f) + (c == 0 ? 1.5f : -0.25f);
+                }
+            }
+
+            AssertClose(expected, moved.ToArray(), 1e-6f, "translate + e^(log scale) · x per channel");
+            Check(MathF.Abs(logDet.Item() - (0.3f - 0.7f) * T) < 1e-5f, $"log-determinant {logDet.Item()}");
+            var back = moved.ToArray();
+            flow.Reverse(back, T);
+            AssertClose(latents, back, 1e-5f, "Reverse gives the latents back");
+            ThrowsNaming<ArgumentException>(() => flow.Forward(Tensor.From(new float[3 * T], [1, 3, T], device), null, T, out _), "[B, 2, T]");
+        }
+
+        ThrowsNaming<InvalidDataException>(() => ElementwiseAffineFlow.FromStored(stored, "flow", 3).Dispose(), "the configuration says 3");
+
+        // Index tensors hold their integers exactly.
+        int[] indices = [0, 1, 7, 65535, 16777216, 3];
+        using var ix = Tensor.Indices(indices, device);
+        Check(ix.Shape.SequenceEqual([6]) && ix.ToArray().Select(v => (int)v).SequenceEqual(indices), string.Join(" ", ix.ToArray()));
     }
 }

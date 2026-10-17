@@ -33,8 +33,8 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     private readonly Conv1d _pre, _proj;
     private readonly Conv1d? _cond;
     private readonly DilatedDepthSeparableConv _dds;
-    private readonly float[] _logScale, _translate;                              // the element-wise affine flow, [channels]
-    private readonly Tensor? _logScaleParameter, _translateParameter;            // training: the same as parameters [channels, 1]
+    private readonly ElementwiseAffineFlow _affine;                              // the element-wise affine flow over the channels
+    private readonly bool _trainable;
     private readonly ConvolutionalSplineFlow[] _flows;
     private readonly Posterior? _posterior;                                      // training: the posterior flows over the durations
 
@@ -51,12 +51,8 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         }
 
         int channels = config.DepthSeparableChannels;
-        _logScale = weights.Read("duration_predictor.flows.0.log_scale");
-        _translate = weights.Read("duration_predictor.flows.0.translate");
-        if (_logScale.Length != channels || _translate.Length != channels)
-        {
-            throw new InvalidDataException($"duration_predictor.flows.0 has {_logScale.Length} channels, the configuration says {channels}.");
-        }
+        _affine = ElementwiseAffineFlow.FromStored(weights, "duration_predictor.flows.0", channels);
+        _trainable = weights.Trainable;
 
         _flows = new ConvolutionalSplineFlow[config.DurationFlows];
         for (int i = 0; i < config.DurationFlows; i++)
@@ -77,8 +73,6 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
                     + "transformers' VitsModel holds); train from a checkpoint that keeps them.");
             }
 
-            _logScaleParameter = weights.Parameter("duration_predictor.flows.0.log_scale", _logScale, [channels, 1], weights.Shape("duration_predictor.flows.0.log_scale"));
-            _translateParameter = weights.Parameter("duration_predictor.flows.0.translate", _translate, [channels, 1], weights.Shape("duration_predictor.flows.0.translate"));
             _posterior = new Posterior(weights, config);
         }
     }
@@ -116,7 +110,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
 
         // The posterior: the noise through the affine, then its flows (each after which the channels flip), conditioned on both.
         var conditioning = x + h;
-        var latents = Affine(noise, posterior.LogScale, posterior.Translate, mask, positions, out var logDetQ);
+        var latents = posterior.Affine.Forward(noise, mask, positions, out var logDetQ);
         foreach (var flow in posterior.Flows)
         {
             latents = flow.Forward(latents, conditioning, mask, out var logDet);
@@ -180,8 +174,12 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     /// </summary>
     internal Tensor Prior(Tensor latents, Tensor x, PaddedSequences? mask, out Tensor logDet)
     {
-        var logScale = _logScaleParameter ?? throw new InvalidOperationException("The duration predictor was loaded to speak; load the model with SpeechSynthesisLoadOptions.Training to train it.");
-        latents = Affine(latents, logScale, _translateParameter!, mask, mask?.Positions ?? latents.Shape[2], out logDet);
+        if (!_trainable)
+        {
+            throw new InvalidOperationException("The duration predictor was loaded to speak; load the model with SpeechSynthesisLoadOptions.Training to train it.");
+        }
+
+        latents = _affine.Forward(latents, mask, mask?.Positions ?? latents.Shape[2], out logDet);
         foreach (var flow in _flows)
         {
             latents = flow.Forward(latents, x, mask, out var flowDet);
@@ -190,16 +188,6 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         }
 
         return latents;
-    }
-
-    // transformers' VitsElementwiseAffine forward on [B, 2, T]: translate + exp(log_scale) · x per channel (one row-wise
-    // affine over the channels), zero over the padding; its log-determinant is Σ log_scale over the tokens within the utterances.
-    private static Tensor Affine(Tensor x, Tensor logScale, Tensor translate, PaddedSequences? mask, int positions, out Tensor logDet)
-    {
-        int channels = x.Shape[1], t = x.Shape[2];
-        logDet = logScale.Sum() * positions;
-        var y = x.GroupAffine(logScale.Reshape(channels).Exp(), translate.Reshape(channels), channels, t);
-        return mask is null ? y : mask.Apply(y);
     }
 
     // torch.flip over the two channels of [B, 2, T].
@@ -231,9 +219,6 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
     internal float[] Reverse(float[] latents, Tensor x)
     {
         int t = x.Shape[1], channels = _config.DepthSeparableChannels;
-        var logScale = _logScaleParameter?.ToArray() ?? _logScale;               // a model in training speaks with its weights as they are now
-        var translate = _translateParameter?.ToArray() ?? _translate;
-
         // reversed(flows)[:-2] + [reversed(flows)[-1]]: the spline flows from the last down to the second, then the affine.
         for (int i = _flows.Length - 1; i >= 1; i--)
         {
@@ -242,13 +227,8 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         }
 
         FlipChannels(latents, channels, t);
-        var logDurations = new float[t];
-        for (int n = 0; n < t; n++)
-        {
-            logDurations[n] = (float)((latents[n] - translate[0]) * Math.Exp(-logScale[0]));
-        }
-
-        return logDurations;
+        _affine.Reverse(latents, t);                                             // the model's weights as they are now; the first channel is the log-duration
+        return latents[..t];
     }
 
     // torch.flip over the channel axis of [channels, T].
@@ -272,8 +252,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         _cond?.Dispose();
         _dds.Dispose();
         foreach (var flow in _flows) flow.Dispose();
-        _logScaleParameter?.Dispose();
-        _translateParameter?.Dispose();
+        _affine.Dispose();
         _posterior?.Dispose();
     }
 
@@ -286,8 +265,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
             Pre = weights.Conv("duration_predictor.post_conv_pre", 1, c, 1, 0);
             Proj = weights.Conv("duration_predictor.post_conv_proj", c, c, 1, 0);
             Dds = VitsStochasticDurationPredictor.Dds(weights, "duration_predictor.post_conv_dds", config);
-            LogScale = weights.Tensor("duration_predictor.post_flows.0.log_scale", channels, 1);
-            Translate = weights.Tensor("duration_predictor.post_flows.0.translate", channels, 1);
+            Affine = ElementwiseAffineFlow.FromStored(weights, "duration_predictor.post_flows.0", channels);
             Flows = new ConvolutionalSplineFlow[config.DurationFlows];
             for (int i = 0; i < Flows.Length; i++)
             {
@@ -301,9 +279,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
 
         public DilatedDepthSeparableConv Dds { get; }
 
-        public Tensor LogScale { get; }
-
-        public Tensor Translate { get; }
+        public ElementwiseAffineFlow Affine { get; }
 
         public ConvolutionalSplineFlow[] Flows { get; }
 
@@ -312,8 +288,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
             Pre.Dispose();
             Proj.Dispose();
             Dds.Dispose();
-            LogScale.Dispose();
-            Translate.Dispose();
+            Affine.Dispose();
             foreach (var flow in Flows) flow.Dispose();
         }
     }

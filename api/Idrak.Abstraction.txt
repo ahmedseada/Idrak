@@ -3835,6 +3835,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor Full(System.ReadOnlySpan<int> shape, float value, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor GatedActivation(Idrak.Abstraction.Tensor gate, Idrak.Abstraction.Tensor up, Idrak.Abstraction.Generation.FeedForwardActivation activation)
   public static Idrak.Abstraction.Tensor GatherRows(Idrak.Abstraction.Tensor x, int[] rows)
+  public static Idrak.Abstraction.Tensor Indices(System.ReadOnlySpan<int> indices, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Tensor MatMulBias(Idrak.Abstraction.Tensor x, Idrak.Abstraction.Tensor w, Idrak.Abstraction.Tensor bias)
   public static Idrak.Abstraction.Tensor MatMulFrozenTransposed(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Generation.BFloat16Weight transposed)
   public static Idrak.Abstraction.Tensor MatMulPackedEpilogue(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.PackedWeight weight, Idrak.Abstraction.Tensor? bias, bool gelu = false, Idrak.Abstraction.Tensor? residual = null)
