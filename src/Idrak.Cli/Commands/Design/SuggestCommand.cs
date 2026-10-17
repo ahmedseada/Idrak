@@ -42,7 +42,7 @@ internal sealed class SuggestCommand : Command
         "                          and text data; looked up in the local caches only (idrak pull fetches it)\n" +
         "  -o, --out DIR           where the files go (default: the current folder)\n" +
         "      --assist MODEL      a local chat model explains the choices in plain words (it never changes them)\n" +
-        "  -w, --weights FORMAT, -k, --kv FORMAT, --context N: how --assist loads its model\n\n" +
+        "  -w, --weights FORMAT, --head-weights F, -k, --kv FORMAT, --context N: how --assist loads its model\n\n" +
         "Examples:\n" +
         "  idrak sg houses.csv -t SalePrice -e            design a network for a CSV, with the reasons\n" +
         "  idrak sg ./shapes -n 6 -d vulkan:0             try 6 CNN variants on the GPU, keep the best\n" +

@@ -23,21 +23,21 @@ internal sealed class DataPreviewCommand : Command
         FILE [-n ROWS]
 
         Options:
-          -n, --rows N  rows to show (default 5); the column types come from the first 1,000 rows
+          -n, --count N  rows to show (default 5); the column types come from the first 1,000 rows
 
         Examples:
           idrak data preview houses.csv
           idrak data preview train.parquet -n 10 --json
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--rows"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--count"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-n"] = "--rows" };
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-n"] = "--count" };
 
     public override int Run(CommandContext context)
     {
         string path = context.Argument(0, "FILE (a CSV, JSON Lines, JSON or Parquet file)");
-        int show = context.IntOption("--rows", 5);
+        int show = context.IntOption("--count", 5);
         var data = RowFiles.Read(path);
         var sample = new List<JsonObject>();
         long count = 0;
@@ -764,7 +764,7 @@ internal sealed class DataSampleCommand : Command
         FILE -n N [--seed N] [-t COL] [-o OUT]
 
         Options:
-          -n, --rows N    how many rows
+          -n, --count N   how many rows
               --seed N    the seed (default 1)
           -t, --target C  keep this column's class proportions
           -o, --out FILE  write the sample (by extension); without it the rows are printed as JSON Lines
@@ -774,14 +774,14 @@ internal sealed class DataSampleCommand : Command
           idrak data sample reviews.csv -n 500 -t label -o reviews.sample.csv
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--rows", "--target", "--out"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--count", "--target", "--out"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-n"] = "--rows", ["-t"] = "--target", ["-o"] = "--out" };
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-n"] = "--count", ["-t"] = "--target", ["-o"] = "--out" };
 
     public override int Run(CommandContext context)
     {
         string path = context.Argument(0, "FILE");
-        int count = context.Option("--rows") is null ? throw new UsageException("Give -n N, the number of rows to sample.") : context.IntOption("--rows", 0);
+        int count = context.Option("--count") is null ? throw new UsageException("Give -n N, the number of rows to sample.") : context.IntOption("--count", 0);
         if (count <= 0)
         {
             throw new UsageException("-n needs a positive number of rows.");

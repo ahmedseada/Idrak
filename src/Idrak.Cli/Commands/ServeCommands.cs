@@ -65,6 +65,8 @@ internal sealed class ServeCommand : Command
               --allow-image-urls     let image_url parts name http(s) addresses the server downloads (off: data
                                      URLs and uploads only; each download is held to --max-request-mb and 30 s)
           -w, --weights FORMAT       int8, int4, bf16 or a registered packed format
+              --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores, less
+                                     memory than int8/int4 heads, slower)
           -k, --kv FORMAT            the KV cache format (float32, int8, bfloat16 or a registered one)
               --context N            the longest context to allocate
               --adapter DIR          merge a LoRA or DoRA adapter into the weights (one tuned on images: its

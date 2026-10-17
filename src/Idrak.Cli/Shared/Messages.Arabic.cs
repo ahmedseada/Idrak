@@ -254,7 +254,7 @@ internal static partial class Messages
         ["Memory    process {0} MiB, managed {1} MiB"] = "الذاكرة   العملية {0} MiB، والمدارة {1} MiB",
 
         // Command summaries (idrak help, idrak help COMMAND).
-        ["Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix, text, fonts, synth, audio, mel)"] =
+        ["Datasets: show, count, download, build, preview, stats, convert, split, mix, text, fonts, synth, audio, mel"] =
             "مجموعات البيانات: عرض وعد وتنزيل وبناء (ومعاينة وتحقق وإحصاءات وتحويل وإزالة تكرار وتقسيم وعينات ومزج ونص عشوائي وفحص خطوط وصفحات مصطنعة وصوت وسمات mel)",
         ["Convert, resample and split sound files into a folder of WAV files with a manifest.jsonl"] =
             "تحويل ملفات صوت وإعادة أخذ عيناتها وتقطيعها إلى مجلد ملفات WAV مع ملف manifest.jsonl",
@@ -288,7 +288,7 @@ internal static partial class Messages
             "تقسيم الصفوف إلى ملفات تدريب وتحقق واختبار ببذرة (مع طبقات حسب عمود بالخيار -t)",
         ["A random (or, with -t, stratified) sample of rows"] = "عينة عشوائية من الصفوف (أو عينة طبقية بالخيار -t)",
         ["Assemble a training set from several sources with weights (a dataset recipe)"] = "تجميع مجموعة تدريب من عدة مصادر بأوزان (وصفة مجموعة بيانات)",
-        ["Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz"] = "فحص الخطوط لرسم الصفحات: المحارف وميزات التخطيط والتشكيل مقارنة بـ HarfBuzz",
+        ["Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz"] = "فحص الخطوط لرسم الصفحات: المحارف وميزات التخطيط والتشكيل مقارنة مع HarfBuzz",
         ["Random text in a language (pages, lines or words) to draw training pages from"] = "نص عشوائي بلغة ما (صفحات أو أسطر أو كلمات) لرسم صفحات تدريب منه",
         ["Learn a tokenizer (byte-pair encoding) from text files, for a model made from scratch"] = "تعلم مقسم رموز (ترميز أزواج البايتات) من ملفات نصية لنموذج يبنى من الصفر",
         ["Encode text files into a token file for pretraining (each document's ids, then a separator)"] = "ترميز ملفات نصية إلى ملف رموز للتدريب المسبق (رموز كل مستند ثم فاصل)",

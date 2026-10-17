@@ -25,6 +25,7 @@ internal sealed class EvalCommand : Command
         "the model answers the turns before it (greedy decoding, so results repeat) and the answer is scored.\n\n" +
         "Options:\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format\n" +
+        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "  -k, --kv FORMAT       the key/value cache format\n" +
         "      --context N       the context length; --adapter DIR: merge an adapter first\n" +
         "      --metric NAME     auto (default: number for '#### n' references, else f1), number, exact, contains, f1\n" +

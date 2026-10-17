@@ -35,7 +35,7 @@ internal sealed class DataSynthCommand : Command
               --parts FILE        header, subject, signature and footer parts, with slots such as {digits:6} or {hijri}
                                   (JSON: "headerStart", "headerCenter", "headerEnd", "titles", "subjects", "signatures",
                                   "footers", "chances", "digits", "nativeDigits", "language"); none: the text alone
-          -n, --variants N        pages per record (3)
+          -n, --count N           pages per record (3)
               --layout NAME       a page layout, again for more (letter and plain; a name twice is drawn twice as often)
               --scan PROFILE      a look, again for more, one drawn per page: a name (none: as drawn, clean, office, old,
                                   pale: faint ink, worn: broken strokes, fax, handled: wrinkles, folds, smudges, marked:
@@ -68,12 +68,12 @@ internal sealed class DataSynthCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--out", "--fonts", "--parts", "--variants", "--layout", "--scan", "--grey", "--page", "--records", "--full-text", "--prompt", "--answer-key",
+        ["--out", "--fonts", "--parts", "--count", "--layout", "--scan", "--grey", "--page", "--records", "--full-text", "--prompt", "--answer-key",
          "--image-format", "--quality", "--workers", "--limit"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--zip"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out", ["-n"] = "--variants" };
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out", ["-n"] = "--count" };
 
     public override int Run(CommandContext context)
     {
@@ -108,7 +108,7 @@ internal sealed class DataSynthCommand : Command
             {
                 Style = SyntheticPages.Style(defaults.Style, context.Option("--page")),
                 Parts = context.Option("--parts") is { } parts ? SyntheticPageParts.Read(parts) : SyntheticPageParts.Empty,
-                Variants = context.IntOption("--variants", defaults.Variants),
+                Variants = context.IntOption("--count", defaults.Variants),
                 Layouts = layouts.Count > 0 ? layouts : defaults.Layouts,
                 Scans = scans.Count > 0 ? scans : defaults.Scans,
                 Grey = context.Option("--grey") is { } grey ? double.Parse(grey, NumberStyles.Float, CultureInfo.InvariantCulture) : defaults.Grey,

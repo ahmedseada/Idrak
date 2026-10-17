@@ -34,6 +34,8 @@ internal sealed class EmbedCommand : Command
               --max-length N    tokens per text (default 512, at most the model's context)
               --batch-size N    texts per batch (default 32)
           -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: as stored)
+              --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory than
+                                int8/int4 heads, slower)
               --context N       the longest input the model is loaded for (default: the model's own)
               --adapter DIR     merge a LoRA adapter into the weights as they are read
 
