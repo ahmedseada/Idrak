@@ -358,7 +358,7 @@ internal sealed class VitsTraining : IDisposable
             }
         }
 
-        var gather = VitsOps.Indices(index, device);
+        var gather = Tensor.Indices(index, device);
         var expandedMeans = means.EmbeddingLookup(gather).Reshape(count, length, flow).Permute(0, 2, 1);   // [B, F, length]
         var expandedLogs = logStddevs.EmbeddingLookup(gather).Reshape(count, length, flow).Permute(0, 2, 1);
         var klTerms = expandedLogs - posteriorLogs - 0.5f + (prior - expandedMeans).Square() * 0.5f * (expandedLogs * -2f).Exp();

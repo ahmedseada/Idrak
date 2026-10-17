@@ -342,7 +342,7 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
             }
         }
 
-        var indices = VitsOps.Indices(rows, Device);
+        var indices = Tensor.Indices(rows, Device);
         var prior = means.EmbeddingLookup(indices);                              // [frames, F]
         if (noiseScale != 0)
         {
@@ -377,7 +377,7 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
             return null;
         }
 
-        return _speakers.EmbeddingLookup(VitsOps.Indices([voice is null ? 0 : SpeakerIndex(voice)], Device)).Transpose();
+        return _speakers.EmbeddingLookup(Tensor.Indices([voice is null ? 0 : SpeakerIndex(voice)], Device)).Transpose();
     }
 
     /// <summary>The index of speaker <paramref name="voice"/>: one of <see cref="Voices"/> (any case), or an index.</summary>

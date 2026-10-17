@@ -778,6 +778,17 @@ public sealed class Idrak.Layers.ConvTranspose2d : Idrak.Abstraction.Module
   public override string ToString()
   public static Idrak.Layers.ConvTranspose2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? outputPadding = null, (int, int)? dilation = null, int groups = 1)
 
+public sealed class Idrak.Layers.ConvolutionalFeedForward : Idrak.Abstraction.Module
+  public ConvolutionalFeedForward(Idrak.Layers.Conv1d conv1, Idrak.Layers.Conv1d conv2, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> activation, int kernel)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor x, int batch, int t, Idrak.Layers.PaddedSequences? mask)
+  public int Kernel { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Layers.ConvolutionalFeedForward FromStored(Idrak.Models.StoredLayers stored, string prefix, int hidden, int ffDim, int kernel, string activation)
+  public static System.Collections.Generic.IReadOnlyList<string> Activations { get; }
+  public static System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> Activation(string name)
+
 public sealed class Idrak.Layers.ConvolutionalSplineFlow : Idrak.Abstraction.Module
   public ConvolutionalSplineFlow(Idrak.Layers.Conv1d pre, Idrak.Layers.DilatedDepthSeparableConv dds, Idrak.Layers.Conv1d proj, int half, int bins, float tail, float parameterScale)
   public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor latents, Idrak.Abstraction.Tensor conditioning, Idrak.Layers.PaddedSequences? mask, out Idrak.Abstraction.Tensor logDet)
@@ -844,6 +855,18 @@ public sealed class Idrak.Layers.Dropout : Idrak.Abstraction.Module
   public Dropout(float probability = 0.5f, System.Random? random = null)
   public float Probability { get; }
   public override string ToString()
+
+public sealed class Idrak.Layers.ElementwiseAffineFlow : Idrak.Abstraction.Module
+  public ElementwiseAffineFlow(Idrak.Abstraction.Tensor logScale, Idrak.Abstraction.Tensor translate)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor x, Idrak.Layers.PaddedSequences? mask, int positions, out Idrak.Abstraction.Tensor logDet)
+  public Idrak.Abstraction.Tensor LogScale { get; }
+  public Idrak.Abstraction.Tensor Translate { get; }
+  public int Channels { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Layers.ElementwiseAffineFlow FromStored(Idrak.Models.StoredLayers stored, string prefix, int channels)
+  public void Reverse(System.Span<float> latents, int t)
 
 public sealed class Idrak.Layers.Embedding : Idrak.Abstraction.Module
   public Embedding(int vocabulary, int dim, Idrak.Abstraction.Device? device = null, System.Random? random = null)

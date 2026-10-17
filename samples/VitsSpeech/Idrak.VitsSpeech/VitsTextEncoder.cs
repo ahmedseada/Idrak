@@ -49,7 +49,7 @@ internal sealed class VitsTextEncoder : IDisposable
             ids[b].CopyTo(padded, b * t);
         }
 
-        var x = _embed.EmbeddingLookup(VitsOps.Indices(padded, _embed.Device)) * MathF.Sqrt(_config.HiddenSize);   // [B·T, C]
+        var x = _embed.EmbeddingLookup(Tensor.Indices(padded, _embed.Device)) * MathF.Sqrt(_config.HiddenSize);   // [B·T, C]
         if (mask is not null)
         {
             x = mask.ApplyRows(x);
@@ -82,7 +82,7 @@ internal sealed class VitsTextEncoder : IDisposable
         private readonly VitsConfig _config;
         private readonly RelativePositionAttention _attention;
         private readonly LayerNorm _norm, _finalNorm;
-        private readonly Conv1d _conv1, _conv2;
+        private readonly ConvolutionalFeedForward _feedForward;
 
         public Layer(StoredLayers weights, string prefix, VitsConfig config)
         {
@@ -91,35 +91,14 @@ internal sealed class VitsTextEncoder : IDisposable
             _attention = RelativePositionAttention.FromStored(weights, $"{prefix}.attention", c, config.Heads, config.WindowSize);
             _norm = weights.Norm($"{prefix}.layer_norm", c, config.LayerNormEps);
             _finalNorm = weights.Norm($"{prefix}.final_layer_norm", c, config.LayerNormEps);
-            int k = config.FfnKernelSize, symmetric = k % 2 == 1 ? k / 2 : 0;
-            _conv1 = weights.Conv($"{prefix}.feed_forward.conv_1", c, config.FfnDim, k, symmetric);
-            _conv2 = weights.Conv($"{prefix}.feed_forward.conv_2", config.FfnDim, c, k, symmetric);
+            _feedForward = ConvolutionalFeedForward.FromStored(weights, $"{prefix}.feed_forward", c, config.FfnDim, config.FfnKernelSize, config.HiddenAct);
         }
 
         // x [B·T, C] rows of a batch of `batch` utterances padded to `t` positions (the mask null for one, unpadded).
         public Tensor Forward(Tensor x, int batch, int t, PaddedSequences? mask)
         {
             x = _norm.Forward(x + _attention.Forward(x, batch, t, mask));
-            return _finalNorm.Forward(x + FeedForward(x, batch, t, mask));
-        }
-
-        // The convolutions over time read the padding as zeros (VITS multiplies by the mask before each).
-        private Tensor FeedForward(Tensor x, int batch, int t, PaddedSequences? mask)
-        {
-            int c = _config.HiddenSize, k = _config.FfnKernelSize, left = k % 2 == 1 ? 0 : k / 2, right = k % 2 == 1 ? 0 : (k - 1) / 2;   // even kernels pad asymmetrically
-            var y = x.Reshape(batch, t, c).Permute(0, 2, 1);                       // [B, C, T]
-            if (mask is not null)
-            {
-                y = mask.Apply(y);
-            }
-
-            var h = VitsOps.Activation(_config.HiddenAct, _conv1.Forward(y.Pad(-1, left, right)));
-            if (mask is not null)
-            {
-                h = mask.Apply(h);
-            }
-
-            return _conv2.Forward(h.Pad(-1, left, right)).Permute(0, 2, 1).Reshape(batch * t, c);
+            return _finalNorm.Forward(x + _feedForward.Forward(x, batch, t, mask));
         }
 
         public void Dispose()
@@ -127,8 +106,7 @@ internal sealed class VitsTextEncoder : IDisposable
             _attention.Dispose();
             _norm.Dispose();
             _finalNorm.Dispose();
-            _conv1.Dispose();
-            _conv2.Dispose();
+            _feedForward.Dispose();
         }
     }
 }

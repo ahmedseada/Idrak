@@ -23,7 +23,7 @@ through its driver alone.
 | Area | What is there |
 |------|---------------|
 | Tensors | N-D tensors with automatic differentiation, float32, bfloat16 and FP8 precision, int8 / int4 / bfloat16 weights |
-| Layers | Linear, Conv2d, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head attention, transformer layers, mixture of experts; graph modules with skip connections and branches |
+| Layers | Linear, Conv2d, Conv1d and ConvTranspose1d with weight norm, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head and relative-position attention, transformer layers, convolutional feed-forward, mixture of experts, dilated depth-separable convolution, coupling flows (rational-quadratic spline, element-wise affine), padded-batch masks; graph modules with skip connections and branches; `StoredLayers` reads a checkpoint into them by name |
 | Training | `Trainer` and `TrainingRun`, losses, metrics, early stopping, SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, schedules, gradient clipping, memory offloading |
 | Datasets | In-memory datasets and lazy sources (streamed CSV, memory-mapped token files and .npy arrays), views, scalers, the `DataLoader` (`Idrak.Datasets`; image folders, augmentation and codecs are in `Idrak.Imaging`) |
 | Pretrained models | Llama, Qwen, Mistral, Gemma and mixture-of-experts models by Hugging Face id, folder or GGUF file: safetensors and quantized GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
