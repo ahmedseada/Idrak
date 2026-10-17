@@ -505,9 +505,11 @@ internal static partial class PtxKernels
             """);
 
         // act(gate) and act'(gate) into %f5 and %f6 (kind 0 SiLU, 1 GELU tanh, 2 ReLU, 3 tanh) from %f1; the up side's
-        // function into %f2 (up itself, or sigmoid(up) for kind 3) and its slope into %f17 (1, or sigmoid'(up)).
+        // function into %f19 (up itself, or sigmoid(up) for kind 3) and its slope into %f17 (1, or sigmoid'(up)). %f2 keeps
+        // the up value as read, for the kernels that pack it.
         string activation = $"""
             mov.f32 %f17, {One};
+            mov.f32 %f19, %f2;
             setp.eq.u32 %p5, %s_kind, 1;
             @%p5 bra ACT_GELU;
             setp.eq.u32 %p5, %s_kind, 2;
@@ -560,9 +562,9 @@ internal static partial class PtxKernels
             mul.f32 %f3, %f2, {F(-1.4426950408889634f)};
             ex2.approx.ftz.f32 %f3, %f3;
             add.f32 %f3, %f3, {One};
-            rcp.rn.f32 %f2, %f3;
-            sub.f32 %f17, {One}, %f2;
-            mul.f32 %f17, %f17, %f2;
+            rcp.rn.f32 %f19, %f3;
+            sub.f32 %f17, {One}, %f19;
+            mul.f32 %f17, %f17, %f19;
             ACT_DONE:
             """;
 
@@ -572,7 +574,7 @@ internal static partial class PtxKernels
             ld.global.f32 %f1, [%a_gate];
             ld.global.f32 %f2, [%a_up];
             """ + "\n" + activation + "\n" + """
-            mul.f32 %f5, %f5, %f2;
+            mul.f32 %f5, %f5, %f19;
             st.global.f32 [%a_y], %f5;
             """);
 
@@ -586,7 +588,7 @@ internal static partial class PtxKernels
             and.b32 %r5, %s_flags, 1;
             setp.eq.u32 %p7, %r5, 0;
             @%p7 bra NO_DGATE;
-            mul.f32 %f14, %f13, %f2;
+            mul.f32 %f14, %f13, %f19;
             mov.f32 %f15, 0f00000000;
             and.b32 %r6, %s_flags, 4;
             setp.eq.u32 %p8, %r6, 0;
@@ -663,7 +665,7 @@ internal static partial class PtxKernels
             """ + "\n" + Unpack + "\n" + """
             GA_LOADED:
             """ + "\n" + activation + "\n" + """
-            mul.f32 %f5, %f5, %f2;
+            mul.f32 %f5, %f5, %f19;
             and.b32 %r15, %s_flags, 4;
             setp.eq.u32 %p11, %r15, 0;
             @%p11 bra GA_NO_Y;
@@ -715,7 +717,7 @@ internal static partial class PtxKernels
             and.b32 %r15, %s_flags, 1;
             setp.eq.u32 %p11, %r15, 0;
             @%p11 bra GB_NO_DGATE;
-            mul.f32 %f14, %f13, %f2;
+            mul.f32 %f14, %f13, %f19;
             add.u64 %rd2, %b_dgate, %rd1;
             mov.f32 %f15, 0f00000000;
             and.b32 %r15, %s_flags, 4;
