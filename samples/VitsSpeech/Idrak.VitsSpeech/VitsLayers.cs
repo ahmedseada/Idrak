@@ -440,8 +440,8 @@ internal static class VitsOps
     }
 
     /// <summary>
-    /// The samples [1, L] padded at the end by reflection to <paramref name="length"/> (torch's <c>F.pad(x, (0, n), "reflect")</c>),
-    /// as a gather, so the padding's gradient reaches the samples it copies.
+    /// The samples [1, L] padded at the end by reflection to <paramref name="length"/> (torch's <c>F.pad(x, (0, n), "reflect")</c>):
+    /// the samples and a gather of the mirrored end, so the padding's gradient reaches the samples it copies.
     /// </summary>
     public static Tensor ReflectEnd(Tensor samples, int length)
     {
@@ -451,28 +451,42 @@ internal static class VitsOps
             return samples;
         }
 
-        var rows = new int[length];
-        for (int i = 0; i < length; i++)
+        var tail = new int[length - n];
+        for (int k = 0; k < tail.Length; k++)
         {
-            rows[i] = i < n ? i : 2 * (n - 1) - i;
+            tail[k] = n - 2 - k;
         }
 
-        return samples.Reshape(n, 1).EmbeddingLookup(Indices(rows, samples.Device)).Reshape(1, length);
+        return Tensor.Concat([samples, Edge(samples, tail)], 1);
     }
 
-    /// <summary>The samples [1, L] reflect-padded by <paramref name="pad"/> at both ends (the edge sample not repeated), as a gather.</summary>
+    /// <summary>
+    /// The samples [1, L] reflect-padded by <paramref name="pad"/> at both ends (the edge sample not repeated): the samples
+    /// with a gather of the mirrored edges on each side. Gathering only the edges keeps the gather's gradient (a scatter in
+    /// position order) to the padding's length, not the sound's (where it cost a pass over every earlier position).
+    /// </summary>
     public static Tensor Reflect(Tensor samples, int pad)
     {
         int n = samples.Shape[1];
-        var rows = new int[n + 2 * pad];
-        for (int i = 0; i < rows.Length; i++)
+        if (pad == 0)
         {
-            int j = i - pad;
-            rows[i] = j < 0 ? -j : j >= n ? 2 * (n - 1) - j : j;
+            return samples;
         }
 
-        return samples.Reshape(n, 1).EmbeddingLookup(Indices(rows, samples.Device)).Reshape(1, rows.Length);
+        var left = new int[pad];
+        var right = new int[pad];
+        for (int i = 0; i < pad; i++)
+        {
+            left[i] = pad - i;
+            right[i] = n - 2 - i;
+        }
+
+        return Tensor.Concat([Edge(samples, left), samples, Edge(samples, right)], 1);
     }
+
+    // The samples at `rows` as [1, rows.Length].
+    private static Tensor Edge(Tensor samples, int[] rows) =>
+        samples.Reshape(samples.Shape[1], 1).EmbeddingLookup(Indices(rows, samples.Device)).Reshape(1, rows.Length);
 
     /// <summary>A float tensor of integer indices [count] on <paramref name="device"/> (what the library's gathers take).</summary>
     public static Tensor Indices(ReadOnlySpan<int> indices, Device device)
