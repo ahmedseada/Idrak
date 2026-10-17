@@ -24,7 +24,8 @@ dotnet run -c Release --project benches/Idrak.Benches -- compare before.json aft
 
 Settings, all environment variables: `IDRAK_DEVICES` (`cpu`, `cuda:0`, `vulkan:0`, several with commas),
 `IDRAK_BENCH_SIZE` (`small`, `medium`, `large`; default small on the CPU, medium on a GPU), `IDRAK_BENCH_REPEATS` (timed
-rounds after the cold one, default 5), `IDRAK_BENCH_SECONDS` (the most a stress section runs, default 60),
+rounds after the cold one, default 5), `IDRAK_BENCH_WARMUP` (untimed calls between the cold one and the timed rounds, default
+30: the tiered JIT optimizes a method after about thirty calls, so the warm rounds time the optimized code), `IDRAK_BENCH_SECONDS` (the most a stress section runs, default 60),
 `IDRAK_BENCH_OUT` (the rows as JSON), `IDRAK_BENCH_MODEL` (a VITS model folder for `train-speech`; default the tiny
 fixture under `tests/`), `IDRAK_BENCH_CLIPS` (a folder of clips with transcripts; default synthetic clips).
 

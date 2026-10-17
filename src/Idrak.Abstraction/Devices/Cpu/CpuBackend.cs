@@ -323,6 +323,7 @@ internal sealed partial class CpuBackend : Backend
     private readonly struct FusedAdamKernel(float[] p, float[] g, float[] m, float[] v, float factor, float lr, float decay, float beta1,
         float beta2, float eps, bool zero) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var ps = p.AsSpan(start, end - start);
@@ -569,10 +570,14 @@ internal sealed partial class CpuBackend : Backend
         void Execute(int start, int end);
     }
 
-    // Each kernel processes [start, end): a SIMD main loop over Vector<float> lanes, then a scalar tail.
+    // Each kernel processes [start, end): a SIMD main loop over Vector<float> lanes, then a scalar tail. Every Execute is
+    // compiled optimized at its first call (AggressiveOptimization): a kernel the tiered JIT ran unoptimized until its
+    // thirtieth call took three to four times longer there (exp 72 → 35 µs over 16k elements), and a model's first
+    // passes, a bench's rounds and a short inference are made of such calls.
 
     private readonly struct SigmoidLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -582,7 +587,7 @@ internal sealed partial class CpuBackend : Backend
             var one = Vector<float>.One;
             for (int i = 0; i < xv.Length; i++)
             {
-                yv[i] = one / (one + Vector.Exp(-xv[i]));
+                yv[i] = one / (one + CpuMath.Exp(-xv[i]));
             }
 
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
@@ -594,6 +599,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct TanhLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -614,6 +620,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct ReluLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -634,11 +641,13 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct SquareLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end) => MulLoop.Apply(x.AsSpan(start, end - start), x.AsSpan(start, end - start), y.AsSpan(start, end - start));
     }
 
     private readonly struct AbsLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -659,6 +668,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct DropoutLoop(float[] x, float[] y, float p, uint seed, bool accumulate) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             float scale = 1f / (1f - p);
@@ -705,6 +715,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct AbsBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -729,6 +740,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct SigmoidBackwardLoop(float[] y, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var ys = y.AsSpan(start, end - start);
@@ -752,6 +764,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct TanhBackwardLoop(float[] y, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var ys = y.AsSpan(start, end - start);
@@ -775,6 +788,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct ReluBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -800,6 +814,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct SquareBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -823,6 +838,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct AddLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end) => Apply(a.AsSpan(start, end - start), b.AsSpan(start, end - start), c.AsSpan(start, end - start));
 
         public static void Apply(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c)
@@ -844,6 +860,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct SubLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var @as = a.AsSpan(start, end - start);
@@ -866,6 +883,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct MulLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end) => Apply(a.AsSpan(start, end - start), b.AsSpan(start, end - start), c.AsSpan(start, end - start));
 
         public static void Apply(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c)
@@ -887,6 +905,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct AffineLoop(float[] x, float[] y, float alpha, float beta) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -909,6 +928,7 @@ internal sealed partial class CpuBackend : Backend
 
     internal readonly struct AxpyLoop(float[] x, float[] y, float alpha) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -930,6 +950,7 @@ internal sealed partial class CpuBackend : Backend
 
     internal readonly struct MulAddLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var @as = a.AsSpan(start, end - start);
@@ -952,6 +973,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct SgdMomentumLoop(float[] p, float[] g, float[] v, float lr, float momentum) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var ps = p.AsSpan(start, end - start);
@@ -980,6 +1002,7 @@ internal sealed partial class CpuBackend : Backend
 
     private readonly struct AdamLoop(float[] p, float[] g, float[] m, float[] v, float lr, float beta1, float beta2, float eps) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var ps = p.AsSpan(start, end - start);

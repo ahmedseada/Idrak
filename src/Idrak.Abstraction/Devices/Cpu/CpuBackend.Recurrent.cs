@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
@@ -92,7 +93,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    private static Vector<float> SigmoidLanes(Vector<float> x) => Vector<float>.One / (Vector<float>.One + Vector.Exp(-x));
+    private static Vector<float> SigmoidLanes(Vector<float> x) => Vector<float>.One / (Vector<float>.One + CpuMath.Exp(-x));
 
     private static Vector<float> TanhLanes(Vector<float> x) => CpuMath.Tanh(x);
 
@@ -101,6 +102,7 @@ internal sealed partial class CpuBackend
     private readonly struct LstmCellRows(float[] projected, float[] recurrent, float[] cell, float[] hidden, float[] output, float[]? gates, float[]? cells,
         int step, int steps, int h) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int w = 4 * h;
@@ -169,6 +171,7 @@ internal sealed partial class CpuBackend
     private readonly struct LstmCellBackwardRows(float[] gates, float[] cells, float[]? dOutput, float[] dHidden, float[] dCell, float[] dGates, float[] dStep,
         int step, int previous, int steps, int h) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int w = 4 * h;
@@ -239,6 +242,7 @@ internal sealed partial class CpuBackend
     private readonly struct GruCellRows(float[] projected, float[] recurrent, float[]? hiddenBias, float[] hidden, float[] output, float[]? gates,
         int step, int steps, int h) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int w = 3 * h;
@@ -301,6 +305,7 @@ internal sealed partial class CpuBackend
     private readonly struct GruCellBackwardRows(float[] gates, float[] output, float[]? dOutput, float[] dHidden, float[] dGates, float[] dRecurrent, float[] dStep,
         int step, int previous, int steps, int h) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int w = 3 * h;

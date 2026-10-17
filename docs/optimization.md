@@ -283,6 +283,12 @@ static int CountAbove(ReadOnlySpan<int> s, int limit)
 
 60. Measure in a Release build, without a debugger attached.
 61. Warm up first, so the JIT finishes optimizing the code before you time it.
+    > **Checked:** the tiered JIT compiles a method unoptimized first and optimizes it after about thirty calls (a loop
+    > reaches the optimized code earlier through on-stack replacement, but a loop made of `Vector` calls does not get far).
+    > A bench that timed the median of five calls measured the first tier: `exp` over 16k elements took 72 µs there and
+    > 35 µs once optimized, erf-GELU 577 and 309, softmax over 256 × 1,024 1,108 and 351. Warm up for thirty calls, or mark
+    > the kernel `[MethodImpl(MethodImplOptions.AggressiveOptimization)]` so its first call is already the optimized one
+    > (the CPU backend's range kernels and `CpuMath` are).
 62. Time with `Stopwatch.GetTimestamp()` / `Stopwatch.GetElapsedTime(start)`.
 63. Count allocations with `GC.GetAllocatedBytesForCurrentThread()` before and after.
     > **Checked:** it counts the calling thread only. A `Parallel.For` allocating 64 x 100,000 bytes showed 1.4 MB on

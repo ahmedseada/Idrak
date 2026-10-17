@@ -50,7 +50,7 @@ internal static class OpsBench
             foreach (var (name, op, input, bytes) in cases)
             {
                 string label = $"{name} [{n:N0}]";
-                var (_, warm) = Bench.Time(device, () => op(input), settings.Repeats);
+                var (_, warm) = Bench.Time(device, () => op(input), settings.Repeats, settings.Warmup);
                 var census = Bench.Count(() => op(input));
                 double warmUs = warm * 1000, gbs = bytes / (warm / 1000) / 1e9;
 
@@ -64,7 +64,7 @@ internal static class OpsBench
                     tracked.ReleaseGrad();
                 }
 
-                var (_, warmBoth) = Bench.Time(device, Both, settings.Repeats);
+                var (_, warmBoth) = Bench.Time(device, Both, settings.Repeats, settings.Warmup);
                 var bothCensus = Bench.Count(Both);
                 Console.WriteLine(Bench.Line(label, ("", Bench.F(warmUs, "0.0")), ("", Bench.F(gbs, "0.0")), ("", census.Count.ToString()),
                     ("", Bench.F(warmBoth * 1000, "0.0")), ("", bothCensus.Count.ToString())));
@@ -95,7 +95,7 @@ internal static class OpsBench
         {
             using var a = Bench.RandomTensor(random, [m, k], device, 0.5f);
             using var b = Bench.RandomTensor(random, [k, n], device, 0.5f);
-            var (cold, warm) = Bench.Time(device, () => a.MatMul(b), settings.Repeats);
+            var (cold, warm) = Bench.Time(device, () => a.MatMul(b), settings.Repeats, settings.Warmup);
             double tflops = 2.0 * m * k * n / (warm / 1000) / 1e12;
             string label = $"{m} x {k} x {n}";
             Console.WriteLine(Bench.Line(label, ("", Bench.F(warm, "0.000")), ("", Bench.F(tflops, "0.00")), ("", Bench.F(cold, "0.0"))));
@@ -121,7 +121,7 @@ internal static class OpsBench
             {
                 using var _ = Autograd.NoGrad();
                 conv.Forward(input);
-            }, settings.Repeats);
+            }, settings.Repeats, settings.Warmup);
             int oh = (h + 2 * (h == 1 ? 0 : padding) - (h == 1 ? 1 : kernel)) / (h == 1 ? 1 : stride) + 1, ow = (w + 2 * padding - kernel) / stride + 1;
             double flops = 2.0 * batch * outChannels * oh * ow * inChannels * (h == 1 ? kernel : kernel * kernel);
             void Both()
@@ -136,7 +136,7 @@ internal static class OpsBench
                 input.ReleaseGrad();
             }
 
-            var (_, warmBoth) = Bench.Time(device, Both, settings.Repeats);
+            var (_, warmBoth) = Bench.Time(device, Both, settings.Repeats, settings.Warmup);
             var census = Bench.Count(Both);
             Console.WriteLine(Bench.Line(name, ("", Bench.F(warm, "0.000")), ("", Bench.F(flops / (warm / 1000) / 1e12, "0.00")), ("", Bench.F(warmBoth, "0.000")), ("", census.Count.ToString())));
             report.Add(ProductsSection, "conv " + name, device, "warm", warm, "ms");

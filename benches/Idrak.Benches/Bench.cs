@@ -17,7 +17,7 @@ internal enum BenchSize
 }
 
 /// <summary>The run's settings, read once from the environment.</summary>
-internal sealed record Settings(IReadOnlyList<Device> Devices, BenchSize Size, int Repeats, double Seconds, string? Output, string? Model, string? Clips)
+internal sealed record Settings(IReadOnlyList<Device> Devices, BenchSize Size, int Repeats, int Warmup, double Seconds, string? Output, string? Model, string? Clips)
 {
     public static Settings FromEnvironment()
     {
@@ -37,12 +37,12 @@ internal sealed record Settings(IReadOnlyList<Device> Devices, BenchSize Size, i
             null or "" => devices.All(d => d.Type == DeviceType.Cpu) ? BenchSize.Small : BenchSize.Medium,
             var other => throw new ArgumentException($"IDRAK_BENCH_SIZE '{other}': small, medium or large."),
         };
-        return new Settings(devices, size, Int("IDRAK_BENCH_REPEATS", 5), Double("IDRAK_BENCH_SECONDS", 60),
+        return new Settings(devices, size, Int("IDRAK_BENCH_REPEATS", 5), Int("IDRAK_BENCH_WARMUP", 30), Double("IDRAK_BENCH_SECONDS", 60),
             Text("IDRAK_BENCH_OUT"), Text("IDRAK_BENCH_MODEL"), Text("IDRAK_BENCH_CLIPS"));
     }
 
     public string Describe() => string.Create(CultureInfo.InvariantCulture,
-        $"Idrak benches: {string.Join(", ", Devices)}; size {Size.ToString().ToLowerInvariant()}, {Repeats} timed rounds, stress sections up to {Seconds:0} s{(Output is null ? "" : $", rows to {Output}")}");
+        $"Idrak benches: {string.Join(", ", Devices)}; size {Size.ToString().ToLowerInvariant()}, {Warmup} warm-up calls then {Repeats} timed rounds, stress sections up to {Seconds:0} s{(Output is null ? "" : $", rows to {Output}")}");
 
     private static int Int(string name, int fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } s ? int.Parse(s, CultureInfo.InvariantCulture) : fallback;
 
@@ -79,6 +79,7 @@ internal sealed class Report
             ["written"] = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
             ["size"] = settings.Size.ToString().ToLowerInvariant(),
             ["repeats"] = settings.Repeats,
+            ["warmup"] = settings.Warmup,
             ["devices"] = new JsonArray([.. settings.Devices.Select(d => (JsonNode)$"{d} ({d.Name})")]),
             ["rows"] = rows,
         };
@@ -133,10 +134,10 @@ internal static class Bench
 {
     /// <summary>
     /// Runs <paramref name="action"/> once cold (compilation, first kernels, first allocations), then <paramref name="repeats"/>
-    /// timed rounds, each in its own tensor scope with the device synchronized after it: the cold time and the warm median
-    /// (rule 76: cold and warm apart).
+    /// <paramref name="warmup"/> untimed calls, then the timed rounds, each in its own tensor scope with the device
+    /// synchronized after it: the cold time and the warm median (rule 76: cold and warm apart).
     /// </summary>
-    public static (double ColdMs, double WarmMs) Time(Device device, Action action, int repeats)
+    public static (double ColdMs, double WarmMs) Time(Device device, Action action, int repeats, int warmup = 0)
     {
         var backend = device.Backend;
         var watch = Stopwatch.StartNew();
@@ -147,6 +148,15 @@ internal static class Bench
         }
 
         double cold = watch.Elapsed.TotalMilliseconds;
+        for (int i = 0; i < warmup; i++)
+        {
+            // The tiered JIT optimizes a method after about thirty calls: untimed calls until then, so the warm rounds
+            // measure the optimized code (rule 61), not the first tier's.
+            using var scope = new TensorScope();
+            action();
+            backend.Synchronize();
+        }
+
         var times = new double[Math.Max(1, repeats)];
         for (int i = 0; i < times.Length; i++)
         {

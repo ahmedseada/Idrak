@@ -72,6 +72,142 @@ internal static class CpuMath
         q = MathF.FusedMultiplyAdd(x2, q, TanhB0);
         return p / q;
     }
+    // e^x as 2^k · e^f with k = round(x · log2 e) and f = x − k · ln 2 (ln 2 in two parts) in [−ln 2 / 2, ln 2 / 2], e^f a
+    // degree-6 polynomial (Cephes' expf coefficients, within 8e-8 of the true value): the lanes' own code, inlined into the
+    // optimized kernels, so e^x is fast from the first call. The runtime's Vector.Exp is a method of its own that the JIT
+    // compiles unoptimized at first and does not inline; a kernel calling it ran 4 to 7 times slower for its first hundreds
+    // of calls (exp over 262k elements: 1,300 µs against 180 µs settled). Below ExpUnderflow the result is 0, above
+    // ExpOverflow +∞, NaN stays NaN; k is held within [−126, 127], so 2^k is a normal float.
+    private const float ExpUnderflow = -87.3365f, ExpOverflow = 88.7228f, ExpLog2E = 1.44269504f, ExpLn2High = 0.693359375f, ExpLn2Low = -2.12194440e-4f;
+    private const float ExpRoundMagic = 12582912f;                               // 1.5 · 2^23: adding it rounds to the nearest integer in the low mantissa bits
+    private const float ExpP0 = 1.9875691500E-4f, ExpP1 = 1.3981999507E-3f, ExpP2 = 8.3334519073E-3f, ExpP3 = 4.1665795894E-2f, ExpP4 = 1.6666665459E-1f, ExpP5 = 5.0000001201E-1f;
+
+    /// <summary>e^x of each lane (see the notes above): 0 below −87.34, +∞ above 88.72, NaN kept.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector<float> Exp(Vector<float> x)
+    {
+        var c = Vector.Min(Vector.Max(x, new Vector<float>(ExpUnderflow)), new Vector<float>(ExpOverflow));
+        var magic = new Vector<float>(ExpRoundMagic);
+        var kf = Vector.FusedMultiplyAdd(c, new Vector<float>(ExpLog2E), magic);
+        var k = Vector.Min(Vector.Max(Vector.AsVectorInt32(kf) - Vector.AsVectorInt32(magic), new Vector<int>(-126)), new Vector<int>(127));
+        var kFloat = Vector.ConvertToSingle(k);
+        var f = Vector.FusedMultiplyAdd(kFloat, new Vector<float>(-ExpLn2High), c);
+        f = Vector.FusedMultiplyAdd(kFloat, new Vector<float>(-ExpLn2Low), f);
+        var p = Vector.FusedMultiplyAdd(new Vector<float>(ExpP0), f, new Vector<float>(ExpP1));
+        p = Vector.FusedMultiplyAdd(p, f, new Vector<float>(ExpP2));
+        p = Vector.FusedMultiplyAdd(p, f, new Vector<float>(ExpP3));
+        p = Vector.FusedMultiplyAdd(p, f, new Vector<float>(ExpP4));
+        p = Vector.FusedMultiplyAdd(p, f, new Vector<float>(ExpP5));
+        p = Vector.FusedMultiplyAdd(p, f * f, f + Vector<float>.One);
+        var result = p * Vector.AsVectorSingle((k + new Vector<int>(127)) << 23);
+        result = Vector.ConditionalSelect(Vector.LessThan(x, new Vector<float>(ExpUnderflow)), Vector<float>.Zero, result);
+        result = Vector.ConditionalSelect(Vector.GreaterThan(x, new Vector<float>(ExpOverflow)), new Vector<float>(float.PositiveInfinity), result);
+        return Vector.ConditionalSelect(Vector.Equals(x, x), result, x);
+    }
+
+    /// <summary>e^x of each lane of a 512-bit vector, as <see cref="Exp(Vector{float})"/> computes it.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector512<float> Exp(Vector512<float> x)
+    {
+        var c = Vector512.Min(Vector512.Max(x, Vector512.Create(ExpUnderflow)), Vector512.Create(ExpOverflow));
+        var magic = Vector512.Create(ExpRoundMagic);
+        var kf = Vector512.FusedMultiplyAdd(c, Vector512.Create(ExpLog2E), magic);
+        var k = Vector512.Min(Vector512.Max(kf.AsInt32() - magic.AsInt32(), Vector512.Create(-126)), Vector512.Create(127));
+        var kFloat = Vector512.ConvertToSingle(k);
+        var f = Vector512.FusedMultiplyAdd(kFloat, Vector512.Create(-ExpLn2High), c);
+        f = Vector512.FusedMultiplyAdd(kFloat, Vector512.Create(-ExpLn2Low), f);
+        var p = Vector512.FusedMultiplyAdd(Vector512.Create(ExpP0), f, Vector512.Create(ExpP1));
+        p = Vector512.FusedMultiplyAdd(p, f, Vector512.Create(ExpP2));
+        p = Vector512.FusedMultiplyAdd(p, f, Vector512.Create(ExpP3));
+        p = Vector512.FusedMultiplyAdd(p, f, Vector512.Create(ExpP4));
+        p = Vector512.FusedMultiplyAdd(p, f, Vector512.Create(ExpP5));
+        p = Vector512.FusedMultiplyAdd(p, f * f, f + Vector512<float>.One);
+        var result = p * ((k + Vector512.Create(127)) << 23).AsSingle();
+        result = Vector512.ConditionalSelect(Vector512.LessThan(x, Vector512.Create(ExpUnderflow)), Vector512<float>.Zero, result);
+        result = Vector512.ConditionalSelect(Vector512.GreaterThan(x, Vector512.Create(ExpOverflow)), Vector512.Create(float.PositiveInfinity), result);
+        return Vector512.ConditionalSelect(Vector512.Equals(x, x), result, x);
+    }
+
+    /// <summary>erf of each lane within 1.5e-7 (Abramowitz and Stegun 7.1.26): sign(z) · (1 − t · poly(t) · e^(−z²)), t = 1 / (1 + p |z|).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector<float> Erf(Vector<float> z)
+    {
+        var a = Vector.Abs(z);
+        var t = Vector<float>.One / Vector.FusedMultiplyAdd(new Vector<float>(0.3275911f), a, Vector<float>.One);
+        var poly = Vector.FusedMultiplyAdd(new Vector<float>(1.061405429f), t, new Vector<float>(-1.453152027f));
+        poly = Vector.FusedMultiplyAdd(poly, t, new Vector<float>(1.421413741f));
+        poly = Vector.FusedMultiplyAdd(poly, t, new Vector<float>(-0.284496736f));
+        poly = Vector.FusedMultiplyAdd(poly, t, new Vector<float>(0.254829592f));
+        poly *= t;
+        var e = Vector<float>.One - poly * Exp(-a * a);
+        return Vector.ConditionalSelect(Vector.LessThan(z, Vector<float>.Zero), -e, e);
+    }
+
+    /// <summary>erf of one value, the same approximation as the lanes'.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float Erf(float z)
+    {
+        float a = MathF.Abs(z), t = 1f / MathF.FusedMultiplyAdd(0.3275911f, a, 1f);
+        float poly = MathF.FusedMultiplyAdd(1.061405429f, t, -1.453152027f);
+        poly = MathF.FusedMultiplyAdd(poly, t, 1.421413741f);
+        poly = MathF.FusedMultiplyAdd(poly, t, -0.284496736f);
+        poly = MathF.FusedMultiplyAdd(poly, t, 0.254829592f);
+        poly *= t;
+        float e = 1f - poly * MathF.Exp(-a * a);
+        return z < 0 ? -e : e;
+    }
+
+    /// <summary>1 / (1 + e^(−x)) of each lane.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector<float> Sigmoid(Vector<float> x) => Vector<float>.One / (Vector<float>.One + Exp(-x));
+
+    /// <summary>y = x · scale + mask (mask empty: none), and the largest y (the softmax's shift), in one pass.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static float ScaleAddMax(ReadOnlySpan<float> x, ReadOnlySpan<float> mask, Span<float> y, float scale)
+    {
+        int i = 0;
+        float max = float.NegativeInfinity;
+        ref float rx = ref MemoryMarshal.GetReference(x);
+        ref float ry = ref MemoryMarshal.GetReference(y);
+        if (Vector.IsHardwareAccelerated && x.Length >= Vector<float>.Count)
+        {
+            var s = new Vector<float>(scale);
+            var m = new Vector<float>(float.NegativeInfinity);
+            if (mask.IsEmpty)
+            {
+                for (; i <= x.Length - Vector<float>.Count; i += Vector<float>.Count)
+                {
+                    var v = Vector.LoadUnsafe(ref rx, (nuint)i) * s;
+                    v.StoreUnsafe(ref ry, (nuint)i);
+                    m = Vector.Max(m, v);
+                }
+            }
+            else
+            {
+                ref float rm = ref MemoryMarshal.GetReference(mask);
+                for (; i <= x.Length - Vector<float>.Count; i += Vector<float>.Count)
+                {
+                    var v = Vector.LoadUnsafe(ref rx, (nuint)i) * s + Vector.LoadUnsafe(ref rm, (nuint)i);
+                    v.StoreUnsafe(ref ry, (nuint)i);
+                    m = Vector.Max(m, v);
+                }
+            }
+
+            for (int l = 0; l < Vector<float>.Count; l++)
+            {
+                max = MathF.Max(max, m[l]);
+            }
+        }
+
+        for (; i < x.Length; i++)
+        {
+            y[i] = x[i] * scale + (mask.IsEmpty ? 0f : mask[i]);
+            max = MathF.Max(max, y[i]);
+        }
+
+        return max;
+    }
+
     /// <summary>The largest value (negative infinity when empty).</summary>
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static float Max(ReadOnlySpan<float> x)
@@ -127,7 +263,7 @@ internal static class CpuMath
             var total = Vector512<float>.Zero;
             for (; i <= x.Length - 16; i += 16)
             {
-                var e = Vector512.Exp(Vector512.LoadUnsafe(ref r, (nuint)i) - s);
+                var e = Exp(Vector512.LoadUnsafe(ref r, (nuint)i) - s);
                 e.StoreUnsafe(ref r, (nuint)i);
                 total += e;
             }
@@ -140,7 +276,7 @@ internal static class CpuMath
             var total = Vector<float>.Zero;
             for (; i <= x.Length - Vector<float>.Count; i += Vector<float>.Count)
             {
-                var e = Vector.Exp(Vector.LoadUnsafe(ref r, (nuint)i) - s);
+                var e = Exp(Vector.LoadUnsafe(ref r, (nuint)i) - s);
                 e.StoreUnsafe(ref r, (nuint)i);
                 total += e;
             }
@@ -199,7 +335,7 @@ internal static class CpuMath
                 Vector<float> a;
                 if (kind == 0)
                 {
-                    a = x / (one + Vector.Exp(-x));
+                    a = x / (one + Exp(-x));
                 }
                 else if (kind == 1)
                 {
@@ -209,7 +345,7 @@ internal static class CpuMath
                 else if (kind == 3)
                 {
                     a = Tanh(x);
-                    v = one / (one + Vector.Exp(-v));
+                    v = one / (one + Exp(-v));
                 }
                 else
                 {
