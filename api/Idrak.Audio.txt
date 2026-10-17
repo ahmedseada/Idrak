@@ -1255,6 +1255,7 @@ public sealed record Idrak.Audio.SpeechTrainingProgress : System.IEquatable<Idra
   public System.TimeSpan Elapsed { get; init; }
   public System.TimeSpan Remaining { get; init; }
   public double AudioSecondsPerSecond { get; init; }
+  public double BatchAudioSeconds { get; init; }
   public double EpochFraction { get; init; }
   public double MicroBatchSeconds { get; init; }
   public double UtterancesPerSecond { get; init; }

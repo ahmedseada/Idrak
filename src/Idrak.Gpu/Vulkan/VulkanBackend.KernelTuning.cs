@@ -154,6 +154,19 @@ internal sealed unsafe partial class VulkanBackend
             return fallback;
         }
 
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            return TuneTimed(key, candidates, fallback, run);
+        }
+        finally
+        {
+            TuningMeasured(key.Op.ToString(), candidates.Length, Stopwatch.GetElapsedTime(started));
+        }
+    }
+
+    private int TuneTimed(VulkanTuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run)
+    {
         // The formula's choice first, once untimed (builds its pipelines) and once timed: when measuring every candidate
         // would take longer than TuneBudget (a slow device, a large shape), the formula's choice is kept (and stored).
         Interlocked.Increment(ref _measurements);

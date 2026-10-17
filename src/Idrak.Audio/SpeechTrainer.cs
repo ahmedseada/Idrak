@@ -293,6 +293,9 @@ public sealed record SpeechTrainingProgress(string Stage, int Step, int Steps, i
 {
     /// <summary>The last step's loss terms by name when the objective has several (an adversarial synthesizer's "mel", "kl", "discriminator", ...); null otherwise.</summary>
     public IReadOnlyDictionary<string, float>? Terms { get; init; }
+
+    /// <summary>The audio seconds of the step's batches (the utterances' own lengths, before padding); 0 for a stage that is not a step.</summary>
+    public double BatchAudioSeconds { get; init; }
 }
 
 /// <summary>What a speech training run did.</summary>
@@ -571,7 +574,7 @@ public static class SpeechTrainer
                     double pace = timedSeconds / Math.Max(1, step - startStep - 1);
                     progress.Report(new SpeechTrainingProgress(stage, step, options.Steps, epoch + 1, next / (double)Math.Max(1, PlanFor(epoch).Count), (float)loss, rate0,
                         trainedUtterances / Math.Max(1e-9, timedSeconds), trainedSeconds / Math.Max(1e-9, timedSeconds), clock.Elapsed,
-                        TimeSpan.FromSeconds(pace * (options.Steps - step)), model.Device.Backend.GetMemoryUsage().Peak, micro, evaluated) { Terms = model.Terms });
+                        TimeSpan.FromSeconds(pace * (options.Steps - step)), model.Device.Backend.GetMemoryUsage().Peak, micro, evaluated) { Terms = model.Terms, BatchAudioSeconds = audio });
                 }
             }
         }

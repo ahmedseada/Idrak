@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
@@ -225,6 +226,19 @@ internal sealed unsafe partial class CudaBackend
     }
 
     private int TuneMeasuredLocked(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
+    {
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            return TuneMeasuredTimed(key, candidates, fallback, run, cold, part, parts);
+        }
+        finally
+        {
+            TuningMeasured(key.Op.ToString(), candidates.Length, Stopwatch.GetElapsedTime(started));
+        }
+    }
+
+    private int TuneMeasuredTimed(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
     {
         MakeCurrent();
         using var use = UseStream();

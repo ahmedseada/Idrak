@@ -621,6 +621,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   protected void ComposedConvolutionBackwardWeight(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dweight, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups)
   protected void EndMove()
   protected void GuardMoves()
+  protected void TuningMeasured(string operation, int candidates, System.TimeSpan duration)
   public abstract Idrak.Abstraction.Devices.BackendCapabilities Capabilities { get; }
   public abstract Idrak.Abstraction.Devices.Storage Allocate(int length, bool zeroed)
   public abstract Idrak.Abstraction.MemoryUsage GetMemoryUsage()
@@ -1208,6 +1209,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
 
 public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstraction.Diagnostics.ITelemetryHook
   public ConsoleLogger(Idrak.Abstraction.Diagnostics.TelemetryLevel levels = (Idrak.Abstraction.Diagnostics.TelemetryLevel)1, int epochInterval = 1, int batchInterval = 1, System.IO.TextWriter? output = null)
@@ -1227,6 +1229,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.DeviceFailed : System.IEquatable<Idrak.Abstraction.Diagnostics.DeviceFailed>
   public DeviceFailed(string Device, string? Operation, string Message, bool RetriedOnHost, string? Hint)
@@ -1303,6 +1306,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public (default) void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public (default) void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public (default) void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.InferenceCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.InferenceCompleted>
@@ -1355,6 +1359,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.LayerForward : System.IEquatable<Idrak.Abstraction.Diagnostics.LayerForward>
   public Idrak.Abstraction.Device Device { get; init; }
@@ -1612,6 +1617,13 @@ public readonly record struct Idrak.Abstraction.Diagnostics.TrainingStarted : Sy
   public long ParameterCount { get; init; }
   public string Model { get; init; }
   public string Optimizer { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.TuningCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.TuningCompleted>
+  public System.TimeSpan Duration { get; init; }
+  public TuningCompleted(string Device, string Operation, int Candidates, System.TimeSpan Duration)
+  public int Candidates { get; init; }
+  public string Device { get; init; }
+  public string Operation { get; init; }
 
 public sealed class Idrak.Abstraction.DifferentiableFunction
   public Idrak.Abstraction.Tensor Apply(scoped params System.ReadOnlySpan<Idrak.Abstraction.Tensor> inputs)

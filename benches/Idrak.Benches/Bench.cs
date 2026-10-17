@@ -245,14 +245,30 @@ internal sealed class Census : ITelemetryHook
 {
     private readonly Dictionary<string, (long Count, long Elements, TimeSpan Time)> _byOperation = new(StringComparer.Ordinal);
 
-    public TelemetryLevel Levels => TelemetryLevel.Operations;
+    public TelemetryLevel Levels => TelemetryLevel.Operations | TelemetryLevel.Devices;
 
     public long Count { get; private set; }
 
     public long Elements { get; private set; }
 
+    /// <summary>Tunings the device measured (a new shape class each: once per class, kept in its cache file).</summary>
+    public long Tunings { get; private set; }
+
+    /// <summary>The time those tunings took.</summary>
+    public TimeSpan TuningTime { get; private set; }
+
     public IEnumerable<(string Operation, long Count, long Elements, TimeSpan Time)> ByCount =>
         _byOperation.OrderByDescending(p => p.Value.Count).Select(p => (p.Key, p.Value.Count, p.Value.Elements, p.Value.Time));
+
+    /// <summary>By the host time of the operations' calls: launch time, and where the host waited (tuning, allocating new memory, a host fallback).</summary>
+    public IEnumerable<(string Operation, long Count, long Elements, TimeSpan Time)> ByTime =>
+        _byOperation.OrderByDescending(p => p.Value.Time).Select(p => (p.Key, p.Value.Count, p.Value.Elements, p.Value.Time));
+
+    public void OnTuning(in TuningCompleted e)
+    {
+        Tunings++;
+        TuningTime += e.Duration;
+    }
 
     public void OnOperation(in OperationCompleted e)
     {

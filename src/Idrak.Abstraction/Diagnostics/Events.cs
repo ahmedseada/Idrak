@@ -262,6 +262,18 @@ public readonly record struct DeviceFailed(string Device, string? Operation, str
 public readonly record struct HostFallback(string Device, string Operation);
 
 /// <summary>
+/// A device measured the candidates of an operation at a shape class it had not seen and kept the fastest
+/// (<c>TelemetryLevel.Devices</c>). The choice is kept for the class (and in the device's tuning cache file), so the time
+/// is paid once per class and device: a run whose batches keep landing in new classes (a new batch count or padded length
+/// each step) shows here where its early steps' time went.
+/// </summary>
+/// <param name="Device">The kind of device ("cuda", "vulkan", "hip", …).</param>
+/// <param name="Operation">What was tuned (a convolution's pass, a product's splits, a decoder step's tile, …).</param>
+/// <param name="Candidates">The choices measured.</param>
+/// <param name="Duration">The measuring, first runs and all.</param>
+public readonly record struct TuningCompleted(string Device, string Operation, int Candidates, TimeSpan Duration);
+
+/// <summary>
 /// Published when an app's implementation of a slot threw, when <c>TelemetryLevel.Overrides</c> is enabled: under
 /// <see cref="SlotPolicy.Throw"/> (the default) the error went on to the caller, under <see cref="SlotPolicy.FallBack"/>
 /// the call was answered by the library default.
