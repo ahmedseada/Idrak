@@ -244,7 +244,13 @@ internal sealed class VitsTraining : IDisposable
     {
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
-        return batch.Frames.Count == 0 ? 0 : PassAll(batch, options).Mel.Item();
+        if (batch.Frames.Count == 0)
+        {
+            return 0;
+        }
+
+        using var pass = PassAll(batch, options);
+        return pass.Mel.Item();
     }
 
     /// <summary>
@@ -308,12 +314,20 @@ internal sealed class VitsTraining : IDisposable
     // A micro-batch's generator pass: the KL and duration terms summed over its utterances, and, for all of them as one
     // batch (equal segments), the sound made [B, L], the real sound [B, L] and the mel loss (the mean over the batch, which
     // is the mean of the utterances' means), with each utterance's durations.
-    internal sealed record BatchPass(Tensor Kl, Tensor Nll, Tensor Mel, Tensor Made, Tensor Real, IReadOnlyList<int[]> Durations);
+    internal sealed record BatchPass(Tensor Kl, Tensor Nll, Tensor Mel, Tensor Made, Tensor Real, IReadOnlyList<int[]> Durations, VitsMask? TokenMask, VitsMask? FrameMask) : IDisposable
+    {
+        /// <summary>Releases the batch's masks (their tensors belong to no scope): once the pass's backward step has run.</summary>
+        public void Dispose()
+        {
+            TokenMask?.Dispose();
+            FrameMask?.Dispose();
+        }
+    }
 
     // Utterance i of the batch through the generator on its own (gradients as Autograd says).
     internal UtterancePass Pass(AdversarialSynthesisBatch batch, int i, AdversarialSynthesisOptions options)
     {
-        var pass = PassAll(batch, options, [i]);
+        using var pass = PassAll(batch, options, [i]);                            // one utterance: no masks to release
         return new UtterancePass(pass.Kl, pass.Nll, pass.Mel, pass.Made, pass.Real, pass.Durations[0]);
     }
 
@@ -323,6 +337,7 @@ internal sealed class VitsTraining : IDisposable
     // loss and the discriminators together; every layer runs once a micro-batch. One utterance runs unpadded, unmasked.
     internal BatchPass PassAll(AdversarialSynthesisBatch batch, AdversarialSynthesisOptions options, IReadOnlyList<int>? utterances = null)
     {
+        using var checkpoints = batch.Checkpointing ? VitsCheckpoints.Enter() : null;
         utterances ??= [.. Enumerable.Range(0, batch.Frames.Count)];
         var config = _model.Config;
         var device = _model.Device;
@@ -442,7 +457,7 @@ internal sealed class VitsTraining : IDisposable
         var real = count == 1 ? reals[0] : Tensor.Concat(reals, 0);              // [B, seg · hop]
         var target = count == 1 ? targets[0] : Tensor.Concat(targets, 0);        // [B · seg, mels]
         var mel = (target - LogMel(made, basis, melFilters)).Abs().Mean();
-        return new BatchPass(kl, nll, mel, made, real, durations);
+        return new BatchPass(kl, nll, mel, made, real, durations, tokenMask, frameMask);
     }
 
     // The log-mel spectra [B · frames, mels] of the sound [B, L] as VITS's mel_spectrogram_torch takes it, differentiable:
@@ -569,6 +584,11 @@ internal sealed class VitsTraining : IDisposable
             var share = loss! * ((float)batch.Frames.Count / batch.StepUtterances);
             float total = share.Item();
             share.Backward();
+            if (!keep)
+            {
+                pass.Dispose();                                                  // the kept pass's masks go after the generator's half
+            }
+
             return total;
         }
 
@@ -593,7 +613,7 @@ internal sealed class VitsTraining : IDisposable
             try
             {
                 using var scope = keep ? null : new TensorScope();
-                var pass = _kept ?? owner.PassAll(batch, options);
+                using var pass = _kept ?? owner.PassAll(batch, options);         // its masks go after the backward step below
                 _kept = null;
                 List<List<Tensor>> realMaps;
                 using (Autograd.NoGrad())
@@ -648,6 +668,7 @@ internal sealed class VitsTraining : IDisposable
 
         public void Dispose()
         {
+            _kept?.Dispose();
             _kept = null;
             WeightNormedLayers.Unbind(owner._weights.Normed);
             WeightNormedLayers.Unbind(discriminators.Normed);

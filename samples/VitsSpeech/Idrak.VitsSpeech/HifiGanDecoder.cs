@@ -150,7 +150,8 @@ internal sealed class HifiGanDecoder : IDisposable
                 for (int j = 0; j < kernels; j++)
                 {
                     using var block = release ? new TensorScope() : null;
-                    var y = _blocks[i * kernels + j].Forward(up, release);
+                    var residual = _blocks[i * kernels + j];
+                    var y = VitsCheckpoints.Run(x => residual.Forward(x, release), up);
                     var total = sum is null ? y : sum + y;
                     block?.Keep(total);
                     if (release && sum is not null && stage!.Owns(sum))

@@ -30,7 +30,7 @@ internal static partial class Tests
     {
         _ = device;
         string gguf = TestData("gguf/tiny-qwen3-q8.gguf"), folder = TestData("gguf/tiny-qwen3-q8-hf");
-        Check(CheckpointFormats.Names.SequenceEqual(["gguf", "safetensors"]), $"formats: {string.Join(", ", CheckpointFormats.Names)}");
+        Check(CheckpointFormats.Names.SequenceEqual(["gguf", "pytorch", "safetensors"]), $"formats: {string.Join(", ", CheckpointFormats.Names)}");
         Check(CheckpointFormats.For(gguf).Name == "gguf" && CheckpointFormats.For(folder).Name == "safetensors"
               && CheckpointFormats.Get("safetensors").CanOpen(folder) && !CheckpointFormats.Get("gguf").CanOpen(folder), "formats claim their paths");
         try

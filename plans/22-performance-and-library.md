@@ -77,6 +77,12 @@ means that code is generic.
   kernel exists (layer norm, affine), else keep.
 - The CPU's exp, erf, softmax, layer norm and axis sums (section 1): vectorized loops, not fusions, but the same gain.
 
+## 4b. Lookups (the owner's note: indices and hash tables for quick access)
+
+Where a lookup walks a list or compares names in a loop, give it an index: candidates are `TensorScope`'s backward scan
+of its list on every `Keep`, `Owns` and `Untrack` (long scopes in a training step), name lookups in the weight readers and
+tensor stores, and the kernel and registry lookups per launch; each is measured with the benches before and after.
+
 ## 5. Order of work and status
 
 | # | Step | Status |

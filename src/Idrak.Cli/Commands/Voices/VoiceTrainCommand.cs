@@ -55,7 +55,8 @@ internal sealed class VoiceTrainCommand : Command
               --lr X              the learning rate of the generator (default 2e-4)
               --discriminator-lr X
                                   the discriminators' learning rate (default: --lr)
-              --batch-seconds S   audio seconds a step, padding included (default 40)
+              --batch-seconds S   audio seconds a step, padding included (default auto: as many as the device holds, measured
+                                  on the longest recording before the run; the run's notes name the value)
               --segment-frames N  the latent frames of each utterance's slice the decoder makes sound of (default 32)
               --mel-weight W      the mel loss's weight (default 45)
               --kl-weight W       the KL term's weight (default 1)
@@ -226,10 +227,10 @@ internal sealed class VoiceTrainCommand : Command
     }
 
     // Fine-tuning's starting point: VITS's optimizer (AdamW 2e-4, betas in AdversarialSynthesisOptions), no clipping, a
-    // constant rate; batches of 40 audio seconds, a checkpoint every 500 steps.
+    // constant rate; batches as large as the device holds (automatic), a checkpoint every 500 steps.
     private static SpeechTrainingOptions Defaults() => new()
     {
-        Steps = 2000, LearningRate = 2e-4f, Schedule = "constant", WarmupFraction = 0, MaxGradientNorm = 0, BatchSeconds = 40, SaveEvery = 500,
+        Steps = 2000, LearningRate = 2e-4f, Schedule = "constant", WarmupFraction = 0, MaxGradientNorm = 0, BatchSeconds = 0, SaveEvery = 500,
         Adversarial = new AdversarialSynthesisOptions(),
     };
 
@@ -266,7 +267,7 @@ internal sealed class VoiceTrainCommand : Command
         {
             Steps = resuming ? start.Steps : context.IntOption("--steps", start.Steps),
             LearningRate = Real(context, "--lr", start.LearningRate),
-            BatchSeconds = Real(context, "--batch-seconds", (float)start.BatchSeconds),
+            BatchSeconds = context.Option("--batch-seconds") is { } batch && batch.Equals("auto", StringComparison.OrdinalIgnoreCase) ? 0 : Real(context, "--batch-seconds", (float)start.BatchSeconds),
             Schedule = context.Option("--schedule") ?? start.Schedule,
             WarmupFraction = Real(context, "--warmup", start.WarmupFraction),
             Optimizer = context.Option("--optimizer") ?? start.Optimizer,

@@ -55,7 +55,7 @@ internal sealed class GenerationSettings
     /// <summary>Top-p (1 = off).</summary>
     public float TopP { get; set; } = 0.95f;
 
-    /// <summary>Longest answer in tokens (-1: until a stop sequence or <see cref="TextGenerator.MaxTokens"/>).</summary>
+    /// <summary>Longest answer in tokens (-1: until a stop sequence or the context window is full).</summary>
     public int MaxTokens { get; set; } = -1;
 
     /// <summary>Random seed (null: random).</summary>

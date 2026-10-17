@@ -24,6 +24,7 @@ internal static partial class Tests
         ("audio train: the IdrakAudio plug-in reads ctc/model and ctc/model-conv (refused naming SpeechFamilies.Register without it) and gives torch's step-1 CTC loss within 1e-4 and every tensor's gradient within 1e-4 of that tensor's largest, through CtcObjective.Loss; three SGD steps' losses within 1e-4 and the weights after them within 1e-4; Viterbi on the model's own log-probabilities gives torchaudio's paths; each utterance's logits in the padded batch equal its logits alone within 1e-5; a config that does not match the weights refused", AudioTrainFixture),
         ("audio train: SpeechModels.Create makes an IdrakAudio ctc model from a spec and a trained tokenizer into a folder SpeechModels.Load reads back with the same weights (an unregistered architecture, a used folder, an unbuilt task and the tts task refused, the last naming SpeechSynthesisModels.Create); it transcribes tone speech with greedy and beam decoding, batch and chunked and streamed alike, and passes the kit's SpeechRecognizerSuite", AudioTrainCreate),
         ("audio train: SpeechTrainer: a run stopped after step 2 and resumed from checkpoint-2 gives steps 3 to 6 and the final weights bit for bit (augmentations on, an epoch boundary crossed); checkpoints are models SpeechModels.Load reads with train-state.json; the feature cache takes each utterance's features once (no AudioFeatures stage after the first pass); an utterance too short for its text is counted and left out; progress reports every step with the time left", AudioTrainResume),
+        ("audio train: BatchSeconds 0 sizes the batch automatically: the longest utterance is probed through a step's passes without an optimizer step, the note names the measured batch (at least the longest utterance, at most one pass of the audio), the run trains in it and its checkpoint resumes with it", AudioTrainAutomaticBatch),
         ("audio train: SpeechTrainer halves the micro-batch when the device runs out of memory (a model refusing more than two utterances at once) and repeats the step: the same losses within 1e-5 as a run that never ran out, the note and the final micro-batch reported; with gradient accumulation of two batches a step, the run one utterance at a time gives the same losses within 1e-5", AudioTrainMemory),
         ("audio train: a 200-step CPU run of a tiny IdrakAudio ctc model on tone speech halves its loss (the mean of the last 10 steps under half of step 1), its evaluation CER at step 200 is at most its CER at step 100 and under 0.5, and the trained checkpoint transcribes (step time and CER printed)", AudioTrainSmoke),
     ];
@@ -705,6 +706,38 @@ internal static partial class Tests
             inner.TranscribeStream(chunks, options, cancellationToken);
 
         public void Dispose() => inner.Dispose();
+    }
+
+    private static void AudioTrainAutomaticBatch(Device device)
+    {
+        string root = TempFolder("ctc-auto-batch");
+        IdrakAudioPlugin.Register();
+        try
+        {
+            var (transcripts, texts) = ToneSpeech(Path.Combine(root, "data"), 12, 37);
+            var tokenizer = ToneTokenizer(root, texts);
+            var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
+            var options = ToneTraining(Path.Combine(root, "cache")) with { Steps = 3, BatchSeconds = 0, SaveEvery = 3 };
+            SpeechTrainingResult result;
+            using (var model = CreateTone(Path.Combine(root, "a"), tokenizer, device))
+            {
+                var before = model.Network.Parameters().Select(p => p.ToArray()).ToList();
+                result = SpeechTrainer.Train(model, train, null, options, Path.Combine(root, "run-a"));
+                Check(model.Network.Parameters().Select(p => p.ToArray()).Zip(before).Any(pair => !pair.First.SequenceEqual(pair.Second)), "the run trained (the probe alone changes no weight)");
+            }
+
+            string note = result.Notes.FirstOrDefault(n => n.StartsWith("batch: ", StringComparison.Ordinal)) ?? "";
+            Check(note.Contains("automatic", StringComparison.Ordinal) || note.Contains("reports no free memory", StringComparison.Ordinal), $"the note names the automatic batch: '{note}' ({string.Join("; ", result.Notes)})");
+            Check(result.MicroBatchSeconds > 0, $"the run has a batch of {result.MicroBatchSeconds} s");
+            var state = SpeechTrainer.ReadCheckpoint(Path.Combine(root, "run-a", "checkpoint-3"));
+            Check(state.Options.BatchSeconds == result.MicroBatchSeconds, $"the checkpoint stores the measured batch ({state.Options.BatchSeconds} s against {result.MicroBatchSeconds})");
+            Check(state.Options.BatchSeconds >= 0.9 && state.Options.BatchSeconds <= 12 * 1.1, $"the batch is at least the longest utterance and at most one pass ({state.Options.BatchSeconds} s)");
+        }
+        finally
+        {
+            IdrakAudioPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     private static void AudioTrainMemory(Device device)

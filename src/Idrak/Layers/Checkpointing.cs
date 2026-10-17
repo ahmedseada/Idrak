@@ -7,8 +7,12 @@ using System.Numerics;
 
 namespace Idrak.Layers;
 
-/// <summary>Gradient checkpointing: a forward run again during backward instead of keeping its activations (dropout replays its seeds).</summary>
-internal static class Checkpointing
+/// <summary>
+/// Gradient checkpointing: a forward run again during backward instead of keeping its activations (dropout replays its
+/// seeds). <see cref="ModuleExtensions.ForwardCheckpointed"/> checkpoints a module; <see cref="Checkpoint"/> any function of
+/// one tensor, so a model built from its own layers (a plug-in's) keeps only its blocks' outputs too.
+/// </summary>
+public static class Checkpointing
 {
     [ThreadStatic]
     private static int t_firstPass;
@@ -27,7 +31,7 @@ internal static class Checkpointing
     /// outputs at the cost of a second forward pass. The function must be deterministic (no dropout). The
     /// recompute runs with the image blocks the first pass ran with (<see cref="ImageBlocks.Current"/>).
     /// </summary>
-    internal static Tensor Checkpoint(Func<Tensor, Tensor> forward, Tensor input)
+    public static Tensor Checkpoint(Func<Tensor, Tensor> forward, Tensor input)
     {
         if (!Autograd.IsEnabled)
         {

@@ -323,7 +323,7 @@ internal sealed class ConvTranspose1d(ConvTranspose2d conv, WeightNormed? normed
 /// them, as it owns the pass's other tensors). Null in the layers' signatures stands for one utterance with nothing
 /// padded (speaking), where no mask is applied at all.
 /// </summary>
-internal sealed class VitsMask
+internal sealed class VitsMask : IDisposable
 {
     private readonly int[] _lengths;
     private readonly Device _device;
@@ -365,7 +365,7 @@ internal sealed class VitsMask
                 }
             }
 
-            _byChannels[channels] = mask = Tensor.From(values, [Batch, channels, Length], _device);
+            _byChannels[channels] = mask = TensorScope.Untrack(Tensor.From(values, [Batch, channels, Length], _device));   // outlives the block it is first asked in
         }
 
         return mask;
@@ -387,7 +387,7 @@ internal sealed class VitsMask
                     values.AsSpan(b * Length, _lengths[b]).Fill(1f);
                 }
 
-                _rows = Tensor.From(values, [Batch * Length], _device);
+                _rows = TensorScope.Untrack(Tensor.From(values, [Batch * Length], _device));
             }
 
             return _rows;
@@ -414,10 +414,29 @@ internal sealed class VitsMask
                 }
             }
 
-            _keys[heads] = keys = Tensor.From(values, [Batch * heads, Length, Length], _device);
+            _keys[heads] = keys = TensorScope.Untrack(Tensor.From(values, [Batch * heads, Length, Length], _device));
         }
 
         return keys;
+    }
+
+    /// <summary>Releases the mask tensors: after the pass's backward step, which reads them (they belong to no scope).</summary>
+    public void Dispose()
+    {
+        foreach (var mask in _byChannels.Values)
+        {
+            mask.Dispose();
+        }
+
+        foreach (var keys in _keys.Values)
+        {
+            keys.Dispose();
+        }
+
+        _rows?.Dispose();
+        _byChannels.Clear();
+        _keys.Clear();
+        _rows = null;
     }
 }
 
@@ -511,6 +530,37 @@ internal static class WeightNormedLayers
         {
             layer.Unbind();
         }
+    }
+}
+
+/// <summary>
+/// Activation checkpointing of the model's blocks on the current thread (<c>AdversarialSynthesisBatch.Checkpointing</c>):
+/// inside the scope, a block whose forward records gradients keeps only its output and runs again in the backward pass
+/// (<see cref="Checkpointing.Checkpoint"/>): the decoder's residual blocks, the WaveNets of the posterior encoder and the
+/// flow's coupling layers, the text encoder's layers. Nothing changes outside gradient recording.
+/// </summary>
+internal static class VitsCheckpoints
+{
+    [ThreadStatic]
+    private static int t_depth;
+
+    /// <summary>Whether blocks checkpoint on this thread.</summary>
+    public static bool Enabled => t_depth > 0;
+
+    /// <summary>Turns checkpointing on for this thread until the scope is disposed.</summary>
+    public static Scope Enter()
+    {
+        t_depth++;
+        return new Scope();
+    }
+
+    /// <summary><paramref name="forward"/>(<paramref name="input"/>) checkpointed when on and recording, else run as it is.</summary>
+    public static Tensor Run(Func<Tensor, Tensor> forward, Tensor input) =>
+        Enabled && Autograd.IsEnabled ? Checkpointing.Checkpoint(forward, input) : forward(input);
+
+    public sealed class Scope : IDisposable
+    {
+        public void Dispose() => t_depth--;
     }
 }
 

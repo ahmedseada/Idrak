@@ -28,9 +28,20 @@ public sealed record SpeechTrainingOptions
     /// Audio seconds in a batch, padding included (its utterances times the longest): utterances are sorted by length within
     /// windows of <see cref="BucketUtterances"/> and cut into batches of at most this, so a batch's padding is small. A step
     /// whose device runs out of memory is run again in micro-batches of half as many seconds (their gradients added up), and
-    /// so on: the batches, and so the training, do not change, only how many go through the device at once.
+    /// so on: the batches, and so the training, do not change, only how many go through the device at once. 0 (the default):
+    /// automatic, as many seconds as the device holds: the longest utterance goes through a step's passes once before training
+    /// (no optimizer step), its peak memory gives the cost of an audio second, and the batch fills <see cref="AutomaticBatchShare"/>
+    /// of the memory the device reports free after the optimizers' state (never less than the longest utterance, never more
+    /// than one pass of the training audio); the run's notes name the value, and its checkpoints resume with it. A device
+    /// that reports no free memory trains in batches of 160 s.
     /// </summary>
-    public double BatchSeconds { get; init; } = 160;
+    public double BatchSeconds { get; init; }
+
+    /// <summary>The share of the device's free memory an automatic batch (<see cref="BatchSeconds"/> 0) fills; the rest is headroom for a pass's own temporaries. In (0, 1]; 0.9 by default.</summary>
+    public double AutomaticBatchShare { get; init; } = 0.9;
+
+    /// <summary>The batch of a device that reports no free memory, in audio seconds (<see cref="BatchSeconds"/> 0).</summary>
+    public const double FallbackBatchSeconds = 160;
 
     /// <summary>Batches whose gradients are added up before each optimizer step.</summary>
     public int GradientAccumulation { get; init; } = 1;
@@ -159,7 +170,7 @@ public sealed record SpeechTrainingOptions
     /// <summary>The options as JSON (<see cref="FromJson"/> reads it back).</summary>
     public JsonObject ToJson() => new()
     {
-        ["steps"] = Steps, ["batch_seconds"] = BatchSeconds, ["gradient_accumulation"] = GradientAccumulation, ["bucket_utterances"] = BucketUtterances,
+        ["steps"] = Steps, ["batch_seconds"] = BatchSeconds, ["automatic_batch_share"] = AutomaticBatchShare, ["gradient_accumulation"] = GradientAccumulation, ["bucket_utterances"] = BucketUtterances,
         ["learning_rate"] = LearningRate, ["warmup_fraction"] = WarmupFraction, ["min_learning_rate"] = MinLearningRate, ["schedule"] = Schedule,
         ["optimizer"] = Optimizer, ["weight_decay"] = WeightDecay, ["momentum"] = Momentum, ["host_optimizer"] = HostOptimizer,
         ["max_gradient_norm"] = MaxGradientNorm, ["bf16_activations"] = BFloat16Activations, ["checkpointing"] = Checkpointing,
@@ -181,6 +192,7 @@ public sealed record SpeechTrainingOptions
         {
             Steps = (int?)json["steps"] ?? d.Steps,
             BatchSeconds = (double?)json["batch_seconds"] ?? d.BatchSeconds,
+            AutomaticBatchShare = (double?)json["automatic_batch_share"] ?? d.AutomaticBatchShare,
             GradientAccumulation = (int?)json["gradient_accumulation"] ?? d.GradientAccumulation,
             BucketUtterances = (int?)json["bucket_utterances"] ?? d.BucketUtterances,
             LearningRate = (float?)json["learning_rate"] ?? d.LearningRate,
@@ -219,12 +231,12 @@ public sealed record SpeechTrainingOptions
 
     internal void Check()
     {
-        if (Steps < 1 || !(BatchSeconds > 0) || GradientAccumulation < 1 || BucketUtterances < 1 || !(LearningRate > 0) || WarmupFraction is < 0 or > 1
+        if (Steps < 1 || !(BatchSeconds >= 0) || !(AutomaticBatchShare > 0) || AutomaticBatchShare > 1 || GradientAccumulation < 1 || BucketUtterances < 1 || !(LearningRate > 0) || WarmupFraction is < 0 or > 1
             || MaxGradientNorm < 0 || SaveEvery < 0 || KeepCheckpoints < 0 || EvaluateEvery < 0 || BeamWidth < 1 || Workers < 0 || NonFiniteSteps < 0
             || !(DurationLossWeight >= 0) || DistillationAlpha is < 0 or > 1 || float.IsNaN(DistillationAlpha)
             || !(DistillationTemperature > 0) || float.IsInfinity(DistillationTemperature))
         {
-            throw new ArgumentException("Speech training: Steps, BatchSeconds, GradientAccumulation, BucketUtterances, LearningRate and BeamWidth are positive, "
+            throw new ArgumentException("Speech training: Steps, GradientAccumulation, BucketUtterances, LearningRate and BeamWidth are positive, BatchSeconds not negative (0: automatic), AutomaticBatchShare in (0, 1], "
                 + "WarmupFraction 0 to 1, and MaxGradientNorm, SaveEvery, KeepCheckpoints, EvaluateEvery, Workers, NonFiniteSteps and DurationLossWeight not negative, "
                 + "DistillationAlpha 0 to 1 and DistillationTemperature positive.");
         }
@@ -447,6 +459,14 @@ public static class SpeechTrainer
         }
 
         using var own = model.Start(options, resume?.Folder, step);              // the trainee's own optimizers (an adversarial one's discriminators)
+        var forward = new SpeechForwardOptions { Checkpointing = options.Checkpointing };
+        if (options.BatchSeconds == 0)
+        {
+            // Automatic: a resumed run keeps the batch it measured (its plan does not change); a new one measures the device now.
+            options = resume is not null && resume.Options.BatchSeconds > 0 ? options with { BatchSeconds = resume.Options.BatchSeconds }
+                : AutomaticBatch(model, reader, labels, features, augmentations, usable, seconds, options, forward, notes, trace);
+            micro = Math.Min(micro == 0 ? options.BatchSeconds : micro, options.BatchSeconds);
+        }
 
         // Each pass's batches, made once from the seed (the worker reading ahead and the loop both ask), the passes behind dropped.
         var plans = new ConcurrentDictionary<int, List<int[]>>();
@@ -460,7 +480,6 @@ public static class SpeechTrainer
         Telemetry.TrainingStarted(new TrainingStarted(model.Architecture, options.Optimizer, model.Device, 0, usable.Count, evalReader?.Count, 0, PlanFor(epoch).Count,
             parameters.Sum(p => (long)p.Size), options.LearningRate, Environment.ProcessorCount));
         string? last = resume?.Folder;
-        var forward = new SpeechForwardOptions { Checkpointing = options.Checkpointing };
         int startStep = step, nonFinite = 0;
         double trainedUtterances = 0, trainedSeconds = 0, timedSeconds = 0;
         model.Network.Train();
@@ -625,6 +644,54 @@ public static class SpeechTrainer
             (double)json["micro_batch_seconds"]!,
             [.. json["losses"]!.AsArray().Select(l => l is JsonValue v && v.TryGetValue(out float f) ? f : float.NaN)],
             [.. json["evaluations"]!.AsArray().Select(x => ((int)x!["step"]!, (double)x["score"]!))]);
+    }
+
+    // The batch that fills the device: the longest usable utterance through a step's passes once (no optimizer step), its
+    // peak memory as the cost of an audio second, and the options' share of what the device reports free after the state the
+    // optimizers will hold (three floats a parameter: the gradient and Adam's two moments), at least the longest utterance
+    // and at most one pass of the training audio. A device that reports no free memory gets FallbackBatchSeconds.
+    private static SpeechTrainingOptions AutomaticBatch(SpeechTrainee model, ISpeechReader reader, int[][] labels, FeatureSource features, IAudioAugmentation[] augmentations,
+        List<int> usable, double[] seconds, SpeechTrainingOptions options, SpeechForwardOptions forward, List<string> notes, Action<string>? trace)
+    {
+        int longest = usable[0];
+        double total = 0;
+        foreach (int u in usable)
+        {
+            total += seconds[u];
+            if (seconds[u] > seconds[longest])
+            {
+                longest = u;
+            }
+        }
+
+        double length = seconds[longest];
+        var backend = model.Device.Backend;
+        var group = features.Batch(reader, [longest], labels, 0, augmentations);
+        long before = backend.GetMemoryUsage().InUse;
+        backend.ResetPeakMemoryUsage();
+        model.Probe(reader, group, options, forward);
+        long peak = Math.Max(1, backend.GetMemoryUsage().Peak - before);
+        backend.ResetPeakMemoryUsage();
+        double chosen;
+        string note;
+        if (backend.AvailableMemory() is { } available)
+        {
+            long state = 3 * model.ParameterBytes;
+            double room = Math.Max(0, available - state) * options.AutomaticBatchShare;
+            chosen = Math.Round(Math.Clamp(room / (peak / length), length, Math.Max(length, total)), 1);
+            note = string.Create(CultureInfo.InvariantCulture,
+                $"batch: automatic, {chosen:0.#} audio seconds a step: the longest utterance ({length:0.#} s) took {peak >> 20} MiB through a step's passes, "
+                + $"{available >> 20} MiB free on {model.Device} with {state >> 20} MiB kept for the optimizers' state ({options.AutomaticBatchShare:P0} of the rest filled; SpeechTrainingOptions.BatchSeconds sets it)");
+        }
+        else
+        {
+            chosen = SpeechTrainingOptions.FallbackBatchSeconds;
+            note = string.Create(CultureInfo.InvariantCulture, $"batch: {chosen:0.#} audio seconds a step ({model.Device} reports no free memory to size an automatic batch by; SpeechTrainingOptions.BatchSeconds sets it)");
+        }
+
+        notes.Add(note);
+        trace?.Invoke(note);
+        return options with { BatchSeconds = chosen };
     }
 
     // One optimizer step over its batches: each split into micro-batches of at most `micro` padded seconds, every loss

@@ -165,8 +165,9 @@ public sealed record AdversarialSynthesisOptions
 /// <param name="StepUtterances">The utterances of the whole step.</param>
 /// <param name="StepFrames">Their frames.</param>
 /// <param name="StepLabels">Their labels.</param>
+/// <param name="Checkpointing">Keep only each block's output in the forward pass and run the block again in the backward pass (activation checkpointing, <c>SpeechTrainingOptions.Checkpointing</c>); the model decides which of its blocks.</param>
 public sealed record AdversarialSynthesisBatch(Tensor Features, IReadOnlyList<int> Frames, IReadOnlyList<int[]> Labels, IReadOnlyList<int> Utterances, int Step, int Seed,
-    int StepUtterances, long StepFrames, long StepLabels);
+    int StepUtterances, long StepFrames, long StepLabels, bool Checkpointing = false);
 
 /// <summary>
 /// One micro-batch's part of a training step: first the discriminators' (their loss on the real sound and on the sound the
