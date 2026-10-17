@@ -377,7 +377,7 @@ internal sealed class VoiceTrainCommand : Command
             return ExitCodes.Ok;
         }
 
-        context.Write(GpuProfiler.Format(kernels, rows: 30).TrimEnd());
+        context.Write(GpuProfiler.Format(kernels, rows: 40).TrimEnd());
         double gpuMs = kernels.Sum(k => k.Milliseconds) / Profiled;
         long launches = kernels.Sum(k => k.Calls) / Profiled;
         context.Write(FormattableString.Invariant(

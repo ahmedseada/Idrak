@@ -234,11 +234,19 @@ internal sealed unsafe partial class CudaBackend
 
     // Launches an implicit product: blocks of its tile along x (columns) and y (rows), the batch entries along z (the
     // kernels loop over those past the grid's z limit).
-    private void LaunchConvProduct(string kernel, int choice, int rows, int columns, int batch, ReadOnlySpan<ulong> args)
+    // While profiling, the launch is named with its shape (channels, image, window, stride, dilation, images, groups).
+    private void LaunchConvProduct(string kernel, int choice, int rows, int columns, int batch, ReadOnlySpan<ulong> args, in ConvGeometry g, int filters, int groups)
     {
         bool blocked = (choice & 15) == ConvBlocked;
         int edge = blocked ? PtxKernels.ConvBlockedEdge : PtxKernels.ConvTileEdge;
-        LaunchGrid(K(blocked ? kernel + "_f32" : kernel + "_tile_f32"), (uint)((columns + edge - 1) / edge), (uint)((rows + edge - 1) / edge),
+        string name = blocked ? kernel + "_f32" : kernel + "_tile_f32";
+        if (_profile is not null)
+        {
+            _profileLabel = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{name} {g.C}->{filters} {g.H}x{g.W} k{g.KH}x{g.KW} s{g.SH}x{g.SW} d{g.DH}x{g.DW} n{g.N}{(groups > 1 ? $" g{groups}" : "")}");
+        }
+
+        LaunchGrid(K(name), (uint)((columns + edge - 1) / edge), (uint)((rows + edge - 1) / edge),
             (uint)Math.Clamp(batch, 1, _limits.MaxGridZ), PtxKernels.ConvThreads, 1, 1, args);
     }
 
@@ -266,7 +274,7 @@ internal sealed unsafe partial class CudaBackend
         }
 
         var (rows, columns, batch) = ConvProduct(ConvolutionShapes.Forward, in g, filters, groups);
-        LaunchConvProduct("conv_fwd", choice, rows, columns, batch, args[..22]);
+        LaunchConvProduct("conv_fwd", choice, rows, columns, batch, args[..22], in g, filters, groups);
     }
 
     private void RunConvolutionInput(int choice, Storage dy, Storage weight, Storage dx, ConvGeometry g, int filters, int groups)
@@ -291,7 +299,7 @@ internal sealed unsafe partial class CudaBackend
         }
 
         var (rows, columns, batch) = ConvProduct(ConvolutionShapes.Input, in g, filters, groups);
-        LaunchConvProduct("conv_bwd_input", choice, rows, columns, batch, args[..21]);
+        LaunchConvProduct("conv_bwd_input", choice, rows, columns, batch, args[..21], in g, filters, groups);
     }
 
     // Several splits write their partial sums to a temporary [splits, filters, patch] that conv_split_reduce_f32 adds to
@@ -328,7 +336,7 @@ internal sealed unsafe partial class CudaBackend
         {
             args[3] = P(dweight);
             ConvArguments(args[4..], g, filters, groups, 0, 1);
-            LaunchConvProduct("conv_bwd_weight", choice, rows, columns, groups, args);
+            LaunchConvProduct("conv_bwd_weight", choice, rows, columns, groups, args, in g, filters, groups);
             return;
         }
 
@@ -337,7 +345,7 @@ internal sealed unsafe partial class CudaBackend
         {
             args[3] = P(part);
             ConvArguments(args[4..], g, filters, groups, 0, splits);
-            LaunchConvProduct("conv_bwd_weight", choice, rows, columns, groups * splits, args);
+            LaunchConvProduct("conv_bwd_weight", choice, rows, columns, groups * splits, args, in g, filters, groups);
             Launch1D(K("conv_split_reduce_f32"), count, P(part), P(dweight), U(count), U(splits), U(count));
         }
         finally
