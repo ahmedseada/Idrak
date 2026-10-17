@@ -318,12 +318,16 @@ internal sealed class WeightNormed(Tensor gain, Tensor direction) : IDisposable
     /// <summary>The filters: the bound ones, else made now.</summary>
     public Tensor Weight => _bound ?? VitsOps.WeightNorm(gain, direction);
 
-    /// <summary>Makes the filters once (a leaf taking gradients when g or v does: frozen layers' are constants).</summary>
+    /// <summary>
+    /// Makes the filters once (no graph: the norm's intermediates go at once; <see cref="Flush"/> works the gradient out
+    /// itself), a leaf taking gradients when g or v does: frozen layers' are constants.
+    /// </summary>
     public void Bind()
     {
         Unbind();
         Tensor filters;
         using (Autograd.NoGrad())
+        using (new TensorScope())
         {
             filters = TensorScope.Untrack(VitsOps.WeightNorm(gain, direction));
         }
@@ -332,13 +336,33 @@ internal sealed class WeightNormed(Tensor gain, Tensor direction) : IDisposable
         _bound = filters;
     }
 
-    /// <summary>Gives the bound filters' gathered gradient to g and v (one backward through the norm).</summary>
+    /// <summary>
+    /// Gives the bound filters' gathered gradient ∂w to g and v in closed form, without a second pass through the norm:
+    /// with w = g · v / ‖v‖ per row, ∂g = ⟨∂w, v⟩ / ‖v‖ and ∂v = (g / ‖v‖) · (∂w − v · ⟨∂w, v⟩ / ‖v‖²).
+    /// </summary>
     public void Flush()
     {
-        if (_bound?.Grad is { } gradient && (gain.RequiresGrad || direction.RequiresGrad))
+        if (_bound?.Grad is not { } gradient || !(gain.RequiresGrad || direction.RequiresGrad))
         {
-            using var filters = VitsOps.WeightNorm(gain, direction);
-            filters.Backward(gradient);
+            return;
+        }
+
+        using var noGrad = Autograd.NoGrad();
+        using var scope = new TensorScope();
+        int rows = direction.Shape[0], columns = direction.Size / rows;
+        var sumSquares = direction.Square().Sum(1);                             // ‖v‖², [rows]
+        var inverseNorm = sumSquares.Pow(-0.5f);                                // 1 / ‖v‖
+        var dot = (gradient * direction).Sum(1);                                // ⟨∂w, v⟩
+        if (gain.RequiresGrad)
+        {
+            gain.AddGradient((dot * inverseNorm).Reshape(gain.Shape), adopt: true);
+        }
+
+        if (direction.RequiresGrad)
+        {
+            var scale = gain.Reshape(rows) * inverseNorm;                       // g / ‖v‖
+            var along = scale * dot * sumSquares.Pow(-1f);                      // (g / ‖v‖) · ⟨∂w, v⟩ / ‖v‖²
+            direction.AddGradient(gradient.GroupAffine(scale, null, rows, columns) - direction.GroupAffine(along, null, rows, columns), adopt: true);
         }
     }
 
@@ -426,11 +450,15 @@ internal static class VitsOps
     /// <summary>A column [C, 1] repeated over <paramref name="columns"/> columns: [C, columns].</summary>
     public static Tensor ExpandColumns(Tensor column, int columns) => column.MatMul(Tensor.Ones([1, columns], column.Device));
 
-    /// <summary>g · v / ‖v‖ per row: the directions [rows, columns] scaled by the gains [rows, 1] over each row's norm (PyTorch's weight_norm, dim 0).</summary>
+    /// <summary>
+    /// g · v / ‖v‖ per row: the directions [rows, columns] scaled by the gains [rows, 1] over each row's norm (PyTorch's
+    /// weight_norm, dim 0). The row norms once ([rows]), then one row-wise scale: no broadcast copy of the directions.
+    /// </summary>
     public static Tensor WeightNorm(Tensor gain, Tensor direction)
     {
-        var scale = gain * direction.Square().Sum(1, keepDim: true).Sqrt().Pow(-1f);   // [rows, 1]
-        return direction * ExpandColumns(scale, direction.Shape[1]);
+        int rows = direction.Shape[0], columns = direction.Size / rows;
+        var scale = gain.Reshape(rows) * direction.Square().Sum(1).Pow(-0.5f);   // g / ‖v‖, [rows]
+        return direction.GroupAffine(scale, null, rows, columns);
     }
 
     /// <summary>
