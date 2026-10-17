@@ -47,6 +47,9 @@
     <Project Path="src/Idrak.Audio/Idrak.Audio.csproj" />
     <Project Path="src/Idrak/Idrak.csproj" />
   </Folder>
+  <Folder Name="/benches/">
+    <Project Path="benches/Idrak.Benches/Idrak.Benches.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Idrak.PluginTests/Idrak.PluginTests.csproj" />
     <Project Path="tests/Idrak.Tests/Idrak.Tests.csproj" />
