@@ -953,6 +953,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             UnaryOp.Cos => K("cos_f32"),
             UnaryOp.Silu => K("silu_f32"),
             UnaryOp.Sign => K("sign_f32"),
+            UnaryOp.GeluErf => K("gelu_erf_f32"),
             _ => IntPtr.Zero,
         };
         if (fn == IntPtr.Zero)
@@ -985,6 +986,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             UnaryOp.Sin => K("sin_bwd_f32"),
             UnaryOp.Cos => K("cos_bwd_f32"),
             UnaryOp.Silu => K("silu_bwd_f32"),
+            UnaryOp.GeluErf => K("gelu_erf_bwd_f32"),
             _ => IntPtr.Zero,
         };
         if (fn == IntPtr.Zero)

@@ -22,6 +22,9 @@ public sealed partial class Tensor
     /// <summary>Sigmoid linear unit (swish), x · sigmoid(x), element-wise.</summary>
     public Tensor Silu() => Unary(UnaryOp.Silu);
 
+    /// <summary>The exact GELU, 0.5 · x · (1 + erf(x / √2)), element-wise (<see cref="Gelu"/> is the tanh approximation).</summary>
+    public Tensor GeluErf() => Unary(UnaryOp.GeluErf);
+
     /// <summary>
     /// The sign of each element: -1, 0 or 1. Its gradient is zero. Combined with <see cref="Relu"/> it makes a mask:
     /// <c>x.Sign().Relu()</c> is 1 where x &gt; 0 and 0 elsewhere (see <see cref="Where"/>).

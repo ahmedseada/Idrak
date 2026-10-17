@@ -104,8 +104,18 @@ public static partial class DeviceCases
         UnaryOp.Silu => v => v / (1f + MathF.Exp(-v)),
         UnaryOp.Sign => v => MathF.Sign(v),
         UnaryOp.Gelu => v => 0.5f * v * (1f + MathF.Tanh(0.7978845608f * (v + 0.044715f * v * v * v))),
+        UnaryOp.GeluErf => v => (float)(0.5 * v * (1 + Erf(v / Math.Sqrt(2)))),
         _ => null,
     };
+
+    // erf in double, within 1.5e-7 (Abramowitz and Stegun 7.1.26), the reference the devices' float kernels are held to.
+    private static double Erf(double z)
+    {
+        double a = Math.Abs(z), t = 1 / (1 + 0.3275911 * a);
+        double poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t;
+        double e = 1 - poly * Math.Exp(-a * a);
+        return z < 0 ? -e : e;
+    }
 
     private static void UnaryFunctions(DeviceCaseContext c)
     {

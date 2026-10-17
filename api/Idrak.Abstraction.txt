@@ -1141,6 +1141,7 @@ public enum Idrak.Abstraction.Devices.UnaryOp : int
   Cos = 10
   Exp = 5
   Gelu = 7
+  GeluErf = 13
   Log = 6
   Relu = 2
   Sigmoid = 0
@@ -3700,6 +3701,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Exp()
   public Idrak.Abstraction.Tensor Flatten(int startDim = 1)
   public Idrak.Abstraction.Tensor Gelu()
+  public Idrak.Abstraction.Tensor GeluErf()
   public Idrak.Abstraction.Tensor GroupAffine(Idrak.Abstraction.Tensor? scale, Idrak.Abstraction.Tensor? shift, int groups, int inner)
   public Idrak.Abstraction.Tensor Im2Col(in Idrak.Abstraction.Devices.ConvGeometry geometry)
   public Idrak.Abstraction.Tensor Interpolate((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false, (double, double)? scaleFactor = null)

@@ -11,7 +11,7 @@ internal static partial class PtxKernels
 {
     public static readonly string[] AdvancedNames =
     [
-        "exp_f32", "exp_bwd_f32", "log_f32", "log_bwd_f32", "gelu_f32", "gelu_bwd_f32", "inv_sqrt_f32",
+        "exp_f32", "exp_bwd_f32", "log_f32", "log_bwd_f32", "gelu_f32", "gelu_bwd_f32", "gelu_erf_f32", "gelu_erf_bwd_f32", "inv_sqrt_f32",
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
         "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32",
@@ -109,6 +109,52 @@ internal static partial class PtxKernels
             mul.f32 %f7, %f7, %f1;
             mul.f32 %f7, %f7, {F(0.5f)};
             st.global.f32 [%a_y], %f7;
+            """);
+
+        // Exact GELU: 0.5 x (1 + erf(x/√2)), erf within 1.5e-7 (Abramowitz and Stegun 7.1.26: sign(z) (1 - t poly(t) e^(-z²)),
+        // t = 1 / (1 + p |z|)). %f1 = x, %f6 = e^(-z²) = e^(-x²/2), %f7 = erf(z).
+        string erf = $"""
+            ld.global.f32 %f1, [%a_x];
+            mul.f32 %f2, %f1, {F(0.70710678f)};
+            abs.f32 %f3, %f2;
+            fma.rn.f32 %f4, %f3, {F(0.3275911f)}, {One};
+            rcp.rn.f32 %f4, %f4;
+            fma.rn.f32 %f5, %f4, {F(1.061405429f)}, {F(-1.453152027f)};
+            fma.rn.f32 %f5, %f5, %f4, {F(1.421413741f)};
+            fma.rn.f32 %f5, %f5, %f4, {F(-0.284496736f)};
+            fma.rn.f32 %f5, %f5, %f4, {F(0.254829592f)};
+            mul.f32 %f5, %f5, %f4;
+            mul.f32 %f6, %f3, %f3;
+            mul.f32 %f6, %f6, {F(-1.4426950408889634f)};
+            ex2.approx.ftz.f32 %f6, %f6;
+            mul.f32 %f7, %f5, %f6;
+            sub.f32 %f7, {One}, %f7;
+            setp.lt.f32 %p1, %f2, 0f00000000;
+            neg.f32 %f8, %f7;
+            selp.f32 %f7, %f8, %f7, %p1;
+            """;
+
+        Elementwise(sb, "gelu_erf_f32", ["x", "y"], [],
+            erf + $"""
+
+            add.f32 %f9, %f7, {One};
+            mul.f32 %f9, %f9, %f1;
+            mul.f32 %f9, %f9, {F(0.5f)};
+            st.global.f32 [%a_y], %f9;
+            """);
+
+        // d/dx = 0.5 (1 + erf(z)) + x e^(-x²/2) / √(2π).
+        Elementwise(sb, "gelu_erf_bwd_f32", ["x", "y", "dy", "dx"], [],
+            erf + $"""
+
+            add.f32 %f9, %f7, {One};
+            mul.f32 %f9, %f9, {F(0.5f)};
+            mul.f32 %f10, %f6, %f1;
+            fma.rn.f32 %f9, %f10, {F(0.3989422804f)}, %f9;
+            ld.global.f32 %f11, [%a_dy];
+            ld.global.f32 %f12, [%a_dx];
+            fma.rn.f32 %f12, %f11, %f9, %f12;
+            st.global.f32 [%a_dx], %f12;
             """);
 
         Elementwise(sb, "gelu_bwd_f32", ["x", "y", "dy", "dx"], [],
