@@ -54,7 +54,7 @@ internal sealed class VitsTextEncoder : IDisposable
     /// no padded key and the feed-forward convolutions read the padding as zeros (VITS's masking), so each utterance's
     /// rows are what it gets alone.
     /// </summary>
-    public (Tensor Hidden, Tensor Means, Tensor LogVariances) Forward(IReadOnlyList<int[]> ids, VitsMask? mask)
+    public (Tensor Hidden, Tensor Means, Tensor LogVariances) Forward(IReadOnlyList<int[]> ids, PaddedSequences? mask)
     {
         int batch = ids.Count, t = mask?.Length ?? ids[0].Length;
         var padded = new int[batch * t];                                         // the padding reads id 0; it is masked wherever it matters
@@ -142,13 +142,13 @@ internal sealed class VitsTextEncoder : IDisposable
         }
 
         // x [B·T, C] rows of a batch of `batch` utterances padded to `t` positions (the mask null for one, unpadded).
-        public Tensor Forward(Tensor x, int batch, int t, VitsMask? mask)
+        public Tensor Forward(Tensor x, int batch, int t, PaddedSequences? mask)
         {
             x = _norm.Forward(x + Attention(x, batch, t, mask));
             return _finalNorm.Forward(x + FeedForward(x, batch, t, mask));
         }
 
-        private Tensor Attention(Tensor x, int batch, int t, VitsMask? mask)
+        private Tensor Attention(Tensor x, int batch, int t, PaddedSequences? mask)
         {
             int h = _config.Heads, c = _config.HiddenSize, d = c / h, bh = batch * h;
             float scaling = 1f / MathF.Sqrt(d);
@@ -236,7 +236,7 @@ internal sealed class VitsTextEncoder : IDisposable
         }
 
         // The convolutions over time read the padding as zeros (VITS multiplies by the mask before each).
-        private Tensor FeedForward(Tensor x, int batch, int t, VitsMask? mask)
+        private Tensor FeedForward(Tensor x, int batch, int t, PaddedSequences? mask)
         {
             int c = _config.HiddenSize, k = _config.FfnKernelSize, left = k % 2 == 1 ? 0 : k / 2, right = k % 2 == 1 ? 0 : (k - 1) / 2;   // even kernels pad asymmetrically
             var y = x.Reshape(batch, t, c).Permute(0, 2, 1);                       // [B, C, T]
@@ -245,13 +245,13 @@ internal sealed class VitsTextEncoder : IDisposable
                 y = mask.Apply(y);
             }
 
-            var h = VitsOps.Activation(_config.HiddenAct, _conv1.Forward3(VitsOps.PadTime(y, left, right)));
+            var h = VitsOps.Activation(_config.HiddenAct, _conv1.Forward(y.Pad(-1, left, right)));
             if (mask is not null)
             {
                 h = mask.Apply(h);
             }
 
-            return _conv2.Forward3(VitsOps.PadTime(h, left, right)).Permute(0, 2, 1).Reshape(batch * t, c);
+            return _conv2.Forward(h.Pad(-1, left, right)).Permute(0, 2, 1).Reshape(batch * t, c);
         }
 
         public void Dispose()

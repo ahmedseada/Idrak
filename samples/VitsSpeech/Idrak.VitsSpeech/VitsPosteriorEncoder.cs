@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers;
+
 namespace Idrak.VitsSpeech;
 
 /// <summary>
@@ -34,15 +36,15 @@ internal sealed class VitsPosteriorEncoder : IDisposable
     /// A batch of spectrograms [B, bins, T] (zero over the padding) with the speaker's embedding [E, 1] (one utterance
     /// only) and the batch's mask: the means and log-stddevs [B, F, T] each, zero over the padding.
     /// </summary>
-    public (Tensor Means, Tensor LogStddevs) Stats(Tensor spectrograms, Tensor? speaker, VitsMask? mask)
+    public (Tensor Means, Tensor LogStddevs) Stats(Tensor spectrograms, Tensor? speaker, PaddedSequences? mask)
     {
-        var x = _pre.Forward3(spectrograms);
+        var x = _pre.Forward(spectrograms);
         if (mask is not null)
         {
             x = mask.Apply(x);
         }
 
-        var stats = _proj.Forward3(VitsCheckpoints.Run(h => _waveNet.Forward(h, speaker, mask), x));   // [B, 2F, T]
+        var stats = _proj.Forward(VitsCheckpoints.Run(h => _waveNet.Forward(h, speaker, mask), x));   // [B, 2F, T]
         if (mask is not null)
         {
             stats = mask.Apply(stats);

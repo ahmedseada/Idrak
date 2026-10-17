@@ -3,6 +3,8 @@
 
 using Idrak.Layers;
 
+using Idrak.Models;
+
 namespace Idrak.OpenVoice;
 
 /// <summary>
@@ -44,7 +46,7 @@ internal sealed class OpenVoiceReferenceEncoder : IDisposable
                 throw new InvalidDataException($"'{v}' is {Abstraction.Tensor.FormatShape(shape)}, the reference encoder takes [{filters[i]}, {inChannels}, 3, 3].");
             }
 
-            var weight = Abstraction.Tensor.Persistent(VitsWeights.FoldWeightNorm(weights.Read(g), weights.Read(v), shape), shape, weights.Device);
+            var weight = Abstraction.Tensor.Persistent(StoredWeights.FoldWeightNorm(weights.Read(g), weights.Read(v), shape), shape, weights.Device);
             _convs[i] = Conv2d.FromWeights(weight, weights.Tensor(prefix + ".bias", filters[i]), (3, 3), (2, 2), (1, 1));
             width = (width - 3 + 2) / 2 + 1;
             inChannels = filters[i];

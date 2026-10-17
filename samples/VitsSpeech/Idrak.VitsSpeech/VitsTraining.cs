@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Formats;
 using Idrak.Models;
 using Idrak.Audio;
+using Idrak.Layers;
 
 namespace Idrak.VitsSpeech;
 
@@ -314,7 +315,7 @@ internal sealed class VitsTraining : IDisposable
     // A micro-batch's generator pass: the KL and duration terms summed over its utterances, and, for all of them as one
     // batch (equal segments), the sound made [B, L], the real sound [B, L] and the mel loss (the mean over the batch, which
     // is the mean of the utterances' means), with each utterance's durations.
-    internal sealed record BatchPass(Tensor Kl, Tensor Nll, Tensor Mel, Tensor Made, Tensor Real, IReadOnlyList<int[]> Durations, VitsMask? TokenMask, VitsMask? FrameMask) : IDisposable
+    internal sealed record BatchPass(Tensor Kl, Tensor Nll, Tensor Mel, Tensor Made, Tensor Real, IReadOnlyList<int[]> Durations, PaddedSequences? TokenMask, PaddedSequences? FrameMask) : IDisposable
     {
         /// <summary>Releases the batch's masks (their tensors belong to no scope): once the pass's backward step has run.</summary>
         public void Dispose()
@@ -354,8 +355,8 @@ internal sealed class VitsTraining : IDisposable
         }
 
         int tokens = labels.Max(l => l.Length), length = frames.Max();
-        var tokenMask = count == 1 ? null : new VitsMask([.. labels.Select(l => l.Length)], tokens, device);
-        var frameMask = count == 1 ? null : new VitsMask(frames, length, device);
+        var tokenMask = count == 1 ? null : new PaddedSequences([.. labels.Select(l => l.Length)], tokens, device);
+        var frameMask = count == 1 ? null : new PaddedSequences(frames, length, device);
 
         // Each utterance's training rows: its spectrogram columns into [B, bins, length] (zero after its frames), its rows kept for the segment.
         var rows = new Tensor[count];
@@ -466,7 +467,7 @@ internal sealed class VitsTraining : IDisposable
     internal Tensor LogMel(Tensor sound, Tensor basis, Tensor melFilters)
     {
         int size = (Features.Bins - 1) * 2, bins = Features.Bins, hop = Features.Hop, batch = sound.Shape[0];
-        var padded = VitsOps.Reflect(sound, (size - hop) / 2);
+        var padded = sound.Pad(1, (size - hop) / 2, (size - hop) / 2, PaddingMode.Reflect);
         int length = padded.Shape[1], frames = (length - size) / hop + 1;
         var spectrum = padded.Reshape(batch, 1, 1, length).Convolution(basis, null, new ConvGeometry(batch, 1, 1, length, 1, size, 1, hop, 0, 0)).Reshape(batch, 2 * bins, frames);
         var magnitude = (spectrum.Narrow(1, 0, bins).Square() + spectrum.Narrow(1, bins, bins).Square() + 1e-6f).Sqrt();   // [B, bins, frames]
@@ -531,25 +532,25 @@ internal sealed class VitsTraining : IDisposable
     {
         private BatchPass? _kept;
 
-        // The weight-normed filters are made once a half (WeightNormed): the discriminators' for their half (gradients
+        // The weight-normed filters are made once a half (WeightNorm): the discriminators' for their half (gradients
         // gathered, then handed to g and v), the generator's for its passes (kept from the discriminators' half to the
         // generator's when the passes are kept, else made again there), each dropped at its half's end.
         public float Discriminate()
         {
-            WeightNormedLayers.Bind(owner._weights.Normed);
-            WeightNormedLayers.Bind(discriminators.Normed);
+            WeightNorm.Bind(owner._weights.Normed);
+            WeightNorm.Bind(discriminators.Normed);
             try
             {
                 float total = Discriminators();
-                WeightNormedLayers.Flush(discriminators.Normed);
+                WeightNorm.Flush(discriminators.Normed);
                 return total;
             }
             finally
             {
-                WeightNormedLayers.Unbind(discriminators.Normed);
+                WeightNorm.Unbind(discriminators.Normed);
                 if (!keep)
                 {
-                    WeightNormedLayers.Unbind(owner._weights.Normed);
+                    WeightNorm.Unbind(owner._weights.Normed);
                 }
             }
         }
@@ -606,10 +607,10 @@ internal sealed class VitsTraining : IDisposable
 
             if (!keep || owner._weights.Normed.Any(n => !n.Bound))
             {
-                WeightNormedLayers.Bind(owner._weights.Normed);
+                WeightNorm.Bind(owner._weights.Normed);
             }
 
-            WeightNormedLayers.Bind(discriminators.Normed);                       // constants this half
+            WeightNorm.Bind(discriminators.Normed);                       // constants this half
             try
             {
                 using var scope = keep ? null : new TensorScope();
@@ -653,15 +654,15 @@ internal sealed class VitsTraining : IDisposable
             }
             finally
             {
-                WeightNormedLayers.Unbind(discriminators.Normed);
+                WeightNorm.Unbind(discriminators.Normed);
                 foreach (var p in parameters)
                 {
                     p.RequiresGrad = true;
                 }
             }
 
-            WeightNormedLayers.Flush(owner._weights.Normed);
-            WeightNormedLayers.Unbind(owner._weights.Normed);
+            WeightNorm.Flush(owner._weights.Normed);
+            WeightNorm.Unbind(owner._weights.Normed);
 
             return terms;
         }
@@ -670,8 +671,8 @@ internal sealed class VitsTraining : IDisposable
         {
             _kept?.Dispose();
             _kept = null;
-            WeightNormedLayers.Unbind(owner._weights.Normed);
-            WeightNormedLayers.Unbind(discriminators.Normed);
+            WeightNorm.Unbind(owner._weights.Normed);
+            WeightNorm.Unbind(discriminators.Normed);
         }
     }
 }

@@ -87,10 +87,11 @@ tensor stores, and the kernel and registry lookups per launch; each is measured 
 
 | # | Step | Status |
 |---|---|---|
-| 1 | Benchmark and stress project, baseline rows | done |
-| 2 | CPU kernels the bench exposed: exp, erf and GELU(erf), axis sums with inner 1, softmax and layer norm vectorized | |
-| 3 | `ComputeResources`: environment variables for every limit; one `WorkspaceShare` setting behind the three fixed halves; Vulkan's memory reserve; `MaxTokens` cap removed; `MaxCpuThreads` honoured everywhere | |
-| 4 | Speech training: `BatchSeconds` automatic (fills the device from a measured probe), checkpointing honoured by the VITS step through a public checkpoint API | |
-| 5 | WaveNet gate as one operation (CPU, CUDA, Vulkan, conformance kit) | |
-| 6 | Library moves in dependency order (section 3, items 1-5), each with its tests and the API dumps | |
-| 7 | Measure every step with the benches; record the numbers here | |
+| 1 | Benchmark and stress project, baseline rows | done (836a3141) |
+| 2 | CPU kernels the bench exposed: axis sums with inner 1 (521 → 31 µs over 256 × 1,024), layer norm (1,200 → 181 µs forward); exp and erf left (the built-in vector exp is latency-bound, a modest win) | done (836a3141) |
+| 3 | `ComputeResources`: environment variables for every limit; `WorkspaceShare` behind the three fixed halves; Vulkan's memory reserve; `MaxTokens` cap removed; `MaxCpuThreads` honoured everywhere | done (37e5faeb) |
+| 4 | Speech training: `BatchSeconds` 0 (the default) fills the device from a probe of the longest utterance; checkpointing reaches the VITS step (MMS size, four clips: peak 3,486 → 2,491 MiB, the step about a fifth longer on the CPU) | done (37e5faeb) |
+| 5 | WaveNet gate as one operation (`FeedForwardActivation.TanhSigmoid`; CPU, CUDA, Vulkan, conformance kit): 7,124 → 6,932 launches a step, peak 2,491 → 2,460 MiB | done (d2b36cf0) |
+| 6a | Library moves, batch 1: `Tensor.Pad` (zeros, reflect, replicate) and `Tensor.Flip`, `TensorDictionary`, `Conv1d` and `ConvTranspose1d` with the `WeightNorm` parametrization, `PaddedSequences`, `StoredWeights.FoldWeightNorm` and `WeightNormNames`; the VITS plug-in and OpenVoice use them | done |
+| 6b | Library moves, batch 2: WaveNet, flows, the spline, relative-position attention, the posterior encoder, HiFi-GAN, discriminators, GAN losses, the differentiable log-mel (section 3, items 4-5); then the vision and text items | next |
+| 7 | Measure every step with the benches; record the numbers here | ongoing |

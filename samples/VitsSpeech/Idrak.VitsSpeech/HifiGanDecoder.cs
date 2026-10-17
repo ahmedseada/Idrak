@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers;
+
 namespace Idrak.VitsSpeech;
 
 /// <summary>
@@ -125,7 +127,7 @@ internal sealed class HifiGanDecoder : IDisposable
         Tensor x;
         using (var first = release ? new TensorScope() : null)
         {
-            x = _pre.Forward3(latents.Shape.Length == 3 ? latents : latents.Reshape(1, latents.Shape[0], latents.Shape[1]));
+            x = _pre.Forward(latents.Shape.Length == 3 ? latents : latents.Reshape(1, latents.Shape[0], latents.Shape[1]));
             if (speaker is not null && _cond is not null)
             {
                 if (batch != 1)
@@ -145,7 +147,7 @@ internal sealed class HifiGanDecoder : IDisposable
             var previous = x;
             using (var stage = release ? new TensorScope() : null)
             {
-                var up = _upsamplers[i].Forward3(VitsOps.LeakyRelu(x, _config.LeakyReluSlope));
+                var up = _upsamplers[i].Forward(VitsOps.LeakyRelu(x, _config.LeakyReluSlope));
                 Tensor? sum = null;
                 for (int j = 0; j < kernels; j++)
                 {
@@ -173,7 +175,7 @@ internal sealed class HifiGanDecoder : IDisposable
         }
 
         using var last = release ? new TensorScope() : null;
-        var made = _post.Forward3(VitsOps.LeakyRelu(x, _config.FinalLeakyReluSlope)).Tanh();   // [B, 1, L]
+        var made = _post.Forward(VitsOps.LeakyRelu(x, _config.FinalLeakyReluSlope)).Tanh();   // [B, 1, L]
         var samples = made.Reshape(batch, made.Shape[2]);
         last?.Keep(samples);
         if (release)
@@ -220,8 +222,8 @@ internal sealed class HifiGanDecoder : IDisposable
                 Tensor next;
                 using (var step = release ? new TensorScope() : null)
                 {
-                    var h = _convs1[i].Forward3(VitsOps.LeakyRelu(x, _slope));
-                    h = _convs2[i].Forward3(VitsOps.LeakyRelu(h, _slope));
+                    var h = _convs1[i].Forward(VitsOps.LeakyRelu(x, _slope));
+                    h = _convs2[i].Forward(VitsOps.LeakyRelu(h, _slope));
                     next = h + x;
                     step?.Keep(next);
                 }
