@@ -6,9 +6,11 @@ using Idrak.Layers;
 namespace Idrak.Benches;
 
 /// <summary>
-/// Element-wise operations, reductions, softmax and layer norm at three sizes: microseconds a call (warm median), the
-/// bandwidth that implies (bytes read and written over the time), the launches each takes, forward and with its backward
-/// step. A fused operation shows as fewer launches and a higher bandwidth than the chain it replaced.
+/// Element-wise operations, reductions, softmax and layer norm at three sizes: microseconds a call (the warm median of
+/// rounds of Settings.Calls calls queued back to back with one device sync, so the sync and the driver's submission
+/// latency are shared, not charged to each 10 µs kernel), the bandwidth that implies (bytes read and written over the
+/// time), the launches each takes, forward and with its backward step. A fused operation shows as fewer launches and a
+/// higher bandwidth than the chain it replaced.
 /// </summary>
 internal static class OpsBench
 {
@@ -47,10 +49,20 @@ internal static class OpsBench
                 ("layer norm [rows, 1024]", t => norm.Forward(t), matrix, 8L * n),
                 ("weight norm [rows, 1024]", t => Tensor.WeightNorm(WeightNormGain(t), t), matrix, 8L * n),
             ];
+            int calls = settings.Calls;
             foreach (var (name, op, input, bytes) in cases)
             {
                 string label = $"{name} [{n:N0}]";
-                var (_, warm) = Bench.Time(device, () => op(input), settings.Repeats, settings.Warmup);
+                void Forward()
+                {
+                    for (int c = 0; c < calls; c++)
+                    {
+                        using var result = op(input);
+                    }
+                }
+
+                var (_, warmRound) = Bench.Time(device, Forward, settings.Repeats, settings.Warmup);
+                double warm = warmRound / calls;
                 var census = Bench.Count(() => op(input));
                 double warmUs = warm * 1000, gbs = bytes / (warm / 1000) / 1e9;
 
@@ -58,21 +70,26 @@ internal static class OpsBench
                 using var tracked = Bench.RandomTensor(random, input.Shape, device, 2f, requiresGrad: true);
                 void Both()
                 {
-                    var result = op(tracked);
-                    using var loss = result.Sum();
-                    loss.Backward();
-                    tracked.ReleaseGrad();
+                    for (int c = 0; c < calls; c++)
+                    {
+                        var result = op(tracked);
+                        using var loss = result.Sum();
+                        loss.Backward();
+                        tracked.ReleaseGrad();
+                    }
                 }
 
-                var (_, warmBoth) = Bench.Time(device, Both, settings.Repeats, settings.Warmup);
+                var (_, warmBothRound) = Bench.Time(device, Both, settings.Repeats, settings.Warmup);
+                double warmBoth = warmBothRound / calls;
                 var bothCensus = Bench.Count(Both);
+                long bothLaunches = bothCensus.Count / calls;
                 Console.WriteLine(Bench.Line(label, ("", Bench.F(warmUs, "0.0")), ("", Bench.F(gbs, "0.0")), ("", census.Count.ToString()),
-                    ("", Bench.F(warmBoth * 1000, "0.0")), ("", bothCensus.Count.ToString())));
+                    ("", Bench.F(warmBoth * 1000, "0.0")), ("", bothLaunches.ToString())));
                 report.Add(Section, label, device, "warm", warmUs, "µs");
                 report.Add(Section, label, device, "bandwidth", gbs, "GB/s");
                 report.Add(Section, label, device, "launches", census.Count, "launches");
                 report.Add(Section, label, device, "fwd+bwd warm", warmBoth * 1000, "µs");
-                report.Add(Section, label, device, "fwd+bwd launches", bothCensus.Count, "launches");
+                report.Add(Section, label, device, "fwd+bwd launches", bothLaunches, "launches");
             }
         }
     }

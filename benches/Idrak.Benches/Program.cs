@@ -9,7 +9,8 @@
 //   dotnet run -c Release --project benches/Idrak.Benches -- compare before.json after.json
 //
 // Sections (default: all):
-//   ops            element-wise, reductions, softmax, layer norm: µs a call, GB/s, launches; forward and backward
+//   ops            element-wise, reductions, softmax, layer norm: µs a call (IDRAK_BENCH_CALLS back to back, one sync),
+//                  GB/s, launches; forward and backward
 //   matmul         products and convolutions at several shapes: TFLOPS, ms a call
 //   train-decoder  a decoder's training step (size by IDRAK_BENCH_SIZE): ms a step, launches a step, peak memory,
 //                  activation memory with and without checkpointing
@@ -21,8 +22,11 @@
 //                  sequences, the largest batch the device takes before it runs out
 //
 // Settings: IDRAK_DEVICES (cpu, cuda:0, vulkan:0, ...), IDRAK_BENCH_SIZE (small, medium, large; default small on the
-// CPU, medium on a GPU), IDRAK_BENCH_REPEATS (timed rounds after the cold one, default 5), IDRAK_BENCH_SECONDS (the
-// most a stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS.
+// CPU, medium on a GPU; a device that cannot hold a size's model or batch gets the next smaller batch, else the section
+// is skipped with the reason), IDRAK_BENCH_REPEATS (timed rounds after the cold one, default 5), IDRAK_BENCH_WARMUP
+// (untimed calls first, default 30), IDRAK_BENCH_CALLS (calls a timed round in the ops section, default 8: one device
+// sync a round, so a driver's submission latency does not stand for a 10 µs kernel), IDRAK_BENCH_SECONDS (the most a
+// stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS.
 
 using Idrak.Benches;
 
@@ -59,7 +63,7 @@ foreach (string section in sections)
         {
             Sections.Run(section, device, settings, report);
         }
-        catch (Exception e) when (e is NotSupportedException or InvalidOperationException or IOException)
+        catch (Exception e) when (e is NotSupportedException or InvalidOperationException or IOException or ResourceLimitExceededException)
         {
             Console.WriteLine($"   skipped: {e.Message}");
         }

@@ -245,6 +245,14 @@ internal sealed unsafe partial class CudaBackend
 
     public override void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
+        if (inner == 1 && dim >= PtxKernels.WarpLanes && (long)outer * PtxKernels.WarpLanes <= int.MaxValue)
+        {
+            // A row sum: one warp a row reads coalesced, where the thread-per-output kernel reads each row serially.
+            int lanes = outer * PtxKernels.WarpLanes;
+            Launch1D(K("sum_axis_rows_f32"), lanes, P(x), P(y), U(dim), F(scale), U(accumulate ? 1 : 0), U(lanes));
+            return;
+        }
+
         int n = outer * inner;
         Launch1D(K("sum_axis_f32"), n, P(x), P(y), U(dim), U(inner), F(scale), U(accumulate ? 1 : 0), U(n));
     }

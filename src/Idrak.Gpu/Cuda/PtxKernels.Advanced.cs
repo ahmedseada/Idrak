@@ -16,10 +16,13 @@ internal static partial class PtxKernels
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
         "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32", "weight_norm_f32", "weight_norm_bwd_f32",
         "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
-        "permute_f32", "copy2d_f32", "sum_axis_f32", "broadcast_axis_f32",
+        "permute_f32", "copy2d_f32", "sum_axis_f32", "sum_axis_rows_f32", "broadcast_axis_f32",
     ];
 
     public const int MaxPermuteRank = 6;
+
+    /// <summary>The lanes of a PTX warp: the ISA's width, which the shuffle reductions are written for (sum_axis_rows_f32 runs one warp a row).</summary>
+    public const int WarpLanes = 32;
 
     /// <summary>
     /// The split group kernels (norm_stats_part_f32, group_reduce_part_f32 and their final passes): threads of a block (fixed,
@@ -1515,6 +1518,52 @@ internal static partial class PtxKernels
             add.f32 %f1, %f1, %f3;
             STORE:
             st.global.f32 [%a_y], %f1;
+            """);
+
+        // y[o] (+)= scale * Σ_d x[o, d] when inner is 1 (a row sum, the common reduction over the last axis): one warp per
+        // output row, its lanes reading consecutive elements (coalesced) and summing in a fixed butterfly order (rule 86),
+        // where sum_axis_f32's thread-per-output loop reads each row serially with its neighbours a whole row apart.
+        // Launched with n = rows · WarpLanes threads, so a warp's lanes share a row and leave together.
+        Elementwise(sb, "sum_axis_rows_f32", ["x", "y"], [("u32", "dim"), ("f32", "scale"), ("u32", "accumulate")],
+            $"""
+            shr.u32 %r5, %i, 5;
+            and.b32 %r6, %i, 31;
+            mul.lo.u32 %r7, %r5, %s_dim;
+            add.u32 %r7, %r7, %r6;
+            mul.wide.u32 %rd1, %r7, 4;
+            add.u64 %rd1, %b_x, %rd1;
+            mov.f32 %f1, {Zero};
+            mov.u32 %r8, %r6;
+            SR_LOOP:
+            setp.ge.u32 %p1, %r8, %s_dim;
+            @%p1 bra SR_REDUCE;
+            ld.global.f32 %f2, [%rd1];
+            add.f32 %f1, %f1, %f2;
+            add.u64 %rd1, %rd1, 128;
+            add.u32 %r8, %r8, 32;
+            bra SR_LOOP;
+            SR_REDUCE:
+            shfl.sync.bfly.b32 %f2, %f1, 16, 31, 0xffffffff;
+            add.f32 %f1, %f1, %f2;
+            shfl.sync.bfly.b32 %f2, %f1, 8, 31, 0xffffffff;
+            add.f32 %f1, %f1, %f2;
+            shfl.sync.bfly.b32 %f2, %f1, 4, 31, 0xffffffff;
+            add.f32 %f1, %f1, %f2;
+            shfl.sync.bfly.b32 %f2, %f1, 2, 31, 0xffffffff;
+            add.f32 %f1, %f1, %f2;
+            shfl.sync.bfly.b32 %f2, %f1, 1, 31, 0xffffffff;
+            add.f32 %f1, %f1, %f2;
+            setp.ne.u32 %p2, %r6, 0;
+            @%p2 bra DONE;
+            mul.f32 %f1, %f1, %s_scale;
+            mul.wide.u32 %rd2, %r5, 4;
+            add.u64 %rd2, %b_y, %rd2;
+            setp.eq.u32 %p3, %s_accumulate, 0;
+            @%p3 bra SR_STORE;
+            ld.global.f32 %f3, [%rd2];
+            add.f32 %f1, %f1, %f3;
+            SR_STORE:
+            st.global.f32 [%rd2], %f1;
             """);
 
         // dx[o, d, j] += scale * dy[o, j]; one thread per dx element.

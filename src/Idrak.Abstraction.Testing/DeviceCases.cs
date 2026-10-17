@@ -644,7 +644,8 @@ public static partial class DeviceCases
             b.Permute(x, Random(c, n), outShape, inStrides, true);
         }
 
-        foreach (var (outer, dim, inner) in new[] { (1, 1, 1), (2, 3, 5), (c.Size(1, 8), c.Size(1, 32), c.Size(1, 16)) })
+        // Rows summed over the last axis (inner 1) at widths past one warp of lanes and not a multiple of it reach a device's row kernel.
+        foreach (var (outer, dim, inner) in new[] { (1, 1, 1), (2, 3, 5), (c.Size(1, 8), c.Size(1, 32), c.Size(1, 16)), (3, 64, 1), (5, 33, 1), (c.Size(1, 6), 32 + c.Size(0, 997), 1) })
         {
             var x = Random(c, outer * dim * inner);
             b.SumAxis(x, c.Zeros(outer * inner), outer, dim, inner, 1f, false);
