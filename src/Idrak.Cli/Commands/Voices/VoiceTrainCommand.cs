@@ -81,8 +81,8 @@ internal sealed class VoiceTrainCommand : Command
               --resume RUN        continue a voice run from its latest checkpoint (--steps N: N more)
           -o, --out RUN           the run folder (default CACHE/runs/DATE-voice-NAME)
               --no-install        train only; install later with --resume RUN --steps 0
-              --profile           time steps instead of training: 3 warm-up, 3 timed, 2 with every GPU kernel timed
-                                  (the step's GPU time against its wall time; nothing installed)
+              --profile           time steps instead of training: after a first pass over the recordings, 3 timed and 2
+                                  with every GPU kernel timed (the step's GPU time against its wall time; nothing installed)
               --overwrite         replace an installed voice of the same name
         """ + "\n" + VoiceText.StoreHelp + "\n" + """
 
@@ -320,16 +320,18 @@ internal sealed class VoiceTrainCommand : Command
             + "voice train fine-tunes a VITS checkpoint (-P Idrak.VitsSpeech.dll).");
     }
 
-    // --profile: 3 warm-up steps, 3 timed by the clock, 2 with every GPU kernel timed (slower, so timed apart): how much of
-    // a step the device works, and on what.
+    // --profile: steps until the second pass over the recordings (the first takes every clip's training rows), then 3 timed
+    // by the clock and 2 with every GPU kernel timed (slower, so timed apart): how much of a step the device works, and on what.
     private static int Profile(CommandContext context, IAdversarialSpeechSynthesizer model, SpeechSource train, SpeechTrainingOptions options, string scratch)
     {
-        const int Warm = 3, Timed = 3, Profiled = 2;
+        const int Timed = 3, Profiled = 2;
         var device = model.Device;
-        context.Write($"profiling on {device}: {Warm} warm-up steps, {Timed} timed, {Profiled} with every GPU kernel timed…");
+        context.Write($"profiling on {device}: the first pass over the recordings (their training rows taken), then {Timed} steps timed and {Profiled} with every GPU kernel timed…");
         long started = 0;
+        int first = -1;
         double wallMs = 0, audioPerSecond = 0;
         IReadOnlyList<GpuProfileEntry> kernels = [];
+        using var stop = new CancellationTokenSource();
         var progress = new SyncProgress<SpeechTrainingProgress>(p =>
         {
             if (p.Stage != "step")
@@ -337,24 +339,38 @@ internal sealed class VoiceTrainCommand : Command
                 return;
             }
 
-            if (p.Step == Warm)
+            if (first < 0 && p.Epoch >= 2)
             {
+                first = p.Step;
                 device.Synchronize();
                 started = Stopwatch.GetTimestamp();
             }
-            else if (p.Step == Warm + Timed)
+            else if (first >= 0 && p.Step == first + Timed)
             {
                 device.Synchronize();
                 wallMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds / Timed;
                 audioPerSecond = p.AudioSecondsPerSecond;
                 GpuProfiler.Start(device);
             }
-            else if (p.Step == Warm + Timed + Profiled)
+            else if (first >= 0 && p.Step == first + Timed + Profiled)
             {
                 kernels = GpuProfiler.Stop(device);
+                stop.Cancel();
             }
         });
-        AdversarialSynthesisTrainer.Train(model, train, null, options with { Steps = Warm + Timed + Profiled, EvaluateEvery = 0, SaveEvery = 0 }, scratch, null, progress);
+        try
+        {
+            AdversarialSynthesisTrainer.Train(model, train, null, options with { Steps = 100_000, EvaluateEvery = 0, SaveEvery = 0 }, scratch, null, progress, stop.Token);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+        }
+
+        if (first < 0)
+        {
+            throw new UsageException("--profile: the recordings ended before a second pass; give more of them.");
+        }
+
         if (kernels.Count == 0)
         {
             context.Write(FormattableString.Invariant($"per step: {wallMs:F0} ms ({audioPerSecond:F1}x real time); kernel times need a device that times them (cuda)"));
