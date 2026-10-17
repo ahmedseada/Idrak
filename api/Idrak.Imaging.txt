@@ -143,6 +143,57 @@ public sealed class Idrak.Imaging.RandomShift : Idrak.Abstraction.Data.IAugmenta
   public string Name { get; }
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
 
+public static class Idrak.Imaging.Shaping.ArabicPresentationForms
+  public static Idrak.Imaging.Shaping.JoiningType JoiningTypeOf(int codePoint)
+  public static bool HasArabic(System.ReadOnlySpan<char> text)
+  public static bool HasForms(int codePoint)
+  public static int[] Shape(System.ReadOnlySpan<int> points, out int[] from)
+  public static string Shape(string text)
+
+public static class Idrak.Imaging.Shaping.Bidi
+  public static (byte[], Idrak.Imaging.Shaping.BidiClass[], bool) Resolve(string text, bool? rightToLeft = null)
+  public static (int[], byte[]) Reorder(System.ReadOnlySpan<byte> levels, System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> classes, int start, int end, bool rightToLeft)
+  public static Idrak.Imaging.Shaping.BidiClass ClassOf(int codePoint)
+  public static bool Removed(Idrak.Imaging.Shaping.BidiClass type)
+  public static int Mirror(int codePoint)
+  public static int ParagraphLevel(System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> types, int fallback = 0)
+  public static int[] VisualOrder(System.ReadOnlySpan<sbyte> levels)
+  public static sbyte[] Levels(System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> types, System.ReadOnlySpan<int> codePoints, int paragraphLevel, out int resolvedParagraphLevel)
+  public static string UnicodeVersion { get; }
+
+public enum Idrak.Imaging.Shaping.BidiClass : byte
+  AL = 2
+  AN = 6
+  B = 10
+  BN = 9
+  CS = 7
+  EN = 3
+  ES = 4
+  ET = 5
+  FSI = 21
+  L = 0
+  LRE = 14
+  LRI = 19
+  LRO = 15
+  NSM = 8
+  ON = 13
+  PDF = 18
+  PDI = 22
+  R = 1
+  RLE = 16
+  RLI = 20
+  RLO = 17
+  S = 11
+  WS = 12
+
+public enum Idrak.Imaging.Shaping.JoiningType : byte
+  C = 4
+  D = 3
+  L = 2
+  R = 1
+  T = 5
+  U = 0
+
 public enum Idrak.Imaging.TextAlignment : int
   Center = 4
   End = 1

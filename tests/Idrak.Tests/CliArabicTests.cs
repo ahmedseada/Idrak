@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using Idrak;
 using Idrak.Cli;
 using Idrak.Cli.Shared;
+using Idrak.Imaging.Shaping;
 
 // Arabic messages in the idrak tool (--lang ar) and the renderer that shows them in terminals without bidirectional
 // support: Arabic shaping, the Unicode Bidirectional Algorithm on known lines (expected visual order worked out from the
@@ -65,7 +66,7 @@ internal static partial class Tests
     {
         _ = device;
         void Expect(string text, string shaped) =>
-            Check(ArabicShaping.Shape(text) == shaped, $"shape({text}): {Codes(ArabicShaping.Shape(text))}, expected {Codes(shaped)}");
+            Check(ArabicPresentationForms.Shape(text) == shaped, $"shape({text}): {Codes(ArabicPresentationForms.Shape(text))}, expected {Codes(shaped)}");
 
         // مرحبا: meem initial (reh joins it), reh final (reh never joins the next), hah initial, beh medial, alef final.
         Expect("مرحبا", "\uFEE3\uFEAE\uFEA3\uFE92\uFE8E");
@@ -81,14 +82,20 @@ internal static partial class Tests
         Expect("بَب", "\uFE91\u064E\uFE90");
         // Tatweel causes joining on both sides; text without Arabic is returned as it is.
         Expect("بـ", "\uFE91\u0640");
+        // A zero width non-joiner breaks the join (Persian): both letters isolated; a zero width joiner makes one.
+        Expect("ب\u200Cب", "\uFE8F\u200C\uFE8F");
+        Expect("ب\u200D", "\uFE91\u200D");
         Expect("idrak 0.1.7", "idrak 0.1.7");
-        Check(ArabicShaping.JoiningType(0x0627) == 'R' && ArabicShaping.JoiningType(0x0628) == 'D' && ArabicShaping.JoiningType(0x064E) == 'T'
-              && ArabicShaping.JoiningType('a') == 'U' && ArabicShaping.JoiningType(0x0640) == 'C', "joining types");
+        Check(ArabicPresentationForms.JoiningTypeOf(0x0627) == JoiningType.R && ArabicPresentationForms.JoiningTypeOf(0x0628) == JoiningType.D
+              && ArabicPresentationForms.JoiningTypeOf(0x064E) == JoiningType.T && ArabicPresentationForms.JoiningTypeOf('a') == JoiningType.U
+              && ArabicPresentationForms.JoiningTypeOf(0x0640) == JoiningType.C && ArabicPresentationForms.JoiningTypeOf(0x200D) == JoiningType.C
+              && ArabicPresentationForms.JoiningTypeOf(0x200C) == JoiningType.U, "joining types");
         Check(Bidi.ClassOf('a') == BidiClass.L && Bidi.ClassOf(0x0628) == BidiClass.AL && Bidi.ClassOf(0x05D0) == BidiClass.R && Bidi.ClassOf('1') == BidiClass.EN
               && Bidi.ClassOf(0x0661) == BidiClass.AN && Bidi.ClassOf(',') == BidiClass.CS && Bidi.ClassOf('+') == BidiClass.ES && Bidi.ClassOf('%') == BidiClass.ET
               && Bidi.ClassOf(0x064E) == BidiClass.NSM && Bidi.ClassOf(' ') == BidiClass.WS && Bidi.ClassOf('(') == BidiClass.ON && Bidi.ClassOf(0x200D) == BidiClass.BN
               && Bidi.ClassOf(0x2067) == BidiClass.RLI && Bidi.ClassOf(0x1E900) == BidiClass.R, "bidirectional classes");
-        Check(Bidi.Mirror('(') == ')' && Bidi.Mirror('<') == '>' && Bidi.Mirror('«') == '»' && Bidi.Mirror('a') == 'a', "mirrored glyphs");
+        Check(Bidi.Mirror('(') == ')' && Bidi.Mirror('<') == '>' && Bidi.Mirror('«') == '»' && Bidi.Mirror('a') == 'a' && Bidi.Mirror(0x2208) == 0x220B, "mirrored glyphs");
+        Check(Bidi.UnicodeVersion == "18.0.0", $"tables from Unicode {Bidi.UnicodeVersion}");
     }
 
     private static void CliArabicBidi(Device device)
@@ -96,7 +103,7 @@ internal static partial class Tests
         _ = device;
         void Expect(string text, string visual, int level = -1) =>
             Check(Visual(text, level) == visual, $"visual({text}): {Codes(Visual(text, level))}, expected {Codes(visual)}");
-        string Shaped(string word) => Reverse(ArabicShaping.Shape(word));
+        string Shaped(string word) => Reverse(ArabicPresentationForms.Shape(word));
 
         // Left-to-right text alone is unchanged, in either paragraph direction (one run at level 0, or 2 inside 1).
         Expect("idrak doctor", "idrak doctor");
@@ -163,7 +170,7 @@ internal static partial class Tests
     private static void CliArabicRenderer(Device device)
     {
         _ = device;
-        string Shaped(string word) => Reverse(ArabicShaping.Shape(word));
+        string Shaped(string word) => Reverse(ArabicPresentationForms.Shape(word));
         // Lines without right-to-left text come back unchanged (escape sequences too).
         Check(VisualText.Line("  -d, --device NAME   cpu, cuda:0") == "  -d, --device NAME   cpu, cuda:0", "an English line changed");
         Check(VisualText.Line("\u001b[32mok\u001b[0m  cache") == "\u001b[32mok\u001b[0m  cache", "colours on an English line changed");
@@ -272,7 +279,7 @@ internal static partial class Tests
 
         // Every Arabic letter of the catalog has its presentation forms (so the renderer shapes all of it).
         var letters = Messages.Arabic.Values.SelectMany(v => v).Where(c => c is >= '\u0621' and <= '\u064A' and not '\u0621' and not '\u0640').Distinct().ToList();
-        Check(letters.All(c => ArabicShaping.Shape(c.ToString())[0] >= '\uFE70'), "a letter of the catalog has no presentation form");
+        Check(letters.All(c => ArabicPresentationForms.Shape(c.ToString())[0] >= '\uFE70'), "a letter of the catalog has no presentation form");
     }
 
     private static void CliArabicCommands(Device device)

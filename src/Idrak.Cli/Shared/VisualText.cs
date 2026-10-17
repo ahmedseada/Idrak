@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Text;
+using Idrak.Imaging.Shaping;
 
 namespace Idrak.Cli.Shared;
 
@@ -22,7 +23,7 @@ internal enum TextRendering
 
 /// <summary>
 /// Right-to-left text for terminals that show characters left to right in the order they arrive (most of them,
-/// Windows' console host and Windows Terminal included): each line is shaped (<see cref="ArabicShaping"/>) and
+/// Windows' console host and Windows Terminal included): each line is shaped (<see cref="ArabicPresentationForms"/>) and
 /// reordered by the Unicode Bidirectional Algorithm (<see cref="Bidi"/>), so Arabic reads right to left with joined
 /// letters while embedded English words, numbers and paths keep their order.
 /// </summary>
@@ -302,7 +303,7 @@ internal static class VisualText
             offsets[k] = offsets[k - 1] + (source[k - 1] >= 0x10000 ? 2 : 1);
         }
 
-        var shaped = ArabicShaping.Shape(source, out var shapedFrom);
+        var shaped = ArabicPresentationForms.Shape(source, out var shapedFrom);
         var from = Array.ConvertAll(shapedFrom, k => offsets[k]);
         var types = Array.ConvertAll(shaped, Bidi.ClassOf);
         var levels = Bidi.Levels(types, shaped, paragraphLevel, out int paragraph);

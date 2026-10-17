@@ -106,12 +106,7 @@ internal sealed class ArabicShaper : OpenTypeShaper
         }
     }
 
-    private static JoiningType Joining(int codePoint) => codePoint switch
-    {
-        0x200D => JoiningType.C,
-        0x200C => JoiningType.U,
-        _ => UnicodeText.Joining(codePoint),
-    };
+    private static JoiningType Joining(int codePoint) => ArabicPresentationForms.JoiningTypeOf(codePoint);
 
     // The joining type of the first non-transparent character from `at` in `step` direction, U at the text's edge.
     private static JoiningType ContextType(string text, int at, int step)
