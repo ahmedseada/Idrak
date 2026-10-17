@@ -102,7 +102,7 @@ Loaded with `SpeechSynthesisLoadOptions.Training`, the synthesizer is an `IAdver
 | Durations | the monotonic alignment search on the host (`MonotonicAlignment`, VITS's recursion in float), the stochastic duration predictor's negative log-likelihood through its posterior flows (the spline composed from tensor operations); the deterministic predictor's squared log error when the checkpoint uses one |
 | Losses | mel L1 × 45, KL × 1 (over the batch's frames), duration × 1 (over its tokens), least-squares adversarial × 1, feature matching × 2: every weight a setting (`AdversarialSynthesisOptions`) |
 | Decoder | a random segment of `SegmentFrames` latent frames (32 by default, 8192 samples at hop 256): memory follows the batch, not an utterance's length |
-| Discriminators | `VitsDiscriminators`: VITS's multi-period discriminator (a scale discriminator of grouped convolutions, periods 2, 3, 5, 7, 11), `scales` above 1 adds HiFi-GAN's pooled scales; weight-normed; `discriminator.json` lists every channel, kernel, stride, group and slope; read from the base folder when it holds `discriminator.safetensors`, else drawn new (MMS-TTS checkpoints ship none) |
+| Discriminators | `VitsDiscriminators`: VITS's multi-period discriminator (a scale discriminator of grouped convolutions, periods 2, 3, 5, 7, 11), `scales` above 1 adds HiFi-GAN's pooled scales; weight-normed; `discriminator.json` lists every channel, kernel, stride, group and slope; read from the base folder when it holds `discriminator.safetensors`, else from the file `--discriminator-weights` names (a `discriminator.safetensors`, or the VITS and MMS releases' `D_*.pth` under its `weight_g` and `weight_v` names), else drawn new |
 
 ```powershell
 idrak voice train ahmed --from D:\rec\transcripts.jsonl --base facebook/mms-tts-ara -P Idrak.VitsSpeech.dll -l ar `
@@ -119,9 +119,16 @@ a step, 2000 steps, a checkpoint every 500. Only single-speaker checkpoints trai
 `"audio voice train"` tests): both losses and every gradient of step 1 within 1e-4, the alignment paths exactly, three SGD
 steps; resumed bit for bit on the CPU.
 
+**Start from the released discriminators.** The HF `facebook/mms-tts-*` checkpoints hold the generator only. Discriminators
+drawn new tell the real voice from the made one no better than chance for thousands of steps against a trained
+generator (measured: `disc` stays at 3.0 and `adv` at 1.5, the values of a discriminator answering 0.5 to everything, in
+Idrak and in torch alike), so the voice trains on the mel loss alone and a buzz at the frame rate (every 62.5 Hz at
+hop 256) grows with the steps. Meta's MMS release ships each language's discriminators beside its generator
+(`https://dl.fbaipublicfiles.com/mms/tts/full_model/{lang}.tar.gz`, `D_100000.pth`); give that file with
+`--discriminator-weights`, and watch `disc` fall under ~2.5 and `adv` rise above 2 within the first few hundred steps.
+
 **What to expect, plainly.** The fixture proves the step is VITS's, not that the voice sounds good: no voice made here has
-been listened to. The discriminators start new, so for the first thousand steps or so the adversarial terms are noisy
-and the sound can get worse before it gets better. From clean, accurately transcribed speech, a few thousand steps
+been listened to. From clean, accurately transcribed speech, a few thousand steps
 should give a voice recognisably the person's with the base model's pronunciation; Arabic goes through uroman
 romanisation (no diacritics) as MMS was trained, so its pronunciation errors stay. Fine-tuning runs without dropout (a
 later setting). The convolution's backward sums in a fixed order on CUDA too, so runs resume bit for bit there.

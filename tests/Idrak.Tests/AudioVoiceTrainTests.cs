@@ -23,7 +23,8 @@ internal static partial class Tests
         ("audio voice train: a trained folder installs as a voice of kind checkpoint (consent required, a folder without config.json refused, the training files left out, an installed name kept unless overwritten); VoicedSynthesizer speaks it with its own model, the samples the folder's own; export and import give it back, a checkpoint voice without its model refused", AudioVoiceTrainInstall),
         ("audio voice train: idrak voice train on the CPU fine-tunes the tiny VITS model on tone speech and installs the voice (refused without consent or a trainable base), voice show names its base and steps, speak --voice gives the checkpoint's samples; --resume and idrak resume add steps and install again; --profile times steps and installs nothing; its help has examples, every option and lines under 120 characters", AudioVoiceTrainCli),
         ("audio voice train: the stochastic duration predictor's flows forward (training) then in reverse (speaking) give the log-durations back within 1e-4: VITS's order, no flip after the element-wise affine (transformers' forward flips there, and a model fine-tuned that way speaks with durations it was not trained on)", AudioVoiceTrainDurationFlows),
-        ("audio voice train: Frozen [\"decoder\"] keeps the decoder's tensors bit for bit while the other parts train, takes them out of the generator's parameters and saves them in the run's options; a sub-part by its tensors' prefix (decoder.upsampler) keeps only those; a part VITS does not have is refused naming its parts", AudioVoiceTrainFrozen),
+        ("audio voice train: Frozen [\"decoder\"] keeps the decoder's tensors bit for bit while the other parts train, takes them out of the generator's parameters and saves them in the run's options; a part VITS does not have is refused naming its parts", AudioVoiceTrainFrozen),
+        ("audio voice train: DiscriminatorWeights starts a run from a file's discriminators when the base ships none: a checkpoint's discriminator.safetensors (its discriminator.json beside it) read bit for bit, a file under VITS's own weight_g and weight_v names (a release's D_*.pth) the same, a base folder's own discriminators kept whatever it names, a missing file refused naming the option; the run saves them in its state", AudioVoiceTrainDiscriminatorWeights),
         ("audio voice train: a short CPU run of the tiny VITS model on tone speech lowers its mel L1 (the mean of the last 5 steps under 0.8 of the first 5; step time printed)", AudioVoiceTrainSmoke),
     ];
 
@@ -362,6 +363,78 @@ internal static partial class Tests
         }
     }
 
+    private static void AudioVoiceTrainDiscriminatorWeights(Device device)
+    {
+        string root = TempFolder("vits-disc-weights");
+        VitsSpeechPlugin.Register();
+        try
+        {
+            var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 37, maxLetters: 4);
+            var train = new SpeechSource(SpeechSources.Transcripts, [transcripts]);
+            var options = VitsToneTraining(Path.Combine(root, "cache")) with { Steps = 1 };
+            using (var model = LoadVitsTrain(device))
+            {
+                AdversarialSynthesisTrainer.Train(model, train, null, options, Path.Combine(root, "run"));
+            }
+
+            // The tiny model's folder ships discriminators; a copy without them starts from the file the options name.
+            string bare = Path.Combine(root, "bare");
+            Directory.CreateDirectory(bare);
+            foreach (string file in Directory.GetFiles(VitsTrainData("model")).Where(f => !Path.GetFileName(f).StartsWith("discriminator.", StringComparison.Ordinal)))
+            {
+                File.Copy(file, Path.Combine(bare, Path.GetFileName(file)));
+            }
+
+            string trained = Path.Combine(root, "run", "checkpoint-1", "discriminator.safetensors");
+            using var reader = Idrak.Models.SafeTensorsReader.Open(trained);
+            var names = ((Idrak.Abstraction.Formats.ITensorStore)reader).Names.ToList();
+            string released = Path.Combine(root, "release", "D.safetensors");
+            Directory.CreateDirectory(Path.GetDirectoryName(released)!);
+            File.Copy(Path.Combine(root, "run", "checkpoint-1", "discriminator.json"), Path.Combine(root, "release", "discriminator.json"));
+            Idrak.Models.SafeTensorsWriter.Write(released, names.Select(n => (n.Replace(".parametrizations.weight.original0", ".weight_g", StringComparison.Ordinal)
+                .Replace(".parametrizations.weight.original1", ".weight_v", StringComparison.Ordinal), ((Idrak.Abstraction.Formats.ITensorStore)reader).ShapeOf(n), reader.Read(n))), Idrak.Models.SafeTensorType.F32);
+
+            List<(string Name, float[] Values)> Loaded(string folder, string? file)
+            {
+                using var synthesizer = (VitsSynthesizer)SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = device, Training = true });
+                synthesizer.Discriminators(options.Adversarial! with { DiscriminatorWeights = file }, 0);
+                return [.. synthesizer.Training.Opened!.Module.Named.Select(p => (p.Name, p.Values()))];
+            }
+
+            var fromCheckpoint = Loaded(bare, trained);
+            Check(fromCheckpoint.Count == names.Count && fromCheckpoint.All(p => names.Contains(p.Name) && p.Values.AsSpan().SequenceEqual(reader.Read(p.Name))),
+                "the checkpoint's discriminators read bit for bit under their names");
+            var fromRelease = Loaded(bare, released);
+            Check(fromRelease.Count == fromCheckpoint.Count && fromRelease.Any(p => p.Name.EndsWith(".weight_g", StringComparison.Ordinal))
+                && fromRelease.Zip(fromCheckpoint).All(pair => pair.First.Values.AsSpan().SequenceEqual(pair.Second.Values)),
+                "a file under weight_g and weight_v names gives the same discriminators");
+            var fromFolder = Loaded(VitsTrainData("model"), released);
+            Check(fromFolder.All(p => p.Name.Contains(".parametrizations.", StringComparison.Ordinal) || p.Name.EndsWith(".bias", StringComparison.Ordinal))
+                && fromFolder.Zip(fromCheckpoint).Any(pair => !pair.First.Values.AsSpan().SequenceEqual(pair.Second.Values)),
+                "a folder's own discriminators are the ones trained, whatever the options name");
+            using (var synthesizer = (VitsSynthesizer)SpeechSynthesisModels.Load(bare, new SpeechSynthesisLoadOptions { Device = device, Training = true }))
+            {
+                ThrowsNaming<FileNotFoundException>(() => synthesizer.Discriminators(options.Adversarial! with { DiscriminatorWeights = Path.Combine(root, "none.pth") }, 0),
+                    "a missing discriminators file", "none.pth", "DiscriminatorWeights");
+            }
+
+            // A run from the bare copy and the released file: its checkpoint holds them, trained, and its state names the file.
+            using (var synthesizer = (VitsSynthesizer)SpeechSynthesisModels.Load(bare, new SpeechSynthesisLoadOptions { Device = device, Training = true }))
+            {
+                var result = AdversarialSynthesisTrainer.Train(synthesizer, train, null, options with { Adversarial = options.Adversarial! with { DiscriminatorWeights = released } }, Path.Combine(root, "run2"));
+                Check(result.Steps == 1 && File.Exists(Path.Combine(root, "run2", "checkpoint-1", "discriminator.safetensors")), "the run saves the discriminators it started from");
+            }
+
+            string state = File.ReadAllText(Path.Combine(root, "run2", "checkpoint-1", SpeechTrainer.StateFile));
+            Check(state.Contains("\"discriminator_weights\":", StringComparison.Ordinal) && state.Contains("D.safetensors", StringComparison.Ordinal), "the run's options name the file");
+        }
+        finally
+        {
+            VitsSpeechPlugin.Unregister();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static void AudioVoiceTrainFrozen(Device device)
     {
         string root = TempFolder("vits-frozen");
@@ -376,7 +449,7 @@ internal static partial class Tests
                 Check(model.Parts.Order().SequenceEqual(["decoder", "duration_predictor", "flow", "posterior_encoder", "text_encoder"]),
                     $"VITS names its parts: {string.Join(", ", model.Parts)}");
                 ThrowsNaming<ArgumentException>(() => AdversarialSynthesisTrainer.Train(model, train, null,
-                    options with { Adversarial = options.Adversarial! with { Frozen = ["vocoder"] } }, Path.Combine(root, "none")), "no part 'vocoder'", "decoder", "flow", "decoder.upsampler");
+                    options with { Adversarial = options.Adversarial! with { Frozen = ["vocoder"] } }, Path.Combine(root, "none")), "no part 'vocoder'", "decoder", "flow");
             }
 
             using (var model = LoadVitsTrain(device))
@@ -405,22 +478,6 @@ internal static partial class Tests
             }
 
             Check(kept > 0 && moved > 0, $"{kept} decoder tensors kept, {moved} other tensors trained");
-
-            // A sub-part by its tensors' prefix: the upsamplers kept, the rest of the decoder trained.
-            using (var model = LoadVitsTrain(device))
-            {
-                AdversarialSynthesisTrainer.Train(model, train, null, options with { Adversarial = options.Adversarial! with { Frozen = ["decoder.upsampler"] } },
-                    Path.Combine(root, "sub"));
-            }
-
-            using (var sub = Idrak.Models.SafeTensorsReader.Open(Path.Combine(root, "sub", "checkpoint-2", "model.safetensors")))
-            {
-                var names = ((Idrak.Abstraction.Formats.ITensorStore)before).Names.ToList();
-                bool upsamplersKept = names.Where(n => n.StartsWith("decoder.upsampler.", StringComparison.Ordinal)).All(n => before.Read(n).AsSpan().SequenceEqual(sub.Read(n)));
-                bool restMoved = names.Where(n => n.StartsWith("decoder.", StringComparison.Ordinal) && !n.StartsWith("decoder.upsampler.", StringComparison.Ordinal))
-                    .Any(n => !before.Read(n).AsSpan().SequenceEqual(sub.Read(n)));
-                Check(upsamplersKept && restMoved, $"Frozen [decoder.upsampler]: upsamplers kept {upsamplersKept}, the rest of the decoder trained {restMoved}");
-            }
             var state = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "run", "checkpoint-2", SpeechTrainer.StateFile)))!.ToJsonString();
             Check(state.Contains("\"frozen\":[\"decoder\"]", StringComparison.Ordinal), "the run's options keep the frozen parts (a resume freezes them too)");
         }

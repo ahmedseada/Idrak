@@ -67,9 +67,20 @@ public sealed record AdversarialSynthesisOptions
     public JsonObject? Discriminator { get; init; }
 
     /// <summary>
+    /// A file of trained discriminators to start from, as the family reads it (VITS: a <c>discriminator.safetensors</c>,
+    /// with a <c>discriminator.json</c> beside it when it has one, or the original VITS and MMS releases' <c>D_*.pth</c>
+    /// checkpoint, whose <c>weight_g</c> and <c>weight_v</c> names it reads). Null: the model folder's, else new ones of
+    /// <see cref="Discriminator"/>. A model folder's own discriminators (a checkpoint's) train as they are, whatever this
+    /// names. New discriminators tell nothing apart for thousands of steps against a trained generator, which then trains
+    /// on the mel loss alone (a buzz at the frame rate); fine-tuning a released model takes its released discriminators
+    /// (MMS ships them apart from its HF checkpoints).
+    /// </summary>
+    public string? DiscriminatorWeights { get; init; }
+
+    /// <summary>
     /// The generator's parts kept as the base has them (<see cref="IAdversarialSpeechSynthesizer.Parts"/> names them; for
-    /// VITS "decoder" keeps the base's waveform generator, which the mel loss and young discriminators barely see above a
-    /// few kHz): their weights take no gradient and no optimizer state. Empty, the default: every part trains.
+    /// VITS "decoder" keeps the base's waveform generator): their weights take no gradient and no optimizer state. Empty,
+    /// the default: every part trains.
     /// </summary>
     public IReadOnlyList<string> Frozen { get; init; } = [];
 
@@ -80,7 +91,8 @@ public sealed record AdversarialSynthesisOptions
         ["adversarial_weight"] = AdversarialWeight, ["feature_matching_weight"] = FeatureMatchingWeight, ["mels"] = Mels,
         ["mel_min_frequency"] = MelMinFrequency, ["mel_max_frequency"] = MelMaxFrequency, ["discriminator_learning_rate"] = DiscriminatorLearningRate,
         ["beta1"] = Beta1, ["beta2"] = Beta2, ["epsilon"] = Epsilon, ["keep_generator_pass"] = KeepGeneratorPass,
-        ["discriminator"] = Discriminator?.DeepClone(), ["frozen"] = new JsonArray([.. Frozen.Select(p => (JsonNode?)p)]),
+        ["discriminator"] = Discriminator?.DeepClone(), ["discriminator_weights"] = DiscriminatorWeights,
+        ["frozen"] = new JsonArray([.. Frozen.Select(p => (JsonNode?)p)]),
     };
 
     /// <summary>Options from their JSON (<see cref="ToJson"/>); a key missing keeps the default.</summary>
@@ -105,6 +117,7 @@ public sealed record AdversarialSynthesisOptions
             Epsilon = (float?)json["epsilon"] ?? d.Epsilon,
             KeepGeneratorPass = (bool?)json["keep_generator_pass"] ?? d.KeepGeneratorPass,
             Discriminator = json["discriminator"] is JsonObject description ? (JsonObject)description.DeepClone() : null,
+            DiscriminatorWeights = (string?)json["discriminator_weights"],
             Frozen = json["frozen"] is JsonArray frozen ? [.. frozen.Select(p => (string)p!)] : [],
         };
     }
@@ -207,8 +220,9 @@ public interface IAdversarialSpeechSynthesizer : ISpeechSynthesizer
     string Refused { get; }
 
     /// <summary>
-    /// The discriminators trained beside the generator: the ones the model's folder holds, else new ones of the options'
-    /// description drawn from <paramref name="seed"/>; the same object on later calls.
+    /// The discriminators trained beside the generator: the ones the model's folder holds, else the file
+    /// <see cref="AdversarialSynthesisOptions.DiscriminatorWeights"/> names, else new ones of the options' description
+    /// drawn from <paramref name="seed"/>; the same object on later calls.
     /// </summary>
     Module Discriminators(AdversarialSynthesisOptions options, int seed);
 
@@ -229,8 +243,7 @@ public interface IAdversarialSpeechSynthesizer : ISpeechSynthesizer
     IReadOnlyList<string> Parts => [];
 
     /// <summary>
-    /// Keeps <paramref name="parts"/> (of <see cref="Parts"/>, or a family's finer names for parts of them: VITS takes a
-    /// prefix of its tensors' names, such as "decoder.upsampler") as they are for training: their weights take no gradient
+    /// Keeps <paramref name="parts"/> (of <see cref="Parts"/>) as they are for training: their weights take no gradient
     /// and leave <see cref="Generator"/>'s parameters, so the optimizer neither steps nor holds state for them; they are
     /// saved unchanged. Called once, before the trainer reads the parameters.
     /// </summary>

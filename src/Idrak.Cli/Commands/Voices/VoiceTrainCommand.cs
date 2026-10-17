@@ -65,9 +65,12 @@ internal sealed class VoiceTrainCommand : Command
               --feature-weight W  the feature-matching loss's weight (default 2)
               --mels N            the mel loss's bands (default 80)
               --discriminator F   new discriminators' description (JSON; default the base's, else VITS's)
+              --discriminator-weights FILE
+                                  trained discriminators to start from when the base ships none: a
+                                  discriminator.safetensors, or the VITS and MMS releases' D_*.pth (new discriminators
+                                  tell nothing apart for thousands of steps, and the voice trains on the mel loss alone)
               --freeze PARTS      parts kept as the base has them, comma-separated (VITS: decoder keeps its waveform
-                                  generator, decoder.upsampler and decoder.conv_pre its frame-to-sample layers; also
-                                  text_encoder, flow, duration_predictor, posterior_encoder; default none)
+                                  generator; text_encoder, flow, duration_predictor, posterior_encoder; default none)
               --schedule NAME     the rate's schedule: constant, cosine, linear, wsd (default constant)
               --warmup F          the share of the steps the rate warms up over (default 0)
               --optimizer NAME    adamw, adam, sgd (default adamw, betas 0.8 and 0.99)
@@ -97,7 +100,7 @@ internal sealed class VoiceTrainCommand : Command
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--from", "--audio", "--eval", "--base", "--consent", "--consent-file", "--speaker", "--language", "--steps", "--lr", "--discriminator-lr", "--batch-seconds",
-        "--segment-frames", "--mel-weight", "--kl-weight", "--duration-weight", "--adversarial-weight", "--feature-weight", "--mels", "--discriminator", "--freeze", "--schedule",
+        "--segment-frames", "--mel-weight", "--kl-weight", "--duration-weight", "--adversarial-weight", "--feature-weight", "--mels", "--discriminator", "--discriminator-weights", "--freeze", "--schedule",
         "--warmup", "--optimizer", "--clip", "--save-every", "--keep", "--eval-every", "--log-every", "--feature-cache", "--resume", "--out", "--voices",
     ];
 
@@ -174,6 +177,12 @@ internal sealed class VoiceTrainCommand : Command
             ["log_every"] = context.IntOption("--log-every", 10),
         };
         using var model = Load(context, baseFolder);
+        if (options.Adversarial?.DiscriminatorWeights is { } discriminators && model.TrainingFiles.Any(f => File.Exists(Path.Combine(baseFolder, f))))
+        {
+            throw new UsageException($"{baseFolder} holds its own discriminators ({string.Join(", ", model.TrainingFiles)}), which train as they are: "
+                + $"drop --discriminator-weights {discriminators}, or train from a folder without them.");
+        }
+
         Directory.CreateDirectory(run);
         File.WriteAllText(Path.Combine(run, "run.json"), settings.ToJsonString(CommandContext.JsonOutput) + "\n");
         context.Write(FormattableString.Invariant($"voice '{name}': fine-tuning {baseArgument} ({model.Generator.ParameterCount / 1e6:F2}M parameters) on {model.Device}, run {run}"));
@@ -242,6 +251,9 @@ internal sealed class VoiceTrainCommand : Command
             Mels = context.IntOption("--mels", a.Mels),
             DiscriminatorLearningRate = context.Option("--discriminator-lr") is null ? a.DiscriminatorLearningRate : Real(context, "--discriminator-lr", 0),
             Discriminator = description,
+            DiscriminatorWeights = context.Option("--discriminator-weights") is { } weights
+                ? File.Exists(weights) ? Path.GetFullPath(weights) : throw new UsageException($"No discriminators file {weights} (--discriminator-weights).")
+                : a.DiscriminatorWeights,
             Frozen = context.Option("--freeze") is { } frozen
                 ? [.. frozen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]
                 : a.Frozen,
