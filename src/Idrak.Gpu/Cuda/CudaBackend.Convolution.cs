@@ -13,7 +13,8 @@ namespace Idrak.Gpu.Cuda;
 // (TuneOp.Convolution, keyed by the shape, the pass, the precision, the activation and the groups; CudaBackend.Tuning.cs)
 // and kept in the tuning cache. While nothing can be measured (a graph being recorded, the profiler, IDRAK_AUTOTUNE=0)
 // the formula's choice runs: the depthwise kernels where they apply, else the implicit product, on 64 × 64 tiles when
-// they would be at least half full, with the most splits of ConvWeightSplits that leave each at least 4,096 positions.
+// they would be at least half full (the composed path for products of fewer rows than a quarter of a small tile), with the
+// most splits of ConvWeightSplits that leave each at least 4,096 positions.
 // The implicit products and the depthwise kernels keep nothing beyond their output (and the weight gradient's partial
 // sums).
 internal sealed unsafe partial class CudaBackend
@@ -173,6 +174,15 @@ internal sealed unsafe partial class CudaBackend
         }
 
         var (rows, columns, _) = ConvProduct(pass, in g, filters, groups);
+
+        // A product of fewer rows than a quarter of the small tile leaves most of every tile's threads idle (a spectrogram's
+        // input gradient: one channel, 1,026 filters of 1,024 samples, 84 ms a call on the tile); the patches and the
+        // measured products fill the device where they fit.
+        if (rows * 4 < PtxKernels.ConvTileEdge && Array.IndexOf(candidates, ConvComposed) >= 0)
+        {
+            return ConvComposed;
+        }
+
         int edge = PtxKernels.ConvBlockedEdge;
         int splitBits = pass == ConvolutionShapes.Weight ? System.Numerics.BitOperations.Log2((uint)ConvWeightFormulaSplits(in g, filters, groups)) << 4 : 0;
         int variant = rows >= edge / 2 && columns >= edge / 2 ? ConvBlocked : ConvTile;
