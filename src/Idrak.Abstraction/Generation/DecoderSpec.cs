@@ -26,6 +26,12 @@ public enum FeedForwardActivation
 
     /// <summary>max(0, x).</summary>
     Relu,
+
+    /// <summary>
+    /// With a gate only: tanh(gate) · sigmoid(up), the gated unit of WaveNet and PixelCNN (the up side has its own
+    /// function, so its gradient is dy · tanh(gate) · sigmoid'(up)).
+    /// </summary>
+    TanhSigmoid,
 }
 
 /// <summary>

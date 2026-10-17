@@ -819,6 +819,7 @@ public sealed class FeedForward : Module
     {
         FeedForwardActivation.Silu => x * x.Sigmoid(),
         FeedForwardActivation.Gelu => x.Gelu(),
+        FeedForwardActivation.TanhSigmoid => throw new NotSupportedException("The tanh · sigmoid activation gates two projections; a feed-forward layer without a gate cannot use it."),
         _ => x.Relu(),
     };
 

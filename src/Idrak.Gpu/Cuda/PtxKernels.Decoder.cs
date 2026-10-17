@@ -504,12 +504,16 @@ internal static partial class PtxKernels
             PT_END:
             """);
 
-        // act(gate) and act'(gate) into %f5 and %f6 (kind 0 SiLU, 1 GELU tanh, 2 ReLU) from %f1.
+        // act(gate) and act'(gate) into %f5 and %f6 (kind 0 SiLU, 1 GELU tanh, 2 ReLU, 3 tanh) from %f1; the up side's
+        // function into %f2 (up itself, or sigmoid(up) for kind 3) and its slope into %f17 (1, or sigmoid'(up)).
         string activation = $"""
+            mov.f32 %f17, {One};
             setp.eq.u32 %p5, %s_kind, 1;
             @%p5 bra ACT_GELU;
             setp.eq.u32 %p5, %s_kind, 2;
             @%p5 bra ACT_RELU;
+            setp.eq.u32 %p5, %s_kind, 3;
+            @%p5 bra ACT_TANH;
             mul.f32 %f3, %f1, {F(-1.4426950408889634f)};
             ex2.approx.ftz.f32 %f3, %f3;
             add.f32 %f3, %f3, {One};
@@ -544,6 +548,21 @@ internal static partial class PtxKernels
             max.f32 %f5, %f1, {Zero};
             setp.gt.f32 %p6, %f1, {Zero};
             selp.f32 %f6, {One}, {Zero}, %p6;
+            bra ACT_DONE;
+            ACT_TANH:
+            mul.f32 %f9, %f1, {F(2.8853900817779268f)};
+            ex2.approx.ftz.f32 %f9, %f9;
+            add.f32 %f9, %f9, {One};
+            rcp.rn.f32 %f9, %f9;
+            fma.rn.f32 %f5, %f9, {F(-2f)}, {One};
+            mul.f32 %f6, %f5, %f5;
+            sub.f32 %f6, {One}, %f6;
+            mul.f32 %f3, %f2, {F(-1.4426950408889634f)};
+            ex2.approx.ftz.f32 %f3, %f3;
+            add.f32 %f3, %f3, {One};
+            rcp.rn.f32 %f2, %f3;
+            sub.f32 %f17, {One}, %f2;
+            mul.f32 %f17, %f17, %f2;
             ACT_DONE:
             """;
 
@@ -582,7 +601,8 @@ internal static partial class PtxKernels
             and.b32 %r6, %s_flags, 8;
             setp.eq.u32 %p8, %r6, 0;
             @%p8 ld.global.f32 %f16, [%a_dup];
-            fma.rn.f32 %f16, %f13, %f5, %f16;
+            mul.f32 %f18, %f5, %f17;
+            fma.rn.f32 %f16, %f13, %f18, %f16;
             st.global.f32 [%a_dup], %f16;
             NO_DUP:
             """);
@@ -712,7 +732,8 @@ internal static partial class PtxKernels
             and.b32 %r15, %s_flags, 8;
             setp.eq.u32 %p13, %r15, 0;
             @%p13 ld.global.f32 %f16, [%rd2];
-            fma.rn.f32 %f16, %f13, %f5, %f16;
+            mul.f32 %f18, %f5, %f17;
+            fma.rn.f32 %f16, %f13, %f18, %f16;
             st.global.f32 [%rd2], %f16;
             GB_NO_DUP:
             add.u32 %r11, %r11, 1;

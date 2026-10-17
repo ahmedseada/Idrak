@@ -1143,13 +1143,13 @@ public static class OperationKernels
 
     /// <summary>
     /// A kernel for <see cref="Ops.GatedActivation"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.
+    /// y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU, 3 = tanh(gate) · sigmoid(up) (the up side through its own function).
     /// </summary>
     public delegate void GatedActivation(Backend backend, Storage gate, Storage up, Storage y, int n, int kind);
 
     /// <summary>
     /// A kernel for <see cref="Ops.GatedActivationBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).
+    /// dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1 (kind 3: up read as sigmoid(up), and dup += dy · tanh(gate) · sigmoid'(up)); bits 2 and 3 write dgate and dup (= instead of +=).
     /// </summary>
     public delegate void GatedActivationBackward(Backend backend, Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags);
 
@@ -2317,13 +2317,13 @@ public static partial class Ops
         new("SoftmaxCrossEntropyRows", "SoftmaxCrossEntropyRowsKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Single", OperationIndex.SoftmaxCrossEntropyRows, typeof(OperationKernels.SoftmaxCrossEntropyRows), KernelSource.Host);
 
     /// <summary>
-    /// y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.
+    /// y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU, 3 = tanh(gate) · sigmoid(up) (the up side through its own function).
     /// </summary>
     public static readonly Operation GatedActivation =
         new("GatedActivation", "GatedActivationKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.GatedActivation, typeof(OperationKernels.GatedActivation), KernelSource.Host);
 
     /// <summary>
-    /// dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).
+    /// dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1 (kind 3: up read as sigmoid(up), and dup += dy · tanh(gate) · sigmoid'(up)); bits 2 and 3 write dgate and dup (= instead of +=).
     /// </summary>
     public static readonly Operation GatedActivationBackward =
         new("GatedActivationBackward", "GatedActivationBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GatedActivationBackward, typeof(OperationKernels.GatedActivationBackward), KernelSource.Host);

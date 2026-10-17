@@ -178,7 +178,7 @@ internal static class CpuMath
         }
     }
 
-    /// <summary>y = act(gate) · up for the gated activations (0: SiLU, 1: tanh GELU, else ReLU).</summary>
+    /// <summary>y = act(gate) · up for the gated activations (0: SiLU, 1: tanh GELU, 2: ReLU, 3: tanh(gate) · sigmoid(up)).</summary>
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static void Gated(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> y, int kind)
     {
@@ -195,6 +195,7 @@ internal static class CpuMath
             for (; i <= y.Length - Vector<float>.Count; i += Vector<float>.Count)
             {
                 var x = Vector.LoadUnsafe(ref g, (nuint)i);
+                var v = Vector.LoadUnsafe(ref u, (nuint)i);
                 Vector<float> a;
                 if (kind == 0)
                 {
@@ -205,25 +206,31 @@ internal static class CpuMath
                     var t = Tanh(k * Vector.FusedMultiplyAdd(c * x * x, x, x));
                     a = half * x * (one + t);
                 }
+                else if (kind == 3)
+                {
+                    a = Tanh(x);
+                    v = one / (one + Vector.Exp(-v));
+                }
                 else
                 {
                     a = Vector.Max(x, Vector<float>.Zero);
                 }
 
-                (a * Vector.LoadUnsafe(ref u, (nuint)i)).StoreUnsafe(ref o, (nuint)i);
+                (a * v).StoreUnsafe(ref o, (nuint)i);
             }
         }
 
         for (; i < y.Length; i++)
         {
-            float x = gate[i];
+            float x = gate[i], v = up[i];
             float a = kind switch
             {
                 0 => x / (1f + MathF.Exp(-x)),
                 1 => 0.5f * x * (1f + Tanh(0.7978845608f * (x + 0.044715f * x * x * x))),
+                3 => Tanh(x),
                 _ => x > 0f ? x : 0f,
             };
-            y[i] = a * up[i];
+            y[i] = a * (kind == 3 ? 1f / (1f + MathF.Exp(-v)) : v);
         }
     }
 }

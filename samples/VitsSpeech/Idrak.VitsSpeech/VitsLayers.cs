@@ -833,7 +833,7 @@ internal sealed class VitsWaveNet : IDisposable
                 h = h + VitsOps.ExpandColumns(conditioning.Narrow(0, i * 2 * _channels, 2 * _channels), t).Reshape(1, 2 * _channels, t);
             }
 
-            var acts = h.Narrow(1, 0, _channels).Tanh() * h.Narrow(1, _channels, _channels).Sigmoid();
+            var acts = Tensor.GatedActivation(h.Narrow(1, 0, _channels), h.Narrow(1, _channels, _channels), FeedForwardActivation.TanhSigmoid);   // one kernel each way
             var resSkip = _resSkip[i].Forward3(acts);
             if (i < _in.Length - 1)
             {
