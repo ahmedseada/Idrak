@@ -14,6 +14,15 @@ name in `VisionMetrics`); augmentations that move boxes and masks with the pixel
 jitter, cutout, mosaic, mixup, resize; Idrak.Imaging's flip and shift; by name in `Augmentations`), and `AugmentedImageLoader`,
 which batches augmented samples on worker threads while the model trains.
 
+## Layers
+
+`VisionTransformerEncoder` (plan 22): the vision transformer tower SigLIP, CLIP and towers trained from scratch share, built
+from a checkpoint's tensors under transformers' names (`FromTensors` with a prefix; the projections kept bfloat16 when the
+checkpoint stores them so, `EncoderWeights`), written back under them (`Tensors`, `Load`, `Expected`), each layer
+checkpointed while a trainer's `ActivationMemory.CheckpointBlocks()` scope is on (`ForwardTraining`); its shape is a
+`VisionTransformerConfig`, every value a setting. `PatchGrid.AveragePool` pools the patch grid a projector reads. The
+Gemma 3 and IdrakVision plug-ins build their towers from it.
+
 ## Contracts
 
 In `Idrak.Vision.Abstractions` (add the `using` line to name them): `IObjectDetector`, `ISegmenter`, `IRegionProposer`,

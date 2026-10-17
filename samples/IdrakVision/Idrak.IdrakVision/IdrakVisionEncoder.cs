@@ -3,6 +3,7 @@
 
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
+using Idrak.Vision;
 
 namespace Idrak.IdrakVision;
 
@@ -14,7 +15,7 @@ public sealed class IdrakVisionEncoder : Module, IVisionEncoder, IVisionEncoderS
 {
     private readonly ImageTokenLayout _layout;
 
-    internal IdrakVisionEncoder(IdrakVisionPart vision, IdrakVisionTower tower, IdrakVisionProjector projector, ImagePreprocessor preprocessor)
+    internal IdrakVisionEncoder(IdrakVisionPart vision, VisionTransformerEncoder tower, IdrakVisionProjector projector, ImagePreprocessor preprocessor)
     {
         Vision = vision;
         Tower = tower;
@@ -28,7 +29,7 @@ public sealed class IdrakVisionEncoder : Module, IVisionEncoder, IVisionEncoderS
     public IdrakVisionPart Vision { get; }
 
     /// <summary>The tower.</summary>
-    public IdrakVisionTower Tower { get; }
+    public VisionTransformerEncoder Tower { get; }
 
     /// <summary>The projector.</summary>
     public IdrakVisionProjector Projector { get; }

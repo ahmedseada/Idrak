@@ -9,6 +9,7 @@ using Idrak.Gemma3Vision;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
+using Idrak.Vision;
 
 // Gemma 3 4B's image side at its real sizes with random weights (SigLIP: 896 x 896, 4,096 patches, 27 layers of 1,152,
 // 16 heads, MLP 4,304; the projector to 256 tokens of 2,560), on each device IDRAK_DEVICES names (default the CPU):
@@ -47,7 +48,7 @@ internal static partial class Tests
         {
             var build = Stopwatch.StartNew();
             using var store = new RandomTensorStore(config, textDim: 2560);
-            using var encoder = SiglipVisionEncoder.FromTensors(config, store, device: device);
+            using var encoder = VisionTransformerEncoder.FromTensors(config.ToTransformer(), store, "vision.", device);
             using var projector = Gemma3Projector.FromTensors(store, config.Dim, 2560, poolSize: 4, normEpsilon: 1e-6f, device: device);
             Console.WriteLine($"{device}: {encoder}, {encoder.ParameterCount / 1e6:F0} M parameters, built in {build.Elapsed.TotalSeconds:F1} s");
             using var pixels = Tensor.From(RandomArray(new Random(5), 3 * 896 * 896), [1, 3, 896, 896], device);
@@ -83,7 +84,7 @@ internal static partial class Tests
     {
         var build = Stopwatch.StartNew();
         using var store = new RandomTensorStore(config, textDim: 2560);
-        using var encoder = SiglipVisionEncoder.FromTensors(config, store, device: device, weights: EncoderWeights.BFloat16);
+        using var encoder = VisionTransformerEncoder.FromTensors(config.ToTransformer(), store, "vision.", device, EncoderWeights.BFloat16);
         using var projector = Gemma3Projector.FromTensors(store, config.Dim, 2560, poolSize: 4, normEpsilon: 1e-6f, device: device, weights: EncoderWeights.BFloat16);
         Console.WriteLine($"{device}: {encoder} with bfloat16 projections, built in {build.Elapsed.TotalSeconds:F1} s; tensor cores: "
             + $"{MixedPrecision.TensorCoresUnavailable(device) ?? "yes"}");

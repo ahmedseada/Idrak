@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak.Imaging;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
+using Idrak.Vision;
 
 namespace Idrak.IdrakVision;
 
@@ -48,7 +49,7 @@ public sealed class IdrakVisionFamily : IVisionFamily
             throw new InvalidDataException($"mm_tokens_per_image {given}, but the vision_config pools {vision.PatchesPerSide} x {vision.PatchesPerSide} patches into {vision.TokensPerImage}.");
         }
 
-        var expected = IdrakVisionTower.Expected(vision, TowerPrefix).Concat(IdrakVisionProjector.Expected(vision, textDim, ProjectorPrefix)).ToList();
+        var expected = VisionTransformerEncoder.Expected(vision.ToTransformer(), TowerPrefix).Concat(IdrakVisionProjector.Expected(vision, textDim, ProjectorPrefix)).ToList();
         foreach (var (name, shape) in expected)
         {
             if (!checkpoint.Tensors.Contains(name))
@@ -92,7 +93,7 @@ public sealed class IdrakVisionFamily : IVisionFamily
         float std = (float?)vision["init_std"] ?? 0.02f;
         var random = new Random(seed ^ 0x5eed);
         var tensors = new List<(string, int[], float[])>();
-        foreach (var (name, shape) in IdrakVisionTower.Expected(config, TowerPrefix).Concat(IdrakVisionProjector.Expected(config, textDim, ProjectorPrefix)))
+        foreach (var (name, shape) in VisionTransformerEncoder.Expected(config.ToTransformer(), TowerPrefix).Concat(IdrakVisionProjector.Expected(config, textDim, ProjectorPrefix)))
         {
             int count = shape.Aggregate(1, (a, b) => a * b);
             var values = new float[count];
@@ -210,7 +211,7 @@ public sealed class IdrakVisionPart : PretrainedVision, IVisionTuningPart
     {
         var device = options?.Device ?? Device.Default;
         using var store = _open();
-        var tower = IdrakVisionTower.FromTensors(Config, store, IdrakVisionFamily.TowerPrefix, device);
+        var tower = VisionTransformerEncoder.FromTensors(Config.ToTransformer(), store, IdrakVisionFamily.TowerPrefix, device, EncoderWeights.Float32);
         try
         {
             var projector = IdrakVisionProjector.FromTensors(Config, Width, store, IdrakVisionFamily.ProjectorPrefix, device);

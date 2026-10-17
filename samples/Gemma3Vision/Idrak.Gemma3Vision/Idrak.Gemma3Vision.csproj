@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
     <PackageReference Include="Idrak.Imaging" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Vision" Version="$(IdrakVersion)" />
   </ItemGroup>
 
 </Project>

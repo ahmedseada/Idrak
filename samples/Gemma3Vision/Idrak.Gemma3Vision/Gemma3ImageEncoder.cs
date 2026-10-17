@@ -3,6 +3,7 @@
 
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
+using Idrak.Vision;
 
 namespace Idrak.Gemma3Vision;
 
@@ -22,7 +23,7 @@ public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderS
 {
     private readonly ImageTokenLayout _layout;
 
-    internal Gemma3ImageEncoder(Gemma3Vision vision, SiglipVisionEncoder encoder, Gemma3Projector projector, ImagePreprocessor preprocessor, Gemma3PanAndScan panAndScan)
+    internal Gemma3ImageEncoder(Gemma3Vision vision, VisionTransformerEncoder encoder, Gemma3Projector projector, ImagePreprocessor preprocessor, Gemma3PanAndScan panAndScan)
     {
         Vision = vision;
         Encoder = encoder;
@@ -37,7 +38,7 @@ public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderS
     public Gemma3Vision Vision { get; }
 
     /// <summary>The SigLIP encoder: pixel values to patch outputs [images, patches, vision width].</summary>
-    public SiglipVisionEncoder Encoder { get; }
+    public VisionTransformerEncoder Encoder { get; }
 
     /// <summary>The projector: patch outputs to soft-token embeddings [images, tokens per image, text width].</summary>
     public Gemma3Projector Projector { get; }

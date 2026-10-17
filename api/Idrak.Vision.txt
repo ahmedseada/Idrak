@@ -384,6 +384,9 @@ public sealed class Idrak.Vision.Mosaic : Idrak.Abstraction.Data.IAugmentation
 public static class Idrak.Vision.NonMaxSuppression
   public static System.Collections.Generic.List<Idrak.Vision.Abstractions.Detection> Apply(System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.Detection> detections, float iouThreshold = 0.5f, float minScore = 0f, bool perClass = true, int maxDetections = 2147483647)
 
+public static class Idrak.Vision.PatchGrid
+  public static Idrak.Abstraction.Tensor AveragePool(Idrak.Abstraction.Tensor x, int poolSize)
+
 public enum Idrak.Vision.Polarity : int
   Auto = 0
   DarkOnLight = 1
@@ -484,6 +487,50 @@ public sealed record Idrak.Vision.SegmentationScore : System.IEquatable<Idrak.Vi
   public double MeanAccuracy { get; init; }
   public double MeanIoU { get; init; }
   public double PixelAccuracy { get; init; }
+
+public sealed record Idrak.Vision.VisionTransformerConfig : System.IEquatable<Idrak.Vision.VisionTransformerConfig>
+  public Idrak.Vision.VisionTransformerConfig Checked()
+  public System.Func<Idrak.Abstraction.Module> ActivationFactory()
+  public VisionTransformerConfig()
+  public float LayerNormEpsilon { get; init; }
+  public int Channels { get; init; }
+  public int Dim { get; init; }
+  public int FfDim { get; init; }
+  public int HeadDim { get; }
+  public int Heads { get; init; }
+  public int ImageSize { get; init; }
+  public int Layers { get; init; }
+  public int PatchSize { get; init; }
+  public int Patches { get; }
+  public int PatchesPerSide { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> Activations { get; }
+  public string Activation { get; init; }
+
+public sealed class Idrak.Vision.VisionTransformerEncoder : Idrak.Abstraction.Module
+  public Idrak.Abstraction.Tensor Embed(Idrak.Abstraction.Tensor pixels)
+  public Idrak.Abstraction.Tensor ForwardTraining(Idrak.Abstraction.Tensor pixels, bool checkpointed)
+  public Idrak.Abstraction.Tensor PositionEmbedding { get; }
+  public Idrak.Layers.Conv2d Patches { get; }
+  public Idrak.Layers.LayerNorm PostNorm { get; }
+  public Idrak.Vision.VisionTransformerConfig Config { get; }
+  public System.Collections.Generic.IEnumerable<(string, int[], float[])> Tensors(string prefix)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Layers.TransformerEncoderLayer> Layers { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Vision.VisionTransformerLayerWeights> LayerWeights { get; }
+  public System.Collections.Generic.List<string> Load(string prefix, System.Collections.Generic.IReadOnlyDictionary<string, float[]> values)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Vision.VisionTransformerEncoder FromTensors(Idrak.Vision.VisionTransformerConfig config, Idrak.Abstraction.Formats.ITensorStore tensors, string prefix, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Generation.EncoderWeights weights = (Idrak.Abstraction.Generation.EncoderWeights)0)
+  public static System.Collections.Generic.IEnumerable<(string, int[])> Expected(Idrak.Vision.VisionTransformerConfig config, string prefix)
+
+public sealed record Idrak.Vision.VisionTransformerLayerWeights : System.IEquatable<Idrak.Vision.VisionTransformerLayerWeights>
+  public Idrak.Layers.LayerNorm Norm1 { get; init; }
+  public Idrak.Layers.LayerNorm Norm2 { get; init; }
+  public Idrak.Layers.Linear Fc1 { get; init; }
+  public Idrak.Layers.Linear Fc2 { get; init; }
+  public Idrak.Layers.Linear Output { get; init; }
+  public Idrak.Layers.Linear Qkv { get; init; }
+  public VisionTransformerLayerWeights(Idrak.Layers.LayerNorm Norm1, Idrak.Layers.Linear Qkv, Idrak.Layers.Linear Output, Idrak.Layers.LayerNorm Norm2, Idrak.Layers.Linear Fc1, Idrak.Layers.Linear Fc2)
 
 public sealed class Idrak.Vision.VocAveragePrecision : Idrak.Vision.Abstractions.IDetectionMetric, Idrak.Vision.Abstractions.IVisionMetric
   public System.Collections.Generic.IReadOnlyDictionary<string, double> Compute()
