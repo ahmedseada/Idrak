@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Numerics;
 using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
@@ -44,19 +45,8 @@ internal sealed partial class CpuBackend
             for (int r = start; r < end; r++)
             {
                 var xs = xv.AsSpan(r * cols, cols);
-                float mean = 0f;
-                foreach (float v in xs)
-                {
-                    mean += v;
-                }
-
-                mean /= cols;
-                float var = 0f;
-                foreach (float v in xs)
-                {
-                    var += (v - mean) * (v - mean);
-                }
-
+                float mean = RowSum(xs) / cols;
+                float var = RowSquaredDeviation(xs, mean);
                 sv[r] = mean;
                 sv[rows + r] = 1f / MathF.Sqrt(var / cols + eps);
             }
@@ -73,21 +63,8 @@ internal sealed partial class CpuBackend
             {
                 for (int r = start; r < end; r++)
                 {
-                    float mean = sv[r], rstd = sv[rows + r], s1 = 0f, s2 = 0f;
-                    for (int j = 0; j < cols; j++)
-                    {
-                        float xhat = (xv[r * cols + j] - mean) * rstd, g = dyv[r * cols + j] * gv[j];
-                        s1 += g;
-                        s2 += g * xhat;
-                    }
-
-                    s1 /= cols;
-                    s2 /= cols;
-                    for (int j = 0; j < cols; j++)
-                    {
-                        float xhat = (xv[r * cols + j] - mean) * rstd, g = dyv[r * cols + j] * gv[j];
-                        dxv[r * cols + j] += rstd * (g - s1 - xhat * s2);
-                    }
+                    float mean = sv[r], rstd = sv[rows + r];
+                    LayerNormInputGradient(xv.AsSpan(r * cols, cols), gv, dyv.AsSpan(r * cols, cols), dxv.AsSpan(r * cols, cols), mean, rstd);
                 }
             });
         }
@@ -149,26 +126,77 @@ internal sealed partial class CpuBackend
             {
                 var xs = xv.AsSpan(r * cols, cols);
                 var ys = yv.AsSpan(r * cols, cols);
-                float mean = 0f;
-                foreach (float v in xs)
-                {
-                    mean += v;
-                }
-
-                mean /= cols;
-                float var = 0f;
-                foreach (float v in xs)
-                {
-                    var += (v - mean) * (v - mean);
-                }
-
+                float mean = RowSum(xs) / cols;
+                float var = RowSquaredDeviation(xs, mean);
                 float inv = 1f / MathF.Sqrt(var / cols + eps);
-                for (int j = 0; j < cols; j++)
-                {
-                    ys[j] = (xs[j] - mean) * inv * gv[j] + bv[j];
-                }
+                NormalizeRow(xs, gv, bv, ys, mean, inv);
             }
         });
+    }
+
+    // y = (x − mean) · inv · gamma + beta over a row (SIMD, scalar tail).
+    private static void NormalizeRow(ReadOnlySpan<float> x, ReadOnlySpan<float> gamma, ReadOnlySpan<float> beta, Span<float> y, float mean, float inv)
+    {
+        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
+        var gv = MemoryMarshal.Cast<float, Vector<float>>(gamma);
+        var bv = MemoryMarshal.Cast<float, Vector<float>>(beta);
+        var yv = MemoryMarshal.Cast<float, Vector<float>>(y);
+        var m = new Vector<float>(mean);
+        var s = new Vector<float>(inv);
+        for (int i = 0; i < xv.Length; i++)
+        {
+            yv[i] = Vector.FusedMultiplyAdd((xv[i] - m) * s, gv[i], bv[i]);
+        }
+
+        for (int j = xv.Length * Vector<float>.Count; j < x.Length; j++)
+        {
+            y[j] = MathF.FusedMultiplyAdd((x[j] - mean) * inv, gamma[j], beta[j]);
+        }
+    }
+
+    // dx += rstd · (g − mean(g) − xhat · mean(g · xhat)) over a row, g = dy · gamma, xhat = (x − mean) · rstd (SIMD, scalar tail).
+    private static void LayerNormInputGradient(ReadOnlySpan<float> x, ReadOnlySpan<float> gamma, ReadOnlySpan<float> dy, Span<float> dx, float mean, float rstd)
+    {
+        int cols = x.Length;
+        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
+        var gv = MemoryMarshal.Cast<float, Vector<float>>(gamma);
+        var dyv = MemoryMarshal.Cast<float, Vector<float>>(dy);
+        var dxv = MemoryMarshal.Cast<float, Vector<float>>(dx);
+        var m = new Vector<float>(mean);
+        var r = new Vector<float>(rstd);
+        Vector<float> sum1 = default, sum2 = default;
+        for (int i = 0; i < xv.Length; i++)
+        {
+            var g = dyv[i] * gv[i];
+            sum1 += g;
+            sum2 = Vector.FusedMultiplyAdd(g, (xv[i] - m) * r, sum2);
+        }
+
+        float s1 = Vector.Sum(sum1), s2 = Vector.Sum(sum2);
+        int tail = xv.Length * Vector<float>.Count;
+        for (int j = tail; j < cols; j++)
+        {
+            float g = dy[j] * gamma[j];
+            s1 += g;
+            s2 = MathF.FusedMultiplyAdd(g, (x[j] - mean) * rstd, s2);
+        }
+
+        s1 /= cols;
+        s2 /= cols;
+        var v1 = new Vector<float>(s1);
+        var v2 = new Vector<float>(s2);
+        for (int i = 0; i < xv.Length; i++)
+        {
+            var g = dyv[i] * gv[i];
+            var xhat = (xv[i] - m) * r;
+            dxv[i] = Vector.FusedMultiplyAdd(r, g - v1 - xhat * v2, dxv[i]);
+        }
+
+        for (int j = tail; j < cols; j++)
+        {
+            float g = dy[j] * gamma[j], xhat = (x[j] - mean) * rstd;
+            dx[j] = MathF.FusedMultiplyAdd(rstd, g - s1 - xhat * s2, dx[j]);
+        }
     }
 
     public override void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols)

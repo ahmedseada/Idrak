@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Idrak.Benches</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Public surface only: what an app sees. A measurement the public API cannot take is a gap in the library's telemetry
+       (rule 78), not a reason to reach into internals. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Gpu\Idrak.Gpu.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Audio\Idrak.Audio.csproj" />
+    <ProjectReference Include="..\..\samples\VitsSpeech\Idrak.VitsSpeech\Idrak.VitsSpeech.csproj" />
+  </ItemGroup>
+
+</Project>

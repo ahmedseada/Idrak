@@ -285,6 +285,47 @@ internal sealed partial class CpuBackend
         }, chunksSummed: true);
     }
 
+    /// <summary>Σ x over a row: SIMD lanes added in a fixed order, then a scalar tail.</summary>
+    internal static float RowSum(ReadOnlySpan<float> x)
+    {
+        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
+        Vector<float> acc = default;
+        for (int i = 0; i < xv.Length; i++)
+        {
+            acc += xv[i];
+        }
+
+        float sum = Vector.Sum(acc);
+        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
+        {
+            sum += x[i];
+        }
+
+        return sum;
+    }
+
+    /// <summary>Σ (x − mean)² over a row (two passes keep the precision of a centred sum).</summary>
+    internal static float RowSquaredDeviation(ReadOnlySpan<float> x, float mean)
+    {
+        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
+        var m = new Vector<float>(mean);
+        Vector<float> acc = default;
+        for (int i = 0; i < xv.Length; i++)
+        {
+            var d = xv[i] - m;
+            acc = Vector.FusedMultiplyAdd(d, d, acc);
+        }
+
+        float sum = Vector.Sum(acc);
+        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
+        {
+            float d = x[i] - mean;
+            sum = MathF.FusedMultiplyAdd(d, d, sum);
+        }
+
+        return sum;
+    }
+
     private static (double Sum, double SumProduct) Moments(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
         var av = MemoryMarshal.Cast<float, Vector<float>>(a);
@@ -872,16 +913,20 @@ internal sealed partial class CpuBackend
                 for (int o = start; o < end; o++)
                 {
                     acc.Clear();
-                    if (inner < Vector<float>.Count)
+                    if (inner == 1)
                     {
-                        // Runs shorter than a vector (a sum along the last axis: one value each) add in place, in the same
-                        // order, without a call and two spans per value.
+                        // A sum along the last axis: the row's elements are contiguous, summed as one SIMD row.
+                        acc[0] = RowSum(xv.AsSpan(o * dim, dim));
+                    }
+                    else if (inner < Vector<float>.Count)
+                    {
+                        // Runs shorter than a vector add in place, in the same order, without a call and two spans per value.
                         for (int d = 0; d < dim; d++)
                         {
-                            var run = xv.AsSpan((o * dim + d) * inner, inner);
-                            for (int i = 0; i < run.Length; i++)
+                            int offset = (o * dim + d) * inner;
+                            for (int i = 0; i < inner; i++)
                             {
-                                acc[i] += run[i];
+                                acc[i] += xv[offset + i];
                             }
                         }
                     }
