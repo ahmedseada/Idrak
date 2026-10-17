@@ -32,6 +32,7 @@ public sealed record Idrak.Audio.Abstractions.AdversarialSynthesisOptions : Syst
   public int Mels { get; init; }
   public int SegmentFrames { get; init; }
   public static Idrak.Audio.Abstractions.AdversarialSynthesisOptions FromJson(System.Text.Json.Nodes.JsonObject json)
+  public string? DiscriminatorWeights { get; init; }
   public void Check()
 
 public sealed record Idrak.Audio.Abstractions.AudioAugmentationOptions : System.IEquatable<Idrak.Audio.Abstractions.AudioAugmentationOptions>

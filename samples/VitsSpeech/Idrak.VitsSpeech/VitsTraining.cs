@@ -199,6 +199,27 @@ internal sealed class VitsTraining : IDisposable
             using var reader = SafeTensorsReader.Open(Path.Combine(folder, VitsDiscriminators.WeightsFile));
             _discriminators = new VitsDiscriminators(saved, reader, _model.Device);
         }
+        else if (options.DiscriminatorWeights is { } file)
+        {
+            // Trained discriminators to start from: Idrak's discriminator.safetensors (its discriminator.json beside it), or
+            // the original VITS and MMS releases' D_*.pth under their weight_g and weight_v names (VITS's own shapes).
+            if (!File.Exists(file))
+            {
+                throw new FileNotFoundException($"No discriminators file {file} (AdversarialSynthesisOptions.DiscriminatorWeights).", file);
+            }
+
+            string configPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file))!, VitsDiscriminators.ConfigFile);
+            var config = asked ?? (File.Exists(configPath) ? VitsDiscriminatorConfig.FromJson(JsonNode.Parse(File.ReadAllText(configPath))!.AsObject()) : new VitsDiscriminatorConfig());
+            using ITensorStore store = PyTorchCheckpointReader.IsCheckpoint(file) ? PyTorchCheckpointReader.Open(file) : SafeTensorsReader.Open(file);
+            try
+            {
+                _discriminators = new VitsDiscriminators(config, store, _model.Device);
+            }
+            catch (InvalidDataException e)
+            {
+                throw new InvalidDataException($"{file} does not hold discriminators of {config.ToJson().ToJsonString()}: {e.Message}", e);
+            }
+        }
         else
         {
             _discriminators = VitsDiscriminators.Create(asked ?? new VitsDiscriminatorConfig(), _model.Device, seed);
