@@ -73,7 +73,7 @@ internal sealed class VitsTextEncoder : IDisposable
         private readonly Tensor? _relKParameter, _relVParameter, _zeroRow;      // training: the relative embeddings [2w + 1, d] as parameters, and a zero row [1, d]
         private readonly LayerNorm _norm, _finalNorm;
         private readonly Conv1d _conv1, _conv2;
-        private readonly ConcurrentDictionary<int, (float[] RelToAbs, float[] AbsToRel, float[] RelK, float[] RelV, float[] Offsets)> _byLength = new();
+        private readonly ConcurrentDictionary<int, (float[] RelK, float[] RelV, float[] Offsets)> _byLength = new();
 
         public Layer(VitsWeights weights, string prefix, VitsConfig config)
         {
@@ -134,20 +134,44 @@ internal sealed class VitsTextEncoder : IDisposable
             {
                 var relK = RelativeTable(_relKParameter, tables.RelK, tables.Offsets, t, d, x.Device);
                 var relative = q.MatMul(relK, transposeB: true);                    // [h, T, 2T - 1]: query i against offset r - (T - 1)
-                var bias = relative.Reshape(h * t * (2 * t - 1), 1).EmbeddingLookup(Tensor.From(tables.RelToAbs, [h * t * t], x.Device)).Reshape(h, t, t);
-                scores = scores + bias;
+                scores = scores + RelativeToAbsolute(relative, h, t, x.Device);
             }
 
             var probs = scores.Softmax();
             var output = probs.MatMul(v);                                            // [h, T, d]
             if (_relV is not null)
             {
-                var table = Tensor.Concat([probs.Reshape(h * t * t, 1), Tensor.Zeros([1, 1], x.Device)], 0);
-                var relativeProbs = table.EmbeddingLookup(Tensor.From(tables.AbsToRel, [h * t * (2 * t - 1)], x.Device)).Reshape(h, t, 2 * t - 1);
-                output = output + relativeProbs.MatMul(RelativeTable(_relVParameter, tables.RelV, tables.Offsets, t, d, x.Device));
+                output = output + AbsoluteToRelative(probs, h, t, x.Device).MatMul(RelativeTable(_relVParameter, tables.RelV, tables.Offsets, t, d, x.Device));
             }
 
             return _out.Forward(output.Permute(1, 0, 2).Reshape(t, c));
+        }
+
+        // [h, T, 2T - 1] by offset (r = j - i + T - 1) to [h, T, T] by key, and back (zeros where a key falls outside), with
+        // VITS's padding and reshapes: each value moves once, so the backward pass is slices and padding (no gather's
+        // scatter over h·T² positions, and no index table sent to the device each call).
+        private static Tensor RelativeToAbsolute(Tensor x, int h, int t, Device device)
+        {
+            if (t == 1)
+            {
+                return x;
+            }
+
+            var padded = Tensor.Concat([x, Tensor.Zeros([h, t, 1], device)], 2);                                    // [h, T, 2T]
+            var flat = Tensor.Concat([padded.Reshape(h, 2 * t * t), Tensor.Zeros([h, t - 1], device)], 1);         // [h, 2T² + T - 1]
+            return flat.Reshape(h, t + 1, 2 * t - 1).Narrow(1, 0, t).Narrow(2, t - 1, t);
+        }
+
+        private static Tensor AbsoluteToRelative(Tensor x, int h, int t, Device device)
+        {
+            if (t == 1)
+            {
+                return x;
+            }
+
+            var padded = Tensor.Concat([x, Tensor.Zeros([h, t, t - 1], device)], 2);                                // [h, T, 2T - 1]
+            var flat = Tensor.Concat([Tensor.Zeros([h, t], device), padded.Reshape(h, t * (2 * t - 1))], 1);       // [h, 2T²]
+            return flat.Reshape(h, t, 2 * t).Narrow(2, 1, 2 * t - 1);
         }
 
         // The relative embeddings [2T - 1, d] for T queries: the host's slices when speaking; when training, the parameters'
@@ -157,30 +181,10 @@ internal sealed class VitsTextEncoder : IDisposable
                 ? Tensor.From(host, [2 * t - 1, d], device)
                 : Tensor.Concat([parameter, _zeroRow!], 0).EmbeddingLookup(Tensor.From(offsets, [offsets.Length], device));
 
-        // The gather indices and the relative embeddings for T queries: offset r in [0, 2T - 2] is key j = i + r - (T - 1).
-        private (float[] RelToAbs, float[] AbsToRel, float[] RelK, float[] RelV, float[] Offsets) BuildTables(int t)
+        // The relative embeddings for T queries: offset r in [0, 2T - 2] is key j = i + r - (T - 1).
+        private (float[] RelK, float[] RelV, float[] Offsets) BuildTables(int t)
         {
             int h = _config.Heads, w = _config.WindowSize, d = _config.HiddenSize / h, offsets = 2 * t - 1;
-            var relToAbs = new float[h * t * t];
-            var absToRel = new float[h * t * offsets];
-            int zeroSlot = h * t * t;
-            for (int head = 0; head < h; head++)
-            {
-                for (int i = 0; i < t; i++)
-                {
-                    for (int j = 0; j < t; j++)
-                    {
-                        relToAbs[(head * t + i) * t + j] = (head * t + i) * offsets + (j - i + t - 1);
-                    }
-
-                    for (int r = 0; r < offsets; r++)
-                    {
-                        int j = i + r - (t - 1);
-                        absToRel[(head * t + i) * offsets + r] = j >= 0 && j < t ? (head * t + i) * t + j : zeroSlot;
-                    }
-                }
-            }
-
             var relK = new float[offsets * d];
             var relV = new float[offsets * d];
             var rows = new float[offsets];
@@ -195,7 +199,7 @@ internal sealed class VitsTextEncoder : IDisposable
                 }
             }
 
-            return (relToAbs, absToRel, relK, relV, rows);
+            return (relK, relV, rows);
         }
 
         private Tensor FeedForward(Tensor x)
