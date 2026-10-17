@@ -600,7 +600,8 @@ internal static partial class Tests
             Check(whole.Notes.Any(n => n.Contains("1 utterances give fewer steps than their labels need", StringComparison.Ordinal)), $"the dropped row is noted: {string.Join("; ", whole.Notes)}");
             var steps = reports.Where(r => r.Stage == "step").ToList();
             Check(steps.Select(r => r.Step).SequenceEqual(Enumerable.Range(1, 6)) && steps[^1].Remaining == TimeSpan.Zero && steps.Any(r => r.Epoch == 2)
-                && steps[2].Remaining > TimeSpan.Zero && steps.All(r => r.MicroBatchSeconds == 3), "progress after every step, the time left, an epoch boundary crossed");
+                && steps[2].Remaining > TimeSpan.Zero && steps.All(r => r.MicroBatchSeconds == 3) && steps.All(r => r.BatchAudioSeconds > 0),
+                "progress after every step, the time left, the step's audio seconds, an epoch boundary crossed");
             foreach (int step in new[] { 2, 4, 6 })
             {
                 Check(File.Exists(Path.Combine(root, "run-a", $"checkpoint-{step}", SpeechTrainer.StateFile)), $"checkpoint-{step} holds its state");

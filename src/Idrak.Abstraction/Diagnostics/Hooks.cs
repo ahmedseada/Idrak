@@ -127,6 +127,10 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
         _out.WriteLine($"Device {e.Device} {e.Operation} runs on the host: the device has no kernel of its own for it here, so each call copies its operands to the CPU and back");
 
     /// <inheritdoc />
+    public void OnTuning(in TuningCompleted e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Device {e.Device} tuned {e.Operation}: {e.Candidates} candidates in {e.Duration.TotalMilliseconds:F0} ms (once per shape class)"));
+
+    /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) =>
         _out.WriteLine($"Override {e.Registry}/{e.Slot} ({e.Implementation}, {e.Origin}) threw {e.Exception.GetType().Name}: {e.Exception.Message}; "
             + (e.FellBack ? "the library default answered" : "the error reached the caller") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
@@ -306,6 +310,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnHostFallback(in HostFallback e) => Write(e);
 
     /// <inheritdoc />
+    public void OnTuning(in TuningCompleted e) => Write(e);
+
+    /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) => Write(e);
 
     /// <inheritdoc />
@@ -374,6 +381,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnHostFallback(in HostFallback e) => _channel.OnHostFallback(in e);
+
+    /// <inheritdoc />
+    public void OnTuning(in TuningCompleted e) => _channel.OnTuning(in e);
 
     /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) => _channel.OnOverrideFailed(in e);
@@ -544,6 +554,13 @@ public static class TelemetryJson
                 w.WriteString("event", "host_fallback");
                 w.WriteString("device", e.Device);
                 w.WriteString("operation", e.Operation);
+                break;
+            case TuningCompleted e:
+                w.WriteString("event", "tuning");
+                w.WriteString("device", e.Device);
+                w.WriteString("operation", e.Operation);
+                w.WriteNumber("candidates", e.Candidates);
+                w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
                 break;
             case OverrideFailed e:
                 w.WriteString("event", "override_failed");

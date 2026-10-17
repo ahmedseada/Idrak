@@ -458,6 +458,18 @@ public abstract partial class Backend
         }
     }
 
+    /// <summary>
+    /// Reports a tuning this device measured (<see cref="TuningCompleted"/>: <paramref name="operation"/> at a new shape
+    /// class, <paramref name="candidates"/> choices timed in <paramref name="duration"/>) to telemetry, while someone listens.
+    /// </summary>
+    protected void TuningMeasured(string operation, int candidates, TimeSpan duration)
+    {
+        if (Telemetry.IsEnabled(TelemetryLevel.Devices))
+        {
+            Telemetry.Tuning(new TuningCompleted(Kind, operation, candidates, duration));
+        }
+    }
+
     // The kernel registered for an operation on this device, or null for the device's own (off the fast path: counted
     // when traced).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

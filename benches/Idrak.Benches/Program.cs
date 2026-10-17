@@ -17,7 +17,9 @@
 //   infer-decoder  a decoder decoding token by token: tokens a second, launches a token, the key/value cache's memory
 //   train-speech   a speech synthesizer's adversarial training step (the plug-in's VITS; IDRAK_BENCH_MODEL names the
 //                  model folder, default the tiny fixture under tests/; IDRAK_BENCH_CLIPS a folder of clips, default
-//                  synthetic ones): ms a step, launches a step by operation, peak memory, at one and several clips
+//                  synthetic ones): one cold step then IDRAK_BENCH_CALLS timed ones, each listed with the device tuning
+//                  in it; the fastest timed step's seconds and audio, launches a step by operation, peak memory, at one
+//                  and several clips
 //   memory         stress: the pool over thousands of varied shapes (rule 77: device memory does not grow), long
 //                  sequences, the largest batch the device takes before it runs out
 //

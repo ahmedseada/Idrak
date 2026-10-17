@@ -43,7 +43,8 @@ public enum TelemetryLevel
 
     /// <summary>
     /// Device failures (<see cref="DeviceFailed"/>): a GPU error, and an operation retried on the CPU; and the first host
-    /// fallback of each operation on a device (<see cref="HostFallback"/>). Rare; the built-in
+    /// fallback of each operation on a device (<see cref="HostFallback"/>); and each tuning a device measured
+    /// (<see cref="TuningCompleted"/>: once per shape class, where a run's early steps spend their time). Rare; the built-in
     /// <see cref="ConsoleLogger"/> and <see cref="JsonLinesLogger"/> always include it.
     /// </summary>
     Devices = 1 << 8,
@@ -133,6 +134,11 @@ public interface ITelemetryHook
 
     /// <summary>An operation ran through the host fallback on a device for the first time (<see cref="TelemetryLevel.Devices"/>).</summary>
     void OnHostFallback(in HostFallback e)
+    {
+    }
+
+    /// <summary>A device measured an operation's candidates at a new shape class and kept the fastest (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnTuning(in TuningCompleted e)
     {
     }
 
@@ -361,6 +367,17 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnHostFallback(in e);
+            }
+        }
+    }
+
+    internal static void Tuning(in TuningCompleted e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnTuning(in e);
             }
         }
     }
