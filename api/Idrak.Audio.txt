@@ -777,6 +777,11 @@ public static class Idrak.Audio.Abstractions.VoiceStores
   public static string? Origin(string name)
   public static void Register(Idrak.Audio.Abstractions.IVoiceStore store)
 
+public static class Idrak.Audio.AdversarialLosses
+  public static Idrak.Abstraction.Tensor FeatureMatching(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>> realMaps, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>> madeMaps)
+  public static Idrak.Abstraction.Tensor LeastSquaresDiscriminator(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> real, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> made)
+  public static Idrak.Abstraction.Tensor LeastSquaresGenerator(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> made)
+
 public static class Idrak.Audio.AdversarialSynthesisTrainer
   public const string DiscriminatorOptimizerFile = "discriminator-optimizer.safetensors"
   public const string Objective = "adversarial"
@@ -837,6 +842,10 @@ public sealed record Idrak.Audio.CtcPath : System.IEquatable<Idrak.Audio.CtcPath
   public int[] Frames { get; init; }
   public int[] Lengths { get; init; }
   public int[] Starts { get; init; }
+
+public static class Idrak.Audio.DifferentiableLogMel
+  public static Idrak.Abstraction.Tensor Compute(Idrak.Abstraction.Tensor sound, Idrak.Abstraction.Tensor basis, Idrak.Abstraction.Tensor melFilters, int size, int hop)
+  public static float[] Basis(int size, System.ReadOnlySpan<float> window)
 
 public sealed class Idrak.Audio.DurationSynthesisObjective : Idrak.Audio.Abstractions.ISpeechSynthesisObjective
   public DurationSynthesisObjective()
@@ -905,6 +914,101 @@ public sealed class Idrak.Audio.GriffinLimVocoder : Idrak.Audio.Abstractions.IVo
   public static float[] MelPseudoInverse(Idrak.Audio.Abstractions.AudioFeatureOptions options)
   public string Name { get; }
 
+public sealed record Idrak.Audio.Layers.HifiGanDiscriminatorConfig : System.IEquatable<Idrak.Audio.Layers.HifiGanDiscriminatorConfig>
+  public HifiGanDiscriminatorConfig()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public float LeakyReluSlope { get; init; }
+  public int PeriodKernel { get; init; }
+  public int PeriodStride { get; init; }
+  public int PoolKernel { get; init; }
+  public int PoolPadding { get; init; }
+  public int PoolStride { get; init; }
+  public int PostKernel { get; init; }
+  public int Scales { get; init; }
+  public int[] PeriodChannels { get; init; }
+  public int[] Periods { get; init; }
+  public int[] ScaleChannels { get; init; }
+  public int[] ScaleGroups { get; init; }
+  public int[] ScaleKernels { get; init; }
+  public int[] ScaleStrides { get; init; }
+  public static Idrak.Audio.Layers.HifiGanDiscriminatorConfig FromJson(System.Text.Json.Nodes.JsonObject json)
+
+public sealed class Idrak.Audio.Layers.HifiGanDiscriminators : System.IDisposable
+  public (System.Collections.Generic.List<Idrak.Abstraction.Tensor>, System.Collections.Generic.List<System.Collections.Generic.List<Idrak.Abstraction.Tensor>>) Forward(Idrak.Abstraction.Tensor sound)
+  public HifiGanDiscriminators(Idrak.Audio.Layers.HifiGanDiscriminatorConfig config, Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Device device)
+  public Idrak.Audio.Layers.HifiGanDiscriminatorConfig Config { get; }
+  public Idrak.Models.ParameterSet Module { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Layers.WeightNorm> Normed { get; }
+  public const string ConfigFile = "discriminator.json"
+  public const string WeightsFile = "discriminator.safetensors"
+  public override string ToString()
+  public static Idrak.Audio.Layers.HifiGanDiscriminators Create(Idrak.Audio.Layers.HifiGanDiscriminatorConfig config, Idrak.Abstraction.Device device, int seed)
+  public void Dispose()
+  public void Save(string folder)
+
+public sealed class Idrak.Audio.Layers.HifiGanGenerator : Idrak.Abstraction.Module
+  public HifiGanGenerator(Idrak.Layers.Conv1d pre, Idrak.Layers.Conv1d? conditioning, System.Collections.Generic.IReadOnlyList<Idrak.Layers.ConvTranspose1d> upsamplers, System.Collections.Generic.IReadOnlyList<Idrak.Audio.Layers.HifiGanResidualBlock> blocks, Idrak.Layers.Conv1d post, int kernelsPerStage, float slope, float finalSlope, int hop, int contextFrames)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor latents, Idrak.Abstraction.Tensor? speaker)
+  public float[] Samples(Idrak.Abstraction.Tensor latents, Idrak.Abstraction.Tensor? speaker, int chunkFrames)
+  public int ContextFrames { get; }
+  public int Hop { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Audio.Layers.HifiGanGenerator FromStored(Idrak.Models.StoredLayers stored, string prefix, int flowSize, int initialChannels, System.Collections.Generic.IReadOnlyList<int> upsampleRates, System.Collections.Generic.IReadOnlyList<int> upsampleKernels, System.Collections.Generic.IReadOnlyList<int> resblockKernels, System.Collections.Generic.IReadOnlyList<int[]> resblockDilations, float slope, float finalSlope, int conditioningSize)
+  public static int ContextFramesFor(System.Collections.Generic.IReadOnlyList<int> upsampleRates, System.Collections.Generic.IReadOnlyList<int> upsampleKernels, System.Collections.Generic.IReadOnlyList<int> resblockKernels, System.Collections.Generic.IReadOnlyList<int[]> resblockDilations)
+
+public sealed class Idrak.Audio.Layers.HifiGanResidualBlock : Idrak.Abstraction.Module
+  public HifiGanResidualBlock(System.Collections.Generic.IReadOnlyList<Idrak.Layers.Conv1d> convs1, System.Collections.Generic.IReadOnlyList<Idrak.Layers.Conv1d> convs2, float slope)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor x, bool release)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Audio.Layers.HifiGanResidualBlock FromStored(Idrak.Models.StoredLayers stored, string prefix, int channels, int kernel, System.Collections.Generic.IReadOnlyList<int> dilations, float slope)
+
+public sealed class Idrak.Audio.Layers.PosteriorEncoder : Idrak.Abstraction.Module
+  public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) Stats(Idrak.Abstraction.Tensor spectrogram, Idrak.Abstraction.Tensor? speaker)
+  public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) Stats(Idrak.Abstraction.Tensor spectrograms, Idrak.Abstraction.Tensor? speaker, Idrak.Layers.PaddedSequences? mask)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor spectrogram, Idrak.Abstraction.Tensor? speaker, float noiseScale, System.Random random)
+  public PosteriorEncoder(Idrak.Layers.Conv1d pre, Idrak.Audio.Layers.WaveNet waveNet, Idrak.Layers.Conv1d proj, int flowSize)
+  public int FlowSize { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Audio.Layers.PosteriorEncoder FromStored(Idrak.Models.StoredLayers stored, string prefix, int bins, int hidden, int flowSize, int waveNetLayers, int kernel, int dilationRate, int conditioningSize)
+
+public sealed class Idrak.Audio.Layers.ResidualCouplingBlock : Idrak.Abstraction.Module
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor z, Idrak.Abstraction.Tensor? speaker)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor z, Idrak.Abstraction.Tensor? speaker, Idrak.Layers.PaddedSequences? mask)
+  public Idrak.Abstraction.Tensor Reverse(Idrak.Abstraction.Tensor z, Idrak.Abstraction.Tensor? speaker)
+  public ResidualCouplingBlock(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Layers.ResidualCouplingLayer> layers)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Layers.ResidualCouplingLayer> Layers { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Audio.Layers.ResidualCouplingBlock FromStored(Idrak.Models.StoredLayers stored, string prefix, int flows, int channels, int hidden, int waveNetLayers, int kernel, int dilationRate, int conditioningSize)
+
+public sealed class Idrak.Audio.Layers.ResidualCouplingLayer : Idrak.Abstraction.Module
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor z, Idrak.Abstraction.Tensor? speaker, Idrak.Layers.PaddedSequences? mask)
+  public Idrak.Abstraction.Tensor Reverse(Idrak.Abstraction.Tensor z, Idrak.Abstraction.Tensor? speaker)
+  public ResidualCouplingLayer(Idrak.Layers.Conv1d pre, Idrak.Audio.Layers.WaveNet waveNet, Idrak.Layers.Conv1d post, int half)
+  public int Half { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Audio.Layers.ResidualCouplingLayer FromStored(Idrak.Models.StoredLayers stored, string prefix, int channels, int hidden, int waveNetLayers, int kernel, int dilationRate, int conditioningSize)
+
+public sealed class Idrak.Audio.Layers.WaveNet : Idrak.Abstraction.Module
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor x, Idrak.Abstraction.Tensor? speaker)
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor x, Idrak.Abstraction.Tensor? speaker, Idrak.Layers.PaddedSequences? mask)
+  public WaveNet(int channels, System.Collections.Generic.IReadOnlyList<Idrak.Layers.Conv1d> inLayers, System.Collections.Generic.IReadOnlyList<Idrak.Layers.Conv1d> resSkipLayers, Idrak.Layers.Conv1d? conditioning)
+  public int Channels { get; }
+  public int Layers { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Audio.Layers.WaveNet FromStored(Idrak.Models.StoredLayers stored, string prefix, int channels, int layers, int kernel, int dilationRate, int conditioningSize)
+
 public static class Idrak.Audio.LengthRegulation
   public static (Idrak.Abstraction.Tensor, int[]) Expand(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int[]> durations)
   public static (int[], int[]) Rows(System.Collections.Generic.IReadOnlyList<int[]> durations, int length)
@@ -924,6 +1028,10 @@ public sealed class Idrak.Audio.LogMelFeatures : Idrak.Audio.Abstractions.IAudio
 public static class Idrak.Audio.MelFilterbank
   public static Idrak.Abstraction.Tensor Tensor(Idrak.Audio.Abstractions.AudioFeatureOptions options, Idrak.Abstraction.Device device)
   public static float[] Build(Idrak.Audio.Abstractions.AudioFeatureOptions options)
+
+public static class Idrak.Audio.MonotonicAlignment
+  public static int[] Durations(System.ReadOnlySpan<int> path, int tokens)
+  public static int[] Search(System.ReadOnlySpan<float> scores, int frames, int tokens)
 
 public sealed record Idrak.Audio.ResampleOptions : System.IEquatable<Idrak.Audio.ResampleOptions>
   public ResampleOptions()

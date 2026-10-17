@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Abstraction.Diagnostics;
+using Idrak.Audio.Layers;
+using Idrak.Models;
 
 namespace Idrak.OpenVoice;
 
@@ -15,23 +17,24 @@ namespace Idrak.OpenVoice;
 public sealed class OpenVoiceConverter : IVoiceConverter
 {
     private readonly OpenVoiceReferenceEncoder _reference;
-    private readonly VitsPosteriorEncoder _posterior;
-    private readonly VitsFlow _flow;
-    private readonly HifiGanDecoder _decoder;
+    private readonly PosteriorEncoder _posterior;
+    private readonly ResidualCouplingBlock _flow;
+    private readonly HifiGanGenerator _decoder;
     private readonly AudioFeatureOptions _spectrum;
     private bool _disposed;
 
-    internal OpenVoiceConverter(VitsWeights weights, OpenVoiceConfig config, string? folder, List<string> notes)
+    internal OpenVoiceConverter(StoredLayers weights, OpenVoiceConfig config, string? folder, List<string> notes)
     {
         Config = config;
         Folder = folder;
         Notes = notes;
         Device = weights.Device;
-        var vits = config.ToVits();
         _reference = new OpenVoiceReferenceEncoder(weights, config);
-        _posterior = new VitsPosteriorEncoder(weights, vits);
-        _flow = new VitsFlow(weights, vits);
-        _decoder = new HifiGanDecoder(weights, vits);
+        _posterior = PosteriorEncoder.FromStored(weights, "posterior_encoder", config.Bins, config.HiddenChannels, config.InterChannels, config.PosteriorLayers,
+            config.WaveNetKernelSize, 1, config.GinChannels);
+        _flow = Flow(weights, config);
+        _decoder = HifiGanGenerator.FromStored(weights, "decoder", config.InterChannels, config.UpsampleInitialChannel, config.UpsampleRates, config.UpsampleKernelSizes,
+            config.ResblockKernelSizes, config.ResblockDilationSizes, config.LeakyReluSlope, config.FinalLeakyReluSlope, config.GinChannels);
         _spectrum = new AudioFeatureOptions
         {
             SampleRate = config.SamplingRate,
@@ -41,6 +44,10 @@ public sealed class OpenVoiceConverter : IVoiceConverter
             Center = false,
         };
     }
+
+    /// <summary>The flow of <paramref name="config"/> (<see cref="ResidualCouplingBlock"/>: its couplings' WaveNets conditioned on the embedding, dilation 1) from <paramref name="weights"/>.</summary>
+    internal static ResidualCouplingBlock Flow(StoredLayers weights, OpenVoiceConfig config) =>
+        ResidualCouplingBlock.FromStored(weights, "flow", config.Flows, config.InterChannels, config.HiddenChannels, config.FlowLayers, config.WaveNetKernelSize, 1, config.GinChannels);
 
     /// <summary>The checkpoint's configuration.</summary>
     public OpenVoiceConfig Config { get; }

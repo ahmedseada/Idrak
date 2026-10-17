@@ -8,8 +8,8 @@ using Idrak.Models;
 namespace Idrak.OpenVoice;
 
 /// <summary>
-/// An OpenVoice checkpoint's tensors under the names the VITS plug-in's layers read (transformers' VITS names), so its
-/// WaveNet, flow and HiFi-GAN decoder load them unchanged: <c>posterior_encoder.conv_pre</c> is OpenVoice's
+/// An OpenVoice checkpoint's tensors under the names the library's layers read (transformers' VITS names), so the
+/// WaveNet, flow and HiFi-GAN generator load them unchanged (<c>FromStored</c>): <c>posterior_encoder.conv_pre</c> is OpenVoice's
 /// <c>enc_q.pre</c>, coupling <c>i</c> of <c>flow.flows</c> is <c>flow.flows.{2i}</c> (the flips between take the odd
 /// indices), <c>decoder.upsampler</c> is <c>dec.ups</c>. A <c>.weight</c> stored weight-normed (<c>.weight_g</c> and
 /// <c>.weight_v</c>) is read folded. Other names (the reference encoder's) pass through.

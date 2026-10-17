@@ -1,20 +1,19 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Formats;
-using Idrak.Models;
 using Idrak.Layers;
+using Idrak.Models;
 
-namespace Idrak.VitsSpeech;
+namespace Idrak.Audio.Layers;
 
 /// <summary>
 /// The discriminators' shapes (a model folder's discriminator.json): VITS's multi-period discriminator by default (one
 /// scale discriminator, one per period 2, 3, 5, 7, 11, at its widths); <see cref="Scales"/> above 1 adds HiFi-GAN's
 /// multi-scale discriminators, each reading the sound average-pooled once more. Every value is a setting.
 /// </summary>
-public sealed record VitsDiscriminatorConfig
+public sealed record HifiGanDiscriminatorConfig
 {
     /// <summary>The periods of the period discriminators (the sound folded into rows of this many samples).</summary>
     public int[] Periods { get; init; } = [2, 3, 5, 7, 11];
@@ -69,11 +68,11 @@ public sealed record VitsDiscriminatorConfig
 
     /// <summary>A description from its JSON; a key missing keeps the default.</summary>
     /// <exception cref="InvalidDataException">A list is not one, the scale lists differ in length, or a size is not positive.</exception>
-    public static VitsDiscriminatorConfig FromJson(JsonObject json)
+    public static HifiGanDiscriminatorConfig FromJson(JsonObject json)
     {
         ArgumentNullException.ThrowIfNull(json);
-        var d = new VitsDiscriminatorConfig();
-        var c = new VitsDiscriminatorConfig
+        var d = new HifiGanDiscriminatorConfig();
+        var c = new HifiGanDiscriminatorConfig
         {
             Periods = List(json, "periods", d.Periods),
             PeriodChannels = List(json, "period_channels", d.PeriodChannels),
@@ -116,14 +115,15 @@ public sealed record VitsDiscriminatorConfig
 }
 
 /// <summary>
-/// The discriminators VITS trains its generator against (its multi-period discriminator: a scale discriminator of
-/// grouped convolutions over the sound and period discriminators of (k, 1) convolutions over the sound folded into rows
-/// of a period; more scales read it average-pooled, as HiFi-GAN's multi-scale discriminator), every convolution
-/// weight-normed and followed by a leaky ReLU. Each gives its scores and the feature maps of each layer (the
-/// feature-matching loss compares them). Stored as discriminator.safetensors under VITS's names
-/// (<c>discriminators.{i}.convs.{j}</c>, <c>discriminators.{i}.conv_post</c>; the scales first) with discriminator.json.
+/// The discriminators a HiFi-GAN or VITS generator trains against (VITS's multi-period discriminator: a scale
+/// discriminator of grouped convolutions over the sound and period discriminators of (k, 1) convolutions over the sound
+/// folded into rows of a period; more scales read it average-pooled, as HiFi-GAN's multi-scale discriminator), every
+/// convolution weight-normed and followed by a leaky ReLU. Each gives its scores and the feature maps of each layer (the
+/// feature-matching loss compares them, <see cref="AdversarialLosses"/>). Stored as discriminator.safetensors under
+/// VITS's names (<c>discriminators.{i}.convs.{j}</c>, <c>discriminators.{i}.conv_post</c>; the scales first) with
+/// discriminator.json; a release's <c>D_*.pth</c> reads under its <c>weight_g</c> and <c>weight_v</c> names.
 /// </summary>
-internal sealed class VitsDiscriminators : IDisposable
+public sealed class HifiGanDiscriminators : IDisposable
 {
     /// <summary>The weights' file in a model folder.</summary>
     public const string WeightsFile = "discriminator.safetensors";
@@ -131,42 +131,48 @@ internal sealed class VitsDiscriminators : IDisposable
     /// <summary>The description's file in a model folder.</summary>
     public const string ConfigFile = "discriminator.json";
 
-    /// <summary>The weight-normed filters of the discriminators' layers (bound for a step's half).</summary>
-    internal IReadOnlyList<WeightNorm> Normed => _weights.Normed;
-
     private readonly Stack[] _scales, _periods;
-    private readonly VitsWeights _weights;
+    private readonly StoredLayers _stored;
 
-    public VitsDiscriminators(VitsDiscriminatorConfig config, ITensorStore store, Device device)
+    /// <summary>The discriminators of <paramref name="config"/> read from <paramref name="store"/> onto <paramref name="device"/>, to be trained.</summary>
+    /// <exception cref="InvalidDataException">A tensor is missing or not of the configuration's shape.</exception>
+    public HifiGanDiscriminators(HifiGanDiscriminatorConfig config, ITensorStore store, Device device)
     {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(store);
         Config = config;
-        _weights = new VitsWeights(store, device, trainable: true);
+        _stored = new StoredLayers(store, device, trainable: true);
         _scales = new Stack[config.Scales];
         for (int s = 0; s < config.Scales; s++)
         {
-            _scales[s] = Stack.Scale(_weights, $"discriminators.{s}", config);
+            _scales[s] = Stack.Scale(_stored, $"discriminators.{s}", config);
         }
 
         _periods = new Stack[config.Periods.Length];
         for (int p = 0; p < _periods.Length; p++)
         {
-            _periods[p] = Stack.Period(_weights, $"discriminators.{config.Scales + p}", config, config.Periods[p]);
+            _periods[p] = Stack.Period(_stored, $"discriminators.{config.Scales + p}", config);
         }
 
-        Module = new VitsParameterSet("VITS discriminators", _weights.Trained);
+        Module = new ParameterSet("HiFi-GAN discriminators", _stored.Trained);
     }
 
-    public VitsDiscriminatorConfig Config { get; }
+    /// <summary>The shapes.</summary>
+    public HifiGanDiscriminatorConfig Config { get; }
 
     /// <summary>The trained tensors (what the discriminators' optimizer steps).</summary>
-    public VitsParameterSet Module { get; }
+    public ParameterSet Module { get; }
+
+    /// <summary>The weight-normed filters of the discriminators' layers (bound for a step's half, <see cref="WeightNorm"/>).</summary>
+    public IReadOnlyList<WeightNorm> Normed => _stored.Normed;
 
     /// <summary>
     /// New discriminators of <paramref name="config"/>: each convolution's directions and bias drawn as PyTorch's
     /// default does (uniform within 1 / √fan-in), its gains the directions' norms (weight_norm's start), from <paramref name="seed"/>.
     /// </summary>
-    public static VitsDiscriminators Create(VitsDiscriminatorConfig config, Device device, int seed)
+    public static HifiGanDiscriminators Create(HifiGanDiscriminatorConfig config, Device device, int seed)
     {
+        ArgumentNullException.ThrowIfNull(config);
         var random = new Random(seed);
         var tensors = new TensorDictionary();
         void Draw(string prefix, int[] shape)
@@ -222,7 +228,7 @@ internal sealed class VitsDiscriminators : IDisposable
             Draw($"discriminators.{i}.conv_post", [1, c, config.PostKernel, 1]);
         }
 
-        return new VitsDiscriminators(config, tensors, device);
+        return new HifiGanDiscriminators(config, tensors, device);
     }
 
     /// <summary>
@@ -231,6 +237,12 @@ internal sealed class VitsDiscriminators : IDisposable
     /// </summary>
     public (List<Tensor> Scores, List<List<Tensor>> Maps) Forward(Tensor sound)
     {
+        ArgumentNullException.ThrowIfNull(sound);
+        if (sound.Rank != 2)
+        {
+            throw new ArgumentException($"The discriminators read sound as [B, L], got {Tensor.FormatShape(sound.Shape)}.", nameof(sound));
+        }
+
         int batch = sound.Shape[0];
         var scores = new List<Tensor>(_scales.Length + _periods.Length);
         var maps = new List<List<Tensor>>(scores.Capacity);
@@ -252,7 +264,7 @@ internal sealed class VitsDiscriminators : IDisposable
         foreach (var (stack, period) in _periods.Zip(Config.Periods))
         {
             int length = sound.Shape[1], padded = (length + period - 1) / period * period;
-            var folded = sound.Pad(1, 0, padded - sound.Shape[1], PaddingMode.Reflect).Reshape(batch, 1, padded / period, period);
+            var folded = sound.Pad(1, 0, padded - length, PaddingMode.Reflect).Reshape(batch, 1, padded / period, period);
             var (score, map) = stack.Forward(folded, Config.LeakyReluSlope);
             scores.Add(score);
             maps.Add(map);
@@ -264,46 +276,50 @@ internal sealed class VitsDiscriminators : IDisposable
     /// <summary>Writes discriminator.safetensors and discriminator.json into <paramref name="folder"/>.</summary>
     public void Save(string folder)
     {
-        SafeTensorsWriter.Write(Path.Combine(folder, WeightsFile), _weights.Trained.Select(p => (p.Name, p.Stored, p.Values())), SafeTensorType.F32);
-        File.WriteAllText(Path.Combine(folder, ConfigFile), Config.ToJson().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n");
+        ArgumentException.ThrowIfNullOrEmpty(folder);
+        SafeTensorsWriter.Write(Path.Combine(folder, WeightsFile), _stored.Trained.Select(p => (p.Name, p.Stored, p.Values())), SafeTensorType.F32);
+        File.WriteAllText(Path.Combine(folder, ConfigFile), Config.ToJson().ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
     }
 
+    /// <summary>Disposes the layers.</summary>
     public void Dispose()
     {
         foreach (var s in _scales) s.Dispose();
         foreach (var p in _periods) p.Dispose();
     }
 
-    // One discriminator: its convolutions, each followed by the leaky ReLU, and the output convolution; [1, C, H, W] in.
+    /// <inheritdoc />
+    public override string ToString() => $"HifiGanDiscriminators({_scales.Length} scales, periods {string.Join(", ", Config.Periods)})";
+
+    // One discriminator: its convolutions, each followed by the leaky ReLU, and the output convolution; [B, 1, H, W] in.
     private sealed class Stack(Conv1d[] convs, Conv1d post) : IDisposable
     {
-        public static Stack Scale(VitsWeights weights, string prefix, VitsDiscriminatorConfig c)
+        public static Stack Scale(StoredLayers stored, string prefix, HifiGanDiscriminatorConfig c)
         {
             var convs = new Conv1d[c.ScaleChannels.Length];
             int channels = 1;
             for (int j = 0; j < convs.Length; j++)
             {
                 int k = c.ScaleKernels[j];
-                convs[j] = weights.Conv2($"{prefix}.convs.{j}", channels, c.ScaleChannels[j], (1, k), (1, c.ScaleStrides[j]), (0, (k - 1) / 2), (1, 1), c.ScaleGroups[j]);
+                convs[j] = stored.Conv2($"{prefix}.convs.{j}", channels, c.ScaleChannels[j], (1, k), (1, c.ScaleStrides[j]), (0, (k - 1) / 2), (1, 1), c.ScaleGroups[j]);
                 channels = c.ScaleChannels[j];
             }
 
-            return new Stack(convs, weights.Conv2($"{prefix}.conv_post", channels, 1, (1, c.PostKernel), (1, 1), (0, (c.PostKernel - 1) / 2), (1, 1)));
+            return new Stack(convs, stored.Conv2($"{prefix}.conv_post", channels, 1, (1, c.PostKernel), (1, 1), (0, (c.PostKernel - 1) / 2), (1, 1)));
         }
 
-        public static Stack Period(VitsWeights weights, string prefix, VitsDiscriminatorConfig c, int period)
+        public static Stack Period(StoredLayers stored, string prefix, HifiGanDiscriminatorConfig c)
         {
-            _ = period;
             var convs = new Conv1d[c.PeriodChannels.Length];
             int channels = 1, k = c.PeriodKernel;
             for (int j = 0; j < convs.Length; j++)
             {
                 int stride = j < convs.Length - 1 ? c.PeriodStride : 1;
-                convs[j] = weights.Conv2($"{prefix}.convs.{j}", channels, c.PeriodChannels[j], (k, 1), (stride, 1), ((k - 1) / 2, 0), (1, 1));
+                convs[j] = stored.Conv2($"{prefix}.convs.{j}", channels, c.PeriodChannels[j], (k, 1), (stride, 1), ((k - 1) / 2, 0), (1, 1));
                 channels = c.PeriodChannels[j];
             }
 
-            return new Stack(convs, weights.Conv2($"{prefix}.conv_post", channels, 1, (c.PostKernel, 1), (1, 1), ((c.PostKernel - 1) / 2, 0), (1, 1)));
+            return new Stack(convs, stored.Conv2($"{prefix}.conv_post", channels, 1, (c.PostKernel, 1), (1, 1), ((c.PostKernel - 1) / 2, 0), (1, 1)));
         }
 
         public (Tensor Score, List<Tensor> Maps) Forward(Tensor x, float slope)
@@ -311,7 +327,7 @@ internal sealed class VitsDiscriminators : IDisposable
             var maps = new List<Tensor>(convs.Length + 1);
             foreach (var conv in convs)
             {
-                x = VitsOps.LeakyRelu(conv.Forward(x), slope);
+                x = AudioLayerOps.LeakyRelu(conv.Forward(x), slope);
                 maps.Add(x);
             }
 

@@ -25,6 +25,14 @@ public static class Checkpointing
     internal static bool FirstPass => t_firstPass > 0;
 
     /// <summary>
+    /// <paramref name="forward"/>(<paramref name="input"/>) checkpointed when <see cref="ActivationMemory.CheckpointsBlocks"/>
+    /// holds on this thread and gradients are recorded, else run as it is: what a module made of blocks of its own calls for
+    /// each block, so a trainer's checkpointing scope reaches it.
+    /// </summary>
+    public static Tensor RunBlock(Func<Tensor, Tensor> forward, Tensor input) =>
+        ActivationMemory.CheckpointsBlocks && Autograd.IsEnabled ? Checkpoint(forward, input) : forward(input);
+
+    /// <summary>
     /// <paramref name="forward"/>(input) without storing its intermediate results (activation checkpointing): the
     /// forward pass runs without recording, and the backward pass runs it again with recording, back-propagates through
     /// it and frees it at once. Parameters used inside receive their gradients then. Memory drops to the checkpointed

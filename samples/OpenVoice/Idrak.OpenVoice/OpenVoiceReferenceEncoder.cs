@@ -19,7 +19,7 @@ internal sealed class OpenVoiceReferenceEncoder : IDisposable
     private readonly GRU _gru;
     private readonly Linear _proj;
 
-    public OpenVoiceReferenceEncoder(VitsWeights weights, OpenVoiceConfig config)
+    public OpenVoiceReferenceEncoder(StoredLayers weights, OpenVoiceConfig config)
     {
         int bins = config.Bins;
         if (weights.Contains("ref_enc.layernorm.weight"))
@@ -33,13 +33,7 @@ internal sealed class OpenVoiceReferenceEncoder : IDisposable
         for (int i = 0; i < filters.Length; i++)
         {
             string prefix = $"ref_enc.convs.{i}";
-            string g = prefix + ".weight_g", v = prefix + ".weight_v";
-            if (!weights.Contains(v))
-            {
-                g = prefix + ".parametrizations.weight.original0";
-                v = prefix + ".parametrizations.weight.original1";
-            }
-
+            var (g, v) = weights.WeightNormNames(prefix) ?? throw new InvalidDataException($"'{prefix}' is not stored weight-normed (weight_g and weight_v, or parametrizations.weight.original0 and original1).");
             var shape = weights.Shape(v);
             if (shape is not [var o, var c, 3, 3] || o != filters[i] || c != inChannels)
             {

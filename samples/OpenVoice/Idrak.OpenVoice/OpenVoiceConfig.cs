@@ -69,6 +69,12 @@ public sealed record OpenVoiceConfig
     /// <summary>The WaveNets' kernel (OpenVoice's model code: 5).</summary>
     public int WaveNetKernelSize { get; init; } = 5;
 
+    /// <summary>The leaky ReLU slope inside the decoder (OpenVoice's model code: 0.1; config.json's "leaky_relu_slope" when present).</summary>
+    public float LeakyReluSlope { get; init; } = 0.1f;
+
+    /// <summary>The slope of the decoder's last leaky ReLU (PyTorch's default, 0.01; config.json's "final_leaky_relu_slope" when present).</summary>
+    public float FinalLeakyReluSlope { get; init; } = 0.01f;
+
     /// <summary>The reference encoder's convolution filters (OpenVoice's model code: 32, 32, 64, 64, 128, 128).</summary>
     public int[] ReferenceFilters { get; init; } = [32, 32, 64, 64, 128, 128];
 
@@ -112,6 +118,8 @@ public sealed record OpenVoiceConfig
             UpsampleRates = Ints(model, "upsample_rates", d.UpsampleRates),
             UpsampleInitialChannel = Int(model, "upsample_initial_channel", d.UpsampleInitialChannel),
             UpsampleKernelSizes = Ints(model, "upsample_kernel_sizes", d.UpsampleKernelSizes),
+            LeakyReluSlope = model["leaky_relu_slope"] is JsonValue slope ? (float)slope.GetValue<double>() : d.LeakyReluSlope,
+            FinalLeakyReluSlope = model["final_leaky_relu_slope"] is JsonValue finalSlope ? (float)finalSlope.GetValue<double>() : d.FinalLeakyReluSlope,
         };
         if (result.Resblock != "1")
         {
@@ -130,26 +138,6 @@ public sealed record OpenVoiceConfig
 
         return result;
     }
-
-    /// <summary>The same shapes as the VITS plug-in's configuration, for its layers.</summary>
-    public VitsConfig ToVits() => new()
-    {
-        HiddenSize = HiddenChannels,
-        FlowSize = InterChannels,
-        SpeakerEmbeddingSize = GinChannels,
-        UpsampleInitialChannel = UpsampleInitialChannel,
-        UpsampleRates = UpsampleRates,
-        UpsampleKernelSizes = UpsampleKernelSizes,
-        ResblockKernelSizes = ResblockKernelSizes,
-        ResblockDilationSizes = ResblockDilationSizes,
-        PriorFlows = Flows,
-        PriorWaveNetLayers = FlowLayers,
-        PosteriorWaveNetLayers = PosteriorLayers,
-        WaveNetKernelSize = WaveNetKernelSize,
-        WaveNetDilationRate = 1,
-        SpectrogramBins = Bins,
-        SamplingRate = SamplingRate,
-    };
 
     private static int Int(JsonObject section, string key, int fallback) => section[key] is JsonValue v ? v.GetValue<int>() : fallback;
 

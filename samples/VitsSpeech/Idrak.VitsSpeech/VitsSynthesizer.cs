@@ -6,6 +6,8 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Audio;
+using Idrak.Audio.Layers;
+using Idrak.Models;
 
 namespace Idrak.VitsSpeech;
 
@@ -19,15 +21,15 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
 {
     private readonly VitsTextEncoder _encoder;
     private readonly IVitsDurationPredictor _durations;
-    private readonly VitsFlow _flow;
-    private readonly HifiGanDecoder _decoder;
-    private readonly VitsPosteriorEncoder? _posterior;                           // training: the spectrogram's latents
+    private readonly ResidualCouplingBlock _flow;
+    private readonly HifiGanGenerator _decoder;
+    private readonly PosteriorEncoder? _posterior;                               // training: the spectrogram's latents
     private readonly VitsTraining? _training;
     private readonly Tensor? _speakers;                                          // [speakers, E]
     private readonly string[] _voices;
     private bool _disposed;
 
-    internal VitsSynthesizer(VitsWeights weights, VitsConfig config, VitsTokenizer tokenizer, List<string> notes, string? folder = null, Func<ITensorStore>? open = null)
+    internal VitsSynthesizer(StoredLayers weights, VitsConfig config, VitsTokenizer tokenizer, List<string> notes, string? folder = null, Func<ITensorStore>? open = null)
     {
         Config = config;
         Tokenizer = tokenizer;
@@ -39,8 +41,10 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
         _durations = config.StochasticDurations
             ? new VitsStochasticDurationPredictor(weights, config)
             : new VitsDeterministicDurationPredictor(weights, config);
-        _flow = new VitsFlow(weights, config);
-        _decoder = new HifiGanDecoder(weights, config);
+        _flow = ResidualCouplingBlock.FromStored(weights, "flow", config.PriorFlows, config.FlowSize, config.HiddenSize, config.PriorWaveNetLayers, config.WaveNetKernelSize,
+            config.WaveNetDilationRate, config.SpeakerEmbeddingSize);
+        _decoder = HifiGanGenerator.FromStored(weights, "decoder", config.FlowSize, config.UpsampleInitialChannel, config.UpsampleRates, config.UpsampleKernelSizes,
+            config.ResblockKernelSizes, config.ResblockDilationSizes, config.LeakyReluSlope, config.FinalLeakyReluSlope, config.SpeakerEmbeddingSize);
         if (config.SpeakerEmbeddingSize > 0 && config.Speakers > 1)
         {
             _speakers = weights.Tensor("embed_speaker.weight", config.Speakers, config.SpeakerEmbeddingSize);
@@ -54,7 +58,8 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
         Vocoder = new DecoderVocoder(this);
         if (weights.Trainable)
         {
-            _posterior = new VitsPosteriorEncoder(weights, config);
+            _posterior = PosteriorEncoder.FromStored(weights, "posterior_encoder", config.SpectrogramBins, config.HiddenSize, config.FlowSize, config.PosteriorWaveNetLayers,
+                config.WaveNetKernelSize, config.WaveNetDilationRate, config.SpeakerEmbeddingSize);
             _training = new VitsTraining(this, weights);
         }
     }
@@ -68,11 +73,11 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
 
     internal IVitsDurationPredictor StochasticDurations => _durations;
 
-    internal VitsFlow Flow => _flow;
+    internal ResidualCouplingBlock Flow => _flow;
 
-    internal HifiGanDecoder Decoder => _decoder;
+    internal HifiGanGenerator Decoder => _decoder;
 
-    internal VitsPosteriorEncoder Posterior => _posterior ?? throw NotTrainable();
+    internal PosteriorEncoder Posterior => _posterior ?? throw NotTrainable();
 
     /// <summary>Whether the model was loaded to be trained (<see cref="SpeechSynthesisLoadOptions.Training"/>).</summary>
     public bool Trainable => _training is not null;
@@ -344,7 +349,7 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
             var noise = new float[frames * Config.FlowSize];
             for (int i = 0; i < noise.Length; i++)
             {
-                noise[i] = (float)VitsNoise.Normal(random);
+                noise[i] = (float)random.NextGaussian();
             }
 
             prior = prior + Tensor.From(noise, [frames, Config.FlowSize], Device) * logVariances.EmbeddingLookup(indices).Exp() * noiseScale;

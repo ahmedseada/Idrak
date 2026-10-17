@@ -30,6 +30,19 @@ inside a piece, `PadSeconds` of silence kept on both sides, a piece over `MaxSec
 and "seconds" (pieces of a fixed length) built in; `AudioSplitOptions` holds every setting. `SpeechSynthesisOptions` and
 `VoiceConversionOptions` gained `DecoderSeconds` (the decoder's piece for one call; null: the model's own setting).
 
+Layers (`Idrak.Audio.Layers`, plan 22): the generative speech layers the VITS and OpenVoice plug-ins used to carry,
+each built from a checkpoint by a `FromStored` factory over `StoredLayers` (transformers' tensor names, a prefix per
+part) or from the library's layers directly: `WaveNet` (gated residual layers with global conditioning, the tanh ·
+sigmoid gate one kernel), `ResidualCouplingLayer` and `ResidualCouplingBlock` (mean-only affine coupling flows, `Forward`
+and `Reverse`), `PosteriorEncoder` (a spectrogram's latents' means and log-stddevs), `HifiGanResidualBlock` and
+`HifiGanGenerator` (`Samples` decodes long latents in pieces with `ContextFrames` of context, so device memory follows the
+piece), `HifiGanDiscriminators` with `HifiGanDiscriminatorConfig` (VITS's multi-period and HiFi-GAN's multi-scale
+discriminators, created from a seed or read from `discriminator.safetensors` or a release's `D_*.pth`, saved back). With
+them `AdversarialLosses` (the least-squares GAN losses and feature matching), `MonotonicAlignment` (the search and its
+durations, on the host in float as VITS adds) and `DifferentiableLogMel` (the log-mel of sound as tensor operations, so a
+mel loss reaches the generator). A padded batch goes through them with `PaddedSequences` masks; each block the trainer
+may checkpoint runs through `Checkpointing.RunBlock`, so `ActivationMemory.CheckpointBlocks()` reaches it.
+
 Cleaning: `AudioCleaners`, a registry of `IAudioCleaner` stages a recording goes through before it is used, with
 "highpass" (a second-order Butterworth high-pass: DC and rumble out), "denoise" (spectral gating: each frequency's noise
 floor read from its quietest frames and gated off through the STFT and back, at most `DenoiseFloorDecibels`), "trim"

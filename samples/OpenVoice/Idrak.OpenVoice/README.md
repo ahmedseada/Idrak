@@ -26,11 +26,11 @@ var (audio, stats) = voiced.Speak("مرحبا، أنا إدراك", new SpeechSy
 |---|---|---|
 | Spectrogram (`OpenVoiceConverter.Spectrogram`) | reflect padding of (n_fft − hop) / 2, `Stft.Power` (not centred, periodic Hann), √(power + 1e-6) | OpenVoice's `spectrogram_torch`; `win_length` must equal `filter_length` (it does in OpenVoice's checkpoints) |
 | Reference encoder (`OpenVoiceReferenceEncoder`) | `LayerNorm` over the bins, six weight-normed `Conv2d` 3 × 3 stride 2 + ReLU, `Permute` and flatten, the core `GRU` (PyTorch's gates through `LoadGateWeights`), `Linear` | the embedding of several clips is the mean of theirs; a clip longer than 1.5 × `EmbedSeconds` (10 s, a setting) is embedded in windows and averaged, as OpenVoice's se_extractor splits its references, so memory stays bounded |
-| Posterior encoder | the VITS plug-in's `VitsPosteriorEncoder` (pointwise `Conv2d`, a 16-layer WaveNet, a projection) | noise of `VoiceConversionOptions.Tau` (0.3) around the means, seeded |
-| Flow | the VITS plug-in's `VitsFlow`: `Forward` with the source's embedding, `Reverse` with the target's | 4 couplings of 4 WaveNet layers, OpenVoice's model code |
-| Decoder | the VITS plug-in's `HifiGanDecoder` | resblock "1" only ("2" is refused) |
+| Posterior encoder | the library's `PosteriorEncoder` (Idrak.Audio.Layers: a pointwise `Conv1d`, a 16-layer `WaveNet`, a projection) | noise of `VoiceConversionOptions.Tau` (0.3) around the means, seeded |
+| Flow | the library's `ResidualCouplingBlock`: `Forward` with the source's embedding, `Reverse` with the target's | 4 couplings of 4 WaveNet layers, OpenVoice's model code |
+| Decoder | the library's `HifiGanGenerator` (its slopes `leaky_relu_slope` 0.1 and `final_leaky_relu_slope` 0.01, settings) | resblock "1" only ("2" is refused) |
 
-`OpenVoiceTensors` reads OpenVoice's tensor names under the VITS names (`enc_q.pre` as `posterior_encoder.conv_pre`,
+`OpenVoiceTensors` reads OpenVoice's tensor names under the transformers VITS names the library's `FromStored` factories take (`enc_q.pre` as `posterior_encoder.conv_pre`,
 coupling `i` as `flow.flows.{2i}`, `dec.ups` as `decoder.upsampler`) and folds weight norm (`weight_g`, `weight_v`) where a
 plain `.weight` is read. A v2 checkpoint (`zero_g` true) gives the posterior encoder and the decoder a zero embedding;
 v1 gives them the source's and the target's. OpenVoice's audio watermark is not added.
@@ -66,8 +66,8 @@ safetensors copy instead, `tools/audio/convert_openvoice.py` still writes one (i
 ## Installing a voice and speaking with it
 
 `idrak voice` adds, lists, shows, removes, exports and imports voices, and `idrak speak --voice` speaks with one
-(`-v` prints the cold and warm timings and the peak device memory). The plug-in is given with `-P`; its folder holds
-the VITS plug-in it builds on too. `samples/OpenVoice/voice.cs` is the prototype these commands match.
+(`-v` prints the cold and warm timings and the peak device memory). The plug-in is given with `-P` (it needs only
+Idrak and Idrak.Audio beside it). `samples/OpenVoice/voice.cs` is the prototype these commands match.
 
 ```powershell
 cd D:\Projects\Idrak
