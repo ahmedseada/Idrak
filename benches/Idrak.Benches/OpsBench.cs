@@ -72,7 +72,8 @@ internal static class OpsBench
                 {
                     for (int c = 0; c < calls; c++)
                     {
-                        var result = op(tracked);
+                        // The result freed with its loss each call, so the calls reuse one block instead of each taking a new one.
+                        using var result = op(tracked);
                         using var loss = result.Sum();
                         loss.Backward();
                         tracked.ReleaseGrad();
