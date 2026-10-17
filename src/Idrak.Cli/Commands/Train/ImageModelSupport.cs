@@ -206,7 +206,7 @@ internal sealed class MeasuredBatches(Device device, int? ceiling)
                 if (!_measured)
                 {
                     long perItem = Math.Max(1, (backend.GetMemoryUsage().Peak - before) / n);
-                    _fits = backend.AvailableMemory() is { } free ? (int)Math.Clamp(free / 2 / perItem, 1, int.MaxValue) : null;
+                    _fits = backend.AvailableMemory() is { } free ? (int)Math.Clamp((long)(free * ComputeResources.WorkspaceShare) / perItem, 1, int.MaxValue) : null;
                     _measured = true;
                 }
 

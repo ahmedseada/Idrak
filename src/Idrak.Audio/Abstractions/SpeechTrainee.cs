@@ -66,6 +66,27 @@ internal abstract class SpeechTrainee
     {
     }
 
+    // The bytes the trainee's parameters take (the network's and any of its own, such as discriminators): what the
+    // optimizers' state is sized by.
+    public virtual long ParameterBytes => Network.Parameters().Sum(p => (long)p.Size) * sizeof(float);
+
+    // One micro-batch through a step's passes, forward and backward, without an optimizer step, its gradients released
+    // after: the memory probe an automatic batch is sized by (SpeechTrainingOptions.BatchSeconds 0).
+    public virtual void Probe(ISpeechReader reader, SpeechTrainer.Prepared[] group, SpeechTrainingOptions options, SpeechForwardOptions forward)
+    {
+        using (var scope = new TensorScope())
+        using (var precision = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
+        {
+            var loss = Loss(reader, SpeechTrainer.Padded(group, this), group, forward);
+            loss.Backward();
+        }
+
+        foreach (var parameter in Network.Parameters())
+        {
+            parameter.ReleaseGrad();
+        }
+    }
+
     // One optimizer step over the step's micro-batches (`step` counts from 1): each micro-batch's mean loss, scaled by its
     // utterances' share of the step, backward; then the optimizer's step. Returns the step's mean loss.
     public virtual double Step(ISpeechReader reader, IReadOnlyList<SpeechTrainer.Prepared[]> groups, Optimizer optimizer, SpeechTrainingOptions options,

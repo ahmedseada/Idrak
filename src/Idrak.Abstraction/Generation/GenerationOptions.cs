@@ -40,7 +40,7 @@ public sealed record GenerationOptions
     /// <summary>Context window in tokens; the model's own context length caps it.</summary>
     public int NumCtx { get; init; } = 2048;
 
-    /// <summary>Maximum tokens to generate; -1 means until a stop sequence or <c>TextGenerator.MaxTokens</c>.</summary>
+    /// <summary>Maximum tokens to generate; -1 means until a stop sequence or the context window is full.</summary>
     public int NumPredict { get; init; } = -1;
 
     /// <summary>Generation ends when the text contains any of these; the stop text itself is not returned.</summary>

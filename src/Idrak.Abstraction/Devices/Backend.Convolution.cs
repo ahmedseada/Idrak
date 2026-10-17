@@ -13,14 +13,14 @@ namespace Idrak.Abstraction.Devices;
 // offset); otherwise in one piece, as before these operations existed.
 public abstract partial class Backend
 {
-    // Images per chunk: all of them unless the patches of all would not fit (see above).
+    // Images per chunk: all of them unless the patches of all would not fit the workspace share of the free memory (see above).
     private int ConvolutionChunk(in ConvGeometry g)
     {
         long perImage = Math.Max(1L, (long)g.OH * g.OW * g.PatchSize);
         long limit = int.MaxValue;
         if (perImage * g.N > int.MaxValue / 4 && AvailableMemory() is long free && free > 0)
         {
-            limit = Math.Min(limit, free / 2 / sizeof(float));
+            limit = Math.Min(limit, (long)(free * ComputeResources.WorkspaceShare) / sizeof(float));
         }
 
         return (int)Math.Clamp(limit / perImage, 1, Math.Max(1, g.N));

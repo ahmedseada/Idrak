@@ -79,7 +79,7 @@ public static class TokenFileWriter
 
         int width = options.Type == TokenType.UInt16 ? 2 : 4;
         long documents = 0, tokens = 0, bytes = 0;
-        var parallel = new ParallelOptions { MaxDegreeOfParallelism = options.Workers > 0 ? options.Workers : Environment.ProcessorCount, CancellationToken = cancellationToken };
+        var parallel = new ParallelOptions { MaxDegreeOfParallelism = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads, CancellationToken = cancellationToken };
         string? folder = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(output));
         if (folder is not null)
         {

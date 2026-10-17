@@ -313,7 +313,6 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public bool KeepCache { get; set; }
   public bool ReuseDecoding { get; set; }
   public bool SupportsBatches { get; }
-  public const int MaxTokens = 4096
   public int ContextLength { get; }
   public void ReleaseCache()
 
@@ -691,6 +690,9 @@ public sealed class Idrak.Layers.ChannelNormalize : Idrak.Abstraction.Module
   public int Channels { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
   public override string ToString()
+
+public static class Idrak.Layers.Checkpointing
+  public static Idrak.Abstraction.Tensor Checkpoint(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> forward, Idrak.Abstraction.Tensor input)
 
 public sealed class Idrak.Layers.Conv2d : Idrak.Abstraction.Module
   public Conv2d(int inChannels, int outChannels, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)

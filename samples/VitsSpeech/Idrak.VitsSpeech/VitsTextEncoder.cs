@@ -71,7 +71,8 @@ internal sealed class VitsTextEncoder : IDisposable
 
         foreach (var layer in _layers)
         {
-            x = layer.Forward(x, batch, t, mask);
+            var current = layer;
+            x = VitsCheckpoints.Run(h => current.Forward(h, batch, t, mask), x);
         }
 
         var stats = _project.Forward(x);                                         // [B·T, 2F]

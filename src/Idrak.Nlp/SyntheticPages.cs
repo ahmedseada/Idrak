@@ -432,7 +432,7 @@ public static class SyntheticPages
         bool jpeg = options.ImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase);
         var encoder = jpeg ? null : ImageEncoders.Get(options.ImageFormat);
         string extension = jpeg ? ".jpg" : encoder!.Extensions.First();
-        int workers = options.Workers > 0 ? options.Workers : Environment.ProcessorCount;
+        int workers = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads;
 
         var watch = Stopwatch.StartNew();
         var skips = new List<string>();

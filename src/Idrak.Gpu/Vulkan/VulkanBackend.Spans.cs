@@ -248,7 +248,12 @@ internal sealed partial class VulkanBackend
         return chosen == 1;
     }
 
-    // What the device reports holding no live tensors: the storage heap less what is in use (Vulkan reports no free
-    // memory of its own without the memory-budget extension; blocks kept in the pool count as available).
-    public override long? AvailableMemory() => StorageHeapBytes > 0 ? Math.Max(0, StorageHeapBytes - _memory.Usage.InUse) : null;
+    // What the device reports holding no live tensors: the storage heap less what is in use and less the reserve kept for
+    // the display and other programs (ComputeResources.GpuMemoryReserve, else a sixteenth of the heap, at least 256 MiB, as
+    // the CUDA and HIP devices keep); Vulkan reports no free memory of its own without the memory-budget extension, and
+    // blocks kept in the pool count as available.
+    public override long? AvailableMemory() => StorageHeapBytes > 0 ? Math.Max(0, StorageHeapBytes - _memory.Usage.InUse - MemoryReserve) : null;
+
+    /// <summary>Memory kept free on this device (ComputeResources.GpuMemoryReserve, else a sixteenth of the storage heap, at least 256 MiB).</summary>
+    internal long MemoryReserve => ComputeResources.GpuMemoryReserve ?? Math.Max(256L << 20, StorageHeapBytes / 16);
 }

@@ -666,6 +666,8 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |
 | `IDRAK_MATMUL`, `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Matrix product precision; spilling to system memory; where a token table lives (auto, host, device) |
 | `IDRAK_GPU_CHUNK_MB`, `IDRAK_GPU_STACK_BYTES` | The chunks long-lived GPU blocks share (0: off); each GPU thread's stack |
+| `IDRAK_CPU_THREADS`, `IDRAK_CPU_MEMORY_LIMIT_MB`, `IDRAK_GPU_MEMORY_LIMIT_MB` | The most CPU threads (default every core) and the most MiB of tensor memory on the CPU and on each GPU (default unlimited) |
+| `IDRAK_GPU_MEMORY_RESERVE_MB`, `IDRAK_OFFLOAD_RETURN_HEADROOM_MB`, `IDRAK_WORKSPACE_SHARE` | MiB kept free on a GPU for the display (default a sixteenth); MiB kept free when offloaded tensors return (an eighth); the share of free memory one operation's working buffers may take (0.5) |
 | `HF_TOKEN`, `HF_ENDPOINT`, `HF_HOME` | The Hugging Face token, hub address and folder |
 | `IDRAK_API_KEY` | The key `serve` requires and the client commands send |
 | `IDRAK_PORT` | The port `serve` and `ui` listen on and the client commands call (`--port` wins; default 7317) |

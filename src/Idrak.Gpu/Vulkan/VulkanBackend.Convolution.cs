@@ -190,7 +190,7 @@ internal sealed partial class VulkanBackend
     private const int ConvCandidatesMost = 2 + 2 * 4 * 3;
 
     // The candidates of a pass, written to `into` (ConvCandidatesMost long): the composed path where its patches fit the
-    // device (a binding, and half the memory it reports free), the implicit product tiled and blocked at each candidate
+    // device (a binding, and the workspace share of the memory it reports free), the implicit product tiled and blocked at each candidate
     // width where the workgroup counts take it (the weight gradient at each split count), the depthwise kernels where
     // every group reads one channel.
     private ReadOnlySpan<int> ConvCandidates(int pass, in ConvGeometry g, int filters, int groups, Span<int> into)
@@ -198,7 +198,7 @@ internal sealed partial class VulkanBackend
         int count = 0;
         long patches = (long)g.Positions * g.PatchSize;
         long free = AvailableMemory() ?? long.MaxValue;
-        if (patches <= int.MaxValue && BlockBytes((int)Math.Min(patches, int.MaxValue)) <= MaxStorageBytes && 4 * patches <= free / 2)
+        if (patches <= int.MaxValue && BlockBytes((int)Math.Min(patches, int.MaxValue)) <= MaxStorageBytes && 4 * patches <= free * ComputeResources.WorkspaceShare)
         {
             into[count++] = WithWidth(Width, ConvComposed);
         }

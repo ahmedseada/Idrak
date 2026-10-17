@@ -75,6 +75,7 @@ public static class Idrak.Abstraction.ComputeResources
   public static bool OffloadToHostMemory { get; set; }
   public static bool PrefetchOffloadedWeights { get; set; }
   public static bool ReturnOffloadedTensors { get; set; }
+  public static double WorkspaceShare { get; set; }
   public static int MaxCpuThreads { get; set; }
   public static int ReturnOffloaded(Idrak.Abstraction.Device? device = null)
   public static long? CpuMemoryLimit { get; set; }

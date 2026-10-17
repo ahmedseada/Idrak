@@ -33,9 +33,6 @@ public sealed record BatchChunk(int Index, string Text, bool Done = false, strin
 /// </example>
 public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int contextLength) : ITextModel
 {
-    /// <summary>Upper bound on generated tokens when <see cref="GenerationOptions.NumPredict"/> is negative.</summary>
-    public const int MaxTokens = 4096;
-
     /// <summary>The language model.</summary>
     public Sequential Model { get; } = model;
 
@@ -435,7 +432,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             throw new InvalidOperationException($"A prompt of {promptLength} tokens with its images does not fit the context window of {context}.");
         }
 
-        int limit = Math.Min(options.NumPredict > 0 ? Math.Min(options.NumPredict, MaxTokens) : MaxTokens, context - promptLength);
+        int limit = Math.Min(options.NumPredict > 0 ? options.NumPredict : int.MaxValue, context - promptLength);   // no cap but the context window
         limit = Math.Max(1, limit);
         var stops = options.Stop.Where(x => x.Length > 0).ToArray();
         int holdBack = stops.Length == 0 ? 0 : stops.Max(x => x.Length) - 1;
@@ -676,7 +673,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         var attention = imageInput?.Attention;                              // the family's rule, read only with images
         var total = Stopwatch.StartNew();
         int context = Math.Clamp(options.NumCtx, 2, ContextLength);
-        int limit = options.NumPredict > 0 ? Math.Min(options.NumPredict, MaxTokens) : MaxTokens;
+        int limit = options.NumPredict > 0 ? options.NumPredict : context;                              // no cap but the context window (the window slides)
         var history = new List<int>(Tokenizer.Encode(prompt));
         if (history.Count == 0)
         {

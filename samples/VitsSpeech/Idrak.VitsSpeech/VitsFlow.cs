@@ -81,7 +81,7 @@ internal sealed class VitsFlow : IDisposable
         {
             var first = z.Narrow(1, 0, _half);
             var second = z.Narrow(1, _half, _half);
-            var moved = second + Mean(first, speaker, mask);
+            var moved = second + VitsCheckpoints.Run(x => Mean(x, speaker, mask), first);
             return Tensor.Concat([first, mask is null ? moved : mask.Apply(moved)], 1);
         }
 

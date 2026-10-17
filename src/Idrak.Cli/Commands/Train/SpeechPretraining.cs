@@ -201,7 +201,7 @@ internal static class SpeechPretraining
         options = options with
         {
             Steps = context.IntOption("--steps", options.Steps),
-            BatchSeconds = RealD(context, "--batch-seconds", options.BatchSeconds),
+            BatchSeconds = context.Option("--batch-seconds") is { } batch && batch.Equals("auto", StringComparison.OrdinalIgnoreCase) ? 0 : RealD(context, "--batch-seconds", options.BatchSeconds),
             GradientAccumulation = context.IntOption("--accumulate", options.GradientAccumulation),
             LearningRate = Real(context, "--lr", options.LearningRate),
             MinLearningRate = Real(context, "--min-lr", options.MinLearningRate),

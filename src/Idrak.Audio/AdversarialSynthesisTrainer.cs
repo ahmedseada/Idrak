@@ -174,6 +174,29 @@ public static class AdversarialSynthesisTrainer
 
         public override void Stepped() => _schedule?.Step();
 
+        public override long ParameterBytes => base.ParameterBytes + (_discriminators?.Parameters().Sum(p => (long)p.Size) ?? 0) * sizeof(float);
+
+        // Both halves of a step over the group, as a step runs them (the generator's pass kept between them when the
+        // options say so), no optimizer stepped, every gradient released.
+        public override void Probe(ISpeechReader reader, SpeechTrainer.Prepared[] group, SpeechTrainingOptions run, SpeechForwardOptions forward)
+        {
+            using var features = SpeechTrainer.Padded(group, this);
+            var batch = new AdversarialSynthesisBatch(features, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], [.. group.Select(u => u.Utterance)],
+                1, run.Seed, group.Length, group.Sum(u => (long)u.Frames), group.Sum(u => (long)u.Labels.Length), forward.Checkpointing);
+            using (var scope = new TensorScope())
+            using (var precision = run.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
+            using (var step = model.Begin(batch, adversarial, adversarial.KeepGeneratorPass))
+            {
+                step.Discriminate();
+                step.Generate();
+            }
+
+            foreach (var parameter in model.Generator.Parameters().Concat(_discriminators?.Parameters() ?? []))
+            {
+                parameter.ReleaseGrad();
+            }
+        }
+
         public override void SaveState(string folder) => SpeechTrainer.WriteState(Path.Combine(folder, DiscriminatorOptimizerFile), _optimizer!);
 
         // The discriminators' half of every micro-batch and their step, then the generator's half and its step. A step run
@@ -196,7 +219,7 @@ public static class AdversarialSynthesisTrainer
                     var group = groups[i];
                     features[i] = TensorScope.Untrack(SpeechTrainer.Padded(group, this));
                     var batch = new AdversarialSynthesisBatch(features[i]!, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], [.. group.Select(u => u.Utterance)],
-                        step, run.Seed, utterances, frames, labels);
+                        step, run.Seed, utterances, frames, labels, forward.Checkpointing);
                     steps[i] = model.Begin(batch, adversarial, keep);
                 }
 

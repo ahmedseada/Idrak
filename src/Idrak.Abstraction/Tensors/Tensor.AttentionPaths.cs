@@ -33,12 +33,6 @@ public static class AttentionPaths
     /// </summary>
     public static AttentionPath Forced { get; set; } = FromEnvironment(Environment.GetEnvironmentVariable("IDRAK_ATTENTION_PATH"));
 
-    /// <summary>
-    /// The share of the device's available memory the composed path's scores may take (the rest is the margin for
-    /// everything else the pass allocates): half.
-    /// </summary>
-    internal const double ScoreShare = 0.5;
-
     internal static AttentionPath FromEnvironment(string? value) => value?.Trim().ToLowerInvariant() switch
     {
         "spans" => AttentionPath.Spans,
@@ -54,8 +48,8 @@ public static class AttentionPaths
     internal static long ComposedBytes(int heads, int rows, int keyRows, bool recording) =>
         (recording ? 4L : 2L) * heads * rows * keyRows * sizeof(float);
 
-    /// <summary>Whether the composed path's scores fit the memory the device reports available, with the margin (none reported: no).</summary>
-    internal static bool ComposedFits(long? available, long bytes) => available is { } free && bytes <= free * ScoreShare;
+    /// <summary>Whether the composed path's scores fit the memory the device reports available, within <see cref="ComputeResources.WorkspaceShare"/> of it (none reported: no).</summary>
+    internal static bool ComposedFits(long? available, long bytes) => available is { } free && bytes <= free * ComputeResources.WorkspaceShare;
 }
 
 public sealed partial class Tensor

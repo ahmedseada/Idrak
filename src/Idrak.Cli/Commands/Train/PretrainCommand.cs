@@ -36,7 +36,7 @@ internal sealed class PretrainCommand : Command
         A speech model (its family registered by a plug-in, -P: a recognizer whose objective is ctc or seq2seq, or a
         synthesizer) trains on transcribed speech instead: --data transcripts.jsonl ({"audio", "text"} rows; a folder or
         zip of name.wav beside name.txt) with --audio DIR|ZIP, the step, rate and checkpoint options below, and these:
-        --batch-seconds S (audio seconds a step, 160), --metric cer|wer (the held-out score), --decoder greedy|beam and
+        --batch-seconds S (audio seconds a step; auto, the default, as many as the device holds), --metric cer|wer (the held-out score), --decoder greedy|beam and
         --beam N (how a CTC model reads the held-out sounds), --augment speed,noise,spec-mask, --clean
         highpass,denoise,trim,normalize (every recording cleaned before its features; --clean-settings F its JSON),
         --min-seconds and --max-seconds S (utterances left out), --skip-missing (rows whose sound is missing), --source KIND (the speech

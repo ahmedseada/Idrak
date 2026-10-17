@@ -42,7 +42,7 @@ internal sealed class VitsPosteriorEncoder : IDisposable
             x = mask.Apply(x);
         }
 
-        var stats = _proj.Forward3(_waveNet.Forward(x, speaker, mask));        // [B, 2F, T]
+        var stats = _proj.Forward3(VitsCheckpoints.Run(h => _waveNet.Forward(h, speaker, mask), x));   // [B, 2F, T]
         if (mask is not null)
         {
             stats = mask.Apply(stats);

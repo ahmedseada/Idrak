@@ -81,7 +81,7 @@ internal sealed class BpeTrainer : ITokenizerTrainer
     {
         long total = files.Sum(f => new FileInfo(f).Length);
         long read = 0;
-        int workers = options.Workers > 0 ? options.Workers : Environment.ProcessorCount;
+        int workers = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads;
         var merged = new Dictionary<string, long>(StringComparer.Ordinal);
         var parts = new ConcurrentBag<Dictionary<string, long>>();
         Parallel.ForEach(

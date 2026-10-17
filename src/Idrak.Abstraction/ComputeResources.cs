@@ -46,11 +46,12 @@ public sealed class ResourceLimitExceededException(string message) : Exception(m
 /// </example>
 public static class ComputeResources
 {
-    private static ParallelOptions s_parallelOptions = new() { MaxDegreeOfParallelism = Environment.ProcessorCount };
+    private static ParallelOptions s_parallelOptions = new() { MaxDegreeOfParallelism = Math.Clamp(EnvironmentInt("IDRAK_CPU_THREADS") ?? Environment.ProcessorCount, 1, Environment.ProcessorCount) };
 
     /// <summary>
     /// The maximum number of CPU threads used by CPU kernels, data loading and parsing.
-    /// Defaults to <see cref="Environment.ProcessorCount"/>; 1 makes all CPU work single-threaded.
+    /// Defaults to <see cref="Environment.ProcessorCount"/> (every core); 1 makes all CPU work single-threaded. The
+    /// environment variable IDRAK_CPU_THREADS sets it at start.
     /// </summary>
     public static int MaxCpuThreads
     {
@@ -62,19 +63,40 @@ public static class ComputeResources
         }
     }
 
-    /// <summary>Maximum bytes of tensor memory on the CPU (null = unlimited).</summary>
-    public static long? CpuMemoryLimit { get; set; }
+    /// <summary>Maximum bytes of tensor memory on the CPU (null = unlimited). IDRAK_CPU_MEMORY_LIMIT_MB sets it in MiB.</summary>
+    public static long? CpuMemoryLimit { get; set; } = EnvironmentMebibytes("IDRAK_CPU_MEMORY_LIMIT_MB");
 
-    /// <summary>Maximum bytes of tensor memory on each GPU (null = unlimited, up to what the card has).</summary>
-    public static long? GpuMemoryLimit { get; set; }
+    /// <summary>Maximum bytes of tensor memory on each GPU (null = unlimited, up to what the card has). IDRAK_GPU_MEMORY_LIMIT_MB sets it in MiB.</summary>
+    public static long? GpuMemoryLimit { get; set; } = EnvironmentMebibytes("IDRAK_GPU_MEMORY_LIMIT_MB");
+
+    /// <summary>
+    /// The share of the memory a device reports available that one operation's working buffers may take at once (the
+    /// patches an unfolded convolution makes of a batch, the composed attention's scores, a measured batch's items): the
+    /// rest is the room for everything else the pass allocates. In (0, 1]; half by default. IDRAK_WORKSPACE_SHARE sets it.
+    /// </summary>
+    public static double WorkspaceShare
+    {
+        get => s_workspaceShare;
+        set
+        {
+            if (!(value > 0) || value > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, "The workspace share is in (0, 1].");
+            }
+
+            s_workspaceShare = value;
+        }
+    }
+
+    private static double s_workspaceShare = EnvironmentDouble("IDRAK_WORKSPACE_SHARE") is { } share && share > 0 && share <= 1 ? share : 0.5;
 
     /// <summary>
     /// GPU memory left free for the display and other programs: a new GPU allocation that would leave less free is treated
     /// as not fitting, so the driver never has to page GPU memory out to system memory on its own (on Windows that makes
     /// long kernels, which the watchdog resets as a hung GPU). Null (the default): a sixteenth of each GPU's memory, at
-    /// least 256 MiB (512 MiB on an 8 GB card, 1 GiB on a 16 GB one).
+    /// least 256 MiB (512 MiB on an 8 GB card, 1 GiB on a 16 GB one). IDRAK_GPU_MEMORY_RESERVE_MB sets it in MiB (0: none).
     /// </summary>
-    public static long? GpuMemoryReserve { get; set; }
+    public static long? GpuMemoryReserve { get; set; } = EnvironmentMebibytes("IDRAK_GPU_MEMORY_RESERVE_MB");
 
     /// <summary>
     /// When a GPU is full (or at <see cref="GpuMemoryLimit"/>), place new tensors in pinned system memory that the GPU
@@ -144,9 +166,10 @@ public static class ComputeResources
 
     /// <summary>
     /// Device memory kept free when offloaded tensors come back, so a step that needs a little more does not push them
-    /// straight out again. Null (the default): an eighth of each GPU's memory, at least 256 MiB.
+    /// straight out again. Null (the default): an eighth of each GPU's memory, at least 256 MiB. IDRAK_OFFLOAD_RETURN_HEADROOM_MB
+    /// sets it in MiB.
     /// </summary>
-    public static long? OffloadReturnHeadroom { get; set; }
+    public static long? OffloadReturnHeadroom { get; set; } = EnvironmentMebibytes("IDRAK_OFFLOAD_RETURN_HEADROOM_MB");
 
     /// <summary>
     /// Brings offloaded tensors back to the GPU (or every GPU when <paramref name="device"/> is null) where they fit now,
@@ -167,6 +190,15 @@ public static class ComputeResources
 
         return moved;
     }
+
+    private static int? EnvironmentInt(string name) =>
+        Environment.GetEnvironmentVariable(name) is { Length: > 0 } s && int.TryParse(s, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int value) ? value : null;
+
+    private static double? EnvironmentDouble(string name) =>
+        Environment.GetEnvironmentVariable(name) is { Length: > 0 } s && double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value) ? value : null;
+
+    private static long? EnvironmentMebibytes(string name) =>
+        Environment.GetEnvironmentVariable(name) is { Length: > 0 } s && long.TryParse(s, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long value) && value >= 0 ? value << 20 : null;
 
     /// <summary>The options CPU loops run <see cref="Parallel"/> with: at most <see cref="MaxCpuThreads"/> threads.</summary>
     public static ParallelOptions ParallelOptions => s_parallelOptions;
