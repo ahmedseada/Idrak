@@ -2009,6 +2009,7 @@ public enum Idrak.Abstraction.Generation.FeedForwardActivation : int
   Gelu = 1
   Relu = 2
   Silu = 0
+  TanhSigmoid = 3
 
 public sealed class Idrak.Abstraction.Generation.Float16Weight : Idrak.Abstraction.Generation.PackedWeight
   public Idrak.Abstraction.Tensor Packed { get; }

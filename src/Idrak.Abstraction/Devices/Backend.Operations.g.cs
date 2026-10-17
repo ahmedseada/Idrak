@@ -5880,7 +5880,7 @@ public abstract partial class Backend
         CpuBackend.Instance.SoftmaxCrossEntropyRows(h[logits], h[targets], h[weights], h[losses], rows, vocabulary, scale);
     }
 
-    /// <summary>y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.</summary>
+    /// <summary>y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU, 3 = tanh(gate) · sigmoid(up) (the up side through its own function).</summary>
     /// <remarks>Runs <see cref="Ops.GatedActivation"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind)
@@ -5934,7 +5934,7 @@ public abstract partial class Backend
         CpuBackend.Instance.GatedActivation(h[gate], h[up], h[y], n, kind);
     }
 
-    /// <summary>dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).</summary>
+    /// <summary>dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1 (kind 3: up read as sigmoid(up), and dup += dy · tanh(gate) · sigmoid'(up)); bits 2 and 3 write dgate and dup (= instead of +=).</summary>
     /// <remarks>Runs <see cref="Ops.GatedActivationBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)

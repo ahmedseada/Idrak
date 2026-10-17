@@ -408,7 +408,7 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // y = act(gate) · up; kind 0 = SiLU, 1 = GELU (tanh), anything else = ReLU (uniform branches on the push constant).
+        // y = act(gate) · up; kind 0 = SiLU, 1 = GELU (tanh), 3 = tanh(gate) · sigmoid(up), anything else = ReLU (uniform branches on the push constant).
         yield return ("gated_activation", () =>
         {
             var k = new KernelBuilder("gated_activation", Block);
@@ -417,7 +417,8 @@ internal static partial class VulkanKernels
             Grid(k, n, i =>
             {
                 var (value, _) = Activation(k, gate[i], kind, slope: false);
-                y[i] = value.V * up[i];
+                var (upValue, _) = UpSide(k, up[i], kind, slope: false);
+                y[i] = value.V * upValue.V;
             });
             return k.Build();
         });
@@ -431,15 +432,16 @@ internal static partial class VulkanKernels
             Grid(k, n, i =>
             {
                 var (value, slope) = Activation(k, gate[i], kind, slope: true);
+                var (upValue, upSlope) = UpSide(k, up[i], kind, slope: true);
                 k.If((flags & 1).Ne(0), () =>
                 {
                     var keep = k.Select((flags & 4).Ne(0), k.Float(0f), dgate[i]);
-                    dgate[i] = keep + dy[i] * up[i] * slope!.V;
+                    dgate[i] = keep + dy[i] * upValue.V * slope!.V;
                 });
                 k.If((flags & 2).Ne(0), () =>
                 {
                     var keep = k.Select((flags & 8).Ne(0), k.Float(0f), dup[i]);
-                    dup[i] = keep + dy[i] * value.V;
+                    dup[i] = keep + dy[i] * (value.V * upSlope!.V);
                 });
             });
             return k.Build();
@@ -527,6 +529,14 @@ internal static partial class VulkanKernels
             {
                 d.V = GeluSlope(k, g);
             }
+        }, () => k.If(kind.Eq(3), () =>
+        {
+            var t = Tanh(k, g);
+            value.V = t;
+            if (d is not null)
+            {
+                d.V = 1f - t * t;
+            }
         }, () =>
         {
             value.V = k.Max(g, k.Float(0f));
@@ -534,7 +544,31 @@ internal static partial class VulkanKernels
             {
                 d.V = k.Select(g > 0f, k.Float(1f), k.Float(0f));
             }
-        }));
+        })));
+        return (value, d);
+    }
+
+    // The up side's value and slope: up itself (slope 1), or sigmoid(up) for kind 3.
+    private static (Var Value, Var? Slope) UpSide(KernelBuilder k, Val u, Val kind, bool slope)
+    {
+        var value = k.Local(ScalarKind.Float);
+        var d = slope ? k.Local(ScalarKind.Float) : null;
+        k.If(kind.Eq(3), () =>
+        {
+            var s = Sigmoid(k, u);
+            value.V = s;
+            if (d is not null)
+            {
+                d.V = s * (1f - s);
+            }
+        }, () =>
+        {
+            value.V = u;
+            if (d is not null)
+            {
+                d.V = k.Float(1f);
+            }
+        });
         return (value, d);
     }
 }

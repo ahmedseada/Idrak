@@ -777,9 +777,27 @@ internal sealed partial class CpuBackend
                 return (0.5f * g * (1f + t), 0.5f * (1f + t) + 0.5f * g * (1f - t * t) * K * (1f + 3f * C * g * g));
             }
 
+            case 3:
+            {
+                float t = CpuMath.Tanh(g);
+                return (t, 1f - t * t);
+            }
+
             default:
                 return (g > 0f ? g : 0f, g > 0f ? 1f : 0f);
         }
+    }
+
+    // The up side's value and slope: up itself (slope 1) but for kind 3, where it is sigmoid(up).
+    private static (float Value, float Slope) UpSide(float u, int kind)
+    {
+        if (kind != 3)
+        {
+            return (u, 1f);
+        }
+
+        float s = 1f / (1f + MathF.Exp(-u));
+        return (s, s * (1f - s));
     }
 
     public override void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind)
@@ -799,14 +817,15 @@ internal sealed partial class CpuBackend
             for (int i = first; i < last; i++)
             {
                 var (value, slope) = Activation(gv[i], kind);
+                var (up_, upSlope) = UpSide(uv[i], kind);
                 if ((flags & 1) != 0)
                 {
-                    dg[i] = ((flags & 4) != 0 ? 0f : dg[i]) + dv[i] * uv[i] * slope;
+                    dg[i] = ((flags & 4) != 0 ? 0f : dg[i]) + dv[i] * up_ * slope;
                 }
 
                 if ((flags & 2) != 0)
                 {
-                    du[i] = ((flags & 8) != 0 ? 0f : du[i]) + dv[i] * value;
+                    du[i] = ((flags & 8) != 0 ? 0f : du[i]) + dv[i] * (kind == 3 ? value * upSlope : value);
                 }
             }
         });

@@ -190,9 +190,22 @@ public static partial class DeviceCases
             int words = (n + 1) / 2;
             float[] gv = c.Values(n, 3f), uv = c.Values(n, 3f);
             Storage gate = c.Storage(gv), up = c.Storage(uv), packedGate = c.Storage(PackRows(gv, 1, n)), packedUp = c.Storage(PackRows(uv, 1, n));
-            foreach (int kind in new[] { 0, 1, 2 })
+            foreach (int kind in new[] { 0, 1, 2, 3 })
             {
-                b.GatedActivation(gate, up, c.Zeros(n), n, kind);
+                var y = c.Zeros(n);
+                b.GatedActivation(gate, up, y, n, kind);
+                if (kind == 3)
+                {
+                    // tanh(gate) · sigmoid(up) against plain loops, forward and both gradients.
+                    static float Sigmoid(float v) => 1f / (1f + MathF.Exp(-v));
+                    c.ExpectClose([.. gv.Zip(uv, (g, u) => MathF.Tanh(g) * Sigmoid(u))], Read(y), 2e-5f, "tanh · sigmoid gate");
+                    float[] dyv = c.Values(n), dg0 = c.Values(n), du0 = c.Values(n);
+                    Storage dgate = c.Storage(dg0), dup = c.Storage(du0);
+                    b.GatedActivationBackward(gate, up, c.Storage(dyv), dgate, dup, n, kind, 3);
+                    c.ExpectClose([.. Enumerable.Range(0, n).Select(i => dg0[i] + dyv[i] * Sigmoid(uv[i]) * (1f - MathF.Tanh(gv[i]) * MathF.Tanh(gv[i])))], Read(dgate), 2e-5f, "tanh · sigmoid gate: the gate's gradient");
+                    c.ExpectClose([.. Enumerable.Range(0, n).Select(i => du0[i] + dyv[i] * MathF.Tanh(gv[i]) * Sigmoid(uv[i]) * (1f - Sigmoid(uv[i])))], Read(dup), 2e-5f, "tanh · sigmoid gate: the up side's gradient");
+                }
+
                 foreach (int flags in new[] { 3, 1, 2, 15 })
                 {
                     b.GatedActivationBackward(gate, up, Random(c, n), Random(c, n), Random(c, n), n, kind, flags);
