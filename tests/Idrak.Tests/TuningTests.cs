@@ -125,6 +125,14 @@ internal static partial class Tests
             return y.ToArray();
         }
 
+        float[] Scores(Device on, int n)                                         // attention scores: the length in n, exact in the key
+        {
+            using var a = Tensor.From(values.AsSpan(0, 256 * 256), [256, 256], on);
+            using var b = Tensor.From(values.AsSpan(1000, 256 * n), [256, n], on);
+            using var y = a.MatMul(b);
+            return y.ToArray();
+        }
+
         var tunings = new TuningCounter();
         var cuda = device.Backend as CudaBackend;
         var vulkan = device.Backend as Idrak.Gpu.Vulkan.VulkanBackend;
@@ -173,6 +181,15 @@ internal static partial class Tests
                     AssertClose(lent, cpuProduct, 1e-3f * Math.Max(1f, cpuProduct.Max(Math.Abs)), "the lent tile against the CPU");
                     Product(device, 6000);                                       // class 6144, 2.5 octaves away: measured
                     Check(tunings.Count("FloatTile") > tiles, "a product's rows class farther than the reach is measured");
+
+                    Scores(device, 1000);
+                    tiles = tunings.Count("FloatTile");
+                    var lentScores = Scores(device, 1300);                       // n a third longer: lent
+                    Check(tunings.Count("FloatTile") == tiles, $"a product whose n follows the data borrows the tile within an octave: {tunings.Count("FloatTile") - tiles} measured");
+                    var cpuScores = Scores(Device.Cpu, 1300);
+                    AssertClose(lentScores, cpuScores, 1e-3f * Math.Max(1f, cpuScores.Max(Math.Abs)), "the lent tile of the scores against the CPU");
+                    Scores(device, 3000);                                        // n three times longer: measured
+                    Check(tunings.Count("FloatTile") > tiles, "a product whose n is farther than the reach is measured");
                 }
                 else
                 {
