@@ -20,7 +20,7 @@ internal static partial class Tests
         ("tuning: decoding attention reads at least a measured number of positions per block (short caches on fewer blocks): every least chunk, split count and cache format gives the one-block result; lengths 64 ... capacity and chunk candidates", DecodeMinChunks),
         ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
         ("tuning: sizes that follow the data are keyed by size class (exact up to 32, then four classes a doubling, each within a quarter), so convolutions over batches of every width share a few measured choices", TuneSizeClasses),
-        ("tuning: a convolution at a size class none measured takes the choice of the nearest measured class of its shape within ComputeResources.TuningNeighbourOctaves (IDRAK_TUNE_NEIGHBOUR_OCTAVES) instead of measuring, a class farther away is measured, 0 measures every class, and the lent choice gives the CPU's result; each measured tuning is a TuningCompleted telemetry event", ConvNeighbourClasses),
+        ("tuning: a convolution or a float32 product at a size class none measured takes the choice of the nearest measured class of its shape within ComputeResources.TuningNeighbourOctaves (IDRAK_TUNE_NEIGHBOUR_OCTAVES) instead of measuring, a class farther away is measured, 0 measures every class, and the lent choice gives the CPU's result; each measured tuning is a TuningCompleted telemetry event", ConvNeighbourClasses),
         ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
     ];
 
@@ -108,12 +108,20 @@ internal static partial class Tests
         }
 
         var r = new Random(23);
-        float[] values = [.. Enumerable.Range(0, 64 * 20000).Select(_ => r.NextSingle() * 2 - 1)];
+        float[] values = [.. Enumerable.Range(0, 64 * 25000).Select(_ => r.NextSingle() * 2 - 1)];
         float[] Run(Device on, int width)
         {
             using var layer = new Conv1d(64, 64, 5, padding: 2, device: on, random: new Random(5));
             using var x = Tensor.From(values.AsSpan(0, 64 * width), [1, 64, width], on);
             using var y = layer.Forward(x);
+            return y.ToArray();
+        }
+
+        float[] Product(Device on, int rows)
+        {
+            using var a = Tensor.From(values.AsSpan(0, rows * 256), [rows, 256], on);
+            using var b = Tensor.From(values.AsSpan(1000, 256 * 256), [256, 256], on);
+            using var y = a.MatMul(b);
             return y.ToArray();
         }
 
@@ -155,6 +163,22 @@ internal static partial class Tests
                 Run(device, 20000);                                              // class 20480, 2.3 octaves away: measured
                 Check(tunings.Convolutions > first, "a class farther than the reach is measured");
 
+                Product(device, 1000);                                           // rows class 1024
+                int tiles = tunings.Count("FloatTile");
+                if (tiles > 0)
+                {
+                    var lent = Product(device, 1200);                            // class 1280: lent
+                    Check(tunings.Count("FloatTile") == tiles, $"a product's rows class within an octave borrows the tile: {tunings.Count("FloatTile") - tiles} measured for it");
+                    var cpuProduct = Product(Device.Cpu, 1200);
+                    AssertClose(lent, cpuProduct, 1e-3f * Math.Max(1f, cpuProduct.Max(Math.Abs)), "the lent tile against the CPU");
+                    Product(device, 6000);                                       // class 6144, 2.5 octaves away: measured
+                    Check(tunings.Count("FloatTile") > tiles, "a product's rows class farther than the reach is measured");
+                }
+                else
+                {
+                    Console.WriteLine($"    (the float32 product offers one tile on {device}: its lending not exercised)");
+                }
+
                 ComputeResources.TuningNeighbourOctaves = 0;
                 Forget();
                 int before = tunings.Convolutions;
@@ -178,11 +202,15 @@ internal static partial class Tests
 
     private sealed class TuningCounter : ITelemetryHook
     {
+        private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
+
         public TelemetryLevel Levels => TelemetryLevel.Devices;
 
-        public int Convolutions { get; private set; }
+        public int Convolutions => Count("Convolution");
 
-        public void OnTuning(in TuningCompleted e) => Convolutions += e.Operation == "Convolution" ? 1 : 0;
+        public int Count(string operation) => _counts.GetValueOrDefault(operation);
+
+        public void OnTuning(in TuningCompleted e) => _counts[e.Operation] = Count(e.Operation) + 1;
     }
 
     // Pure (no GPU): the comparison with an injected timer.

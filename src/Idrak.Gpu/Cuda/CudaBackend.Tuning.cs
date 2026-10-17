@@ -59,8 +59,8 @@ internal sealed unsafe partial class CudaBackend
 
     private readonly Dictionary<TuneKey, int> _tuned = [];
 
-    // Convolution choices lent by the nearest measured class of the same shape (ComputeResources.TuningNeighbourOctaves):
-    // known for their keys, never saved and never lent on, so a choice reaches one neighbourhood and no further.
+    // Choices lent by the nearest measured class of the same shape (ComputeResources.TuningNeighbourOctaves): known for
+    // their keys, never saved and never lent on, so a choice reaches one neighbourhood and no further.
     private readonly Dictionary<TuneKey, int> _lent = [];
 
     // Choices read from the cache file (null until first needed); each is used only when it is still one of the
@@ -110,7 +110,7 @@ internal sealed unsafe partial class CudaBackend
         lock (_tuned)
         {
             _persisted ??= TuningFileLocked() is { } file ? TuningCache.Load(file.Path, file.Identity) : [];
-            foreach (var table in (Dictionary<TuneKey, int>[])[_tuned, _persisted])
+            foreach (var table in (Dictionary<TuneKey, int>[])[_tuned, _persisted, _lent])
             {
                 foreach (var key in table.Keys.Where(k => op is null || k.Op == op).ToList())
                 {
@@ -180,30 +180,29 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    // A convolution's choice from the nearest measured (or stored) class of the same shape, the data-sized fields apart,
-    // within ComputeResources.TuningNeighbourOctaves of its positions; false when none is, or the distance is 0.
+    // The choice from the nearest measured (or stored) class of the same shape, the data-sized fields apart, within
+    // ComputeResources.TuningNeighbourOctaves of its positions; false when none is, the distance is 0, or the key has no
+    // data-sized fields.
     private bool NearestTunedLocked(TuneKey key, ReadOnlySpan<int> candidates, out int value)
     {
         value = 0;
         double reach = ComputeResources.TuningNeighbourOctaves;
-        if (reach <= 0)
+        if (reach <= 0 || !DataSized(key, out long positions, out var shape))
         {
             return false;
         }
 
-        long positions = ConvolutionShapes.Positions(key.A, key.D);
         double best = double.MaxValue;
         foreach (var table in (Dictionary<TuneKey, int>[])[_tuned, _persisted ?? []])
         {
             foreach (var (known, choice) in table)
             {
-                if (known.Op != key.Op || known.Variant != key.Variant || known.B != key.B || known.C != key.C || known.E != key.E || known.F != key.F
-                    || !candidates.Contains(choice))
+                if (known.Op != key.Op || !DataSized(known, out long other, out var otherShape) || otherShape != shape || !candidates.Contains(choice))
                 {
                     continue;
                 }
 
-                double distance = ConvolutionShapes.Octaves(positions, ConvolutionShapes.Positions(known.A, known.D));
+                double distance = ConvolutionShapes.Octaves(positions, other);
                 if (distance <= reach && distance < best)
                 {
                     (best, value) = (distance, choice);
@@ -212,6 +211,40 @@ internal sealed unsafe partial class CudaBackend
         }
 
         return best <= reach;
+    }
+
+    // The fields of a key that follow the data (keyed by size class: a batch, rows, a length) as their product, and the
+    // key with them cleared (the shape apart from them), for the choices a neighbouring class may lend: convolutions,
+    // float32 and tensor-core products, attention. False for a key whose fields are all the model's.
+    private static bool DataSized(in TuneKey key, out long positions, out TuneKey shape)
+    {
+        switch (key.Op)
+        {
+            case TuneOp.Convolution:                                           // images class; height and width classes
+                positions = ConvolutionShapes.Positions(key.A, key.D);
+                shape = key with { A = 0, D = 0 };
+                return true;
+            case TuneOp.FloatTile:                                             // rows class; batch count class
+                positions = (long)key.A * key.D;
+                shape = key with { A = 0, D = 0 };
+                return true;
+            case TuneOp.TensorSplits:                                          // rows class
+                positions = key.A;
+                shape = key with { A = 0 };
+                return true;
+            case TuneOp.SpanKernel or TuneOp.AttentionPath:                    // rows class; key rows class
+                positions = (long)key.B * key.C;
+                shape = key with { B = 0, C = 0 };
+                return true;
+            case TuneOp.SpanStrided:                                           // rows class
+                positions = key.B;
+                shape = key with { B = 0 };
+                return true;
+            default:
+                positions = 0;
+                shape = default;
+                return false;
+        }
     }
 
     // Whether `key` was measured already, or has a lent choice (callers skip preparing candidates then).
@@ -337,7 +370,7 @@ internal sealed unsafe partial class CudaBackend
                 return true;
             }
 
-            if (candidates.Length > 1 && key.Op == TuneOp.Convolution && NearestTunedLocked(key, candidates, out int lent))
+            if (candidates.Length > 1 && NearestTunedLocked(key, candidates, out int lent))
             {
                 _lent[key] = lent;
                 choice = lent;

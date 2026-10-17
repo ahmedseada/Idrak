@@ -89,12 +89,12 @@ public static class ComputeResources
     }
 
     /// <summary>
-    /// How far a convolution's measured choice reaches, in octaves of its positions (batch × height × width): a shape at a
-    /// size class none measured takes the choice of the nearest measured class of the same convolution within this distance
-    /// instead of measuring its own. Training on utterances or images of varied lengths lands in a new class with nearly
-    /// every batch, and each class measured costs every convolution shape of the model once (seconds a class on a large
-    /// batch), while within an octave the fastest choice is nearly always the same. 1 by default; 0 measures every class.
-    /// IDRAK_TUNE_NEIGHBOUR_OCTAVES sets it.
+    /// How far a measured choice reaches, in octaves of the work that follows the data (a convolution's batch × height ×
+    /// width, a product's rows × batch, attention's rows × key rows): a shape at a size class none measured takes the choice
+    /// of the nearest measured class of the same shape within this distance instead of measuring its own. Training on
+    /// utterances or images of varied lengths lands in a new class with nearly every batch, and each class measured costs
+    /// every such shape of the model once (seconds a class on a large batch), while within an octave the fastest choice is
+    /// nearly always the same. 1 by default; 0 measures every class. IDRAK_TUNE_NEIGHBOUR_OCTAVES sets it.
     /// </summary>
     public static double TuningNeighbourOctaves
     {
