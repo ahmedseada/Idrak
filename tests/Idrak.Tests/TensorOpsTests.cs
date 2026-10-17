@@ -11,6 +11,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] TensorOpsGroup =
     [
         ("tensor ops: sqrt, sin, cos (also far from zero), silu, sign, pow, clamp, maximum, minimum and where match the host's math; on Vulkan and CUDA as kernels, without the host fallback", TensorOpsForward),
+        ("tensor ops: the CPU's own vector exp (CpuMath.Exp, 256- and 512-bit lanes) is within 1.2e-7 of MathF.Exp over [-87.3, 88] and within two ulp up to 88.7 (a thousand points a unit), 0 below, +∞ above, NaN kept, -∞ to 0; exp, sigmoid, silu and softmax on the CPU equal the host's math", TensorOpsVectorExp),
         ("gradient: sqrt, sin, cos, silu, sign", TensorOpsUnaryGradients),
         ("gradient: pow (fractional, odd, negative and zero exponents), clamp, scalar maximum and minimum", TensorOpsParameterGradients),
         ("gradient: element-wise maximum and minimum (both inputs, and one tensor on both sides), where", TensorOpsSelectionGradients),
@@ -81,6 +82,80 @@ internal static partial class Tests
         catch (ArgumentException)
         {
         }
+    }
+
+    private static void TensorOpsVectorExp(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        // Every lane against MathF.Exp over the whole finite range, and the special values.
+        int width = System.Numerics.Vector<float>.Count;
+        var inputs = new List<float>();
+        for (float v = -87.3f; v <= 88.7f; v += 0.001f)
+        {
+            inputs.Add(v);
+        }
+
+        inputs.AddRange([-87.5f, -88f, -100f, -1e30f, float.NegativeInfinity, 88.73f, 89f, 1e30f, float.PositiveInfinity, float.NaN, 0f, -0f, 1f, -1f, 1e-30f, -1e-30f]);
+        while (inputs.Count % 16 != 0)
+        {
+            inputs.Add(0.5f);
+        }
+
+        var values = inputs.ToArray();
+        var lanes = new float[values.Length];
+        var wide = new float[values.Length];
+        for (int i = 0; i < values.Length; i += width)
+        {
+            Idrak.Abstraction.Devices.Cpu.CpuMath.Exp(new System.Numerics.Vector<float>(values.AsSpan(i, width))).CopyTo(lanes.AsSpan(i, width));
+        }
+
+        for (int i = 0; i < values.Length; i += 16)
+        {
+            System.Runtime.Intrinsics.Vector512.CopyTo(Idrak.Abstraction.Devices.Cpu.CpuMath.Exp(System.Runtime.Intrinsics.Vector512.Create<float>(values.AsSpan(i, 16))), wide.AsSpan(i, 16));
+        }
+
+        float worst = 0;
+        int at = 0;
+        for (int i = 0; i < values.Length; i++)
+        {
+            float expected = MathF.Exp(values[i]);
+            foreach (float got in new[] { lanes[i], wide[i] })
+            {
+                if (float.IsNaN(expected))
+                {
+                    Check(float.IsNaN(got), $"exp(NaN) is NaN, got {got}");
+                }
+                else if (expected == 0f || float.IsInfinity(expected) || values[i] < -87.3365f || values[i] > 88.7228f)
+                {
+                    Check(got == (values[i] < 0 ? 0f : float.PositiveInfinity) || got == expected, $"exp({values[i]}) = {got}, MathF {expected}");
+                }
+                else
+                {
+                    // Above 88 the exponent is held at 127 and the polynomial runs past its interval: two ulp there, one below.
+                    float relative = MathF.Abs(got - expected) / expected * (values[i] > 88f ? 0.5f : 1f);
+                    if (relative > worst)
+                    {
+                        (worst, at) = (relative, i);
+                    }
+                }
+            }
+        }
+
+        Check(worst <= 1.2e-7f, $"the vector exp is off by {worst:E2} at x = {values[at]} (lanes {lanes[at]}, MathF {MathF.Exp(values[at])})");
+
+        // Through the tensors: exp, sigmoid, silu and a softmax row against the host's math.
+        float[] xs = [.. OpValues, 40f, -25.5f, 12.25f, -0.01f, 3.5f, 0f];
+        using var x = Tensor.From(xs, [xs.Length], device);
+        AssertClose([.. xs.Select(MathF.Exp)], x.Exp().ToArray(), 1e-5f, "exp");
+        AssertClose([.. xs.Select(v => 1f / (1f + MathF.Exp(-v)))], x.Sigmoid().ToArray(), 1e-6f, "sigmoid");
+        AssertClose([.. xs.Select(v => v / (1f + MathF.Exp(-v)))], x.Silu().ToArray(), 1e-5f, "silu");
+        float max = xs.Max();
+        double sum = xs.Sum(v => Math.Exp(v - max));
+        AssertClose([.. xs.Select(v => (float)(Math.Exp(v - max) / sum))], x.Reshape(1, xs.Length).Softmax().ToArray(), 1e-6f, "softmax");
     }
 
     private static void TensorOpsUnaryGradients(Device device)

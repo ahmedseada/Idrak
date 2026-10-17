@@ -129,20 +129,55 @@ internal sealed partial class CpuBackend
         {
             for (int r = start; r < end; r++)
             {
-                int o = r * cols;
-                double dot = 0;
-                for (int j = 0; j < cols; j++)
-                {
-                    dot += log ? gv[o + j] : gv[o + j] * yv[o + j];
-                }
-
-                float s = (float)dot;
-                for (int j = 0; j < cols; j++)
-                {
-                    dv[o + j] += log ? gv[o + j] - MathF.Exp(yv[o + j]) * s : yv[o + j] * (gv[o + j] - s);
-                }
+                SoftmaxBackwardRow(yv.AsSpan(r * cols, cols), gv.AsSpan(r * cols, cols), dv.AsSpan(r * cols, cols), log);
             }
         });
+    }
+
+    // One row: s = Σ dy (log) or Σ dy · y, then dx += dy − e^y · s (log) or y · (dy − s); vectors with a scalar tail, the sum in double.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void SoftmaxBackwardRow(ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx, bool log)
+    {
+        int cols = y.Length, i = 0;
+        double dot = log ? RowSum(dy) : 0;
+        if (!log)
+        {
+            if (Vector.IsHardwareAccelerated && cols >= Vector<float>.Count)
+            {
+                var total = Vector<double>.Zero;
+                for (; i <= cols - Vector<float>.Count; i += Vector<float>.Count)
+                {
+                    Vector.Widen(new Vector<float>(dy.Slice(i)) * new Vector<float>(y.Slice(i)), out var lo, out var hi);
+                    total += lo + hi;
+                }
+
+                dot = Vector.Sum(total);
+            }
+
+            for (; i < cols; i++)
+            {
+                dot += (double)dy[i] * y[i];
+            }
+        }
+
+        float s = (float)dot;
+        i = 0;
+        if (Vector.IsHardwareAccelerated && cols >= Vector<float>.Count)
+        {
+            var sv = new Vector<float>(s);
+            for (; i <= cols - Vector<float>.Count; i += Vector<float>.Count)
+            {
+                var g = new Vector<float>(dy.Slice(i));
+                var p = new Vector<float>(y.Slice(i));
+                var d = new Vector<float>(dx.Slice(i)) + (log ? g - CpuMath.Exp(p) * sv : p * (g - sv));
+                d.CopyTo(dx.Slice(i));
+            }
+        }
+
+        for (; i < cols; i++)
+        {
+            dx[i] += log ? dy[i] - MathF.Exp(y[i]) * s : y[i] * (dy[i] - s);
+        }
     }
 
     private static int ArgMaxRow(ReadOnlySpan<float> row)
@@ -997,8 +1032,10 @@ internal sealed partial class CpuBackend
 
     // ------------------------------------------------------------ element-wise kernels
 
+    // CpuMath.Exp, not Vector.Exp: see its notes (the runtime's is not inlined and starts unoptimized).
     private readonly struct ExpLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -1007,7 +1044,7 @@ internal sealed partial class CpuBackend
             var yv = MemoryMarshal.Cast<float, Vector<float>>(ys);
             for (int i = 0; i < xv.Length; i++)
             {
-                yv[i] = Vector.Exp(xv[i]);
+                yv[i] = CpuMath.Exp(xv[i]);
             }
 
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
@@ -1019,6 +1056,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct LogLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -1039,6 +1077,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct LogBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             for (int i = start; i < end; i++)
@@ -1057,6 +1096,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct GeluLoop(float[] x, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);
@@ -1083,6 +1123,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct GeluBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             var xs = x.AsSpan(start, end - start);

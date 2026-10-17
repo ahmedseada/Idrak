@@ -60,7 +60,7 @@ internal static class DecoderBench
         foreach (bool checkpointing in (bool[])[false, true])
         {
             string label = checkpointing ? "step, checkpointed blocks" : "step";
-            var (cold, warm) = Bench.Time(device, () => Step(checkpointing), settings.Repeats);
+            var (cold, warm) = Bench.Time(device, () => Step(checkpointing), settings.Repeats, settings.Warmup);
             var census = Bench.Count(() => Step(checkpointing));
             long peak = Bench.PeakBytes(device, () => Step(checkpointing));
             double tokensPerSecond = batch * tokens / (warm / 1000);

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
@@ -40,77 +41,132 @@ internal sealed partial class CpuBackend
 
     private readonly struct MathLoop(UnaryOp op, float[] x, float[] y) : IRangeKernel
     {
+        // A vector main loop per operation (the runtime's Vector.Sqrt, Sin, Cos and Exp, CpuMath's erf), then the tail.
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
+            var xs = x.AsSpan(start, end - start);
+            var ys = y.AsSpan(start, end - start);
+            var xv = MemoryMarshal.Cast<float, Vector<float>>(xs);
+            var yv = MemoryMarshal.Cast<float, Vector<float>>(ys);
+            int tail = xv.Length * Vector<float>.Count;
             switch (op)
             {
                 case UnaryOp.Sqrt:
-                    for (int i = start; i < end; i++) y[i] = MathF.Sqrt(x[i]);
+                    for (int i = 0; i < xv.Length; i++) yv[i] = Vector.SquareRoot(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ys[i] = MathF.Sqrt(xs[i]);
                     break;
                 case UnaryOp.Sin:
-                    for (int i = start; i < end; i++) y[i] = MathF.Sin(x[i]);
+                    for (int i = 0; i < xv.Length; i++) yv[i] = Vector.Sin(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ys[i] = MathF.Sin(xs[i]);
                     break;
                 case UnaryOp.Cos:
-                    for (int i = start; i < end; i++) y[i] = MathF.Cos(x[i]);
+                    for (int i = 0; i < xv.Length; i++) yv[i] = Vector.Cos(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ys[i] = MathF.Cos(xs[i]);
                     break;
                 case UnaryOp.Silu:
-                    for (int i = start; i < end; i++) y[i] = x[i] * SigmoidOf(x[i]);
+                    for (int i = 0; i < xv.Length; i++) yv[i] = xv[i] * CpuMath.Sigmoid(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ys[i] = xs[i] * SigmoidOf(xs[i]);
                     break;
                 case UnaryOp.Sign:
-                    for (int i = start; i < end; i++) y[i] = SignOf(x[i]);
+                    for (int i = 0; i < xv.Length; i++)
+                    {
+                        var v = xv[i];
+                        var sign = Vector.ConditionalSelect(Vector.GreaterThan(v, Vector<float>.Zero), Vector<float>.One, Vector<float>.Zero)
+                            - Vector.ConditionalSelect(Vector.LessThan(v, Vector<float>.Zero), Vector<float>.One, Vector<float>.Zero);
+                        yv[i] = Vector.ConditionalSelect(Vector.Equals(v, v), sign, v);   // NaN stays NaN
+                    }
+
+                    for (int i = tail; i < xs.Length; i++) ys[i] = SignOf(xs[i]);
                     break;
                 case UnaryOp.GeluErf:
-                    for (int i = start; i < end; i++) y[i] = 0.5f * x[i] * (1f + ErfOf(x[i] * 0.70710678f));
+                {
+                    var half = new Vector<float>(0.5f);
+                    var root = new Vector<float>(0.70710678f);
+                    for (int i = 0; i < xv.Length; i++) yv[i] = half * xv[i] * (Vector<float>.One + CpuMath.Erf(xv[i] * root));
+                    for (int i = tail; i < xs.Length; i++) ys[i] = 0.5f * xs[i] * (1f + ErfOf(xs[i] * 0.70710678f));
                     break;
+                }
+
                 default:
                     throw new ArgumentOutOfRangeException(nameof(op));
             }
         }
     }
 
-    /// <summary>erf(z) within 1.5e-7 (Abramowitz and Stegun 7.1.26): sign(z) · (1 − t · poly(t) · e^(−z²)), t = 1 / (1 + p |z|).</summary>
-    internal static float ErfOf(float z)
-    {
-        float a = MathF.Abs(z), t = 1f / (1f + 0.3275911f * a);
-        float poly = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;
-        float e = 1f - poly * MathF.Exp(-a * a);
-        return z < 0 ? -e : e;
-    }
+    /// <summary>erf(z) within 1.5e-7 (Abramowitz and Stegun 7.1.26), as <see cref="CpuMath.Erf(float)"/> rounds it.</summary>
+    internal static float ErfOf(float z) => CpuMath.Erf(z);
 
     // dx += dy · op'(x); sqrt's slope comes from y = sqrt(x), sign's is zero.
     private readonly struct MathBackwardLoop(UnaryOp op, float[] x, float[] y, float[] dy, float[] dx) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
+            var xs = x.AsSpan(start, end - start);
+            var ys = y.AsSpan(start, end - start);
+            var gs = dy.AsSpan(start, end - start);
+            var ds = dx.AsSpan(start, end - start);
+            var xv = MemoryMarshal.Cast<float, Vector<float>>(xs);
+            var yv = MemoryMarshal.Cast<float, Vector<float>>(ys);
+            var gv = MemoryMarshal.Cast<float, Vector<float>>(gs);
+            var dv = MemoryMarshal.Cast<float, Vector<float>>(ds);
+            int tail = xv.Length * Vector<float>.Count;
             switch (op)
             {
                 case UnaryOp.Sqrt:
-                    for (int i = start; i < end; i++) dx[i] += dy[i] * 0.5f / y[i];
+                {
+                    var half = new Vector<float>(0.5f);
+                    for (int i = 0; i < xv.Length; i++) dv[i] += gv[i] * half / yv[i];
+                    for (int i = tail; i < xs.Length; i++) ds[i] += gs[i] * 0.5f / ys[i];
                     break;
+                }
+
                 case UnaryOp.Sin:
-                    for (int i = start; i < end; i++) dx[i] += dy[i] * MathF.Cos(x[i]);
+                    for (int i = 0; i < xv.Length; i++) dv[i] += gv[i] * Vector.Cos(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ds[i] += gs[i] * MathF.Cos(xs[i]);
                     break;
                 case UnaryOp.Cos:
-                    for (int i = start; i < end; i++) dx[i] -= dy[i] * MathF.Sin(x[i]);
+                    for (int i = 0; i < xv.Length; i++) dv[i] -= gv[i] * Vector.Sin(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ds[i] -= gs[i] * MathF.Sin(xs[i]);
                     break;
                 case UnaryOp.Silu:
-                    for (int i = start; i < end; i++)
+                    for (int i = 0; i < xv.Length; i++)
                     {
-                        float s = SigmoidOf(x[i]);
-                        dx[i] += dy[i] * s * (1f + x[i] * (1f - s));
+                        var s = CpuMath.Sigmoid(xv[i]);
+                        dv[i] += gv[i] * s * (Vector<float>.One + xv[i] * (Vector<float>.One - s));
+                    }
+
+                    for (int i = tail; i < xs.Length; i++)
+                    {
+                        float s = SigmoidOf(xs[i]);
+                        ds[i] += gs[i] * s * (1f + xs[i] * (1f - s));
                     }
 
                     break;
                 case UnaryOp.Sign:
                     break;
                 case UnaryOp.GeluErf:
-                    for (int i = start; i < end; i++)
+                {
+                    // 0.5 (1 + erf(x/√2)) + x e^(-x²/2) / √(2π)
+                    var half = new Vector<float>(0.5f);
+                    var root = new Vector<float>(0.70710678f);
+                    var density = new Vector<float>(0.3989422804f);
+                    for (int i = 0; i < xv.Length; i++)
                     {
-                        float v = x[i];                                           // 0.5 (1 + erf(x/√2)) + x e^(-x²/2) / √(2π)
-                        dx[i] += dy[i] * (0.5f * (1f + ErfOf(v * 0.70710678f)) + v * 0.3989422804f * MathF.Exp(-0.5f * v * v));
+                        var v = xv[i];
+                        dv[i] += gv[i] * (half * (Vector<float>.One + CpuMath.Erf(v * root)) + v * density * CpuMath.Exp(-half * v * v));
+                    }
+
+                    for (int i = tail; i < xs.Length; i++)
+                    {
+                        float v = xs[i];
+                        ds[i] += gs[i] * (0.5f * (1f + ErfOf(v * 0.70710678f)) + v * 0.3989422804f * MathF.Exp(-0.5f * v * v));
                     }
 
                     break;
+                }
+
                 default:
                     throw new ArgumentOutOfRangeException(nameof(op));
             }
@@ -119,6 +175,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct ExtremumLoop(bool minimum, float[] a, float[] b, float[] c) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;
@@ -149,6 +206,7 @@ internal sealed partial class CpuBackend
     // Ties go to a.
     private readonly struct ExtremumBackwardLoop(bool minimum, float[] a, float[] b, float[] dy, float[]? da, float[]? db) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;
@@ -181,6 +239,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct PowLoop(float[] x, float[] y, float exponent) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             for (int i = start; i < end; i++) y[i] = MathF.Pow(x[i], exponent);
@@ -189,6 +248,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct PowBackwardLoop(float[] x, float[] dy, float[] dx, float exponent) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             if (exponent == 0f)
@@ -202,6 +262,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct ClampLoop(float[] x, float[] y, float min, float max) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;
@@ -224,6 +285,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct ClampBackwardLoop(float[] x, float[] dy, float[] dx, float min, float max) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;
@@ -252,6 +314,7 @@ internal sealed partial class CpuBackend
     // y = x where x > 0, slope · x elsewhere (a NaN stays NaN).
     private readonly struct LeakyReluLoop(float[] x, float[] y, float slope) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;
@@ -275,6 +338,7 @@ internal sealed partial class CpuBackend
     // dx += dy where x > 0, slope · dy elsewhere.
     private readonly struct LeakyReluBackwardLoop(float[] x, float[] dy, float[] dx, float slope) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;
@@ -298,6 +362,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct WhereLoop(float[] condition, float[] a, float[] b, float[] y) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;
@@ -322,6 +387,7 @@ internal sealed partial class CpuBackend
 
     private readonly struct WhereBackwardLoop(float[] condition, float[] dy, float[]? da, float[]? db) : IRangeKernel
     {
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
             int i = start;

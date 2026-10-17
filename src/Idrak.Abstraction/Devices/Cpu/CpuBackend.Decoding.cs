@@ -24,13 +24,7 @@ internal sealed partial class CpuBackend
                 var xs = xv.AsSpan(r * cols, cols);
                 var ys = yv.AsSpan(r * cols, cols);
                 var ms = mv is null ? default : mv.AsSpan(r % maskRows * cols, cols);
-                float max = float.NegativeInfinity;
-                for (int j = 0; j < cols; j++)
-                {
-                    ys[j] = xs[j] * scale + (mv is null ? 0f : ms[j]);
-                    max = MathF.Max(max, ys[j]);
-                }
-
+                float max = CpuMath.ScaleAddMax(xs, ms, ys, scale);
                 CpuMath.Scale(ys, 1f / CpuMath.ExpShifted(ys, max));
             }
         });

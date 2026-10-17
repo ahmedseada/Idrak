@@ -77,7 +77,7 @@ internal static class MemoryBench
             using var ends = Tensor.From([.. Enumerable.Range(1, t).Select(i => (float)i)], [t], device);
             float scale = 1f / MathF.Sqrt(Dim);
             Action attention = () => Tensor.AttentionFastest(q, k, v, starts, ends, scale, everyKey: false);
-            var (_, warm) = Bench.Time(device, attention, Math.Min(settings.Repeats, 3));
+            var (_, warm) = Bench.Time(device, attention, Math.Min(settings.Repeats, 3), Math.Min(settings.Warmup, 3));
             long peak = Bench.PeakBytes(device, attention);
             string label = $"causal attention, {Heads} heads x {t} x {Dim}";
             Console.WriteLine(Bench.Line(label, ("ms warm", Bench.F(warm, "0.0")), ("peak", Bench.Mib(peak))));

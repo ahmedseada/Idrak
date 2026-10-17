@@ -22,10 +22,10 @@ Baseline on the 4-thread CPU container (small size), the slow spots the first ru
 |---|---|---|
 | add, mul, leaky relu | 23-31 | SIMD loops: the ceiling here |
 | tanh, gelu (tanh form) | 13-15 | vectorized rational |
-| exp | 2.8 | a scalar `MathF.Exp` loop |
-| gelu (erf) | 1.1 | scalar erf and exp |
+| exp | 2.8 | `Vector.Exp`, a runtime method the JIT does not inline and compiles unoptimized at first (step 8: the library's own, 16 GB/s) |
+| gelu (erf) | 1.1 | scalar erf and exp (step 8: vector loops, 9.6 GB/s) |
 | sum over rows (inner = 1) | 2.0 | a span per element in the short-run branch |
-| softmax, layer norm | 1.7-1.9 | scalar mean/variance/exp loops |
+| softmax, layer norm | 1.7-1.9 | scalar mean/variance/exp loops (steps 2 and 8: 7.5 and 11 GB/s) |
 
 ## 2. Resource caps found (src/, by the survey)
 
@@ -95,4 +95,5 @@ tensor stores, and the kernel and registry lookups per launch; each is measured 
 | 6a | Library moves, batch 1: `Tensor.Pad` (zeros, reflect, replicate) and `Tensor.Flip`, `TensorDictionary`, `Conv1d` and `ConvTranspose1d` with the `WeightNorm` parametrization, `PaddedSequences`, `StoredWeights.FoldWeightNorm` and `WeightNormNames`; the VITS plug-in and OpenVoice use them | done |
 | 6b | Library moves, batch 2 (section 3, items 2, 4 and 5): `StoredLayers`, `StoredParameter` and `ParameterSet` (Idrak.Models), `Random.NextGaussian`, `DilatedDepthSeparableConv`, `RationalQuadraticSpline`, `ConvolutionalSplineFlow`, `RelativePositionAttention`, `Checkpointing.RunBlock` (Idrak.Layers); `WaveNet`, `ResidualCouplingBlock`, `PosteriorEncoder`, `HifiGanGenerator`, `HifiGanDiscriminators` (Idrak.Audio.Layers), `AdversarialLosses`, `MonotonicAlignment`, `DifferentiableLogMel` (Idrak.Audio). The VITS plug-in keeps its tokenizer, text encoder, duration predictor's flow order and training step (five files gone); OpenVoice drops its VitsSpeech reference and builds the library layers from its own config. The torch fixture's step-1 losses and gradients, the three SGD steps and the conversion fixture match as before (within 1e-4); 16 layer tests, three new | done |
 | 6c | Library moves, batch 3: a library "hifigan" `IVocoder` over `HifiGanGenerator`, the convolutional feed-forward and the duration predictor's element-wise affine flow, the text encoder as a library layer; then section 3's items 6 (vision and text) and 7 (MP3, the owner's call) | next |
+| 8 | CPU math kernels: the library's own vector exp (`CpuMath.Exp`, 256- and 512-bit; the runtime's `Vector.Exp` is not inlined and runs unoptimized for its first hundreds of calls), every range kernel compiled optimized at its first call (`AggressiveOptimization`), erf-GELU, SiLU, sqrt, sin, cos and sign as vector loops forward and backward, the scale-mask softmax's pass and the softmax backward row vectorized; the bench warms up 30 calls before timing (`IDRAK_BENCH_WARMUP`). Warm µs on the 4-thread CPU, 16k / 262k elements: exp 72 → 14 / 672 → 131, erf-GELU 577 → 34 / 1,587 → 219, softmax 103 → 18 / 1,108 → 281, exp forward and backward 1,349 → 610 | done |
 | 7 | Measure every step with the benches; record the numbers here | ongoing |
