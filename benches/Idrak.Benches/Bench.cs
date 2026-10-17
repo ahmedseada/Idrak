@@ -267,7 +267,10 @@ internal sealed class Census : ITelemetryHook
     public void OnTuning(in TuningCompleted e)
     {
         Tunings++;
-        TuningTime += e.Duration;
+        if (!e.Nested)
+        {
+            TuningTime += e.Duration;                                        // a nested one's time lies within the outer's
+        }
     }
 
     public void OnOperation(in OperationCompleted e)

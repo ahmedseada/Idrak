@@ -59,6 +59,10 @@ internal sealed unsafe partial class CudaBackend
 
     private readonly Dictionary<TuneKey, int> _tuned = [];
 
+    // Convolution choices lent by the nearest measured class of the same shape (ComputeResources.TuningNeighbourOctaves):
+    // known for their keys, never saved and never lent on, so a choice reaches one neighbourhood and no further.
+    private readonly Dictionary<TuneKey, int> _lent = [];
+
     // Choices read from the cache file (null until first needed); each is used only when it is still one of the
     // candidates the shape offers, so a file from a build with other candidates cannot pick an invalid one.
     private Dictionary<TuneKey, int>? _persisted;
@@ -88,6 +92,7 @@ internal sealed unsafe partial class CudaBackend
         lock (_tuned)
         {
             _tuned.Clear();
+            _lent.Clear();
             _persisted = null;
             _tuningFile = null;
         }
@@ -175,12 +180,46 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    // Whether `key` was measured already (callers skip preparing candidates then).
+    // A convolution's choice from the nearest measured (or stored) class of the same shape, the data-sized fields apart,
+    // within ComputeResources.TuningNeighbourOctaves of its positions; false when none is, or the distance is 0.
+    private bool NearestTunedLocked(TuneKey key, ReadOnlySpan<int> candidates, out int value)
+    {
+        value = 0;
+        double reach = ComputeResources.TuningNeighbourOctaves;
+        if (reach <= 0)
+        {
+            return false;
+        }
+
+        long positions = ConvolutionShapes.Positions(key.A, key.D);
+        double best = double.MaxValue;
+        foreach (var table in (Dictionary<TuneKey, int>[])[_tuned, _persisted ?? []])
+        {
+            foreach (var (known, choice) in table)
+            {
+                if (known.Op != key.Op || known.Variant != key.Variant || known.B != key.B || known.C != key.C || known.E != key.E || known.F != key.F
+                    || !candidates.Contains(choice))
+                {
+                    continue;
+                }
+
+                double distance = ConvolutionShapes.Octaves(positions, ConvolutionShapes.Positions(known.A, known.D));
+                if (distance <= reach && distance < best)
+                {
+                    (best, value) = (distance, choice);
+                }
+            }
+        }
+
+        return best <= reach;
+    }
+
+    // Whether `key` was measured already, or has a lent choice (callers skip preparing candidates then).
     private bool TunedKnown(TuneKey key)
     {
         lock (_tuned)
         {
-            return _tuned.ContainsKey(key);
+            return _tuned.ContainsKey(key) || _lent.ContainsKey(key);
         }
     }
 
@@ -227,14 +266,14 @@ internal sealed unsafe partial class CudaBackend
 
     private int TuneMeasuredLocked(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
     {
-        long started = Stopwatch.GetTimestamp();
+        long began = TuningBegan();
         try
         {
             return TuneMeasuredTimed(key, candidates, fallback, run, cold, part, parts);
         }
         finally
         {
-            TuningMeasured(key.Op.ToString(), candidates.Length, Stopwatch.GetElapsedTime(started));
+            TuningMeasured(key.Op.ToString(), candidates.Length, began);
         }
     }
 
@@ -285,7 +324,7 @@ internal sealed unsafe partial class CudaBackend
 
         lock (_tuned)
         {
-            if (_tuned.TryGetValue(key, out int known))
+            if (_tuned.TryGetValue(key, out int known) || _lent.TryGetValue(key, out known))
             {
                 choice = candidates.Contains(known) ? known : fallback;    // another shape of the class may offer other candidates
                 return true;
@@ -295,6 +334,13 @@ internal sealed unsafe partial class CudaBackend
             {
                 _tuned[key] = kept;
                 choice = kept;
+                return true;
+            }
+
+            if (candidates.Length > 1 && key.Op == TuneOp.Convolution && NearestTunedLocked(key, candidates, out int lent))
+            {
+                _lent[key] = lent;
+                choice = lent;
                 return true;
             }
         }

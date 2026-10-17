@@ -90,6 +90,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CACHE", Tuning, "~/.cache/idrak", "The cache folder: downloaded models, tuning choices, compiled kernels (--cache wins for the tool)", [Every]),
         new("IDRAK_AUTOTUNE", Tuning, "1 (measure)", "0 or false: the formulas only, no measuring of kernel choices on the device", OnDevice),
         new("IDRAK_TUNING_CACHE", Tuning, "on, under the cache folder", "0, false or off: measured choices are not kept; a path: the CUDA tuning folder", Caches),
+        new("IDRAK_TUNE_NEIGHBOUR_OCTAVES", Tuning, "1", "How far a convolution's measured choice reaches, in octaves of its positions: a size class none measured takes the nearest measured class's choice within it instead of measuring (ComputeResources.TuningNeighbourOctaves); 0: every class measured", OnDevice),
         new("IDRAK_TUNE_LOG", Tuning, "not set", "1: print every tuning measurement (candidates, time ratios, the choice) to the error output", OnDevice),
         new("IDRAK_CPU_TUNING_FILE", Tuning, "<cache>/cpu/tuning.tsv", "The CPU tuning file (empty: none)", Caches),
         new("IDRAK_VULKAN_TUNING_CACHE", Tuning, "<cache>/vulkan/tuning.tsv", "0 or false: no Vulkan tuning file; a path: the file", Caches),
@@ -140,6 +141,8 @@ internal static class EnvironmentVariables
         new("ROCM_PATH", Hip, "/opt/rocm", "Where ROCm is (Linux)", OnDevice),
 
         new("IDRAK_VOICES", Sources, "voices/ under IDRAK_CACHE or ~/.cache/idrak", "The installed voices' folder (--voices wins; with --cache given and this unset: voices/ under it)", VoiceStore),
+        new("IDRAK_ESPEAK", Sources, "espeak-ng on the PATH", "The espeak-ng program the phonemizer runs for a speech model whose text front end wants phonemes (Idrak.Audio.SpeechText.EspeakNgPhonemizer)", ["speak", "pretrain", "tune", "serve"]),
+        new("IDRAK_ESPEAK_VOICE", Sources, "the checkpoint's language", "The espeak-ng voice the phonemizer uses instead of the model's language", ["speak", "pretrain", "tune", "serve"]),
         new("HF_TOKEN", Sources, "the saved login", "The Hugging Face access token for gated and private models and datasets", [.. Models, .. Data, .. Logins], Secret: true),
         new("HUGGING_FACE_HUB_TOKEN", Sources, "not set", "The older name of HF_TOKEN", [.. Models, .. Data, "doctor"], Secret: true),
         new("HF_TOKEN_PATH", Sources, "<HF_HOME>/token", "The file holding the saved Hugging Face token", [.. Models, .. Data, .. Logins]),
