@@ -263,7 +263,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.ITextRomanizer` | interface | public | — | UromanArabicRomanizer |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer` | interface | public | Module, Tensor | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, Vocoders.GuardedVocoder |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, HifiGanVocoder, Vocoders.GuardedVocoder |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IVoiceConverter` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IVoiceConverterFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IVoiceStore` | interface | public | — | FolderVoiceStore |  | Audio | Audio |
@@ -276,7 +276,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.SpeechTrainingObjectives` | registry | public | — |  | ctc, seq2seq | Audio | Audio |
 | `Idrak.Audio.Abstractions.TextPhonemizers` | registry | public | — |  | espeak-ng | Audio | Audio |
 | `Idrak.Audio.Abstractions.TextRomanizers` | registry | public | — |  | uroman-arabic | — | Audio |
-| `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | — | Audio |
+| `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | Audio | Audio |
 | `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.VoiceStores` | registry | public | — |  | folder | Audio | Audio |
 

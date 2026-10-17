@@ -39,8 +39,8 @@ public sealed class HifiGanResidualBlock : Module
         for (int i = 0; i < dilations.Count; i++)
         {
             int dilation = dilations[i];
-            convs1[i] = stored.Conv($"{prefix}.convs1.{i}", channels, channels, kernel, (kernel * dilation - dilation) / 2, dilation);
-            convs2[i] = stored.Conv($"{prefix}.convs2.{i}", channels, channels, kernel, (kernel - 1) / 2);
+            convs1[i] = stored.Conv(StoredLayers.Join(prefix, $"convs1.{i}"), channels, channels, kernel, (kernel * dilation - dilation) / 2, dilation);
+            convs2[i] = stored.Conv(StoredLayers.Join(prefix, $"convs2.{i}"), channels, channels, kernel, (kernel - 1) / 2);
         }
 
         return new HifiGanResidualBlock(convs1, convs2, slope);
@@ -167,8 +167,8 @@ public sealed class HifiGanGenerator : Module
             throw new ArgumentException($"The upsampling rates and kernels pair up ({upsampleRates.Count}, {upsampleKernels.Count}), as do the residual blocks' kernels and dilations ({resblockKernels.Count}, {resblockDilations.Count}).", nameof(upsampleKernels));
         }
 
-        var pre = stored.Conv($"{prefix}.conv_pre", flowSize, initialChannels, 7, 3);
-        var cond = conditioningSize > 0 ? stored.Conv($"{prefix}.cond", conditioningSize, initialChannels, 1, 0) : null;
+        var pre = stored.Conv(StoredLayers.Join(prefix, "conv_pre"), flowSize, initialChannels, 7, 3);
+        var cond = conditioningSize > 0 ? stored.Conv(StoredLayers.Join(prefix, "cond"), conditioningSize, initialChannels, 1, 0) : null;
         int stages = upsampleRates.Count, kernels = resblockKernels.Count;
         var upsamplers = new ConvTranspose1d[stages];
         var blocks = new HifiGanResidualBlock[stages * kernels];
@@ -177,15 +177,15 @@ public sealed class HifiGanGenerator : Module
         {
             int rate = upsampleRates[i], kernel = upsampleKernels[i];
             int inChannels = initialChannels >> i, outChannels = initialChannels >> (i + 1);
-            upsamplers[i] = stored.ConvTranspose($"{prefix}.upsampler.{i}", inChannels, outChannels, kernel, rate, (kernel - rate) / 2);
+            upsamplers[i] = stored.ConvTranspose(StoredLayers.Join(prefix, $"upsampler.{i}"), inChannels, outChannels, kernel, rate, (kernel - rate) / 2);
             hop *= rate;
             for (int j = 0; j < kernels; j++)
             {
-                blocks[i * kernels + j] = HifiGanResidualBlock.FromStored(stored, $"{prefix}.resblocks.{i * kernels + j}", outChannels, resblockKernels[j], resblockDilations[j], slope);
+                blocks[i * kernels + j] = HifiGanResidualBlock.FromStored(stored, StoredLayers.Join(prefix, $"resblocks.{i * kernels + j}"), outChannels, resblockKernels[j], resblockDilations[j], slope);
             }
         }
 
-        var post = stored.Conv($"{prefix}.conv_post", initialChannels >> stages, 1, 7, 3);
+        var post = stored.Conv(StoredLayers.Join(prefix, "conv_post"), initialChannels >> stages, 1, 7, 3);
         return new HifiGanGenerator(pre, cond, upsamplers, blocks, post, kernels, slope, finalSlope, hop, ContextFramesFor(upsampleRates, upsampleKernels, resblockKernels, resblockDilations));
     }
 

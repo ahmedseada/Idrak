@@ -20,6 +20,7 @@ internal static partial class Tests
         ("layers: StoredLayers reads a store's convolutions, transposed convolutions, linears, norms and 1 × 1 projections under their stored names (trainable: every tensor a parameter listed in Trained, a weight norm kept as gain and direction); WaveNet, ResidualCouplingBlock (forward then reverse the identity within 1e-5, with and without a speaker) and PosteriorEncoder (means at noise 0) built from it; a batch with masks equals the sequences alone", AudioLayersFromStored),
         ("layers: HifiGanGenerator decodes long latents in pieces with context equal to one pass within 1e-5 and halves a piece the device refuses; HifiGanDiscriminators created from a seed give a score and a map per layer per discriminator, save and reload bit for bit under VITS's names, and refuse sound that is not [B, L]; the GAN losses equal plain loops", HifiGanLayers),
         ("layers: VisionTransformerEncoder built from a store of every tensor Expected names gives [images, patches, dim], its Tensors round-trip the store bit for bit (q, k, v split from the fused projection), Load takes the names given and sets the values, the checkpointed pass equals the plain one, a wrong shape and an unknown activation are refused; PatchGrid.AveragePool equals a loop", VisionTransformerFromStored),
+        ("layers: HifiGanVocoder reads transformers' root-level HiFi-GAN names (conv_pre, upsampler, resblocks, conv_post, mean, scale) from a store and from a saved folder, standardizes the log-mel and gives frames · hop samples equal to the generator's; registered under a name Vocoders.Create gives it back; another mel count and disagreeing lists are refused", HifiGanVocoderFromStored),
         ("layers: RelativePositionAttention with window 0 equals scaled-dot-product attention from the same projections within 1e-5, zero relative embeddings change nothing, the trained path (embeddings as parameters) equals the speaking path and gives them gradients; MonotonicAlignment finds the best monotonic path and its durations; DifferentiableLogMel equals the host STFT's log-mel within 1e-4", AttentionAlignmentAndMel),
     ];
 
@@ -700,6 +701,80 @@ internal static partial class Tests
             AssertClose(pooled, p.ToArray(), 1e-6f, "3 x 3 average pooling of the grid");
             Check(ReferenceEquals(PatchGrid.AveragePool(g, 1), g), "pool size 1 is the input");
             ThrowsNaming<ArgumentException>(() => PatchGrid.AveragePool(g, 4).Dispose(), "divisible by 4");
+        }
+    }
+
+    private static void HifiGanVocoderFromStored(Device device)
+    {
+        var random = new Random(9);
+        var config = new HifiGanVocoderConfig { Mels = 4, SamplingRate = 800, UpsampleInitialChannel = 8, UpsampleRates = [2, 2], UpsampleKernelSizes = [4, 4], ResblockKernelSizes = [3], ResblockDilationSizes = [[1, 3]] };
+        using var store = new TensorDictionary();
+        DrawLayer(store, random, "conv_pre", [8, 4, 7]);
+        for (int i = 0; i < 2; i++)
+        {
+            DrawLayer(store, random, $"upsampler.{i}", [8 >> i, 8 >> (i + 1), 4], biasRows: 8 >> (i + 1));
+            for (int d = 0; d < 2; d++)
+            {
+                DrawLayer(store, random, $"resblocks.{i}.convs1.{d}", [8 >> (i + 1), 8 >> (i + 1), 3]);
+                DrawLayer(store, random, $"resblocks.{i}.convs2.{d}", [8 >> (i + 1), 8 >> (i + 1), 3]);
+            }
+        }
+
+        DrawLayer(store, random, "conv_post", [1, 2, 7]);
+        float[] mean = [0.1f, -0.2f, 0.3f, 0.5f], scale = [1.5f, 0.5f, 2f, 1f];
+        store.Add("mean", [4], mean);
+        store.Add("scale", [4], scale);
+        using var vocoder = HifiGanVocoder.FromStored(new StoredLayers(store, device), "", config);
+        Check(vocoder.Mels == 4 && vocoder.SampleRate == 800 && vocoder.Config.Hop == 4 && vocoder.Normalizes && vocoder.Name == "hifigan" && vocoder.ToString().Contains("standardized"), vocoder.ToString());
+
+        const int Frames = 30;
+        float[] mel = [.. Enumerable.Range(0, Frames * 4).Select(_ => random.NextSingle() * 4 - 6)];
+        using var logMel = Tensor.From(mel, [Frames, 4], Device.Cpu);
+        var sound = vocoder.Synthesize(logMel, device);
+        Check(sound.Length == Frames * 4 && sound.SampleRate == 800 && sound.Channels == 1 && sound.Samples.All(float.IsFinite), $"{sound.Length} samples at {sound.SampleRate} Hz");
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            var standardized = new float[mel.Length];
+            for (int i = 0; i < mel.Length; i++)
+            {
+                standardized[i] = (mel[i] - mean[i % 4]) / scale[i % 4];
+            }
+
+            var direct = vocoder.Generator.Samples(Tensor.From(standardized, [Frames, 4], device).Transpose(), null, 0);
+            AssertClose(direct, sound.Samples, 1e-5f, "the vocoder is the generator over the standardized log-mel");
+            vocoder.DecoderChunkSeconds = 10.0 * 4 / 800;                                   // pieces of 10 frames
+            AssertClose(direct, vocoder.Synthesize(logMel, device).Samples, 1e-5f, "decoded in pieces of 10 frames");
+        }
+
+        // The same checkpoint saved as a folder and read back through the checkpoint formats, then registered by name.
+        string folder = TempFolder("hifigan-vocoder");
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJson().ToJsonString());
+            SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), store.Names.Select(n => (n, store.ShapeOf(n), store.Read(n))), SafeTensorType.F32);
+            using var loaded = HifiGanVocoder.Load(folder, device);
+            Check(loaded.Normalizes && loaded.Config.Hop == 4, loaded.ToString());
+            AssertClose(sound.Samples, loaded.Synthesize(logMel, device).Samples, 1e-6f, "the folder's vocoder gives the store's samples");
+            HifiGanVocoder.RegisterFolder(folder, "hifigan-test", device);
+            try
+            {
+                var created = Vocoders.Create("hifigan-test");
+                Check(created.Mels == 4 && created.SampleRate == 800 && ReferenceEquals(created, Vocoders.Create("hifigan-test")), "registered under a name, read once");
+                Check(Vocoders.Names.Contains("hifigan-test"), "listed");
+            }
+            finally
+            {
+                Vocoders.Unregister("hifigan-test");
+            }
+
+            ThrowsNaming<ArgumentException>(() => loaded.Synthesize(Tensor.From(new float[Frames * 5], [Frames, 5], Device.Cpu), device), "[frames, 4]");
+            ThrowsNaming<InvalidDataException>(() => (config with { UpsampleKernelSizes = [4] }).Checked(), "pair up");
+            ThrowsNaming<InvalidDataException>(() => HifiGanVocoderConfig.FromJson(new System.Text.Json.Nodes.JsonObject { ["upsample_rates"] = 3 }), "not a list");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
         }
     }
 }

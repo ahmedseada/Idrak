@@ -1738,6 +1738,7 @@ public sealed class Idrak.Models.StoredLayers
   public bool Trainable { get; }
   public float[] Read(string name)
   public int[] Shape(string name)
+  public static string Join(string prefix, string name)
 
 public sealed record Idrak.Models.StoredParameter : System.IEquatable<Idrak.Models.StoredParameter>
   public Idrak.Abstraction.Tensor Tensor { get; init; }
