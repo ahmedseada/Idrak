@@ -186,6 +186,13 @@ public static partial class DeviceCases
             b.Clamp(a, y, n, float.NegativeInfinity, 0.5f);
             b.ClampBackward(a, Random(c, n), Random(c, n), n, 0f, float.PositiveInfinity);
 
+            foreach (float slope in new[] { 0.1f, 0f })
+            {
+                b.LeakyRelu(a, y, n, slope);
+                c.ExpectClose([.. av.Select(v => v > 0f ? v : v * slope)], Read(y), 1e-6f, $"leaky ReLU, slope {slope}");
+                b.LeakyReluBackward(a, Random(c, n), Random(c, n), n, slope);
+            }
+
             var condition = c.Storage([.. Enumerable.Range(0, n).Select(_ => (float)c.Random.Next(2))]);
             b.Where(condition, a, bs, y, n);
             b.WhereBackward(condition, Random(c, n), Random(c, n), Random(c, n), n);

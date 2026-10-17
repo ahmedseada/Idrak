@@ -512,6 +512,114 @@ public abstract partial class Backend
         CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
     }
 
+    /// <summary>y = x where x &gt; 0, slope · x elsewhere: the leaky ReLU, for a slope in [0, 1).</summary>
+    /// <remarks>Runs <see cref="Ops.LeakyRelu"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LeakyReluKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void LeakyRelu(Storage x, Storage y, int n, float slope)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            LeakyReluKernel(x, y, n, slope);
+        }
+        else
+        {
+            LeakyReluRegistered(x, y, n, slope);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluRegistered(Storage x, Storage y, int n, float slope)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.LeakyRelu) is OperationKernels.LeakyRelu kernel)
+        {
+            kernel(this, x, y, n, slope);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.LeakyRelu))
+        {
+            LeakyReluKernel(x, y, n, slope);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.LeakyRelu);
+        try
+        {
+            LeakyReluKernel(x, y, n, slope);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            LeakyReluOnHost(x, y, n, slope);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of LeakyRelu (the default body of LeakyReluKernel), for RetryOnHost.
+    private void LeakyReluOnHost(Storage x, Storage y, int n, float slope)
+    {
+        using var h = new HostCall(this, "LeakyRelu");
+        CpuBackend.Instance.LeakyRelu(h[x], h[y], n, slope);
+    }
+
+    /// <summary>dx += dy where x &gt; 0, slope · dy elsewhere.</summary>
+    /// <remarks>Runs <see cref="Ops.LeakyReluBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LeakyReluBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void LeakyReluBackward(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            LeakyReluBackwardKernel(x, dy, dx, n, slope);
+        }
+        else
+        {
+            LeakyReluBackwardRegistered(x, dy, dx, n, slope);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluBackwardRegistered(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.LeakyReluBackward) is OperationKernels.LeakyReluBackward kernel)
+        {
+            kernel(this, x, dy, dx, n, slope);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.LeakyReluBackward))
+        {
+            LeakyReluBackwardKernel(x, dy, dx, n, slope);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.LeakyReluBackward);
+        try
+        {
+            LeakyReluBackwardKernel(x, dy, dx, n, slope);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            LeakyReluBackwardOnHost(x, dy, dx, n, slope);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of LeakyReluBackward (the default body of LeakyReluBackwardKernel), for RetryOnHost.
+    private void LeakyReluBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        using var h = new HostCall(this, "LeakyReluBackward");
+        CpuBackend.Instance.LeakyReluBackward(h[x], h[dy], h[dx], n, slope);
+    }
+
     /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
     /// <remarks>Runs <see cref="Ops.Where"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>WhereKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

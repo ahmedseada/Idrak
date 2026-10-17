@@ -24,6 +24,10 @@ internal sealed partial class CpuBackend
 
     public override void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max) => Run(new ClampBackwardLoop(D(x), D(dy), D(dx), min, max), n);
 
+    public override void LeakyReluKernel(Storage x, Storage y, int n, float slope) => Run(new LeakyReluLoop(D(x), D(y), slope), n);
+
+    public override void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope) => Run(new LeakyReluBackwardLoop(D(x), D(dy), D(dx), slope), n);
+
     public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n) => Run(new WhereLoop(D(condition), D(a), D(b), D(y)), n);
 
     public override void WhereBackwardKernel(Storage condition, Storage dy, Storage? da, Storage? db, int n) =>
@@ -242,6 +246,53 @@ internal sealed partial class CpuBackend
             {
                 if (x[i] >= min && x[i] <= max) dx[i] += dy[i];
             }
+        }
+    }
+
+    // y = x where x > 0, slope · x elsewhere (a NaN stays NaN).
+    private readonly struct LeakyReluLoop(float[] x, float[] y, float slope) : IRangeKernel
+    {
+        public void Execute(int start, int end)
+        {
+            int i = start;
+            if (Vector.IsHardwareAccelerated)
+            {
+                var xv = MemoryMarshal.Cast<float, Vector<float>>(x.AsSpan(start, end - start));
+                var yv = MemoryMarshal.Cast<float, Vector<float>>(y.AsSpan(start, end - start));
+                var s = new Vector<float>(slope);
+                for (int v = 0; v < yv.Length; v++)
+                {
+                    yv[v] = Vector.ConditionalSelect(Vector.GreaterThan(xv[v], Vector<float>.Zero), xv[v], xv[v] * s);
+                }
+
+                i += yv.Length * Vector<float>.Count;
+            }
+
+            for (; i < end; i++) y[i] = x[i] > 0f ? x[i] : x[i] * slope;
+        }
+    }
+
+    // dx += dy where x > 0, slope · dy elsewhere.
+    private readonly struct LeakyReluBackwardLoop(float[] x, float[] dy, float[] dx, float slope) : IRangeKernel
+    {
+        public void Execute(int start, int end)
+        {
+            int i = start;
+            if (Vector.IsHardwareAccelerated)
+            {
+                var xv = MemoryMarshal.Cast<float, Vector<float>>(x.AsSpan(start, end - start));
+                var gv = MemoryMarshal.Cast<float, Vector<float>>(dy.AsSpan(start, end - start));
+                var dv = MemoryMarshal.Cast<float, Vector<float>>(dx.AsSpan(start, end - start));
+                var s = new Vector<float>(slope);
+                for (int v = 0; v < dv.Length; v++)
+                {
+                    dv[v] += Vector.ConditionalSelect(Vector.GreaterThan(xv[v], Vector<float>.Zero), gv[v], gv[v] * s);
+                }
+
+                i += dv.Length * Vector<float>.Count;
+            }
+
+            for (; i < end; i++) dx[i] += x[i] > 0f ? dy[i] : dy[i] * slope;
         }
     }
 

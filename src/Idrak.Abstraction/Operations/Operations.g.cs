@@ -22,147 +22,149 @@ internal static class OperationIndex
     public const int PowBackward = 6;
     public const int Clamp = 7;
     public const int ClampBackward = 8;
-    public const int Where = 9;
-    public const int WhereBackward = 10;
-    public const int Affine = 11;
-    public const int Axpy = 12;
-    public const int MulAdd = 13;
-    public const int AddRowVector = 14;
-    public const int SumRows = 15;
-    public const int Sum = 16;
-    public const int AxpyAt = 17;
-    public const int AddBroadcastScalar = 18;
-    public const int PackedMatMulLarge = 19;
-    public const int PackedMatMulEpilogue = 20;
-    public const int PackedMatMulGated = 21;
-    public const int PackedMatMulAddRmsNorm = 22;
-    public const int PackedMatMulNormAddRmsNorm = 23;
-    public const int PackedMatMulMany = 24;
-    public const int PackedMatMulGatedPair = 25;
-    public const int MatMulMany = 26;
-    public const int MatMulBias = 27;
-    public const int MatMulLowRank = 28;
-    public const int BFloat16TransposedMatMul = 29;
-    public const int Float8QuantizeWeight = 30;
-    public const int Float8MatMul = 31;
-    public const int PackedMatMulLowRank = 32;
-    public const int GemmStrided = 33;
-    public const int AttentionStrided = 34;
-    public const int AttentionStridedBackward = 35;
-    public const int SumColumns = 36;
-    public const int AddDropout = 37;
-    public const int BatchedMatMul = 38;
-    public const int Softmax = 39;
-    public const int SoftmaxBackward = 40;
-    public const int ArgMax = 41;
-    public const int ClassMatch = 42;
-    public const int NormStats = 43;
-    public const int NormApply = 44;
-    public const int NormBackward = 45;
-    public const int GroupScaleShift = 46;
-    public const int GroupReduce = 47;
-    public const int InvSqrt = 48;
-    public const int Gather = 49;
-    public const int GatherBFloat16 = 50;
-    public const int GatherBFloat16Columns = 51;
-    public const int OneHot = 52;
-    public const int ScatterAdd = 53;
-    public const int Im2Col = 54;
-    public const int Col2Im = 55;
-    public const int MaxPool = 56;
-    public const int MaxPoolBackward = 57;
-    public const int MaxPoolBackward2 = 58;
-    public const int Convolution = 59;
-    public const int ConvolutionBackwardInput = 60;
-    public const int ConvolutionBackwardWeight = 61;
-    public const int AvgPool = 62;
-    public const int AvgPoolBackward = 63;
-    public const int ResizeNormalize = 64;
-    public const int Interpolate2d = 65;
-    public const int Interpolate2dBackward = 66;
-    public const int AdaptiveAvgPool = 67;
-    public const int AdaptiveAvgPoolBackward = 68;
-    public const int AdaptiveMaxPool = 69;
-    public const int AdaptiveMaxPoolBackward = 70;
-    public const int CtcLoss = 71;
-    public const int CtcLossBackward = 72;
-    public const int LstmCell = 73;
-    public const int LstmCellBackward = 74;
-    public const int GruCell = 75;
-    public const int GruCellBackward = 76;
-    public const int LstmStep = 77;
-    public const int LstmStepBackward = 78;
-    public const int GruStep = 79;
-    public const int GruStepBackward = 80;
-    public const int LstmSequence = 81;
-    public const int LstmSequenceBackward = 82;
-    public const int GruSequence = 83;
-    public const int GruSequenceBackward = 84;
-    public const int BoxIouLoss = 85;
-    public const int BoxIouLossBackward = 86;
-    public const int SigmoidFocalLoss = 87;
-    public const int SigmoidFocalLossBackward = 88;
-    public const int Permute = 89;
-    public const int SumAxis = 90;
-    public const int BroadcastAxis = 91;
-    public const int SgdStep = 92;
-    public const int AdamStep = 93;
-    public const int AdamStep8Bit = 94;
-    public const int SumSquares = 95;
-    public const int FusedAdamW = 96;
-    public const int ClipFactor = 97;
-    public const int Dropout = 98;
-    public const int DropoutBackward = 99;
-    public const int ScaleMaskSoftmax = 100;
-    public const int LayerNormFused = 101;
-    public const int LayerNormTrain = 102;
-    public const int LayerNormBackward = 103;
-    public const int BiasGelu = 104;
-    public const int Int8MatMul = 105;
-    public const int BFloat16MatMul = 106;
-    public const int BFloat16Dequantize = 107;
-    public const int Float16MatMul = 108;
-    public const int Float16Dequantize = 109;
-    public const int PackBFloat16 = 110;
-    public const int Int8Dequantize = 111;
-    public const int Int4MatMul = 112;
-    public const int Int4Dequantize = 113;
-    public const int RmsNorm = 114;
-    public const int RmsNormBackward = 115;
-    public const int Rope = 116;
-    public const int RmsNormAffine = 117;
-    public const int AddRmsNormAffine = 118;
-    public const int RmsNormRope = 119;
-    public const int RmsNormRopePair = 120;
-    public const int NormRopeHeads = 121;
-    public const int SoftmaxCrossEntropyRows = 122;
-    public const int GatedActivation = 123;
-    public const int GatedActivationBackward = 124;
-    public const int GatedActivationPacked = 125;
-    public const int GatedActivationBackwardPacked = 126;
-    public const int KeyValueWriteInt8 = 127;
-    public const int AttentionScoresInt8 = 128;
-    public const int AttentionContextInt8 = 129;
-    public const int AttentionDecode = 130;
-    public const int AttentionInt8 = 131;
-    public const int AttentionBFloat16 = 132;
-    public const int KeyValueWriteBFloat16 = 133;
-    public const int AttentionTiledBackward = 134;
-    public const int AttentionSegmented = 135;
-    public const int AttentionRows = 136;
-    public const int AttentionSegmentedBackward = 137;
-    public const int AttentionTiled = 138;
-    public const int AttentionSpans = 139;
-    public const int AttentionSpansStrided = 140;
-    public const int AttentionSpansBackward = 141;
-    public const int DecoderMask = 142;
-    public const int KeyValueWrite = 143;
-    public const int SampleRows = 144;
-    public const int PenalizeRows = 145;
-    public const int HistoryPush = 146;
+    public const int LeakyRelu = 9;
+    public const int LeakyReluBackward = 10;
+    public const int Where = 11;
+    public const int WhereBackward = 12;
+    public const int Affine = 13;
+    public const int Axpy = 14;
+    public const int MulAdd = 15;
+    public const int AddRowVector = 16;
+    public const int SumRows = 17;
+    public const int Sum = 18;
+    public const int AxpyAt = 19;
+    public const int AddBroadcastScalar = 20;
+    public const int PackedMatMulLarge = 21;
+    public const int PackedMatMulEpilogue = 22;
+    public const int PackedMatMulGated = 23;
+    public const int PackedMatMulAddRmsNorm = 24;
+    public const int PackedMatMulNormAddRmsNorm = 25;
+    public const int PackedMatMulMany = 26;
+    public const int PackedMatMulGatedPair = 27;
+    public const int MatMulMany = 28;
+    public const int MatMulBias = 29;
+    public const int MatMulLowRank = 30;
+    public const int BFloat16TransposedMatMul = 31;
+    public const int Float8QuantizeWeight = 32;
+    public const int Float8MatMul = 33;
+    public const int PackedMatMulLowRank = 34;
+    public const int GemmStrided = 35;
+    public const int AttentionStrided = 36;
+    public const int AttentionStridedBackward = 37;
+    public const int SumColumns = 38;
+    public const int AddDropout = 39;
+    public const int BatchedMatMul = 40;
+    public const int Softmax = 41;
+    public const int SoftmaxBackward = 42;
+    public const int ArgMax = 43;
+    public const int ClassMatch = 44;
+    public const int NormStats = 45;
+    public const int NormApply = 46;
+    public const int NormBackward = 47;
+    public const int GroupScaleShift = 48;
+    public const int GroupReduce = 49;
+    public const int InvSqrt = 50;
+    public const int Gather = 51;
+    public const int GatherBFloat16 = 52;
+    public const int GatherBFloat16Columns = 53;
+    public const int OneHot = 54;
+    public const int ScatterAdd = 55;
+    public const int Im2Col = 56;
+    public const int Col2Im = 57;
+    public const int MaxPool = 58;
+    public const int MaxPoolBackward = 59;
+    public const int MaxPoolBackward2 = 60;
+    public const int Convolution = 61;
+    public const int ConvolutionBackwardInput = 62;
+    public const int ConvolutionBackwardWeight = 63;
+    public const int AvgPool = 64;
+    public const int AvgPoolBackward = 65;
+    public const int ResizeNormalize = 66;
+    public const int Interpolate2d = 67;
+    public const int Interpolate2dBackward = 68;
+    public const int AdaptiveAvgPool = 69;
+    public const int AdaptiveAvgPoolBackward = 70;
+    public const int AdaptiveMaxPool = 71;
+    public const int AdaptiveMaxPoolBackward = 72;
+    public const int CtcLoss = 73;
+    public const int CtcLossBackward = 74;
+    public const int LstmCell = 75;
+    public const int LstmCellBackward = 76;
+    public const int GruCell = 77;
+    public const int GruCellBackward = 78;
+    public const int LstmStep = 79;
+    public const int LstmStepBackward = 80;
+    public const int GruStep = 81;
+    public const int GruStepBackward = 82;
+    public const int LstmSequence = 83;
+    public const int LstmSequenceBackward = 84;
+    public const int GruSequence = 85;
+    public const int GruSequenceBackward = 86;
+    public const int BoxIouLoss = 87;
+    public const int BoxIouLossBackward = 88;
+    public const int SigmoidFocalLoss = 89;
+    public const int SigmoidFocalLossBackward = 90;
+    public const int Permute = 91;
+    public const int SumAxis = 92;
+    public const int BroadcastAxis = 93;
+    public const int SgdStep = 94;
+    public const int AdamStep = 95;
+    public const int AdamStep8Bit = 96;
+    public const int SumSquares = 97;
+    public const int FusedAdamW = 98;
+    public const int ClipFactor = 99;
+    public const int Dropout = 100;
+    public const int DropoutBackward = 101;
+    public const int ScaleMaskSoftmax = 102;
+    public const int LayerNormFused = 103;
+    public const int LayerNormTrain = 104;
+    public const int LayerNormBackward = 105;
+    public const int BiasGelu = 106;
+    public const int Int8MatMul = 107;
+    public const int BFloat16MatMul = 108;
+    public const int BFloat16Dequantize = 109;
+    public const int Float16MatMul = 110;
+    public const int Float16Dequantize = 111;
+    public const int PackBFloat16 = 112;
+    public const int Int8Dequantize = 113;
+    public const int Int4MatMul = 114;
+    public const int Int4Dequantize = 115;
+    public const int RmsNorm = 116;
+    public const int RmsNormBackward = 117;
+    public const int Rope = 118;
+    public const int RmsNormAffine = 119;
+    public const int AddRmsNormAffine = 120;
+    public const int RmsNormRope = 121;
+    public const int RmsNormRopePair = 122;
+    public const int NormRopeHeads = 123;
+    public const int SoftmaxCrossEntropyRows = 124;
+    public const int GatedActivation = 125;
+    public const int GatedActivationBackward = 126;
+    public const int GatedActivationPacked = 127;
+    public const int GatedActivationBackwardPacked = 128;
+    public const int KeyValueWriteInt8 = 129;
+    public const int AttentionScoresInt8 = 130;
+    public const int AttentionContextInt8 = 131;
+    public const int AttentionDecode = 132;
+    public const int AttentionInt8 = 133;
+    public const int AttentionBFloat16 = 134;
+    public const int KeyValueWriteBFloat16 = 135;
+    public const int AttentionTiledBackward = 136;
+    public const int AttentionSegmented = 137;
+    public const int AttentionRows = 138;
+    public const int AttentionSegmentedBackward = 139;
+    public const int AttentionTiled = 140;
+    public const int AttentionSpans = 141;
+    public const int AttentionSpansStrided = 142;
+    public const int AttentionSpansBackward = 143;
+    public const int DecoderMask = 144;
+    public const int KeyValueWrite = 145;
+    public const int SampleRows = 146;
+    public const int PenalizeRows = 147;
+    public const int HistoryPush = 148;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 147;
+    public const int Count = 149;
 }
 
 /// <summary>
@@ -225,6 +227,18 @@ public static class OperationKernels
     /// dx += dy where min ≤ x ≤ max.
     /// </summary>
     public delegate void ClampBackward(Backend backend, Storage x, Storage dy, Storage dx, int n, float min, float max);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.LeakyRelu"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x where x &gt; 0, slope · x elsewhere: the leaky ReLU, for a slope in [0, 1).
+    /// </summary>
+    public delegate void LeakyRelu(Backend backend, Storage x, Storage y, int n, float slope);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.LeakyReluBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += dy where x &gt; 0, slope · dy elsewhere.
+    /// </summary>
+    public delegate void LeakyReluBackward(Backend backend, Storage x, Storage dy, Storage dx, int n, float slope);
 
     /// <summary>
     /// A kernel for <see cref="Ops.Where"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1376,6 +1390,18 @@ public static partial class Ops
         new("ClampBackward", "ClampBackwardKernel", "Storage,Storage,Storage,Int32,Single,Single", OperationIndex.ClampBackward, typeof(OperationKernels.ClampBackward), KernelSource.Host);
 
     /// <summary>
+    /// y = x where x &gt; 0, slope · x elsewhere: the leaky ReLU, for a slope in [0, 1).
+    /// </summary>
+    public static readonly Operation LeakyRelu =
+        new("LeakyRelu", "LeakyReluKernel", "Storage,Storage,Int32,Single", OperationIndex.LeakyRelu, typeof(OperationKernels.LeakyRelu), KernelSource.Host);
+
+    /// <summary>
+    /// dx += dy where x &gt; 0, slope · dy elsewhere.
+    /// </summary>
+    public static readonly Operation LeakyReluBackward =
+        new("LeakyReluBackward", "LeakyReluBackwardKernel", "Storage,Storage,Storage,Int32,Single", OperationIndex.LeakyReluBackward, typeof(OperationKernels.LeakyReluBackward), KernelSource.Host);
+
+    /// <summary>
     /// y = condition ≠ 0 ? a : b, element-wise.
     /// </summary>
     public static readonly Operation Where =
@@ -2474,6 +2500,8 @@ public static partial class Ops
         PowBackward,
         Clamp,
         ClampBackward,
+        LeakyRelu,
+        LeakyReluBackward,
         Where,
         WhereBackward,
         Affine,

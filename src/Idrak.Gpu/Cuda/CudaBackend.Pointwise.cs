@@ -34,6 +34,12 @@ internal sealed unsafe partial class CudaBackend
     public override void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max) =>
         Launch1D(K("clamp_bwd_f32"), n, P(x), P(dy), P(dx), F(min), F(max), U(n));
 
+    public override void LeakyReluKernel(Storage x, Storage y, int n, float slope) =>
+        Launch1D(K("leaky_relu_f32"), n, P(x), P(y), F(slope), U(n));
+
+    public override void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope) =>
+        Launch1D(K("leaky_relu_bwd_f32"), n, P(x), P(dy), P(dx), F(slope), U(n));
+
     public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n) =>
         Launch1D(K("where_f32"), n, P(condition), P(a), P(b), P(y), U(n));
 

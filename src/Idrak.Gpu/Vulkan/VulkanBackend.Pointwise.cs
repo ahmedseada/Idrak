@@ -70,6 +70,30 @@ internal sealed partial class VulkanBackend
         Grid("clamp_backward", n, [x, dy, dx], new Push(b).I(n).F(min).F(max).Bytes);
     }
 
+    public override void LeakyReluKernel(Storage x, Storage y, int n, float slope)
+    {
+        if (!Fit(x, y))
+        {
+            base.LeakyReluKernel(x, y, n, slope);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[8];
+        Grid("leaky_relu", n, [x, y], new Push(b).I(n).F(slope).Bytes);
+    }
+
+    public override void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        if (!Fit(x, dy, dx))
+        {
+            base.LeakyReluBackwardKernel(x, dy, dx, n, slope);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[8];
+        Grid("leaky_relu_backward", n, [x, dy, dx], new Push(b).I(n).F(slope).Bytes);
+    }
+
     public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
     {
         if (!Fit(condition, a, b, y))

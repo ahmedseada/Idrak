@@ -54,6 +54,25 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
+        // y = x where x > 0, slope · x elsewhere; dx += dy where x > 0, slope · dy elsewhere.
+        yield return ("leaky_relu", () =>
+        {
+            var k = new KernelBuilder("leaky_relu", Block);
+            var (x, y) = (k.Buffer("x"), k.Buffer("y"));
+            var (n, slope) = (k.PushInt("n"), k.PushFloat("slope"));
+            Grid(k, n, i => y[i] = k.Select(x[i] > 0f, x[i], x[i] * slope));
+            return k.Build();
+        });
+
+        yield return ("leaky_relu_backward", () =>
+        {
+            var k = new KernelBuilder("leaky_relu_backward", Block);
+            var (x, dy, dx) = (k.Buffer("x"), k.Buffer("dy"), k.Buffer("dx"));
+            var (n, slope) = (k.PushInt("n"), k.PushFloat("slope"));
+            Grid(k, n, i => dx[i] = dx[i] + k.Select(x[i] > 0f, dy[i], dy[i] * slope));
+            return k.Build();
+        });
+
         yield return ("where", () =>
         {
             var k = new KernelBuilder("where", Block);
