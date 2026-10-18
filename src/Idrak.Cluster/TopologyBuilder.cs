@@ -14,7 +14,13 @@ namespace Idrak.Cluster;
 /// <param name="Type">Its type.</param>
 /// <param name="MemoryBytes">Its memory, or null when unknown.</param>
 /// <param name="Name">What it is, for the listing.</param>
-public sealed record MachineDevice(string Device, DeviceType Type, long? MemoryBytes, string Name);
+/// <param name="Card">The listed device that drives the same card ("cuda:0" for vulkan:0 on that card), or null when it
+/// is its own: ranks on one card share its memory whichever backend each names.</param>
+public sealed record MachineDevice(string Device, DeviceType Type, long? MemoryBytes, string Name, string? Card = null)
+{
+    /// <summary>The card this device is: <see cref="Card"/>, or the device itself.</summary>
+    public string CardKey => Card ?? Device;
+}
 
 /// <summary>What the topology builder suggests from: this machine's name, network address and adapter, and devices.</summary>
 /// <param name="HostName">This machine's host name.</param>
@@ -62,6 +68,25 @@ public sealed record MachineFacts(string HostName, string? Address, string? Adap
             catch (Exception e)
             {
                 devices.Add(new MachineDevice(device.ToString(), device.Type, null, $"could not start: {e.Message}"));
+            }
+        }
+
+        // A device a backend does not list because another backend drives its card (vulkan:0 beside cuda:0) is still a
+        // device a rank can name: it is listed with its twin's memory (the same UUID), without starting a backend for it.
+        foreach (var provider in DeviceProviders.All.Where(p => p.Kind != SimulatedDevices.Kind))
+        {
+            for (int i = 0; i < provider.Count; i++)
+            {
+                if (provider.Listed(i) || provider.TypeOf(i) == DeviceType.Cpu)
+                {
+                    continue;
+                }
+
+                var uuid = provider.DeviceUuid(i);
+                var twin = uuid is null ? null : Device.Available.FirstOrDefault(d => d.Type != DeviceType.Cpu && DeviceProviders.Find(d.Kind)?.DeviceUuid(d.Ordinal) == uuid);
+                var listed = twin is null ? null : devices.FirstOrDefault(d => d.Device == twin.ToString());
+                devices.Add(new MachineDevice($"{provider.Kind}:{i}", provider.TypeOf(i), listed?.MemoryBytes,
+                    twin is null ? $"{provider.Display} device {i}" : $"{twin.Name} (the card {twin} drives)", listed?.Device));
             }
         }
 
@@ -375,15 +400,16 @@ public sealed class TopologyBuilder
 
         int index = int.Parse(parts[3], CultureInfo.InvariantCulture);
         string device = Devices(node)[index - 1];
-        int sharing = Devices(node).Count(d => d.Equals(device, StringComparison.OrdinalIgnoreCase));
         var found = _facts.Devices.FirstOrDefault(d => d.Device.Equals(device, StringComparison.OrdinalIgnoreCase));
+        string CardOf(string d) => _facts.Devices.FirstOrDefault(f => f.Device.Equals(d, StringComparison.OrdinalIgnoreCase))?.CardKey ?? d;
+        int sharing = Devices(node).Count(d => CardOf(d).Equals(CardOf(device), StringComparison.OrdinalIgnoreCase));
         string? split = found?.MemoryBytes is { } total ? ClusterTopology.FormatMemory(total / sharing / (1 << 20) * (1 << 20)) : null;
         return new(key, $"Memory cap of {_answers[$"node.{node}.name"]}/{device}{(sharing > 1 ? $" (rank {index} of the node)" : "")}?",
             "A hard limit for that rank's device: past it an allocation fails, or spills to pinned host memory where the device can.\n" +
             "A cap above the physical memory is allowed. Use the real card's size when imitating a machine you own; empty for its own.",
             split ?? "",
             split is null ? $"{device} is not on this machine: give the size of the card on that machine" :
-            sharing > 1 ? $"{split} ({device}'s memory split between the {sharing} ranks on it)" : $"{split} ({device}'s memory)");
+            sharing > 1 ? $"{split} ({(found?.Card is { } card ? $"{device} is {card}'s card; its" : $"{device}'s")} memory split between the {sharing} ranks on it)" : $"{split} ({device}'s memory)");
     }
 
     private string? Validate(string key, string value)
@@ -431,7 +457,9 @@ public sealed class TopologyBuilder
 
             if (value.Length > 0)
             {
-                return ClusterTopology.ParseMemory(value) > 0 ? null : "a size above 0";
+                // A bare number is refused: 4048 would be 4,048 bytes, never what a cap means.
+                return value.All(char.IsAsciiDigit) ? $"a size with its unit ({value}MB, {value}GB; B, KB, MB, GB, TB, powers of 1,024)"
+                    : ClusterTopology.ParseMemory(value) > 0 ? null : "a size above 0";
             }
 
             return null;

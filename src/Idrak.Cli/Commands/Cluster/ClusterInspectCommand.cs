@@ -21,7 +21,7 @@ internal sealed class ClusterInspectCommand : Command
     public override string Summary => "Shows a topology file: its ranks, its links and the time an all-reduce would take on it";
 
     public override string Usage => """
-        FILE [--bytes SIZE]
+        FILE [--bytes SIZE] [--unit UNIT]
 
         Reads the topology file (idrak cluster init writes one) and checks it: the node this machine is (by its host
         name), every rank with its node, device and memory cap, each kind of link the ranks use with its bandwidth and
@@ -32,14 +32,19 @@ internal sealed class ClusterInspectCommand : Command
           FILE              the topology file
 
         Options:
-              --bytes SIZE  the all-reduce whose time is predicted (100MB; B, KB, MB, GB, powers of 1,024)
+              --bytes SIZE  the all-reduce whose time is predicted (100MB; B, KB, MB, GB, TB, powers of 1,024)
+              --unit UNIT   the unit sizes and bandwidths are shown in: B, KB, MB, GB or TB (powers of 1,024; KiB and
+                            the rest the same); default: per value, the largest unit it fills
 
         Examples:
           idrak cluster inspect topology.json
+          idrak cluster inspect topology.json --bytes 1GB --unit GB
           idrak cluster inspect topology.json --bytes 1GB -j
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--bytes"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--bytes", "--unit"];
+
+    private static readonly string[] Units = ["B", "KB", "MB", "GB", "TB"];
 
     public override int Run(CommandContext context)
     {
@@ -52,6 +57,14 @@ internal sealed class ClusterInspectCommand : Command
         catch (FormatException e)
         {
             throw new UsageException($"--bytes: {e.Message}");
+        }
+
+        int? unit = null;
+        if (context.Option("--unit") is { } named)
+        {
+            string plain = named.Replace("i", "", StringComparison.OrdinalIgnoreCase);    // KiB is KB: both powers of 1,024
+            int found = Array.FindIndex(Units, u => u.Equals(plain, StringComparison.OrdinalIgnoreCase));
+            unit = found >= 0 ? found : throw new UsageException($"--unit: '{named}' is not a unit; use {string.Join(", ", Units)} (powers of 1,024).");
         }
 
         ClusterTopology topology;
@@ -75,7 +88,7 @@ internal sealed class ClusterInspectCommand : Command
         {
             var (node, local) = topology.Place(r);
             var device = topology.Nodes[node].Devices[local];
-            string cap = device.MemoryBytes is { } m ? $"{ClusterTopology.FormatMemory(m)} ({(m / (1 << 20)).ToString("N0", inv)} MiB)" : "the device's own";
+            string cap = device.MemoryBytes is { } m ? Size(m, unit) : "the device's own";
             return (IReadOnlyList<string>)[r.ToString(inv), topology.Nodes[node].Name, device.Device, cap];
         }).ToList();
         context.Table(["rank", "node", "device", "cap"], ranks);
@@ -93,7 +106,7 @@ internal sealed class ClusterInspectCommand : Command
         }
 
         context.Table(["between", "link", "bandwidth", "latency", "figures from"], [.. links.Select(l => (IReadOnlyList<string>)
-            [l.Between, l.Link, l.BandwidthBytesPerSecond > 0 ? $"{(l.BandwidthBytesPerSecond / 1e6).ToString("N1", inv)} MB/s" : "unknown",
+            [l.Between, l.Link, l.BandwidthBytesPerSecond > 0 ? Size(l.BandwidthBytesPerSecond, unit) + "/s" : "unknown",
              $"{l.Latency.TotalMicroseconds.ToString("F1", inv)} us", l.Source])]);
         context.Write("");
 
@@ -104,7 +117,7 @@ internal sealed class ClusterInspectCommand : Command
             {
                 var time = TopologyInspection.PredictAllReduce(topology, algorithm, bytes);
                 predictions[algorithm] = time.TotalSeconds;
-                context.Write($"all-reduce of {ClusterTopology.FormatMemory(bytes)} with {algorithm}: {time.TotalMilliseconds.ToString("F2", inv)} ms of network time");
+                context.Write($"all-reduce of {Size(bytes, unit)} with {algorithm}: {time.TotalMilliseconds.ToString("F2", inv)} ms of network time");
             }
             catch (InvalidOperationException e)
             {
@@ -128,5 +141,22 @@ internal sealed class ClusterInspectCommand : Command
             ["all_reduce_seconds"] = predictions,
         });
         return ExitCodes.Ok;
+    }
+
+    // A size in `unit` (an index into Units), or in the largest unit it fills; powers of 1,024 (decision 7).
+    private static string Size(double bytes, int? unit)
+    {
+        int power = unit ?? 0;
+        if (unit is null)
+        {
+            while (power < Units.Length - 1 && bytes >= Math.Pow(1024, power + 1))
+            {
+                power++;
+            }
+        }
+
+        double value = bytes / Math.Pow(1024, power);
+        string format = power == 0 || value == Math.Floor(value) ? "N0" : value >= 100 ? "N1" : value >= 1 ? "N2" : "G3";
+        return value.ToString(format, CultureInfo.InvariantCulture) + " " + Units[power];
     }
 }
