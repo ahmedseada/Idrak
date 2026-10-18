@@ -155,6 +155,27 @@ public interface IGradientSync : IDisposable
     IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState() => null;
 
     /// <summary>
+    /// The rank that alone holds <paramref name="parameter"/>'s trained state (plan 23, C8b: a sharded run's owner), or null
+    /// when every rank holds it (the default, and every parameter a synchronisation does not train). A checkpoint streamed to
+    /// rank 0 takes each parameter from its owner (<see cref="Local"/>, <see cref="SaveOwnOptimizerState"/>).
+    /// </summary>
+    int? Owner(Tensor parameter) => null;
+
+    /// <summary>
+    /// The parameters this rank owns (<see cref="Owner"/>) in memory with their trained values until the returned scope is
+    /// disposed, without a collective (plan 23, C8b: a parameters shard gives them back between uses); null when they are in
+    /// memory anyway (the default).
+    /// </summary>
+    IDisposable? Local() => null;
+
+    /// <summary>
+    /// This rank's own entries of the optimizer's state, no collective (plan 23, C8b): its own parameters' moments, and on
+    /// rank 0 the optimizer's own entries (its step count), so a checkpoint streamed to rank 0 joins every rank's at rank 0
+    /// one entry at a time; null (the default) when the synchronisation does not shard the state (every rank holds it whole).
+    /// </summary>
+    IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState() => null;
+
+    /// <summary>
     /// Takes a checkpoint's whole optimizer state (<see cref="SaveOptimizerState"/>, or one process's) for a resumed run:
     /// a sharded run keeps each rank's share of it. False (the default): load it into the optimizer as in one process.
     /// </summary>

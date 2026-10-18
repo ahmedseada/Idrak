@@ -165,7 +165,25 @@ public sealed record PretrainedOptions
     /// (to train it further, or export it).
     /// </summary>
     public string? MergeAdapter { get; init; }
+
+    /// <summary>
+    /// Read no weight now (plan 23, C8b): the network is built on the deferred device (<see cref="DeferredTensors"/>), each
+    /// weight checked against the checkpoint's header and given its tensor's place in the file, and a weight's bytes are
+    /// read when its module moves to a device (<see cref="Module.To(Device)"/>), one tensor at a time. A pipeline stage
+    /// (<c>PipelineStage.Place</c>) or a parameters shard (the pretrainer) so reads only its own tensors, and no process
+    /// builds or holds the whole model. The weights are float32 (no packed format, no merged adapter); a family whose
+    /// weights the checkpoint names do not cover (<see cref="PretrainedModel.StoredTensors"/>) is refused naming the tensor.
+    /// Move the network to a device before running it (<see cref="PretrainedModel.Place"/>).
+    /// </summary>
+    public bool Deferred { get; init; }
 }
+
+/// <summary>A weight of a model as its checkpoint stores it (<see cref="PretrainedModel.StoredTensors"/>).</summary>
+/// <param name="Name">Its name in the checkpoint.</param>
+/// <param name="Shape">Its shape in the checkpoint (the tensor's transpose when <paramref name="Transposed"/>).</param>
+/// <param name="Tensor">The model's tensor.</param>
+/// <param name="Transposed">Whether the checkpoint stores the tensor's transpose (a projection [in, out] stored [out, in]).</param>
+public sealed record StoredTensor(string Name, int[] Shape, Tensor Tensor, bool Transposed);
 
 /// <summary>
 /// Where the time of <see cref="PretrainedModel.Load"/> went, by stage: wall time on the loading thread (work spread over
@@ -268,6 +286,13 @@ public sealed class PretrainedModel : IDisposable
     {
         long started = Stopwatch.GetTimestamp();
         options ??= new PretrainedOptions();
+        if (options.Deferred && (options.Int8 || options.Int4 || options.BFloat16 || options.PackedFormatName is not null || options.HeadFormatName is not null
+            || options.MergeAdapter is not null))
+        {
+            throw new ArgumentException("A deferred load (PretrainedOptions.Deferred) reads float32 weights where they are placed: load without Int8, Int4, BFloat16, "
+                + "a packed format or a merged adapter.", nameof(options));
+        }
+
         var format = CheckpointFormats.For(folder);
         folder = format.Prepare(folder);                            // a .gguf file: config, tokenizer and template from its metadata
 
@@ -289,12 +314,14 @@ public sealed class PretrainedModel : IDisposable
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
-        var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
-        var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions };
+        var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred };
+        var buildDevice = options.Deferred ? DeferredTensors.Device : options.Device;
+        var buildOptions = new DecoderBuildOptions { Device = buildDevice, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
-        using ((options.Device ?? Idrak.Abstraction.Device.Default).Backend.LongLivedAllocations())
+        using ((buildDevice ?? Idrak.Abstraction.Device.Default).Backend.LongLivedAllocations())
+        using (options.Deferred ? DeferredTensors.Build() : null)
         {
             // The weights live as long as the model: the device may place them together (Backend.LongLivedAllocations).
             network = architecture.Build is { } build
@@ -373,6 +400,19 @@ public sealed class PretrainedModel : IDisposable
         }
 
         model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
+        model._loadBytes = reader.BytesRead;
+        if (options.Deferred)
+        {
+            try
+            {
+                model.BindDeferred(format.Open(folder));            // a store of its own, kept while the model lives
+            }
+            catch
+            {
+                model.Dispose();
+                throw;
+            }
+        }
 
         // The store's file time (when it measures it) apart from the rest of its reads; what the build did besides reading,
         // merging and the bfloat16 uploads is packing and the other weights' uploads.
@@ -780,6 +820,109 @@ public sealed class PretrainedModel : IDisposable
         return Network.Children().SelectMany(child => Walk(child, child.Name ?? ""));
     }
 
+    // The store a deferred model's tensors are read from (plan 23, C8b), and the bytes the load itself read.
+    private ITensorStore? _source;
+    private long? _loadBytes;
+
+    /// <summary>
+    /// The bytes of weight values read from the checkpoint so far: by the load, and for a deferred model
+    /// (<see cref="PretrainedOptions.Deferred"/>) by each tensor read as it was placed; null when the store does not count them.
+    /// </summary>
+    public long? BytesRead => _loadBytes is { } loaded ? loaded + (_source?.BytesRead ?? 0) : _source?.BytesRead;
+
+    /// <summary>Whether some of the network's tensors are still on the deferred device (not read yet, <see cref="PretrainedOptions.Deferred"/>).</summary>
+    public bool IsDeferred => Network.Parameters().Concat(Network.Buffers()).Any(DeferredTensors.IsDeferred);
+
+    /// <summary>
+    /// Moves a deferred network to <see cref="Device"/>, reading every tensor still unread, one at a time (nothing when the
+    /// model was loaded whole). A rank that holds only part of the model places that part itself instead.
+    /// </summary>
+    public void Place()
+    {
+        if (IsDeferred)
+        {
+            Network.To(Device);
+        }
+    }
+
+    /// <summary>
+    /// The model's weights as its checkpoint stores them, in the order a save writes them: each one's checkpoint name, its
+    /// stored shape and the model's tensor (a tied head's table once, under the embedding's name). The names are the
+    /// architecture's (<see cref="PretrainedArchitecture.TensorName"/>), so this holds for any registered family.
+    /// </summary>
+    public IReadOnlyList<StoredTensor> StoredTensors()
+    {
+        var tensors = new List<StoredTensor>();
+        void Add(string name, Tensor tensor)
+        {
+            string stored = CheckpointName(name);
+            bool transposed = Architecture.Transposed(name) && tensor.Rank == 2;
+            tensors.Add(new StoredTensor(stored, transposed ? [tensor.Shape[1], tensor.Shape[0]] : [.. tensor.Shape], tensor, transposed));
+        }
+
+        foreach (var (path, module) in NamedModules())
+        {
+            switch (module)
+            {
+                case Linear { TiedTo: not null }:
+                    break;
+                case Linear linear:
+                    Add($"{path}.weight", linear.Weight);
+                    if (linear.Bias is { } bias)
+                    {
+                        Add($"{path}.bias", bias);
+                    }
+
+                    break;
+                case Embedding embedding:
+                    Add($"{path}.weight", embedding.Weight);
+                    break;
+                case PositionEmbedding positions:
+                    Add($"{path}.weight", positions.Weight);
+                    break;
+                case RMSNorm norm:
+                    Add($"{path}.weight", norm.Gain);
+                    break;
+                case LayerNorm norm:
+                    Add($"{path}.weight", norm.Gamma);
+                    Add($"{path}.bias", norm.Beta);
+                    break;
+            }
+        }
+
+        return tensors;
+    }
+
+    // A deferred build's tensors given their places in the checkpoint: every parameter must have one.
+    private void BindDeferred(ITensorStore store)
+    {
+        _source = store;
+        foreach (var stored in StoredTensors())
+        {
+            if (!DeferredTensors.IsDeferred(stored.Tensor) || DeferredTensors.SourceOf(stored.Tensor) is not null)
+            {
+                continue;
+            }
+
+            string name = stored.Name;
+            bool transposed = stored.Transposed;
+            int count = stored.Tensor.Size;
+            if (!store.Contains(name) || store.ShapeOf(name).Aggregate(1L, (a, b) => a * b) != count)
+            {
+                throw new InvalidDataException($"A deferred load reads '{name}' for a tensor of {count} values, which the checkpoint does not hold as such; load the model whole.");
+            }
+
+            DeferredTensors.SetSource(stored.Tensor, name, values => (transposed ? store.ReadTransposed(name) : store.Read(name)).AsSpan(0, values.Length).CopyTo(values));
+        }
+
+        if (Network.Parameters().FirstOrDefault(p => DeferredTensors.IsDeferred(p) && DeferredTensors.SourceOf(p) is null) is { } unread)
+        {
+            var owner = NamedModules().FirstOrDefault(m => m.Module.Parameters().Any(q => ReferenceEquals(q, unread)));
+            throw new InvalidDataException($"A deferred load cannot place the parameter {Tensor.FormatShape(unread.Shape)} of '{owner.Path}' ({owner.Module?.GetType().Name}): "
+                + "the architecture names no checkpoint tensor for it (PretrainedModel.StoredTensors). Load the model whole (PretrainedOptions.Deferred off, IDRAK_CLUSTER_OWN_TENSORS=0).");
+        }
+    }
+
     // The checkpoint name of a Idrak weight name.
     private string CheckpointName(string name) =>
         Architecture.TensorName(name) ?? throw new InvalidOperationException($"The architecture has no checkpoint name for '{name}'.");
@@ -976,7 +1119,15 @@ public sealed class PretrainedModel : IDisposable
     /// part's, from <see cref="IVisionTuningPart.Export"/>), else the model's trained vision tensors
     /// (<see cref="TrainedVisionTensors"/>), else the checkpoint's own, as stored.
     /// </summary>
-    public void SaveHuggingFace(string folder, SafeTensorType type, IReadOnlyDictionary<string, Tensor>? vision)
+    public void SaveHuggingFace(string folder, SafeTensorType type, IReadOnlyDictionary<string, Tensor>? vision) => SaveHuggingFace(folder, type, vision, null);
+
+    /// <summary>
+    /// <see cref="SaveHuggingFace(string, SafeTensorType, IReadOnlyDictionary{string, Tensor})"/> with each weight's values
+    /// from <paramref name="values"/> (in the model's layout, asked for one tensor at a time as it is written, in the order
+    /// of <see cref="StoredTensors"/>), or from the tensor itself when null: a checkpoint streamed from the ranks holding a
+    /// model's parts (plan 23, C8b) writes the file one process writes, holding one tensor at a time.
+    /// </summary>
+    public void SaveHuggingFace(string folder, SafeTensorType type, IReadOnlyDictionary<string, Tensor>? vision, Func<StoredTensor, float[]>? values)
     {
         using var source = Vision is null && _partTensors.Count == 0 ? null : CheckpointFormats.For(Folder).Open(Folder);
         var visionTensors = Vision is null ? [] : Vision.StoredTensors.Order(StringComparer.Ordinal).Select(name =>
@@ -987,7 +1138,7 @@ public sealed class PretrainedModel : IDisposable
         var partTensors = _partTensors.Values.SelectMany(owned => owned).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Select(name =>
             _parts.TryGetValue(name, out var kept) ? (name, kept.Shape, (Func<float[]>)(() => kept.Values))
             : (name, source!.ShapeOf(name), (Func<float[]>)(() => source!.Read(name)))).ToList();
-        WriteTensors(folder, type, [.. visionTensors, .. partTensors]);
+        WriteTensors(folder, type, [.. visionTensors, .. partTensors], values);
         string target = Path.GetFullPath(folder);
         foreach (string file in Directory.GetFiles(Folder))
         {
@@ -1005,7 +1156,8 @@ public sealed class PretrainedModel : IDisposable
     }
 
     // model.safetensors of the network (LoRA merged first), each weight under its checkpoint name and layout.
-    private void WriteTensors(string folder, SafeTensorType type, IEnumerable<(string Name, int[] Shape, Func<float[]> Values)>? extra = null)
+    private void WriteTensors(string folder, SafeTensorType type, IEnumerable<(string Name, int[] Shape, Func<float[]> Values)>? extra = null,
+        Func<StoredTensor, float[]>? values = null)
     {
         if (Network.Descendants().OfType<Linear>().Any(l => l.Packed) || Network.Descendants().OfType<Embedding>().Any(e => e.BFloat16 is not null))
         {
@@ -1016,47 +1168,14 @@ public sealed class PretrainedModel : IDisposable
         Directory.CreateDirectory(folder);
         // The header is written from the shapes; each tensor is copied to the host (and transposed) only when it is written.
         var tensors = new List<(string, int[], Func<float[]>)>();
-        void Add(string name, Tensor tensor)
+        foreach (var stored in StoredTensors())
         {
-            string stored = CheckpointName(name);
-            if (Architecture.Transposed(name) && tensor.Rank == 2)
+            var tensor = stored.Tensor;
+            tensors.Add((stored.Name, stored.Shape, () =>
             {
-                tensors.Add((stored, [tensor.Shape[1], tensor.Shape[0]], () => HostParallel.Transpose(tensor.ToArray(), tensor.Shape[0], tensor.Shape[1])));
-            }
-            else
-            {
-                tensors.Add((stored, [.. tensor.Shape], tensor.ToArray));
-            }
-        }
-
-        foreach (var (path, module) in NamedModules())
-        {
-            switch (module)
-            {
-                case Linear { TiedTo: not null }:
-                    break;
-                case Linear linear:
-                    Add($"{path}.weight", linear.Weight);
-                    if (linear.Bias is { } bias)
-                    {
-                        Add($"{path}.bias", bias);
-                    }
-
-                    break;
-                case Embedding embedding:
-                    Add($"{path}.weight", embedding.Weight);
-                    break;
-                case PositionEmbedding positions:
-                    Add($"{path}.weight", positions.Weight);
-                    break;
-                case RMSNorm norm:
-                    Add($"{path}.weight", norm.Gain);
-                    break;
-                case LayerNorm norm:
-                    Add($"{path}.weight", norm.Gamma);
-                    Add($"{path}.bias", norm.Beta);
-                    break;
-            }
+                var read = values?.Invoke(stored) ?? tensor.ToArray();
+                return stored.Transposed ? HostParallel.Transpose(read, tensor.Shape[0], tensor.Shape[1]) : read;
+            }));
         }
 
         foreach (var item in extra ?? [])
@@ -1071,5 +1190,10 @@ public sealed class PretrainedModel : IDisposable
     }
 
     /// <inheritdoc />
-    public void Dispose() => Network.Dispose();
+    public void Dispose()
+    {
+        Network.Dispose();
+        _source?.Dispose();
+        _source = null;
+    }
 }

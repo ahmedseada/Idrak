@@ -928,6 +928,35 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
     }
 
+    // Straight to the offset (plan 23, C8b: a gradient piece of a parameter cut across buckets, which went through a kept
+    // bucket-sized scratch on the device before).
+    public override void UploadRange(ReadOnlySpan<float> source, Storage destination, int offset)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if ((uint)offset > (uint)destination.Length || source.Length > destination.Length - offset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), $"Floats {offset} to {offset + source.Length} of a storage of {destination.Length}.");
+        }
+
+        if (source.IsEmpty)
+        {
+            return;
+        }
+
+        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        MakeCurrent();
+        using var use = UseStream();
+        if (TryUploadAsync(source, destination, offset))
+        {
+            return;
+        }
+
+        fixed (float* p = source)
+        {
+            Check(cuMemcpyHtoD(P(destination) + ((ulong)offset * sizeof(float)), p, (nuint)source.Length * sizeof(float)), nameof(cuMemcpyHtoD));
+        }
+    }
+
     public override void Download(Storage source, Span<float> destination) => DownloadRange(source, 0, destination);
 
     public override void DownloadRange(Storage source, int offset, Span<float> destination)

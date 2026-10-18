@@ -799,7 +799,46 @@ internal sealed unsafe partial class VulkanBackend : Backend
         OutsideCapture(capture, () => UploadThroughStaging(values, block));
     }
 
-    private void UploadThroughStaging(ReadOnlySpan<float> source, VulkanBlock block)
+    // Straight to the offset (plan 23, C8b): mapped memory written in place, else through the staging buffer.
+    public override void UploadRange(ReadOnlySpan<float> source, Storage destination, int offset)
+    {
+        var block = BlockOf(destination);
+        if ((uint)offset > (uint)destination.Length || source.Length > destination.Length - offset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), $"Floats {offset} to {offset + source.Length} of a storage of {destination.Length}.");
+        }
+
+        if (source.IsEmpty)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            if (block.Mapped != null)
+            {
+                WaitFor(block);
+                source.CopyTo(new Span<float>(block.Mapped + (long)offset * sizeof(float), source.Length));
+                if (!_storageCoherent)
+                {
+                    FlushOrInvalidate(block, flush: true);
+                }
+
+                return;
+            }
+
+            if (_capture is { } capture)
+            {
+                var values = source.ToArray();
+                OutsideCapture(capture, () => UploadThroughStaging(values, block, offset));
+                return;
+            }
+
+            UploadThroughStaging(source, block, offset);
+        }
+    }
+
+    private void UploadThroughStaging(ReadOnlySpan<float> source, VulkanBlock block, long offset = 0)
     {
         var staging = Staging();
         for (long done = 0; done < source.Length;)
@@ -811,7 +850,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 FlushOrInvalidate(staging, flush: true);
             }
 
-            RecordCopy(staging, 0, block, done * sizeof(float), count * sizeof(float));
+            RecordCopy(staging, 0, block, (offset + done) * sizeof(float), count * sizeof(float));
             SubmitAndWait();                                                   // the staging buffer is reused next
             done += count;
         }

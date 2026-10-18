@@ -119,7 +119,7 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_DEVICE"] = "cuda:1", ["IDRAK_CLUSTER_RUN"] = "run-7", ["IDRAK_CLUSTER_PARENT"] = "4242", ["IDRAK_CLUSTER_RETRY_DELAY"] = "0.25",
             ["IDRAK_CLUSTER_SHM_BYTES"] = "1MB", ["IDRAK_CLUSTER_SHM_FOLDER"] = "rings",
             // C6: receive credit in bytes, background staging, device collectives, a sharded layer's gather size, the shared-memory doorbell.
-            ["IDRAK_CLUSTER_RECEIVE_BYTES"] = "1MB", ["IDRAK_CLUSTER_ASYNC_STAGING"] = "0", ["IDRAK_CLUSTER_DEVICE_COLLECTIVES"] = "0",
+            ["IDRAK_CLUSTER_RECEIVE_BYTES"] = "1MB", ["IDRAK_CLUSTER_ASYNC_STAGING"] = "0", ["IDRAK_CLUSTER_DEVICE_COLLECTIVES"] = "0", ["IDRAK_CLUSTER_DEVICE_ACTIVATIONS"] = "0", ["IDRAK_CLUSTER_DIRECT_WAKE"] = "0", ["IDRAK_CLUSTER_OWN_TENSORS"] = "0", ["IDRAK_CLUSTER_STREAMED_SAVE"] = "0",
             ["IDRAK_CLUSTER_GATHER_BYTES"] = "64MB", ["IDRAK_CLUSTER_SHM_SPIN"] = "0.0001", ["IDRAK_CLUSTER_SHM_CHECK"] = "2",
             // C7: a pipeline's stages and how they are cut.
             ["IDRAK_CLUSTER_STAGES"] = "2", ["IDRAK_CLUSTER_PIPELINE_BALANCE"] = "memory", ["IDRAK_CLUSTER_PIPELINE_CUTS"] = "3,6",
@@ -143,7 +143,7 @@ internal static partial class Tests
             "unset, the synchronisation follows IDRAK_CLUSTER_LOCAL_SGD and the compression IDRAK_CLUSTER_TOPK and IDRAK_CLUSTER_WIRE");
         Check(all is { Device: "cuda:1", RunId: "run-7", Parent: 4242, SharedMemoryBytes: 1L << 20, SharedMemoryFolder: "rings" } && all.RetryDelay == TimeSpan.FromSeconds(0.25),
             $"the C5 settings parsed: {all}");
-        Check(all is { ReceiveBytes: 1L << 20, AsyncStaging: false, DeviceCollectives: false, GatherBytes: 64L << 20, SharedMemorySpin: { } spin } && spin == TimeSpan.FromSeconds(0.0001)
+        Check(all is { ReceiveBytes: 1L << 20, AsyncStaging: false, DeviceCollectives: false, DeviceActivations: false, DirectWake: false, OwnTensorsOnly: false, StreamedSave: false, GatherBytes: 64L << 20, SharedMemorySpin: { } spin } && spin == TimeSpan.FromSeconds(0.0001)
               && all.SharedMemoryCheck == TimeSpan.FromSeconds(2) && new ClusterOptions { Shard = ShardMode.Optimizer }.GradientSyncName == "sharded",
             $"the C6 settings parsed, and a shard picks the sharded synchronisation: {all}");
         Check(all is { Rank: 2, WorldSize: 4, Wire: WireType.BFloat16, Shard: ShardMode.Parameters, ChunkBytes: 4L << 20, SocketBufferBytes: 512L << 10, BucketBytes: 25L << 20,

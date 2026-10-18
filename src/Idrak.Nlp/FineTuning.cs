@@ -854,6 +854,14 @@ public sealed record FineTuningOptions
     public int SaveEvery { get; init; }
 
     /// <summary>
+    /// A checkpoint a stopped cluster run wrote to go on from (plan 23, C8b: a run steered from outside, a dashboard's stop,
+    /// writes <c>checkpoint-STEP</c> in the output folder with the adapters, the optimizer's state and the step before every
+    /// rank stops): its adapters and optimizer state are loaded and the steps it finished are skipped, so the run ends as the
+    /// uninterrupted one. The run's data, options and seed must be the stopped run's. Null: from the start.
+    /// </summary>
+    public string? ResumeFrom { get; init; }
+
+    /// <summary>
     /// Recompute each decoder block's activations in the backward pass instead of storing them (about 20× less
     /// activation memory for about a third more compute): needed for long sequences, large batches or large models on
     /// small devices. Null (the default): off while the activations fit, turned on for the rest of training the first time
@@ -1193,6 +1201,18 @@ public static class FineTuner
             model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
 
+        long resumeStep = 0;
+        if (options.ResumeFrom is { } from)
+        {
+            if (vision is { Parameters.Count: > 0 } || options.Parts.OfType<ITrainableSoftParts>().Any())
+            {
+                throw new NotSupportedException("A tune resumed from a stop's checkpoint trains the adapters only: a trained vision part or part source is not restored from it.");
+            }
+
+            resumeStep = ReadStopState(from);
+            model.LoadAdapter(from);                                       // into the adapters just made: the same tensors, the stop's values
+        }
+
         var parameters = network.TrainableParameters().Concat(vision?.Parameters ?? []).Concat(TrainedParts(options.Parts)).ToList();
         void Save(string folder)
         {
@@ -1223,6 +1243,15 @@ public static class FineTuner
 
         using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, clusterOptions!) : null;
         using var seeds = sync is null ? null : Dropout.SeedsForRank(sync.Rank);
+        if (options.ResumeFrom is { } resumed)
+        {
+            var saved = ReadOptimizerFile(resumed);
+            if (sync?.LoadOptimizerState(saved) != true)
+            {
+                optimizer.LoadState(saved);
+            }
+        }
+
         sync?.Start();
         bool lead = sync is null || sync.Rank == 0;
         var random = new Random(options.Seed);
@@ -1244,7 +1273,39 @@ public static class FineTuner
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var global = batches.Skip(first).Take(perStep).ToList();
-                if (sync is not null && !sync.BeginStep(step))
+                if (step < resumeStep)
+                {
+                    schedule.Step();                                       // a step the stopped run finished (ResumeFrom)
+                    step++;
+                    continue;
+                }
+
+                bool present;
+                try
+                {
+                    present = sync is null || sync.BeginStep(step);
+                }
+                catch (ClusterRunStoppedException) when (outputFolder is not null && step > resumeStep)
+                {
+                    // Stopped at this step boundary (a dashboard's stop, plan 23 C9; written since C8b): the last finished
+                    // step's adapters, optimizer state (a sharded run's joined) and step, as a saving step writes them.
+                    string stop = Path.Combine(outputFolder, $"checkpoint-{step}");
+                    using (sync!.Gather())
+                    {
+                        var state = sync.SaveOptimizerState() ?? optimizer.SaveState();
+                        if (sync.Rank == 0)
+                        {
+                            Save(stop);
+                            WriteStopState(stop, state, optimizer, step);
+                        }
+                    }
+
+                    sync.Barrier();
+                    trace?.Invoke($"stopped: checkpoint {stop}");
+                    throw;
+                }
+
+                if (!present)
                 {
                     // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's last
                     // step): the ranks that take part share the step's batches; the schedule moves on alike.
@@ -1334,6 +1395,32 @@ public static class FineTuner
         }
 
         return evaluations;
+    }
+
+    private const string StopStateFile = "tune-state.json", StopOptimizerFile = "optimizer.safetensors";
+
+    // A stop's optimizer state and step beside its adapters (plan 23, C8b).
+    private static void WriteStopState(string folder, IReadOnlyDictionary<string, OptimizerStateValue> state, Optimizer optimizer, int step)
+    {
+        Directory.CreateDirectory(folder);
+        SafeTensorsWriter.Write(Path.Combine(folder, StopOptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), SafeTensorType.F32,
+            new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
+        File.WriteAllText(Path.Combine(folder, StopStateFile), new System.Text.Json.Nodes.JsonObject { ["format"] = "idrak-tune-state/1", ["step"] = step }.ToJsonString() + "\n");
+    }
+
+    private static long ReadStopState(string folder)
+    {
+        string path = Path.Combine(folder, StopStateFile);
+        return File.Exists(path)
+            ? (long)System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!["step"]!
+            : throw new FileNotFoundException($"{folder} holds no stopped tune's state ({StopStateFile}); give a checkpoint-STEP folder a stop wrote.", path);
+    }
+
+    private static Dictionary<string, OptimizerStateValue> ReadOptimizerFile(string folder)
+    {
+        using var reader = SafeTensorsReader.Open(Path.Combine(folder, StopOptimizerFile));
+        ITensorStore store = reader;
+        return store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
     }
 
     // This rank's share of a step's batches (by the ranks' shares: draws k·W + r while they are equal), and the step's
