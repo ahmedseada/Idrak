@@ -52,7 +52,8 @@ internal sealed class TuneTool(ToolConsole console)
                    --max-rows N, --seed N, --min-chars N, --max-chars N, --no-dedup, --mix, --no-shuffle, --balance N (answers from a
                    short list, such as labels: rarer answers repeated, up to N times, towards the most common one's count)
         Training:  --rank 16, --alpha 32, --lr 2e-4, --epochs 1, --max-length 2048, --batch-tokens 4096, --accumulate 1,
-                   --targets q,k,v,o,gate,up,down, --save-every N, --eval-every N, --checkpointing | --no-checkpointing
+                   --targets q,k,v,o,gate,up,down, --save-every N, --eval-every N, --resume-from DIR (a stopped cluster
+                   run's checkpoint-STEP: its adapters, optimizer state and step), --checkpointing | --no-checkpointing
                    (default: off, turned on if a step runs out of device memory even with --recompute), --recompute (recompute the
                    feed-forward activations in the backward pass: a fifth less activation memory for one kernel per block;
                    default: turned on first when a step runs out of device memory), --bf16-activations (hold the activations
@@ -99,7 +100,7 @@ internal sealed class TuneTool(ToolConsole console)
         "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--matmul", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
         "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
-        "--metric-samples", "--audio", "--audio-prompt",
+        "--metric-samples", "--audio", "--audio-prompt", "--resume-from",
     ];
 
     /// <summary>The flags.</summary>
@@ -210,6 +211,7 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--batch-tokens": tuning = tuning with { BatchTokens = NextInt() }; break;
                 case "--accumulate": tuning = tuning with { GradientAccumulation = NextInt() }; break;
                 case "--save-every": tuning = tuning with { SaveEvery = NextInt() }; break;
+                case "--resume-from": tuning = tuning with { ResumeFrom = Next() }; break;
                 case "--eval-every": tuning = tuning with { EvaluateEvery = NextInt() }; break;
                 case "--targets": tuning = tuning with { Targets = Next().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) }; break;
                 case "--no-checkpointing": tuning = tuning with { Checkpointing = false }; break;
@@ -385,9 +387,20 @@ internal sealed class TuneTool(ToolConsole console)
     {
         string command = positional[0];
 
+        // A rank of a cluster (idrak cluster sim, or tune --cluster) trains on its device with its collectives; the
+        // process-wide default device stays as it is (the ranks of a simulation share the process).
+        if (Cluster.ClusterSession.Current is { } rank)
+        {
+            device = rank.Device;
+            tuning = tuning with { Cluster = rank.Collectives, ClusterOptions = rank.Context.Options };
+        }
+
         // Tensor cores (bfloat16) for the larger products unless asked otherwise.
         MixedPrecision.Default = matmul ?? MatMulPrecision.BFloat16;
-        Device.Default = device;
+        if (Cluster.ClusterSession.Current is null)
+        {
+            Device.Default = device;
+        }
         cacheLayout = kvLayout ?? KeyValueLayouts.For(kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32);
         downloads = console.CreateDownloader();
 
@@ -619,18 +632,37 @@ internal sealed class TuneTool(ToolConsole console)
                 }
             }
 
+            bool writes = Cluster.ClusterSession.Current is not { Rank: > 0 };   // a cluster's rank 0 writes the adapter folder
             try
             {
                 work(progress, cancel.Token, Trace);
-                record.Save(output!);
+                if (writes)
+                {
+                    record.Save(output!);
+                }
+
                 console.Finish();
                 _out.WriteLine($"trained in {Elapsed(clock.Elapsed)}{(lastEvaluation is { } l ? $", evaluation loss {l:F4}" : "")}"
                                + $"{(lastAnswers is { } a ? $", {Score(a)}" : "")}; adapter written to {Path.GetFullPath(output!)}");
             }
+            catch (Idrak.Abstraction.Cluster.ClusterRunStoppedException stopped)
+            {
+                // Stopped as asked (a dashboard's stop, plan 23 C8b): every rank stops at this step boundary; the tuner wrote the
+                // last finished step's checkpoint in the output folder.
+                console.Clear();
+                if (writes)
+                {
+                    _out.WriteLine($"stopped as asked before step {stopped.Step}; checkpoint {Path.Combine(Path.GetFullPath(output!), $"checkpoint-{stopped.Step}")} (--resume-from it continues)");
+                }
+            }
             catch (OperationCanceledException)
             {
-                saveSoFar(output!);
-                record.Save(output!);
+                if (writes)
+                {
+                    saveSoFar(output!);
+                    record.Save(output!);
+                }
+
                 console.Clear();
                 _out.WriteLine($"stopped after {Elapsed(clock.Elapsed)}; the adapter so far written to {Path.GetFullPath(output!)}");
             }

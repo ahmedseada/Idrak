@@ -1248,6 +1248,143 @@ the reader, so no rank holds the whole model; activations between stages moved d
 can; a receive inbox that wakes its waiter directly; then sharding with a pipeline, and top-k with sharding, if the
 measured numbers justify them).
 
+**C8a as built (2026-10-18).** Commands (group "Cluster", each with its Arabic summary): `idrak cluster replay --topology
+FILE --seed S --step N [--failures M] [--from LOG] [-- COMMAND …]` (`ClusterReplayCommand`, over C3's `ClusterReplay`): the
+fault schedule through step N; with a training command after `--` the run again through step N (`ReplayStep`, every rank
+sitting out the later steps) and each rank's clock as it began step N; `--from` a run's event log compares the faults and
+every rank's clock through N bit for bit and names the first that differs (exit 1), and a seed, model or world size other
+than the log's is a usage error naming both. `idrak cluster calibrate --from RUN|BENCH.json [--topology] [--dry-run]
+[--shared-tolerance F]` (`ClusterCalibrateCommand` over `Idrak.Cluster/Calibration.cs`, `LinkCalibration`): transfers from a
+run's `log.jsonl` (its `transfer` records over real transports) or a bench's JSON (per pair an empty message at the warm
+latency and the message's round trip less one latency), each on the link the topology gives its pair, fitted per link by
+least squares over `seconds = latency + bytes / bandwidth` (a negative intercept refits through the origin) with the
+residual, kept by `ClusterCache` (below) and published as `ProfileCalibrated`. `idrak transports [NAME]`
+(`TransportsCommand`): every registered transport with who registered it, its estimate and capabilities, and its
+availability with the reason in three settings on this machine (two ranks of one process on the first two devices listed,
+two processes here, two machines with the key from the environment); `rdma` and `udp` are named as plug-in only. `cluster
+bench --concurrent` (`LinkBench.RunConcurrent`): between every two nodes of two or more ranks, as many pairs at once as the
+smaller holds, their bytes together over the slowest pair's time, cold and warm; its rows ride in the JSON's
+`"concurrent"`. `cluster sim` takes `tune`, `train` and `resume` beside `pretrain` (the folder rank 0 writes is named per
+command: `-o RUN`, `-o DIR`, `--run DIR`, `RUN`), `--placement single|pipeline` and `--stages N` (pipeline with pretrain or
+resume only, stages that do not divide the ranks named), `--event-log FILE`, and `--profile` (in-process only).
+
+`--profile` runs the training under `Profiler.Run` with the non-intrusive probes and `kernels` (skipped where the device
+does not time kernels), one warm run by default (`IDRAK_PROFILE_WARM`); the cold run trains into the run folder, each later
+one into `RUN.profile-N`, removed after; the report's table (JSON with `-j`) has the network probe's new "gradient
+buckets" (per rank: buckets a step, the share sent during the backward pass, the bucket bytes, network and exposed time a
+step) and "pipeline stages" tables, and the cluster probe's new rows `steps`, `measured step` (the run's wall over rank 0's
+steps) and `predicted step` (the same with rank 0's network wall time replaced by the slowest rank's virtual-clock time);
+the command prints both. `idrak profile MODEL --cluster FILE [--stages N] [--steps N]`: every rank loads the model on the
+host, `PipelineStage.Place` keeps its stage, rank 0 times decoding steps and the other stages `Serve`; the rows are a
+token's hops (`rank a -> rank b`, the stages, messages, bytes, wall and simulated time per token) from the
+`TransferCompleted` of the timed steps, with the token's wall and virtual-clock time. `idrak tuning show` gained the
+backend `cluster`: the calibrated links (bandwidth, latency, residual, transfers, date, a shared adapter) and the measured
+chunk and bucket sizes with the figures that chose them (`--reset` deletes them). `idrak runs show` charts "network %" a step
+(rank 0's `GradientsSynced` exposed time over the step's batch time, or a pipeline's first stage's blocked over wall) with
+the mean and the worst step, and `-j` carries `"network"`; pretrain's run log now holds every rank's `gradient_sync` and
+`pipeline_step` and, unless `IDRAK_CLUSTER_LOG_TRANSFERS=0`, the transfers over real transports a calibration reads.
+
+`--cluster FILE` on `train`, `pretrain`, `tune`, `resume` and `distill` (`ClusterJoin`, called first in each command; with
+none of its options the C5 environment join stays): the world size is the file's device count; this host's node is found by
+its host name or `--node`; a node of one worker gives the rank; a node of several needs it: `--rank N` (or `IDRAK_RANK`) on
+train, pretrain and resume, `IDRAK_RANK` on tune and distill, whose `--rank` stays the adapter's (the usage error says so);
+`--world-size` or `IDRAK_WORLD_SIZE` that contradicts the file is refused naming both; without a file `--coordinator H:P`,
+`--world-size N` and the rank join a cluster of one node per rank on this process's device (`LocalhostCluster.Join(ClusterTopology,
+ClusterOptions, string?)`, new), and `--world-size` without a coordinator names `--coordinator`. pretrain also takes
+`--placement` and `--stages` (and reads them under `cluster sim` too). The ranks of `train` and `tune` train on the rank's
+device with its collectives (`Trainer.Cluster`, `FineTuningOptions.Cluster`); rank 0 alone writes their run folder, package,
+log and adapter manifest; `tune` no longer sets the process-wide default device while it is a rank (the ranks of a
+simulation share the process).
+
+Library. `ClusterCache` (`src/Idrak.Abstraction/Cluster/ClusterCache.cs`, with the records `CalibratedLink` and
+`ClusterTuning`): one file per calibrated link under `{cache}/cluster/link-NAME.txt` (header `idrak-cluster-profiles 1`, then
+`link bandwidth latency jitter residual samples adapter date source`) or every link in `IDRAK_CLUSTER_PROFILES_FILE`, and
+the measured sizes in `{cache}/cluster/tuning.txt` (header `idrak-cluster-tuning 1`, `kind key bytes date detail`) or
+`IDRAK_CLUSTER_TUNING_FILE` (`ClusterOptions.TuningFile`); an empty name keeps none, `IDRAK_TUNING_CACHE=0` neither; pure
+`Serialize`/`Parse`, a header mismatch read as empty and written anew, writes beside the file and moved over it, a file read
+once per version. `LinkProfiles.Resolve` returns the calibration in the library profile's place (an app's registration stays
+above both; `Find` still gives the registered profile), so every topology naming the link uses it and `cluster inspect`
+says "calibrated DATE (N transfers, residual)". The measured `ChunkBytes` (`HostCollectives.Chunks.cs`): with `ChunkBytes`
+unset over a real transport, the first collective agrees on the size every rank kept for the transport (one all-reduce of
+two floats; powers of two only), else measures: an all-reduce of `ChunkProbeBytes` (`IDRAK_CLUSTER_CHUNK_PROBE`, 4 MiB) per
+candidate (powers of 4 from 64 KiB, then the whole probe in one message), the median of three warm calls, the slowest
+rank's (a max over the ranks, so every rank chooses alike), ties to the larger; kept with every candidate's time. The
+measured bucket size is kept the same way after the first step's measurement over a real transport (key: synchronisation,
+algorithm, ranks, device kind, gradient values, compression) and a later run of that shape uses it from its first step when
+every rank kept the same (`SyncCore.Started`, a new hook after the starting state). The event log is flushed while a run
+goes (`SimulationOptions.EventLogFlushSteps`, `IDRAK_CLUSTER_EVENT_LOG_FLUSH`, 1): each rank appends its records since its
+last flush (and the faults drawn) to the file's journal as it begins every N steps, on its own thread, and gives the blocks
+back to the pool; `EventLog.Load`/`Parse` read a journal (a chunk being written left out) as well as a finished log, and
+the run's end writes the finished log over it, the same bytes as a run kept in memory. `cluster sim` puts the event log in
+the run folder (`cluster-events.idrklog`) unless `IDRAK_CLUSTER_EVENT_LOG` or `--event-log` names one, and names it with the
+replay command. An override may carry `"address": [A's, B's]` (each end's address on its own link; null for a node's own):
+`ClusterLinkOverride` gained `AddressA`/`AddressB`, `IClusterTopology.AddressOf(rank, from)` (a default member; the subset
+and group topologies forward it) gives where `from` reaches `rank`, `direct-link`'s availability and the rendezvous dial it
+(a bare host, or host:port whose port is ignored: the port comes from the rendezvous); `cluster init` asks
+`override.N.address` for each override (a suggestion from this machine's adapters off the LAN; `--override-address
+A,B;…`), and `cluster inspect` prints each override's ends. A shared adapter: `LinkProfile.AdapterBytesPerSecond`; a
+topology gives each pair of nodes on such a link the adapter's rate over the ranks of the larger node, never more than the
+link's own.
+
+Changes from the plan, kept: **a shared network adapter is a static share**, not an event-ordered lane: a link whose
+calibration found one adapter (a bench's concurrent pairs moving less than their count times one pair, beyond
+`--shared-tolerance`, 0.25) gives each pair of ranks between those machines the adapter's rate over the larger node's ranks,
+in the topology itself, so the virtual clock and every prediction stay bit for bit whatever order the rank threads charge;
+it is exact when every rank of a machine crosses at once (the hierarchical collective's columns, a pipeline's replicas) and
+pessimistic for a flat ring, which crosses with one pair a machine; an event-ordered clock sharing the adapter only among
+transfers that overlap in virtual time is left open (a rewrite of `VirtualClock` and `SimTransport`). **On a virtual clock
+an unset `ChunkBytes` stays one message a piece** (chunking buys a real link its pipelining; on the simulator it would only
+make `PredictAllReduce` and a replay depend on a wall-time measurement), and the chunk is not measured under
+`Profiler.Run`: the cache's detail line holds every candidate's time instead. **A measured bucket is reused over real
+transports only** (on the clock it is measured each run, cheap and the same). **`calibrate --from RUN` needs the run's
+`--topology`** (a bench's JSON names its own): a run folder does not record its topology. **A run's log reads transfers
+with their arrival time** (the real transports time a frame's bytes, not a round trip), so a fit from a run's log gives the
+bandwidth and a latency near zero; a bench gives both. **The fitted jitter is not changed** (the profile's own is kept):
+the residual is recorded, and a jitter drawn into every simulated transfer would move every prediction. **`--profile` runs
+the training twice by default** (cold and one warm run) and **profile `--cluster` loads the whole model on every rank's host
+side** before placing its stage (C8b's stage loads fix that). The tests run against a profiles file nobody writes
+(`tests/Idrak.Tests/Program.cs` sets `IDRAK_CLUSTER_PROFILES_FILE` when unset), so a machine's calibrations never move
+their figures. New settings, in `ClusterOptions.Variables` and the CLI's table: `ChunkProbeBytes`
+(`IDRAK_CLUSTER_CHUNK_PROBE`), `TuningFile` (`IDRAK_CLUSTER_TUNING_FILE`), `SimulationOptions.EventLogFlushSteps`
+(`IDRAK_CLUSTER_EVENT_LOG_FLUSH`); the cluster variables now list the commands that read them (replay, calibrate, inspect,
+transports, train, tune, resume, distill, profile, tuning show). Tests: 12 in `tests/Idrak.Tests/ClusterCliTests.cs`
+(`ClusterCliGroup`, after `ClusterPipelineGroup`); C2's "another command is a usage error" now uses `chat`; the options test has values for the new variables. Fixed on the way:
+`cluster sim` declared the common `--seed` again (the CLI health check refused it; `cluster replay` reads it as a common
+option too), and `idrak env set` asked "port" took IDRAK_CLUSTER_PORT and IDRAK_CLUSTER_TRANSPORT as matches beside
+IDRAK_PORT (it now takes IDRAK_ + the answer first). One build of the test project, the API dumps regenerated
+(Abstraction, Cluster, Network; the inventory unchanged), then on the CPU the filter `cluster:|public API|abstraction
+inventory|cli health|cli polish|cli arabic: every message|cli dev: trace|cli pretrain:|cli measure|cli train data|profiler:|
+pretrain:|fine-tuning:|training:|callbacks:|tuning show`: 189 passed, 0 failed, no process left.
+Not run here: the GPU runs (the owner's), and the LAN or rental benches and calibrations. Deferred to C8b as planned:
+stage and shard loads of their own tensors, device-to-device activations, the waking inbox, sharding with a pipeline and
+top-k with sharding.
+
+**Merged with C9 (2026-10-18, onto f262009).** Both kept. `cluster sim` takes every C8a option (tune, train and resume,
+`--placement`/`--stages`, `--event-log`, `--profile`) and C9's `--dashboard`/`--port`/`--no-browser` with its run control;
+C9's `RunRanks` is the one place ranks run (`Simulate` wraps it, with a run control and the dashboard's output when given),
+`CheckTrainer(inner, steered)` checks the command and the folder rank 0 writes for the command line, the dashboard's
+`POST /api/runs` and `Prepare` alike, and `RunFolder` names each command's folder (pretrain `-o`, train `--run`, resume
+`RUN`). **A run the dashboard steers is pretrain's or the resume of one**: a stop ends every rank as it begins the next
+step and only the pretrainer answers it with that step's checkpoint, so `--dashboard` (and a run started from the page)
+with tune or train is a usage error saying so; `--profile` with `--dashboard` is refused too (a profile trains more than
+once). **One event log name and format**: `RUN/cluster-events.idrklog` (`ClusterSimCommand.EventLogFile`), written by
+`cluster sim` and by the dashboard's runs (C9 had `cluster-events.bin`), flushed as the run goes (C8a's journal, the live
+faults' mark kept in the fault records), read by `EventLog.Load` while the run goes or after. **`cluster replay --from`
+replays a steered run** (C9's deferral "`cluster replay` taking the event log", closed): the log's live faults join the
+seed's schedule in the comparison and a rerun injects them again at their steps (`ClusterRunControl` over them, as
+`ClusterReplay.Run(…, steered)` does); the dashboard's fault answer names it, and C9's live-fault test now also replays the
+steered run through the CLI and gets "matches". The `--seed` and `env set` fixes both phases made are kept once (C9's
+`env set` match). `Tests.All`: … `ClusterPipelineGroup`, `ClusterCliGroup`, `ClusterDashboardGroup`, …; the options test
+lists both phases' variables; the CLI's `ClusterRun` lists both phases' commands, "cluster ui" included, beside C9's
+`ClusterUi`. API dumps and the inventory regenerated after the build. Found on the way: `RunFolder` now skips a leading
+"idrak" and reads another command's `-o` (cluster start's `RUN/ranks.jsonl` had stopped being written), and C9's live-fault
+test steers a 400-step run (40 steps could finish between the test seeing two steps past the fault and asking the stop:
+"the run is finished: there is nothing to stop"); the replays use the same count. One build after the merge, the dumps and
+inventory regenerated, then on the CPU the filter `cluster:|public API|abstraction inventory|cli health|cli polish|cli
+arabic: every message|cli dev: trace|cli pretrain:|cli measure|cli train data|cli serve|profiler:|pretrain:|fine-tuning:|
+training:|callbacks:|tuning show`: 204 passed, 0 failed, no process left. Open: the dashboard steering train and tune (a
+stop answered with a checkpoint by the Trainer and the fine-tuner), with C8b's stage-own checkpoint.
+
 **Owner's GPU run after C6 + C7 (2026-10-18), open for C8b.** "cluster: a model whose training state is over the cap
 of one fake GPU trains across four with Shard = parameters" fails on CUDA and on Vulkan, passes on the CPU: every rank
 holds 1,835,012 B at each epoch's end against its share of 1,572,864 B, constant over the epochs (no growth), so
@@ -1367,6 +1504,16 @@ Idrak, Idrak.Nlp, Idrak.Network) and the inventory regenerated, then on the CPU 
 inventory|cli health|cli polish|cli arabic: every message|profiler:|pretrain:|cli pretrain:|training:|fine-tuning:|callbacks:|offloading:|generation:|decoder:|pretrained:|minimal:|minimum backend:`:
 216 passed, 1 failed (the options test, which lacked the new variables), fixed and rerun. Not run here: everything on a
 GPU (the UploadRange overrides on CUDA and Vulkan, the two GPU items above, pcie-host and nvlink between GPUs).
+
+**Merged with C8a (2026-10-18, onto 7c41b8d).** Conflict only in `tests/Idrak.Tests/Program.cs` (both group lists kept:
+`ClusterCliGroup`, then `ClusterMemoryGroup` after `ClusterDashboardGroup`). The command line now steers `tune` and `train`
+too: C8a's usage error in `ClusterSimCommand.CheckTrainer` for a steered tune or train is lifted (every trainer it takes
+writes a checkpoint on a stop); `tune` answers a stop with "stopped as asked before step N" and the checkpoint, and takes
+`--resume-from DIR` (`FineTuningOptions.ResumeFrom`); `train` sets `Trainer.StopFolder` to its run folder under a cluster and
+answers the stop with exit 0, and `idrak resume RUN` of a train run goes on from the newest stop checkpoint when it is newer
+than `last.ikw` (`TrainSession.Run(…, stopped)`, `Trainer.ResumeFrom`); an image-folder run keeps its epoch resume. The test
+"cluster: a stopped Trainer and a stopped fine-tuner…" checks `CheckTrainer` takes both. One build of the merged tree, the
+dumps and the inventory regenerated (no change), then the same filter on the CPU: 229 passed, 0 failed, no process left.
 
 ### C9: the dashboard (set up, control and monitor in a browser)
 

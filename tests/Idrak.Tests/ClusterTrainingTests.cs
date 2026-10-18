@@ -634,7 +634,7 @@ internal static partial class Tests
             Check(File.Exists(Path.Combine(run, "run.json")) && File.Exists(Path.Combine(run, "log.jsonl")) && Pretrainer.LatestCheckpoint(run) is { } last && last.EndsWith("checkpoint-2", StringComparison.Ordinal),
                 "rank 0 wrote the run: run.json, the log and the stage's checkpoint");
 
-            var (other, _, otherError) = Idrak("cluster", "sim", "--topology", topology, "--", "tune", TinyLlama, "-o", run);
+            var (other, _, otherError) = Idrak("cluster", "sim", "--topology", topology, "--", "chat", TinyLlama, "-o", run);
             Check(other == ExitCodes.Usage && otherError.Contains("pretrain", StringComparison.Ordinal), $"another command is a usage error naming the one it runs: {otherError}");
             var (missing, _, missingError) = Idrak("cluster", "sim", "--topology", topology, "--", "pretrain", TinyLlama, "--tokens", PretrainData("tokens.bin"));
             Check(missing == ExitCodes.Usage && missingError.Contains("-o RUN", StringComparison.Ordinal), $"a missing run folder is a usage error naming -o: {missingError}");

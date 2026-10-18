@@ -119,6 +119,18 @@ internal sealed class ClusterInspectCommand : Command
         context.Table(["between", "link", "bandwidth", "latency", "figures from"], [.. links.Select(l => (IReadOnlyList<string>)
             [l.Between, l.Link, l.BandwidthBytesPerSecond > 0 ? Size(l.BandwidthBytesPerSecond, unit) + "/s" : "unknown",
              $"{l.Latency.TotalMicroseconds.ToString("F1", inv)} us", l.Source])]);
+        // A link of its own between two machines, and where each end is reached on it (a cable on a subnet of its own).
+        var cables = new JsonArray();
+        foreach (var o in topology.Overrides)
+        {
+            int a = topology.NodeOf(o.A)!.Value, b = topology.NodeOf(o.B)!.Value;
+            int rankA = topology.Ranks(a)[0], rankB = topology.Ranks(b)[0];
+            string? atA = topology.AddressOf(rankA, rankB), atB = topology.AddressOf(rankB, rankA);
+            context.Write($"own link {o.A}-{o.B} ({o.Link}): {o.A} at {atA ?? "no address"}{(o.AddressA is null ? "" : " (on the link)")}, "
+                          + $"{o.B} at {atB ?? "no address"}{(o.AddressB is null ? "" : " (on the link)")}");
+            cables.Add(new JsonObject { ["between"] = new JsonArray(o.A, o.B), ["link"] = o.Link, ["address_a"] = atA, ["address_b"] = atB, ["own_addresses"] = o.AddressA is not null || o.AddressB is not null });
+        }
+
         context.Write("");
 
         var predictions = new JsonObject();
@@ -177,6 +189,7 @@ internal sealed class ClusterInspectCommand : Command
             ["all_reduce_bytes"] = bytes,
             ["all_reduce_seconds"] = predictions,
             ["default_collective"] = collective,
+            ["overrides"] = cables,
             ["transports"] = pairs,
         });
         return ExitCodes.Ok;

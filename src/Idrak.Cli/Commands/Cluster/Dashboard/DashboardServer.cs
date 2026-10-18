@@ -482,7 +482,7 @@ internal sealed class DashboardServer : IDisposable
         {
             ["run"] = run.Id, ["kind"] = fault.Kind.ToString(), ["ranks"] = new JsonArray([.. fault.Ranks.Select(r => (JsonNode)r)]), ["duration_ms"] = duration.TotalMilliseconds,
             ["factor"] = factor, ["step"] = run.Control.LastStep + 1, ["seed"] = run.Seed,
-            ["detail"] = "queued for the next step the run begins; written to the event log with its step, so --seed and --step replay the run as steered",
+            ["detail"] = "queued for the next step the run begins; written to the event log with its step, so idrak cluster replay --from the run's event log replays the run as steered",
         });
     }
 

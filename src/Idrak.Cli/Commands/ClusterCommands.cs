@@ -5,7 +5,7 @@ using Idrak.Cli.Commands.Cluster;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>The cluster commands (plan 23): init, inspect, sim, start, bench and ui now; replay and calibrate as their phases land.</summary>
+/// <summary>The cluster commands (plan 23): init, inspect, sim, start, bench, replay, calibrate and ui, and the transports listing.</summary>
 internal static class ClusterCommands
 {
     public static IReadOnlyList<Command> All { get; } =
@@ -15,6 +15,9 @@ internal static class ClusterCommands
         new ClusterSimCommand(),
         new ClusterStartCommand(),
         new ClusterBenchCommand(),
+        new ClusterReplayCommand(),
+        new ClusterCalibrateCommand(),
+        new TransportsCommand(),
         new ClusterUiCommand(),
     ];
 }

@@ -79,7 +79,10 @@ public static class TopologyInspection
                     1 => $"{topology.Nodes[na].Name} ranks on {deviceA}",
                     _ => $"{topology.Nodes[na].Name} devices",
                 };
-                string source = declared is MeasuredLink ? $"measured on {deviceA}" : link.BandwidthBytesPerSecond > 0 ? "the name's rate or a registered profile" : "none: give a rate";
+                string source = ClusterCache.Calibrated(declared.Name) is { } calibrated
+                    ? string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                        $"calibrated {calibrated.Calibrated:yyyy-MM-dd} ({calibrated.Samples} transfers, residual {calibrated.Residual * 1e6:F1} us{(calibrated.AdapterBytesPerSecond > 0 ? ", one adapter shared by a machine's ranks" : "")})")
+                    : declared is MeasuredLink ? $"measured on {deviceA}" : link.BandwidthBytesPerSecond > 0 ? "the name's rate or a registered profile" : "none: give a rate";
                 links.Add(new TopologyLink(between, a, b, link.Name, link.BandwidthBytesPerSecond, link.Latency, source));
             }
         }

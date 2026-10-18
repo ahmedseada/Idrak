@@ -348,6 +348,12 @@ internal static partial class Messages
             "فتح لوحة العنقود: إعداد البنية وتشغيل التشغيلات المحاكاة والتحكم بها ومتابعة التشغيلات الحقيقية",
         ["Measures the bandwidth and latency of every pair of ranks of a cluster, cold and warm apart"] =
             "قياس عرض النطاق وزمن الاستجابة لكل زوج من رتب العنقود، الجولة الأولى منفصلة عن الجولات اللاحقة",
+        ["Replays a simulated run's fault schedule and clock through a step, and reruns the step"] =
+            "إعادة جدول أعطال تشغيل محاكى وساعته حتى خطوة معينة، وإعادة تشغيل تلك الخطوة",
+        ["Fits each link's bandwidth and latency to a run's or bench's transfers and keeps the profiles"] =
+            "ضبط عرض نطاق كل رابط وزمن استجابته على النقلات المقيسة في تشغيل أو قياس، وحفظهما",
+        ["Every registered transport, its capabilities, and whether it is available here and why"] =
+            "كل وسائل النقل المسجلة وقدراتها، وهل هي متاحة على هذا الجهاز ولماذا",
         ["Writes the config file: default device, cache folder, model aliases"] = "كتابة ملف الإعدادات: الجهاز الافتراضي ومجلد التخزين المؤقت وأسماء النماذج المختصرة",
         ["Stores a token for the Hugging Face hub, GitHub or Kaggle where the library reads it"] = "حفظ رمز دخول لمستودع Hugging Face أو GitHub أو Kaggle حيث تقرؤه المكتبة",
         ["Removes a stored token (Hugging Face hub, GitHub or Kaggle)"] = "إزالة رمز دخول محفوظ (مستودع Hugging Face أو GitHub أو Kaggle)",
@@ -421,7 +427,8 @@ internal static partial class Messages
         ["Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more)"] =
             "متابعة تدريب من آخر نقطة حفظ (الحقب المتبقية، أو --epochs N إضافية)",
         ["Training runs (from their JSON Lines logs): epochs, best epoch and loss, time, status"] = "عمليات التدريب (من سجلاتها بصيغة JSON Lines): الحقب وأفضل حقبة والخسارة والوقت والحالة",
-        ["One training run: settings, loss curves (text plot), the epochs, best epoch and time"] = "عملية تدريب واحدة: الإعدادات ومنحنيات الخسارة (رسم نصي) والحقب وأفضل حقبة والوقت",
+        ["One training run: settings, loss curves, epochs, best epoch, time, a cluster run's network share"] =
+            "عملية تدريب واحدة: الإعدادات ومنحنيات الخسارة والحقب وأفضل حقبة والوقت وحصة الشبكة في تشغيل العنقود",
         ["Training runs side by side: settings, best epoch and loss, time, and their validation curves"] =
             "عمليات تدريب جنبا إلى جنب: الإعدادات وأفضل حقبة والخسارة والوقت ومنحنيات التحقق",
         ["Run a model package (.ikm) or an image model on new rows or images: classes, boxes, masks or features"] =

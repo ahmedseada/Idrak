@@ -20,6 +20,20 @@ using EventLog = Idrak.Cluster.EventLog;
 // calls it as the page does, over HTTP; every wait is bounded, and every server, run and process is ended in finally.
 internal static partial class Tests
 {
+    // A file another handle is still writing (the pretrainer's log): Windows refuses a reader that does not share writing.
+    private static List<string> SharedLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var lines = new List<string>();
+        while (reader.ReadLine() is { } line)
+        {
+            lines.Add(line);
+        }
+
+        return lines;
+    }
+
     private static readonly (string Name, Action<Device> Run)[] ClusterDashboardGroup =
     [
         ("cluster: ui the builder API asks cluster init's questions (each with its description, default and suggestion, a refused answer saying why) and writes the file cluster init --yes writes for the same answers; the inspection's phases add up to each prediction", ClusterUiBuilder),
@@ -285,7 +299,7 @@ internal static partial class Tests
             Check(control is { PauseAt: 0, LastStep: -1, Observed: false } && server.Runs.Listening == 0, "paused before step 0, no rank began it; nobody observes");
             UiOk(http, "POST", $"/api/runs/{id}/resume");
             string log = Path.Combine(steered, "log.jsonl");
-            Check(UiWait(() => File.Exists(log) && File.ReadLines(log).Count(l => l.Contains("\"event\":\"batch\"", StringComparison.Ordinal)) >= 3, 180),
+            Check(UiWait(() => File.Exists(log) && SharedLines(log).Count(l => l.Contains("\"event\":\"batch\"", StringComparison.Ordinal)) >= 3, 180),
                 "three steps trained with no page listening");
             // Paused before the page connects, so what it gets first is what was kept while nobody listened.
             long early = (long)UiOk(http, "POST", $"/api/runs/{id}/pause")["at"]!;
@@ -391,9 +405,10 @@ internal static partial class Tests
         var (server, http) = UiServer(topology);
         string steered = Path.Combine(folder, "steered");
         const int Seed = 7;
+        const int Steps = 400;                         // far more than the test takes: the stop always finds the run going
         try
         {
-            string id = (string)UiOk(http, "POST", "/api/runs", new JsonObject { ["command"] = UiArgs(UiPretrain(steered, 40)), ["seed"] = Seed, ["paused"] = true })["id"]!;
+            string id = (string)UiOk(http, "POST", "/api/runs", new JsonObject { ["command"] = UiArgs(UiPretrain(steered, Steps)), ["seed"] = Seed, ["paused"] = true })["id"]!;
             Check(UiWait(() => UiState(http, id) == "paused", 120), "paused before step 0");
             UiOk(http, "POST", $"/api/runs/{id}/resume");
             var run = server.Runs.Find(id)!;
@@ -406,10 +421,11 @@ internal static partial class Tests
             Check((long)queued["step"]! == at && (string?)queued["kind"] == "SlowWorker", $"queued for step {at}: {queued.ToJsonString()}");
             UiOk(http, "POST", $"/api/runs/{id}/resume");
             Check(UiWait(() => run.Control!.LastStep >= at + 2, 120), "two steps after the fault");
+            Check(UiState(http, id) is "running" or "paused", $"the run still goes before its stop: {run.State} ({run.Detail}) at step {run.Control!.LastStep}");
             long last = (long)UiOk(http, "POST", $"/api/runs/{id}/stop")["at"]!;
             Check(UiWait(() => UiState(http, id) == "stopped", 180), $"stopped: {run.Detail}");
 
-            var log = EventLog.Load(Path.Combine(steered, "cluster-events.bin"));
+            var log = EventLog.Load(Path.Combine(steered, ClusterSimCommand.EventLogFile));
             Check(log.LiveFaults.Count == 1 && log.LiveFaults[0] is { Kind: FaultKind.SlowWorker, Factor: 8 } live && live.Step == at && live.Ranks.SequenceEqual([1])
                   && log.Faults.Contains(live) && log.Seed == Seed, $"the live fault is in the event log with its step {at}, marked live: {string.Join("; ", log.Faults.Select(f => $"{f.Kind}@{f.Step}"))}");
 
@@ -425,7 +441,7 @@ internal static partial class Tests
                     try
                     {
                         using var output = new StringWriter(CultureInfo.InvariantCulture);
-                        int code = CommandLine.Run(UiPretrain(Path.Combine(folder, name), 40), rank.Rank == 0 ? output : TextWriter.Null, output);
+                        int code = CommandLine.Run(UiPretrain(Path.Combine(folder, name), Steps), rank.Rank == 0 ? output : TextWriter.Null, output);
                         Check(code == ExitCodes.Ok, $"rank {rank.Rank} of the replay: {output}");
                     }
                     finally
@@ -450,6 +466,11 @@ internal static partial class Tests
                 }
             }
 
+            // The same through idrak cluster replay: the live fault from the run's event log, the rerun's clocks bit for bit.
+            var cli = ClusterCli(["cluster", "replay", "--topology", topology, "--step", through.ToString(CultureInfo.InvariantCulture), "--from",
+                Path.Combine(steered, ClusterSimCommand.EventLogFile), "--", .. UiPretrain(Path.Combine(folder, "cli-replay"), Steps)]);
+            Check(cli.Code == ExitCodes.Ok && cli.Output.Contains("live faults from the log (1)", StringComparison.Ordinal) && cli.Output.Contains("matches", StringComparison.Ordinal),
+                $"idrak cluster replay --from the steered run's log reproduces it: {cli.Code} {cli.Error}\n{cli.Output}");
             var unsteered = Replay("unsteered", null);
             Check(Enumerable.Range(0, 3).Any(r => unsteered.Log!.ClockAt(r, through) != log.ClockAt(r, through)),
                 "without the live fault the clocks differ: the replay reproduced the fault, not a run without it");

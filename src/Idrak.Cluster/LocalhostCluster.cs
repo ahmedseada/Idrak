@@ -68,7 +68,7 @@ public sealed record LocalhostRunResult(IReadOnlyList<LocalhostRankResult> Ranks
     }
 }
 
-/// <summary>This process as one rank of a cluster of processes (<see cref="LocalhostCluster.Join"/>); disposing it leaves the group.</summary>
+/// <summary>This process as one rank of a cluster of processes (<see cref="LocalhostCluster.Join(ClusterOptions)"/>); disposing it leaves the group.</summary>
 public sealed class LocalhostRank : IDisposable
 {
     private bool _disposed;
@@ -107,7 +107,7 @@ public sealed class LocalhostRank : IDisposable
 /// real cluster, <c>idrak cluster start</c>), each with its rank, the world size, its node, its device, the coordinator, the
 /// run's name and the launcher's process id in its environment (the variables <see cref="ClusterOptions.FromEnvironment"/>
 /// reads), streams their lines, ends them all when one fails, and kills any left in <c>finally</c>. A rank's process calls
-/// <see cref="Join"/>.
+/// <see cref="Join(ClusterOptions)"/>.
 /// </summary>
 public static class LocalhostCluster
 {
@@ -370,7 +370,20 @@ public static class LocalhostCluster
     {
         options ??= ClusterOptions.FromEnvironment();
         string path = options.Topology ?? throw new InvalidOperationException("A rank of a cluster reads its topology file from IDRAK_CLUSTER_TOPOLOGY, which is not set (idrak cluster start sets it).");
-        var topology = ClusterTopology.Load(path);
+        return Join(ClusterTopology.Load(path), options, path);
+    }
+
+    /// <summary>
+    /// Joins this process to a cluster of <paramref name="topology"/> as one rank (<see cref="Join(ClusterOptions)"/> for a
+    /// topology given as an object: a hand-started process with a bare coordinator and world size, plan 23 C8, every rank on
+    /// a node of its own); <paramref name="source"/> names it in messages.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No rank, or a rank, world size or node that contradicts the topology (the message names both).</exception>
+    public static LocalhostRank Join(ClusterTopology topology, ClusterOptions options, string? source = null)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        ArgumentNullException.ThrowIfNull(options);
+        string path = source ?? "the topology";
         options = options with { Simulation = options.Simulation with { Mode = SimulationMode.Localhost } };   // one process per rank
         if (options.WorldSize is { } world && world != topology.WorldSize)
         {

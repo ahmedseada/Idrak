@@ -94,6 +94,14 @@ internal sealed class PretrainCommand : Command
               --log-every N        a line every N steps (10)
               --seed N             the data order's seed (0)
           -o, --out RUN            the run folder (a new one under the runs folder)
+              --cluster FILE       train as one rank of a real cluster of the topology file (idrak cluster init writes one): its
+                                   device count is the world size, and this host's node (--node) gives the rank
+              --rank N             this process's rank, on a node of several workers (IDRAK_RANK)
+              --node NAME          this machine's node of the file (the node named after this host; IDRAK_CLUSTER_NODE)
+              --coordinator H:P    where rank 0 listens (the file's first node's address; IDRAK_COORDINATOR)
+              --world-size N       the ranks of a cluster without a file, with --coordinator and --rank (IDRAK_WORLD_SIZE)
+              --placement P        single or pipeline: the whole model on every rank, or a stage each (IDRAK_CLUSTER_PLACEMENT)
+              --stages N           a pipeline's stages, dividing the ranks (IDRAK_CLUSTER_STAGES)
 
         Examples:
           idrak data tokens corpus.txt --tokenizer tokenizer.json -o tokens.bin
@@ -105,6 +113,7 @@ internal sealed class PretrainCommand : Command
           idrak pretrain my-tts --data train.jsonl --audio clips --durations alignments.jsonl -P Idrak.IdrakAudio.dll
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
+          idrak pretrain my-model --tokens tokens.bin -o run --cluster lan.json --placement pipeline
           idrak resume run
           idrak runs show run
         """;
@@ -114,7 +123,7 @@ internal sealed class PretrainCommand : Command
         "--tokens", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
         "--batch-tokens", "--accumulate", "--optimizer", "--weight-decay", "--clip", "--save-every", "--keep", "--eval", "--eval-every", "--log-every", "--out",
         "--image-transform", "--vision", "--audio", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device",
-        .. SpeechPretraining.ValueOptions,
+        .. SpeechPretraining.ValueOptions, "--rank", .. ClusterJoin.Options, .. ClusterJoin.PipelineOptions,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
@@ -124,7 +133,7 @@ internal sealed class PretrainCommand : Command
 
     public override int Run(CommandContext context)
     {
-        using var cluster = ClusterSession.JoinStarted();                  // a rank process of idrak cluster start (phase C5)
+        using var cluster = ClusterJoin.Join(context, ownsRank: false);    // --cluster FILE, or a rank process of idrak cluster start (C5)
         string modelFolder = context.Argument(0, "MODEL (a model folder; idrak create writes one)");
         string run = context.Option("--out") ?? NewRunFolder(context, Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(modelFolder))));
         if (SpeechPretraining.Holds(modelFolder))
@@ -191,7 +200,21 @@ internal sealed class PretrainCommand : Command
         var device = rank?.Device ?? context.Device;
         if (rank is not null)
         {
-            options = options with { Cluster = rank.Collectives, ClusterOptions = rank.Context.Options };
+            var clusterOptions = rank.Context.Options;
+            if (context.Option("--placement") is { } placement)
+            {
+                clusterOptions = clusterOptions with
+                {
+                    Placement = placement.ToLowerInvariant() is "single" or "pipeline" ? placement.ToLowerInvariant() : throw new UsageException($"--placement is single or pipeline, not '{placement}'."),
+                };
+            }
+
+            if (context.Option("--stages") is not null)
+            {
+                clusterOptions = clusterOptions with { Stages = context.IntOption("--stages", 1) is >= 1 and var stages ? stages : throw new UsageException("--stages needs a whole number, 1 or more.") };
+            }
+
+            options = options with { Cluster = rank.Collectives, ClusterOptions = clusterOptions };
         }
 
         PretrainedModel model;
@@ -478,10 +501,28 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
 
     public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Network;
 
+    // Whether transfers over real transports are written (for idrak cluster calibrate --from RUN; IDRAK_CLUSTER_LOG_TRANSFERS).
+    private readonly bool _transfers = Environment.GetEnvironmentVariable("IDRAK_CLUSTER_LOG_TRANSFERS") is not ("0" or "false" or "off");
+
     // Ranks that are processes of their own send rank 0 their step's network totals (phase C5): one line per rank and step.
     public void OnCollective(in CollectiveCompleted e)
     {
         if (e.Operation == "step-summary")
+        {
+            Write(e);
+        }
+    }
+
+    // Each rank's gradient synchronisation per step and each pipeline stage's step (plan 23, C8: idrak runs show charts the
+    // network share of the steps from them).
+    public void OnGradientSync(in GradientsSynced e) => Write(e);
+
+    public void OnPipelineStep(in PipelineStepped e) => Write(e);
+
+    // A transfer over a real transport (a simulated one took the virtual clock's time): what a calibration fits.
+    public void OnTransfer(in TransferCompleted e)
+    {
+        if (_transfers && e.Simulated == TimeSpan.Zero && e.Transport != "sim")
         {
             Write(e);
         }
@@ -530,6 +571,7 @@ internal sealed class PretrainInitCommand : Command
         Examples:
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
+          idrak pretrain my-model --tokens tokens.bin -o run --cluster lan.json --placement pipeline
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out"];

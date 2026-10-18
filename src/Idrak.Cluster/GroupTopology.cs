@@ -56,6 +56,8 @@ internal sealed class GroupTopology : IClusterTopology
 
     public ILinkProfile Link(int rankA, int rankB) => _cluster.Link(_real[rankA], _real[rankB]);
 
+    public string? AddressOf(int rank, int from) => _cluster.AddressOf(_real[rank], _real[from]);
+
     public (int Node, int Local) Place(int rank) => _place[rank];
 
     public IReadOnlyList<int> Ranks(int node) => _nodeRanks[node];

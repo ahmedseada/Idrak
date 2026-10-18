@@ -7,8 +7,11 @@ namespace Idrak.Cluster.Diagnostics;
 
 /// <summary>
 /// The "cluster" profiler probe (plan 23): over a run of a simulated cluster, the network time the virtual clock charged,
-/// per rank across its collectives (the slowest rank's is the step's predicted network time) and per link. It reads the
-/// network telemetry of the "sim" transport, so it records nothing for a workload that runs no simulated cluster.
+/// per rank across its collectives (the slowest rank's is the step's predicted network time) and per link, and with the
+/// training steps the run made (rank 0's gradient synchronisations or pipeline steps) the step as measured here beside
+/// the step predicted for the topology's links: the measured step with rank 0's network wall time replaced by the
+/// slowest rank's time on the virtual clock. It reads the network telemetry of the "sim" transport, so it records
+/// nothing for a workload that runs no simulated cluster.
 /// </summary>
 internal sealed class ClusterProbe : IProfileProbe
 {
@@ -35,7 +38,8 @@ internal sealed class ClusterProbe : IProfileProbe
     {
         private readonly Lock _gate = new();
         private readonly SortedDictionary<(int From, int To), (long Count, long Bytes, double Seconds)> _links = [];
-        private readonly SortedDictionary<int, (long Count, double Seconds)> _ranks = [];
+        private readonly SortedDictionary<int, (long Count, double Seconds, double Wall)> _ranks = [];
+        private long _steps;
 
         public TelemetryLevel Levels => TelemetryLevel.Network;
 
@@ -62,8 +66,24 @@ internal sealed class ClusterProbe : IProfileProbe
 
             lock (_gate)
             {
-                var (count, seconds) = _ranks.GetValueOrDefault(e.Rank);
-                _ranks[e.Rank] = (count + 1, seconds + e.Simulated.TotalSeconds);
+                var (count, seconds, wall) = _ranks.GetValueOrDefault(e.Rank);
+                _ranks[e.Rank] = (count + 1, seconds + e.Simulated.TotalSeconds, wall + e.Wall.TotalSeconds);
+            }
+        }
+
+        public void OnGradientSync(in GradientsSynced e)
+        {
+            if (e.Rank == 0)
+            {
+                Interlocked.Increment(ref _steps);
+            }
+        }
+
+        public void OnPipelineStep(in PipelineStepped e)
+        {
+            if (e.Rank == 0)
+            {
+                Interlocked.Increment(ref _steps);
             }
         }
 
@@ -81,6 +101,13 @@ internal sealed class ClusterProbe : IProfileProbe
                     var slowest = _ranks.MaxBy(r => r.Value.Seconds);
                     run.Record("simulated network", slowest.Value.Seconds * 1e3, "ms");
                     run.Record("simulated slowest rank", slowest.Key, "rank");
+                    if (_steps > 0 && run.Value("wall") is { } wall)
+                    {
+                        double here = _ranks.TryGetValue(0, out var first) ? first.Wall * 1e3 : 0;
+                        run.Record("steps", _steps, "steps");
+                        run.Record("measured step", wall / _steps, "ms");
+                        run.Record("predicted step", Math.Max(0, wall - here + (slowest.Value.Seconds * 1e3)) / _steps, "ms");
+                    }
                 }
 
                 run.Record("simulated transfers", _links.Values.Sum(l => l.Count), "transfers");
