@@ -1753,6 +1753,23 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 Dated, newest last: date, commit, target (sim | localhost | LAN pair | rental), topology, what was measured, predicted
 step time, measured step time, the calibration delta written.
 
+The owner's machine for the rows below: Windows 11, one RTX 5070 Ti (16,302 MiB), a 24-thread CPU. Topology
+`card.json`: one node `MAIN`, rank 0 and rank 1 on `cuda:0` (the card split in two), rank 2 on the CPU; links
+`same-device` (ranks 0 and 1) and `pcie` (either GPU rank and the CPU rank). Workload: `idrak pretrain` of a
+3,623,168-parameter Llama model (4 layers of width 256) for 100 steps on 7,349 tokens; the step time is the profile's
+warm median.
+
 | Date | Commit | Target | Topology | Measured | Predicted | Delta |
 |---|---|---|---|---|---|---|
-| | | | | | | |
+| 2026-10-18 | 2b51430 | localhost (`cluster bench --localhost`) | card.json, 3 ranks | shared memory between processes, 16 MB messages, warm: ranks 0-1 7,318 MiB/s and 18 us, 0-2 8,218 MiB/s and 8 us, 1-2 6,729 MiB/s and 9 us (cold 1,830-2,689 MiB/s) | | |
+| 2026-10-18 | 2b51430 | sim, in process (`cluster sim --profile`) | card.json, 3 ranks | step 52.74 ms, about 106k tok/s, loss 4.5942 at step 100 | step 34.70 ms (built-in links, measured on the machine) | -34% |
+| 2026-10-18 | 2b51430 | localhost (`cluster sim --mode localhost`) | card.json, 3 processes | about 66k tok/s, wall 8.0 s, loss 4.5942 at step 100 (the in-process run's) | | |
+| 2026-10-18 | 2b51430 | localhost (`cluster start --node MAIN`) | card.json, 3 processes | about 68k tok/s, wall 8.0 s, loss 4.5942 at step 100 (the in-process run's) | | |
+| 2026-10-18 | 2b51430 | calibration (`cluster calibrate --from bench.json`) | card.json | from 6 bench transfers: pcie 8,023 MiB/s and 8.2 us (residual 70.7 us), same-device 7,668 MiB/s and 14.5 us; no shared adapter | | written to the cache |
+| 2026-10-18 | 2b51430 | sim, in process, calibrated (`cluster sim --profile`) | card.json, 3 ranks | step 50.76 ms, about 105k tok/s, loss 4.5942 at step 100 | step 38.65 ms (calibrated links) | -24% (from -34%) |
+
+The same loss, 4.5942 at step 100, in the simulator, in processes over shared memory and under `cluster start`: the
+three ways of running a cluster train alike. Calibration from the bench moved the prediction from 34% to 24% under the
+measured step; the gap left is the compute side of the step (rank 2 on the CPU sends 3% of its buckets during its
+backward pass, the GPU ranks all of theirs), which the virtual clock does not model. The three-machine LAN run is still
+to come.
