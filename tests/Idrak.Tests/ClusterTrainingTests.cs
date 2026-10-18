@@ -43,8 +43,10 @@ internal static partial class Tests
     // `world` ranks of one node, every one carved from `device`.
     private static ClusterTopology DpTopology(Device device, int world) => DpTopology([.. Enumerable.Repeat(device.ToString(), world)]);
 
+    // Different devices in the node (cpu beside a GPU) are joined by pcie, measured here; ranks on one device by same-device.
     private static ClusterTopology DpTopology(IReadOnlyList<string> devices) =>
-        ClusterTopology.Create([new ClusterNodeSpec("box", null, [.. devices.Select(d => new ClusterDeviceSpec(d, null))])], null, null);
+        ClusterTopology.Create([new ClusterNodeSpec("box", null, [.. devices.Select(d => new ClusterDeviceSpec(d, null))])],
+            devices.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1 ? "pcie" : null, null);
 
     // Equal splits (no speed measured), so a rerun splits alike.
     private static ClusterOptions DpOptions(WireType wire = WireType.Float32) => new() { RebalanceSteps = 0, Wire = wire, Timeout = TimeSpan.FromSeconds(300) };
