@@ -36,7 +36,7 @@ internal static partial class Tests
         ("cluster: a simulated training run with a slow worker shows it as blocked time naming it: the pretrainer's gradient all-reduces on every other rank wait on rank 2, the losses as without the fault", ClusterTrainingSlowWorker),
         ("cluster: a late joiner joins at step N: the pretrainer's other ranks train steps 0 to N-1 over every step's draws, the joiner takes the trained weights and optimizer state, and the run equals the run without the fault (losses and weights within 1e-5)", ClusterTrainingLateJoin),
         ("cluster: a late joiner across the Trainer's epoch end: each step's samples shared among the ranks that take part, so the run equals the run without the fault and every rank ends alike; a source sharded by epoch fails at once naming the cause", ClusterTrainerLateJoin),
-        ("cluster: a replay stops at a step bit for bit: the pretrainer's checkpoint, losses and clocks through step N as the whole run's; the Trainer's weights as one step's", ClusterTrainingReplay),
+        ("cluster: a replay stops at a step bit for bit: the pretrainer's checkpoint, losses and clocks through step N as the whole run's; a run the cluster advisor measured replays from its log's setting alone; the Trainer's weights as one step's", ClusterTrainingReplay),
         ("cluster: cli cluster sim --failures MODEL --seed S injects the faults into the training and lists them with their replay key; an unknown model is named", ClusterCliSimFailures),
         ("cluster: a rank with no rows in a step takes part in the bucketed reduction as the others do (3 ranks, buckets of a set size sent during the backward pass, two sequences a step): the pretrainer's losses and weights as one process's", ClusterBucketsRankWithoutRows),
     ];
@@ -496,6 +496,38 @@ internal static partial class Tests
                     Check(replay.Log!.ClockAt(r, s) is { } at && at == whole.Log!.ClockAt(r, s), $"rank {r}'s clock as step {s} began: {replay.Log!.ClockAt(r, s)} against {whole.Log!.ClockAt(r, s)}");
                 }
             }
+
+            // A run whose ranks measured for the cluster advisor (someone listened; one warm step, so its two slice collectives
+            // go at the end of step 1) replays bit for bit from its log alone: the log's header holds the advisor's setting,
+            // and the replay takes it, nobody listening and IDRAK_CLUSTER_SUGGEST unset. Without the log the clocks differ.
+            var advised = options with { SuggestSteps = 1 };
+            var listener = new MetricsRecorder(TelemetryLevel.Suggestions);
+            ClusterRunResult measured;
+            using (Telemetry.Subscribe(listener))
+            {
+                measured = InProcessCluster.Run(topology, advised with { Simulation = new SimulationOptions { Seed = 9 } }, rank =>
+                    ClusterPretrain(rank.Device, DpPretraining(corpus, 4, rank.Collectives, advised), Path.Combine(folder, "advised")));
+            }
+
+            measured.ThrowIfFailed();
+            var fromLog = ClusterReplay.Run(topology, options, seed: 9, step: 2, rank =>
+                ClusterPretrain(rank.Device, DpPretraining(corpus, 4, rank.Collectives, options), Path.Combine(folder, "from-log")), measured.Log!);
+            fromLog.ThrowIfFailed();
+            var unlogged = ClusterReplay.Run(topology, options, seed: 9, step: 2, rank =>
+                ClusterPretrain(rank.Device, DpPretraining(corpus, 4, rank.Collectives, options), Path.Combine(folder, "unlogged")));
+            unlogged.ThrowIfFailed();
+            Check(measured.Log!.Suggest && measured.Log.SuggestSteps == 1 && !unlogged.Log!.Suggest, "the log's header holds the advisor's setting: on, one warm step");
+            for (int r = 0; r < 3; r++)
+            {
+                for (long s = 0; s <= 2; s++)
+                {
+                    Check(fromLog.Log!.ClockAt(r, s) is { } at && at == measured.Log.ClockAt(r, s),
+                        $"rank {r}'s clock as step {s} began, replayed from the advised run's log: {fromLog.Log!.ClockAt(r, s)} against {measured.Log.ClockAt(r, s)}");
+                }
+            }
+
+            Check(Enumerable.Range(0, 3).Any(r => unlogged.Log!.ClockAt(r, 2) != measured.Log.ClockAt(r, 2)),
+                "without the log the replay does not measure, and its clocks after the advisor's step differ: the log's setting is what matched them");
 
             // The Trainer: one step an epoch (75 samples a rank); a replay through step 0 of three epochs leaves one step's weights.
             var data = Spirals(50, 3, 1);

@@ -59,9 +59,13 @@ public sealed class PipelineStage : IDisposable
     private DecodingContext? _serving;
     private bool _stopped;
 
+    private readonly int[] _holders;
+
     private PipelineStage(PipelinePlan plan, PipelineLayout layout, int rank, ITransport transport, Device device, IReadOnlyList<Module> modules,
-        IReadOnlyList<Tensor> parameters, IReadOnlyList<int> indices, List<(int, int[], Tensor)> shared, IPipelineSchedule schedule, ICollectives? replicas)
+        IReadOnlyList<Tensor> parameters, IReadOnlyList<int> indices, List<(int, int[], Tensor)> shared, IPipelineSchedule schedule, ICollectives? replicas,
+        int[] holders, bool deviceActivations)
     {
+        _holders = holders;
         Plan = plan;
         Layout = layout;
         Rank = rank;
@@ -76,13 +80,13 @@ public sealed class PipelineStage : IDisposable
         Replicas = replicas;
         if (!IsFirst)
         {
-            _receive = new PipelineBoundary(transport, layout.RankOf(Stage - 1, Replica), sends: false, device);
+            _receive = new PipelineBoundary(transport, layout.RankOf(Stage - 1, Replica), sends: false, device, deviceActivations: deviceActivations);
         }
 
         if (!IsLast)
         {
             _send = new PipelineBoundary(transport, layout.RankOf(Stage + 1, Replica), sends: true, device,
-                answerer: IsFirst ? layout.RankOf(layout.Stages - 1, Replica) : null);
+                answerer: IsFirst ? layout.RankOf(layout.Stages - 1, Replica) : null, deviceActivations: deviceActivations);
         }
 
         Network = new Sequential(IsFirst && _send is not null ? [.. modules, _send] : modules) { Name = $"pipeline stage {Stage}" };
@@ -135,6 +139,15 @@ public sealed class PipelineStage : IDisposable
     /// <see cref="Parameters"/>): a tensor several stages hold (a tied table) is counted, and written, by the first alone.
     /// </summary>
     public bool Owns(int parameter) => !_notOwned.Contains(Parameters[parameter]);
+
+    /// <summary>
+    /// The first stage holding the whole model's distinct parameter <paramref name="globalParameter"/> (its index in the
+    /// model's distinct parameters, as <see cref="ParameterIndices"/> counts them): the stage that writes it into a checkpoint.
+    /// </summary>
+    public int HolderOf(int globalParameter) => _holders[globalParameter];
+
+    /// <summary>How this stage's activations cross to its neighbours: "device" or "host" (<see cref="ClusterOptions.DeviceActivations"/>).</summary>
+    public string Staging => (_send ?? _receive)?.Staging ?? "host";
 
     /// <summary>This stage's bytes, as the plan measured them.</summary>
     public long Bytes => Plan.Stages[Stage].Bytes;
@@ -270,7 +283,8 @@ public sealed class PipelineStage : IDisposable
                 new ClusterContext(topology, layout.ReplicaOf(rank), options));
         }
 
-        return new PipelineStage(plan, layout, rank, transport, cluster.Device, [.. top.Skip(range.Start).Take(range.Count)], parameters, indices, shared, schedule, replicas);
+        return new PipelineStage(plan, layout, rank, transport, cluster.Device, [.. top.Skip(range.Start).Take(range.Count)], parameters, indices, shared, schedule, replicas,
+            [.. holders.Select(h => h?.Min() ?? -1)], options.DeviceActivations);
     }
 
     /// <summary>
@@ -384,6 +398,8 @@ public sealed class PipelineStage : IDisposable
             stepScope?.Dispose();
         }
 
+        _send?.Flush();                                                    // every value handed over device to device was taken
+        _receive?.Flush();
         ExchangeShared();
         double stepLoss = ShareLoss(total);
         return Report(started, microBatches, options.Step, stepLoss);
@@ -415,6 +431,8 @@ public sealed class PipelineStage : IDisposable
                     _send!.SendTensor(y, _send.Peer, PipelineBoundary.ActivationTag + (2 * m));
                 }
             }
+
+            _send?.Flush();
         }
 
         return ShareLoss(total);
@@ -769,7 +787,8 @@ public sealed class PipelineStage : IDisposable
         double ideal = Schedule.IdealBubble(Layout.Stages, microBatches);
         if (Telemetry.IsEnabled(TelemetryLevel.Network))
         {
-            Telemetry.PipelineStep(new PipelineStepped(Schedule.Name, Rank, Stage, Layout.Stages, Replica, microBatches, step, wall, blocked, bubble, ideal, sent, received));
+            Telemetry.PipelineStep(new PipelineStepped(Schedule.Name, Rank, Stage, Layout.Stages, Replica, microBatches, step, wall, blocked, bubble, ideal, sent, received,
+                Layout.Stages > 1 ? Staging : null));
         }
 
         return new PipelineStepResult(loss, wall, blocked, bubble, ideal, sent, received);

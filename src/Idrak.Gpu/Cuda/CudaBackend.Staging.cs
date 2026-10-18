@@ -36,7 +36,7 @@ internal sealed unsafe partial class CudaBackend
 
     // Queues the copy through the staging ring; false when the upload must take the synchronous path (too large, a
     // graph is being recorded on this thread, or pinned memory is unavailable). Called with the stream gate held.
-    private bool TryUploadAsync(ReadOnlySpan<float> source, Storage destination)
+    private bool TryUploadAsync(ReadOnlySpan<float> source, Storage destination, int destinationOffset = 0)
     {
         long bytes = (long)source.Length * sizeof(float);
         if (SynchronousUploads || bytes == 0 || bytes > AsyncUploadBytes || Environment.CurrentManagedThreadId == Volatile.Read(ref _captureThread))
@@ -63,7 +63,7 @@ internal sealed unsafe partial class CudaBackend
                 Buffer.MemoryCopy(p, staging, size, size);
             }
 
-            Check(cuMemcpyHtoDAsync(P(destination), staging, (nuint)size, _stream), nameof(cuMemcpyHtoDAsync));
+            Check(cuMemcpyHtoDAsync(P(destination) + ((ulong)destinationOffset * sizeof(float)), staging, (nuint)size, _stream), nameof(cuMemcpyHtoDAsync));
             IntPtr done = _spareEvents.Count > 0 ? _spareEvents.Pop() : CreateEvent();
             Check(cuEventRecord(done, _stream), nameof(cuEventRecord));
             _staged.Enqueue((offset, size, done));

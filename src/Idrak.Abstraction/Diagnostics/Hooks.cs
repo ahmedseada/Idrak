@@ -163,7 +163,8 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnPipelineStep(in PipelineStepped e) =>
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"Pipeline {e.Schedule} rank {e.Rank} stage {e.Stage}/{e.Stages}{(e.Replica > 0 ? $" replica {e.Replica}" : "")}{(e.Step >= 0 ? $" step {e.Step}" : "")}: {e.MicroBatches} micro-batch(es) in {e.Wall.TotalMilliseconds:F3} ms, "
-            + $"blocked {e.Blocked.TotalMilliseconds:F3} ms, bubble {e.Bubble:P1} (schedule's {e.IdealBubble:P1}), sent {e.BytesSent:N0} B, received {e.BytesReceived:N0} B"));
+            + $"blocked {e.Blocked.TotalMilliseconds:F3} ms, bubble {e.Bubble:P1} (schedule's {e.IdealBubble:P1}), sent {e.BytesSent:N0} B, received {e.BytesReceived:N0} B")
+            + (e.Staging is { } staging ? $", activations through the {staging}" : ""));
 
     /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => _out.WriteLine($"Ranks {e.RankA} and {e.RankB} use {e.Transport} ({e.Reason})");
@@ -796,6 +797,11 @@ public static class TelemetryJson
                 Number(w, "ideal_bubble", e.IdealBubble);
                 w.WriteNumber("bytes_sent", e.BytesSent);
                 w.WriteNumber("bytes_received", e.BytesReceived);
+                if (e.Staging is { } pipelineStaging)
+                {
+                    w.WriteString("staging", pipelineStaging);
+                }
+
                 break;
             case GradientsSynced e:
                 w.WriteString("event", "gradient_sync");

@@ -60,4 +60,10 @@ public interface ITensorStore : IDisposable
     /// not measure it (the default): <c>PretrainedModel.LoadTimes</c> then counts reading and converting as one.
     /// </summary>
     TimeSpan? ReadTime => null;
+
+    /// <summary>
+    /// The bytes of tensor values read from storage so far, or null when the store does not count them (the default): a
+    /// rank that loads only its own tensors (plan 23, C8b) shows what it read against the whole checkpoint.
+    /// </summary>
+    long? BytesRead => null;
 }

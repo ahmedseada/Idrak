@@ -388,8 +388,12 @@ public readonly record struct GradientsSynced(string Sync, string Compression, i
 /// <param name="IdealBubble">The schedule's own arithmetic for stages of equal cost: (stages - 1) / (micro-batches + stages - 1) for GPipe.</param>
 /// <param name="BytesSent">The activation and gradient bytes this stage sent.</param>
 /// <param name="BytesReceived">The bytes it received.</param>
+/// <param name="Staging">
+/// How the activations crossed: "device" (handed device to device over a transport that moves device memory, plan 23
+/// C8b), "host" (through host memory), or null when this stage sent and received none.
+/// </param>
 public readonly record struct PipelineStepped(string Schedule, int Rank, int Stage, int Stages, int Replica, int MicroBatches, long Step, TimeSpan Wall,
-    TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived);
+    TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived, string? Staging = null);
 
 /// <summary>Published at <c>TelemetryLevel.Network</c> once per pair of ranks when a group starts: the transport joining them, and why.</summary>
 /// <param name="RankA">One rank.</param>

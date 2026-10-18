@@ -138,10 +138,14 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public System.TimeSpan? MessageCost { get; init; }
   public System.TimeSpan? SharedMemorySpin { get; init; }
   public bool AsyncStaging { get; init; }
+  public bool DeviceActivations { get; init; }
   public bool DeviceCollectives { get; init; }
+  public bool DirectWake { get; init; }
   public bool ErrorFeedback { get; init; }
   public bool Overlap { get; init; }
+  public bool OwnTensorsOnly { get; init; }
   public bool Pipelined { get; }
+  public bool StreamedSave { get; init; }
   public bool? Suggest { get; init; }
   public double RebalanceTolerance { get; init; }
   public double SuggestShare { get; init; }
@@ -339,6 +343,12 @@ public interface Idrak.Abstraction.Cluster.ICollectivesProvider
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Abstraction.Cluster.IDeviceTransport : Idrak.Abstraction.Cluster.ITransport, System.IDisposable
+  public System.Threading.Tasks.Task PostDevice(int to, Idrak.Abstraction.Devices.Storage source, int count, int tag)
+  public void ReceiveDevice(int from, Idrak.Abstraction.Devices.Storage destination, int count, int tag)
+  public void SendDevice(int to, Idrak.Abstraction.Devices.Storage source, int count, int tag)
+  public void WaitTaken(System.Threading.Tasks.Task posted, int to, int tag)
+
 public interface Idrak.Abstraction.Cluster.IFailureModel
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.Fault> Draw(long step, Idrak.Abstraction.Cluster.IClusterTopology topology, System.Random seeded)
   public string Name { get; }
@@ -346,7 +356,9 @@ public interface Idrak.Abstraction.Cluster.IFailureModel
 
 public interface Idrak.Abstraction.Cluster.IGradientSync : System.IDisposable
   public (default) System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue>? SaveOptimizerState()
+  public (default) System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue>? SaveOwnOptimizerState()
   public (default) System.IDisposable? Gather()
+  public (default) System.IDisposable? Local()
   public (default) System.IDisposable? Overlap(double tokens, bool normalized = false)
   public (default) bool BeginStep(long step)
   public (default) bool LoadOptimizerState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
@@ -354,6 +366,7 @@ public interface Idrak.Abstraction.Cluster.IGradientSync : System.IDisposable
   public (default) double? Update(float maxNorm, bool readNorm = false)
   public (default) int Rank { get; }
   public (default) int WorldSize { get; }
+  public (default) int? Owner(Idrak.Abstraction.Tensor parameter)
   public (default) void End()
   public (default) void OverlapLost(string reason)
   public Idrak.Abstraction.Cluster.GradientSyncResult Reduce(double tokens, double loss, bool normalized = false)
@@ -1284,6 +1297,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual Idrak.Abstraction.Devices.IHostStaging? CreateHostStaging(int slots, int slotFloats)
   public virtual Idrak.Abstraction.Devices.IMemoryOffload? Offload { get; }
   public virtual System.Collections.Generic.Dictionary<string, (long, long, double)> StopProfile()
+  public virtual System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Devices.LiveStorage> LiveStorages(System.Func<Idrak.Abstraction.Devices.Storage, string?>? name = null)
   public virtual System.Collections.Generic.List<Idrak.Abstraction.Devices.Storage> AbortCapture()
   public virtual System.IDisposable? LongLivedAllocations()
   public virtual System.IDisposable? ReuseQuantizedOperands()
@@ -1452,6 +1466,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void SumSquaresKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage total, int n)
   public virtual void UnaryBackwardKernel(Idrak.Abstraction.Devices.UnaryOp op, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n)
   public virtual void UnaryKernel(Idrak.Abstraction.Devices.UnaryOp op, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n)
+  public virtual void UploadRange(System.ReadOnlySpan<float> source, Idrak.Abstraction.Devices.Storage destination, int offset)
   public virtual void WeightNormBackwardKernel(Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage dweight, Idrak.Abstraction.Devices.Storage? dgain, Idrak.Abstraction.Devices.Storage? ddirection, int rows, int columns)
   public virtual void WeightNormKernel(Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage direction, Idrak.Abstraction.Devices.Storage weight, int rows, int columns)
   public virtual void WhereBackwardKernel(Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
@@ -1560,6 +1575,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void SampleRows(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage ids, Idrak.Abstraction.Devices.Storage stats, Idrak.Abstraction.Devices.Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
   public void ScaleMaskSoftmax(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int rows, int cols, int maskRows, float scale)
   public void ScatterAdd(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage dtable, int count, int dim, int vocabulary)
+  public void SetRecompute(Idrak.Abstraction.Devices.Storage storage, System.Action<Idrak.Abstraction.Devices.Storage>? recompute)
   public void SgdStep(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage? v, int n, float lr, float momentum)
   public void SigmoidFocalLoss(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, int count, float alpha, float gamma)
   public void SigmoidFocalLossBackward(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogits, int count, float alpha, float gamma)
@@ -1636,6 +1652,16 @@ public readonly record struct Idrak.Abstraction.Devices.ConvGeometry : System.IE
   public int SW { get; init; }
   public int W { get; init; }
 
+public static class Idrak.Abstraction.Devices.DeferredTensors
+  public const string Kind = "deferred"
+  public static Idrak.Abstraction.Device Device { get; }
+  public static System.IDisposable Build()
+  public static System.IDisposable StayDeferred()
+  public static bool IsDeferred(Idrak.Abstraction.Tensor tensor)
+  public static float[] Placeholder(int length)
+  public static string? SourceOf(Idrak.Abstraction.Tensor tensor)
+  public static void SetSource(Idrak.Abstraction.Tensor tensor, string name, System.Action<System.Span<float>> read)
+
 public class Idrak.Abstraction.Devices.DeviceException : System.Exception
   public DeviceException(string device, string message, System.Exception? inner = null)
   public static System.IDisposable Handled()
@@ -1707,6 +1733,12 @@ public enum Idrak.Abstraction.Devices.InterpolationMode : int
   Bilinear = 1
   Nearest = 0
 
+public readonly record struct Idrak.Abstraction.Devices.LiveStorage : System.IEquatable<Idrak.Abstraction.Devices.LiveStorage>
+  public Idrak.Abstraction.Devices.Storage Storage { get; init; }
+  public LiveStorage(long Bytes, string Owner, Idrak.Abstraction.Devices.Storage Storage)
+  public long Bytes { get; init; }
+  public string Owner { get; init; }
+
 public enum Idrak.Abstraction.Devices.LookupTablePlacement : byte
   Automatic = 0
   DeviceMemory = 2
@@ -1758,6 +1790,13 @@ public abstract class Idrak.Abstraction.Devices.Storage
   public virtual System.Span<float> HostMemory { get; }
   public void AddRef()
   public void Release()
+
+public static class Idrak.Abstraction.Devices.StorageTracking
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Devices.LiveStorage> List(Idrak.Abstraction.Devices.Backend backend, System.Func<Idrak.Abstraction.Devices.Storage, string?>? name = null)
+  public static System.IDisposable Track()
+  public static bool Enabled { get; }
+  public static string Describe(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Devices.LiveStorage> storages, int top = 24)
+  public static void Name(Idrak.Abstraction.Devices.Storage storage, string owner)
 
 public static class Idrak.Abstraction.Devices.TensorOffloading
   public static System.Action<Idrak.Abstraction.Module>? MarkFrozen { get; set; }
@@ -2116,7 +2155,7 @@ public readonly record struct Idrak.Abstraction.Diagnostics.OverrideFailed : Sys
   public string? Hint { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.PipelineStepped : System.IEquatable<Idrak.Abstraction.Diagnostics.PipelineStepped>
-  public PipelineStepped(string Schedule, int Rank, int Stage, int Stages, int Replica, int MicroBatches, long Step, System.TimeSpan Wall, System.TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived)
+  public PipelineStepped(string Schedule, int Rank, int Stage, int Stages, int Replica, int MicroBatches, long Step, System.TimeSpan Wall, System.TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived, string? Staging = null)
   public System.TimeSpan Blocked { get; init; }
   public System.TimeSpan Wall { get; init; }
   public double Bubble { get; init; }
@@ -2130,6 +2169,7 @@ public readonly record struct Idrak.Abstraction.Diagnostics.PipelineStepped : Sy
   public long BytesSent { get; init; }
   public long Step { get; init; }
   public string Schedule { get; init; }
+  public string? Staging { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.ProfileCalibrated : System.IEquatable<Idrak.Abstraction.Diagnostics.ProfileCalibrated>
   public ProfileCalibrated(string Link, double BandwidthBefore, double BandwidthAfter, System.TimeSpan LatencyBefore, System.TimeSpan LatencyAfter, double Residual, int Samples)
@@ -2426,6 +2466,7 @@ public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
   public (default) System.TimeSpan? ReadTime { get; }
   public (default) bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
   public (default) float[] ReadTransposed(string name)
+  public (default) long? BytesRead { get; }
   public System.Collections.Generic.IEnumerable<string> Names { get; }
   public bool Contains(string name)
   public float[] Read(string name)
