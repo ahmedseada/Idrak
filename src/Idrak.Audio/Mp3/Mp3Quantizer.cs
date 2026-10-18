@@ -3,10 +3,10 @@
 
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using static Idrak.Mp3Audio.Mp3EncoderTables;
-using static Idrak.Mp3Audio.Mp3Huffman;
+using static Idrak.Audio.Mp3EncoderTables;
+using static Idrak.Audio.Mp3Huffman;
 
-namespace Idrak.Mp3Audio;
+namespace Idrak.Audio;
 
 /// <summary>One granule of one channel as its side information describes it.</summary>
 internal struct Mp3Granule

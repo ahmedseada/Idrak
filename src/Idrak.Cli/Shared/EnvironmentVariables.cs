@@ -70,7 +70,7 @@ internal static class EnvironmentVariables
     public const string ChildGroup = Child;
 
     private const string Devices = "Devices and backends", Tuning = "Tuning and caches", Precision = "Precision and memory", Cpu = "CPU",
-        Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET";
+        Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET";
 
     /// <summary>The table, in listing order.</summary>
     public static IReadOnlyList<Variable> All { get; } =
@@ -143,6 +143,12 @@ internal static class EnvironmentVariables
         new("IDRAK_VOICES", Sources, "voices/ under IDRAK_CACHE or ~/.cache/idrak", "The installed voices' folder (--voices wins; with --cache given and this unset: voices/ under it)", VoiceStore),
         new("IDRAK_ESPEAK", Sources, "espeak-ng on the PATH", "The espeak-ng program the phonemizer runs for a speech model whose text front end wants phonemes (Idrak.Audio.SpeechText.EspeakNgPhonemizer)", ["speak", "pretrain", "tune", "serve"]),
         new("IDRAK_ESPEAK_VOICE", Sources, "the checkpoint's language", "The espeak-ng voice the phonemizer uses instead of the model's language", ["speak", "pretrain", "tune", "serve"]),
+        new("IDRAK_MP3_BITRATE", Audio, "128 for stereo, 64 for mono (96 and 64 below 32 kHz)", "The MP3 encoder's constant bit rate in kbit/s (Mp3EncodeOptions.Bitrate)", ["speak"]),
+        new("IDRAK_MP3_RATE", Audio, "the sound's rate", "The rate MP3 is written at, in Hz: 32000, 44100, 48000, 16000, 22050 or 24000", ["speak"]),
+        new("IDRAK_MP3_CHANNELS", Audio, "joint", "How two channels are written to MP3: joint, stereo or mono (the channels' mean)", ["speak"]),
+        new("IDRAK_MP3_QUALITY", Audio, "standard", "The MP3 encoder's effort a granule: fast, standard or high", ["speak"]),
+        new("IDRAK_MP3_LOWPASS", Audio, "by the bit rate", "The MP3 encoder's low-pass in Hz; 0: none", ["speak"]),
+        new("IDRAK_MP3_FRAMES_PER_TASK", Audio, "by the length", "Frames an MP3 encoding task takes at once (the frames are encoded in parallel)", ["speak"]),
         new("HF_TOKEN", Sources, "the saved login", "The Hugging Face access token for gated and private models and datasets", [.. Models, .. Data, .. Logins], Secret: true),
         new("HUGGING_FACE_HUB_TOKEN", Sources, "not set", "The older name of HF_TOKEN", [.. Models, .. Data, "doctor"], Secret: true),
         new("HF_TOKEN_PATH", Sources, "<HF_HOME>/token", "The file holding the saved Hugging Face token", [.. Models, .. Data, .. Logins]),

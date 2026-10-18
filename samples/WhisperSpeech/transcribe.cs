@@ -1,5 +1,4 @@
 #:project Idrak.WhisperSpeech/Idrak.WhisperSpeech.csproj
-#:project ../Mp3Audio/Idrak.Mp3Audio/Idrak.Mp3Audio.csproj
 #:project ../../src/Idrak.Gpu/Idrak.Gpu.csproj
 #:property PublishAot=false
 
@@ -16,11 +15,9 @@ using System.Globalization;
 using Idrak.Abstraction;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.Mp3Audio;
 using Idrak.WhisperSpeech;
 
 WhisperSpeechPlugin.Register();
-Mp3AudioPlugin.Register();
 var positional = new List<string>();
 var options = new Dictionary<string, string>(StringComparer.Ordinal);
 for (int i = 0; i < args.Length; i++)

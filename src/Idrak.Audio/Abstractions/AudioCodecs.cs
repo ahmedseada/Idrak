@@ -52,8 +52,8 @@ public static class AudioCodecs
     /// <summary>The bytes of a file's start that <see cref="IAudioCodec.ReadInfo"/> receives.</summary>
     public const int HeaderBytes = 64 * 1024;
 
-    // The most recently registered first; the library's wav and flac behind them (registered as a library default on the
-    // registry's first use).
+    // The most recently registered first; the library's wav, flac and mp3 behind them (registered as a library default on
+    // the registry's first use).
     private static readonly SlotTable<string, IAudioCodec> Registry = BuiltIn();
 
     private static SlotTable<string, IAudioCodec> BuiltIn()
@@ -61,6 +61,7 @@ public static class AudioCodecs
         var table = new SlotTable<string, IAudioCodec>(nameof(AudioCodecs), (slot, app, library) => new GuardedCodec(slot, app, library), StringComparer.OrdinalIgnoreCase, newestFirst: true);
         table.RegisterDefault("wav", new WavCodec());
         table.RegisterDefault("flac", new FlacCodec());
+        table.RegisterDefault("mp3", new Mp3Codec());
         return table;
     }
 

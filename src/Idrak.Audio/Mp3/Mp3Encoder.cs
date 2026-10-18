@@ -5,10 +5,10 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 
-namespace Idrak.Mp3Audio;
+namespace Idrak.Audio;
 
 /// <summary>
-/// Writes MP3 files (an <see cref="IAudioEncoder"/> "mp3", registered by <see cref="Mp3AudioPlugin.Register"/>): MPEG-1
+/// Writes MP3 files (an <see cref="IAudioEncoder"/> "mp3", the library's, registered in <see cref="AudioEncoders"/>): MPEG-1
 /// Layer III at 32, 44.1 and 48 kHz and MPEG-2 Layer III at 16, 22.05 and 24 kHz, one or two channels (left/right or
 /// mid/side joint stereo), constant bit rate with the bit reservoir, long blocks. Written from ISO/IEC 11172-3 and
 /// 13818-3: the polyphase analysis filterbank and MDCT, a masking model, the rate and distortion loops, the standard's
@@ -16,7 +16,7 @@ namespace Idrak.Mp3Audio;
 /// silence before the sound and silence after it to the end of the last frame. <see cref="AudioEncodeOptions"/> are
 /// ignored (MP3 has no sample format); the encoder's own are <see cref="Mp3EncodeOptions"/>.
 /// </summary>
-/// <param name="options">How it encodes (the defaults when null).</param>
+/// <param name="options">How it encodes; null: the IDRAK_MP3_* variables, the defaults where unset.</param>
 public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
 {
     /// <summary>
@@ -25,7 +25,8 @@ public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
     /// </summary>
     public const int Delay = 1057;
 
-    private readonly Mp3EncodeOptions _options = options ?? new Mp3EncodeOptions();
+    private readonly Mp3EncodeOptions? _given = options;
+    private Mp3EncodeOptions? _environment;
 
     /// <inheritdoc />
     public string Name => "mp3";
@@ -33,8 +34,8 @@ public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
     /// <inheritdoc />
     public string Extension => ".mp3";
 
-    /// <summary>The options it encodes with.</summary>
-    public Mp3EncodeOptions Options => _options;
+    /// <summary>The options it encodes with: those given, else the environment's (<see cref="Mp3EncodeOptions.FromEnvironment"/>, read at the first use).</summary>
+    public Mp3EncodeOptions Options => _given ?? (_environment ??= Mp3EncodeOptions.FromEnvironment());
 
     /// <inheritdoc />
     /// <exception cref="ArgumentException">An option MP3 does not take (a bit rate or sample rate; the message names those it does).</exception>
@@ -65,7 +66,7 @@ public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
                 }
             }
 
-            new Mp3Stream(format, _options.FramesPerTask).Write(planes, length, output);
+            new Mp3Stream(format, Options.FramesPerTask).Write(planes, length, output);
         }
         finally
         {
@@ -79,7 +80,7 @@ public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
     /// <summary>The stream's format for input of <paramref name="rate"/> Hz and <paramref name="channels"/> channels, the options checked.</summary>
     internal Mp3Format Resolve(int rate, int channels)
     {
-        var o = _options;
+        var o = Options;
         if (channels > 2 && o.ChannelMode != Mp3ChannelMode.Mono)
         {
             throw new NotSupportedException($"MP3 holds one or two channels, not {channels}; encode with Mp3ChannelMode.Mono to mix them down.");

@@ -15,7 +15,7 @@ Built so far (phase S1):
 - "flac" (decode only): 4 to 32 bits, every subframe kind (constant, verbatim, fixed, LPC), wasted bits, the stereo
   pairs; an ID3v2 tag before the stream skipped; frames found by their sync code and decoded in parallel, every CRC
   checked (a damaged frame refused by number). `FlacOptions`: `KeepCutEnd` (a file cut inside its last frame keeps its
-  whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3, Ogg and AAC are plug-ins (`AudioCodecs.Register`).
+  whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3 and MP2 decoding (`Mp3Codec`, a port of minimp3) and MP3 encoding (`Mp3Encoder`, written from the ISO specifications; `Mp3EncodeOptions`, the IDRAK_MP3_* variables) are built in too. Ogg and AAC would be plug-ins (`AudioCodecs.Register`).
 
 Voices (phase S9, route B): `VoiceConverters` (a registry of converter families, none in the library; OpenVoice is
 the plug-in `samples/OpenVoice`), `VoiceStores` with the built-in "folder" store (`FolderVoiceStore`: one folder per

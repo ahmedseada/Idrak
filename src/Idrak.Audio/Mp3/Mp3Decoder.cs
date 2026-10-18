@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using static Idrak.Mp3Audio.Mp3Tables;
+using static Idrak.Audio.Mp3Tables;
 
-namespace Idrak.Mp3Audio;
+namespace Idrak.Audio;
 
 /// <summary>What one decoded frame was.</summary>
 /// <param name="FrameBytes">The bytes it took from the input, the bytes skipped before it included (0: no frame found).</param>

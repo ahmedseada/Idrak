@@ -3,7 +3,7 @@
 
 using System.Globalization;
 
-namespace Idrak.Mp3Audio;
+namespace Idrak.Audio;
 
 /// <summary>How <see cref="Mp3Encoder"/> writes two channels (and more).</summary>
 public enum Mp3ChannelMode
@@ -37,7 +37,7 @@ public enum Mp3Quality
 /// <summary>
 /// How <see cref="Mp3Encoder"/> encodes: constant bit rate MPEG-1 Layer III (32, 44.1 and 48 kHz) or MPEG-2 Layer III
 /// (16, 22.05 and 24 kHz). Every value has a default; <see cref="FromEnvironment"/> reads them from IDRAK_MP3_*
-/// variables (what <see cref="Mp3AudioPlugin.Register"/> uses when it is given none).
+/// variables (what the library's <see cref="Mp3Encoder"/> uses when it is given none).
 /// </summary>
 public sealed record Mp3EncodeOptions
 {

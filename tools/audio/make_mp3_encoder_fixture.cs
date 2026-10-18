@@ -1,4 +1,4 @@
-#:project ../../samples/Mp3Audio/Idrak.Mp3Audio/Idrak.Mp3Audio.csproj
+#:project ../../src/Idrak.Audio/Idrak.Audio.csproj
 #:property PublishAot=false
 
 // Copyright (c) 2026 Ahmed Seada
@@ -7,12 +7,12 @@
 // make_mp3_encoder_fixture.cs: the MP3 encoder's fixture (tests/Idrak.Tests/data/audio/mp3enc), checked by ffmpeg.
 //   dotnet run tools/audio/make_mp3_encoder_fixture.cs -c Release --no-cache
 // (--no-cache: a file-based app keeps its last build when only a project it references changed).
-// Encodes the WAV fixture's signals (wav/; their samples are exact everywhere) with the plug-in's Mp3Encoder at a few
+// Encodes the WAV fixture's signals (wav/; their samples are exact everywhere) with the library's Mp3Encoder at a few
 // rates, bit rates and channel modes (the other rates by taking rate44k's samples as 48, 32, 22.05 or 24 kHz, exactly),
 // decodes each file with ffmpeg (which must write nothing to stderr at -v error), and writes the files and files.json:
 // the encoding's options, its bytes' SHA-256, ffmpeg's length, its SNR against the signal after the encoder's delay and
 // the RMS of each channel's 576-sample blocks as ffmpeg decodes them. The tests ("audio codecs: mp3 encode:") encode
-// the same signals again (the same bytes) and decode them with the plug-in (ffmpeg's length, SNR and block RMS); ffmpeg
+// the same signals again (the same bytes) and decode them with the library (ffmpeg's length, SNR and block RMS); ffmpeg
 // is not needed then. Needs ffmpeg on the PATH.
 using System.Diagnostics;
 using System.Globalization;
@@ -20,7 +20,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Audio.Abstractions;
-using Idrak.Mp3Audio;
+using Idrak.Audio;
 
 string root = Directory.GetCurrentDirectory();
 while (!File.Exists(Path.Combine(root, "Idrak.slnx")))

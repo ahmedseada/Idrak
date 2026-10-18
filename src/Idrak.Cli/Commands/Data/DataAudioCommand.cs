@@ -77,7 +77,7 @@ internal sealed class DataAudioCommand : Command
           idrak data audio recordings/ -o clips --rate 16000 --mono
           idrak data audio rec/ -o voice-clips --rate 22050 --mono --split silence --min-seconds 3
           idrak data audio talk.flac -o pieces --split seconds --max-seconds 30 --transcripts texts.jsonl
-          idrak data audio -P Idrak.Mp3Audio.dll podcasts/*.mp3 -o wav --rate 16000 --mono --bits 16
+          idrak data audio podcasts/*.mp3 -o wav --rate 16000 --mono --bits 16
           idrak data audio corpus/ --stats
           idrak data audio rec/ -o clips --rate 16000 --mono --transcripts texts.tsv --align my-ctc -P Idrak.IdrakAudio.dll
           idrak data audio train.jsonl --audio clips.zip --align my-ctc -o aligned -P Idrak.IdrakAudio.dll

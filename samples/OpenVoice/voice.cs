@@ -1,6 +1,5 @@
 #:project Idrak.OpenVoice/Idrak.OpenVoice.csproj
 #:project ../VitsSpeech/Idrak.VitsSpeech/Idrak.VitsSpeech.csproj
-#:project ../Mp3Audio/Idrak.Mp3Audio/Idrak.Mp3Audio.csproj
 #:project ../../src/Idrak.Gpu/Idrak.Gpu.csproj
 #:property PublishAot=false
 
@@ -18,13 +17,11 @@ using System.Diagnostics;
 using Idrak.Abstraction;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.Mp3Audio;
 using Idrak.OpenVoice;
 using Idrak.VitsSpeech;
 
 OpenVoicePlugin.Register();
 VitsSpeechPlugin.Register();
-Mp3AudioPlugin.Register();
 var store = VoiceStores.Get();
 if (args.Length == 0)
 {

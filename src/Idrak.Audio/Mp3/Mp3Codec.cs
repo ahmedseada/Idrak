@@ -4,7 +4,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 
-namespace Idrak.Mp3Audio;
+namespace Idrak.Audio;
 
 /// <summary>How <see cref="Mp3Codec"/> decodes.</summary>
 public sealed record Mp3Options
