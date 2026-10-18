@@ -47,6 +47,9 @@ internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 /// </summary>
 internal sealed class GradientReduction : SyncCore
 {
+    // The per-message cost measured on the simulator, per collective, world size and device kind, kept for the process.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float> MessageCosts = new(StringComparer.Ordinal);
+
     private const int HeaderFloats = 2;                       // tokens, loss; then a presence flag per parameter, a changed flag per bucket
 
     private readonly IGradientCompressor _compressor;
@@ -441,10 +444,24 @@ internal sealed class GradientReduction : SyncCore
         var simulated = Values.SimulatedTime;
         long wall = Stopwatch.GetTimestamp();
         Values.AllReduce(probe, WireType.Float32);
-        double latency = Seconds(Values.SimulatedTime - simulated, Stopwatch.GetElapsedTime(wall));
-        Span<float> figures = [onClock ? -1f : (float)backward, (float)latency, (float)bucketSeconds];
+        var probeWall = Stopwatch.GetElapsedTime(wall);
+        double latency = Seconds(Values.SimulatedTime - simulated, probeWall);
+
+        // What a collective's messages cost beyond their bytes: set, else on the simulator the wall time of the tiny probe
+        // here (the transport's own work per message on this machine), agreed over the ranks and kept for the process, so a
+        // seed's runs choose alike; a real transport's timed latency holds it already.
+        string key = $"{Collectives.Name}/{World}/{Collectives.Device.Type}";
+        bool known = MessageCosts.TryGetValue(key, out float kept);
+        float messageCost = Options.MessageCost is { } cost ? (float)cost.TotalSeconds : !onClock ? 0f : known ? kept : (float)probeWall.TotalSeconds;
+        Span<float> figures = [onClock ? -1f : (float)backward, (float)latency, (float)bucketSeconds, messageCost];
         Values.AllReduce(figures, WireType.Float32, ReduceOp.Max);
-        int values = BucketSizing.Choose(_layout.Total, figures[0], figures[1], figures[2], bucketValues);
+        if (onClock && Options.MessageCost is null && !known)
+        {
+            MessageCosts.TryAdd(key, figures[3]);
+        }
+
+        long headerValues = 2L * (World - 1) * WireFormat.HeaderBytes / sizeof(float);   // a ring's messages each carry a header
+        int values = BucketSizing.Choose(_layout.Total, figures[0], figures[1], figures[2], bucketValues, figures[3], headerValues);
         _sized = true;
         if (values != _layout.BucketValues)
         {

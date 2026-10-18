@@ -754,8 +754,8 @@ then an in-process run whose plan mixes transports is refused naming them.
 join, a replay's end) changes the group the gradients are summed over and the token weighting, so the trainers'
 step loop needs to take part in that, not just the launcher; it lands with C4, which reworks the same step. **Closed by
 C4** (below): the Trainer, the fine-tuner and the pretrainer begin every step through `IGradientSync.BeginStep`, so
-`idrak cluster sim` (now with `--failures` and `--seed`) runs with the faults injected; what remains is the Trainer's
-late join across an epoch's end (see C4's note).
+`idrak cluster sim` (now with `--failures` and `--seed`) runs with the faults injected, and the Trainer, sharing a `DataLoader`'s steps among the ranks that take part, is exact
+under a late join too (another batch source refuses a rank that sits out, at once and naming why).
 
 ### C4: overlap, buckets, compression, local SGD
 
@@ -769,7 +769,7 @@ slow link" (the simulator's number, asserted); "cluster: top-k with error feedba
 the full-gradient loss after N steps" (the tolerance measured on the CPU and written into the test name); "cluster:
 local SGD every k steps equals one process at k = 1 and runs k times fewer collectives".
 
-**C4 as built (2026-10-18).** Overlap: `Autograd.OnGradientReady(Action<Tensor, bool>)` (Idrak.Abstraction) calls a
+**C4 as built (2026-10-18; merged with C5 at 378a7c1).** Overlap: `Autograd.OnGradientReady(Action<Tensor, bool>)` (Idrak.Abstraction) calls a
 listener on the training thread for each parameter right after the last step of the backward pass that reads it (the
 second argument false inside a pass nested in another's, a checkpointed block's); the backward loop pays for it only
 while someone listens. `IGradientSync` gained `BeginStep(step)`, `Overlap(tokens, normalized)` (a scope the trainers put
@@ -786,8 +786,14 @@ learns it from the header and sums it again, whole and uncompressed. Unset `Buck
 step (16 MiB buckets as the first probe): the backward pass's time, the latency (a tiny collective timed after another
 that takes what is still queued on the links) and the slowest bucket's time, the largest of each over the ranks, choose
 the bucket count with the least predicted wait after the backward pass (at most 256, a bucket kept to what the link
-moves in a hundred latencies); on a simulated transport the backward pass is not timed (taken as long as the gradients'
-transfer), so the choice comes from the virtual clock alone and a seed's run stays the same bit for bit. A recorded
+moves in a hundred latencies). The latency counts each collective's per-message cost beyond its bytes: the wire headers
+(36 bytes a message, 2(W-1) messages a ring) and the transport's own work per message, which on a real transport is in
+the timed latency and on the simulator (whose built-in links carry no latency) is the wall time of the tiny probe here,
+agreed over the ranks and kept for the process (`ClusterOptions.MessageCost`, `IDRAK_CLUSTER_MESSAGE_COST` in seconds,
+pins it); without it the sizing chose 2 KiB buckets (256 of them) for 520 KiB of gradients on the simulator, with it 52
+KiB (10). On a simulated transport the backward pass is not timed (taken as long as the gradients' transfer), so the
+choice comes from the virtual clock and the kept per-message cost alone and a seed's runs in a process stay the same bit
+for bit (a replay in another process pins the cost with the setting). A recorded
 fine-tuning step (a CUDA graph runs no hook) reduces after the replay and says so (`OverlapLost`). Telemetry: one new
 event, `GradientsSynced` (sync, compression, rank, step, buckets, how many went during the backward pass, bucket bytes,
 bytes, backward, network and exposed time, the lost overlap's reason), carried by the console, `MetricsRecorder`
@@ -810,16 +816,23 @@ the shares go even over the group and the speed measurement starts again; a rank
 Trainers: each step begins through `BeginStep`; a rank that sits out keeps its draws, schedule and step count alike and
 trains nothing; the fine-tuner and the pretrainer share each step's draws over the ranks that take part (so a late join
 still trains every draw, token-weighted: the run equals the run without the fault), and the step's group's first rank
-writes its checkpoints. `idrak cluster sim` gained `--failures MODEL` and `--seed S` (registered value options; `--seed`
+writes its checkpoints. The Trainer does the same for a `DataLoader` over a sample source (`DataLoader.StepShares`: every
+rank draws each step as one process with batches W times as large and keeps sample i of the step when i mod (ranks taking
+part) is its place; with every rank taking part, the samples C2's `Shard` gave it, in the same order), so every rank runs
+the same steps an epoch, a late join across an epoch's end trains every sample and equals the run without the fault, and
+no rank waits on another; another batch source (a stream, a source of one's own) keeps C2's sharding by epoch, and a rank
+of it that sits a step out (other than past a replay's last step, where every rank does) fails at once naming why, which
+ends every other rank at once (its pipes close) instead of a stall. `idrak cluster sim` gained `--failures MODEL` and `--seed S` (registered value options; `--seed`
 was read in C2 but not declared) and lists the faults injected with their replay key (text and `-j`). New settings:
-`Overlap` (`IDRAK_CLUSTER_OVERLAP`, 1) and `Compression` (`IDRAK_CLUSTER_COMPRESSION`), in `ClusterOptions.Variables` and
-the CLI's table; `BucketBytes`, `LocalSgdEvery` and `GradientSync` described anew. Tests: 10 in
-`tests/Idrak.Tests/ClusterOverlapTests.cs` (`ClusterOverlapGroup`); the `"cluster:"` filter with the API guard, the
-inventory and the help layout: 63 passed, 0 failed on the CPU; the fine-tuning, pretraining, Trainer, callback,
-HostOptimizer, CLI health, polish, Arabic, trace and profiler filters pass unchanged. Measured on the CPU (4 cores):
-overlap on `ethernet-1g`, 2 ranks, 520 KiB of gradients in 9 buckets: exposed network time 3.73 ms a step against 4.26
-ms without (12.5% shorter; the backward pass measured 1.4 ms); the measured bucket size there 2 KiB (256 buckets: the
-built-in profiles carry no latency, so the latency term is near zero); top-k 10% with error feedback on the Spirals
+`Overlap` (`IDRAK_CLUSTER_OVERLAP`, 1), `Compression` (`IDRAK_CLUSTER_COMPRESSION`) and `MessageCost`
+(`IDRAK_CLUSTER_MESSAGE_COST`), in `ClusterOptions.Variables` and
+the CLI's table; `BucketBytes`, `LocalSgdEvery` and `GradientSync` described anew. Tests: 11 in
+`tests/Idrak.Tests/ClusterOverlapTests.cs` (`ClusterOverlapGroup`, before C5's `ClusterTransportGroup`). After merging C5
+(378a7c1), one build and one run of `cluster:|public API|abstraction inventory|cli health: …|cli polish: …|cli arabic:
+every message|cli dev: trace|profiler:|fine-tuning:|fine-tuning options:|pretrain:|cli pretrain:|training:|callbacks:|
+offloading: HostOptimizer` on the CPU: 139 passed, 0 failed, no child process left. Measured on the CPU (4 cores):
+overlap on `ethernet-1g`, 2 ranks, 520 KiB of gradients in 9 buckets: exposed network time 3.52 ms a step against 4.26
+ms without (17.4% shorter; the backward pass measured 1.7 ms); the measured bucket size there 52 KiB (10 buckets); top-k 10% with error feedback on the Spirals
 sample after 20 epochs: training loss 0.3703 against the full gradient's 0.3536 (gap 0.0167, the test holds it to 0.02),
 1,810 KiB sent against 8,951 KiB (without error feedback 0.3680, so error feedback did not help on this small run); local
 SGD: 24 weight averages at k = 1, 6 at k = 4 over 24 steps; slow worker (x8) in the pretrainer: ranks 0 and 1 blocked
@@ -837,14 +850,21 @@ moved**, not by the call's own simulated time: a tiny header that took no simula
 the wall clock. **Overlap is off for the HostOptimizer** (it downloads the gradients itself after the backward pass) and
 behind a plug-in's device-only collectives; the telemetry names why. **Local SGD still sums a two-float header every
 step** (the step's loss over every rank, and the epoch's end for ranks of unequal shares); "k times fewer collectives"
-counts the weight averages. **The Trainer's step groups are partial**: it shards its batches per epoch, so a rank that
-sits a step out leaves its share of that step untrained (the step is weighted over the samples trained), and a rank
-sitting out across an epoch's end ends the epoch on its own batches (a late join drawn near an epoch's end can stall the
-Trainer; the simulator draws late joins at step 0 for a few steps); the pretrainer and fine-tuner, which share each
-step's draws, are exact. A rank's own loss list holds the steps it trained. Not run here: the CUDA check that a
+counts the weight averages. **The Trainer draws a `DataLoader`'s epoch step by step under a cluster** (C2 sharded it by epoch): exact under a changing
+group, without the prefetch of the next batch (a step's share is known only as the step begins); other batch sources keep
+the epoch's sharding and refuse a rank that sits out. After a join the Trainer's batch-norm statistics are rank 0's again
+at the epoch's end (C2's broadcast), not at the join. A rank's own loss list holds the steps it trained.
+**Out-of-process ranks (C5's `LocalhostCluster`, `cluster start` children, tcp and shared memory) take part in
+`BeginStep` as a fixed group**: their collectives are not an `IStepGroup`, so the synchronisation lets every rank take part
+until `SimulationOptions.ReplayStep` (`IDRAK_CLUSTER_REPLAY_STEP`, inherited by the children), past which every rank sits
+out alike, as `ClusterRank.BeginStep` already did; faults stay the simulated transport's (C3), so `cluster sim --mode
+localhost --failures …` is refused naming why. Overlap, compression, local SGD and the measured bucket size run over the
+real transports unchanged (the worker thread uses the transport while the training thread does not), and C5's per-step
+summaries are sent to rank 0 from `SyncCore.Stepped` for both synchronisations, by the ranks that took part in the step. Not run here: the CUDA check that a
 replayed fine-tuning step names the lost overlap (`SupportsGraphs` only) and the GPU runs of the whole filter (the
-owner's). Moved: overlap with device-side staging copies (`IHostStaging`) for GPU gradients (C5, with the real
-transports; here a finished bucket is downloaded on the training thread), the `--profile` of a step's buckets (C8), and
+owner's). Open: overlap with device-side staging copies (`IHostStaging`) for GPU gradients (C5 landed without it; here a
+finished bucket is downloaded on the training thread, so on a GPU each launch waits for the device; for C6, which reworks
+the gradient pieces), the `--profile` of a step's buckets (C8), and
 persisting the measured bucket size in the tuning cache (C8, with `idrak tuning show`).
 
 ### C5: real transports on localhost, then the home LAN, then a rental
@@ -862,6 +882,91 @@ on every device"; "cluster: nvlink falls back to pcie-host where peer access is 
 
 **The owner's runs** (speed only; correctness is already proven): the three home machines over `direct-link` and `tcp`,
 then a rental with `pcie-host` and `nvlink`; `idrak cluster bench` on each pair; the numbers go into "Runs".
+
+**C5 as built (2026-10-18).** Merged C2 (12f1ba8) first, so C5 builds on the training hooks. `src/Idrak.Network/Transports/`:
+`SharedMemoryTransport.cs` (`shared-memory`: one memory-mapped ring per sending and receiving rank, `SharedRing`, a file of
+`IDRAK_CLUSTER_SHM_BYTES` (4 MiB) after a 128-byte header under a folder named after the run in `IDRAK_CLUSTER_SHM_FOLDER`
+(the temporary folder); the two positions only grow, each on its own cache line, written after the bytes they cover; a
+message larger than the ring streams through it; one reader thread per rank spins, yields, then sleeps a millisecond while
+idle and checks the writers' processes once a second), `TcpTransport.cs` (`tcp` and `direct-link`: a socket per pair, Nagle
+off, `IDRAK_CLUSTER_SOCKET_BUFFER`, a reader thread per socket, frames of up to 64 KiB written in one call), `Rendezvous.cs`
+(rank 0 listens at the coordinator; every other rank listens on `IDRAK_CLUSTER_PORT`, dials rank 0 with
+`IDRAK_CLUSTER_RETRIES` attempts, the wait doubling from `IDRAK_CLUSTER_RETRY_DELAY`, gets a welcome with every rank's
+address, dials the ranks below and takes the ranks above; the hello is a challenge each way: the acceptor's nonce, the
+HMAC of it and a nonce of the connector's, the HMAC of that back, so a recorded hello is worth nothing; a failed hello gets
+an error frame naming why, never the key; without a key nothing listens or dials beyond loopback),
+`PciHostTransport.cs` and `NvlinkTransport.cs` (`pcie-host`, `nvlink` and its other name `p2p`: ranks of one process,
+frames handed over by a call, device memory handed over through `IDeviceTransport` and copied by the receiver: through
+host memory, or `Backend.CopyTo` where the devices reach each other; a refused peer copies through the host and publishes
+`TransportChosen(pcie-host, reason)` once per pair). Their shared bases are in `Idrak.Networking.Abstractions`
+(`FramedTransport`: frames of `WireFormat`, one unbounded queue per sending rank and tag fed by the readers so a send never
+waits on a peer that is itself sending, receives with the timeout, a barrier of frames to rank 0 and back, a bye on
+dispose, a carrier closed without one ending every wait on that rank at once naming it; `LocalTransport`;
+`IDeviceTransport`). `Bench/LinkBench.cs`: every pair one at a time (a barrier before each), half the round trip of an
+empty message and a message of `--bytes` with its answer, the first round apart from the median of the warm ones; rank 0
+gets the rows. `src/Idrak.Cluster/LocalhostCluster.cs` (`Run`: every rank of a file on this machine, or one node's ranks;
+each process given `IDRAK_RANK`, `IDRAK_WORLD_SIZE`, `IDRAK_CLUSTER_TOPOLOGY`, `IDRAK_CLUSTER_NODE`, `IDRAK_CLUSTER_DEVICE`,
+`IDRAK_COORDINATOR`, `IDRAK_CLUSTER_RUN`, `IDRAK_CLUSTER_PARENT`, `IDRAK_CLUSTER_MODE=localhost`, the key inherited; lines
+streamed; the first rank to fail ends the others; every process left is killed in `finally` and when this process exits;
+`Join`: a process as one rank, its device carved with its entry's cap when it declares one, the plan's transports, the
+throttle, the collectives; a rank whose launcher is gone ends itself) and `LinkModel.cs` (`TokenBucket`,
+`ThrottledTransport`: in a localhost simulation each pair whose link declares a rate leaves at that rate and is held for
+its latency, the arrival time travelling in 8 bytes ahead of the payload). `Backend.CopyTo(source, destination, count)` and
+`CopiesDirectlyTo` (default: a copy inside the backend, else down and up through one pooled host buffer); CUDA overrides
+them (`CudaBackend.Peers.cs`: a device copy between two backends of one card, `cuMemcpyPeerAsync` where
+`cuDeviceCanAccessPeer` says yes, peer access enabled once per pair and remembered, else the default). CLI: `idrak cluster
+start --topology FILE [--node NAME] -- COMMAND` (this host's node, or `--node`; `idrak …` after `--` runs this tool; one
+live line per rank in a terminal: its device, state, time, lines and their rate, and its last line, the command's own
+progress and time left; "rank N: …" lines otherwise), `idrak cluster bench --topology FILE [--bytes N] [--rounds N] [--node
+NAME | --localhost]` (each machine starts its node's ranks, which run the bench; rank 0's machine prints the table, `-j` the
+rows), `idrak cluster sim --mode localhost` (C2's deferral: every rank a process of this tool, rank 0's output shown, one
+line per rank), and `pretrain` (and `resume`) join the cluster they were started for (`ClusterSession.JoinStarted`), so
+`cluster start -- idrak pretrain …` needs nothing more. Rank 0's `log.jsonl` holds every rank's per-step summary where the
+ranks are processes of their own: `HostCollectives` keeps the step's totals (bytes each way, wall, blocked, the peer waited
+on longest) when its transport crosses processes, the all-reduce sync's `Stepped` sends them to rank 0, which publishes a
+`CollectiveCompleted` per rank with the operation `step-summary`, and pretrain's log writes those. Six settings joined
+`ClusterOptions` and the CLI's table: `Device` (`IDRAK_CLUSTER_DEVICE`), `RunId` (`IDRAK_CLUSTER_RUN`), `Parent`
+(`IDRAK_CLUSTER_PARENT`), `RetryDelay` (`IDRAK_CLUSTER_RETRY_DELAY`, 1 s), `SharedMemoryBytes` (`IDRAK_CLUSTER_SHM_BYTES`),
+`SharedMemoryFolder` (`IDRAK_CLUSTER_SHM_FOLDER`). Tests: 12 in `tests/Idrak.Tests/ClusterTransportTests.cs`
+(`ClusterTransportGroup`; child processes are the test program again with `--cluster-child`, or the CLI); the C5 filter with
+C0 to C3, the API guard, the inventory, the CLI health, polish, Arabic and trace checks and the profiler: 73 passed, 0 failed
+on the CPU. The throttle, `ethernet-200m` (25.0 MB/s) between two processes over tcp, 4 MiB messages, three runs: warm 24.02 to 24.37 MB/s
+(at most 3.9% under), cold 14.5 to 22.9 MB/s (the first round pays for connecting and compiling, rule 76). A rank that
+leaves removes every ring it used, its peers' included, so a rank that died leaves nothing behind once one peer leaves.
+
+Changes from the plan, kept: **one group over several transports runs** (C3 refused it in-process): `TransportPlan.Connect`
+connects each carrier once for the ranks its pairs join and routes every message to its pair's (`RoutedTransport` and
+`SubsetTopology` in `src/Idrak.Abstraction/Cluster/Routing.cs`); a carrier over a part of the group sees those ranks as a
+group of their own and a run name of its own; `ITransportProvider.Carrier` (a default member: the name) lets `direct-link`
+ride on the `tcp` mesh, so a file with a cable for one pair and the LAN for the rest connects one set of sockets; a network
+carrier whose ranks leave out rank 0 is refused (its rendezvous needs the coordinator), which a topology of two or more
+nodes never makes. `InProcessCluster` runs a mixed plan the same way. **The launcher picks the coordinator's port**, not rank
+0 reporting it on its output: in a mixed group rank 0 meets its node's shared-memory peers before it listens, so every rank
+must know the port before any starts (a loopback port the system gives free; ranks of one process given port 0 still share
+the system's choice). **Whether every rank is on this machine is told by the coordinator being on loopback**, not by
+`IDRAK_CLUSTER_MODE`: a process of `cluster start` is also one process per rank (the mode says that), and its pairs between
+machines need the key and may take a cable; a localhost simulation (coordinator on loopback) needs no key, takes no cable
+and is throttled. `cluster start` sets `IDRAK_CLUSTER_THROTTLE=0`. **Receives are buffered**: every carrier's reader drains
+into per-rank, per-tag queues (unbounded), so a ring's sends never wait on each other in a circle whatever the message and
+socket-buffer sizes; `InFlight` still bounds the simulator only. **Shared memory is not zero-copy on the receive side**: the
+reader copies a frame out of the ring into a pooled buffer (one copy) so the ring frees as soon as it is read; files and
+polling instead of named maps and semaphores, which .NET does not offer on every system (rule 70). **The transports carry
+bytes; the collectives still stage device buffers through the host**: `IDeviceTransport` and `Backend.CopyTo` give the device
+path, and keeping a `GpuDirect` chunk on the device with the sum made there moves to C6, where sharding moves device memory
+between ranks. **The localhost-against-in-process test is on real training**: `cluster sim --mode localhost` and in-process
+`cluster sim` run `pretrain` 3 steps on two CPU ranks and the checkpoints' tensors are bit-identical; the collectives'
+results of three groups of child processes (2 ranks on shared-memory, 3 forced onto tcp, 3 on two nodes routed over both)
+are also bit-identical to the in-process run's. `TransportSuite` and `CollectivesSuite` run in one process on the real
+transports (2 to 8 ranks, rings smaller than the messages) and on a routed group; in child processes the same exchange and
+every collective run per rank. **Not done, with the reason**: the measured `ChunkBytes` and its cache (moved here from C1)
+moves to C8 with `calibrate` and `idrak tuning show`, which read the bench's numbers C5 now produces; one network adapter
+shared by a machine's ranks stays out of the virtual clock (C3's reason holds: a lane charged from several rank threads
+depends on their order and breaks bit-for-bit replay; an event-ordered clock stepping every rank in virtual-time order is
+a rewrite of `VirtualClock` and `SimTransport`), and moves to C8, where `calibrate` can fit a per-machine adapter share from
+benches of concurrent pairs; `cluster bench` measures one pair at a time. A cable on a subnet of its own needs the node's
+address in the file to be the cable's (an override has no address field yet: C8). `idrak transports` is C8's. Tests skipped
+on this CPU-only machine: the copies between two physical GPUs (`cluster: nvlink falls back …` prints the skip); the
+owner's CUDA run checks two backends of one card copying device to device, and peer access where a machine has two cards.
 
 ### C6: sharding (ZeRO-style)
 

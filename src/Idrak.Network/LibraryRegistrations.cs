@@ -4,6 +4,7 @@
 using Idrak.Networking.Collectives;
 using Idrak.Networking.Diagnostics;
 using Idrak.Networking.Selection;
+using Idrak.Networking.Transports;
 using Idrak.Networking.Training;
 
 namespace Idrak.Networking;
@@ -23,6 +24,15 @@ internal static class LibraryRegistrations
             Abstraction.Cluster.Collectives.Register(new NaiveProvider());
             Abstraction.Cluster.Collectives.Register(new RingProvider());
             Abstraction.Cluster.Collectives.Register(new HierarchicalProvider());
+        },
+        [typeof(Abstraction.Cluster.Transports)] = () =>
+        {
+            Abstraction.Cluster.Transports.Register(new SharedMemoryProvider());
+            Abstraction.Cluster.Transports.Register(new PciHostProvider());
+            Abstraction.Cluster.Transports.Register(new NvlinkProvider());
+            Abstraction.Cluster.Transports.Register(new NvlinkProvider("p2p"));
+            Abstraction.Cluster.Transports.Register(new DirectLinkProvider());
+            Abstraction.Cluster.Transports.Register(new TcpProvider());
         },
         [typeof(TransportSelectors)] = () => TransportSelectors.Register(new FastestSelector()),
         [typeof(GradientSyncs)] = () =>

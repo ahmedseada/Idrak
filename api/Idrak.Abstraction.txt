@@ -79,7 +79,9 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public Idrak.Abstraction.Cluster.SimulationOptions Simulation { get; init; }
   public Idrak.Abstraction.Cluster.StartingState StartingState { get; init; }
   public Idrak.Abstraction.Cluster.WireType Wire { get; init; }
+  public System.TimeSpan RetryDelay { get; init; }
   public System.TimeSpan Timeout { get; init; }
+  public System.TimeSpan? MessageCost { get; init; }
   public bool ErrorFeedback { get; init; }
   public bool Overlap { get; init; }
   public double RebalanceTolerance { get; init; }
@@ -94,8 +96,10 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public int Retries { get; init; }
   public int SyncWeightsEvery { get; init; }
   public int? MicroBatches { get; init; }
+  public int? Parent { get; init; }
   public int? Rank { get; init; }
   public int? WorldSize { get; init; }
+  public long SharedMemoryBytes { get; init; }
   public long? BucketBytes { get; init; }
   public long? ChunkBytes { get; init; }
   public long? SocketBufferBytes { get; init; }
@@ -111,9 +115,12 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public string? Collective { get; init; }
   public string? Compression { get; init; }
   public string? Coordinator { get; init; }
+  public string? Device { get; init; }
   public string? GradientSync { get; init; }
   public string? Node { get; init; }
   public string? ProfilesFile { get; init; }
+  public string? RunId { get; init; }
+  public string? SharedMemoryFolder { get; init; }
   public string? Topology { get; init; }
 
 public sealed record Idrak.Abstraction.Cluster.ClusterSimulationSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterSimulationSpec>
@@ -296,6 +303,7 @@ public interface Idrak.Abstraction.Cluster.ITransport : System.IDisposable
   public void Send(int to, System.ReadOnlySpan<byte> bytes, int tag)
 
 public interface Idrak.Abstraction.Cluster.ITransportProvider
+  public (default) string Carrier { get; }
   public Idrak.Abstraction.Cluster.ITransport Connect(Idrak.Abstraction.Cluster.ClusterContext context, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Abstraction.Cluster.TransportAvailability Availability(Idrak.Abstraction.Cluster.ClusterContext context, int peer)
   public Idrak.Abstraction.Cluster.TransportCapabilities Capabilities { get; }
@@ -384,6 +392,7 @@ public readonly record struct Idrak.Abstraction.Cluster.TransportCapabilities : 
 
 public sealed class Idrak.Abstraction.Cluster.TransportPlan
   public (string, string) this[int rankA, int rankB] { get; }
+  public Idrak.Abstraction.Cluster.ITransport Connect(Idrak.Abstraction.Cluster.ClusterContext context, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyList<string> Used { get; }
   public int WorldSize { get; }
   public static Idrak.Abstraction.Cluster.TransportPlan Make(Idrak.Abstraction.Cluster.IClusterTopology topology, Idrak.Abstraction.Cluster.ClusterOptions options)
@@ -1033,6 +1042,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   protected void ComposedConvolution(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups, Idrak.Abstraction.Devices.ConvActivation activation)
   protected void ComposedConvolutionBackwardInput(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups)
   protected void ComposedConvolutionBackwardWeight(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dweight, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups)
+  protected void CopyThroughHost(Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage destination, int count)
   protected void EndMove()
   protected void GuardMoves()
   protected void TuningMeasured(string operation, int candidates, long began)
@@ -1095,6 +1105,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual bool AttentionStridedBackwardKernel(Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, long dqOffset, Idrak.Abstraction.Devices.Storage dk, long dkOffset, Idrak.Abstraction.Devices.Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
   public virtual bool AttentionStridedKernel(Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
   public virtual bool BFloat16TransposedMatMulKernel(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage c, int m, int n, int k, float beta, Idrak.Abstraction.Devices.Storage? u, Idrak.Abstraction.Devices.Storage? v, int rank)
+  public virtual bool CopiesDirectlyTo(Idrak.Abstraction.Devices.Backend destination)
   public virtual bool Float8MatMulKernel(Idrak.Abstraction.Devices.Storage x, int m, int k, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage scales, int n, Idrak.Abstraction.Devices.Storage y, float beta)
   public virtual bool Float8QuantizeWeightKernel(Idrak.Abstraction.Devices.Storage w, int k, int n, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage scales)
   public virtual bool FusedAdamWKernel(System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage, int)> tensors, ref System.IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
@@ -1175,6 +1186,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void ConvolutionKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups, Idrak.Abstraction.Devices.ConvActivation activation)
   public virtual void Copy(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n)
   public virtual void Copy2D(Idrak.Abstraction.Devices.Storage src, int srcOffset, int srcStride, Idrak.Abstraction.Devices.Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
+  public virtual void CopyTo(Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage destination, int count)
   public virtual void CtcLossBackwardKernel(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogProbs, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
   public virtual void CtcLossKernel(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
   public virtual void DecoderMaskKernel(Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage mask, int rows, int capacity)

@@ -220,7 +220,18 @@ internal static class BucketSizing
     /// network time only): it is taken to last as long as the gradients' transfer, the case overlap is for, so the choice
     /// depends on the virtual clock alone and a simulated run of a seed stays the same, bit for bit.
     /// </summary>
-    public static int Choose(long total, double backward, double latency, double bucketSeconds, long bucketValues)
+    /// <param name="total">The gradient values.</param>
+    /// <param name="backward">The backward pass's seconds, or below 0 when not measured.</param>
+    /// <param name="latency">A tiny collective's seconds.</param>
+    /// <param name="bucketSeconds">A bucket's seconds.</param>
+    /// <param name="bucketValues">That bucket's values.</param>
+    /// <param name="messageCost">
+    /// What a collective's messages cost beyond their bytes on a real transport (its own per-message work), at least: on the
+    /// simulator, whose built-in links carry no latency, the measured latency alone would cut the gradients into hundreds of
+    /// buckets a real link would pay dearly for.
+    /// </param>
+    /// <param name="headerValues">The wire headers of a collective's messages, in values (each bucket carries them).</param>
+    public static int Choose(long total, double backward, double latency, double bucketSeconds, long bucketValues, double messageCost = 0, long headerValues = 0)
     {
         if (total <= 1)
         {
@@ -228,6 +239,7 @@ internal static class BucketSizing
         }
 
         double perValue = bucketSeconds > latency && bucketValues > 0 ? (bucketSeconds - latency) / bucketValues : 0;   // seconds a value takes on the link
+        latency = Math.Max(latency, messageCost) + (headerValues * perValue);
         if (backward < 0)
         {
             backward = total * perValue;
