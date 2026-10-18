@@ -101,6 +101,10 @@ public static class InProcessCluster
             Coordinator = run,
             Simulation = (options?.Simulation ?? new SimulationOptions()) with { Mode = SimulationMode.InProcess },
         };
+
+        // The cluster advisor's measurement, decided once for the run before any rank starts (plan 23, C8c): set, or on while
+        // someone listens for suggestions now. Every rank takes it from its context, and the event log keeps it for a replay.
+        options = options with { Suggest = options.Suggest ?? Telemetry.IsEnabled(TelemetryLevel.Suggestions) };
         if (control is null)
         {
             return Start(topology, options, work);

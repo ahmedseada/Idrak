@@ -96,7 +96,10 @@ internal sealed class ClusterSimCommand : Command
         (IDRAK_PROFILE_WARM warm runs, 1 here; the later runs train into folders of their own, removed after), the
         probes' rows (cpu, memory, the device's kernels where it times them, the network's collectives, transfers and
         gradient buckets, the cluster's simulated links) and the step measured here beside the step predicted for the
-        topology's links. The other cluster settings come from the IDRAK_CLUSTER_ variables (idrak env lists them). With
+        topology's links. The other cluster settings come from the IDRAK_CLUSTER_ variables (idrak env lists them). The
+        settings the library suggests from the first warm steps (a bf16 wire, local SGD, gradient accumulation, the bucket
+        size, top-k, the hierarchical collective; never applied) are shown once each above the progress line and kept in
+        the run's log (idrak suggest RUN lists them). With
         --dashboard the run is shown in a browser while it goes (idrak cluster ui's page): its ranks, links, losses and
         faults; pause, resume, stop with a checkpoint, and faults injected at the next step (in-process; a localhost run
         takes no faults). A run the dashboard steers is pretrain's (or resume of a pretrain run): its stop writes the
@@ -107,6 +110,9 @@ internal sealed class ClusterSimCommand : Command
               --mode M           in-process (threads, the virtual clock) or localhost (processes) (IDRAK_CLUSTER_MODE)
               --collective NAME  the collective algorithm: ring, naive or hierarchical (hierarchical with several nodes)
               --wire W           how gradients travel: f32 or bf16 (f32)
+              --local-sgd K      average the weights every K steps instead of the gradients every step
+              --bucket-bytes N   a gradient bucket's size, such as 64KiB (measured on the first step)
+              --topk F           send each rank's largest share F of the gradient values (0 to 1)
               --failures MODEL   the failure model: none, slow-worker, dropped-worker, link-loss, partition,
                                  late-join or mixed (the file's)
               --seed N           the seed of the simulation's jitter and faults (the file's)
@@ -130,7 +136,7 @@ internal sealed class ClusterSimCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        ["--topology", "--collective", "--wire", "--mode", "--failures", "--placement", "--stages", "--event-log", "--port"];   // --seed: a common option
+        ["--topology", "--collective", "--wire", "--local-sgd", "--bucket-bytes", "--topk", "--mode", "--failures", "--placement", "--stages", "--event-log", "--port"];   // --seed: a common option
 
     public override IReadOnlyCollection<string> Flags => ["--profile", "--dashboard", "--no-browser"];
 
@@ -146,6 +152,7 @@ internal sealed class ClusterSimCommand : Command
         int world = topology.WorldSize;
         var codes = new int[world];
         var errors = new StringWriter[world];
+        using var shown = SuggestionLine.Show(output, error);           // the settings suggested while the ranks train, once each (decision 4)
         var result = InProcessCluster.Run(topology, options, rank =>
         {
             errors[rank.Rank] = new StringWriter(inv);
@@ -364,6 +371,34 @@ internal sealed class ClusterSimCommand : Command
                     "bf16" or "bfloat16" => WireType.BFloat16,
                     _ => throw new UsageException($"--wire is f32 or bf16, not '{wire}'."),
                 },
+            };
+        }
+
+        if (context.Option("--local-sgd") is { } localSgd)
+        {
+            options = options with { LocalSgdEvery = int.TryParse(localSgd, NumberStyles.None, CultureInfo.InvariantCulture, out int k) ? k : throw new UsageException($"--local-sgd is a whole number of steps, 0 or more, not '{localSgd}'.") };
+        }
+
+        if (context.Option("--bucket-bytes") is { } bucket)
+        {
+            long bytes;
+            try
+            {
+                bytes = ClusterTopology.ParseMemory(bucket);
+            }
+            catch (FormatException)
+            {
+                bytes = 0;
+            }
+
+            options = options with { BucketBytes = bytes > 0 ? bytes : throw new UsageException($"--bucket-bytes is a size above 0 with its unit (64KiB, 4MB), not '{bucket}'.") };
+        }
+
+        if (context.Option("--topk") is { } topk)
+        {
+            options = options with
+            {
+                TopK = double.TryParse(topk, NumberStyles.Float, CultureInfo.InvariantCulture, out double share) && share is >= 0 and <= 1 ? share : throw new UsageException($"--topk is a share from 0 to 1, not '{topk}'."),
             };
         }
 
@@ -626,6 +661,21 @@ internal sealed class ClusterSimCommand : Command
         if (options.Simulation.Seed is { } seed)
         {
             environment["IDRAK_CLUSTER_SEED"] = seed.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (options.LocalSgdEvery > 0)
+        {
+            environment["IDRAK_CLUSTER_LOCAL_SGD"] = options.LocalSgdEvery.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (options.BucketBytes is { } bucketBytes)
+        {
+            environment["IDRAK_CLUSTER_BUCKET_BYTES"] = bucketBytes.ToString(CultureInfo.InvariantCulture) + "B";
+        }
+
+        if (options.TopK > 0)
+        {
+            environment["IDRAK_CLUSTER_TOPK"] = options.TopK.ToString("R", CultureInfo.InvariantCulture);
         }
 
         environment["IDRAK_CLUSTER_PLACEMENT"] = options.Placement;

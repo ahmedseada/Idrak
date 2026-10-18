@@ -125,6 +125,8 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_STAGES"] = "2", ["IDRAK_CLUSTER_PIPELINE_BALANCE"] = "memory", ["IDRAK_CLUSTER_PIPELINE_CUTS"] = "3,6",
             // C8: the chunk measurement's probe, the measured sizes' file, the event log's flush interval.
             ["IDRAK_CLUSTER_CHUNK_PROBE"] = "1MB", ["IDRAK_CLUSTER_TUNING_FILE"] = "sizes.txt", ["IDRAK_CLUSTER_EVENT_LOG_FLUSH"] = "4",
+            // C8c: the cluster advisor's measurement on or off, the warm steps it measures and its bf16 slice.
+            ["IDRAK_CLUSTER_SUGGEST"] = "0", ["IDRAK_CLUSTER_SUGGEST_STEPS"] = "5", ["IDRAK_CLUSTER_SUGGEST_SLICE"] = "1024",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();

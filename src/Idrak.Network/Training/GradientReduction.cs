@@ -132,6 +132,10 @@ internal sealed partial class GradientReduction : SyncCore
 
         _sized = options.BucketBytes is not null;
         _layout = NewLayout(ValuesOf(options.BucketBytes ?? BucketSizing.ProbeBytes));
+        if (collectives.Transport?.Capabilities.CrossProcess != true)
+        {
+            StartAdvice(DecideInProcess());                    // ranks of one process: one decision for the run, whichever rank comes first
+        }
     }
 
     public override string Name => _mode == ShardMode.None ? "all-reduce" : "sharded";
@@ -269,6 +273,12 @@ internal sealed partial class GradientReduction : SyncCore
             ResetShardStep();
         }
 
+        bool advising = AdviceStep;
+        if (advising && StepsInGroup == 1L + _meter!.Warm && _meter.SliceCount == 0)
+        {
+            _meter.Capture = true;                             // the slice from the last measured step's own values (unless taken during its backward pass)
+        }
+
         HostGradients?.DownloadGradients();
         long started = Stopwatch.GetTimestamp();
         _sent.Clear();
@@ -297,6 +307,7 @@ internal sealed partial class GradientReduction : SyncCore
         }
 
         AfterShardedReduce();
+        var reduceWall = Stopwatch.GetElapsedTime(started);
         var network = TimeSpan.Zero;
         bool onClock = Values.SimulatedTime > TimeSpan.Zero;
         double end = 0;
@@ -309,7 +320,12 @@ internal sealed partial class GradientReduction : SyncCore
 
         // On a simulated transport the wait after the backward pass is predicted from the buckets' simulated times and when
         // each was ready; on a real one it is the time Reduce took.
-        var exposed = onClock ? TimeSpan.FromSeconds(Math.Max(0, end - backward)) : Stopwatch.GetElapsedTime(started);
+        var exposed = onClock ? TimeSpan.FromSeconds(Math.Max(0, end - backward)) : reduceWall;
+        if (advising)
+        {
+            _meter!.Pending = (exposed, network, TimeSpan.FromSeconds(backward), reduceWall, onClock);
+        }
+
         Publish(_compressor.Name, _layout.Count, overlapped, (long)_layout.BucketValues * sizeof(float), (long)_layout.Total * sizeof(float),
             TimeSpan.FromSeconds(backward), network, exposed, overlapped > 0 ? null : _lost ?? (backward > 0 && _layout.Count == 1 ? "one bucket holds every gradient" : null));
         _lost = null;
@@ -329,12 +345,14 @@ internal sealed partial class GradientReduction : SyncCore
         _staging?.Dispose();
         _staging = null;
         _compressor.Dispose();
+        StopAdvice();
         DisposeShards();
         base.Dispose();
     }
 
     protected override void ShareState(int holder)
     {
+        StopAdvice();                                          // a group that changed measures nothing more (every member stops alike)
         // The holder's bucket size, so a rank that joins after the first step's measurement lays its buckets out alike.
         var (high, low) = Split(_layout.BucketValues);
         Span<float> state = [_sized ? 1f : 0f, high, low];
@@ -597,6 +615,11 @@ internal sealed partial class GradientReduction : SyncCore
     // rank's piece of it its own parameters' values.
     private void ReduceBucket(int bucket, Span<float> values, float weight)
     {
+        if (bucket == 0 && _meter is { Capture: true } meter)
+        {
+            CaptureSlice(meter, values, weight);
+        }
+
         if (!_layout.Sharded)
         {
             _compressor.Reduce(values, weight, _layout.Pieces(bucket));
@@ -651,14 +674,27 @@ internal sealed partial class GradientReduction : SyncCore
     // same every time, from the clock).
     protected override void Started()
     {
+        // Ranks in processes of their own decide the advisor's measurement together (any rank's listener turns it on for
+        // every rank): in the bucket size's agreement when there is one, else in one float of its own (real transports only).
+        bool crossProcess = Collectives.Transport?.Capabilities.CrossProcess == true;
         if (_sized || Values.SimulatedTime > TimeSpan.Zero || Collectives.Transport?.SimulatedCriticalRank is not null)
         {
+            if (crossProcess)
+            {
+                StartAdvice(AgreeAdvice());
+            }
+
             return;
         }
 
         long kept = ClusterCache.FindTuning(BucketKind, BucketKey, Options.TuningFile) is { Value: > 0 and var bytes } ? ValuesOf(bytes) : 0;
-        Span<float> agree = [kept >> 20, kept & ((1 << 20) - 1), -(kept >> 20), -(kept & ((1 << 20) - 1))];   // each part exact in float32
+        Span<float> agree = [kept >> 20, kept & ((1 << 20) - 1), -(kept >> 20), -(kept & ((1 << 20) - 1)), AdviceWanted ? 1f : 0f];   // each part exact in float32
         Values.AllReduce(agree, WireType.Float32, ReduceOp.Max);
+        if (crossProcess)
+        {
+            StartAdvice(agree[4] > 0f);
+        }
+
         if (kept > 0 && agree[0] == -agree[2] && agree[1] == -agree[3])
         {
             _sized = true;

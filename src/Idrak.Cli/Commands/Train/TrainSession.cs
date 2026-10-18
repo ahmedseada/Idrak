@@ -232,6 +232,7 @@ internal static class TrainSession
         var trainLoader = new DataLoader(trainSet, settings.Batch, shuffle: true, device: device, seed: settings.Seed + epochsDone);
         var validationLoader = validationSet is null ? null : new DataLoader(validationSet, Math.Max(settings.Batch, 256), device: device);
         string log = Path.Combine(folder, "log.jsonl");
+        using var suggestions = writes && rank is not null ? Telemetry.Subscribe(new Cluster.SuggestionLog(log)) : null;   // a cluster run's suggestions: idrak suggest RUN lists them
         trainer.Callbacks.Add(new Checkpoint(folder));
         trainer.Callbacks.Add(new TrainingProgress(progress, total, epochsDone));
         if (writes)

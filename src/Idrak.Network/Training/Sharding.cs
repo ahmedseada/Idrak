@@ -117,6 +117,7 @@ internal sealed partial class GradientReduction
 
     protected override void Began(bool present)
     {
+        ArmAdvice(present);
         if (present && _mode != ShardMode.None)
         {
             EnsurePartitioned();

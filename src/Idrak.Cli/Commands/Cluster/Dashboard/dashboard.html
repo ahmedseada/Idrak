@@ -245,7 +245,7 @@ td { padding: 8px; border-top: 1px solid var(--row); }
   <!-- Events: faults, rank states and the run's own changes, newest first, each with its replay key. -->
   <section id="p-events" class="card hidden" aria-label="Event timeline">
     <div class="between"><b data-t="Events">Events</b>
-      <span class="small dim" data-t="faults, rank states and runs, newest first · the event log replays them">faults, rank states and runs, newest first · the event log replays them</span></div>
+      <span class="small dim" data-t="faults, rank states, runs and suggested settings, newest first · the event log replays the faults">faults, rank states, runs and suggested settings, newest first · the event log replays the faults</span></div>
     <div id="events"></div>
   </section>
 </div>
@@ -270,6 +270,7 @@ const API = {
 };
 
 const AR = {
+  'suggestion': 'اقتراح', 'faults, rank states, runs and suggested settings, newest first · the event log replays the faults': 'الأعطال وحالات الرتب والتشغيلات والإعدادات المقترحة، الأحدث أولا · سجل الأحداث يعيد الأعطال',
   'cluster': 'العنقود', 'Start run': 'بدء التشغيل', 'Pause at next step': 'إيقاف مؤقت عند الخطوة التالية', 'Resume': 'استئناف',
   'Stop and checkpoint': 'إيقاف وحفظ نقطة', 'Inject fault': 'حقن عطل', 'Fault': 'العطل', 'On rank': 'على الرتبة',
   'Inject at next step': 'الحقن عند الخطوة التالية', 'Set up': 'الإعداد', 'Run': 'التشغيل', 'Events': 'الأحداث',
@@ -760,6 +761,7 @@ function ingest(e) {
     case 'cluster_start': event(0, 'run', `${t('cluster start on node')} ${e.node}: ${t('ranks')} ${e.ranks.join(', ')} (${e.devices.join(', ')}) · ${e.command}`); R.world = Math.max(R.world, ...e.ranks.map(r => r + 1)); break;
     case 'rank_end': { const k = rank(e.rank); k.exit = e.exit_code; k.state = e.exit_code === 0 ? 'finished' : 'dropped'; event(R.step, e.exit_code === 0 ? 'run' : 'error', `rank ${e.rank} ${e.exit_code === 0 ? t('done') : t('ended') + ' (' + (e.exit_code ?? t('by the launcher')) + ')'}`); break; }
     case 'cluster_end': event(R.step, e.failure ? 'error' : 'run', e.failure || t('every rank ended')); break;
+    case 'setting_suggestion': event(R.step, 'suggestion', `${e.setting} = ${e.value}: ${e.reason}`, e.source); break;
     case 'transport_chosen': break;
   }
   if (R.output.length > 400) R.output.splice(0, R.output.length - 400);
@@ -890,7 +892,7 @@ function renderRunParts() {
   $('output').textContent = R.output.slice(-200).join('\n');
   $('output').scrollTop = $('output').scrollHeight;
 
-  const tone = { fault: 'amber', state: '', run: 'teal', error: 'red' };
+  const tone = { fault: 'amber', state: '', run: 'teal', error: 'red', suggestion: 'blue' };
   $('events').innerHTML = R.events.slice().reverse().slice(0, 500).map(e => `<div class="event"><span class="mono small muted">${t('step')} ${e.step ?? '—'}</span>
     <span><span class="pill ${tone[e.kind] || ''}">${h(t(e.kind))}</span></span><span>${h(e.text)}</span><span class="mono small dim ltr">${h(e.key)}</span></div>`).join('')
     || `<p class="small dim">${t('no event yet')}</p>`;

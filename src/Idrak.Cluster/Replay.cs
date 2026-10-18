@@ -41,13 +41,14 @@ public static class ClusterReplay
     /// Replays a run steered while it went (plan 23, phase C9: faults injected from the dashboard): as the run above, with the live faults
     /// <paramref name="steered"/>'s event log recorded injected again at their steps, so the replay's faults, clocks and
     /// training equal the steered run's through <paramref name="step"/>, bit for bit. (A pause changes no result, so it needs
-    /// no replaying; a stop ends the run where a replay's step would.)
+    /// no replaying; a stop ends the run where a replay's step would.) The cluster advisor's setting is the log's
+    /// (<see cref="EventLog.AdviceOf"/>): its slice collectives are on the clock, so the replay measures as the run did.
     /// </summary>
     public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, int seed, long step, Action<ClusterRank> work, EventLog steered)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(step);
         ArgumentNullException.ThrowIfNull(steered);
-        options ??= new ClusterOptions();
+        options = steered.AdviceOf(options ?? new ClusterOptions());
         return InProcessCluster.Run(topology, options with { Simulation = options.Simulation with { Seed = seed, ReplayStep = step } }, work,
             new ClusterRunControl(steered.LiveFaults.Where(f => f.Step <= step)));
     }
