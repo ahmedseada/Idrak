@@ -58,6 +58,12 @@ public sealed class Dropout : Module
     /// <summary>Fraction of inputs dropped during training.</summary>
     public float Probability { get; }
 
+    /// <summary>
+    /// Mixes the seeds of the masks drawn on this thread with <paramref name="rank"/> until disposed: the ranks of a
+    /// data-parallel run (plan 23) drop different elements of their different rows; rank 0 drops what one process would.
+    /// </summary>
+    public static IDisposable SeedsForRank(int rank) => DropoutSeeds.ForRank(rank);
+
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) =>
         IsTraining && Probability > 0f ? input.Dropout(Probability, DropoutSeeds.Next(_random)) : input;
@@ -160,6 +166,11 @@ internal static class DropoutSeeds
     [ThreadStatic]
     private static Queue<uint>? t_replay;
 
+    // The rank of a data-parallel run on this thread (plan 23): its seeds are mixed with it, so ranks drop different
+    // elements of their different rows; 0 (one process, or rank 0) leaves them as they are.
+    [ThreadStatic]
+    private static int t_rank;
+
     public static uint Next(Random random)
     {
         if (t_replay is { Count: > 0 } replay)
@@ -168,8 +179,35 @@ internal static class DropoutSeeds
         }
 
         uint seed = (uint)random.Next();
+        if (t_rank != 0)
+        {
+            seed = Mix(seed, t_rank);
+        }
+
         t_record?.Add(seed);
         return seed;
+    }
+
+    /// <summary>Mixes the seeds drawn on this thread with <paramref name="rank"/> until disposed (a data-parallel rank's training).</summary>
+    public static RankScope ForRank(int rank)
+    {
+        var scope = new RankScope(t_rank);
+        t_rank = rank;
+        return scope;
+    }
+
+    // SplitMix64's finalizer over the seed and the rank.
+    private static uint Mix(uint seed, int rank)
+    {
+        ulong z = ((ulong)seed << 32 | (uint)rank) * 0x9E3779B97F4A7C15UL;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+        return (uint)(z ^ (z >> 31));
+    }
+
+    public readonly struct RankScope(int previous) : IDisposable
+    {
+        public void Dispose() => t_rank = previous;
     }
 
     /// <summary>Records the seeds drawn until disposed into <paramref name="seeds"/>.</summary>

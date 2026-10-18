@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 63 | 13 | 36 | 111 | 0 |
+| `Idrak.Abstraction` | 66 | 13 | 37 | 115 | 0 |
 | `Idrak` | 11 | 4 | 12 | 27 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -42,15 +42,19 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, mixed, none, partition, slow-worker | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology |  | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce | Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | HierarchicalProvider, NaiveProvider, RingProvider |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | NoFailures, SeededFailures |  | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.IGradientSync` | interface | public | Tensor | GradientReduction |  | Abstraction, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider |  | Abstraction, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IHostGradients` | interface | public | — | HostOptimizer |  | Idrak, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | SimTransport |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportProvider` | interface | public | — | SimTransportProvider |  | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | FastestSelector |  | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | direct-link, ethernet, ethernet-100g, ethernet-10g, ethernet-1g, ethernet-2.5g, infiniband, nvlink, +7 | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | direct-link, ethernet, ethernet-100g, ethernet-10g, ethernet-1g, ethernet-2.5g, infiniband, nvlink, +7 | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | fastest | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | sim | Cluster | Abstraction |
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, resize, resized-crop, +2 | Imaging, Vision | Abstraction |
@@ -150,7 +154,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | Idrak, Mcp | Abstraction |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | AspNetCore, Idrak | Abstraction |
 | `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Audio, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Network, Nlp | Abstraction |
 
 ### Idrak
 

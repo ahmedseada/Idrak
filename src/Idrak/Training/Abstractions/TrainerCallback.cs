@@ -111,6 +111,15 @@ public sealed class TrainerContext
     /// <summary>The token passed to <c>Trainer.Fit</c>.</summary>
     public CancellationToken CancellationToken { get; }
 
+    /// <summary>
+    /// This trainer's rank in data-parallel training (<c>Trainer.Cluster</c>; 0 in one process). Every rank runs the
+    /// callbacks with the same losses; a callback that writes files writes on rank 0 only.
+    /// </summary>
+    public int Rank { get; internal init; }
+
+    /// <summary>The number of ranks training together (1 in one process).</summary>
+    public int WorldSize { get; internal init; } = 1;
+
     /// <summary>Whether <see cref="Stop"/> was called.</summary>
     public bool StopRequested { get; private set; }
 

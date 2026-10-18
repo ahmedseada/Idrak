@@ -76,9 +76,11 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public Idrak.Abstraction.Cluster.ClusterKey? Key { get; init; }
   public Idrak.Abstraction.Cluster.ShardMode Shard { get; init; }
   public Idrak.Abstraction.Cluster.SimulationOptions Simulation { get; init; }
+  public Idrak.Abstraction.Cluster.StartingState StartingState { get; init; }
   public Idrak.Abstraction.Cluster.WireType Wire { get; init; }
   public System.TimeSpan Timeout { get; init; }
   public bool ErrorFeedback { get; init; }
+  public double RebalanceTolerance { get; init; }
   public double SuggestShare { get; init; }
   public double TopK { get; init; }
   public double? SuggestBFloat16Tolerance { get; init; }
@@ -86,6 +88,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public int ListenPort { get; init; }
   public int LocalSgdEvery { get; init; }
   public int RebalanceEvery { get; init; }
+  public int RebalanceSteps { get; init; }
   public int Retries { get; init; }
   public int SyncWeightsEvery { get; init; }
   public int? MicroBatches { get; init; }
@@ -97,6 +100,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public static Idrak.Abstraction.Cluster.ClusterOptions FromEnvironment(Idrak.Abstraction.Cluster.ClusterOptions? defaults = null)
   public static System.Collections.Generic.IReadOnlyList<string> Variables { get; }
   public string CollectiveFor(Idrak.Abstraction.Cluster.IClusterTopology topology)
+  public string GradientSync { get; init; }
   public string Placement { get; init; }
   public string Schedule { get; init; }
   public string Selector { get; init; }
@@ -145,6 +149,10 @@ public static class Idrak.Abstraction.Cluster.Collectives
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Cluster.ICollectivesProvider provider)
 
+public static class Idrak.Abstraction.Cluster.DrawShares
+  public static System.Collections.Generic.IReadOnlyList<double> Even(int world)
+  public static int[] Owners(System.ReadOnlySpan<long> sizes, System.Collections.Generic.IReadOnlyList<double> shares)
+
 public static class Idrak.Abstraction.Cluster.FailureModels
   public static Idrak.Abstraction.Cluster.IFailureModel Get(string name)
   public static Idrak.Abstraction.Cluster.IFailureModel? Default(string name)
@@ -169,6 +177,23 @@ public enum Idrak.Abstraction.Cluster.FaultKind : int
   LinkLoss = 2
   Partition = 3
   SlowWorker = 0
+
+public readonly record struct Idrak.Abstraction.Cluster.GradientSyncResult : System.IEquatable<Idrak.Abstraction.Cluster.GradientSyncResult>
+  public GradientSyncResult(double Tokens, double Loss)
+  public double Loss { get; init; }
+  public double Tokens { get; init; }
+
+public static class Idrak.Abstraction.Cluster.GradientSyncs
+  public static Idrak.Abstraction.Cluster.IGradientSync Create(Idrak.Abstraction.Cluster.ICollectives collectives, Idrak.Abstraction.Training.Optimizer optimizer, Idrak.Abstraction.Cluster.ClusterOptions? options = null)
+  public static Idrak.Abstraction.Cluster.IGradientSyncProvider Get(string name)
+  public static Idrak.Abstraction.Cluster.IGradientSyncProvider? Default(string name)
+  public static Idrak.Abstraction.Cluster.IGradientSyncProvider? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.IGradientSyncProvider> All { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.IGradientSyncProvider provider)
 
 public interface Idrak.Abstraction.Cluster.IClusterTopology
   public (int, int) Place(int rank)
@@ -199,6 +224,31 @@ public interface Idrak.Abstraction.Cluster.IFailureModel
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.Fault> Draw(long step, Idrak.Abstraction.Cluster.IClusterTopology topology, System.Random seeded)
   public string Name { get; }
   public string Summary { get; }
+
+public interface Idrak.Abstraction.Cluster.IGradientSync : System.IDisposable
+  public (default) int Rank { get; }
+  public (default) int WorldSize { get; }
+  public Idrak.Abstraction.Cluster.GradientSyncResult Reduce(double tokens, double loss, bool normalized = false)
+  public Idrak.Abstraction.Cluster.ICollectives Collectives { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
+  public System.Collections.Generic.IReadOnlyList<double> Shares { get; }
+  public string Name { get; }
+  public void Barrier()
+  public void Broadcast(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> tensors, int root = 0)
+  public void Start()
+  public void Stepped(long step)
+  public void Sum(System.Span<float> values)
+
+public interface Idrak.Abstraction.Cluster.IGradientSyncProvider
+  public Idrak.Abstraction.Cluster.IGradientSync Create(Idrak.Abstraction.Cluster.ICollectives collectives, Idrak.Abstraction.Training.Optimizer optimizer, Idrak.Abstraction.Cluster.ClusterOptions options)
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Cluster.IHostGradients
+  public System.Span<float> CreateHostGradient(int parameter)
+  public System.Span<float> HostGradient(int parameter)
+  public void DownloadGradients()
+  public void ReloadParameters()
 
 public interface Idrak.Abstraction.Cluster.ILinkProfile
   public Idrak.Abstraction.Cluster.ILinkProfile With(double? bandwidthBytesPerSecond = null, System.TimeSpan? latency = null, System.TimeSpan? jitter = null, double? lossRate = null, double? failureRate = null, string? name = null)
@@ -285,6 +335,10 @@ public sealed record Idrak.Abstraction.Cluster.SimulationOptions : System.IEquat
   public string? CarveFrom { get; init; }
   public string? EventLog { get; init; }
   public string? Failures { get; init; }
+
+public enum Idrak.Abstraction.Cluster.StartingState : int
+  Broadcast = 0
+  Check = 1
 
 public enum Idrak.Abstraction.Cluster.ThroughputClock : int
   Simulated = 1

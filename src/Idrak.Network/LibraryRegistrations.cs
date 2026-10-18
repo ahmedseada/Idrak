@@ -4,12 +4,13 @@
 using Idrak.Networking.Collectives;
 using Idrak.Networking.Diagnostics;
 using Idrak.Networking.Selection;
+using Idrak.Networking.Training;
 
 namespace Idrak.Networking;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction (plan 23): the "naive", "ring" and "hierarchical" collectives, the
-/// "fastest" transport selector and the "network" profiler probe. <c>LibraryDefaults.Ensure</c> calls
+/// "fastest" transport selector, the "all-reduce" gradient synchronisation and the "network" profiler probe. <c>LibraryDefaults.Ensure</c> calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, when the application ships it.
 /// </summary>
 internal static class LibraryRegistrations
@@ -23,6 +24,7 @@ internal static class LibraryRegistrations
             Abstraction.Cluster.Collectives.Register(new HierarchicalProvider());
         },
         [typeof(TransportSelectors)] = () => TransportSelectors.Register(new FastestSelector()),
+        [typeof(GradientSyncs)] = () => GradientSyncs.Register(new AllReduceSyncProvider()),
         [typeof(ProfileProbes)] = () => ProfileProbes.Register(new NetworkProbe()),
     };
 

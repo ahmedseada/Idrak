@@ -90,6 +90,34 @@ internal abstract class HostCollectives : ICollectives
 
     public void Barrier() => Time("barrier", Transport.Barrier);
 
+    /// <summary>
+    /// An all-reduce of values the caller already holds on the host (a gradient synchronisation's bucket, plan 23 C2), with
+    /// no device copy: the same algorithm, chunks, sum order and telemetry as <see cref="AllReduce"/>.
+    /// </summary>
+    internal void AllReduceHostValues(Span<float> values, ReduceOp op, WireType wire)
+    {
+        if (!Telemetry.IsEnabled(TelemetryLevel.Network))
+        {
+            AllReduceHost(values, op, wire);
+            return;
+        }
+
+        (_measuring, _sent, _received, _blockedTicks, _longestWait, _slowest) = (true, 0, 0, 0, 0, Rank);
+        var simulated = Transport.SimulatedTime;
+        long start = Stopwatch.GetTimestamp();
+        try
+        {
+            AllReduceHost(values, op, wire);
+        }
+        finally
+        {
+            _measuring = false;
+        }
+
+        Telemetry.Collective(new CollectiveCompleted(Name, "all-reduce", Rank, WorldSize, _sent, _received, Stopwatch.GetElapsedTime(start),
+            Transport.SimulatedTime - simulated, TimeSpan.FromSeconds(_blockedTicks / (double)Stopwatch.Frequency), _slowest));
+    }
+
     public virtual void Dispose()
     {
         // The transport is the caller's: it may outlive these collectives.

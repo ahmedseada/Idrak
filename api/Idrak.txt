@@ -855,6 +855,7 @@ public sealed class Idrak.Layers.Dropout : Idrak.Abstraction.Module
   public Dropout(float probability = 0.5f, System.Random? random = null)
   public float Probability { get; }
   public override string ToString()
+  public static System.IDisposable SeedsForRank(int rank)
 
 public sealed class Idrak.Layers.ElementwiseAffineFlow : Idrak.Abstraction.Module
   public ElementwiseAffineFlow(Idrak.Abstraction.Tensor logScale, Idrak.Abstraction.Tensor translate)
@@ -1945,14 +1946,18 @@ public sealed class Idrak.Optimizers.GroupedOptimizer : Idrak.Abstraction.Traini
   public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
 
-public sealed class Idrak.Optimizers.HostOptimizer : Idrak.Abstraction.Training.Optimizer
+public sealed class Idrak.Optimizers.HostOptimizer : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Cluster.IHostGradients
   public HostOptimizer(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> create)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Training.Optimizer> CpuOptimizers { get; }
+  public System.Span<float> CreateHostGradient(int parameter)
+  public System.Span<float> HostGradient(int parameter)
   public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public override void ClipAndStep(float maxNorm)
   public override void Dispose()
   public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
+  public void DownloadGradients()
+  public void ReloadParameters()
 
 public interface Idrak.Training.Abstractions.ITrainerCallback
   public (default) bool NeedsBatchLoss { get; }
@@ -1969,6 +1974,8 @@ public sealed class Idrak.Training.Abstractions.TrainerContext
   public bool StopRequested { get; }
   public int Epoch { get; }
   public int Epochs { get; }
+  public int Rank { get; }
+  public int WorldSize { get; }
   public long Step { get; }
   public void Stop()
 
@@ -2032,6 +2039,8 @@ public readonly record struct Idrak.Training.RegressionReport : System.IEquatabl
   public static Idrak.Training.RegressionReport Compute(System.ReadOnlySpan<float> predicted, System.ReadOnlySpan<float> actual)
 
 public sealed class Idrak.Training.Trainer : System.IDisposable
+  public Idrak.Abstraction.Cluster.ClusterOptions? ClusterOptions { get; init; }
+  public Idrak.Abstraction.Cluster.ICollectives? Cluster { get; init; }
   public Idrak.Abstraction.Module Model { get; }
   public Idrak.Abstraction.Training.LearningRateScheduler? Scheduler { get; init; }
   public Idrak.Abstraction.Training.Optimizer Optimizer { get; }

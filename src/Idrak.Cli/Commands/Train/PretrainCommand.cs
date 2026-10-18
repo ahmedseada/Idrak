@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
 using Idrak.Models;
 using Idrak.Nlp;
@@ -141,13 +142,17 @@ internal sealed class PretrainCommand : Command
         }
 
         Directory.CreateDirectory(run);
-        File.WriteAllText(Path.Combine(run, "run.json"), new JsonObject
+        if (ClusterSession.Current is not { Rank: > 0 })                    // a simulated cluster's rank 0 writes the run
         {
-            ["format"] = RunFormat,
-            ["model"] = Path.GetFullPath(modelFolder),
-            ["options"] = options.ToJson(),
-            ["log_every"] = context.IntOption("--log-every", 10),
-        }.ToJsonString(CommandContext.JsonOutput) + "\n");
+            File.WriteAllText(Path.Combine(run, "run.json"), new JsonObject
+            {
+                ["format"] = RunFormat,
+                ["model"] = Path.GetFullPath(modelFolder),
+                ["options"] = options.ToJson(),
+                ["log_every"] = context.IntOption("--log-every", 10),
+            }.ToJsonString(CommandContext.JsonOutput) + "\n");
+        }
+
         return Execute(context, modelFolder, options, run, null, context.IntOption("--log-every", 10));
     }
 
@@ -178,10 +183,18 @@ internal sealed class PretrainCommand : Command
 
     private static int Execute(CommandContext context, string modelFolder, PretrainingOptions options, string run, PretrainingCheckpoint? resume, int logEvery)
     {
+        // A rank of a simulated cluster (idrak cluster sim) trains on its carved device with its collectives.
+        var rank = ClusterSession.Current;
+        var device = rank?.Device ?? context.Device;
+        if (rank is not null)
+        {
+            options = options with { Cluster = rank.Collectives, ClusterOptions = rank.Context.Options };
+        }
+
         PretrainedModel model;
         try
         {
-            model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = context.Device });
+            model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device });
         }
         catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
         {
@@ -198,7 +211,7 @@ internal sealed class PretrainCommand : Command
 
             // A teacher (not kept in checkpoints: given again on resume).
             using var teacherModel = context.Option("--teacher") is { } teacherPath
-                ? PretrainedModel.Load(teacherPath, new PretrainedOptions { Device = context.Option("--teacher-device") is { } td ? Idrak.Abstraction.Device.Parse(td) : context.Device })
+                ? PretrainedModel.Load(teacherPath, new PretrainedOptions { Device = context.Option("--teacher-device") is { } td ? Idrak.Abstraction.Device.Parse(td) : device })
                 : null;
             using var teacher = teacherModel is null ? null : DistillationTeachers.FromModel(teacherModel, context.IntOption("--top-k", 0), options.BatchTokens, options.Images);
             if (teacher is not null)
@@ -215,8 +228,8 @@ internal sealed class PretrainCommand : Command
             }
 
             int total = options.Stages.Sum(s => s.Steps);
-            using var log = new TelemetryAppender(Path.Combine(run, "log.jsonl"));
-            using var subscription = Telemetry.Subscribe(log);
+            using var log = rank is not { Rank: > 0 } ? new TelemetryAppender(Path.Combine(run, "log.jsonl")) : null;   // rank 0's log is the run's
+            using var subscription = log is null ? null : Telemetry.Subscribe(log);
             using var interrupt = new Interrupt(context);
             PretrainingResult result;
             using (var line = new ProgressLine(context, "pretraining", total: total, unit: ProgressUnit.Items))
