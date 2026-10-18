@@ -602,6 +602,68 @@ batches split by measured speed give the one-process losses"; "cluster: HostOpti
 
 **Done when** every test passes on the CPU and the owner's `cuda` run of `"cluster:"` passes with two fake GPUs.
 
+**C2 as built (2026-10-18).** The hook is a contract in `src/Idrak.Abstraction/Cluster/GradientSync.cs`:
+`IGradientSync` (`Start`, `Reduce(tokens, loss, normalized)`, `Stepped(step)`, `Shares`, `Sum`, `Broadcast`, `Barrier`),
+`IGradientSyncProvider` and the unguarded registry `GradientSyncs` (`Create(collectives, optimizer, options)`), named by
+`ClusterOptions.GradientSync`; `IHostGradients` (an optimizer that holds the gradients on the host); `DrawShares.Owners`
+(the rank of each of a step's draws); `GradientSyncResult`; `StartingState`. Idrak.Network implements and registers
+`"all-reduce"` in `src/Idrak.Network/Training/GradientReduction.cs` (from `LibraryRegistrations`); `HostCollectives` gained
+`AllReduceHostValues` (a bucket reduced straight from the host buffer). `Trainer.Cluster`, `FineTuningOptions.Cluster` and
+`PretrainingOptions.Cluster` (each an `ICollectives?`, with a `ClusterOptions?` beside it; null reads the environment) call
+it after the last backward pass and before the update; Idrak and Idrak.Nlp reference neither Idrak.Network nor
+Idrak.Cluster. The reduction: the gradients as (parameter, offset, count) pieces in parameter order, a bucket of
+`BucketBytes` at a time through one pooled host buffer (returned every step), a piece of a parameter larger than a bucket
+written back through one device staging buffer made once (on the CPU straight into its memory); the header (this rank's
+tokens, its loss and one presence flag per parameter) rides in the first bucket on a float32 wire, the gradients weighted
+by the rank's tokens and the first bucket divided by the step's tokens once known, every later bucket weighted before it
+travels; a rank without rows adds zeros and gets the gradients other ranks had; a step no rank had rows in returns 0
+tokens (the Trainer's ranks of unequal shards end an epoch together that way). `Start` sends rank 0's values (or with
+`StartingState.Check` compares every parameter's SHA-256 across ranks and names the rank and parameter that differ);
+`Stepped` sends rank 0's weights every `SyncWeightsEvery` steps and re-splits by speed: each rank's tokens per second
+over the warm steps (the first, cold step aside, rule 76) summed into one list, the shares in proportion unless the
+ranks are within `RebalanceTolerance`. Data: the Trainer shards a `DataLoader` by sample (`DataLoader.Shard`, rank r the
+epoch's samples k·W + r, so batch k of every rank is one process's batch k of W times the size; a shuffling loader needs
+a seed), another batch source by batch; the fine-tuner's step is `GradientAccumulation` batches per rank (W ranks train
+as one process with W times the accumulation); the pretrainer's step is the options' step at every world size (every rank
+draws it alike on the background draw, each trains its share), so a checkpoint resumes at any world size. Rank 0 writes
+checkpoints, adapters, the Trainer's `Checkpoint` and `CsvLog` files (`TrainerContext.Rank`/`WorldSize`) and publishes the
+training telemetry, then a barrier; losses, held-out losses (each rank its share, the sums added) and early stopping are
+over every rank's rows; the Trainer sends rank 0's batch-norm statistics at each epoch's end; `Dropout.SeedsForRank` mixes
+the dropout seeds with the rank (rank 0 draws what one process would). `HostOptimizer` implements `IHostGradients`: the
+sync has it download (its pinned pieces), reduces on its host copies, and the update clips and steps from them.
+`idrak cluster sim --topology FILE [--collective] [--wire] [--seed] -- pretrain … -o RUN` (`ClusterSimCommand`, group
+"Cluster", Arabic summary) runs `pretrain` once per rank on carved devices, rank 0 writing the run, and prints each rank's
+network time on the virtual clock beside the wall time. Four settings joined `ClusterOptions` and the CLI's table:
+`RebalanceSteps` (`IDRAK_CLUSTER_REBALANCE_STEPS`, 3: the plan's first 3 warm steps; 0 keeps equal splits),
+`RebalanceTolerance` (`IDRAK_CLUSTER_REBALANCE_TOLERANCE`, 0.1), `GradientSync` (`IDRAK_CLUSTER_GRADIENT_SYNC`,
+`all-reduce`), `StartingState` (`IDRAK_CLUSTER_START`, `broadcast`); `BucketBytes` unset means 16 MiB buckets until C4
+measures it. Tests: 13 in `tests/Idrak.Tests/ClusterTrainingTests.cs` (`ClusterTrainingGroup`); with C0 and C1, 36
+`"cluster: "` tests pass on the CPU, and the fine-tuning, pretraining, Trainer, callback, data loader and HostOptimizer
+filters pass unchanged with no cluster. Measured against the DDP fixture (two ranks, the Trainer on its eight windows):
+step 1 gradients 5.8e-7 apart, SGD weights after three steps 1.2e-7, folded AdamW weights 2.2e-5; over a bf16 wire against
+`bf16/`: gradients 1.2e-4, losses 1.4e-6, weights 4.9e-5 (inside its measured 5.9e-4, 1.5e-4, 1.6e-4).
+
+Changes from the plan, kept: **a registry and a contract instead of an `AllReduceGradients` method**, so C4's bucketed,
+local-SGD and top-k synchronisations register beside `all-reduce` and a run names one; `ClusterOptions` travels beside
+the `ICollectives` (the contract gives no options). **On a bfloat16 wire the header goes first on its own in float32**
+(a token count past 256 would be rounded in bf16), one more small collective a step; the float32 wire keeps it in the
+first chunk as planned. **A loss of one's own (DPO, ORPO, SimPO, distillation) is not token-weighted**: every rank knows
+the whole step's draws, so it divides by the step's token and sequence counts over every rank and the ranks' gradients
+are summed (`normalized`), which is exact for losses normalized by sequences as well as by tokens. **The fine-tuner's
+global step is W times one rank's** (resume at another world size is the pretrainer's, which has checkpoints of its
+state); **the pretrainer's step is the same at every world size** (the options describe the step, each rank trains about
+1/W of it). Every rank reads every sequence of a step (on the background draw, overlapping the step) and keeps its
+share: a reader that tells a sequence's length without reading it would spare that and is left for a source slow to read.
+Rank 0 alone publishes the training telemetry (in-process ranks share one process's telemetry); the fine-tuner's held-out
+loss of one's own runs on every rank (they agree), and generated answers are scored on rank 0. The AdamW tolerance of the
+fixture test is the fixture's own measured growth (`vs_single`: step 1 gradients 1.3e-7 apart gave folded AdamW weights
+6.7e-6 apart) applied to the run's measured gradient gap (bound 2.9e-5, never below 1e-5); SGD, the losses and each
+rank's losses are held to 1e-5. The Spirals test builds the sample's data, model and settings in the test (the sample's
+`Program.cs` is top-level code; the sample is unchanged). The mixed-kinds test carves the CPU and one device of every other
+kind listed; on a machine with the CPU alone it runs two CPU ranks (the owner's CUDA and Vulkan runs mix kinds). Moved:
+`cluster sim` for `tune` and `train` (with `--cluster` on the training commands) to C8; `--mode localhost` to C5;
+`--failures` and `--profile` on `cluster sim` to C3 and C8.
+
 ### C3: topology-aware all-reduce, the selector across mixed pipes, failures and replay
 
 **Files.** `Collectives/HierarchicalCollectives.cs`, `Selection/` (availability per transport), `src/Idrak.Cluster/Faults.cs`,
@@ -686,6 +748,11 @@ localhost cluster); "runs show charts the network share" to C8 (`cluster sim` ru
 `runs show` reads its log); the `idrak cluster replay` command to C8 (it reruns a training step; C3 gives the
 `ClusterReplay` API); a group over several transports at once (a routed transport) to C5, with the real transports; until
 then an in-process run whose plan mixes transports is refused naming them.
+
+**After merging C2 and C3 (2026-10-18).** Open: training on the simulator does not yet call
+`ClusterRank.BeginStep(step)`, so `idrak cluster sim` runs without injected faults. A rank that sits a step out (a late
+join, a replay's end) changes the group the gradients are summed over and the token weighting, so the trainers'
+step loop needs to take part in that, not just the launcher; it lands with C4, which reworks the same step.
 
 ### C4: overlap, buckets, compression, local SGD
 
