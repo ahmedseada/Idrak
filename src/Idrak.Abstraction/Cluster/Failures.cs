@@ -5,22 +5,38 @@ using System.Runtime.CompilerServices;
 
 namespace Idrak.Abstraction.Cluster;
 
-/// <summary>What goes wrong in a fault.</summary>
+/// <summary>
+/// What goes wrong in a fault. The simulator applies each from the step it is drawn at; a duration is the affected
+/// rank's (or, for a link, the sender's) simulated time from the start of that step, zero for the rest of the run.
+/// </summary>
 public enum FaultKind
 {
-    /// <summary>A rank runs slower: its clock and its sends are stretched by <see cref="Fault.Factor"/>.</summary>
+    /// <summary>
+    /// A rank runs slower: its transfers take <see cref="Fault.Factor"/> times as long (1 or more), so every rank that
+    /// waits on it is blocked longer and names it as the slowest.
+    /// </summary>
     SlowWorker,
 
-    /// <summary>A rank stops: its links close.</summary>
+    /// <summary>A rank stops at the start of the step: its links close, and every other rank's step ends naming it.</summary>
     DroppedWorker,
 
-    /// <summary>A link loses messages at <see cref="Fault.Factor"/> (a share from 0 to 1); each is sent again.</summary>
+    /// <summary>
+    /// The link between <see cref="Fault.Ranks"/>' two ranks loses messages at <see cref="Fault.Factor"/> more (a share from 0
+    /// to 1), both ways; each lost message is sent again, so the step completes later.
+    /// </summary>
     LinkLoss,
 
-    /// <summary>The links between two sets of ranks close for <see cref="Fault.Duration"/>.</summary>
+    /// <summary>
+    /// The links between <see cref="Fault.Ranks"/> and the other ranks close for <see cref="Fault.Duration"/>: a message
+    /// across waits until they open again. Closed for the rest of the run, or for the timeout or longer, the step times out
+    /// on every rank naming both sides.
+    /// </summary>
     Partition,
 
-    /// <summary>A rank connects <see cref="Fault.Factor"/> steps late.</summary>
+    /// <summary>
+    /// A rank connects <see cref="Fault.Factor"/> steps late: the others run those steps as a group without it, and it joins
+    /// at the step after, its clock moved to theirs.
+    /// </summary>
     LateJoin,
 }
 

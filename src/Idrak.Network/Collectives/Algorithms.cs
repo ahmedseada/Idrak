@@ -105,6 +105,8 @@ internal sealed class RingCollectives(ITransport transport, Device device, Clust
 {
     private const int ScatterTag = -11, GatherTag = -12, BroadcastTag = -13;
 
+    private readonly int[] _ring = [.. Enumerable.Range(0, transport.WorldSize)];   // every rank, in rank order
+
     public override string Name => "ring";
 
     private int Next => (Rank + 1) % WorldSize;
@@ -117,17 +119,19 @@ internal sealed class RingCollectives(ITransport transport, Device device, Clust
         int world = WorldSize, slice = values.Length / world, extra = values.Length % world;
         int Offset(int s) => (s * slice) + Math.Min(s, extra);
         int Size(int s) => slice + (s < extra ? 1 : 0);
-        ScatterReduce(values, Offset, Size, op, travel);
-        GatherAround(values, Offset, Size);
+        RingScatter(values, _ring, Rank, Offset, Size, op, travel, ScatterTag);
+        RingGather(values, _ring, Rank, Offset, Size, GatherTag);
     }
 
-    protected override void AllGatherHost(Span<float> all, int count) => GatherAround(all, s => s * count, _ => count);
+    protected override void AllGatherHost(Span<float> all, int count) => RingGather(all, _ring, Rank, s => s * count, _ => count, GatherTag);
 
-    protected override void ReduceScatterHost(Span<float> values, int count, ReduceOp op) => ScatterReduce(values, s => s * count, _ => count, op, WireType.Float32);
+    protected override void ReduceScatterHost(Span<float> values, int count, ReduceOp op) =>
+        RingScatter(values, _ring, Rank, s => s * count, _ => count, op, WireType.Float32, ScatterTag);
 
     protected override void BroadcastHost(Span<float> values, int root)
     {
-        // A chain from the root: each rank takes the values from the one before and passes them on, chunk by chunk.
+        // A chain from the root: each rank takes the values from the one before and passes them on (store and forward;
+        // the chain never closes, so no rank waits on another in a circle).
         if (WorldSize == 1)
         {
             return;
@@ -143,71 +147,8 @@ internal sealed class RingCollectives(ITransport transport, Device device, Clust
         }
         else
         {
-            Relay(values);
+            Receive(Previous, values, BroadcastTag, WireType.Float32);
+            Send(Next, values, BroadcastTag, WireType.Float32);
         }
     }
-
-    // Reduce-scatter: after N−1 steps rank r holds slice r complete, reduced in the order r+1, r+2, …, r.
-    private void ScatterReduce(Span<float> values, Func<int, int> offset, Func<int, int> size, ReduceOp op, WireType wire)
-    {
-        int world = WorldSize;
-        if (world == 1)
-        {
-            return;
-        }
-
-        int largest = 0;
-        for (int s = 0; s < world; s++)
-        {
-            largest = Math.Max(largest, size(s));
-        }
-
-        var arrived = ArrayPool<float>.Shared.Rent(Math.Max(1, largest));
-        try
-        {
-            for (int step = 0; step < world - 1; step++)
-            {
-                int send = Mod(Rank - 1 - step), take = Mod(Rank - 2 - step);
-                var outgoing = values.Slice(offset(send), size(send));
-                if (wire == WireType.BFloat16 && step == 0)
-                {
-                    WireValues.RoundToBFloat16(outgoing);          // this rank's own values as they first travel
-                }
-
-                var incoming = arrived.AsSpan(0, size(take));
-                Exchange(Next, outgoing, Previous, incoming, ScatterTag, wire);
-                var mine = values.Slice(offset(take), size(take));
-                if (wire == WireType.BFloat16)
-                {
-                    WireValues.RoundToBFloat16(mine);              // as every rank's own values travel
-                }
-
-                Combine(mine, incoming, op);                       // what arrived, then this rank's own
-            }
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(arrived);
-        }
-    }
-
-    // All-gather: rank r holds slice r; after N−1 steps every rank holds every slice, passed round as float32.
-    private void GatherAround(Span<float> values, Func<int, int> offset, Func<int, int> size)
-    {
-        for (int step = 0; step < WorldSize - 1; step++)
-        {
-            int send = Mod(Rank - step), take = Mod(Rank - 1 - step);
-            Exchange(Next, values.Slice(offset(send), size(send)), Previous, values.Slice(offset(take), size(take)), GatherTag, WireType.Float32);
-        }
-    }
-
-    // A middle rank of a broadcast chain: takes the values from the rank before, then passes them on (store and forward;
-    // the chain never closes, so no rank waits on another in a circle).
-    private void Relay(Span<float> values)
-    {
-        Receive(Previous, values, BroadcastTag, WireType.Float32);
-        Send(Next, values, BroadcastTag, WireType.Float32);
-    }
-
-    private int Mod(int value) => ((value % WorldSize) + WorldSize) % WorldSize;
 }

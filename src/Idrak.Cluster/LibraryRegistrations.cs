@@ -7,7 +7,8 @@ namespace Idrak.Cluster;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction (plan 23): the "sim" devices, the "sim" transport, the
-/// built-in link profiles, the "none" failure model and the "cluster" profiler probe. <c>LibraryDefaults.Ensure</c> calls
+/// built-in link profiles, the built-in failure models (none, slow-worker, dropped-worker, link-loss, partition, late-join,
+/// mixed) and the "cluster" profiler probe. <c>LibraryDefaults.Ensure</c> calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, when the application ships it.
 /// </summary>
 internal static class LibraryRegistrations
@@ -23,7 +24,13 @@ internal static class LibraryRegistrations
                 LinkProfiles.Register(profile);
             }
         },
-        [typeof(FailureModels)] = () => FailureModels.Register(new NoFailures()),
+        [typeof(FailureModels)] = () =>
+        {
+            foreach (string name in BuiltInFailures.Names)
+            {
+                FailureModels.Register(BuiltInFailures.Create(name));   // the figures from the environment, read at the first draw
+            }
+        },
         [typeof(ProfileProbes)] = () => ProfileProbes.Register(new ClusterProbe()),
     };
 
