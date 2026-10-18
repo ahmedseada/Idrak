@@ -11,6 +11,14 @@ using Idrak.Training.Abstractions;
 
 namespace Idrak.Cli.Shared;
 
+/// <summary>One step's network share in a cluster run's log (plan 23, C8).</summary>
+/// <param name="Step">The step.</param>
+/// <param name="Share">The share of the step spent waiting on the network (0 to 1), or null when the step's time is not known.</param>
+/// <param name="NetworkMs">The network time the step's synchronisation took.</param>
+/// <param name="ExposedMs">What of it the step waited for (after the backward pass; a pipeline stage's time blocked).</param>
+/// <param name="StepMs">The step's time.</param>
+internal sealed record LoggedNetwork(int Step, double? Share, double NetworkMs, double ExposedMs, double StepMs);
+
 /// <summary>One epoch of a training log.</summary>
 internal sealed record LoggedEpoch(int Epoch, double? Loss, double? ValidationLoss, IReadOnlyDictionary<string, double> Metrics,
     IReadOnlyDictionary<string, double> ValidationMetrics, double LearningRate, double Milliseconds, bool Best);
@@ -41,6 +49,13 @@ internal sealed class RunLog
     public string Unit { get; init; } = "epoch";
 
     public DateTimeOffset? Time { get; init; }
+
+    /// <summary>
+    /// The share of each step spent on the network, in step order, from a cluster run's log (plan 23, C8): rank 0's
+    /// gradient synchronisation (the network time the step waited for after its backward pass, over the step's time) or a
+    /// pipeline's first stage (its time blocked on the other stages over its step); empty for a run of one process.
+    /// </summary>
+    public List<LoggedNetwork> Network { get; init; } = [];
 
     /// <summary>The epoch with the lowest validation loss (the training loss without validation), or null.</summary>
     public LoggedEpoch? Best => Epochs.Where(e => (e.ValidationLoss ?? e.Loss) is not null).MinBy(e => e.ValidationLoss ?? e.Loss);
@@ -91,6 +106,8 @@ internal sealed class RunLog
         JsonObject? started = null, completed = null;
         var epochs = new List<LoggedEpoch>();
         var steps = new List<LoggedEpoch>();
+        var syncs = new List<(long Step, double Network, double Exposed)>();
+        var stages = new List<(long Step, double Wall, double Blocked)>();
         DateTimeOffset? time = null;
         foreach (string line in File.ReadLines(path))
         {
@@ -122,6 +139,12 @@ internal sealed class RunLog
                     steps.Add(new LoggedEpoch((int?)record["step"] ?? steps.Count + 1, (double?)record["loss"], null, new Dictionary<string, double>(), new Dictionary<string, double>(), (double?)record["learning_rate"] ?? 0,
                         (double?)record["compute_ms"] ?? 0, false));
                     break;
+                case "gradient_sync" when (int?)record["rank"] == 0:
+                    syncs.Add(((long?)record["step"] ?? syncs.Count, (double?)record["network_ms"] ?? 0, (double?)record["exposed_ms"] ?? 0));
+                    break;
+                case "pipeline_step" when (int?)record["rank"] == 0:
+                    stages.Add(((long?)record["step"] ?? stages.Count, (double?)record["wall_ms"] ?? 0, (double?)record["blocked_ms"] ?? 0));
+                    break;
                 case "epoch":
                     epochs.Add(new LoggedEpoch((int?)record["epoch"] ?? epochs.Count + 1, (double?)record["loss"], (double?)record["val_loss"],
                         Values(record["metrics"]), Values(record["val_metrics"]), (double?)record["learning_rate"] ?? 0,
@@ -138,8 +161,25 @@ internal sealed class RunLog
             HeldOut(steps, folder, settings);
         }
 
+        // A step's network share: rank 0's exposed network time over the step (the batch record of the same order), or a
+        // pipeline's first stage's blocked time over its step.
+        var network = new List<LoggedNetwork>();
+        for (int i = 0; i < syncs.Count; i++)
+        {
+            double step = i < steps.Count ? steps[i].Milliseconds : 0;
+            network.Add(new LoggedNetwork(i < steps.Count ? steps[i].Epoch : (int)syncs[i].Step + 1, step > 0 ? Math.Min(1, syncs[i].Exposed / step) : null,
+                syncs[i].Network, syncs[i].Exposed, step));
+        }
+
+        if (network.Count == 0)
+        {
+            network.AddRange(stages.Select((s, i) => new LoggedNetwork(i < steps.Count ? steps[i].Epoch : (int)s.Step + 1, s.Wall > 0 ? Math.Min(1, s.Blocked / s.Wall) : null,
+                s.Blocked, s.Blocked, s.Wall)));
+        }
+
         return new RunLog
         {
+            Network = network,
             Name = folder is not null ? System.IO.Path.GetFileName(folder) : System.IO.Path.GetFileNameWithoutExtension(path),
             Path = path,
             Folder = folder,

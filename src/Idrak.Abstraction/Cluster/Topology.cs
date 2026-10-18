@@ -22,7 +22,12 @@ public sealed record ClusterNodeSpec(string Name, string? Address, IReadOnlyList
 /// <param name="A">One node's name.</param>
 /// <param name="B">The other's.</param>
 /// <param name="Link">The link profile's name (a rate suffix allowed).</param>
-public sealed record ClusterLinkOverride(string A, string B, string Link);
+/// <param name="AddressA">
+/// <paramref name="A"/>'s address on this link ("10.0.0.1", or "host:port" whose port is ignored), or null for its node's
+/// address: a cable on a subnet of its own reaches each end at an address the LAN does not use (plan 23, phase C8).
+/// </param>
+/// <param name="AddressB"><paramref name="B"/>'s address on this link, or null for its node's.</param>
+public sealed record ClusterLinkOverride(string A, string B, string Link, string? AddressA = null, string? AddressB = null);
 
 /// <summary>What a simulated run of the topology draws from.</summary>
 /// <param name="Seed">The seed of jitter and faults.</param>
@@ -59,6 +64,13 @@ public interface IClusterTopology
 
     /// <summary>The node named <paramref name="hostName"/> (ignoring case), or null.</summary>
     int? NodeOf(string hostName);
+
+    /// <summary>
+    /// Where <paramref name="from"/> reaches <paramref name="rank"/>: the address a link override joining their nodes gives
+    /// <paramref name="rank"/>'s node on that link (a cable on a subnet of its own), else that node's address; null when the
+    /// topology gives neither.
+    /// </summary>
+    string? AddressOf(int rank, int from) => Nodes[Place(rank).Node].Address;
 }
 
 /// <summary>
@@ -77,6 +89,8 @@ public sealed class ClusterTopology : IClusterTopology
     private readonly int[] _rankLocal;
     private readonly int[][] _nodeRanks;
     private readonly Dictionary<(int, int), ILinkProfile> _overrides = [];
+    private readonly Dictionary<(int Node, int Peer), string> _cableAddresses = [];
+    private readonly Dictionary<(int, int), ILinkProfile> _shared = [];
     private readonly ILinkProfile? _intra;
     private readonly ILinkProfile? _inter;
     private readonly ILinkProfile? _same;
@@ -197,6 +211,16 @@ public sealed class ClusterTopology : IClusterTopology
             {
                 throw new InvalidDataException($"Two link overrides join '{o.A}' and '{o.B}'.");
             }
+
+            foreach (var (node, peer, address) in new[] { (a, b, o.AddressA), (b, a, o.AddressB) })
+            {
+                if (address is not null)
+                {
+                    _cableAddresses[(node, peer)] = string.IsNullOrWhiteSpace(address)
+                        ? throw new InvalidDataException($"The link override between '{o.A}' and '{o.B}' gives an empty address.")
+                        : address.Trim();
+                }
+            }
         }
 
         if (string.IsNullOrWhiteSpace(simulation.Failures))
@@ -255,7 +279,38 @@ public sealed class ClusterTopology : IClusterTopology
                 : _intra!;
         }
 
-        return _overrides.TryGetValue((Math.Min(a, b), Math.Max(a, b)), out var own) ? own : _inter!;
+        var key = (Math.Min(a, b), Math.Max(a, b));
+        var link = _overrides.TryGetValue(key, out var own) ? own : _inter!;
+        return link is LinkProfile { AdapterBytesPerSecond: > 0 } shared ? Shared(key, shared) : link;
+    }
+
+    /// <inheritdoc />
+    public string? AddressOf(int rank, int from)
+    {
+        CheckRank(rank);
+        CheckRank(from);
+        int node = _rankNode[rank], peer = _rankNode[from];
+        return node != peer && _cableAddresses.TryGetValue((node, peer), out var cable) ? cable : Nodes[node].Address;
+    }
+
+    // A link whose machines share one network adapter among their ranks (a calibration found it, plan 23 C8): each pair
+    // gets the adapter's rate over the ranks of the larger of the two nodes, never more than the pair's own link. A static
+    // share (every rank of a machine crossing at once, as the hierarchical collective's columns do), so the virtual clock
+    // stays the same bit for bit whatever order the rank threads charge it in.
+    private ILinkProfile Shared((int A, int B) nodes, LinkProfile link)
+    {
+        lock (_shared)
+        {
+            if (!_shared.TryGetValue(nodes, out var share))
+            {
+                int ranks = Math.Max(_nodeRanks[nodes.A].Length, _nodeRanks[nodes.B].Length);
+                double each = link.AdapterBytesPerSecond / ranks;
+                share = link.BandwidthBytesPerSecond > 0 && link.BandwidthBytesPerSecond <= each ? link : link.With(bandwidthBytesPerSecond: each);
+                _shared[nodes] = share;
+            }
+
+            return share;
+        }
     }
 
     /// <inheritdoc />
@@ -388,14 +443,27 @@ public sealed class ClusterTopology : IClusterTopology
                     {
                         string at = $"override {overrides.Count + 1}";
                         Expect(entry, JsonValueKind.Object, at);
-                        Keys(entry, at, "between", "type");
+                        Keys(entry, at, "between", "type", "address");
                         if (!entry.TryGetProperty("between", out var between) || between.ValueKind != JsonValueKind.Array || between.GetArrayLength() != 2)
                         {
                             throw new InvalidDataException($"{at} needs \"between\": [two node names].");
                         }
 
                         string type = entry.TryGetProperty("type", out var t) ? Text(t, at + " \"type\"") : throw new InvalidDataException($"{at} has no \"type\" (a link profile).");
-                        overrides.Add(new ClusterLinkOverride(Text(between[0], at + " \"between\""), Text(between[1], at + " \"between\""), type));
+                        string? first = null, second = null;
+                        if (entry.TryGetProperty("address", out var cable))
+                        {
+                            // Each end's address on the link, in the order of "between" (null: that node's own address).
+                            if (cable.ValueKind != JsonValueKind.Array || cable.GetArrayLength() != 2)
+                            {
+                                throw new InvalidDataException($"{at} \"address\" is [the first node's address on the link, the second's] (null for a node's own).");
+                            }
+
+                            first = cable[0].ValueKind == JsonValueKind.Null ? null : Text(cable[0], at + " \"address\"");
+                            second = cable[1].ValueKind == JsonValueKind.Null ? null : Text(cable[1], at + " \"address\"");
+                        }
+
+                        overrides.Add(new ClusterLinkOverride(Text(between[0], at + " \"between\""), Text(between[1], at + " \"between\""), type, first, second));
                     }
                 }
             }
@@ -474,6 +542,24 @@ public sealed class ClusterTopology : IClusterTopology
                 w.WriteStringValue(o.B);
                 w.WriteEndArray();
                 w.WriteString("type", o.Link);
+                if (o.AddressA is not null || o.AddressB is not null)
+                {
+                    w.WriteStartArray("address");
+                    foreach (string? address in (string?[])[o.AddressA, o.AddressB])
+                    {
+                        if (address is null)
+                        {
+                            w.WriteNullValue();
+                        }
+                        else
+                        {
+                            w.WriteStringValue(address);
+                        }
+                    }
+
+                    w.WriteEndArray();
+                }
+
                 w.WriteEndObject();
             }
 

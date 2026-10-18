@@ -3,6 +3,7 @@
 
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
@@ -65,6 +66,12 @@ internal sealed class TrainCommand : Command
                                  checkpoints last.ikw and best.ikw, and log.jsonl (idrak runs, idrak resume read them)
           -C, --config FILE      a train.json (from idrak suggest): the options above without the dashes
                                  ("target", "epochs", "lr", "batch", ...); options on the command line win
+              --cluster FILE     join a real cluster as one rank of the topology file (idrak cluster init writes one): its
+                                 device count is the world size, and this host's node (--node) gives the rank
+              --rank N           this process's rank, on a node of several workers (IDRAK_RANK)
+              --node NAME        this machine's node of the file (the node named after this host; IDRAK_CLUSTER_NODE)
+              --coordinator H:P  where rank 0 listens (the file's first node's address; IDRAK_COORDINATOR)
+              --world-size N     the ranks of a cluster without a file, with --coordinator and --rank (IDRAK_WORLD_SIZE)
 
         Image runs (an image model, --augment, --loss, --metric, --eval, --decoder, annotations or a [classes, h, w]
         output) read and augment samples on worker threads, stretched to the network's input; a fine-tuned family's
@@ -78,12 +85,13 @@ internal sealed class TrainCommand : Command
           idrak train cnn.json --data ./shapes --augment "flip, rotation(degrees=10)" --eval ./shapes-test
           idrak train unet.json --data ./scans --data-format masks --loss dice -o scans.ikm
           idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --metric coco -o tuned.ikw
+          idrak train network.json --data houses.csv --run run --cluster lan.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--data", "--target", "--ignore", "--task", "--epochs", "--lr", "--batch", "--patience", "--validation", "--optimizer", "--weight-decay", "--out", "--run",
-        "--data-format", "--eval", "--augment", "--loss", "--matcher", "--metric", "--decoder",
+        "--data-format", "--eval", "--augment", "--loss", "--matcher", "--metric", "--decoder", "--rank", .. ClusterJoin.Options,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--no-scale"];
@@ -92,6 +100,7 @@ internal sealed class TrainCommand : Command
 
     public override int Run(CommandContext context)
     {
+        using var cluster = ClusterJoin.Join(context, ownsRank: false);   // --cluster FILE: one rank of a real cluster (plan 23, C8)
         string specPath = context.Argument(0, "SPEC.json (the network, as the builder's JSON) or MODEL (an image model to fine-tune)");
         bool checkpoint = ImageModelFiles.IsCheckpoint(specPath);
         if (!checkpoint && !File.Exists(specPath))
@@ -253,6 +262,8 @@ internal sealed class ResumeCommand : Command
               --teacher MODEL, --temperature T, --alpha A, --top-k K, --teacher-device D
                           a pretraining run's teacher, given again (a checkpoint does not keep it)
               --voices DIR  a voice run (idrak voice train): the store its voice is installed in again
+              --cluster FILE, --rank N, --node NAME, --coordinator H:P, --world-size N
+                          continue the run as one rank of a real cluster (as idrak train and pretrain take them)
 
         The run's data, split, scalers and settings are reused and its log continues. The checkpoint holds the weights
         only: the optimizer's moments and the learning-rate schedule start again. An image run that fine-tunes a model
@@ -264,14 +275,17 @@ internal sealed class ResumeCommand : Command
           idrak resume ./runs/houses --epochs 50 -d cuda:0
           idrak resume run --steps 1000
           idrak resume runs/sara --steps 500 -P Idrak.VitsSpeech.dll   (a voice run: trains on and installs the voice again)
+          idrak resume run --cluster lan.json
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--steps", "--out", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device", "--voices"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } =
+        ["--epochs", "--steps", "--out", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device", "--voices", "--rank", .. ClusterJoin.Options];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
     public override int Run(CommandContext context)
     {
+        using var cluster = ClusterJoin.Join(context, ownsRank: false);   // --cluster FILE: one rank of a real cluster (plan 23, C8)
         var run = RunLog.Find(context, context.Argument(0, "RUN (a run folder or a name from idrak runs list)"));
         if (run.Folder is null || run.Settings is null)
         {
@@ -374,10 +388,14 @@ internal sealed class RunsShowCommand : Command
 {
     public override string Name => "runs show";
 
-    public override string Summary => "One training run: settings, loss curves (text plot), the epochs, best epoch and time";
+    public override string Summary => "One training run: settings, loss curves, epochs, best epoch, time, a cluster run's network share";
 
     public override string Usage => """
         RUN
+
+        A run trained on a cluster (idrak cluster sim, --cluster) also charts the share of each step spent waiting on the
+        network: rank 0's gradient synchronisation time after its backward pass over the step's time (a pipeline's first
+        stage: its time blocked on the others).
 
         Arguments:
           RUN  a run folder, a JSON Lines telemetry log, or a name from idrak runs list; -v lists every epoch
@@ -456,7 +474,30 @@ internal sealed class RunsShowCommand : Command
             }
         }
 
-        context.WriteJson(run.ToJson(epochs: true));
+        // A cluster run (plan 23, C8): the share of each step spent waiting on the network.
+        var shares = run.Network.Where(n => n.Share is not null).ToList();
+        if (shares.Count > 0)
+        {
+            context.Write("");
+            context.Write(string.Create(CultureInfo.InvariantCulture,
+                $"Network   {shares.Average(n => n.Share!.Value):P1} of a step on average waits on the network (rank 0; highest {shares.Max(n => n.Share!.Value):P1} at step {shares.MaxBy(n => n.Share!.Value)!.Step}); "
+                + $"{shares.Average(n => n.NetworkMs):F2} ms of network time a step, {shares.Average(n => n.ExposedMs):F2} ms of it exposed"));
+            foreach (string line in TextPlot.Plot([("network %", [.. shares.Select(n => (double?)(n.Share!.Value * 100))])], unit: "step").TrimEnd('\n').Split('\n'))
+            {
+                context.Write(line);
+            }
+        }
+
+        var json = run.ToJson(epochs: true);
+        if (run.Network.Count > 0)
+        {
+            json["network"] = new JsonArray([.. run.Network.Select(n => (JsonNode)new JsonObject
+            {
+                ["step"] = n.Step, ["share"] = n.Share, ["network_ms"] = n.NetworkMs, ["exposed_ms"] = n.ExposedMs, ["step_ms"] = n.StepMs,
+            })]);
+        }
+
+        context.WriteJson(json);
         return ExitCodes.Ok;
     }
 }

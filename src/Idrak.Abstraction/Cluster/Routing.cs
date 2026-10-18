@@ -245,6 +245,8 @@ internal sealed class SubsetTopology : IClusterTopology
 
     public ILinkProfile Link(int rankA, int rankB) => _whole.Link(_members[rankA], _members[rankB]);
 
+    public string? AddressOf(int rank, int from) => _whole.AddressOf(_members[rank], _members[from]);
+
     public (int Node, int Local) Place(int rank) => _places[rank];
 
     public IReadOnlyList<int> Ranks(int node) => _ranks[node];

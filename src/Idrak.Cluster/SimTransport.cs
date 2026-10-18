@@ -74,7 +74,7 @@ internal sealed class SimWorld
             return carveFrom ?? Topology.Nodes[node].Devices[local].Device;
         }).ToArray();
         var model = FailureModels.Get(Options.Simulation.Failures ?? Topology.Simulation.Failures);
-        Log = new EventLogWriter(Seed, World, model.Name, Options.Simulation.LogTransfers);
+        Log = new EventLogWriter(Seed, World, model.Name, Options.Simulation.LogTransfers, Options.Simulation.EventLog, Options.Simulation.EventLogFlushSteps);
         Faults = new FaultInjector(model, Topology, Seed, Timeout, Log, Break);
         Clock = new VirtualClock(World, (a, b) => MeasuredLink.Resolve(Topology.Link(a, b), devices[a]), Seed) { Faults = Faults };
         Root = new SimHub(this, [.. Enumerable.Range(0, World)], Topology);

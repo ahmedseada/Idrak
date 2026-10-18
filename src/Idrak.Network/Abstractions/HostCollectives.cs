@@ -10,8 +10,8 @@ namespace Idrak.Networking.Abstractions;
 /// <summary>
 /// What every collective algorithm here shares (plan 23, phase C1): the buffer's values come down to one pooled host
 /// buffer per call (returned in <c>finally</c>; device memory does not grow, rule 77), the algorithm works on it, and the
-/// result goes back up once; messages are cut into chunks of <see cref="ClusterOptions.ChunkBytes"/> (one message per
-/// piece when unset); each call is published as <see cref="CollectiveCompleted"/> with its bytes, wall and simulated
+/// result goes back up once; messages are cut into chunks of <see cref="ClusterOptions.ChunkBytes"/> (unset: measured at
+/// the first collective over a real transport and kept in the tuning cache, one message a piece on a virtual clock); each call is published as <see cref="CollectiveCompleted"/> with its bytes, wall and simulated
 /// time, the time blocked on peers and the peer waited on longest, measured only while someone listens (rule 78); on a
 /// simulated transport the blocked time is the virtual clock's and the slowest rank is the origin of the critical path
 /// (<see cref="ITransport.SimulatedCriticalRank"/>), so a slow worker is named on every rank, the same on every run.
@@ -27,9 +27,10 @@ namespace Idrak.Networking.Abstractions;
 /// says which ("device" or "host"). <see cref="ClusterOptions.DeviceCollectives"/> turns the device path off.
 /// </para>
 /// </summary>
-internal abstract class HostCollectives : ICollectives, IHostValueCollectives
+internal abstract partial class HostCollectives : ICollectives, IHostValueCollectives
 {
-    private readonly long _chunkBytes;
+    private long _chunkBytes;
+    private bool _chunkKnown;
     private bool _measuring;
     private long _sent;
     private long _received;
@@ -60,8 +61,11 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         Device = device ?? throw new ArgumentNullException(nameof(device));
         ArgumentNullException.ThrowIfNull(context);
         Context = context;
-        // A message holds at most what one array can: the structural limit, not a tuning.
+        // A message holds at most what one array can: the structural limit, not a tuning. Unset, the chunk is measured at the
+        // first collective over a real transport (HostCollectives.Chunks.cs); on a virtual clock it stays one message a piece.
         _chunkBytes = Math.Clamp(context.Options.ChunkBytes ?? Array.MaxLength / 2, sizeof(float), Array.MaxLength / 2);
+        _chunkKnown = context.Options.ChunkBytes is not null || transport.WorldSize < 2 || transport.SimulatedCriticalRank is not null
+                      || string.Equals(transport.Name, "sim", StringComparison.OrdinalIgnoreCase);
         _summarize = transport.Capabilities.CrossProcess && transport.WorldSize > 1;
         _stepSlowest = transport.Rank;
         _device = context.Options.DeviceCollectives && transport is IDeviceTransport direct && transport.WorldSize > 1 ? direct : null;
@@ -825,6 +829,12 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     // for rank 0 (ranks in processes of their own, phase C5).
     private bool BeginTiming(out long start, out TimeSpan simulated)
     {
+        if (!_chunkKnown)
+        {
+            _chunkKnown = true;                                     // before measuring: the measurement's own calls pass here
+            _chunkBytes = MeasureChunk();
+        }
+
         (start, simulated) = (0, TimeSpan.Zero);
         if (!Telemetry.IsEnabled(TelemetryLevel.Network) && !_summarize)
         {

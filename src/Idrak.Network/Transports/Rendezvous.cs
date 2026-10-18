@@ -220,8 +220,8 @@ internal static class TcpRendezvous
         bool cables = !IsLoopback(Endpoint(coordinator).Host);       // every rank on this machine: no cable to take
         for (int j = 1; j < me; j++)
         {
-            var host = cables && DirectLinkProvider.IsCable(topology, me, j) && topology.Nodes[topology.Place(j).Node].Address is { } file
-                ? Resolve(Endpoint(file).Host)
+            var host = cables && DirectLinkProvider.IsCable(topology, me, j) && topology.AddressOf(j, me) is { } file
+                ? Resolve(HostOf(file))
                 : IPAddress.Parse(addresses[j]);
             string peer = $"rank {j} at {Display(host, ports[j])}";
             var socket = Dial(host, ports[j], me, peer, options, cancellationToken);
@@ -349,6 +349,20 @@ internal static class TcpRendezvous
 
         string host = text[..colon];
         return (host.StartsWith('[') && host.EndsWith(']') ? host[1..^1] : host, port);
+    }
+
+    /// <summary>The host of an address in the topology: "host:port" (an IPv6 address in brackets), or a bare host (a cable's).</summary>
+    internal static string HostOf(string address)
+    {
+        string text = address.Trim();
+        if (text.StartsWith('['))
+        {
+            int close = text.IndexOf(']');
+            return close > 1 ? text[1..close] : text;
+        }
+
+        int colon = text.LastIndexOf(':');
+        return colon > 0 && text.IndexOf(':') == colon ? text[..colon] : text;   // one colon: host:port; more: a bare IPv6 address
     }
 
     /// <summary>Whether every rank of <paramref name="context"/> is on this machine: its coordinator is a loopback address.</summary>

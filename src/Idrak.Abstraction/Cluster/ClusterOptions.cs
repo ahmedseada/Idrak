@@ -113,6 +113,14 @@ public sealed record SimulationOptions
 
     /// <summary>Whether the event log records every transfer beside the steps' clocks and the faults (<c>IDRAK_CLUSTER_LOG_TRANSFERS</c>: 1 or 0).</summary>
     public bool LogTransfers { get; init; } = true;
+
+    /// <summary>
+    /// How often the event log's file (<see cref="EventLog"/>) takes what the ranks recorded while the run goes: every this
+    /// many steps a rank begins, its records since the last time are appended, so the file is readable mid-run and memory
+    /// holds only what was not written yet; 0 writes it at the end only (<c>IDRAK_CLUSTER_EVENT_LOG_FLUSH</c>, steps).
+    /// The finished file is the same bytes either way.
+    /// </summary>
+    public int EventLogFlushSteps { get; init; } = 1;
 }
 
 /// <summary>
@@ -160,8 +168,21 @@ public sealed record ClusterOptions
     /// <summary>Connection attempts at the rendezvous (<c>IDRAK_CLUSTER_RETRIES</c>).</summary>
     public int Retries { get; init; } = 3;
 
-    /// <summary>The bytes of a chunk in flight, or null: measured at first use and kept in the tuning cache (<c>IDRAK_CLUSTER_CHUNK_BYTES</c>).</summary>
+    /// <summary>
+    /// The bytes of a chunk in flight, or null: measured at the first collective over a real transport (once per transport,
+    /// kept in the tuning cache, <see cref="ClusterCache"/>; on the simulator's virtual clock one message a piece, so a
+    /// prediction and a replay stay exact) (<c>IDRAK_CLUSTER_CHUNK_BYTES</c>).
+    /// </summary>
     public long? ChunkBytes { get; init; }
+
+    /// <summary>
+    /// The all-reduce the chunk size is measured with when <see cref="ChunkBytes"/> is unset: each candidate chunk (powers of
+    /// 4 from 64 KiB up to it) times it, and the fastest on the slowest rank is kept (<c>IDRAK_CLUSTER_CHUNK_PROBE</c>, bytes).
+    /// </summary>
+    public long ChunkProbeBytes { get; init; } = 4L << 20;
+
+    /// <summary>The file the measured chunk and bucket sizes are kept in, or null for the tuning cache's (<c>IDRAK_CLUSTER_TUNING_FILE</c>; empty: none kept).</summary>
+    public string? TuningFile { get; init; }
 
     /// <summary>
     /// Chunks in flight each way: a sender has at most this many messages to one peer under one tag that the peer has not
@@ -395,14 +416,14 @@ public sealed record ClusterOptions
     [
         "IDRAK_CLUSTER_TOPOLOGY", "IDRAK_CLUSTER_NODE", "IDRAK_RANK", "IDRAK_WORLD_SIZE", "IDRAK_COORDINATOR", "IDRAK_CLUSTER_TRANSPORT",
         "IDRAK_CLUSTER_SELECTOR", "IDRAK_CLUSTER_COLLECTIVE", "IDRAK_CLUSTER_KEY", "IDRAK_CLUSTER_PORT", "IDRAK_CLUSTER_TIMEOUT",
-        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_RECEIVE_BYTES", "IDRAK_CLUSTER_SOCKET_BUFFER",
+        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_CHUNK_PROBE", "IDRAK_CLUSTER_TUNING_FILE", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_RECEIVE_BYTES", "IDRAK_CLUSTER_SOCKET_BUFFER",
         "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_MESSAGE_COST", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
         "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
-        "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_LOG_TRANSFERS",
+        "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_EVENT_LOG_FLUSH", "IDRAK_CLUSTER_LOG_TRANSFERS",
         "IDRAK_CLUSTER_DEVICE", "IDRAK_CLUSTER_RUN", "IDRAK_CLUSTER_PARENT", "IDRAK_CLUSTER_RETRY_DELAY", "IDRAK_CLUSTER_SHM_BYTES", "IDRAK_CLUSTER_SHM_FOLDER",
         "IDRAK_CLUSTER_SHM_SPIN", "IDRAK_CLUSTER_SHM_CHECK",
     ];
@@ -435,6 +456,8 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_TIMEOUT") is { } timeout) o = o with { Timeout = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_TIMEOUT", timeout, "a number of seconds above 0", v => v > 0)) };
         if (Read(variable, "IDRAK_CLUSTER_RETRIES") is { } retries) o = o with { Retries = Whole("IDRAK_CLUSTER_RETRIES", retries, 1) };
         if (Read(variable, "IDRAK_CLUSTER_CHUNK_BYTES") is { } chunk) o = o with { ChunkBytes = Size("IDRAK_CLUSTER_CHUNK_BYTES", chunk) };
+        if (Read(variable, "IDRAK_CLUSTER_CHUNK_PROBE") is { } chunkProbe) o = o with { ChunkProbeBytes = Size("IDRAK_CLUSTER_CHUNK_PROBE", chunkProbe) };
+        if (variable("IDRAK_CLUSTER_TUNING_FILE") is { } tuningFile) o = o with { TuningFile = tuningFile.Trim() };
         if (Read(variable, "IDRAK_CLUSTER_IN_FLIGHT") is { } inFlight) o = o with { InFlight = Whole("IDRAK_CLUSTER_IN_FLIGHT", inFlight, 1) };
         if (Read(variable, "IDRAK_CLUSTER_RECEIVE_BYTES") is { } receive) o = o with { ReceiveBytes = Size("IDRAK_CLUSTER_RECEIVE_BYTES", receive) };
         if (Read(variable, "IDRAK_CLUSTER_SOCKET_BUFFER") is { } socket) o = o with { SocketBufferBytes = Size("IDRAK_CLUSTER_SOCKET_BUFFER", socket) };
@@ -503,6 +526,7 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_CLOCK") is { } clock) s = s with { Clock = Choice<ThroughputClock>("IDRAK_CLUSTER_CLOCK", clock, "wall or simulated") };
         if (Read(variable, "IDRAK_CLUSTER_CARVE_FROM") is { } carveFrom) s = s with { CarveFrom = carveFrom };
         if (Read(variable, "IDRAK_CLUSTER_EVENT_LOG") is { } eventLog) s = s with { EventLog = eventLog };
+        if (Read(variable, "IDRAK_CLUSTER_EVENT_LOG_FLUSH") is { } flush) s = s with { EventLogFlushSteps = Whole("IDRAK_CLUSTER_EVENT_LOG_FLUSH", flush, 0) };
         if (Read(variable, "IDRAK_CLUSTER_LOG_TRANSFERS") is { } logTransfers) s = s with { LogTransfers = Flag("IDRAK_CLUSTER_LOG_TRANSFERS", logTransfers) };
         return o with { Simulation = s };
     }

@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
@@ -78,6 +79,12 @@ internal sealed class DistillCommand : Command
           records --data-format, --images, --image-transform, --vision, --parts and --feature-cache (a vision-language
           teacher reads the student's images as they are prepared; its family's plug-in with -P). --json prints one JSON
           document at the end with the output lines.
+              --cluster FILE        train as one rank of a real cluster of the topology file (idrak cluster init writes
+                                    one); on a node of several workers IDRAK_RANK names this process's (--rank stays the
+                                    adapter's rank)
+              --node NAME           this machine's node of the file (the node named after this host)
+              --coordinator H:P     where rank 0 listens (the file's first node's address)
+              --world-size N        the ranks of a cluster without a file, with --coordinator and IDRAK_RANK
 
         Examples:
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
@@ -86,12 +93,13 @@ internal sealed class DistillCommand : Command
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --precompute t.topk
           idrak distill --teacher t.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
           idrak distill --teacher big-model --student small-model --data prompts.jsonl --generate -o adapters/s
+          idrak distill --teacher t.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d --cluster lan.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--teacher", "--student", "--base", "--data", "--out", "--temperature", "--alpha", "--top-k", "--precompute", "--max-new", "--batch-size",
-        "--teacher-weights", "--teacher-device", "--weights", .. TuneValues,
+        "--teacher-weights", "--teacher-device", "--weights", .. TuneValues, .. ClusterJoin.Options,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--generate", "--reasoning", "--keep-cut-off", .. TuneFlags];
@@ -103,6 +111,7 @@ internal sealed class DistillCommand : Command
 
     public override int Run(CommandContext context)
     {
+        using var cluster = ClusterJoin.Join(context, ownsRank: true);    // --cluster FILE: one rank of a real cluster; --rank is the adapter's
         if (context.Positional.Count > 0)
         {
             throw new UsageException($"distill takes no arguments ('{context.Positional[0]}'): give --teacher, --student and --data.");

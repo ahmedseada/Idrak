@@ -36,7 +36,19 @@ public interface Idrak.Networking.Abstractions.IGradientCompressor : System.IDis
   public void Reduce(System.Span<float> values, float weight, System.ReadOnlySpan<Idrak.Networking.Abstractions.GradientPiece> pieces)
 
 public static class Idrak.Networking.Bench.LinkBench
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Networking.Bench.LinkBenchConcurrentRow> RunConcurrent(Idrak.Abstraction.Cluster.ITransport transport, Idrak.Abstraction.Cluster.IClusterTopology topology, Idrak.Networking.Bench.LinkBenchOptions? options = null, System.Func<int, int, string>? transportOf = null)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Networking.Bench.LinkBenchRow> Run(Idrak.Abstraction.Cluster.ITransport transport, Idrak.Networking.Bench.LinkBenchOptions? options = null, System.Func<int, int, string>? transportOf = null, System.IProgress<Idrak.Networking.Bench.LinkBenchProgress>? progress = null)
+
+public sealed record Idrak.Networking.Bench.LinkBenchConcurrentRow : System.IEquatable<Idrak.Networking.Bench.LinkBenchConcurrentRow>
+  public LinkBenchConcurrentRow(int RankA, int RankB, int Pairs, string Transport, long Bytes, int Rounds, double ColdBandwidth, double WarmBandwidth)
+  public double ColdBandwidth { get; init; }
+  public double WarmBandwidth { get; init; }
+  public int Pairs { get; init; }
+  public int RankA { get; init; }
+  public int RankB { get; init; }
+  public int Rounds { get; init; }
+  public long Bytes { get; init; }
+  public string Transport { get; init; }
 
 public sealed record Idrak.Networking.Bench.LinkBenchOptions : System.IEquatable<Idrak.Networking.Bench.LinkBenchOptions>
   public LinkBenchOptions()

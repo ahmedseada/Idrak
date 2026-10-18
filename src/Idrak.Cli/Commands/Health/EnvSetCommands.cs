@@ -233,7 +233,9 @@ internal sealed class EnvSetCommand : EnvSaveCommand
                 continue;
             }
 
-            if ((EnvironmentVariables.Find(answer.ToUpperInvariant()) ?? EnvironmentVariables.Find(answer)) is { } exact)
+            // A name, or the part after IDRAK_ ("port" is IDRAK_PORT, though IDRAK_CLUSTER_PORT contains it too).
+            if ((EnvironmentVariables.Find(answer.ToUpperInvariant()) ?? EnvironmentVariables.Find(answer)
+                 ?? EnvironmentVariables.Find("IDRAK_" + answer.Replace(' ', '_').ToUpperInvariant())) is { } exact)
             {
                 if (SavedEnvironment.WhyNot(exact) is { } why)
                 {

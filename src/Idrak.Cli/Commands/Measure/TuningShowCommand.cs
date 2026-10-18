@@ -2,17 +2,19 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Cluster;
 
 namespace Idrak.Cli.Commands.Measure;
 
 /// <summary>
 /// <c>idrak tuning show</c>: the kernel choices the backends measured on this machine and keep in their tuning caches
-/// (the CPU's parallel cut-overs, the CUDA and Vulkan kernel and runtime choices), per device; <c>--reset</c> deletes
-/// them so they are measured again on next use.
+/// (the CPU's parallel cut-overs, the CUDA and Vulkan kernel and runtime choices), per device, and what a cluster keeps
+/// beside them (plan 23, phase C8: the calibrated link profiles and the measured chunk and bucket sizes); <c>--reset</c>
+/// deletes them so they are measured again on next use.
 /// </summary>
 internal sealed class TuningShowCommand : Command
 {
-    private static readonly string[] Backends = ["cpu", "cuda", "vulkan"];
+    private static readonly string[] Backends = ["cpu", "cuda", "vulkan", "cluster"];
 
     public override string Name => "tuning show";
 
@@ -22,15 +24,17 @@ internal sealed class TuningShowCommand : Command
         "[options]\n\n" +
         "Reads the tuning caches the backends write as they measure their choices: the CPU's parallel cut-overs\n" +
         "(cpu/tuning.tsv), the CUDA kernel choices (tuning/cuda/*.txt, one file per GPU and driver) and the Vulkan\n" +
-        "runtime and kernel choices (vulkan/tuning.tsv), all under the cache folder unless the variables below move them.\n" +
-        "Each choice is shown with the device it was measured on.\n\n" +
+        "runtime and kernel choices (vulkan/tuning.tsv), and a cluster's: the link profiles idrak cluster calibrate fitted\n" +
+        "(cluster/link-*.txt) and the chunk and bucket sizes the collectives measured (cluster/tuning.txt), all under the\n" +
+        "cache folder unless the variables below move them. Each choice is shown with what it was measured on.\n\n" +
         "Options:\n" +
-        "      --backend NAME  only cpu, cuda or vulkan\n" +
+        "      --backend NAME  only cpu, cuda, vulkan or cluster\n" +
         "      --reset         delete the caches (or the --backend one): choices are measured again on next use\n\n" +
         "Examples:\n" +
         "  idrak tuning show\n" +
         "  idrak tuning show --backend vulkan -j\n" +
-        "  idrak tuning show --reset --backend cuda";
+        "  idrak tuning show --reset --backend cuda\n" +
+        "  idrak tuning show --backend cluster";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--backend"];
 
@@ -46,7 +50,7 @@ internal sealed class TuningShowCommand : Command
         string? only = context.Option("--backend")?.ToLowerInvariant();
         if (only is not null && !Backends.Contains(only))
         {
-            throw new UsageException($"--backend takes cpu, cuda or vulkan, not '{only}'.");
+            throw new UsageException($"--backend takes cpu, cuda, vulkan or cluster, not '{only}'.");
         }
 
         var caches = Caches(context.CacheFolder).Where(c => only is null || c.Backend == only).ToList();
@@ -134,6 +138,50 @@ internal sealed class TuningShowCommand : Command
             : !string.IsNullOrEmpty(vulkanSetting) ? vulkanSetting
             : System.IO.Path.Combine(cacheFolder, "vulkan", "tuning.tsv");
         yield return new Cache("vulkan", vulkan, vulkan is not null && File.Exists(vulkan) ? [vulkan] : [], ReadVulkan);
+
+        // A cluster's (plan 23, C8): the calibrated profiles (a file per link, or IDRAK_CLUSTER_PROFILES_FILE) and the
+        // measured chunk and bucket sizes (tuning.txt, or IDRAK_CLUSTER_TUNING_FILE).
+        string? folder = Off(tuning) ? null : System.IO.Path.Combine(cacheFolder, "cluster");
+        string? profiles = Environment.GetEnvironmentVariable("IDRAK_CLUSTER_PROFILES_FILE");
+        string? sizes = Environment.GetEnvironmentVariable("IDRAK_CLUSTER_TUNING_FILE");
+        var files = new List<string>();
+        if (profiles is not null)
+        {
+            if (profiles.Length > 0 && File.Exists(profiles))
+            {
+                files.Add(profiles);
+            }
+        }
+        else if (folder is not null && Directory.Exists(folder))
+        {
+            files.AddRange(Directory.GetFiles(folder, "link-*.txt").Order(StringComparer.Ordinal));
+        }
+
+        string? sizesFile = sizes is not null ? (sizes.Length > 0 ? sizes : null) : folder is null ? null : System.IO.Path.Combine(folder, "tuning.txt");
+        if (sizesFile is not null && File.Exists(sizesFile))
+        {
+            files.Add(sizesFile);
+        }
+
+        yield return new Cache("cluster", folder ?? profiles ?? sizes, files, ReadCluster);
+    }
+
+    // A calibrated profiles' file (its links' fitted figures) or the measured sizes' file (each chunk and bucket chosen).
+    private static IEnumerable<Entry> ReadCluster(string path)
+    {
+        string text = File.ReadAllText(path);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        foreach (var link in ClusterCache.ParseProfiles(text))
+        {
+            yield return new Entry("calibrated links", link.Link, string.Create(inv,
+                $"{link.BandwidthBytesPerSecond / (1 << 20):F1} MiB/s, latency {link.Latency.TotalMicroseconds:F1} us, residual {link.Residual * 1e6:F1} us, "
+                + $"{link.Samples} transfers, {link.Calibrated:yyyy-MM-dd}{(link.AdapterBytesPerSecond > 0 ? $", one adapter shared at {link.AdapterBytesPerSecond / (1 << 20):F1} MiB/s" : "")}"));
+        }
+
+        foreach (var size in ClusterCache.ParseTuning(text))
+        {
+            yield return new Entry($"measured {size.Kind} sizes", size.Key, string.Create(inv, $"{size.Value} B ({size.Measured:yyyy-MM-dd}: {size.Detail})"));
+        }
     }
 
     // "v2|processor|features|cores|L1 …|…|.NET …|N threads<TAB>elements<TAB>flops": the two parallel cut-overs per machine key.

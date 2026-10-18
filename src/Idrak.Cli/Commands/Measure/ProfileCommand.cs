@@ -5,16 +5,22 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Cluster;
 using Idrak.Cli.Shared;
+using Idrak.Cluster;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
+using Idrak.Training;
 
 namespace Idrak.Cli.Commands.Measure;
 
 /// <summary>
 /// <c>idrak profile MODEL</c>: where one decoding step's time goes: each top-level layer timed with the device drained
-/// around it, the operations and inner layers from telemetry, and on devices that time kernels, each kernel's time.
+/// around it, the operations and inner layers from telemetry, and on devices that time kernels, each kernel's time. With
+/// <c>--cluster FILE</c> (plan 23, phase C8) the model runs as a pipeline over a simulated cluster of the topology, one
+/// stage a rank, and a token's hops between the stages are the rows: each hop's bytes, wall time here and time on the
+/// virtual clock.
 /// </summary>
 internal sealed class ProfileCommand : Command
 {
@@ -34,12 +40,17 @@ internal sealed class ProfileCommand : Command
         "  -k, --kv FORMAT       the key/value cache format\n" +
         "      --context N       the context length; --adapter DIR: merge an adapter first\n" +
         "      --prompt-tokens N tokens in the cache before the step (default 128)\n" +
-        "      --top N           rows per table (default 15)\n\n" +
+        "      --top N           rows per table (default 15)\n" +
+        "      --cluster FILE    run the model as a pipeline over a simulated cluster of the topology (a stage a rank, or\n" +
+        "                        --stages N): a token's hops between the stages as rows, their bytes, wall and simulated time\n" +
+        "      --stages N        with --cluster: the pipeline's stages (one per rank)\n" +
+        "      --steps N         with --cluster: the decoding steps timed (default 4)\n\n" +
         "Examples:\n" +
         "  idrak profile org/model -d vulkan:0 -w int8\n" +
-        "  idrak profile mymodel --prompt-tokens 1000 -j";
+        "  idrak profile mymodel --prompt-tokens 1000 -j\n" +
+        "  idrak profile my-model --cluster two.json --steps 8";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--prompt-tokens", "--top"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--prompt-tokens", "--top", "--cluster", "--stages", "--steps"];
 
     public override IReadOnlyDictionary<string, string> ShortForms => ModelChoices.ShortForms;
 
@@ -59,6 +70,11 @@ internal sealed class ProfileCommand : Command
         }
 
         var choice = ModelChoices.Choose(context, modelName);
+        if (context.Option("--cluster") is { } topologyFile)
+        {
+            return Pipeline(context, choice, topologyFile, promptTokens);
+        }
+
         using var model = ModelChoices.Load(context, choice);
         var device = context.Device;
         promptTokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - 5));
@@ -165,6 +181,156 @@ internal sealed class ProfileCommand : Command
                 : null,
         });
         return ExitCodes.Ok;
+    }
+
+    // --cluster: the model as a pipeline over a simulated cluster, one decoding step after another on rank 0 (the first
+    // stage), a token's hops between the stages recorded from the transfers each stage takes.
+    private static int Pipeline(CommandContext context, ModelChoices.ModelChoice choice, string topologyFile, int promptTokens)
+    {
+        int steps = context.IntOption("--steps", 4);
+        if (steps <= 0)
+        {
+            throw new UsageException("--steps needs a number above 0.");
+        }
+
+        ClusterTopology topology;
+        ClusterOptions options;
+        try
+        {
+            topology = ClusterTopology.Load(topologyFile);
+            options = ClusterOptions.FromEnvironment() with { Topology = topologyFile, Placement = "pipeline" };
+        }
+        catch (Exception e) when (e is InvalidDataException or NotSupportedException or FileNotFoundException or DirectoryNotFoundException)
+        {
+            context.Error(e.Message);
+            return ExitCodes.Failed;
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
+        }
+
+        if (context.Option("--stages") is not null)
+        {
+            options = options with { Stages = context.IntOption("--stages", 1) };
+        }
+
+        int stages = options.Stages ?? topology.WorldSize;
+        if (stages < 2 || topology.WorldSize % stages != 0)
+        {
+            throw new UsageException($"A pipeline over {topologyFile} needs 2 or more stages dividing its {topology.WorldSize} rank(s) (--stages, IDRAK_CLUSTER_STAGES).");
+        }
+
+        string kv = choice.Kv ?? "float32";
+        var hops = new Hops();
+        double stepMs = 0, simulatedMs = 0;
+        string[] modules = [];
+        var result = InProcessCluster.Run(topology, options, rank =>
+        {
+            using var model = ModelChoices.Load(context, choice, Device.Cpu);   // each rank keeps its own stage of it
+            using var pipe = PipelineStage.Place(model.Network, rank.Collectives, options);
+            if (!pipe.IsFirst)
+            {
+                pipe.Serve();
+                return;
+            }
+
+            try
+            {
+                int tokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - steps - 3));
+                var random = new Random(context.Seed ?? 1);
+                float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
+                using var decoding = new DecodingContext(rank.Device, 1, tokens + steps + 2, KeyValueLayouts.Get(kv));
+                using var noGrad = Autograd.NoGrad();
+                using (var scope = new TensorScope())
+                {
+                    pipe.Network.ForwardCached(Tensor.From([.. Enumerable.Range(0, tokens).Select(_ => Token())], [1, tokens], rank.Device), decoding);
+                    pipe.Network.ForwardCached(Tensor.From([Token()], [1, 1], rank.Device), decoding);   // a first step: kernels built
+                }
+
+                var clockBefore = rank.Transport.SimulatedTime;
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                using (Telemetry.Subscribe(hops))
+                {
+                    for (int i = 0; i < steps; i++)
+                    {
+                        using var scope = new TensorScope();
+                        pipe.Network.ForwardCached(Tensor.From([Token()], [1, 1], rank.Device), decoding);
+                    }
+                }
+
+                stepMs = watch.Elapsed.TotalMilliseconds / steps;
+                simulatedMs = (rank.Transport.SimulatedTime - clockBefore).TotalMilliseconds / steps;
+                modules = [.. pipe.Modules.Select(m => m.Name ?? m.GetType().Name)];
+            }
+            finally
+            {
+                pipe.StopServing();
+            }
+        });
+        if (!result.Succeeded)
+        {
+            foreach (var (error, rank) in result.Errors.Select((e, r) => (e, r)).Where(p => p.e is not null))
+            {
+                context.Error($"rank {rank}: {error!.Message}");
+            }
+
+            return ExitCodes.Failed;
+        }
+
+        var inv = CultureInfo.InvariantCulture;
+        int perStage = topology.WorldSize / stages;
+        var rows = hops.Rows(steps);
+        context.Write($"{choice.Model} as a pipeline of {stages} stage(s) over {topologyFile} ({topology.WorldSize} rank(s), simulated): {steps} decoding step(s) after {promptTokens} prompt tokens");
+        context.Write(string.Create(inv, $"a token: {stepMs:F2} ms here, {simulatedMs:F3} ms of it on the virtual clock (the links the file declares); stage 0 holds {string.Join(", ", modules)}"));
+        context.Table(["hop", "stages", "messages", "bytes", "wall ms", "simulated ms"], [.. rows.Select(r => (IReadOnlyList<string>)
+        [
+            $"rank {r.From} -> rank {r.To}", $"{r.From / perStage} -> {r.To / perStage}", r.Messages.ToString("F1", inv), r.Bytes.ToString("F0", inv),
+            r.Wall.ToString("F3", inv), r.Simulated.ToString("F3", inv),
+        ])]);
+        context.WriteJson(new JsonObject
+        {
+            ["model"] = choice.Model,
+            ["topology"] = Path.GetFullPath(topologyFile),
+            ["stages"] = stages,
+            ["steps"] = steps,
+            ["token_ms"] = stepMs,
+            ["token_simulated_ms"] = simulatedMs,
+            ["hops"] = new JsonArray([.. rows.Select(r => (JsonNode)new JsonObject
+            {
+                ["from"] = r.From, ["to"] = r.To, ["from_stage"] = r.From / perStage, ["to_stage"] = r.To / perStage,
+                ["messages"] = r.Messages, ["bytes"] = r.Bytes, ["wall_ms"] = r.Wall, ["simulated_ms"] = r.Simulated,
+            })]),
+        });
+        return ExitCodes.Ok;
+    }
+
+    // A token's hops: the transfers between ranks (per token: messages, bytes, wall and simulated time), in the order a
+    // token travels (rank 0's stage out, through each stage, back to the first).
+    private sealed class Hops : ITelemetryHook
+    {
+        private readonly Lock _gate = new();
+        private readonly Dictionary<(int From, int To), (long Messages, long Bytes, double Wall, double Simulated)> _pairs = [];
+
+        public TelemetryLevel Levels => TelemetryLevel.Network;
+
+        public void OnTransfer(in TransferCompleted e)
+        {
+            lock (_gate)
+            {
+                var (messages, bytes, wall, simulated) = _pairs.GetValueOrDefault((e.From, e.To));
+                _pairs[(e.From, e.To)] = (messages + 1, bytes + e.Bytes, wall + e.Wall.TotalMilliseconds, simulated + e.Simulated.TotalMilliseconds);
+            }
+        }
+
+        public List<(int From, int To, double Messages, double Bytes, double Wall, double Simulated)> Rows(int steps)
+        {
+            lock (_gate)
+            {
+                return [.. _pairs.OrderBy(p => p.Key.To <= p.Key.From ? 1 : 0).ThenBy(p => p.Key.From).Select(p => (p.Key.From, p.Key.To, p.Value.Messages / (double)steps,
+                    p.Value.Bytes / (double)steps, p.Value.Wall / steps, p.Value.Simulated / steps))];
+            }
+        }
     }
 
     private static void WriteTable(CommandContext context, string title, Dictionary<string, (int Count, double Ms)> table, int top)
