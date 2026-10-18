@@ -1237,6 +1237,17 @@ missing --rank"; "cluster: cli tune --cluster with IDRAK_RANK keeps --rank as th
 world size that contradicts the file is refused naming both"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
 
+**C8 in two parts (2026-10-18).** What C2-C7 handed to C8 is split so two agents can run beside C9 in turn:
+**C8a, the command line and calibration** (the list above; plus `cluster sim` for `tune` and `train`, `--placement
+pipeline`/`--stages` on `cluster sim` and `pretrain --cluster`, `--profile` of a step's buckets, `runs show` charting the
+network share, the event log flushed while a run goes, an address on a link override for a cable on its own subnet, the
+measured `ChunkBytes` and bucket size kept in the tuning cache and shown by `idrak tuning show`, and `calibrate` fitting
+one network adapter shared by a machine's ranks where a bench shows it); **C8b, memory and speed** (a pipeline stage and
+a parameter shard each load only their own tensors from the checkpoint and write only their own shard of it, joined by
+the reader, so no rank holds the whole model; activations between stages moved device to device where the transport
+can; a receive inbox that wakes its waiter directly; then sharding with a pipeline, and top-k with sharding, if the
+measured numbers justify them).
+
 ### C9: the dashboard (set up, control and monitor in a browser)
 
 Beside C8, once C6 and C7 have landed (two agents). Decided by the owner (decision 8): simulated runs are set up,
