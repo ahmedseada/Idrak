@@ -96,7 +96,11 @@ internal sealed class ClusterSimCommand : Command
         (IDRAK_PROFILE_WARM warm runs, 1 here; the later runs train into folders of their own, removed after), the
         probes' rows (cpu, memory, the device's kernels where it times them, the network's collectives, transfers and
         gradient buckets, the cluster's simulated links) and the step measured here beside the step predicted for the
-        topology's links. The other cluster settings come from the IDRAK_CLUSTER_ variables (idrak env lists them).
+        topology's links. The other cluster settings come from the IDRAK_CLUSTER_ variables (idrak env lists them). With
+        --dashboard the run is shown in a browser while it goes (idrak cluster ui's page): its ranks, links, losses and
+        faults; pause, resume, stop with a checkpoint, and faults injected at the next step (in-process; a localhost run
+        takes no faults). A run the dashboard steers is pretrain's (or resume of a pretrain run): its stop writes the
+        step's checkpoint, which train and tune do not yet.
 
         Options:
               --topology FILE    the topology file (idrak cluster init writes one)
@@ -110,6 +114,9 @@ internal sealed class ClusterSimCommand : Command
               --stages N         a pipeline's stages, dividing the ranks (one per rank)
               --event-log FILE   where the event log goes (the run folder's cluster-events.idrklog)
               --profile          profile the run: the probes' rows and the predicted step beside the measured
+              --dashboard        show and steer the run in a browser (127.0.0.1, IDRAK_CLUSTER_UI_HOST)
+              --port N           the dashboard's port (IDRAK_CLUSTER_UI_PORT; 0: one the system picks)
+              --no-browser       print the dashboard's address instead of opening it
 
         Examples:
           idrak cluster init -y --nodes 1 --devices cpu,cpu -o two.json
@@ -119,17 +126,101 @@ internal sealed class ClusterSimCommand : Command
           idrak cluster sim --topology two.json --placement pipeline -- pretrain my-model --tokens t.bin -o run
           idrak cluster sim --topology two.json --profile -- train network.json --data houses.csv --run run
           idrak cluster sim --topology two.json -- tune train my-model chats.jsonl -o adapters/chat
+          idrak cluster sim --topology two.json --dashboard -- pretrain my-model --tokens tokens.bin --steps 500 -o run
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        ["--topology", "--collective", "--wire", "--mode", "--failures", "--placement", "--stages", "--event-log"];
+        ["--topology", "--collective", "--wire", "--mode", "--failures", "--placement", "--stages", "--event-log", "--port"];   // --seed: a common option
 
-    public override IReadOnlyCollection<string> Flags => ["--profile"];
+    public override IReadOnlyCollection<string> Flags => ["--profile", "--dashboard", "--no-browser"];
+
+    /// <summary>
+    /// Runs <paramref name="inner"/> once per rank of <paramref name="topology"/> in this process (every rank a thread on its
+    /// carved device), rank 0's output to <paramref name="output"/>, steered by <paramref name="control"/> when given: each
+    /// rank's exit code and the error text of the ranks after rank 0.
+    /// </summary>
+    public static (ClusterRunResult Result, int[] Codes, string[] Errors) RunRanks(IClusterTopology topology, ClusterOptions options, IReadOnlyList<string> inner,
+        TextWriter output, TextWriter error, ClusterRunControl? control)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        int world = topology.WorldSize;
+        var codes = new int[world];
+        var errors = new StringWriter[world];
+        var result = InProcessCluster.Run(topology, options, rank =>
+        {
+            errors[rank.Rank] = new StringWriter(inv);
+            ClusterSession.Current = rank;
+            try
+            {
+                // Rank 0's output is the run's; the others' errors are kept to name a rank that failed.
+                codes[rank.Rank] = CommandLine.Run(inner, rank.Rank == 0 ? output : TextWriter.Null, rank.Rank == 0 ? error : errors[rank.Rank]);
+            }
+            finally
+            {
+                ClusterSession.Current = null;
+            }
+
+            if (codes[rank.Rank] != ExitCodes.Ok)
+            {
+                throw new InvalidOperationException($"{inner[0]} ended with exit code {codes[rank.Rank]}" + (errors[rank.Rank].ToString().Trim() is { Length: > 0 } text ? $": {text.Split('\n')[0]}" : ""));
+            }
+        }, control);
+        return (result, codes, [.. errors.Select(e => e?.ToString() ?? "")]);
+    }
+
+    /// <summary>
+    /// The checks every simulated run takes before it starts: the training command after -- and the folder rank 0 writes;
+    /// a run the dashboard steers (<paramref name="steered"/>) must answer a stop with a checkpoint (pretrain, or resume of one).
+    /// </summary>
+    public static void CheckTrainer(IReadOnlyList<string> inner, bool steered = true)
+    {
+        if (inner.Count == 0 || Trainers.All(t => t.Command != inner[0]))
+        {
+            throw new UsageException($"Give the training command after --: {string.Join(", ", Trainers.Select(t => t.Command))} (got {(inner.Count == 0 ? "nothing" : inner[0])}).");
+        }
+
+        var trainer = Trainers.First(t => t.Command == inner[0]);
+        if (trainer.Output.Length > 0 && !inner.Any(a => trainer.Output.Contains(a) || trainer.Output.Any(o => o.StartsWith("--", StringComparison.Ordinal) && a.StartsWith(o + "=", StringComparison.Ordinal))))
+        {
+            throw new UsageException($"Give the folder rank 0 writes after {inner[0]} ({trainer.Hint}): every rank trains into one run, rank 0 writes it.");
+        }
+
+        if (steered && !Steerable(inner))
+        {
+            // A stop asked from the dashboard ends every rank as it begins the next step; pretrain answers it with that step's
+            // checkpoint, train and tune would end with an error and nothing written (plan 23: C9 steers pretrain's runs).
+            throw new UsageException($"The dashboard steers pretrain's runs (and resume of one): a stop ends with that step's checkpoint there; {inner[0]} does not "
+                                     + "write one on a stop yet. Run it with idrak cluster sim without --dashboard.");
+        }
+    }
+
+    // Whether a run can be steered (paused, resumed, stopped with a checkpoint): pretrain, or resume of a pretrain run.
+    private static bool Steerable(IReadOnlyList<string> inner) => inner[0] switch
+    {
+        "pretrain" => true,
+        "resume" => RunFolder(inner) is { } run && File.Exists(Path.Combine(run, "run.json"))
+                    && File.ReadAllText(Path.Combine(run, "run.json")).Contains(Train.PretrainCommand.RunFormat, StringComparison.Ordinal),
+        _ => false,
+    };
 
     public override int Run(CommandContext context)
     {
         string path = context.Option("--topology") ?? throw new UsageException("Give the topology file with --topology (idrak cluster init writes one).");
         var inner = context.Positional;
+        if (!context.Flag("--dashboard") && (context.Option("--port") is not null || context.Flag("--no-browser")))
+        {
+            throw new UsageException("--port and --no-browser are the dashboard's: add --dashboard.");
+        }
+
+        if (context.Flag("--dashboard"))
+        {
+            CheckTrainer(inner);
+            if (context.Flag("--profile"))
+            {
+                throw new UsageException("--profile and --dashboard are one at a time: a profile runs the training more than once.");
+            }
+        }
+
         var (options, topology) = Prepare(context, path, inner);
         if (topology is null)
         {
@@ -152,21 +243,33 @@ internal sealed class ClusterSimCommand : Command
             };
         }
 
+        if (options.Simulation.Mode == SimulationMode.Localhost
+            && !string.Equals(options.Simulation.Failures ?? topology.Simulation.Failures, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            // Faults are drawn and applied by the simulated transport's clock; real transports between processes have none.
+            throw new UsageException($"--failures {options.Simulation.Failures ?? topology.Simulation.Failures} needs the simulated transport (--mode in-process); "
+                                     + "a localhost run joins its processes by the real transports, which inject no faults.");
+        }
+
+        if (options.Simulation.Mode == SimulationMode.Localhost && context.Flag("--profile"))
+        {
+            throw new UsageException("--profile needs --mode in-process: the probes read this process's telemetry, and a localhost run's ranks are processes of their own.");
+        }
+
+        using var dashboard = context.Flag("--dashboard") ? Dashboard.Open(context, path) : null;
         if (options.Simulation.Mode == SimulationMode.Localhost)
         {
-            if (!string.Equals(options.Simulation.Failures ?? topology.Simulation.Failures, "none", StringComparison.OrdinalIgnoreCase))
-            {
-                // Faults are drawn and applied by the simulated transport's clock; real transports between processes have none.
-                throw new UsageException($"--failures {options.Simulation.Failures ?? topology.Simulation.Failures} needs the simulated transport (--mode in-process); "
-                                         + "a localhost run joins its processes by the real transports, which inject no faults.");
-            }
+            return Localhost(context, path, topology, options, inner, dashboard);
+        }
 
-            if (context.Flag("--profile"))
-            {
-                throw new UsageException("--profile needs --mode in-process: the probes read this process's telemetry, and a localhost run's ranks are processes of their own.");
-            }
-
-            return Localhost(context, path, topology, options, inner);
+        ClusterRunControl? control = null;
+        DashboardRun? watched = null;
+        if (dashboard is not null)
+        {
+            control = new ClusterRunControl();
+            watched = dashboard.Runs.Attach(RunKind.InProcess, path, inner, options, topology);
+            watched.Bind(control);
+            options = options with { Simulation = options.Simulation with { EventLog = options.Simulation.EventLog ?? watched.EventLogPath } };
         }
 
         var inv = CultureInfo.InvariantCulture;
@@ -184,7 +287,17 @@ internal sealed class ClusterSimCommand : Command
         }
         else
         {
-            (codes, result) = Simulate(context, topology, options, inner);
+            try
+            {
+                (codes, result) = Simulate(context, topology, options, inner, control, watched?.Output(context.Output));
+            }
+            catch (Exception e) when (watched is not null)
+            {
+                watched.Finish("failed", e.Message);
+                throw;
+            }
+
+            watched?.Finish(result, control);
         }
 
         var faults = result.Log?.Faults ?? [];
@@ -229,16 +342,7 @@ internal sealed class ClusterSimCommand : Command
     /// </summary>
     internal static (ClusterOptions Options, ClusterTopology? Topology) Prepare(CommandContext context, string path, IReadOnlyList<string> inner)
     {
-        if (inner.Count == 0 || Trainers.All(t => t.Command != inner[0]))
-        {
-            throw new UsageException($"Give the training command after --: {string.Join(", ", Trainers.Select(t => t.Command))} (got {(inner.Count == 0 ? "nothing" : inner[0])}).");
-        }
-
-        var trainer = Trainers.First(t => t.Command == inner[0]);
-        if (trainer.Output.Length > 0 && !inner.Any(a => trainer.Output.Contains(a) || trainer.Output.Any(o => o.StartsWith("--", StringComparison.Ordinal) && a.StartsWith(o + "=", StringComparison.Ordinal))))
-        {
-            throw new UsageException($"Give the folder rank 0 writes after {inner[0]} ({trainer.Hint}): every rank trains into one run, rank 0 writes it.");
-        }
+        CheckTrainer(inner, steered: false);
 
         ClusterOptions options;
         try
@@ -332,9 +436,22 @@ internal sealed class ClusterSimCommand : Command
         return options with { Simulation = options.Simulation with { EventLog = Path.Combine(Path.GetFullPath(folder), EventLogFile) } };
     }
 
-    // The run folder a training command writes (pretrain -o, train --run, resume RUN), or null (tune's adapter folder).
-    private static string? RunFolder(IReadOnlyList<string> inner)
+    /// <summary>
+    /// The run folder a training command writes (pretrain -o, train --run, resume RUN; another command's -o, as cluster start
+    /// runs it, "idrak" first or not), or null (tune's adapter folder).
+    /// </summary>
+    public static string? RunFolder(IReadOnlyList<string> inner)
     {
+        if (inner.Count > 0 && string.Equals(inner[0], "idrak", StringComparison.OrdinalIgnoreCase))
+        {
+            inner = [.. inner.Skip(1)];                                    // a command cluster start runs: idrak pretrain …
+        }
+
+        if (inner.Count == 0)
+        {
+            return null;
+        }
+
         string? Value(params string[] names)
         {
             for (int i = 1; i < inner.Count; i++)
@@ -361,7 +478,8 @@ internal sealed class ClusterSimCommand : Command
             "pretrain" => Value("-o", "--out"),
             "train" => Value("--run"),
             "resume" => inner.Skip(1).FirstOrDefault(a => !a.StartsWith('-')) is { } run && Directory.Exists(run) ? run : null,
-            _ => null,
+            "tune" => null,                                                     // its -o is the adapter's folder, not a run's
+            _ => Value("-o", "--out"),                                          // another command cluster start runs
         };
     }
 
@@ -369,30 +487,10 @@ internal sealed class ClusterSimCommand : Command
     /// Runs <paramref name="inner"/> on every rank of <paramref name="topology"/> in this process (rank 0's output is the
     /// run's; the others' errors are kept to name a rank that failed); each rank's exit code beside the run's result.
     /// </summary>
-    internal static (int[] Codes, ClusterRunResult Result) Simulate(CommandContext context, ClusterTopology topology, ClusterOptions options, IReadOnlyList<string> inner)
+    internal static (int[] Codes, ClusterRunResult Result) Simulate(CommandContext context, ClusterTopology topology, ClusterOptions options, IReadOnlyList<string> inner,
+        ClusterRunControl? control = null, TextWriter? output = null)
     {
-        var inv = CultureInfo.InvariantCulture;
-        int world = topology.WorldSize;
-        var codes = new int[world];
-        var errors = new StringWriter[world];
-        var result = InProcessCluster.Run(topology, options, rank =>
-        {
-            errors[rank.Rank] = new StringWriter(inv);
-            ClusterSession.Current = rank;
-            try
-            {
-                codes[rank.Rank] = CommandLine.Run(inner, rank.Rank == 0 ? context.Output : TextWriter.Null, rank.Rank == 0 ? context.ErrorOutput : errors[rank.Rank]);
-            }
-            finally
-            {
-                ClusterSession.Current = null;
-            }
-
-            if (codes[rank.Rank] != ExitCodes.Ok)
-            {
-                throw new InvalidOperationException($"{inner[0]} ended with exit code {codes[rank.Rank]}" + (errors[rank.Rank].ToString().Trim() is { Length: > 0 } text ? $": {text.Split('\n')[0]}" : ""));
-            }
-        });
+        var (result, codes, _) = RunRanks(topology, options, inner, output ?? context.Output, context.ErrorOutput, control);
         return (codes, result);
     }
 
@@ -521,10 +619,9 @@ internal sealed class ClusterSimCommand : Command
         return codes.Length > 0 && codes[0] != ExitCodes.Ok ? codes[0] : ExitCodes.Failed;
     }
 
-    // --mode localhost: every rank a process of its own (this tool again), joined by the real transports.
-    private static int Localhost(CommandContext context, string path, ClusterTopology topology, ClusterOptions options, IReadOnlyList<string> inner)
+    /// <summary>The settings a localhost run's processes take from this command beside the environment they inherit.</summary>
+    public static Dictionary<string, string> LocalhostEnvironment(ClusterOptions options)
     {
-        var inv = CultureInfo.InvariantCulture;
         var environment = new Dictionary<string, string>(StringComparer.Ordinal) { ["IDRAK_CLUSTER_WIRE"] = options.Wire == WireType.BFloat16 ? "bf16" : "f32" };
         if (options.Collective is { } collective)
         {
@@ -533,31 +630,51 @@ internal sealed class ClusterSimCommand : Command
 
         if (options.Simulation.Seed is { } seed)
         {
-            environment["IDRAK_CLUSTER_SEED"] = seed.ToString(inv);
+            environment["IDRAK_CLUSTER_SEED"] = seed.ToString(CultureInfo.InvariantCulture);
         }
 
         environment["IDRAK_CLUSTER_PLACEMENT"] = options.Placement;
         if (options.Stages is { } stages)
         {
-            environment["IDRAK_CLUSTER_STAGES"] = stages.ToString(inv);
+            environment["IDRAK_CLUSTER_STAGES"] = stages.ToString(CultureInfo.InvariantCulture);
         }
+
+        return environment;
+    }
+
+    // --mode localhost: every rank a process of its own (this tool again), joined by the real transports.
+    private static int Localhost(CommandContext context, string path, ClusterTopology topology, ClusterOptions options, IReadOnlyList<string> inner, DashboardServer? dashboard)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var environment = LocalhostEnvironment(options);
+
         int world = topology.WorldSize;
         var ranks = Enumerable.Range(0, world).ToList();
         var devices = ranks.Select(r => options.Simulation.CarveFrom ?? topology.Nodes[topology.Place(r).Node].Devices[topology.Place(r).Local].Device).ToList();
         context.Write($"simulating {world} rank(s) of {path} as processes on this machine (real transports{(options.Simulation.Throttle ? ", paced to the links" : "")}): "
                       + $"idrak {string.Join(' ', inner)}");
         using var board = new RankBoard(context, $"{inner[0]} on {world} rank(s)", ranks, devices, line => line.Rank == 0);
+        DashboardRun? watched = dashboard?.Runs.Attach(RunKind.Localhost, path, inner, options, topology);
+        var steer = watched is null ? null : new LocalhostControl(watched.ControlPath);
+        watched?.Bind(steer!);
         LocalhostRunResult result;
         try
         {
-            result = LocalhostCluster.Run(path, options, ClusterLaunch.Program(["idrak", .. inner], environment), null, board.Line, context.TimeoutToken);
+            result = LocalhostCluster.Run(path, options, ClusterLaunch.Program(["idrak", .. inner], environment) with { Control = steer }, null,
+                line =>
+                {
+                    board.Line(line);
+                    watched?.Line(line);
+                }, context.TimeoutToken);
         }
         catch (Exception e) when (e is NotSupportedException or InvalidOperationException or ArgumentException)
         {
+            watched?.Finish("failed", e.Message);
             context.Error(e.Message);
             return ExitCodes.Failed;
         }
 
+        watched?.Finish(result);
         board.Finish(result.Ranks);
         context.Write($"localhost: {world} process(es), wall {result.Wall.TotalSeconds.ToString("F1", inv)} s; "
                       + string.Join(", ", result.Ranks.Select(r => $"rank {r.Rank} {(r.ExitCode switch { 0 => "done", null => "ended", { } code => $"exit {code}" })}")));

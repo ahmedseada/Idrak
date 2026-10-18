@@ -34,9 +34,10 @@ public sealed class EventLog
 
     private readonly Dictionary<(int Rank, long Step), double> _clocks;
 
-    private EventLog(byte[] bytes, int seed, int worldSize, string failures, IReadOnlyList<Fault> faults, IReadOnlyList<ClockRecord> clocks,
+    private EventLog(byte[] bytes, int seed, int worldSize, string failures, IReadOnlyList<Fault> faults, IReadOnlyList<Fault> live, IReadOnlyList<ClockRecord> clocks,
         IReadOnlyList<RankStateChanged> states, IReadOnlyList<TransferRecord> transfers, IReadOnlyList<double?> ends)
     {
+        LiveFaults = live;
         Bytes = bytes;
         Seed = seed;
         WorldSize = worldSize;
@@ -61,8 +62,14 @@ public sealed class EventLog
     /// <summary>The failure model's name.</summary>
     public string Failures { get; }
 
-    /// <summary>The faults drawn, in step order.</summary>
+    /// <summary>The faults drawn, in step order (the live ones among them).</summary>
     public IReadOnlyList<Fault> Faults { get; }
+
+    /// <summary>
+    /// The faults asked for while the run went (phase C9: <see cref="ClusterRunControl.Inject"/>, the "live" model), each at
+    /// the step it was applied at: what a replay of the steered run injects again (<see cref="ClusterReplay"/>).
+    /// </summary>
+    public IReadOnlyList<Fault> LiveFaults { get; }
 
     /// <summary>Each rank's clock as it began each step, rank by rank.</summary>
     public IReadOnlyList<ClockRecord> Clocks { get; }
@@ -132,11 +139,13 @@ public sealed class EventLog
         int seed = r.Int32(), world = r.Int32();
         string failures = r.Text();
         var faults = new List<Fault>();
+        var live = new List<Fault>();
         var faultBytes = new Reader(r.Take(checked((int)r.Int64())));
         while (!faultBytes.Done)
         {
             long step = faultBytes.Int64();
-            var kind = (FaultKind)faultBytes.Byte();
+            int kindByte = faultBytes.Byte();
+            var kind = (FaultKind)(kindByte & ~LiveMark);
             var duration = TimeSpan.FromTicks(faultBytes.Int64());
             double factor = faultBytes.Double();
             var ranks = new int[faultBytes.Int32()];
@@ -145,7 +154,12 @@ public sealed class EventLog
                 ranks[i] = faultBytes.Int32();
             }
 
-            faults.Add(new Fault(kind, step, ranks, duration, factor));
+            var fault = new Fault(kind, step, ranks, duration, factor);
+            faults.Add(fault);
+            if ((kindByte & LiveMark) != 0)
+            {
+                live.Add(fault);
+            }
         }
 
         var clocks = new List<ClockRecord>();
@@ -186,7 +200,7 @@ public sealed class EventLog
             throw new InvalidDataException("bytes follow the last rank's events.");
         }
 
-        return new EventLog(bytes.ToArray(), seed, world, failures, faults, clocks, states, transfers, ends);
+        return new EventLog(bytes.ToArray(), seed, world, failures, faults, live, clocks, states, transfers, ends);
     }
 
     internal const byte RecordClock = 1, RecordState = 2, RecordTransfer = 3, RecordEnd = 4;
@@ -253,6 +267,9 @@ public sealed class EventLog
 
         return output.ToArray();
     }
+
+    // The high bit of a fault's kind: the fault was asked for while the run went (a live fault, phase C9). Logs without it read as before.
+    internal const int LiveMark = 0x80;
 
     // Reads little-endian fields from the front of a span, refusing to read past its end.
     private ref struct Reader(ReadOnlySpan<byte> bytes)
@@ -329,13 +346,13 @@ internal sealed class EventLogWriter : IDisposable
 
     public bool LogsTransfers { get; }
 
-    public void Fault(Fault fault)
+    public void Fault(Fault fault, bool live = false)
     {
         lock (_faultGate)
         {
             var b = _faults.Take(8 + 1 + 8 + 8 + 4 + (4 * fault.Ranks.Count));
             BinaryPrimitives.WriteInt64LittleEndian(b, fault.Step);
-            b[8] = (byte)fault.Kind;
+            b[8] = (byte)((int)fault.Kind | (live ? EventLog.LiveMark : 0));
             BinaryPrimitives.WriteInt64LittleEndian(b[9..], fault.Duration.Ticks);
             BinaryPrimitives.WriteDoubleLittleEndian(b[17..], fault.Factor);
             BinaryPrimitives.WriteInt32LittleEndian(b[25..], fault.Ranks.Count);

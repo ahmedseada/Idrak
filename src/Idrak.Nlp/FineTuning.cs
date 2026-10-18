@@ -1430,14 +1430,23 @@ public static class FineTuner
         }
 
         // Sums the step's gradients across the ranks (nothing in one process) and gives the step's loss over every rank.
-        private (float Loss, long Tokens) Synced(float loss, long tokens, double trained)
+        private (float Loss, long Tokens) Synced(float loss, long tokens, double trained, string? lost = null)
         {
             if (sync is null)
             {
                 return (loss, tokens);
             }
 
-            var reduced = sync.Reduce(trained, loss, normalized: custom is not null && StepTotals is not null);
+            // A step with no backward pass here (no rows on this rank, a recorded step) still opens the overlap, so this rank
+            // sends its buckets and the header in the order the ranks that overlapped do (plan 23, C4; found in C9).
+            bool normalized = custom is not null && StepTotals is not null;
+            sync.Overlap(trained, normalized)?.Dispose();
+            if (lost is not null)
+            {
+                sync.OverlapLost(lost);
+            }
+
+            var reduced = sync.Reduce(trained, loss, normalized: normalized);
             return ((float)reduced.Loss, (long)reduced.Tokens);
         }
 
@@ -1730,8 +1739,8 @@ public static class FineTuner
                     model.Network.Train();
                     var (loss, tokens) = graph.Run(_train, batch);
                     trace?.Invoke($"{label(0)}: {batch.Describe(_train)}, replayed: loss {loss:F4}, {watch.Elapsed.TotalSeconds:F2} s");
-                    sync?.OverlapLost("a recorded step: the graph runs no hook, so its gradients are reduced after the replay");
-                    (loss, tokens) = Synced(loss, tokens, batch.Sequences.Sum(i => _train[i].TrainedTokens));
+                    (loss, tokens) = Synced(loss, tokens, batch.Sequences.Sum(i => _train[i].TrainedTokens),
+                        "a recorded step: the graph runs no hook, so its gradients are reduced after the replay");
                     Update(model, optimizer, options, loss);
                     return (loss, tokens);
                 }

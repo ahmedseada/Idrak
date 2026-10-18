@@ -67,7 +67,10 @@ public interface IGradientSync : IDisposable
     /// <see cref="ClusterOptions.BucketBytes"/> whose parameters are all finished is sent while the backward pass goes on;
     /// <see cref="Reduce"/> sends the rest and waits. The trainers put it around the step's last <c>Backward()</c> only (a
     /// gradient accumulated over several passes is finished in the last). The result equals the reduction after the
-    /// backward pass, bit for bit. Null (the default) when the synchronisation does not overlap.
+    /// backward pass, bit for bit. Null (the default) when the synchronisation does not overlap. A trainer that overlaps
+    /// opens it on every rank in every step it takes part in, a rank with no rows (no backward pass: open it and dispose it
+    /// at once) and a recorded step included, since the overlapped reduction sends its collectives in another order than
+    /// the reduction after the backward pass and every rank must send them alike.
     /// </summary>
     /// <param name="tokens">This rank's tokens in the step, as <see cref="Reduce"/> will be given them.</param>
     /// <param name="normalized">As <see cref="Reduce"/> will be given it.</param>

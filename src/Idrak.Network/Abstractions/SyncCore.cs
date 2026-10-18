@@ -108,6 +108,11 @@ internal abstract class SyncCore : IGradientSync
             // last step (SimulationOptions.ReplayStep, every rank alike) as ClusterRank.BeginStep has it.
             CurrentStep = step;
             _fixedPresent = Options.Simulation.ReplayStep is not { } last || step <= last;
+            if (_fixedPresent && Options.Simulation.Control is { } control)
+            {
+                Steer(control, step);                          // a launcher's pause, resume and stop (phase C9)
+            }
+
             Began(_fixedPresent);
             return _fixedPresent;
         }
@@ -127,6 +132,59 @@ internal abstract class SyncCore : IGradientSync
 
         Began(true);
         return true;
+    }
+
+    // A group of processes steered through a launcher's control file (plan 23, phase C9): rank 0 reads it as the step begins
+    // and broadcasts what it says, so every rank runs, waits or stops at this same step boundary. While paused rank 0 reads it
+    // again every ControlPoll and broadcasts again, so no rank's wait reaches the timeout; a stop throws on every rank alike
+    // (the trainer writes the last finished step's checkpoint first). One float a step travels, only when a control file is set.
+    private void Steer(string path, long step)
+    {
+        Span<float> said = stackalloc float[1];
+        bool paused = false;
+        while (true)
+        {
+            if (Collectives.Rank == 0)
+            {
+                said[0] = (float)ClusterControlFile.Read(path);
+            }
+
+            if (World > 1)
+            {
+                Values.Broadcast(said, 0);
+            }
+
+            switch ((ClusterControlCommand)(int)said[0])
+            {
+                case ClusterControlCommand.Run:
+                    if (paused && Collectives.Rank == 0)
+                    {
+                        ClusterControlFile.Report(path, "running", step);
+                    }
+
+                    return;
+                case ClusterControlCommand.Stop:
+                    if (Collectives.Rank == 0)
+                    {
+                        ClusterControlFile.Report(path, "stopped", step);
+                    }
+
+                    throw new ClusterRunStoppedException(step, $"the run was stopped before step {step} through its control file {path}");
+                default:
+                    if (Collectives.Rank == 0)
+                    {
+                        if (!paused)
+                        {
+                            ClusterControlFile.Report(path, "paused", step);
+                        }
+
+                        Thread.Sleep(Options.Simulation.ControlPoll);
+                    }
+
+                    paused = true;
+                    break;
+            }
+        }
     }
 
     /// <summary>A step began (<see cref="CurrentStep"/>), its group known: <paramref name="present"/> when this rank takes part.</summary>
