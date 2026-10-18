@@ -40,6 +40,7 @@ internal sealed class ClusterProbe : IProfileProbe
         private readonly SortedDictionary<(int From, int To), (long Count, long Bytes, double Seconds)> _links = [];
         private readonly SortedDictionary<int, (long Count, double Seconds, double Wall)> _ranks = [];
         private long _steps;
+        private bool _simulated;
 
         public TelemetryLevel Levels => TelemetryLevel.Network;
 
@@ -52,6 +53,7 @@ internal sealed class ClusterProbe : IProfileProbe
 
             lock (_gate)
             {
+                _simulated = true;
                 var (count, bytes, seconds) = _links.GetValueOrDefault((e.From, e.To));
                 _links[(e.From, e.To)] = (count + 1, bytes + e.Bytes, seconds + e.Simulated.TotalSeconds);
             }
@@ -59,13 +61,15 @@ internal sealed class ClusterProbe : IProfileProbe
 
         public void OnCollective(in CollectiveCompleted e)
         {
-            if (e.Simulated <= TimeSpan.Zero)
-            {
-                return;
-            }
-
             lock (_gate)
             {
+                // A collective of a simulated run, even one whose links cost less than the clock's smallest tick (a fast
+                // same-device link on a fast CPU reports 0): the sim transport's transfers say the run is simulated.
+                if (e.Simulated <= TimeSpan.Zero && !_simulated)
+                {
+                    return;
+                }
+
                 var (count, seconds, wall) = _ranks.GetValueOrDefault(e.Rank);
                 _ranks[e.Rank] = (count + 1, seconds + e.Simulated.TotalSeconds, wall + e.Wall.TotalSeconds);
             }
