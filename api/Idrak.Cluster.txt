@@ -67,6 +67,47 @@ public sealed record Idrak.Cluster.FailureSettings : System.IEquatable<Idrak.Clu
 public static class Idrak.Cluster.InProcessCluster
   public static Idrak.Cluster.ClusterRunResult Run(Idrak.Abstraction.Cluster.IClusterTopology topology, Idrak.Abstraction.Cluster.ClusterOptions? options, System.Action<Idrak.Cluster.ClusterRank> work)
 
+public static class Idrak.Cluster.LocalhostCluster
+  public static (string, System.Collections.Generic.IReadOnlyList<string>) ProgramOf(System.Reflection.Assembly assembly)
+  public static Idrak.Cluster.LocalhostRank Join(Idrak.Abstraction.Cluster.ClusterOptions? options = null)
+  public static Idrak.Cluster.LocalhostRunResult Run(string topologyPath, Idrak.Abstraction.Cluster.ClusterOptions? options, Idrak.Cluster.LocalhostLaunch launch, string? node = null, System.Action<Idrak.Cluster.LocalhostLine>? lines = null, System.Threading.CancellationToken cancellationToken = default)
+
+public sealed record Idrak.Cluster.LocalhostLaunch : System.IEquatable<Idrak.Cluster.LocalhostLaunch>
+  public LocalhostLaunch(string FileName, System.Collections.Generic.IReadOnlyList<string> Arguments)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Arguments { get; init; }
+  public System.TimeSpan? Limit { get; init; }
+  public int KeepLines { get; init; }
+  public string FileName { get; init; }
+  public string? WorkingDirectory { get; init; }
+
+public readonly record struct Idrak.Cluster.LocalhostLine : System.IEquatable<Idrak.Cluster.LocalhostLine>
+  public LocalhostLine(int Rank, string Text, bool IsError)
+  public bool IsError { get; init; }
+  public int Rank { get; init; }
+  public string Text { get; init; }
+
+public sealed class Idrak.Cluster.LocalhostRank : System.IDisposable
+  public Idrak.Abstraction.Cluster.TransportPlan Plan { get; }
+  public Idrak.Cluster.ClusterRank Rank { get; }
+  public void Dispose()
+
+public sealed record Idrak.Cluster.LocalhostRankResult : System.IEquatable<Idrak.Cluster.LocalhostRankResult>
+  public LocalhostRankResult(int Rank, string Device, int? ExitCode, System.Collections.Generic.IReadOnlyList<string> Output, System.Collections.Generic.IReadOnlyList<string> Errors)
+  public System.Collections.Generic.IReadOnlyList<string> Errors { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Output { get; init; }
+  public int Rank { get; init; }
+  public int? ExitCode { get; init; }
+  public string Device { get; init; }
+
+public sealed record Idrak.Cluster.LocalhostRunResult : System.IEquatable<Idrak.Cluster.LocalhostRunResult>
+  public LocalhostRunResult(System.Collections.Generic.IReadOnlyList<Idrak.Cluster.LocalhostRankResult> Ranks, System.TimeSpan Wall, string? Failure)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Cluster.LocalhostRankResult> Ranks { get; init; }
+  public System.TimeSpan Wall { get; init; }
+  public bool Succeeded { get; }
+  public string? Failure { get; init; }
+  public void ThrowIfFailed()
+
 public sealed record Idrak.Cluster.MachineDevice : System.IEquatable<Idrak.Cluster.MachineDevice>
   public Idrak.Abstraction.DeviceType Type { get; init; }
   public MachineDevice(string Device, Idrak.Abstraction.DeviceType Type, long? MemoryBytes, string Name, string? Card = null)

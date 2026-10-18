@@ -123,6 +123,7 @@ internal sealed class PretrainCommand : Command
 
     public override int Run(CommandContext context)
     {
+        using var cluster = ClusterSession.JoinStarted();                  // a rank process of idrak cluster start (phase C5)
         string modelFolder = context.Argument(0, "MODEL (a model folder; idrak create writes one)");
         string run = context.Option("--out") ?? NewRunFolder(context, Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(modelFolder))));
         if (SpeechPretraining.Holds(modelFolder))
@@ -159,6 +160,7 @@ internal sealed class PretrainCommand : Command
     /// <summary>Continues a pretraining run from its latest checkpoint (<c>idrak resume</c>).</summary>
     public static int Resume(CommandContext context, string run, JsonObject settings)
     {
+        using var cluster = ClusterSession.JoinStarted();                  // a rank process of idrak cluster start (phase C5)
         string checkpoint = Pretrainer.LatestCheckpoint(run)
             ?? throw new UsageException($"{run} has no checkpoint yet (the run stopped before its first was written); start it again with idrak pretrain.");
         var state = Pretrainer.ReadCheckpoint(checkpoint);
@@ -457,7 +459,16 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
     private readonly FileStream _stream = new(path, FileMode.Append, FileAccess.Write, FileShare.Read);
     private readonly object _gate = new();
 
-    public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches;
+    public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Network;
+
+    // Ranks that are processes of their own send rank 0 their step's network totals (phase C5): one line per rank and step.
+    public void OnCollective(in CollectiveCompleted e)
+    {
+        if (e.Operation == "step-summary")
+        {
+            Write(e);
+        }
+    }
 
     public void OnTrainingStarted(in TrainingStarted e) => Write(e);
 

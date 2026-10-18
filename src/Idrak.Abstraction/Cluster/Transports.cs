@@ -113,6 +113,13 @@ public interface ITransportProvider
 
     /// <summary>Connects <paramref name="context"/>'s rank to the group, waiting for the others up to the timeout.</summary>
     ITransport Connect(ClusterContext context, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The connection this transport's pairs ride on: transports of one carrier are connected once for a group that mixes
+    /// them (<see cref="TransportPlan.Connect"/>), so "direct-link" pairs and "tcp" pairs share one mesh of sockets. Its
+    /// own name unless it says otherwise.
+    /// </summary>
+    string Carrier => Name;
 }
 
 /// <summary>
