@@ -163,8 +163,43 @@ public sealed record ClusterOptions
     /// <summary>The bytes of a chunk in flight, or null: measured at first use and kept in the tuning cache (<c>IDRAK_CLUSTER_CHUNK_BYTES</c>).</summary>
     public long? ChunkBytes { get; init; }
 
-    /// <summary>Chunks in flight each way (<c>IDRAK_CLUSTER_IN_FLIGHT</c>).</summary>
+    /// <summary>
+    /// Chunks in flight each way: a sender has at most this many messages to one peer under one tag that the peer has not
+    /// taken yet (the simulator's pipes, and since phase C6 the real transports' receive queues), so a fast sender cannot
+    /// fill a slow receiver's memory (<c>IDRAK_CLUSTER_IN_FLIGHT</c>).
+    /// </summary>
     public int InFlight { get; init; } = 2;
+
+    /// <summary>
+    /// The most bytes a rank holds received from one peer under one tag and not yet taken; the sender waits beyond it. A
+    /// message larger still travels alone (one is always let go when none is outstanding), so ranks that all send before
+    /// they receive never wait on each other. Null: <see cref="InFlight"/> messages alone bound it (<c>IDRAK_CLUSTER_RECEIVE_BYTES</c>).
+    /// </summary>
+    public long? ReceiveBytes { get; init; }
+
+    /// <summary>
+    /// Whether a gradient bucket finished during the backward pass is copied to the host in the background (the device's
+    /// pinned staging slots, queued behind the backward pass's work) and waited for by the thread that reduces it, so the
+    /// training thread never waits for the device; 0 copies it on the training thread. The values are the same either way
+    /// (<c>IDRAK_CLUSTER_ASYNC_STAGING</c>: 1 or 0).
+    /// </summary>
+    public bool AsyncStaging { get; init; } = true;
+
+    /// <summary>
+    /// Whether collectives over a transport that moves device memory itself ("pcie-host", "nvlink" in one process) keep each
+    /// chunk on the device and sum it there with the device's kernels, instead of staging it through host memory; the sums
+    /// are the same bit for bit. Elsewhere chunks are staged through the host, and the telemetry says which
+    /// (<c>IDRAK_CLUSTER_DEVICE_COLLECTIVES</c>: 1 or 0).
+    /// </summary>
+    public bool DeviceCollectives { get; init; } = true;
+
+    /// <summary>
+    /// With <see cref="Shard"/> = parameters: the most bytes of weights one layer gathered whole holds; a module whose
+    /// parameters fit is gathered just before its forward (and its backward) and freed after, a larger one is entered
+    /// through its children. Null: each rank's share of the trained parameters (their bytes over the world size), so a
+    /// gathered layer costs at most one share (<c>IDRAK_CLUSTER_GATHER_BYTES</c>).
+    /// </summary>
+    public long? GatherBytes { get; init; }
 
     /// <summary>The socket buffers' bytes, or null for the system's (<c>IDRAK_CLUSTER_SOCKET_BUFFER</c>).</summary>
     public long? SocketBufferBytes { get; init; }
@@ -241,13 +276,21 @@ public sealed record ClusterOptions
     /// </summary>
     public string? GradientSync { get; init; }
 
-    /// <summary>The synchronisation a run uses: <see cref="GradientSync"/>, or the one <see cref="LocalSgdEvery"/> implies.</summary>
-    public string GradientSyncName => GradientSync ?? (LocalSgdEvery > 0 ? "local-sgd" : "all-reduce");
+    /// <summary>
+    /// The synchronisation a run uses: <see cref="GradientSync"/>, or the one the other settings imply: "local-sgd" when
+    /// <see cref="LocalSgdEvery"/> is set, "sharded" when <see cref="Shard"/> is, else "all-reduce".
+    /// </summary>
+    public string GradientSyncName => GradientSync ?? (LocalSgdEvery > 0 ? "local-sgd" : Shard != ShardMode.None ? "sharded" : "all-reduce");
 
     /// <summary>How every rank starts from the same values: rank 0's sent to all, or every rank's hash checked (<c>IDRAK_CLUSTER_START</c>: broadcast or check).</summary>
     public StartingState StartingState { get; init; } = StartingState.Broadcast;
 
-    /// <summary>The state split across ranks (<c>IDRAK_CLUSTER_SHARD</c>: none, optimizer, gradients or parameters).</summary>
+    /// <summary>
+    /// The state split across ranks, ZeRO-style (<c>IDRAK_CLUSTER_SHARD</c>: none, optimizer, gradients or parameters): each
+    /// rank owns the trained parameters of its share and keeps their optimizer state (optimizer), drops the other
+    /// parameters' gradients as soon as they are reduced (gradients), and holds only its share's weights, gathering a
+    /// layer's just before its forward and backward (parameters). Set, it picks the "sharded" synchronisation.
+    /// </summary>
     public ShardMode Shard { get; init; } = ShardMode.None;
 
     /// <summary>How the model is placed: "single" (all of it on every rank) or "pipeline" (<c>IDRAK_CLUSTER_PLACEMENT</c>).</summary>
@@ -299,6 +342,19 @@ public sealed record ClusterOptions
     /// <summary>The folder the shared-memory rings are mapped from, or null: the system's temporary folder (<c>IDRAK_CLUSTER_SHM_FOLDER</c>).</summary>
     public string? SharedMemoryFolder { get; init; }
 
+    /// <summary>
+    /// How long a shared-memory reader with nothing to read (or a writer facing a full ring) spins before it blocks on its
+    /// doorbell, which the other side rings; null: what one wake through the doorbell costs on this machine, measured once
+    /// per process (spinning longer buys nothing a wake would not give) (<c>IDRAK_CLUSTER_SHM_SPIN</c>, seconds).
+    /// </summary>
+    public TimeSpan? SharedMemorySpin { get; init; }
+
+    /// <summary>
+    /// How often an idle shared-memory reader checks that the processes writing to it are still there (a rank that died
+    /// without a goodbye is named within this), and the longest one wait on a doorbell lasts (<c>IDRAK_CLUSTER_SHM_CHECK</c>, seconds).
+    /// </summary>
+    public TimeSpan SharedMemoryCheck { get; init; } = TimeSpan.FromSeconds(1);
+
     /// <summary>The simulation's settings.</summary>
     public SimulationOptions Simulation { get; init; } = new();
 
@@ -317,14 +373,16 @@ public sealed record ClusterOptions
     [
         "IDRAK_CLUSTER_TOPOLOGY", "IDRAK_CLUSTER_NODE", "IDRAK_RANK", "IDRAK_WORLD_SIZE", "IDRAK_COORDINATOR", "IDRAK_CLUSTER_TRANSPORT",
         "IDRAK_CLUSTER_SELECTOR", "IDRAK_CLUSTER_COLLECTIVE", "IDRAK_CLUSTER_KEY", "IDRAK_CLUSTER_PORT", "IDRAK_CLUSTER_TIMEOUT",
-        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_SOCKET_BUFFER",
+        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_RECEIVE_BYTES", "IDRAK_CLUSTER_SOCKET_BUFFER",
         "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_MESSAGE_COST", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
-        "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_PLACEMENT",
+        "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
+        "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_LOG_TRANSFERS",
         "IDRAK_CLUSTER_DEVICE", "IDRAK_CLUSTER_RUN", "IDRAK_CLUSTER_PARENT", "IDRAK_CLUSTER_RETRY_DELAY", "IDRAK_CLUSTER_SHM_BYTES", "IDRAK_CLUSTER_SHM_FOLDER",
+        "IDRAK_CLUSTER_SHM_SPIN", "IDRAK_CLUSTER_SHM_CHECK",
     ];
 
     /// <summary>
@@ -356,6 +414,7 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_RETRIES") is { } retries) o = o with { Retries = Whole("IDRAK_CLUSTER_RETRIES", retries, 1) };
         if (Read(variable, "IDRAK_CLUSTER_CHUNK_BYTES") is { } chunk) o = o with { ChunkBytes = Size("IDRAK_CLUSTER_CHUNK_BYTES", chunk) };
         if (Read(variable, "IDRAK_CLUSTER_IN_FLIGHT") is { } inFlight) o = o with { InFlight = Whole("IDRAK_CLUSTER_IN_FLIGHT", inFlight, 1) };
+        if (Read(variable, "IDRAK_CLUSTER_RECEIVE_BYTES") is { } receive) o = o with { ReceiveBytes = Size("IDRAK_CLUSTER_RECEIVE_BYTES", receive) };
         if (Read(variable, "IDRAK_CLUSTER_SOCKET_BUFFER") is { } socket) o = o with { SocketBufferBytes = Size("IDRAK_CLUSTER_SOCKET_BUFFER", socket) };
         if (Read(variable, "IDRAK_CLUSTER_BUCKET_BYTES") is { } bucket) o = o with { BucketBytes = Size("IDRAK_CLUSTER_BUCKET_BYTES", bucket) };
         if (Read(variable, "IDRAK_CLUSTER_OVERLAP") is { } overlap) o = o with { Overlap = Flag("IDRAK_CLUSTER_OVERLAP", overlap) };
@@ -384,6 +443,9 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_GRADIENT_SYNC") is { } gradientSync) o = o with { GradientSync = gradientSync };
         if (Read(variable, "IDRAK_CLUSTER_START") is { } start) o = o with { StartingState = Choice<StartingState>("IDRAK_CLUSTER_START", start, "broadcast or check") };
         if (Read(variable, "IDRAK_CLUSTER_SHARD") is { } shard) o = o with { Shard = Choice<ShardMode>("IDRAK_CLUSTER_SHARD", shard, "none, optimizer, gradients or parameters") };
+        if (Read(variable, "IDRAK_CLUSTER_GATHER_BYTES") is { } gather) o = o with { GatherBytes = Size("IDRAK_CLUSTER_GATHER_BYTES", gather) };
+        if (Read(variable, "IDRAK_CLUSTER_ASYNC_STAGING") is { } staging) o = o with { AsyncStaging = Flag("IDRAK_CLUSTER_ASYNC_STAGING", staging) };
+        if (Read(variable, "IDRAK_CLUSTER_DEVICE_COLLECTIVES") is { } deviceCollectives) o = o with { DeviceCollectives = Flag("IDRAK_CLUSTER_DEVICE_COLLECTIVES", deviceCollectives) };
         if (Read(variable, "IDRAK_CLUSTER_PLACEMENT") is { } placement) o = o with { Placement = placement };
         if (Read(variable, "IDRAK_CLUSTER_MICROBATCHES") is { } micro) o = o with { MicroBatches = Whole("IDRAK_CLUSTER_MICROBATCHES", micro, 1) };
         if (Read(variable, "IDRAK_CLUSTER_SCHEDULE") is { } schedule) o = o with { Schedule = schedule };
@@ -396,6 +458,8 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_RETRY_DELAY") is { } delay) o = o with { RetryDelay = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_RETRY_DELAY", delay, "a number of seconds, 0 or more", v => v >= 0)) };
         if (Read(variable, "IDRAK_CLUSTER_SHM_BYTES") is { } shm) o = o with { SharedMemoryBytes = Size("IDRAK_CLUSTER_SHM_BYTES", shm) };
         if (Read(variable, "IDRAK_CLUSTER_SHM_FOLDER") is { } shmFolder) o = o with { SharedMemoryFolder = shmFolder };
+        if (Read(variable, "IDRAK_CLUSTER_SHM_SPIN") is { } shmSpin) o = o with { SharedMemorySpin = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_SHM_SPIN", shmSpin, "a number of seconds, 0 or more", v => v >= 0)) };
+        if (Read(variable, "IDRAK_CLUSTER_SHM_CHECK") is { } shmCheck) o = o with { SharedMemoryCheck = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_SHM_CHECK", shmCheck, "a number of seconds above 0", v => v > 0)) };
         if (Read(variable, "IDRAK_CLUSTER_SEED") is { } seed) s = s with { Seed = int.TryParse(seed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v : throw Bad("IDRAK_CLUSTER_SEED", seed, "a whole number") };
         if (Read(variable, "IDRAK_CLUSTER_MODE") is { } mode) s = s with { Mode = Choice<SimulationMode>("IDRAK_CLUSTER_MODE", mode, "in-process or localhost") };
         if (Read(variable, "IDRAK_CLUSTER_THROTTLE") is { } throttle) s = s with { Throttle = Flag("IDRAK_CLUSTER_THROTTLE", throttle) };

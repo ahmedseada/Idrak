@@ -1942,6 +1942,7 @@ public sealed class Idrak.Optimizers.GroupedOptimizer : Idrak.Abstraction.Traini
   public GroupedOptimizer(params Idrak.Abstraction.Training.Optimizer[] groups)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Training.Optimizer> Groups { get; }
   public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
+  public override int? StateParameter(string name)
   public override void Dispose()
   public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()

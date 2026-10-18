@@ -37,6 +37,11 @@ internal sealed class LocalSgd : SyncCore
     public LocalSgd(ICollectives collectives, Optimizer optimizer, ClusterOptions options)
         : base(collectives, optimizer, options)
     {
+        if (options.Shard != ShardMode.None)
+        {
+            throw new ArgumentException("Local SGD steps every rank's whole weights; it does not shard (unset IDRAK_CLUSTER_SHARD, or IDRAK_CLUSTER_LOCAL_SGD).", nameof(options));
+        }
+
         _every = Math.Max(1, options.LocalSgdEvery);
         long total = Parameters.Sum(p => (long)p.Size);
         _layout = new BucketLayout(Parameters, (int)Math.Clamp((options.BucketBytes ?? total * sizeof(float)) / sizeof(float), 1, Array.MaxLength / 2));

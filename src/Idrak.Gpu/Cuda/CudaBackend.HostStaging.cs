@@ -46,12 +46,22 @@ internal sealed unsafe partial class CudaBackend
 
         public Span<float> Slot(int slot) => new((void*)_buffers[slot], SlotFloats);
 
-        public void Download(Storage source, int offset, int slot, int floats)
+        public void Download(Storage source, int offset, int slot, int floats) => Download(source, offset, slot, 0, floats);
+
+        // Any place in the slot: a gradient bucket's pieces queued into one slot (plan 23, phase C6).
+        public bool PlacesCopies => true;
+
+        public void Download(Storage source, int offset, int slot, int slotOffset, int floats)
         {
+            if ((uint)slotOffset > (uint)SlotFloats || floats > SlotFloats - slotOffset)
+            {
+                throw new ArgumentOutOfRangeException(nameof(slotOffset), slotOffset, $"{floats} floats at {slotOffset} do not fit a slot of {SlotFloats}");
+            }
+
             using var operation = _backend.EnterOperation();                   // addresses read until the copy is queued (GuardMoves)
             _backend.MakeCurrent();
             using var use = _backend.UseStream();
-            Check(cuMemcpyDtoHAsync((void*)_buffers[slot], P(source) + (ulong)offset * sizeof(float), (nuint)floats * sizeof(float), _backend._stream),
+            Check(cuMemcpyDtoHAsync((float*)_buffers[slot] + slotOffset, P(source) + (ulong)offset * sizeof(float), (nuint)floats * sizeof(float), _backend._stream),
                 nameof(cuMemcpyDtoHAsync));
             Record(slot);
         }
@@ -76,6 +86,7 @@ internal sealed unsafe partial class CudaBackend
         {
             if (_pending[slot])
             {
+                _backend.MakeCurrent();                                         // a waiting thread of its own (the overlap worker) has no context yet
                 Check(cuEventSynchronize(_events[slot]), nameof(cuEventSynchronize));
                 _pending[slot] = false;
             }

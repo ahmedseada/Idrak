@@ -100,10 +100,15 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
 /// ends with identical bytes and a rerun gives them again; it differs from naive's rank order, so the two agree within
 /// float rounding. On a bfloat16 wire the partial sums travel as bfloat16 (rounded once a hop), the finished slices as
 /// float32. Each step sends and receives chunk by chunk in turn, so no rank waits on another in a circle.
+/// <para>
+/// Phase C6: over a transport that moves device memory (<see cref="HostCollectives.DeviceTransport"/>), a float32 sum,
+/// all-gather, reduce-scatter and broadcast keep their pieces on the device and add them there, the same sums in the same
+/// order (bit for bit the host path's); the pieces of a sharded run's buckets (each rank's own count) go round the same ring.
+/// </para>
 /// </summary>
 internal sealed class RingCollectives(ITransport transport, Device device, ClusterContext context) : HostCollectives(transport, device, context)
 {
-    private const int ScatterTag = -11, GatherTag = -12, BroadcastTag = -13;
+    private const int ScatterTag = -11, GatherTag = -12, BroadcastTag = -13, DeviceTag = -14;
 
     private readonly int[] _ring = [.. Enumerable.Range(0, transport.WorldSize)];   // every rank, in rank order
 
@@ -127,6 +132,48 @@ internal sealed class RingCollectives(ITransport transport, Device device, Clust
 
     protected override void ReduceScatterHost(Span<float> values, int count, ReduceOp op) =>
         RingScatter(values, _ring, Rank, s => s * count, _ => count, op, WireType.Float32, ScatterTag);
+
+    // Pieces of each rank's own size (a sharded bucket): the same ring, each piece ending at its rank.
+    protected override void ReduceScatterPiecesHost(Span<float> values, int[] counts, ReduceOp op, WireType wire)
+    {
+        var starts = Starts(counts);
+        RingScatter(values, _ring, Rank, s => starts[s], s => counts[s], op, wire, ScatterTag);
+    }
+
+    protected override void AllGatherPiecesHost(Span<float> values, int[] counts)
+    {
+        var starts = Starts(counts);
+        RingGather(values, _ring, Rank, s => starts[s], s => counts[s], GatherTag);
+    }
+
+    protected override bool AllReduceDevice(Storage buffer, int count)
+    {
+        int world = WorldSize, slice = count / world, extra = count % world;
+        int Offset(int s) => (s * slice) + Math.Min(s, extra);
+        int Size(int s) => slice + (s < extra ? 1 : 0);
+        DeviceRingScatter(buffer, _ring, Rank, Offset, Size, buffer, Offset(Rank), DeviceTag);
+        DeviceRingGather(buffer, _ring, Rank, Offset, Size, DeviceTag);
+        return true;
+    }
+
+    protected override bool AllGatherDevice(Storage input, int count, Storage output)
+    {
+        Device.Backend.Copy2D(input, 0, 0, output, Rank * count, 0, 1, count, accumulate: false);
+        DeviceRingGather(output, _ring, Rank, s => s * count, _ => count, DeviceTag);
+        return true;
+    }
+
+    protected override bool ReduceScatterDevice(Storage input, int count, Storage output)
+    {
+        DeviceRingScatter(input, _ring, Rank, s => s * count, _ => count, output, 0, DeviceTag);
+        return true;
+    }
+
+    protected override bool BroadcastDevice(Storage buffer, int count, int root)
+    {
+        DeviceChainBroadcast(buffer, count, root, DeviceTag);
+        return true;
+    }
 
     protected override void BroadcastHost(Span<float> values, int root)
     {

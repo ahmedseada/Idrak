@@ -15,7 +15,11 @@ internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 
     public string Summary => "every step's gradients summed across the ranks, token-weighted, a bucket at a time, each sent while the backward pass goes on";
 
-    public IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => new GradientReduction(collectives, optimizer, options);
+    public IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options) =>
+        options.Shard == ShardMode.None
+            ? new GradientReduction(collectives, optimizer, options)
+            : throw new ArgumentException($"all-reduce keeps every rank's state whole; IDRAK_CLUSTER_SHARD={options.Shard.ToString().ToLowerInvariant()} needs the sharded "
+                                          + "synchronisation (leave IDRAK_CLUSTER_GRADIENT_SYNC unset, or name sharded).", nameof(options));
 }
 
 /// <summary>
@@ -44,9 +48,22 @@ internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 /// the backward pass, the network time and the part of it the step waited for after the backward pass, and why overlap
 /// was lost (a recorded step replayed as a graph runs no hook).
 /// </para>
+/// <para>
+/// Phase C6: on a device with pinned staging slots (<see cref="Backend.CreateHostStaging"/>) a bucket finished during the
+/// backward pass is queued to the host behind the backward pass's work and the reducing thread waits for it, so the
+/// training thread never waits for the device (<see cref="ClusterOptions.AsyncStaging"/>); the values are the ones the
+/// synchronous copy gives. A sharded run (the "sharded" synchronisation, <c>Sharding.cs</c>) uses the same buckets, each
+/// grouped by owner and reduce-scattered, and updates itself (<see cref="Update"/>).
+/// </para>
 /// </summary>
-internal sealed class GradientReduction : SyncCore
+internal sealed partial class GradientReduction : SyncCore
 {
+    /// <summary>
+    /// Makes a device's pinned staging slots (the backend's own; a test puts in a staging of its own to check the
+    /// background path without a GPU).
+    /// </summary>
+    internal static Func<Backend, int, int, IHostStaging?> CreateStaging = static (backend, slots, floats) => backend.CreateHostStaging(slots, floats);
+
     // The per-message cost measured on the simulator, per collective, world size and device kind, kept for the process.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float> MessageCosts = new(StringComparer.Ordinal);
 
@@ -78,21 +95,55 @@ internal sealed class GradientReduction : SyncCore
     private IDisposable? _hook;
     private string? _lost;
 
-    public GradientReduction(ICollectives collectives, Optimizer optimizer, ClusterOptions options)
+    // Background staging of finished buckets (phase C6): pinned slots, which slot each launched bucket's copy went to, and
+    // the pieces of it that had no gradient (zeros, written on the host).
+    private IHostStaging? _staging;
+    private bool _stagingTried;
+    private int _stagingSlots;
+    private int[] _slotOf = [];
+    private readonly Stack<int> _freeSlots = new();
+    private readonly object _slotGate = new();
+    private List<(int At, int Count)>?[] _zeros = [];
+    private long _launchTicks, _stagingWaitTicks;
+
+    public GradientReduction(ICollectives collectives, Optimizer optimizer, ClusterOptions options, bool sharded = false)
         : base(collectives, optimizer, options)
     {
-        _compressor = GradientCompressions.Create(collectives, Parameters, options);
         _present = new bool[Parameters.Count];
         for (int i = 0; i < Parameters.Count; i++)
         {
             _index.TryAdd(Parameters[i], i);
         }
 
+        _mode = sharded ? (options.Shard == ShardMode.None ? ShardMode.Optimizer : options.Shard) : ShardMode.None;
+        if (_mode != ShardMode.None)
+        {
+            _wire = CheckSharded(options);
+            _compressor = new DenseCompressor("none", collectives, _wire);   // the changed buckets' path only; the rest reduce-scatters
+            _had = new bool[Parameters.Count];
+            _hadKnown = new bool[Parameters.Count];
+            _gatheredParts = new int[Parameters.Count];
+            _released = new bool[Parameters.Count];
+        }
+        else
+        {
+            _compressor = GradientCompressions.Create(collectives, Parameters, options);
+        }
+
         _sized = options.BucketBytes is not null;
-        _layout = new BucketLayout(Parameters, ValuesOf(options.BucketBytes ?? BucketSizing.ProbeBytes));
+        _layout = NewLayout(ValuesOf(options.BucketBytes ?? BucketSizing.ProbeBytes));
     }
 
-    public override string Name => "all-reduce";
+    public override string Name => _mode == ShardMode.None ? "all-reduce" : "sharded";
+
+    /// <summary>The training thread's time queuing finished buckets during the backward pass (gathering or staging them).</summary>
+    internal TimeSpan LaunchTime => TimeSpan.FromSeconds(_launchTicks / (double)Stopwatch.Frequency);
+
+    /// <summary>The reducing thread's time waiting for staged buckets' copies (time a copy on the training thread would have held it).</summary>
+    internal TimeSpan StagingWait => TimeSpan.FromSeconds(Interlocked.Read(ref _stagingWaitTicks) / (double)Stopwatch.Frequency);
+
+    /// <summary>Whether finished buckets are copied to the host in the background.</summary>
+    internal bool Staged => _staging is not null;
 
     /// <summary>The bucket layout in use (its size measured on the first step when unset).</summary>
     internal BucketLayout Layout => _layout;
@@ -107,6 +158,7 @@ internal sealed class GradientReduction : SyncCore
         }
 
         EndOverlap();                                          // a step that never reached Reduce (it threw) leaves nothing behind
+        EnsurePartitioned();                                   // a sharded run's owners before its buckets are laid out
         _backwardStart = Stopwatch.GetTimestamp();
         (_tokens, _normalized) = (tokens, normalized);
         _lost = !Options.Overlap ? "overlap is off (IDRAK_CLUSTER_OVERLAP=0)"
@@ -144,8 +196,53 @@ internal sealed class GradientReduction : SyncCore
 
         _weight = Weight(tokens, normalized);
         (_next, _overlapped, _overlapping) = (0, 0, true);
+        PrepareStaging(buckets);
+        ResetShardStep();
         _hook = Autograd.OnGradientReady(Finished);
         return new OverlapScope(this);
+    }
+
+    // Pinned slots for the buckets the backward pass finishes (a device that has them, background staging on), made once
+    // for the bucket size and kept (rule 77); every slot free at the start of a step.
+    private void PrepareStaging(int buckets)
+    {
+        if (_slotOf.Length != buckets)
+        {
+            (_slotOf, _zeros) = (new int[buckets], new List<(int, int)>?[buckets]);
+        }
+
+        Array.Fill(_slotOf, -1);
+        if (_staging is { } current && (current.SlotFloats < _layout.BucketValues || _stagingSlots < buckets))
+        {
+            current.Dispose();
+            (_staging, _stagingTried) = (null, false);             // the buckets changed (measured): slots of the new layout
+        }
+
+        if (_staging is null && !_stagingTried && Options.AsyncStaging && HostGradients is null)
+        {
+            // A slot per bucket (pinned host memory the size of the gradients, as the held buffer is), so the training
+            // thread never waits for one while the buckets before are still on the network.
+            _stagingTried = true;
+            _stagingSlots = buckets;
+            var staging = CreateStaging(Collectives.Device.Backend, buckets, _layout.BucketValues);
+            if (staging is { PlacesCopies: true })
+            {
+                _staging = staging;
+            }
+            else
+            {
+                staging?.Dispose();                                // a slot per piece would be needed: the training thread copies
+            }
+        }
+
+        lock (_slotGate)
+        {
+            _freeSlots.Clear();
+            for (int slot = (_staging is null ? 0 : _stagingSlots) - 1; slot >= 0; slot--)
+            {
+                _freeSlots.Push(slot);
+            }
+        }
     }
 
     public override void OverlapLost(string reason) => _lost = reason;
@@ -164,6 +261,12 @@ internal sealed class GradientReduction : SyncCore
         if (!Present)
         {
             throw new InvalidOperationException($"This rank sits out step {CurrentStep} (IGradientSync.BeginStep returned false): it reduces nothing that step.");
+        }
+
+        EnsurePartitioned();
+        if (!_overlapping)
+        {
+            ResetShardStep();
         }
 
         HostGradients?.DownloadGradients();
@@ -193,6 +296,7 @@ internal sealed class GradientReduction : SyncCore
             EndOverlap();
         }
 
+        AfterShardedReduce();
         var network = TimeSpan.Zero;
         bool onClock = Values.SimulatedTime > TimeSpan.Zero;
         double end = 0;
@@ -222,9 +326,12 @@ internal sealed class GradientReduction : SyncCore
         EndOverlap();
         _worker?.Dispose();
         _worker = null;
+        _staging?.Dispose();
+        _staging = null;
         _scratch?.Dispose();
         _scratch = null;
         _compressor.Dispose();
+        DisposeShards();
         base.Dispose();
     }
 
@@ -238,9 +345,12 @@ internal sealed class GradientReduction : SyncCore
         int values = (int)Join(state[1], state[2]);
         if (values != _layout.BucketValues)
         {
-            _layout = new BucketLayout(Parameters, values);
+            _layout = NewLayout(values);
         }
     }
+
+    // A layout of `values` a bucket: grouped by owner in a sharded run that has its owners.
+    private BucketLayout NewLayout(int values) => new(Parameters, values, _owners, _owners is null ? 1 : World);
 
     private static int ValuesOf(long bytes) => (int)Math.Clamp(bytes / sizeof(float), 1, Array.MaxLength / 2);
 
@@ -271,10 +381,11 @@ internal sealed class GradientReduction : SyncCore
             {
                 var bucket = buffer.AsSpan(0, _layout.Size(b));
                 Gather(b, bucket);
+                Gathered(b);
                 var mark = Mark();
-                _compressor.Reduce(bucket, weight, _layout.Pieces(b));
+                ReduceBucket(b, bucket, weight);
                 Sent(backward, mark);
-                DenseCompressor.Scale(bucket, divide);
+                Divide(b, bucket, divide);
                 Scatter(b, bucket);
             }
 
@@ -303,8 +414,9 @@ internal sealed class GradientReduction : SyncCore
         {
             var bucket = held.AsSpan(_layout.Start(b), _layout.Size(b));
             Gather(b, bucket);
+            Gathered(b);
             var mark = Mark();
-            _compressor.Reduce(bucket, _weight, _layout.Pieces(b));
+            ReduceBucket(b, bucket, _weight);
             Sent(backward, mark);
         }
 
@@ -319,12 +431,21 @@ internal sealed class GradientReduction : SyncCore
             if (head[HeaderFloats + Parameters.Count + b] > 0f)
             {
                 // A gradient changed after its bucket went: the bucket again, whole and uncompressed, on every rank.
+                CheckNotReleased(b);
                 var bucket = held.AsSpan(_layout.Start(b), _layout.Size(b));
                 Gather(b, bucket);
                 _compressor.Forget(_layout.Pieces(b));
                 DenseCompressor.Scale(bucket, _weight);
                 var mark = Mark();
-                Values.AllReduce(bucket, WireType.Float32);
+                if (_layout.Sharded)
+                {
+                    Values.ReduceScatter(bucket, _layout.Counts(b), WireType.Float32);
+                }
+                else
+                {
+                    Values.AllReduce(bucket, WireType.Float32);
+                }
+
                 Sent(backward, mark);
             }
         }
@@ -338,7 +459,7 @@ internal sealed class GradientReduction : SyncCore
         for (int b = 0; b < _layout.Count; b++)
         {
             var bucket = held.AsSpan(_layout.Start(b), _layout.Size(b));
-            DenseCompressor.Scale(bucket, divide);
+            Divide(b, bucket, divide);
             Scatter(b, bucket);
         }
 
@@ -375,6 +496,11 @@ internal sealed class GradientReduction : SyncCore
             return;
         }
 
+        if (_layout.Sharded && _released[p])
+        {
+            _releasedThenChanged ??= p;                            // its gradient was dropped when its bucket went (named at Reduce)
+        }
+
         _ready[p] = true;
         foreach (int b in buckets)
         {
@@ -389,21 +515,111 @@ internal sealed class GradientReduction : SyncCore
 
     private void Launch(int bucket)
     {
-        Gather(bucket, _held!.AsSpan(_layout.Start(bucket), _layout.Size(bucket)));
+        long start = Stopwatch.GetTimestamp();
+        if (_staging is not null)
+        {
+            Stage(bucket);                                         // queued behind the backward pass; the worker waits for it
+        }
+        else
+        {
+            Gather(bucket, _held!.AsSpan(_layout.Start(bucket), _layout.Size(bucket)));
+        }
+
+        Gathered(bucket);
         _took[bucket] = (BucketSizing.Seconds(_backwardStart), TimeSpan.Zero, TimeSpan.Zero);
         _launched[bucket] = true;
         _overlapped++;
         _worker ??= new OverlapWorker(ReduceQueued, $"rank {Collectives.Rank} gradient buckets");
         _worker.Queue(bucket);
+        _launchTicks += Stopwatch.GetTimestamp() - start;
     }
 
-    // The worker's part: one bucket through the compression, timed.
+    // A finished bucket's copy to a pinned slot, queued on the device behind the work that wrote its gradients; the pieces
+    // without a gradient are noted, to be zeros on the host. Waits for a free slot only when every slot is in flight.
+    private void Stage(int bucket)
+    {
+        int slot;
+        lock (_slotGate)
+        {
+            while (_freeSlots.Count == 0)
+            {
+                Monitor.Wait(_slotGate);
+            }
+
+            slot = _freeSlots.Pop();
+        }
+
+        var zeros = _zeros[bucket] ??= [];
+        zeros.Clear();
+        foreach (var (parameter, offset, n, at) in _layout.Pieces(bucket))
+        {
+            if (!HasGradient(parameter))
+            {
+                zeros.Add((at, n));
+                continue;
+            }
+
+            _staging!.Download(Parameters[parameter].Grad!.Storage, offset, slot, at, n);
+        }
+
+        _slotOf[bucket] = slot;
+    }
+
+    // The worker's part: a staged bucket's copy waited for and taken from its slot, then the bucket through the
+    // compression (or its reduce-scatter), timed.
     private void ReduceQueued(int bucket)
     {
+        var values = _held!.AsSpan(_layout.Start(bucket), _layout.Size(bucket));
+        if (_slotOf[bucket] is var slot and >= 0)
+        {
+            long waited = Stopwatch.GetTimestamp();
+            _staging!.Wait(slot);
+            Interlocked.Add(ref _stagingWaitTicks, Stopwatch.GetTimestamp() - waited);
+            _staging.Slot(slot)[..values.Length].CopyTo(values);
+            foreach (var (at, n) in _zeros[bucket]!)
+            {
+                values.Slice(at, n).Clear();
+            }
+
+            _slotOf[bucket] = -1;
+            lock (_slotGate)
+            {
+                _freeSlots.Push(slot);
+                Monitor.PulseAll(_slotGate);
+            }
+        }
+
         var simulated = Values.SimulatedTime;
         long wall = Stopwatch.GetTimestamp();
-        _compressor.Reduce(_held!.AsSpan(_layout.Start(bucket), _layout.Size(bucket)), _weight, _layout.Pieces(bucket));
+        ReduceBucket(bucket, values, _weight);
         _took[bucket] = (_took[bucket].ReadyAt, Values.SimulatedTime - simulated, Stopwatch.GetElapsedTime(wall));
+    }
+
+    // One bucket summed across the ranks: through the run's compression, or (sharded) weighted and reduce-scattered, each
+    // rank's piece of it its own parameters' values.
+    private void ReduceBucket(int bucket, Span<float> values, float weight)
+    {
+        if (!_layout.Sharded)
+        {
+            _compressor.Reduce(values, weight, _layout.Pieces(bucket));
+            return;
+        }
+
+        DenseCompressor.Scale(values, weight);
+        Values.ReduceScatter(values, _layout.Counts(bucket), _wire);
+    }
+
+    // values /= the step's tokens: the whole bucket, or (sharded) this rank's piece, the only one it writes back.
+    private void Divide(int bucket, Span<float> values, float divide)
+    {
+        if (_layout.Sharded)
+        {
+            var (start, count) = _layout.Piece(bucket, Collectives.Rank);
+            DenseCompressor.Scale(values.Slice(start, count), divide);
+            return;
+        }
+
+        DenseCompressor.Scale(values, divide);
     }
 
     private void EndOverlap()
@@ -465,7 +681,7 @@ internal sealed class GradientReduction : SyncCore
         _sized = true;
         if (values != _layout.BucketValues)
         {
-            _layout = new BucketLayout(Parameters, values);
+            _layout = NewLayout(values);
         }
     }
 
@@ -476,7 +692,7 @@ internal sealed class GradientReduction : SyncCore
         head[1] = own ? (float)(normalized ? loss : loss * tokens) : 0f;
         for (int i = 0; i < Parameters.Count; i++)
         {
-            head[HeaderFloats + i] = HasGradient(i) ? 1f : 0f;
+            head[HeaderFloats + i] = HadGradient(i) ? 1f : 0f;
         }
 
         var flags = head[(HeaderFloats + Parameters.Count)..];
@@ -529,15 +745,16 @@ internal sealed class GradientReduction : SyncCore
         }
     }
 
-    // The reduced values back into every piece's gradient (made where this rank had none and another rank had one).
+    // The reduced values back into every piece's gradient (made where this rank had none and another rank had one); in a
+    // sharded run only the pieces of the parameters this rank owns.
     private void Scatter(int bucket, ReadOnlySpan<float> values)
     {
         foreach (var (parameter, offset, n, at) in _layout.Pieces(bucket))
         {
             var source = values.Slice(at, n);
-            if (!_present[parameter])
+            if (!_present[parameter] || _layout.Sharded && _owners![parameter] != Collectives.Rank)
             {
-                continue;                                          // no rank has a gradient for it: the optimizer skips it everywhere
+                continue;                                          // no rank has a gradient for it (the optimizer skips it everywhere), or another rank owns it
             }
 
             if (HostGradients is { } host)
@@ -553,23 +770,42 @@ internal sealed class GradientReduction : SyncCore
             }
 
             var p = Parameters[parameter];
-            var storage = p.GradientTarget(out _);                 // every piece of it is written: no zero fill needed
-            var backend = p.Backend;
-            if (offset == 0 && n == p.Size)
-            {
-                backend.Upload(source, storage);
-            }
-            else if (p.Device.Type == DeviceType.Cpu)
-            {
-                source.CopyTo(storage.HostMemory.Slice(offset, n));
-            }
-            else
-            {
-                // A piece of a parameter larger than a bucket: up into the staging buffer, then one strided copy into place.
-                var scratch = Scratch(n);
-                backend.Upload(source, scratch.Storage);
-                backend.Copy2D(scratch.Storage, 0, n, storage, offset, n, 1, n, accumulate: false);
-            }
+            Write(p, p.GradientTarget(out _), offset, source);     // every piece of it is written: no zero fill needed
+        }
+    }
+
+    // `source` into values [offset, offset + source.Length) of `storage` (a parameter's or its gradient's, on its device).
+    private void Write(Tensor p, Storage storage, int offset, ReadOnlySpan<float> source)
+    {
+        int n = source.Length;
+        var backend = p.Backend;
+        if (offset == 0 && n == p.Size)
+        {
+            backend.Upload(source, storage);
+        }
+        else if (p.Device.Type == DeviceType.Cpu)
+        {
+            source.CopyTo(storage.HostMemory.Slice(offset, n));
+        }
+        else
+        {
+            // A piece of a parameter larger than a bucket: up into the staging buffer, then one strided copy into place.
+            var scratch = Scratch(n);
+            backend.Upload(source, scratch.Storage);
+            backend.Copy2D(scratch.Storage, 0, n, storage, offset, n, 1, n, accumulate: false);
+        }
+    }
+
+    // Values [offset, offset + target.Length) of `storage` (on `p`'s device) into `target`.
+    private static void Read(Tensor p, Storage storage, int offset, Span<float> target)
+    {
+        if (offset == 0 && target.Length == p.Size)
+        {
+            p.Backend.Download(storage, target);
+        }
+        else
+        {
+            p.Backend.DownloadRange(storage, offset, target);
         }
     }
 

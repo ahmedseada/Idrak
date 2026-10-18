@@ -80,6 +80,22 @@ public abstract class Optimizer : IDisposable
     public virtual void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state) =>
         throw new NotSupportedException($"{GetType().Name} cannot restore a saved state.");
 
+    /// <summary>
+    /// The index in <see cref="Parameters"/> of the parameter a saved state entry (<see cref="SaveState"/>) belongs to, or
+    /// null for an entry of the whole optimizer (its step count): a sharded run (plan 23, phase C6) keeps each parameter's
+    /// entries on the rank that owns it. By default the convention the library's optimizers follow: the parameter's index
+    /// after the last dot ("m.3"); an optimizer that names its entries otherwise overrides it.
+    /// </summary>
+    public virtual int? StateParameter(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        int dot = name.LastIndexOf('.');
+        return dot >= 0 && int.TryParse(name.AsSpan(dot + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int index)
+               && index < Parameters.Count
+            ? index
+            : null;
+    }
+
     /// <summary>A state tensor's values as a saved value.</summary>
     protected static OptimizerStateValue StateOf(Tensor tensor) => new([.. tensor.Shape], tensor.ToArray());
 

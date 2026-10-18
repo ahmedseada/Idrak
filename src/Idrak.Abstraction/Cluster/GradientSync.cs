@@ -114,6 +114,57 @@ public interface IGradientSync : IDisposable
 
     /// <summary>Returns once every rank has called it (after rank 0 wrote a checkpoint, say).</summary>
     void Barrier();
+
+    /// <summary>
+    /// Whether the synchronisation makes the optimizer's update itself (plan 23, phase C6: a sharded run, where each rank
+    /// updates the parameters it owns and the weights travel afterwards): the trainers call <see cref="Update"/> after
+    /// <see cref="Reduce"/> in place of the optimizer's own clipping and step. False (the default): the trainers update as
+    /// in one process.
+    /// </summary>
+    bool Updates => false;
+
+    /// <summary>
+    /// With <see cref="Updates"/>: clips the step's gradients to the global norm <paramref name="maxNorm"/> over every rank
+    /// (0: no clipping), updates this rank's parameters and brings every rank's weights up to date, as the optimizer's own
+    /// step would on the whole step's gradients. Every rank calls it once per step it took part in, after
+    /// <see cref="Reduce"/>; afterwards no rank holds gradients.
+    /// </summary>
+    /// <param name="maxNorm">The largest global norm of the gradients, or 0 for no clipping.</param>
+    /// <param name="readNorm">Whether the norm is wanted (for telemetry) when it is not clipped to.</param>
+    /// <returns>The gradients' global norm before clipping when it was computed, else null.</returns>
+    /// <exception cref="NotSupportedException">The synchronisation does not update (<see cref="Updates"/> is false).</exception>
+    double? Update(float maxNorm, bool readNorm = false) =>
+        throw new NotSupportedException($"The {Name} synchronisation leaves the update to the optimizer (Updates is false).");
+
+    /// <summary>
+    /// Gives every rank the whole weights until the returned scope is disposed (plan 23, phase C6: a run with
+    /// <see cref="ClusterOptions.Shard"/> = parameters, where each rank holds only its share between uses): for an
+    /// evaluation, a checkpoint, a copy of the best weights. What every rank writes into the weights meanwhile is kept. Every
+    /// rank calls it at the same point (it is a collective); null (the default) when every rank holds the whole weights anyway.
+    /// </summary>
+    IDisposable? Gather() => null;
+
+    /// <summary>
+    /// The optimizer's whole state for a checkpoint (plan 23, phase C6): in a sharded run each rank holds the state of its
+    /// share, and every rank's are joined (every rank calls it at the same point: it is a collective); null (the default)
+    /// when each rank's optimizer holds the whole state (take <see cref="Optimizer.SaveState"/>).
+    /// </summary>
+    IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState() => null;
+
+    /// <summary>
+    /// Takes a checkpoint's whole optimizer state (<see cref="SaveOptimizerState"/>, or one process's) for a resumed run:
+    /// a sharded run keeps each rank's share of it. False (the default): load it into the optimizer as in one process.
+    /// </summary>
+    bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state) => false;
+
+    /// <summary>
+    /// Ends a run that finished on every rank (each calls it once, after its last step): a run that kept each rank's share
+    /// of the weights only gives every rank the whole trained weights again, so the model is whole afterwards. Nothing by
+    /// default.
+    /// </summary>
+    void End()
+    {
+    }
 }
 
 /// <summary>One kind of gradient synchronisation, registered by name in <see cref="GradientSyncs"/>.</summary>

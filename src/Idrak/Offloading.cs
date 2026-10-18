@@ -140,6 +140,37 @@ internal static class Offloading
         return new LayerScope(token, previous, entered: true);
     }
 
+    /// <summary>
+    /// Enters every layer of a fused pass through <see cref="ForwardHooks"/> (a sharded run gathers each one's weights,
+    /// plan 23 phase C6); the result ends them all, last first. Null when none had anything to do.
+    /// </summary>
+    public static IDisposable? Gather(IReadOnlyList<Module> layers)
+    {
+        List<IDisposable>? scopes = null;
+        foreach (var layer in layers)
+        {
+            if (ForwardHooks.Enter(layer) is { } scope)
+            {
+                (scopes ??= []).Add(scope);
+            }
+        }
+
+        return scopes is null ? null : new Scopes(scopes);
+    }
+
+    private sealed class Scopes(List<IDisposable> scopes) : IDisposable
+    {
+        public void Dispose()
+        {
+            for (int i = scopes.Count - 1; i >= 0; i--)
+            {
+                scopes[i].Dispose();
+            }
+
+            scopes.Clear();
+        }
+    }
+
     /// <summary>Ends a layer's forward: unstages its weights and restores the enclosing layer.</summary>
     public readonly struct LayerScope(IDisposable? token, object? previous, bool entered) : IDisposable
     {
