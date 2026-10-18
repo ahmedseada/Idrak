@@ -202,7 +202,8 @@ value and what was expected):
 
 | Option | Variable | Default |
 |---|---|---|
-| `Rank`, `WorldSize` | `IDRAK_RANK`, `IDRAK_WORLD_SIZE` | 0, 1 |
+| `Rank`, `WorldSize` | `IDRAK_RANK`, `IDRAK_WORLD_SIZE` | derived from the topology file (world size: its device count; rank: this host's node when that node has one worker); the variables are read only without a file, or to check against it |
+| `Node` (which node of the file this machine is) | `IDRAK_CLUSTER_NODE` | the node whose name is this host's name |
 | `Coordinator` (`host:port` rank 0 listens on; absent with `direct-link`) | `IDRAK_COORDINATOR` | none |
 | `Topology` (the file) | `IDRAK_CLUSTER_TOPOLOGY` | none: one node, the devices given |
 | `Transport` (a `Transports` name, or `auto` for the selector) | `IDRAK_CLUSTER_TRANSPORT` | `auto` |
@@ -320,8 +321,15 @@ and no dependencies, so the same keys in JSON; a YAML subset reader is decision 
   terminal, as the house rule for prompts requires; `--dry-run` prints the file instead of writing it; `-j` prints it
   as JSON. The builder lives in `Idrak.Cluster` (`TopologyBuilder`: the questions as data, each with its name,
   description, default and validation, so an app can present them in its own UI) and the CLI only asks them.
-- Workers learn rank, world size and coordinator from the file or from `IDRAK_RANK`, `IDRAK_WORLD_SIZE`,
-  `IDRAK_COORDINATOR`, exactly as real launchers set them.
+- **The file is the source of rank and world size** (the owner, 2026-10-18: nothing the builder already counted is
+  typed again). The world size is the file's device count. A process finds its node by this host's name (the builder
+  suggests host names as node names) or by `--node NAME` / `IDRAK_CLUSTER_NODE`; when that node has one worker, its
+  rank follows and nothing more is needed. When a node has several workers, `idrak cluster start` (below) starts one
+  process per worker on that machine and gives each its rank; a hand-started process on such a node passes `--rank`
+  or `IDRAK_RANK`. The coordinator is the first node's address when the file gives addresses (an optional `address`
+  per node), else `--coordinator` / `IDRAK_COORDINATOR`. `IDRAK_RANK` and `IDRAK_WORLD_SIZE` remain for a run with
+  no file (bare `--coordinator`, every rank on its own device) and for launchers that set them; a value that
+  contradicts the file stops the run before it starts, naming both.
 - **Two workers on one card** (the owner's question, 2026-10-18) are joined by the `same-device` link: a copy between
   them is a device-to-device copy inside one memory, at the card's own memory bandwidth, faster than NVLink or PCIe.
   Its bandwidth and latency are **measured on the device at first use** (one timed device copy, kept in the tuning
@@ -590,6 +598,7 @@ device does".
 
 - `idrak cluster init [-o topology.json] [--yes with the options above] [--dry-run]` (the interactive builder)
 - `idrak cluster sim --topology FILE [--mode in-process|localhost] [--failures MODEL] [--seed S] -- <train args>`
+  (every rank of every node on this machine, simulated; `cluster start` is the real counterpart for one machine)
 - `idrak cluster inspect FILE` (the parsed topology, the links, the transport per pair on this machine)
 - `idrak cluster replay --seed S --step N --topology …` (reproduces the fault schedule and the clock; reruns the step)
 - `idrak cluster bench --topology … [--bytes N] [--rounds N]` (bandwidth and latency per pair, cold and warm; the input
@@ -599,11 +608,15 @@ device does".
 - `idrak transports` (every registered transport, available or not on this machine, with its capabilities)
 - `--profile` on `cluster sim` and `--cluster FILE` on `profile` (the two probes above; `-j` for the JSON the
   calibration reads); `idrak tuning show` lists the calibrated profiles and the measured chunk and bucket sizes
-- `--cluster FILE` on `train`, `pretrain`, `tune`, `resume`, `distill`; `--rank N` for this process's rank and
-  `--world-size N` for the world size, the words every cluster tool uses (decision 3). Each command owns its options:
-  on `tune` and `distill`, `--rank` stays the LoRA rank as today, nothing is renamed, and with `--cluster` the cluster
-  rank is read from `IDRAK_RANK` (and the world size from `IDRAK_WORLD_SIZE`), as real launchers set them; the help of
-  those two commands says so in one line; the key only
+- `idrak cluster start --topology FILE [--node NAME] -- <train command and args>`: runs this machine's part of a real
+  cluster job. It finds this host's node in the file, starts one process per worker of that node with its rank,
+  world size, coordinator and device set, streams their progress as one live line per rank, and ends them all when
+  one fails. The same on every machine, so a three-machine job is three identical command lines.
+- `--cluster FILE` on `train`, `pretrain`, `tune`, `resume`, `distill` for a hand-started single process: the rank and
+  world size come from the file as above; `--rank N` names the rank only when this node has several workers (the
+  words every cluster tool uses, decision 3), `--world-size N` only without a file. Each command owns its options: on
+  `tune` and `distill`, `--rank` stays the LoRA rank as today, nothing is renamed, and a hand-started rank on a
+  multi-worker node passes `IDRAK_RANK` instead; `cluster start` covers both without it. The key only
   from `IDRAK_CLUSTER_KEY`.
 
 **Tests** (`"cluster: cli …"`): one per command through `CommandLine.Run`; "cluster: cli pretrain --cluster
@@ -611,8 +624,10 @@ home-3-node-1g --mode localhost writes one run folder from rank 0"; "cluster: cl
 run whose log it reads" and from a bench's JSON; "cluster: cli cluster init answers through the test input write the file, --yes with options writes the same, and
 without a terminal the usage error names the option to add"; "cluster: cli cluster sim --profile prints kernel rows beside the network
 and cluster probes' rows, the predicted step beside the measured"; "cluster: cli profile --cluster shows a token's hops
-through a simulated pipeline"; "cluster: cli --world-size without --coordinator is a usage error naming it"; "cluster: cli tune --cluster takes its rank from
-IDRAK_RANK and --rank stays the adapter's rank"; help within 120
+through a simulated pipeline"; "cluster: cli --world-size without --coordinator is a usage error naming it"; "cluster: cli start finds this host's node, starts one process per worker with its rank, and stops all when one
+fails"; "cluster: cli pretrain --cluster on a one-worker node needs no rank; on a two-worker node it names the
+missing --rank"; "cluster: cli tune --cluster with IDRAK_RANK keeps --rank as the adapter's rank"; "cluster: cli a
+world size that contradicts the file is refused naming both"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
 
 ## Memory and speed, where every byte goes
