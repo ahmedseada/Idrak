@@ -668,9 +668,12 @@ internal sealed class DashboardRuns : IDisposable
     // The library's telemetry for the in-process run going on, as the run's records.
     private sealed class Hook(DashboardRuns owner) : ITelemetryHook
     {
-        public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Network;
+        public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Network | TelemetryLevel.Suggestions;
 
         public void OnTrainingStarted(in TrainingStarted e) => Pass(e);
+
+        // A setting the library suggested from the run's first warm steps (plan 23, decision 4): an event on the timeline.
+        public void OnSuggestion(in SettingSuggestion e) => Pass(e);
 
         public void OnTrainingCompleted(in TrainingCompleted e) => Pass(e);
 

@@ -97,15 +97,19 @@ public enum Idrak.Cluster.ClusterRunState : int
   Stopping = 3
 
 public sealed class Idrak.Cluster.EventLog
+  public Idrak.Abstraction.Cluster.ClusterOptions AdviceOf(Idrak.Abstraction.Cluster.ClusterOptions options)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.Fault> Faults { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.Fault> LiveFaults { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.RankStateChanged> States { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Cluster.ClockRecord> Clocks { get; }
   public System.Collections.Generic.IReadOnlyList<double?> EndClocks { get; }
   public System.ReadOnlyMemory<byte> Bytes { get; }
-  public const int Version = 1
+  public bool Suggest { get; }
+  public const int Version = 2
   public double? ClockAt(int rank, long step)
   public int Seed { get; }
+  public int SuggestSliceValues { get; }
+  public int SuggestSteps { get; }
   public int WorldSize { get; }
   public long Resends { get; }
   public long Transfers { get; }

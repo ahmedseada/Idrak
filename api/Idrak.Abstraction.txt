@@ -146,6 +146,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public bool OwnTensorsOnly { get; init; }
   public bool Pipelined { get; }
   public bool StreamedSave { get; init; }
+  public bool? Suggest { get; init; }
   public double RebalanceTolerance { get; init; }
   public double SuggestShare { get; init; }
   public double TopK { get; init; }
@@ -156,6 +157,8 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public int RebalanceEvery { get; init; }
   public int RebalanceSteps { get; init; }
   public int Retries { get; init; }
+  public int SuggestSliceValues { get; init; }
+  public int SuggestSteps { get; init; }
   public int SyncWeightsEvery { get; init; }
   public int? MicroBatches { get; init; }
   public int? Parent { get; init; }
@@ -201,6 +204,28 @@ public sealed record Idrak.Abstraction.Cluster.ClusterSimulationSpec : System.IE
   public ClusterSimulationSpec(int Seed, string Failures)
   public int Seed { get; init; }
   public string Failures { get; init; }
+
+public sealed record Idrak.Abstraction.Cluster.ClusterStepMeasure : System.IEquatable<Idrak.Abstraction.Cluster.ClusterStepMeasure>
+  public ClusterStepMeasure(Idrak.Abstraction.Cluster.ClusterOptions Options, string Sync, string Collective, string Compression, int WorldSize, int Nodes, int Steps, System.TimeSpan Step, System.TimeSpan Exposed, System.TimeSpan Network, System.TimeSpan Backward, long GradientBytes, long BucketBytes, int Buckets, bool Simulated, double? BFloat16Error, int SliceValues)
+  public Idrak.Abstraction.Cluster.ClusterOptions Options { get; init; }
+  public System.TimeSpan Backward { get; init; }
+  public System.TimeSpan Compute { get; }
+  public System.TimeSpan Exposed { get; init; }
+  public System.TimeSpan Network { get; init; }
+  public System.TimeSpan Step { get; init; }
+  public bool Simulated { get; init; }
+  public double Share { get; }
+  public double? BFloat16Error { get; init; }
+  public int Buckets { get; init; }
+  public int Nodes { get; init; }
+  public int SliceValues { get; init; }
+  public int Steps { get; init; }
+  public int WorldSize { get; init; }
+  public long BucketBytes { get; init; }
+  public long GradientBytes { get; init; }
+  public string Collective { get; init; }
+  public string Compression { get; init; }
+  public string Sync { get; init; }
 
 public sealed class Idrak.Abstraction.Cluster.ClusterTopology : Idrak.Abstraction.Cluster.IClusterTopology
   public (int, int) Place(int rank)
