@@ -563,15 +563,15 @@ device does".
 - `idrak transports` (every registered transport, available or not on this machine, with its capabilities)
 - `--profile` on `cluster sim` and `--cluster FILE|PRESET` on `profile` (the two probes above; `-j` for the JSON the
   calibration reads); `idrak tuning show` lists the calibrated profiles and the measured chunk and bucket sizes
-- `--cluster FILE|PRESET` on `train`, `pretrain`, `tune`, `resume`, `distill`; `--node N` for this process's rank and
-  `--nodes N` for the world size (`--rank` is already the LoRA rank in `tune` and `distill`; decision 3); the key only
+- `--cluster FILE|PRESET` on `train`, `pretrain`, `tune`, `resume`, `distill`; `--worker N` for this process's rank and
+  `--workers N` for the world size (`--rank` is already the LoRA rank in `tune` and `distill`; decision 3); the key only
   from `IDRAK_CLUSTER_KEY`.
 
 **Tests** (`"cluster: cli …"`): one per command through `CommandLine.Run`; "cluster: cli pretrain --cluster
 home-3-node-1g --mode localhost writes one run folder from rank 0"; "cluster: cli calibrate corrects a profile from a
 run whose log it reads" and from a bench's JSON; "cluster: cli cluster sim --profile prints kernel rows beside the network
 and cluster probes' rows, the predicted step beside the measured"; "cluster: cli profile --cluster shows a token's hops
-through a simulated pipeline"; "cluster: cli --nodes without --coordinator is a usage error naming it"; help within 120
+through a simulated pipeline"; "cluster: cli --workers without --coordinator is a usage error naming it"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
 
 ## Memory and speed, where every byte goes
@@ -603,10 +603,9 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 1. **Decided by the owner (2026-10-18): `Idrak.Cluster` references `Idrak.Abstraction`** and implements the contracts
    itself; no bridge, no duplicate types; on extraction the contracts and used types move with it.
 2. **Decided (2026-10-18): the topology file is JSON** with the spec's keys; no YAML reader.
-3. **Option names for this process's rank and the world size** (`--rank` is the LoRA rank in `tune` and `distill`).
-   Proposed to the owner: `--worker N` and `--workers N` (the spec's own word for a rank; reads as "worker 1 of 3"),
-   with `--coordinator HOST:PORT`; alternatives `--node`/`--nodes` (a node holds several workers in a topology, so the
-   word is taken) or `--member`/`--members`. Pending the owner's pick.
+3. **Decided (2026-10-18): `--worker N` for this process's rank and `--workers N` for the world size**, with
+   `--coordinator HOST:PORT` (`--rank` stays the LoRA rank in `tune` and `distill`; "node" stays the topology file's
+   word for a machine). The variables stay `IDRAK_RANK`, `IDRAK_WORLD_SIZE`, `IDRAK_COORDINATOR`.
 4. **Decided (2026-10-18): the wire type defaults to float32, and the library measures and suggests.** A `"cluster"`
    `ISettingAdvisor` registered in `SettingAdvisors` by `Idrak.Network`: during the first warm steps it measures the
    network share of the step (`CollectiveCompleted.Blocked` and `Wall` against the step), and on a sample slice the
