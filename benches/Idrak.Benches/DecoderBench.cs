@@ -62,8 +62,9 @@ internal static class DecoderBench
             using var weights = Tensor.Ones([batch * tokens], device);
             int rows = batch * tokens;
 
-            void Step(bool checkpointing)
+            void Step(bool checkpointing, bool bfloat16 = false)
             {
+                using var precision = bfloat16 ? MixedPrecision.BFloat16() : (MixedPrecision.Scope?)null;
                 optimizer.ZeroGrad();
                 var hidden = checkpointing ? Checkpointed(model, input, layers) : model.ForwardFirst(input, layers);
                 var flat = hidden.Reshape(rows, spec.Dim);
@@ -74,12 +75,14 @@ internal static class DecoderBench
 
             try
             {
-                foreach (bool checkpointing in (bool[])[false, true])
+                // Float32 products, the same with the blocks checkpointed, and bfloat16 products (the tensor cores where
+                // the device has them; a device without them runs the float32 path under the same name).
+                foreach (var (checkpointing, bfloat16) in ((bool, bool)[])[(false, false), (true, false), (false, true)])
                 {
-                    string label = checkpointing ? $"step, checkpointed blocks, batch {batch}" : $"step, batch {batch}";
-                    var (cold, warm) = Bench.Time(device, () => Step(checkpointing), settings.Repeats, settings.Warmup);
-                    var census = Bench.Count(() => Step(checkpointing));
-                    long peak = Bench.PeakBytes(device, () => Step(checkpointing));
+                    string label = bfloat16 ? $"step, bfloat16 products, batch {batch}" : checkpointing ? $"step, checkpointed blocks, batch {batch}" : $"step, batch {batch}";
+                    var (cold, warm) = Bench.Time(device, () => Step(checkpointing, bfloat16), settings.Repeats, settings.Warmup);
+                    var census = Bench.Count(() => Step(checkpointing, bfloat16));
+                    long peak = Bench.PeakBytes(device, () => Step(checkpointing, bfloat16));
                     double tokensPerSecond = rows / (warm / 1000);
                     Console.WriteLine(Bench.Line(label, ("ms warm", Bench.F(warm, "0.0")), ("ms cold", Bench.F(cold, "0")), ("launches", census.Count.ToString()),
                         ("peak", Bench.Mib(peak)), ("tok/s", Bench.F(tokensPerSecond, "0"))));
@@ -88,9 +91,9 @@ internal static class DecoderBench
                     report.Add(Section, label, device, "launches", census.Count, "launches");
                     report.Add(Section, label, device, "peak", peak / 1048576.0, "MiB");
                     report.Add(Section, label, device, "throughput", tokensPerSecond, "tok/s");
-                    if (!checkpointing)
+                    if (!checkpointing && !bfloat16)
                     {
-                        Console.WriteLine("   launches a step by operation (forward and backward apart, the top twelve):");
+                        Console.WriteLine("   launches a step by operation (forward and backward apart, the top twelve; MiB out counts a view's elements too):");
                         foreach (var (operation, count, elements, _) in census.ByCount.Take(12))
                         {
                             Console.WriteLine(Bench.Line("   " + operation, ("/step", count.ToString()), ("MiB out", Bench.F(elements * 4.0 / 1048576, "0"))));

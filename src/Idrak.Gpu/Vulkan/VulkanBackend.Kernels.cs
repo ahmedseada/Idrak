@@ -705,6 +705,15 @@ internal sealed partial class VulkanBackend
             return;
         }
 
+        if (inner == 1)
+        {
+            // The summed axis is the last: a row kernel (a workgroup a row, coalesced, or an invocation a row for short
+            // rows, whichever measures faster) instead of one invocation walking a whole row alone.
+            Span<byte> rowPush = stackalloc byte[16];
+            Rows("sum_axis_rows", outer, dim, [x, y], new Push(rowPush).I(outer).I(dim).F(scale).B(accumulate).Bytes);
+            return;
+        }
+
         Span<byte> b = stackalloc byte[20];
         Grid("sum_axis", (long)outer * inner, [x, y], new Push(b).I(outer).I(dim).I(inner).F(scale).B(accumulate).Bytes);
     }
