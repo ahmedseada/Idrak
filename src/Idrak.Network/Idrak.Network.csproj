@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Networking</RootNamespace>
+    <AssemblyName>Idrak.Network</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Optimize>true</Optimize>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Idrak.Network</PackageId>
+    <Description>The real transports and the collective algorithms of an Idrak cluster (plan 23): naive and ring all-reduce, all-gather, reduce-scatter and broadcast over any transport (the simulator's included), the fastest-first transport selector and the "network" profiler probe. Built on Idrak.Abstraction's cluster contracts.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Cluster" />
+    <Using Include="Idrak.Abstraction.Devices" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -210,6 +210,7 @@ public interface Idrak.Abstraction.Cluster.ILinkProfile
   public string Name { get; }
 
 public interface Idrak.Abstraction.Cluster.ITransport : System.IDisposable
+  public (default) System.TimeSpan SimulatedTime { get; }
   public Idrak.Abstraction.Cluster.TransportCapabilities Capabilities { get; }
   public System.Threading.Tasks.ValueTask SendAsync(int to, System.ReadOnlyMemory<byte> bytes, int tag, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.ValueTask<int> ReceiveAsync(int from, System.Memory<byte> bytes, int tag, System.Threading.CancellationToken cancellationToken = default)
@@ -898,6 +899,7 @@ public static class Idrak.Abstraction.Data.TextShapers
 public sealed class Idrak.Abstraction.Device
   public Idrak.Abstraction.DeviceType Type { get; }
   public Idrak.Abstraction.Devices.Backend Backend { get; }
+  public Idrak.Abstraction.Devices.Backend CreateSeparateBackend(Idrak.Abstraction.Devices.SeparateBackendOptions options)
   public bool IsGpu { get; }
   public int Ordinal { get; }
   public override string ToString()
@@ -1358,6 +1360,8 @@ public abstract class Idrak.Abstraction.Devices.DeviceProvider
   public abstract bool IsStarted(int ordinal)
   public abstract int Count { get; }
   public abstract string Kind { get; }
+  public virtual Idrak.Abstraction.DeviceType TypeOf(int ordinal)
+  public virtual Idrak.Abstraction.Devices.Backend? CreateSeparate(int ordinal, Idrak.Abstraction.Devices.SeparateBackendOptions options)
   public virtual System.Guid? DeviceUuid(int ordinal)
   public virtual bool Listed(int ordinal)
   public virtual int? DefaultRank(int ordinal)
@@ -1441,6 +1445,12 @@ public static class Idrak.Abstraction.Devices.PackedFormats
 
 public static class Idrak.Abstraction.Devices.PowerSource
   public static string Current { get; }
+
+public sealed record Idrak.Abstraction.Devices.SeparateBackendOptions : System.IEquatable<Idrak.Abstraction.Devices.SeparateBackendOptions>
+  public SeparateBackendOptions(string Name, long? MemoryLimit, bool? Offload = null)
+  public bool? Offload { get; init; }
+  public long? MemoryLimit { get; init; }
+  public string Name { get; init; }
 
 public abstract class Idrak.Abstraction.Devices.Storage
   protected Storage(Idrak.Abstraction.Devices.Backend backend, int length)

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Cluster</RootNamespace>
+    <AssemblyName>Idrak.Cluster</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Optimize>true</Optimize>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Idrak.Cluster</PackageId>
+    <Description>A cluster of GPUs and machines simulated on one machine (plan 23): devices carved from a physical one with hard memory caps, the "sim" transport charged on a virtual clock from link profiles, the built-in link profiles, the topology builder and the "cluster" profiler probe. Built on Idrak.Abstraction's cluster contracts; Idrak.Network holds the real transports and the collectives.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Cluster" />
+    <Using Include="Idrak.Abstraction.Devices" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+</Project>

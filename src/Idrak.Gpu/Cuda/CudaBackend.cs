@@ -262,8 +262,18 @@ internal sealed unsafe partial class CudaBackend : Backend
     // The driver's handle of this device (cuDeviceGet).
     private readonly int _deviceHandle;
 
-    private CudaBackend(int ordinal)
+    // A separate backend of the device (plan 23: a simulated cluster's devices carved from one GPU): its own stream, pool
+    // and cap on the device's primary context.
+    internal static CudaBackend CreateSeparate(int ordinal, SeparateBackendOptions options) => new(ordinal, options);
+
+    // Whether allocations past the limit go to pinned host memory: this backend's own choice, else the process's.
+    private bool Offloading => _offload ?? ComputeResources.OffloadToHostMemory;
+
+    private readonly bool? _offload;
+
+    private CudaBackend(int ordinal, SeparateBackendOptions? separate = null)
     {
+        _offload = separate?.Offload;
         Check(cuDeviceGet(out int device, ordinal), nameof(cuDeviceGet));
         _deviceHandle = device;
         Check(cuDevicePrimaryCtxRetain(out _context, device), nameof(cuDevicePrimaryCtxRetain));
@@ -293,7 +303,12 @@ internal sealed unsafe partial class CudaBackend : Backend
         _driverVersion = cuda.Length > 0 ? version : 0;
         _deviceName = Marshal.PtrToStringAnsi((IntPtr)name) ?? "";
         Name = $"{_deviceName} ({memory / (1024 * 1024)} MiB, {_multiprocessors} SMs, compute {_computeMajor}.{_computeMinor}{cuda})";
-        _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, $"cuda:{ordinal}");
+        long? cap = separate?.MemoryLimit;
+        _memory = new MemoryAccountant(() => cap ?? ComputeResources.GpuMemoryLimit, separate?.Name ?? $"cuda:{ordinal}");
+        if (separate is not null)
+        {
+            Name = $"{separate.Name}: {Name}";
+        }
 
         IntPtr module = LoadModule(PtxKernels.SourceFor(_shapes));
         IntPtr Fn(string kernel)
@@ -497,7 +512,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         {
             return null;                                           // the lookup tables leave first; then the limit again
         }
-        catch (ResourceLimitExceededException) when (ComputeResources.OffloadToHostMemory)
+        catch (ResourceLimitExceededException) when (Offloading)
         {
             return AllocateHost(length, zeroed);
         }
@@ -676,7 +691,7 @@ internal sealed unsafe partial class CudaBackend : Backend
                 return 0;
             }
 
-            if (ComputeResources.OffloadToHostMemory)
+            if (Offloading)
             {
                 return 0;
             }

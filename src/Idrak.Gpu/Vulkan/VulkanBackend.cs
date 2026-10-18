@@ -62,13 +62,19 @@ internal sealed unsafe partial class VulkanBackend : Backend
     private bool _usePush;
 
     private VulkanBackend(PhysicalDevice physical, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null,
-        long? stagingBytes = null, long? pageBytes = null)
+        long? stagingBytes = null, long? pageBytes = null, SeparateBackendOptions? separate = null)
     {
         _physical = physical;
         var p = physical.Properties;
         MaxAllocations = MemoryAllocationCap(p.MaxMemoryAllocationCount, maxAllocations);
         Name = $"{physical.DeviceName} (Vulkan {VersionOf(p.ApiVersion).Major}.{VersionOf(p.ApiVersion).Minor}, {physical.Driver})";
-        _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, Name);
+        long? cap = separate?.MemoryLimit;
+        if (separate is not null)
+        {
+            Name = $"{separate.Name}: {Name}";
+        }
+
+        _memory = new MemoryAccountant(() => cap ?? ComputeResources.GpuMemoryLimit, Name);
         MaxStorageBytes = StorageRange(p.MaxStorageBufferRange, StorageRangeOverride);
 
         // One compute queue.
@@ -322,6 +328,12 @@ internal sealed unsafe partial class VulkanBackend : Backend
     internal static VulkanBackend CreateSeparate(int ordinal, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null,
         long? stagingBytes = null, long? pageBytes = null) =>
         new(Probe.Value.Devices[ordinal], preferMapped, pushDescriptors, maxAllocations, stagingBytes, pageBytes);
+
+    // A separate backend of the device (plan 23: a simulated cluster's devices carved from one GPU): its own logical
+    // device, queue, pool and cap, with the staging choice every backend of the process makes. Vulkan has no host
+    // offloading, so the cap is hard.
+    internal static VulkanBackend CreateSeparate(int ordinal, SeparateBackendOptions options) =>
+        new(Probe.Value.Devices[ordinal], preferMapped: Environment.GetEnvironmentVariable("IDRAK_VULKAN_STAGING") is not ("1" or "true"), separate: options);
 
     private static Lazy<VulkanBackend>[] CreateInstances()
     {
@@ -884,7 +896,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         }
     }
 
-    /// <summary>Waits for the device, then frees everything it holds (for backends made by <see cref="CreateSeparate"/>; storages must be released first).</summary>
+    /// <summary>Waits for the device, then frees everything it holds (for backends made by <see cref="CreateSeparate(int, bool, bool?, int?, long?, long?)"/> or <see cref="CreateSeparate(int, SeparateBackendOptions)"/>; storages must be released first).</summary>
     internal void Shutdown()
     {
         lock (_gate)
@@ -923,6 +935,8 @@ internal sealed class VulkanProvider : DeviceProvider
     public override string? UnavailableReason => VulkanBackend.UnavailableReason;
 
     public override Backend Create(int ordinal) => VulkanBackend.Get(ordinal);
+
+    public override Backend? CreateSeparate(int ordinal, SeparateBackendOptions options) => VulkanBackend.CreateSeparate(ordinal, options);
 
     public override bool IsStarted(int ordinal) => VulkanBackend.IsInitialized(ordinal);
 
