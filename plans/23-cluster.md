@@ -992,6 +992,80 @@ through the stages; each keeps its own KV cache.
 head last"; "cluster: a rank holds only its stage's tensors"; "cluster: chat through a 2-stage pipeline answers as one
 device does".
 
+**C7 as built (2026-10-18).** Contracts (`src/Idrak.Abstraction/Cluster/Pipeline.cs`): `PipelinePlan` (a model's
+top-level modules cut into contiguous stages, every module once, each stage at least one, embeddings first and the head
+last by construction; `Balance` finds the cut whose largest stage, over its share, is least, by a dynamic programme over the
+modules, ties to the earliest cut so every rank finds the same plan; `FromStarts` takes cuts by hand; `For` picks by the
+options), `PipelineModule`, `PipelineStageRange`, `PipelineLayout` (stages of world / stages ranks each, stage by stage in
+rank order: ranks 0 to R-1 are stage 0, so a stage's replicas sit together and only activations cross between stages),
+`PipelineBalance`, `IPipelineSchedule` with `PipelineWork` and the unguarded registry `PipelineSchedules`, and
+`ClusterGroups` (`Transport`: some ranks of a connected transport as a group of their own, a barrier on a tag below every
+collective's; `Topology`: the C5 `SubsetTopology`). `ICollectives` gained two default members, `Transport` (for messages of
+one's own on tags 0 and up) and `Context`; `HostCollectives` and the simulator's `SimStepper` give them. Idrak.Network
+registers `gpipe` (`src/Idrak.Network/Training/PipelineSchedules.cs`). Idrak: `PipelineBoundary : Module, ICachedModule`
+(`src/Idrak/Layers/PipelineBoundary.cs`): at a stage's end its forward is an `Autograd.Function` that sends the activation
+and returns the stage's root, whose backward receives the gradient; at a stage's start the mirror (receive forward, send the
+gradient in backward); one function per micro-batch, tags per micro-batch, float32 through one pooled host buffer over any
+transport; without autograd the first stage's boundary runs generation (below). `PipelineStage`
+(`src/Idrak/Training/PipelineStage.cs`): `PlanFor` measures any `Sequential`'s top-level modules (the distinct storages each
+holds or reads, a tied head counting the table it reads) and cuts them; `Place` does that on every rank alike, moves this
+rank's stage (and the table its tied head reads) to its device, releases every other module's tensors but never one the
+stage reads (`keepOthers` keeps them where they were loaded, for the rank that writes whole checkpoints), cuts a block's
+`NextNorm` hand-off when the next norm is another stage's, and with more ranks than stages makes the stage's replica group
+(`ClusterGroups`, the collective `CollectiveFor` names). `Step(M, input, loss, options)` runs the schedule's order (GPipe's
+nests each micro-batch's `TensorScope` so its activations go right after its backward pass; a schedule that does not nest
+keeps one scope a step), sums a tied table's gradient over the stages holding it in stage order (the same bits on each),
+gives every stage the last stage's loss, and publishes `PipelineStepped`; `Evaluate` (forward only), `SumStages`,
+`ClipAndStep` (the norm over the whole pipeline, a shared table counted by its first holder, `Owns`), `Serve` and
+`StopServing`. Telemetry: one event, `PipelineStepped` (schedule, rank, stage, stages, replica, micro-batches, step, wall,
+blocked, bubble, the schedule's ideal bubble, bytes each way) at `Network`, carried by the console, `MetricsRecorder`
+(`PipelineSteps`), the channel, JSON lines and `TelemetryJson`. Inference: rank 0's `PipelineStage.Network` is its modules
+and the boundary, so a `TextGenerator`/`ChatGenerator` over it runs the whole pipeline; each cached step sends a 32-byte
+header (the context's batch, capacity, length before the step, last-position-only, sliding steps, cache format, rows'
+starts) and the hidden state; each later stage keeps its own `DecodingContext` in step (made for the header's shape, reset
+or cut back with it, row starts mirrored), a middle stage passes every position on and the last applies last-position-only
+and sends the logits back to the first; a recorded decode step is refused through a boundary (`TextGenerator`), a custom
+cache layout and a cross-attention memory are refused by name. Training: **the pretrainer** (`src/Idrak.Nlp/PipelinePretraining.cs`,
+`Pretrainer` is now partial): with `ClusterOptions.Placement` pipeline it places the model, draws every step alike on every
+rank, gives each replica its share (`DrawShares` over the replica group), runs the step's micro-batches (`MicroBatches`, or
+the pretrainer's own batches, packed where the model packs), each micro-batch's chunked token loss over the pipeline's
+trained tokens on the last stage (the head run inside the loss), sums each stage over its replicas (`GradientSyncs` on the
+replica group), clips by the pipeline's norm, and writes whole checkpoints from rank 0 (every stage's replica 0 sends its
+parameters and optimizer state; the optimizer's under `pipeline.<stage>.`, the cut in the state file). Settings:
+`Stages` (`IDRAK_CLUSTER_STAGES`, one per rank), `PipelineBalance` (`IDRAK_CLUSTER_PIPELINE_BALANCE`, auto),
+`PipelineCuts` (`IDRAK_CLUSTER_PIPELINE_CUTS`); `IDRAK_CLUSTER_PLACEMENT` is now checked (single or pipeline); all in
+`ClusterOptions.Variables` and the CLI's table. Tests: 5 in `tests/Idrak.Tests/ClusterPipelineTests.cs`
+(`ClusterPipelineGroup`, after `ClusterTransportGroup`). One build of the test project, then on the CPU the filter
+`cluster:|public API|abstraction inventory|cli health: …|cli polish: …|cli arabic: every message|cli dev: trace|profiler:|fine-tuning:|fine-tuning
+options:|pretrain:|cli pretrain:|training:|callbacks:|generation:|decoder:`: 168 passed, 0 failed. Measured on the CPU (4
+cores, two ranks carved from it): the tiny model's two stages hold 102,656 and 102,784 B of its 139,904 B (73% each: the
+tied head's stage holds the embedding table too), `InUse` per rank 102,660 and 102,788 B; two stages against one device:
+logits equal, gradients within 1.0e-7; the pretrainer at 1, 2 and 4 micro-batches, with clipping at 0.5, and as 2 stages × 2
+replicas: losses and the gathered checkpoint's weights within 1e-5 of one process. **The bubble** (blocked over wall, the
+cold step aside), stage 0 and stage 1: M = 1: 60% and 18% (GPipe's arithmetic 50%); M = 2: 53% and 15% (33%); M = 4: 64% and
+6% (20%). On this tiny model a micro-batch's compute is about its messages' host staging, so more micro-batches do not
+shrink the measured bubble here; the first stage's wait is its backward pass waiting on the last stage.
+
+Changes from the plan, kept: **1F1B is not built**: the measured bubble does not justify it, and non-interleaved 1F1B has
+GPipe's bubble by the same arithmetic ((S-1)/(M+S-1)); it only bounds the activations held to S micro-batches, which GPipe's
+nested scopes already free one micro-batch at a time as its backward runs. An interleaved schedule (virtual stages) is what
+shrinks the bubble; `IPipelineSchedule` takes one as a plug-in (`InFlight` reports what it holds), left for when a GPU run's
+bubble asks for it. **Stages are cut by the bytes of the tensors the model was built with**, not the checkpoint file's sizes:
+the same for float32 checkpoints, and what the device will hold for packed or bfloat16 builds. **Each rank loads the whole
+model on the host, then keeps its stage** (`Place`): a build that reads only a stage's tensors needs every family's builder
+to build a range of modules, which a family's own `Build` does not offer; the device never holds the whole model, the host
+does once per process while placing (rank 0 keeps the other stages' modules on the host for whole checkpoints). **Pipeline
+with data parallel is built** (stages × replicas, `IDRAK_CLUSTER_STAGES`), not refused. **The pretrainer first**: the
+fine-tuner and the `Trainer` refuse pipeline placement naming the pretrainer (their adapters, recorded steps and data paths
+are single placement's); the pretrainer refuses conversation records (images and parts), a teacher, the host optimizer and
+training the vision part under pipeline placement, by name; a checkpoint resumes only with the placement and cut it was
+written with (its optimizer state is per stage), refused naming why otherwise. A late join (a step group that changes) is
+refused: a pipeline needs every stage in every step; a replay's end sits every rank out alike. Packed batches are the
+pretrainer's default batches; with `MicroBatches` set the step's sequences are shared into that many padded micro-batches.
+Activations cross through host memory (as the collectives' buffers do since C5); device-to-device copies through
+`IDeviceTransport` move to C8 with the profile of a token's hops. Deferred: `idrak profile MODEL --cluster FILE` (C8, as
+planned), `--placement pipeline` on `cluster sim` and `pretrain --cluster` (C8's command line), the GPU runs (the owner's).
+
 ### C8: the command line and calibration
 
 - `idrak cluster init [-o topology.json] [--yes with the options above] [--dry-run]` (the interactive builder)

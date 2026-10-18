@@ -88,7 +88,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     private MixedPrecision.Scope? PrefillScope() => PrefillPrecision is { } precision ? MixedPrecision.Use(precision) : null;
 
     // Whether a decoding step can be recorded: not with experts, whose routing is read back to the host on every step.
-    private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is MixtureOfExperts);
+    // A pipeline's boundary sends each step to the other stages (plan 23, C7): a recorded step would replay without them.
+    private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is MixtureOfExperts or PipelineBoundary);
 
     private bool? _stepsRecordable;
 
