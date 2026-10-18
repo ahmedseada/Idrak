@@ -47,6 +47,23 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
+        // y[r] (+)= scale · Σ_j x[r, j]: the axis sum over a row (inner 1; sum_rows in VulkanKernels.cs sums the columns); sum_axis in VulkanKernels.Shapes.cs takes the
+        // rest. The row's partial sums go through the workgroup reduction in a fixed order (rule 86).
+        yield return (Named("sum_axis_rows"), () =>
+        {
+            var k = new KernelBuilder(Named("sum_axis_rows"), Block);
+            var (x, y) = (k.Buffer("x"), k.Buffer("y"));
+            var (rows, cols, scale, accumulate) = (k.PushInt("rows"), k.PushInt("cols"), k.PushFloat("scale"), k.PushInt("accumulate"));
+            var w = new RowWork(k, narrow);
+            w.Each(rows, r =>
+            {
+                var o = r * cols;
+                var s = scale * w.RowSum(cols, j => x[o + j]);
+                w.Leader(() => k.If(accumulate.Ne(0), () => y[r] = y[r] + s, () => y[r] = s));
+            });
+            return k.Build();
+        });
+
         // Softmax: dx += y · (dy - Σ dy·y). Log-softmax: dx += dy - exp(y) · Σ dy.
         yield return (Named("softmax_backward"), () =>
         {

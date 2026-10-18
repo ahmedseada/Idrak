@@ -70,7 +70,8 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // y[o, i] (+)= scale · Σ_d x[o, d, i] for a [outer, dim, inner] view: one invocation per output.
+        // y[o, i] (+)= scale · Σ_d x[o, d, i] for a [outer, dim, inner] view with inner > 1: one invocation per output
+        // (neighbouring invocations read neighbouring i: coalesced); inner 1 goes to the sum_axis_rows row kernel.
         yield return ("sum_axis", () =>
         {
             var k = new KernelBuilder("sum_axis", Block);
