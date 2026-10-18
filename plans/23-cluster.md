@@ -21,7 +21,10 @@ the profiles**. Same topology file, same launcher, same training code on every t
   not by a product, and their declared sizes are placeholders the owner edits.
 - **Abstraction (decision 10 of plan 10).** Every new behaviour is a contract plus a `SlotTable` registry. A contract two
   packages use lives in `Idrak.Abstraction` (`Idrak.Abstraction.Cluster`); one only `Idrak.Network` uses lives in
-  `Idrak.Network.Abstractions`. `Idrak.Cluster` has **no Idrak reference at all**. The inventory test and the public API
+  `Idrak.Network.Abstractions`; one only `Idrak.Cluster` uses lives in `Idrak.Cluster.Abstractions`. `Idrak.Cluster`
+references `Idrak.Abstraction` and implements its contracts directly (the owner's call, 2026-10-18: no duplicate types
+and no bridge; when the simulator is ever extracted into its own repository, the contracts and types it uses move
+with it). The inventory test and the public API
   guard (`api/*.txt`) are regenerated when a public surface changes; `api/Idrak.Network.txt` and `api/Idrak.Cluster.txt`
   join the guard.
 - **No native libraries** (plans/README.md, "The rule every plan keeps"). Sockets, memory-mapped files, named semaphores
@@ -65,31 +68,40 @@ the profiles**. Same topology file, same launcher, same training code on every t
 ## Package layout and dependencies
 
 ```
-Idrak.Abstraction  ──────────────┐           (contracts + registries: Idrak.Abstraction.Cluster)
-Idrak.Cluster  (no references)   │           (the simulator: bytes, spans, Channels, a virtual clock, seeded faults)
-        └──────── Idrak.Network ─┘           (every real transport; the "sim" bridge; collectives; distributed training hooks)
-                        └── Idrak.Cli        (idrak cluster …, idrak transports, --cluster on train/pretrain/tune)
-Idrak.Abstraction.Testing                    (TransportSuite, CollectivesSuite, LinkProfileSuite, TopologySuite)
+Idrak.Abstraction                            (contracts + registries: Idrak.Abstraction.Cluster; the telemetry events)
+   ├── Idrak.Cluster                         (the simulator: the "sim" transport and "sim" devices, link profiles, the virtual clock,
+   │                                          seeded faults and replay, the localhost launcher and throttle, calibration, the "cluster" probe)
+   ├── Idrak.Network                         (every real transport, the collectives, the selector, the training hooks, the "network" probe)
+   │        └── Idrak.Cli                    (idrak cluster …, idrak transports, --cluster on train/pretrain/tune; references both)
+   └── Idrak.Abstraction.Testing             (TransportSuite, CollectivesSuite, LinkProfileSuite, TopologySuite)
 Idrak.Nlp, Idrak (core Training)             (take an ICollectives through their options; with none they run as today)
 ```
 
-- **`src/Idrak.Cluster`** references nothing from Idrak (not even Abstraction). Its core works on `Span<byte>`,
-  `ReadOnlyMemory<byte>`, `System.Threading.Channels` and its own small interfaces (`IPipe`, `ILink`, `IClock`), so it
-  can be lifted out as a standalone repository later (working name then: Mithal or Sarab) by moving one folder. It holds
-  the virtual clock, link models, the fault injector, the replayable event log, the in-process cluster, the localhost
-  process launcher with its throttle, and the calibration arithmetic.
-- **`src/Idrak.Network`** references `Idrak.Abstraction` and `Idrak.Cluster`. It holds every real transport, the
-  collectives (naive, ring, hierarchical) over any `ITransport`, the transport selector, the `"sim"` transport that
-  adapts `Idrak.Cluster`'s pipes to `ITransport` (so the simulator and the real transports are swapped by one name), the
-  fake device provider, and the training hooks' implementation. `Idrak.Network.LibraryRegistrations.RegisterFor`
-  registers all of it; `"Idrak.Network"` joins `LibraryDefaults.Assemblies` and its `DynamicDependency` list so an app
-  that ships the package has the transports the first time `Transports` is used, and one that does not gets
-  `Transport 'tcp' is not registered (registered: …); add it with Transports.Register` and the CLI's `-P` hint.
-- **`Idrak` does not reference `Idrak.Network`** (unlike `Idrak.Gpu`): the trainers take the contracts from Abstraction;
-  apps that want a cluster add the package. `Idrak.Cli` references it.
-- **Why the bridge is in `Idrak.Network` and not in `Idrak.Cluster`:** the simulator must stay free of Idrak types; the
-  adapter from its byte pipes to `ITransport` (and from its virtual clock to `Telemetry`) is forty lines that belong to
-  the package that knows Idrak. The owner may prefer a third project (`Idrak.Cluster.Idrak`); decision 1.
+- **`src/Idrak.Cluster`** references `Idrak.Abstraction` only, as `Idrak.Gpu` does, and implements its contracts
+  directly: `SimTransport : ITransport`, `SimulatedDeviceProvider : DeviceProvider` (kind `"sim"`), the built-in
+  `ILinkProfile`s, `IFailureModel`s and `TopologyPresets`, the `"cluster"` `IProfileProbe`, and it publishes `Telemetry`
+  events itself. It holds the virtual clock, the link models, the fault injector, the replayable event log, the
+  in-process cluster, the localhost process launcher with its throttle, and the calibration arithmetic. **It is native
+  to Idrak and uses everything the library already has** (the owner's call, 2026-10-18): `Device` and `DeviceProvider`
+  for the fake devices, `Backend` and `MemoryAccountant` for their caps, `Storage` and `CreateHostStaging` where a
+  simulated transfer carries device memory, `ComputeResources` for its limits, `SlotTable` for its registries,
+  `Telemetry` and the `IProfileProbe` contract for its numbers, the tuning-cache format for its calibrated profiles,
+  `SyncProgress` and the CLI's progress line for its live output, the conformance kit for its tests; nothing is
+  reimplemented here to keep the package detachable. **Extraction later** (working name then: Mithal or Sarab): the
+  package moves as a whole and `Idrak.Abstraction.Cluster`'s contracts and whatever Abstraction types it uses move or
+  are copied with it on that day, not before. `Idrak.Cluster.LibraryRegistrations.RegisterFor` registers its
+  implementations; `"Idrak.Cluster"` joins `LibraryDefaults.Assemblies` and the `DynamicDependency` list.
+- **`src/Idrak.Network`** references `Idrak.Abstraction` only. It holds every real transport, the collectives (naive,
+  ring, hierarchical) over any `ITransport` (the simulator's included), the transport selector, the `"network"` probe
+  and the training hooks' implementation. `Idrak.Network.LibraryRegistrations.RegisterFor` registers all of it;
+  `"Idrak.Network"` joins `LibraryDefaults.Assemblies` and its `DynamicDependency` list, so an app that ships the
+  package has the transports the first time `Transports` is used, and one that does not gets
+  `Transport 'tcp' is not registered (registered: sim); add it with Transports.Register` and the CLI's `-P` hint.
+- **The two packages do not reference each other.** The simulator needs no collective (it carries bytes); the
+  collectives need no simulator (they take any `ITransport`). The tests and the CLI reference both, which is where a
+  simulated run of a real collective happens. Either package can be shipped, or extracted, without the other.
+- **`Idrak` does not reference either** (unlike `Idrak.Gpu`): the trainers take the contracts from Abstraction; apps
+  that want a cluster add the packages they need. `Idrak.Cli` references both.
 
 ## Contracts (`src/Idrak.Abstraction/Cluster/`, namespace `Idrak.Abstraction.Cluster`)
 
@@ -221,9 +233,10 @@ layer carries them:
   `ProfileCalibrated(Link, BandwidthBefore, BandwidthAfter, LatencyBefore, LatencyAfter, Residual, Samples)`.
   `Telemetry.Transfer`, `.Collective`, `.TransportChosen`, `.RankState`, `.Fault`, `.Calibrated` publish them;
   `ITelemetryHook` gains the six `On…` defaults.
-- **`Idrak.Cluster` emits without Idrak types:** its core raises its own small `IClusterListener` (transfer, fault, rank
-  state, clock tick) and keeps `ClusterCounters`; the bridge in `Idrak.Network` forwards each to `Telemetry` behind
-  `IsEnabled(Network)`, so a listener costs nothing when none is subscribed and the simulator stays extractable.
+- **`Idrak.Cluster` publishes directly:** the simulator calls `Telemetry.Transfer`, `.Fault` and `.RankState` behind
+  `IsEnabled(Network)` as every other package does, so a listener costs nothing when none is subscribed; its own
+  counters (per-rank clock, per-link busy time, transfers and bytes, faults) are the virtual clock's state and are kept
+  regardless, since the prediction needs them.
 - **Where it shows up:** `ConsoleLogger` prints one line per collective at `Network` (bytes, wall, simulated, blocked,
   the slowest rank) and one per fault and rank-state change; `MetricsRecorder` keeps per-step network time, bytes and
   blocked time beside the losses; `ChannelTelemetry` streams them to an app's UI; `JsonLinesLogger` and
@@ -242,13 +255,13 @@ layer carries them:
 **Profiling (the owner's note: the profiler is integrated wherever it helps).** The profiler already exists
 (`Profiler.Run(name, device, work, ProfileOptions)` → `ProfileReport`, probes in the `ProfileProbes` registry, writers
 in `ProfileWriters`, `idrak profile`; `src/Idrak.Abstraction/Diagnostics/Profiling.cs`). This plan adds two probes,
-registered by `Idrak.Network.LibraryRegistrations.RegisterFor(typeof(ProfileProbes))`, so every profile of a
+each registered by its package's `LibraryRegistrations.RegisterFor(typeof(ProfileProbes))`, so every profile of a
 distributed step shows network time next to kernel time without a new tool:
 
 - `"network"` probe (`src/Idrak.Network/Diagnostics/NetworkProbe.cs`, not intrusive): per transport and per pair, the
   transfers, bytes, wall time, time blocked waiting for the slowest rank, and the collective count per step; rows named
   `transport/pair` and `collective/operation`, so `--top` ranks the pairs that cost the most.
-- `"cluster"` probe (`Diagnostics/ClusterProbe.cs`, not intrusive; only when the `sim` transport is active): the virtual
+- `"cluster"` probe (`src/Idrak.Cluster/Diagnostics/ClusterProbe.cs`, registered by `Idrak.Cluster.LibraryRegistrations`, not intrusive; only when the `sim` transport is active): the virtual
   clock per rank, each link's busy share, the critical path of the step, the faults drawn; the predicted step time as a
   row beside the measured one.
 
@@ -258,9 +271,8 @@ FILE|PRESET` (the inference profile across a simulated pipeline: a token's hops 
 rows through `ProfileWriters` (table, markdown, csv, json) so `calibrate --from` reads a bench's JSON as readily as a
 run's `log.jsonl`; the collectives' `ChunkBytes` and `BucketBytes` measurement at first use runs under
 `Profiler.Run` so `idrak tuning show` lists what was chosen and why; the "hierarchical beats ring" and "overlap shortens
-the step" tests assert on `ProfileReport` rows, the same numbers the owner sees. `Idrak.Cluster` itself stays free of
-Idrak types: it exposes plain counters (`ClusterCounters`: per-rank clock, per-link busy time, transfer count and bytes,
-faults) that the `cluster` probe reads.
+the step" tests assert on `ProfileReport` rows, the same numbers the owner sees. The `"cluster"` probe lives in
+`Idrak.Cluster` beside the counters it reads; the `"network"` probe in `Idrak.Network` beside the transports it times.
 
 ## The topology file (one format for every target)
 
@@ -292,28 +304,38 @@ and no dependencies, so the same keys in JSON; a YAML subset reader is decision 
 - Workers learn rank, world size and coordinator from the file or from `IDRAK_RANK`, `IDRAK_WORLD_SIZE`,
   `IDRAK_COORDINATOR`, exactly as real launchers set them.
 
-## Idrak.Cluster: the simulator (`src/Idrak.Cluster/`, no Idrak references)
+## Idrak.Cluster: the simulator (`src/Idrak.Cluster/`, on `Idrak.Abstraction`)
 
 | File | What |
 |---|---|
 | `VirtualClock.cs` | Per-rank simulated time. A transfer from A to B started at A's time *t* over link *L* completes at `max(t, L.free) + L.Latency + bytes / L.Bandwidth + jitter(seeded)`; the link's `free` moves to that completion (one transfer at a time per direction: contention is modelled); B's clock becomes `max(B.now, completion)` when B receives. A collective's simulated duration is the critical path through those updates, so a run **predicts** the step time of a cluster that is not there, independent of wall time, and the result is deterministic for a seed. |
 | `LinkModel.cs` | The arithmetic of `ILinkProfile.Predict` and the throttle: a token bucket that paces a real pipe (localhost mode) to the profile's bandwidth and adds its latency, so a localhost socket imitates any slower link. |
-| `Pipes.cs` | `IPipe` (bytes in, bytes out, by rank and tag) over `Channel<ReadOnlyMemory<byte>>` per directed edge, bounded to the in-flight count so a rank that races ahead waits as it would on a socket. Buffers are rented from `ArrayPool<byte>` and returned by the receiver. |
-| `InProcessCluster.cs` | N ranks as tasks on their own threads (`Parallel.For` with `MaxDegreeOfParallelism = worldSize`), one `IPipe` set, one clock; `Run(rank => work)`. The deterministic unit-test mode. |
+| `SimTransport.cs` | `ITransport` named `sim`: bytes by rank and tag over `Channel<ReadOnlyMemory<byte>>` per directed edge, bounded to the in-flight count so a rank that races ahead waits as it would on a socket; every transfer is charged on the virtual clock and published as `TransferCompleted` with its simulated time. Buffers are rented from `ArrayPool<byte>` and returned by the receiver. |
+| `SimulatedDeviceProvider.cs` | `DeviceProvider` of kind `sim` (below, "Fake devices"). |
+| `Profiles.cs`, `Failures.cs`, `Presets.cs` | the built-in `ILinkProfile`s, `IFailureModel`s and `TopologyPresets`, registered as library defaults. |
+| `InProcessCluster.cs` | N ranks as tasks on their own threads (`Parallel.For` with `MaxDegreeOfParallelism = worldSize`), one `SimTransport` per rank over one edge set, one clock; `Run(rank => work)`. The deterministic unit-test mode. |
 | `LocalhostCluster.cs` | One process per fake node: starts `dotnet … --cluster-rank R` children with the rank variables set, a port the OS picks reported back on stdout as bytes, waits with the timeout, kills the children in `finally`. The **real** transport code runs; the throttle (optional) applies the profile. |
 | `Faults.cs` | The seeded fault injector: every fault (slow worker: its clock and its sends are stretched by a factor; dropped worker: its pipe closes; link loss: messages dropped at `LossRate`; partition: a set of links closed for a span; late join: a rank that connects N steps late) is drawn from `Random(seed)` at a step and written to the event log with `(seed, step, kind, ranks, duration)`. |
 | `EventLog.cs` | A compact binary log (bytes, `BinaryPrimitives`) of transfers, faults and clock values, enough to replay a run bit for bit from `(seed, step)`: `Replay(seed, step)` reconstructs the fault schedule and the clock state at that step. |
 | `Calibration.cs` | Given measured transfers `(bytes, seconds)` per link and the profile that predicted them, fits bandwidth and latency by least squares over `seconds = latency + bytes / bandwidth`, reports the residual, and returns the corrected profile values. |
 
-Nothing here knows a `Device`, a `Storage` or a `Tensor`; the bridge in `Idrak.Network` does.
+**Fake devices** (`src/Idrak.Cluster/SimulatedDeviceProvider.cs`): a `DeviceProvider` of kind `"sim"` registered into
+`DeviceProviders`. `sim:N` is the N-th device of the active topology: one more backend instance of the physical
+device's kind (`DeviceProvider.Create(ordinal, limit)`, an overload the three GPU providers and the CPU provider gain: the
+backend's `MemoryAccountant` takes the fake device's cap as its limit function, and offload is per device), its own
+pool, its own streams, so two fake GPUs on one card contend for compute as two real ones would share a bus, and each
+hits its own hard cap. `DeviceUuid` reports the physical device, so a run that wants real parallelism (two physical
+cards) is told when two ranks share one. The simulator carries bytes between ranks and hands out devices; a
+`SimTransport` given a `Storage` stages it through the device's own `CreateHostStaging` like any other transport, and the
+collectives in `Idrak.Network` do the reduction arithmetic on whichever device the rank holds.
 
-## Idrak.Network: transports, collectives, fake devices, training hooks
+## Idrak.Network: transports, collectives, training hooks
 
 **Transports** (`src/Idrak.Network/Transports/`), each an `ITransport` registered by name with its conformance test:
 
 | Name | Scope | How, with .NET and the driver only |
 |---|---|---|
-| `sim` | one process | the bridge over `Idrak.Cluster`'s pipes and clock; carries the virtual time into `TransferCompleted.Simulated` |
+| `sim` | one process | **in `Idrak.Cluster`** (above); listed here because the selector and the collectives treat it as any other transport |
 | `shared-memory` | processes on one machine | `MemoryMappedFile` ring buffers, one per directed pair, a named semaphore or an event per direction; the fastest cross-process path, zero-copy on the receive side |
 | `pcie-host` | GPUs in one machine, one process | device → pinned host staging (`CreateHostStaging`) → device; the path consumer boards actually have; the default `Backend.CopyTo` |
 | `nvlink` (alias `p2p`) | GPUs in one machine, one process | `cuMemcpyPeerAsync` when `cuDeviceCanAccessPeer` says yes (`cuCtxEnablePeerAccess` once per pair, remembered), a `CudaBackend.CopyTo` override; refused peers fall back to `pcie-host` and the telemetry says so once per pair |
@@ -350,14 +372,6 @@ the device has it); on the CPU the buffer is the storage; with `GpuDirect` trans
 `Binary(Add)` sums it there. The staging is created once per group and reused every step (rule 77). `WireType.BFloat16`
 packs on the device (`PackBFloat16`), sums in float32 on arrival, sends finished slices back as float32; `TopK` with
 error feedback keeps the residual per parameter in a buffer allocated once.
-
-**Fake devices** (`src/Idrak.Network/Devices/SimulatedDeviceProvider.cs`): a `DeviceProvider` of kind `"sim"` registered
-into `DeviceProviders`. `sim:N` is the N-th device of the active topology: one more backend instance of the physical
-device's kind (`DeviceProvider.Create(ordinal, limit)`, an overload the three GPU providers and the CPU provider gain: the
-backend's `MemoryAccountant` takes the fake device's cap as its limit function, and offload is per device), its own
-pool, its own streams, so two fake GPUs on one card contend for compute as two real ones would share a bus, and each
-hits its own hard cap. `DeviceUuid` reports the physical device, so a run that wants real parallelism (two physical
-cards) is told when two ranks share one.
 
 **Training hooks** (`Idrak.Nlp`, `Idrak` core): `FineTuningOptions.Cluster`, `PretrainingOptions.Cluster`,
 `Trainer.Cluster` (an `ICollectives?`; null: today's behaviour, no change in any existing test). In `RunStep`, after the
@@ -401,23 +415,25 @@ list, inspect prints every pair"; inventory and API dumps regenerated (Abstracti
 ### C1: Idrak.Cluster in-process, the `sim` transport, `naive` and `ring`
 
 **Files.** `src/Idrak.Cluster/` (the table above, except `LocalhostCluster` and `Calibration`),
-`src/Idrak.Network/Idrak.Network.csproj` (references Abstraction and Cluster; `IsAotCompatible`),
-`LibraryRegistrations.cs`, `Transports/SimTransport.cs`, `Collectives/NaiveCollectives.cs`, `RingCollectives.cs`,
-`Collectives/ChunkPlanner.cs`, `Selection/FastestSelector.cs`, `Devices/SimulatedDeviceProvider.cs`; the
-`Create(ordinal, limit)` overload in `DeviceProvider` and the four providers.
+`src/Idrak.Cluster/Idrak.Cluster.csproj` and `src/Idrak.Network/Idrak.Network.csproj` (each references Abstraction
+only; `IsAotCompatible`), a `LibraryRegistrations.cs` in each, `Idrak.Cluster`: `SimTransport.cs`,
+`SimulatedDeviceProvider.cs`, `Profiles.cs`, `Failures.cs`, `Presets.cs`; `Idrak.Network`:
+`Collectives/NaiveCollectives.cs`, `RingCollectives.cs`, `Collectives/ChunkPlanner.cs`, `Selection/FastestSelector.cs`;
+the `Create(ordinal, limit)` overload in `DeviceProvider` and the four providers.
 
 **The new-package checklist** (both packages, from the survey of how the others are wired): a line each in
 `Idrak.slnx`; `_IdrakSourcePackage` in `build/IdrakFromSource.targets`; `ApiAssemblyNames` in
 `tests/Idrak.Tests/ApiSurfaceTests.cs` and the dumps `api/Idrak.Cluster.txt`, `api/Idrak.Network.txt`;
-`LibraryAssemblyNames` in `InventoryTests.cs` (Idrak.Network only: Idrak.Cluster has no Idrak contracts, like the
-Testing kit it stays out); `LibraryDefaults.Assemblies` and a `[DynamicDependency]` for `Idrak.Network`; a
+`LibraryAssemblyNames` in `InventoryTests.cs`; `LibraryDefaults.Assemblies` and a `[DynamicDependency]` for each; a
 `ProjectReference` in `tests/Idrak.Tests/Idrak.Tests.csproj` and in `Idrak.Cli.csproj`; a `README.md` per package
 listing its contracts (packed with it); `Idrak.Abstraction.Cluster` added to the global usings in
 `Directory.Build.props` and `src/Idrak.Abstraction/buildTransitive/Idrak.Abstraction.props`, and to the inventory's
 namespace-to-area map and allow list; every contract only `Idrak.Network` uses today but any package may use later
-(`ITransport`, `ICollectives`, `ILinkProfile`) justified in `tests/Idrak.Tests/data/shared-contracts.txt`. The csproj
-of each: `IsAotCompatible`, `GenerateDocumentationFile`, `InternalsVisibleTo Idrak.Tests`; `Idrak.Cluster.csproj` has
-no `ProjectReference` at all, and a test asserts it ("cluster: Idrak.Cluster references nothing from Idrak").
+(`ICollectives`, `ITransportSelector`) justified in `tests/Idrak.Tests/data/shared-contracts.txt` (`ITransport`,
+`ILinkProfile`, `IClusterTopology` and `IFailureModel` have two users, Cluster and Network, so decision 10 places them in
+Abstraction on its own). The csproj of each: `IsAotCompatible`, `GenerateDocumentationFile`, `InternalsVisibleTo
+Idrak.Tests`, one `ProjectReference` (Abstraction), and a test asserts that neither references the other or anything
+else ("cluster: Idrak.Cluster and Idrak.Network reference Idrak.Abstraction only").
 
 **Tests** (`"cluster: "`): "cluster: sim ring all-reduce equals naive and the plain sum bit for bit" (2, 3, 4, 8 ranks;
 sizes 1, 7, 1,023, 65,537; sum, max, min); "cluster: sim all-gather, reduce-scatter, broadcast, barrier";
@@ -463,7 +479,7 @@ batches split by measured speed give the one-process losses"; "cluster: HostOpti
 ### C3: topology-aware all-reduce, the selector across mixed pipes, failures and replay
 
 **Files.** `Collectives/HierarchicalCollectives.cs`, `Selection/` (availability per transport), `src/Idrak.Cluster/Faults.cs`,
-`EventLog.cs`, `src/Idrak.Network/Simulation/Replay.cs`.
+`EventLog.cs`, `Replay.cs`.
 
 **Tests** (`"cluster: "`): "cluster: hierarchical equals ring bit for bit"; "cluster: hierarchical beats ring in
 simulated time on a two-level topology" (the preset `2x8-infiniband` with `inter-node` set to `ethernet-1g`; the ratio is
@@ -578,8 +594,8 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 
 ## Decisions (for the owner)
 
-1. **The bridge's home.** The `sim` transport and the fake device provider in `Idrak.Network` (recommended: one package
-   knows Idrak and the simulator), or a third project `Idrak.Cluster.Idrak`.
+1. **Decided by the owner (2026-10-18): `Idrak.Cluster` references `Idrak.Abstraction`** and implements the contracts
+   itself; no bridge, no duplicate types; on extraction the contracts and used types move with it.
 2. **The topology file's format.** JSON now with the spec's keys (recommended: no new reader, no dependency), or a small
    YAML-subset reader in `Idrak.Cluster` for the spec's exact text.
 3. **Option names.** `--node`/`--nodes` (recommended; `--rank` is the LoRA rank in `tune` and `distill`), or `--rank`
