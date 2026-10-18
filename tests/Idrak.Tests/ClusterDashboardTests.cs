@@ -28,6 +28,7 @@ internal static partial class Tests
         ("cluster: ui the dashboard binds to 127.0.0.1 by default; a request from another machine is refused without a key and taken with a set or stored one; another site's page is refused", ClusterUiAccess),
         ("cluster: ui the page names no external address, every call it makes is a route the server answers and every route is called; it is served in the tool's language, right to left in Arabic", ClusterUiPage),
         ("cluster: ui a run folder written by cluster start is followed read-only: rank 0's log and the ranks' lines stream as events, and pause, resume, stop and faults are refused naming why", ClusterUiFollow),
+        ("cluster: ui a sharded run (Shard = parameters) pauses on every rank at one step and its stop ends every rank at one step boundary with a checkpoint joining every rank's share: weights, optimizer state and losses as an uninterrupted run's", ClusterUiShardedStop),
     ];
 
     // A dashboard on 127.0.0.1 and a client of it.
@@ -643,6 +644,53 @@ internal static partial class Tests
         {
             http.Dispose();
             server.Dispose();
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void ClusterUiShardedStop(Device device)
+    {
+        string folder = TempFolder("cluster-ui-sharded");
+        try
+        {
+            string corpus = PretrainData("tokens.bin");
+            var options = DpOptions() with { Collective = "ring", Shard = ShardMode.Parameters };
+            PretrainingOptions Options(int steps, ICollectives cluster) =>
+                DpPretraining(corpus, steps, cluster, options) with { Optimizer = "adamw", BatchTokens = 32, GradientAccumulation = 2 };
+            string stopped = Path.Combine(folder, "stopped"), straight = Path.Combine(folder, "straight");
+            var control = new ClusterRunControl();
+            control.Pause();                                       // before step 0
+            var running = Task.Run(() => InProcessCluster.Run(DpTopology(device, 2), options,
+                rank => DpPretrain(rank.Device, Options(40, rank.Collectives), rank.Rank == 0 ? stopped : Path.Combine(folder, "stopped-1")), control));
+            Check(UiWait(() => control.State == ClusterRunState.Paused, 120) && control.LastStep == -1, "both ranks wait before step 0");
+            control.Resume();
+            Check(UiWait(() => control.LastStep >= 1, 120), "two steps begun");
+            long at = control.Pause();
+            Check(UiWait(() => control.State == ClusterRunState.Paused, 120) && control.LastStep == at - 1, $"both ranks wait before step {at}");
+            control.Resume();
+            Check(UiWait(() => control.LastStep >= at + 1, 120), "the run goes on");
+            long last = control.Stop();
+            Check(running.Wait(TimeSpan.FromMinutes(3)), "the stopped run ends");
+            var result = running.Result;
+            Check(result.Errors.All(e => e is ClusterRunStoppedException s && s.Step == last + 1),
+                $"every rank stopped as it began step {last + 1}: {string.Join("; ", result.Errors.Select(e => e?.Message ?? "finished"))}");
+            int steps = (int)last + 1;
+            string checkpoint = Path.Combine(stopped, $"checkpoint-{steps}");
+            Check(Directory.Exists(checkpoint) && !Directory.Exists(Path.Combine(folder, "stopped-1", $"checkpoint-{steps}")), $"rank 0 alone wrote the stop's checkpoint ({checkpoint})");
+
+            DpRun(DpTopology(device, 2), options, rank => DpPretrain(rank.Device, Options(steps, rank.Collectives), rank.Rank == 0 ? straight : Path.Combine(folder, "straight-1")));
+            string whole = Path.Combine(straight, $"checkpoint-{steps}");
+            foreach (string file in new[] { "model.safetensors", "optimizer.safetensors" })
+            {
+                Check(File.ReadAllBytes(Path.Combine(checkpoint, file)).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(whole, file))),
+                    $"the stop's {file} is the uninterrupted run's after {steps} steps, byte for byte (every rank's share joined)");
+            }
+
+            Check(Pretrainer.ReadCheckpoint(checkpoint).Losses.SequenceEqual(Pretrainer.ReadCheckpoint(whole).Losses), "and its losses");
+            Console.WriteLine($"    sharded (parameters): paused at step {at}, stopped after {steps} steps; the checkpoint as the uninterrupted run's");
+        }
+        finally
+        {
             Directory.Delete(folder, recursive: true);
         }
     }

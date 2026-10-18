@@ -70,6 +70,40 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
         backend.DownloadRange(scratch.Storage, 0, values);
     }
 
+    /// <summary>
+    /// Reduces <paramref name="values"/> so this rank's piece (pieces of <paramref name="counts"/> values in rank order) holds
+    /// the sum; through the device, every value is summed (each piece complete everywhere).
+    /// </summary>
+    public void ReduceScatter(Span<float> values, ReadOnlySpan<int> counts, WireType wire)
+    {
+        if (values.IsEmpty || _host?.TryReduceScatter(values, counts, ReduceOp.Sum, wire) == true)
+        {
+            return;
+        }
+
+        AllReduce(values, wire);
+    }
+
+    /// <summary>Every rank's piece of <paramref name="values"/> (pieces of <paramref name="counts"/> values in rank order) on every rank.</summary>
+    public void AllGather(Span<float> values, ReadOnlySpan<int> counts)
+    {
+        if (values.IsEmpty || _host?.TryAllGather(values, counts) == true)
+        {
+            return;
+        }
+
+        int at = 0;
+        for (int r = 0; r < counts.Length; r++)
+        {
+            if (counts[r] > 0)
+            {
+                Broadcast(values.Slice(at, counts[r]), r);
+            }
+
+            at += counts[r];
+        }
+    }
+
     public void Dispose()
     {
         _scratch?.Dispose();

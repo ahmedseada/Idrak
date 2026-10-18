@@ -19,6 +19,19 @@ public interface IDeviceTransport : ITransport
     void SendDevice(int to, Storage source, int count, int tag);
 
     /// <summary>
+    /// Hands the first <paramref name="count"/> values of <paramref name="source"/> to rank <paramref name="to"/> under
+    /// <paramref name="tag"/> and returns at once (plan 23, phase C6: a ring's step hands its piece on, then takes the one
+    /// before it, so no rank waits on another in a circle). The task completes once that rank has copied them, or faults
+    /// naming why; <paramref name="source"/> must not change until then (wait with <see cref="WaitTaken"/>).
+    /// </summary>
+    Task PostDevice(int to, Storage source, int count, int tag);
+
+    /// <summary>Waits up to <see cref="ClusterOptions.Timeout"/> for a <see cref="PostDevice"/> to rank <paramref name="to"/> to be taken.</summary>
+    /// <exception cref="TimeoutException">The rank did not take it in time; the message names it.</exception>
+    /// <exception cref="InvalidOperationException">The rank could not take it, or left; the message says why.</exception>
+    void WaitTaken(Task posted, int to, int tag);
+
+    /// <summary>
     /// Copies the values rank <paramref name="from"/> handed over under <paramref name="tag"/> into the first
     /// <paramref name="count"/> values of <paramref name="destination"/>.
     /// </summary>

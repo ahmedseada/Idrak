@@ -251,6 +251,12 @@ internal sealed class EnvSetCommand : EnvSaveCommand
                 return matches[0];
             }
 
+            // Several match: the one named after the part itself (port is IDRAK_PORT, not IDRAK_CLUSTER_PORT), if any.
+            if (matches.FirstOrDefault(m => m.Name.Equals("IDRAK_" + answer.Replace(' ', '_'), StringComparison.OrdinalIgnoreCase)) is { } named)
+            {
+                return named;
+            }
+
             context.Write(matches.Count == 0 ? $"No variable matches '{answer}' (? lists all)."
                 : $"'{answer}' matches {string.Join(", ", matches.Select(m => m.Name))}; type more of the name.");
         }

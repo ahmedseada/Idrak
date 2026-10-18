@@ -18,6 +18,14 @@ namespace Idrak.Networking.Abstractions;
 /// Collectives use negative tags, so a program's own messages (tags 0 and up) never mix with theirs. The ring steps
 /// (<see cref="RingScatter"/>, <see cref="RingGather"/>) run over any list of ranks, so an algorithm builds rings inside a
 /// node or across nodes from them.
+/// <para>
+/// Phase C6: over a transport that moves device memory itself (<see cref="IDeviceTransport"/>: "pcie-host", "nvlink" in
+/// one process) an algorithm may keep each piece on the device and sum it there with the device's kernels
+/// (<see cref="AllReduceDevice"/> and the others; ring does), the same sums in the same order, so the results are the same
+/// bit for bit; two device buffers made on first need and kept serve every call (rule 77). Elsewhere, and for what an
+/// algorithm keeps on the host, the values are staged through host memory; each call's <see cref="CollectiveCompleted"/>
+/// says which ("device" or "host"). <see cref="ClusterOptions.DeviceCollectives"/> turns the device path off.
+/// </para>
 /// </summary>
 internal abstract class HostCollectives : ICollectives, IHostValueCollectives
 {
@@ -29,6 +37,10 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     private long _longestWait;
     private int _slowest;
     private TimeSpan _simulatedBlocked;
+    private string? _staging;                                       // the current call's: "device", "host", or null for host values
+    private readonly IDeviceTransport? _device;
+    private Storage? _sendScratch;                                  // the device path's two buffers, kept (rule 77)
+    private Storage? _receiveScratch;
 
     // Phase C5: the step's totals over every collective, kept where the ranks are separate processes (their telemetry is
     // their own), sent to rank 0 after each step (ReportStep) so rank 0's log describes the cluster.
@@ -52,7 +64,11 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         _chunkBytes = Math.Clamp(context.Options.ChunkBytes ?? Array.MaxLength / 2, sizeof(float), Array.MaxLength / 2);
         _summarize = transport.Capabilities.CrossProcess && transport.WorldSize > 1;
         _stepSlowest = transport.Rank;
+        _device = context.Options.DeviceCollectives && transport is IDeviceTransport direct && transport.WorldSize > 1 ? direct : null;
     }
+
+    /// <summary>The transport's device path when the device collectives are on (<see cref="ClusterOptions.DeviceCollectives"/>), else null.</summary>
+    protected IDeviceTransport? DeviceTransport => _device;
 
     public abstract string Name { get; }
 
@@ -72,6 +88,11 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32)
     {
         Check(buffer, count, nameof(buffer));
+        if (_device is not null && op == ReduceOp.Sum && wire == WireType.Float32 && OnDevice("all-reduce", () => AllReduceDevice(buffer, count)))
+        {
+            return;
+        }
+
         Measure("all-reduce", count, buffer, values => AllReduceHost(values, op, wire), upload: buffer, at: 0, length: count);
     }
 
@@ -79,6 +100,12 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     {
         Check(input, count, nameof(input));
         Check(output, checked(count * WorldSize), nameof(output));
+        if (_device is not null && OnDevice("all-gather", () => AllGatherDevice(input, count, output)))
+        {
+            return;
+        }
+
+        _staging = "host";
         var host = ArrayPool<float>.Shared.Rent(Math.Max(1, count * WorldSize));
         try
         {
@@ -97,6 +124,11 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     {
         Check(input, checked(count * WorldSize), nameof(input));
         Check(output, count, nameof(output));
+        if (_device is not null && op == ReduceOp.Sum && OnDevice("reduce-scatter", () => ReduceScatterDevice(input, count, output)))
+        {
+            return;
+        }
+
         Measure("reduce-scatter", count * WorldSize, input, values => ReduceScatterHost(values, count, op), upload: output, at: Rank * count, length: count);
     }
 
@@ -105,7 +137,168 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         Check(buffer, count, nameof(buffer));
         ArgumentOutOfRangeException.ThrowIfNegative(root);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(root, WorldSize);
+        if (_device is not null && OnDevice("broadcast", () => BroadcastDevice(buffer, count, root)))
+        {
+            return;
+        }
+
         Measure("broadcast", count, buffer, values => BroadcastHost(values, root), upload: Rank == root ? null : buffer, at: 0, length: count);
+    }
+
+    /// <summary>
+    /// Reduces <paramref name="buffer"/> on the device (<see cref="DeviceTransport"/>: the pieces handed device to device and
+    /// summed there in the order the host path sums them); false when the algorithm has no device path (the host path runs).
+    /// </summary>
+    protected virtual bool AllReduceDevice(Storage buffer, int count) => false;
+
+    /// <summary><see cref="AllGather"/> on the device; false when the algorithm has no device path.</summary>
+    protected virtual bool AllGatherDevice(Storage input, int count, Storage output) => false;
+
+    /// <summary><see cref="ReduceScatter"/> (a sum) on the device; false when the algorithm has no device path.</summary>
+    protected virtual bool ReduceScatterDevice(Storage input, int count, Storage output) => false;
+
+    /// <summary><see cref="Broadcast"/> on the device; false when the algorithm has no device path.</summary>
+    protected virtual bool BroadcastDevice(Storage buffer, int count, int root) => false;
+
+    // Runs a device path timed as `operation`, published as staged on the device; false (nothing run) when it has none.
+    private bool OnDevice(string operation, Func<bool> body)
+    {
+        bool timed = BeginTiming(out long start, out var simulated);
+        bool done;
+        try
+        {
+            done = body();
+        }
+        finally
+        {
+            _measuring = false;
+        }
+
+        if (done)
+        {
+            _staging = "device";
+            EndTiming(timed, operation, start, simulated);
+        }
+
+        return done;
+    }
+
+    /// <summary>
+    /// Reduce-scatter around the ring <paramref name="members"/> on the device: the member at position p ends with piece p
+    /// summed over every member, written to <paramref name="target"/> at <paramref name="targetOffset"/>;
+    /// <paramref name="source"/> is not changed. Each step hands the piece on (<see cref="IDeviceTransport.PostDevice"/>),
+    /// takes the one before it and adds this rank's own values to what arrived, the order <see cref="RingScatter"/> sums in.
+    /// </summary>
+    protected void DeviceRingScatter(Storage source, ReadOnlySpan<int> members, int position, Func<int, int> offset, Func<int, int> size, Storage target, int targetOffset, int tag)
+    {
+        var device = _device!;
+        int count = members.Length;
+        var backend = Device.Backend;
+        if (count <= 1)
+        {
+            backend.Copy2D(source, offset(position), 0, target, targetOffset, 0, 1, size(position), accumulate: false);
+            return;
+        }
+
+        int next = members[(position + 1) % count], previous = members[(position - 1 + count) % count];
+        int largest = 0;
+        for (int s = 0; s < count; s++)
+        {
+            largest = Math.Max(largest, size(s));
+        }
+
+        Storage send = DeviceScratch(ref _sendScratch, largest), receive = DeviceScratch(ref _receiveScratch, largest);
+        for (int step = 0; step < count - 1; step++)
+        {
+            int give = Wrap(position - 1 - step, count), take = Wrap(position - 2 - step, count);
+            if (step == 0)
+            {
+                backend.Copy2D(source, offset(give), 0, send, 0, 0, 1, size(give), accumulate: false);   // this rank's own piece
+            }
+
+            var posted = device.PostDevice(next, send, size(give), tag);
+            device.ReceiveDevice(previous, receive, size(take), tag);
+            backend.Copy2D(source, offset(take), 0, receive, 0, 0, 1, size(take), accumulate: true);   // what arrived, then this rank's own
+            device.WaitTaken(posted, next, tag);
+            Counted(size(give), size(take));
+            (send, receive) = (receive, send);                     // the sum goes on at the next step
+        }
+
+        backend.Copy2D(send, 0, 0, target, targetOffset, 0, 1, size(position), accumulate: false);
+    }
+
+    /// <summary>
+    /// All-gather around the ring <paramref name="members"/> on the device: <paramref name="values"/> holds piece p at the
+    /// member at position p; every piece on every member afterwards, handed device to device.
+    /// </summary>
+    protected void DeviceRingGather(Storage values, ReadOnlySpan<int> members, int position, Func<int, int> offset, Func<int, int> size, int tag)
+    {
+        var device = _device!;
+        int count = members.Length;
+        if (count <= 1)
+        {
+            return;
+        }
+
+        var backend = Device.Backend;
+        int next = members[(position + 1) % count], previous = members[(position - 1 + count) % count];
+        int largest = 0;
+        for (int s = 0; s < count; s++)
+        {
+            largest = Math.Max(largest, size(s));
+        }
+
+        Storage send = DeviceScratch(ref _sendScratch, largest), receive = DeviceScratch(ref _receiveScratch, largest);
+        backend.Copy2D(values, offset(position), 0, send, 0, 0, 1, size(position), accumulate: false);
+        for (int step = 0; step < count - 1; step++)
+        {
+            int give = Wrap(position - step, count), take = Wrap(position - 1 - step, count);
+            var posted = device.PostDevice(next, send, size(give), tag);
+            device.ReceiveDevice(previous, receive, size(take), tag);
+            backend.Copy2D(receive, 0, 0, values, offset(take), 0, 1, size(take), accumulate: false);
+            device.WaitTaken(posted, next, tag);
+            Counted(size(give), size(take));
+            (send, receive) = (receive, send);                     // the piece that arrived goes on next
+        }
+    }
+
+    /// <summary>A chain from <paramref name="root"/> on the device: each rank takes the values from the one before and hands them on.</summary>
+    protected void DeviceChainBroadcast(Storage buffer, int count, int root, int tag)
+    {
+        var device = _device!;
+        int world = WorldSize, next = (Rank + 1) % world, previous = (Rank - 1 + world) % world;
+        if (Rank != root)
+        {
+            device.ReceiveDevice(previous, buffer, count, tag);
+            Counted(0, count);
+        }
+
+        if (next != root)
+        {
+            device.WaitTaken(device.PostDevice(next, buffer, count, tag), next, tag);
+            Counted(count, 0);
+        }
+    }
+
+    private void Counted(int sentValues, int receivedValues)
+    {
+        if (_measuring)
+        {
+            _sent += (long)sentValues * sizeof(float);
+            _received += (long)receivedValues * sizeof(float);
+        }
+    }
+
+    private Storage DeviceScratch(ref Storage? slot, int values)
+    {
+        if (slot is null || slot.Length < values)
+        {
+            slot?.Release();
+            slot = null;
+            slot = Device.Backend.Allocate(Math.Max(1, values), zeroed: false);
+        }
+
+        return slot;
     }
 
     public void Barrier() => Time("barrier", Transport.Barrier);
@@ -116,6 +309,7 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     /// </summary>
     internal void AllReduceHostValues(Span<float> values, ReduceOp op, WireType wire)
     {
+        _staging = null;
         bool timed = BeginTiming(out long start, out var simulated);
         try
         {
@@ -147,6 +341,7 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
             throw new ArgumentException($"An all-gather of {count} values a rank over {WorldSize} ranks takes {count * WorldSize} values, not {all.Length}.", nameof(all));
         }
 
+        _staging = null;
         bool timed = BeginTiming(out long start, out var simulated);
         try
         {
@@ -166,6 +361,7 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     {
         ArgumentOutOfRangeException.ThrowIfNegative(root);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(root, WorldSize);
+        _staging = null;
         bool timed = BeginTiming(out long start, out var simulated);
         try
         {
@@ -179,6 +375,107 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         EndTiming(timed, "broadcast", start, simulated);
 
         return true;
+    }
+
+    public bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op, WireType wire)
+    {
+        var pieces = Pieces(values.Length, counts);
+        _staging = null;
+        bool timed = BeginTiming(out long start, out var simulated);
+        try
+        {
+            ReduceScatterPiecesHost(values, pieces, op, op == ReduceOp.Sum ? wire : WireType.Float32);
+        }
+        finally
+        {
+            _measuring = false;
+        }
+
+        EndTiming(timed, "reduce-scatter", start, simulated);
+        return true;
+    }
+
+    public bool TryAllGather(Span<float> values, ReadOnlySpan<int> counts)
+    {
+        var pieces = Pieces(values.Length, counts);
+        _staging = null;
+        bool timed = BeginTiming(out long start, out var simulated);
+        try
+        {
+            AllGatherPiecesHost(values, pieces);
+        }
+        finally
+        {
+            _measuring = false;
+        }
+
+        EndTiming(timed, "all-gather", start, simulated);
+        return true;
+    }
+
+    /// <summary>
+    /// Reduces <paramref name="values"/> so this rank's piece (pieces of <paramref name="counts"/> values in rank order) holds
+    /// the reduction. By default an all-reduce of every value (each piece complete on every rank, the reduction's order the
+    /// algorithm's all-reduce); an algorithm with a cheaper way overrides it.
+    /// </summary>
+    protected virtual void ReduceScatterPiecesHost(Span<float> values, int[] counts, ReduceOp op, WireType wire) => AllReduceHost(values, op, wire);
+
+    /// <summary>
+    /// Every rank's piece of <paramref name="values"/> (pieces of <paramref name="counts"/> values in rank order) on every
+    /// rank. By default the all-gather of equal pieces, or each rank's piece broadcast from it in rank order.
+    /// </summary>
+    protected virtual void AllGatherPiecesHost(Span<float> values, int[] counts)
+    {
+        if (counts.All(c => c == counts[0]))
+        {
+            AllGatherHost(values, counts[0]);
+            return;
+        }
+
+        int at = 0;
+        for (int r = 0; r < counts.Length; r++)
+        {
+            if (counts[r] > 0)
+            {
+                BroadcastHost(values.Slice(at, counts[r]), r);
+            }
+
+            at += counts[r];
+        }
+    }
+
+    /// <summary>Where each piece of <paramref name="counts"/> starts.</summary>
+    protected static int[] Starts(int[] counts)
+    {
+        var starts = new int[counts.Length];
+        for (int r = 1; r < counts.Length; r++)
+        {
+            starts[r] = starts[r - 1] + counts[r - 1];
+        }
+
+        return starts;
+    }
+
+    private int[] Pieces(int length, ReadOnlySpan<int> counts)
+    {
+        if (counts.Length != WorldSize)
+        {
+            throw new ArgumentException($"{counts.Length} pieces for {WorldSize} ranks: give one count per rank.", nameof(counts));
+        }
+
+        long total = 0;
+        foreach (int c in counts)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(c, nameof(counts));
+            total += c;
+        }
+
+        if (total != length)
+        {
+            throw new ArgumentException($"The pieces hold {total} values; the buffer {length}.", nameof(counts));
+        }
+
+        return counts.ToArray();
     }
 
     /// <summary>
@@ -242,6 +539,9 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     public virtual void Dispose()
     {
         // The transport is the caller's: it may outlive these collectives.
+        _sendScratch?.Release();
+        _receiveScratch?.Release();
+        (_sendScratch, _receiveScratch) = (null, null);
     }
 
     protected abstract void AllReduceHost(Span<float> values, ReduceOp op, WireType wire);
@@ -491,6 +791,7 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         {
             var values = host.AsSpan(0, count);
             Device.Backend.Download(source, values);
+            _staging = "host";
             Time(operation, () => body(host.AsSpan(0, count)));
             if (upload is not null)
             {
@@ -556,7 +857,7 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         bool onClock = Transport.SimulatedTime > TimeSpan.Zero;       // a simulated transport (its clock has moved): the cluster's time, even for a call that took none
         Telemetry.Collective(new CollectiveCompleted(Name, operation, Rank, WorldSize, _sent, _received, wall, simulatedTime,
             onClock ? _simulatedBlocked : TimeSpan.FromSeconds(_blockedTicks / (double)Stopwatch.Frequency),
-            onClock && Transport.SimulatedCriticalRank is { } critical ? critical : _slowest));
+            onClock && Transport.SimulatedCriticalRank is { } critical ? critical : _slowest, operation == "barrier" ? null : _staging));
     }
 
     private void Check(Storage storage, int count, string name)

@@ -33,6 +33,10 @@ public abstract class Module : IDisposable
     /// </summary>
     public Tensor Forward(Tensor input)
     {
+        // A sharded run's layer gathers its weights from the ranks that hold them (plan 23, phase C6; one thread-static read
+        // when nobody listens).
+        using var gathered = ForwardHooks.Enter(this);
+
         // Weights offloaded to system memory are staged on the device around the forward (Idrak's layers do it; only
         // devices that offload, and only while something is offloaded or offloading is on, return a scope).
         using var offload = input.Device.Backend.Offload is not null ? TensorOffloading.EnterForward?.Invoke(this, input) : null;

@@ -106,12 +106,14 @@ internal abstract class SyncCore : IGradientSync
                 Steer(control, step);                          // a launcher's pause, resume and stop (phase C9)
             }
 
+            Began(_fixedPresent);
             return _fixedPresent;
         }
 
         if (!group.BeginStep(step))
         {
             CurrentStep = step;
+            Began(false);
             return false;
         }
 
@@ -121,6 +123,7 @@ internal abstract class SyncCore : IGradientSync
             Rejoin(group.Holder);
         }
 
+        Began(true);
         return true;
     }
 
@@ -177,6 +180,26 @@ internal abstract class SyncCore : IGradientSync
         }
     }
 
+    /// <summary>A step began (<see cref="CurrentStep"/>), its group known: <paramref name="present"/> when this rank takes part.</summary>
+    protected virtual void Began(bool present)
+    {
+    }
+
+    public virtual bool Updates => false;
+
+    public virtual double? Update(float maxNorm, bool readNorm = false) =>
+        throw new NotSupportedException($"The {Name} synchronisation leaves the update to the optimizer (Updates is false).");
+
+    public virtual IDisposable? Gather() => null;
+
+    public virtual IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState() => null;
+
+    public virtual bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state) => false;
+
+    public virtual void End()
+    {
+    }
+
     public abstract GradientSyncResult Reduce(double tokens, double loss, bool normalized = false);
 
     public virtual IDisposable? Overlap(double tokens, bool normalized = false) => null;
@@ -191,7 +214,11 @@ internal abstract class SyncCore : IGradientSync
         {
             if (Options.SyncWeightsEvery > 0 && step > 0 && step % Options.SyncWeightsEvery == 0)
             {
-                Broadcast(Parameters);                         // ranks of different device kinds round apart: rank 0's values
+                using (Gather())                                 // a sharded run's weights whole for it (each has one owner anyway)
+                {
+                    Broadcast(Parameters);                     // ranks of different device kinds round apart: rank 0's values
+                }
+
                 HostGradients?.ReloadParameters();
             }
 
@@ -275,6 +302,15 @@ internal abstract class SyncCore : IGradientSync
         }
 
         ShareState(holder);
+        ShareTrainedState(holder);
+    }
+
+    /// <summary>
+    /// The trained state every rank of a changed group takes (the weights and the optimizer's state): by default
+    /// <paramref name="holder"/>'s, which holds it whole; a sharded synchronisation moves each share instead.
+    /// </summary>
+    protected virtual void ShareTrainedState(int holder)
+    {
         Broadcast(Parameters, holder);
         HostGradients?.ReloadParameters();
         ShareOptimizerState(holder);

@@ -151,7 +151,7 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnCollective(in CollectiveCompleted e) =>
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"Collective {e.Collective} {e.Operation} rank {e.Rank}/{e.WorldSize}: sent {e.BytesSent:N0} B, received {e.BytesReceived:N0} B in {e.Wall.TotalMilliseconds:F3} ms, blocked {e.Blocked.TotalMilliseconds:F3} ms, slowest rank {e.SlowestRank}")
-            + Simulated(e.Simulated));
+            + Simulated(e.Simulated) + (e.Staging is { } staging ? $", staged on the {staging}" : ""));
 
     /// <inheritdoc />
     public void OnGradientSync(in GradientsSynced e) =>
@@ -775,6 +775,11 @@ public static class TelemetryJson
                 w.WriteNumber("simulated_ms", e.Simulated.TotalMilliseconds);
                 w.WriteNumber("blocked_ms", e.Blocked.TotalMilliseconds);
                 w.WriteNumber("slowest_rank", e.SlowestRank);
+                if (e.Staging is { } staging)
+                {
+                    w.WriteString("staging", staging);
+                }
+
                 break;
             case PipelineStepped e:
                 w.WriteString("event", "pipeline_step");
