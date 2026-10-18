@@ -150,6 +150,7 @@ public sealed partial class Linear : Module, ILinearLayer
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
     {
+        using var tied = _tiedTo is { } table ? ForwardHooks.Enter(table) : null;   // a sharded run gathers the table it reads (plan 23, C6)
         var y = Project(input);
         return _softcap is { } cap ? (y * (1f / cap)).Tanh() * cap : y;
     }
@@ -185,6 +186,7 @@ public sealed partial class Linear : Module, ILinearLayer
     /// </summary>
     internal static Tensor[] ForwardMany(Tensor input, params Linear[] layers)
     {
+        using var gathered = ForwardHooks.Listening ? Offloading.Gather(layers) : null;   // a sharded run's weights of every layer (plan 23, C6)
         using var offload = Offloading.EnterMany(layers, input);       // offloaded weights of all the layers staged together
         int k = input.Shape[^1], rows = input.Size / Math.Max(1, k);
         var capabilities = input.Backend.Capabilities;

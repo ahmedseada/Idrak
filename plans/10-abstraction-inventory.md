@@ -42,13 +42,13 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, live, mixed, none, partition, slow-worker | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce, local-sgd | Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce, local-sgd, sharded | Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology, SubsetTopology |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | HierarchicalProvider, NaiveProvider, RingProvider |  | Abstraction, Cluster, Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | LiveFailures, NoFailures, SeededFailures |  | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.IGradientSync` | interface | public | Tensor | GradientReduction, LocalSgd |  | Abstraction, Idrak, Network, Nlp | Abstraction |
-| `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider, LocalSgdProvider |  | Abstraction, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider, LocalSgdProvider, ShardedSyncProvider |  | Abstraction, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostGradients` | interface | public | — | HostOptimizer |  | Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |

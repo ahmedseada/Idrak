@@ -20,7 +20,7 @@ internal abstract class LocalTransport : FramedTransport, IDeviceTransport
     private readonly LocalHub _hub;
     private readonly ConcurrentDictionary<(int From, int Tag), Channel<Handoff>> _handoffs = new();
 
-    protected LocalTransport(string name, LocalHub hub, int rank) : base(name, rank, hub.Members.Length, hub.Timeout) => _hub = hub;
+    protected LocalTransport(string name, LocalHub hub, int rank) : base(name, rank, hub.Members.Length, hub.Options) => _hub = hub;
 
     /// <summary>Joins the group <paramref name="context"/> names, waiting for every rank up to the timeout.</summary>
     internal static T JoinGroup<T>(ClusterContext context, string transport, Func<LocalHub, int, T> create, CancellationToken cancellationToken)
@@ -28,7 +28,7 @@ internal abstract class LocalTransport : FramedTransport, IDeviceTransport
     {
         ArgumentNullException.ThrowIfNull(context);
         string name = transport + "|" + (context.Options.RunId ?? context.Options.Coordinator ?? "local");
-        var hub = Hubs.GetOrAdd(name, _ => new LocalHub(context.Topology.WorldSize, context.Options.Timeout));
+        var hub = Hubs.GetOrAdd(name, _ => new LocalHub(context.Topology.WorldSize, context.Options));
         var me = create(hub, context.Rank);
         try
         {
@@ -50,7 +50,9 @@ internal abstract class LocalTransport : FramedTransport, IDeviceTransport
         return me;
     }
 
-    public void SendDevice(int to, Storage source, int count, int tag)
+    public void SendDevice(int to, Storage source, int count, int tag) => WaitTaken(PostDevice(to, source, count, tag), to, tag);
+
+    public Task PostDevice(int to, Storage source, int count, int tag)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentOutOfRangeException.ThrowIfNegative(count);
@@ -60,20 +62,28 @@ internal abstract class LocalTransport : FramedTransport, IDeviceTransport
         }
 
         var peer = _hub.Members[to] ?? throw new InvalidOperationException($"rank {to} is not in rank {Rank}'s group");
-        using var handoff = new Handoff(source, count);
+        var handoff = new Handoff(source, count, Rank, to, tag);
         if (!peer.Handoffs(Rank, tag).Writer.TryWrite(handoff))
         {
             throw new InvalidOperationException($"rank {to} left the group before rank {Rank} handed it device memory (tag {tag})");
         }
 
-        if (!handoff.Done.Wait(Timeout))
-        {
-            throw new TimeoutException($"rank {Rank} waited {Timeout.TotalSeconds:F0} s for rank {to} to take its device memory (tag {tag})");
-        }
+        return handoff.Taken;
+    }
 
-        if (handoff.Error is { } error)
+    public void WaitTaken(Task posted, int to, int tag)
+    {
+        ArgumentNullException.ThrowIfNull(posted);
+        try
         {
-            throw new InvalidOperationException($"rank {to} could not take rank {Rank}'s device memory (tag {tag}): {error.Message}", error);
+            if (!posted.Wait(Timeout))
+            {
+                throw new TimeoutException($"rank {Rank} waited {Timeout.TotalSeconds:F0} s for rank {to} to take its device memory (tag {tag})");
+            }
+        }
+        catch (AggregateException e) when (e.InnerException is { } inner)
+        {
+            throw new InvalidOperationException(inner.Message, inner);
         }
     }
 
@@ -115,13 +125,11 @@ internal abstract class LocalTransport : FramedTransport, IDeviceTransport
         }
         catch (Exception e)
         {
-            handoff.Error = e;
+            handoff.Fail(new InvalidOperationException($"rank {Rank} could not take rank {from}'s device memory (tag {tag}): {e.Message}", e));
             throw;
         }
-        finally
-        {
-            handoff.Done.Set();
-        }
+
+        handoff.Done();
     }
 
     /// <summary>Copies <paramref name="count"/> values of rank <paramref name="from"/>'s <paramref name="source"/> into <paramref name="destination"/>.</summary>
@@ -164,6 +172,10 @@ internal abstract class LocalTransport : FramedTransport, IDeviceTransport
         foreach (var (_, channel) in _handoffs)
         {
             channel.Writer.TryComplete();
+            while (channel.Reader.TryRead(out var left))
+            {
+                left.Abandon();                                    // its sender stops waiting at once
+            }
         }
     }
 
@@ -171,29 +183,36 @@ internal abstract class LocalTransport : FramedTransport, IDeviceTransport
         _handoffs.GetOrAdd((from, tag), static _ => Channel.CreateUnbounded<Handoff>(new UnboundedChannelOptions { SingleReader = false, SingleWriter = false }));
 
     /// <summary>One rank's device memory handed to another, and the receiver's word that it was copied.</summary>
-    private sealed class Handoff(Storage source, int count) : IDisposable
+    private sealed class Handoff(Storage source, int count, int from, int to, int tag)
     {
+        private readonly TaskCompletionSource _taken = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Storage Source { get; } = source;
 
         public int Count { get; } = count;
 
-        public ManualResetEventSlim Done { get; } = new(false);
+        public Task Taken => _taken.Task;
 
-        public Exception? Error { get; set; }
+        public void Done() => _taken.TrySetResult();
 
-        public void Dispose() => Done.Dispose();
+        public void Fail(Exception error) => _taken.TrySetException(error);
+
+        // The receiver is gone with the handoff unread.
+        public void Abandon() => _taken.TrySetException(new InvalidOperationException($"rank {to} left the group before it took rank {from}'s device memory (tag {tag})"));
     }
 }
 
 /// <summary>The ranks of one in-process group, and the pairs whose fallback was already reported.</summary>
-internal sealed class LocalHub(int world, TimeSpan timeout)
+internal sealed class LocalHub(int world, ClusterOptions options)
 {
     private readonly object _gate = new();
     private int _joined;
 
     public LocalTransport?[] Members { get; } = new LocalTransport?[world];
 
-    public TimeSpan Timeout { get; } = timeout;
+    public ClusterOptions Options { get; } = options;
+
+    public TimeSpan Timeout => Options.Timeout;
 
     public ConcurrentDictionary<(int, int), bool> Reported { get; } = new();
 

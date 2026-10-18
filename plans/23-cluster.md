@@ -979,6 +979,133 @@ model that does not fit one fake GPU's cap fits across four.
 cap of one fake GPU trains across four with `Shard = parameters`, each rank holding its share" (`InUse` per rank against
 the share); "cluster: a sharded run resumes at the same world size".
 
+**C6 as built (2026-10-18).** Sharding is a gradient synchronisation of its own, `"sharded"` in `GradientSyncs`
+(`src/Idrak.Network/Training/Sharding.cs`, registered beside `all-reduce` and `local-sgd`), picked when `Shard` is set
+(`ClusterOptions.GradientSyncName`; `all-reduce` and `local-sgd` refuse a shard naming the setting). It is the C4
+reduction itself (`GradientReduction`, now partial): the same buckets, overlap, measured bucket size, header and telemetry.
+Each trained parameter has one owner (`ShardOwners.Assign`: largest first to the rank owning the fewest values, the same
+on every rank); each bucket's pieces are grouped by owner (`BucketLayout` with owners, `Counts`, `Piece`) and
+reduce-scattered (`IHostValueCollectives.TryReduceScatter(values, counts, op, wire)` and `TryAllGather(values, counts)`,
+new default members, in `HostCollectives` for every algorithm: ring around its ring with each rank's own count, naive and
+hierarchical through their all-reduce and broadcasts; `HostValues` falls back through the device), so a rank receives the
+token-weighted sum of its own parameters' gradients only. `IGradientSync` gained default members the trainers call:
+`Updates`/`Update(maxNorm, readNorm)` (the global norm is every rank's squares summed, the owned gradients clipped, the
+optimizer stepped: only owned parameters have gradients, so only their moments exist, as any optimizer makes a
+parameter's state when it first steps it; then each bucket's weights all-gathered), `Gather()` (whole weights for an
+evaluation, a checkpoint, a copy of the best weights; what is written meanwhile into a rank's own goes to its master),
+`SaveOptimizerState()`/`LoadOptimizerState()` (every rank's share joined for rank 0's checkpoint, which is the format one
+process writes, so it resumes sharded or not; a resumed rank keeps its share) and `End()` (the whole weights again after
+the last step). `Optimizer.StateParameter(name)` (the parameter a saved entry belongs to; `GroupedOptimizer` maps its
+groups) tells the shares apart. Modes: `optimizer` drops the others' gradients once reduced; `gradients` drops them as soon
+as their bucket was taken during the backward pass (a gradient changed after it went, a weight shared into a checkpointed
+block, fails naming the parameter and the fix); `parameters` keeps a master copy of the owned weights, gives every trained
+parameter's memory back (`Backend.Evict`, its recomputation a broadcast from the owner) and gathers a layer's weights
+just before its forward (`ForwardHooks`, a new thread-scoped listener in Idrak.Abstraction entered by `Module.Forward` and
+by Idrak's fused paths: `Linear.ForwardMany`, the fused convolution with its norm, a tied head's table) and when the
+backward pass reads them (the storage's restore in `Tensor.Backward`), giving them back after; a module whose trained
+parameters fit `GatherBytes` (unset: each rank's share) or has no children is gathered whole, a larger one only its own;
+the overlap worker is drained before each gather so the two never share the collectives at once. A changed group (a late
+joiner) moves each share: every rank says whether it trained the step before and as which rank, the old owners are
+recomputed, and the weights (owners' masters) and each moving parameter's optimizer entries go from the old owner to the
+new; the step count comes from the holder. Trainers: the `Trainer` updates through `Update`, gathers for validation and
+the best weights, ends the run; the fine-tuner's `Update` and the pretrainer's runner take the sync, record no CUDA graph
+when sharded, gather around evaluations, answers and saves; the pretrainer joins the optimizer state for its checkpoints
+and loads a resumed state after the sync exists (it writes no cancelled-step checkpoint when sharded: the state is every
+rank's). New settings, in `ClusterOptions.Variables` and the CLI's table: `GatherBytes` (`IDRAK_CLUSTER_GATHER_BYTES`).
+Tests: `tests/Idrak.Tests/ClusterShardingTests.cs` (`ClusterShardingGroup`, 8 tests after `ClusterTransportGroup`).
+Measured on the CPU (4 cores, shared with another agent): sharded `optimizer`, `gradients` and `parameters` runs equal the
+unsharded run bit for bit with naive (3 ranks, Adam, ten buckets sent during the backward pass), and each rank's optimizer
+holds its own parameters' moments only; ring with AdamW clipped to 0.5 on 2 ranks, gap 0. A model of 462,083 values
+(1.76 MiB of weights, 7.05 MiB of training state with Adam) on fake GPUs capped at 4 MiB: unsharded on one it fails
+("would exceed its memory limit"), with `Shard = parameters` on four each rank's `InUse` at every epoch's end is exactly its
+share (three times its owned values: master and two moments; 1.50, 1.50, 1.50 and 0.79 MiB), the same every epoch (rule
+77), peaks 3.26 MiB and 2.55 MiB, and the weights after 3 epochs are the unsharded run's bit for bit. The pretrainer
+(tiny Llama, AdamW, 2 ranks) resumes `optimizer` and `parameters` runs at the same world size with the uninterrupted run's
+losses and weights, its checkpoint holding every parameter's moments; a late joiner (rank 2 at step 7) ends `optimizer` and
+`parameters` runs with the run without the fault's weights.
+
+Changes from the plan, kept: **shares are whole parameters, not flat slices**: the user's optimizer is used unchanged
+(any optimizer, its state per parameter by `StateParameter`), the results equal the unsharded run's bit for bit where the
+sums are ordered alike, and a checkpoint is one process's format; the cost is balance (a parameter larger than a share
+sits on one rank) and a reduce-scatter whose pieces are as uneven as a bucket's owners (never more bytes than the
+all-reduce). **A gathered unit is a module whose parameters fit `GatherBytes`**, not a fixed "layer": a decoder block is
+gathered whole because its forward reads its norms' gains in fused passes. **`Gather()` gives every rank the whole weights**
+for evaluation and checkpoints (the evaluations run unequal shares, which per-layer gathers cannot); a model whose whole
+weights do not fit one device once cannot be evaluated or saved this way yet, nor built (each rank builds the whole model
+before the first step evicts it): a sharded load and a streamed save are left for C8. **Every rank must run the step's
+forward and backward under `Shard = parameters`** (the gathers are collectives): a rank with no rows in a step would leave
+the others waiting until the timeout; the trainers' steps give every rank rows when a step has at least a draw per rank.
+A forward on another thread than the training thread (none in the trainers today) is not gathered. Sharding refuses the
+HostOptimizer (its state is on the host already), local SGD and top-k (bf16 travels).
+
+**C4's open item, closed: background staging of a finished bucket.** On a device with pinned staging slots each bucket
+the backward pass finishes is queued to a slot of its own (`IHostStaging.Download(source, offset, slot, slotOffset,
+floats)` and `PlacesCopies`, new default members; CUDA implements both, its `Wait` makes the context current for the
+reducing thread) behind the backward pass's work, and the reducing thread waits for it, copies it out and reduces it, so the
+training thread never waits for the device; one slot per bucket (pinned memory the size of the gradients, as the held
+buffer is), made once per layout. `AsyncStaging` (`IDRAK_CLUSTER_ASYNC_STAGING`, on) turns it off; the values are the same.
+Measured with a staging whose copies complete 2 ms after they are queued (the test's, so the path runs without a GPU): 18
+buckets a step for 4 steps, the training thread spent 1.87 ms queuing them, the reducing thread waited 5.42 ms for them;
+the weights bit for bit the synchronous copy's. The CPU has no staging and copies on the training thread as before.
+
+**C5's open items, closed: receive flow control.** `FramedTransport` gives each peer and tag a credit: a sender has at most
+`InFlight` messages and `ReceiveBytes` (`IDRAK_CLUSTER_RECEIVE_BYTES`, unset: messages only) bytes the peer has not taken;
+the receiver acknowledges each message as a receive takes it (an `Ack` frame carrying its bytes), a blocking send beyond
+its credit waits (timeout naming the rank and the settings), an awaited send awaits without a thread. A message is always
+let go when nothing of its peer and tag is outstanding, so a message larger than the budget travels alone and ranks that
+all send before they receive never wait in a circle. Measured: 120 messages of 16 KiB to a receiver taking one a
+millisecond held at most 16 KiB with 2 in flight and a 24 KiB budget on tcp, shared-memory and pcie-host, against 1.9 MiB
+without a bound; three ranks each sending 1 MiB to every other under two tags (budget 4 KiB, one in flight) before
+receiving all complete. **Device collectives.** Over a transport that moves device memory (`IDeviceTransport`: pcie-host,
+nvlink in one process; `PostDevice`/`WaitTaken` hand a piece on without waiting, so a ring step posts, takes, then waits)
+ring keeps every piece of a float32 sum, an all-gather, a reduce-scatter and a broadcast on the device: the piece handed
+device to device, what arrived plus the rank's own added by the device's `Copy2D` (accumulate), the order the host path
+sums in, bit for bit; two device buffers made on first need and kept. Elsewhere (a maximum, bf16, naive, hierarchical,
+socket transports) chunks are staged through the host; `CollectiveCompleted.Staging` ("device", "host", or null for host
+values) says which, carried by the console and JSON-lines loggers. `DeviceCollectives` (`IDRAK_CLUSTER_DEVICE_COLLECTIVES`,
+on) turns it off. Chunking (`ChunkBytes`) applies to the host path only: a device piece goes whole.
+
+**The shared-memory doorbell (the owner's Windows measurements, 2026-10-18).** The reader slept a millisecond between looks
+after 5 ms of spinning, and so did a writer facing a full ring; on Windows a sleep is a timer tick (15.6 ms), longer than
+the 5 ms spin, so once idle both sides stayed in the sleep regime: each message waited about half a tick (the bench's warm
+latency 7,961 us), a 16 MB message stalled once per ring refill (warm 100 MiB/s, below the cold round's 199.5, which ran
+while both sides still spun), and training through `cluster start` ran at 9.5k tok/s against 92k in-process. Now an idle
+side raises a flag in the ring's header and blocks on a loopback datagram socket (`Doorbell`), which the other side rings
+only when the flag is up (each side writes its position or flag, a full fence, then reads the other's, so no wake is
+lost); it waits at most `SharedMemoryCheck` (`IDRAK_CLUSTER_SHM_CHECK`, 1 s: how soon a writer that died is named) and spins
+first for `SharedMemorySpin` (`IDRAK_CLUSTER_SHM_SPIN`; unset: the cost of one cross-thread wake through the doorbell,
+measured once per process, the spin-then-block break-even). Loopback datagrams work alike on Windows, Linux and macOS
+(rule 70). Measured here (Linux, where a sleep of a millisecond takes 1.1 ms, so the old loop never stuck): a message
+after an idle gap between two processes 334 to 418 us median against a timer tick of 1,090 us (the test holds it under half
+a tick); `cluster bench --localhost`, 16 MB, before 1,913 to 3,159 MiB/s warm, after 1,894 to 2,525 MiB/s (latency 12 to 73
+us before, 13 to 132 us after: the old 5 ms spin kept a core busy after every message, which bought those microseconds;
+`IDRAK_CLUSTER_SHM_SPIN=0.001` gives 13 to 20 us); pretraining the tiny model 200 steps on two CPU ranks, mean of the
+progress lines, before: in-process 36.6k to 40.9k tok/s, `cluster sim --mode localhost` 20.8k to 29.2k, `cluster start`
+15.5k to 20.0k; after: 38.4k to 40.3k, 26.3k to 31.2k, 23.9k to 29.8k (the processes' remaining gap to in-process is two
+processes' CPU kernels on four cores). Why `cluster start` was slower than `cluster sim --mode localhost` on Windows could
+not be reproduced here: on Linux the two now run alike; the difference the owner saw is the sleep regime above (a
+throttled localhost run's paced arrivals change when each side goes idle), which the doorbell removes; the owner's Windows
+runs are to confirm it. Not changed: a blocked receive still wakes through the thread pool (the channel's continuation),
+part of the 334 us; an inbox that wakes its waiter directly is left for C8, with the bench's calibration.
+
+**Merged with C7 (2026-10-18, onto 00a0d8f).** Sharding and pipeline placement are refused together, at the start of
+the run (`PipelineStage.Place`, the entry every pipeline run takes, before anything moves), naming
+`IDRAK_CLUSTER_PLACEMENT=pipeline` and `IDRAK_CLUSTER_SHARD` and why: a pipeline already splits the parameters by stage, a
+stage clips by the norm over every stage and rank 0's checkpoint gathers each stage's whole weights and optimizer state,
+where a sharded synchronisation over a stage's replicas would keep each replica's share and clip over the replicas alone,
+and the parameters shard's gathers would run between the stage-to-stage sends. Making them work together (each stage's
+replicas sharding that stage through C7's subgroups, the clipping norm summed over stages and shares, the checkpoint
+joining shares per stage) is left for after C8. A plain pipeline run is untouched by the gathers: `ForwardHooks` has no
+listener unless `Shard = parameters` installs one, so `Module.Forward` and the tied table's entry are one thread-static
+read, and `PipelineBoundary` holds no parameters. One build and one run of the C6 filter with `generation:|decoder:` added:
+178 passed, 0 failed on the CPU (C7's pipeline tests included; the shared-memory test measured 508 us median after an idle
+gap that run, 51 ms worst, the machine shared with another agent's build).
+
+Open, named with their phase: the measured `ChunkBytes` (C8, as C5 said); a sharded load (each rank building only its
+share) and a streamed checkpoint save for weights that never fit one device whole (C8); sharding with top-k (after C8's
+advisor shows a need). Not run here: everything on a GPU (the CUDA staging, peer copies and the device path on nvlink, the
+CUDA carve that spills instead of failing), and the shared-memory measurements on Windows (the owner's runs).
+
 ### C7: pipeline parallelism
 
 `Placement = pipeline`: decoder blocks cut so stages hold equal parameter bytes (measured from the checkpoint's tensor
@@ -1110,6 +1237,25 @@ missing --rank"; "cluster: cli tune --cluster with IDRAK_RANK keeps --rank as th
 world size that contradicts the file is refused naming both"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
 
+**C8 in two parts (2026-10-18).** What C2-C7 handed to C8 is split so two agents can run beside C9 in turn:
+**C8a, the command line and calibration** (the list above; plus `cluster sim` for `tune` and `train`, `--placement
+pipeline`/`--stages` on `cluster sim` and `pretrain --cluster`, `--profile` of a step's buckets, `runs show` charting the
+network share, the event log flushed while a run goes, an address on a link override for a cable on its own subnet, the
+measured `ChunkBytes` and bucket size kept in the tuning cache and shown by `idrak tuning show`, and `calibrate` fitting
+one network adapter shared by a machine's ranks where a bench shows it); **C8b, memory and speed** (a pipeline stage and
+a parameter shard each load only their own tensors from the checkpoint and write only their own shard of it, joined by
+the reader, so no rank holds the whole model; activations between stages moved device to device where the transport
+can; a receive inbox that wakes its waiter directly; then sharding with a pipeline, and top-k with sharding, if the
+measured numbers justify them).
+
+**Owner's GPU run after C6 + C7 (2026-10-18), open for C8b.** "cluster: a model whose training state is over the cap
+of one fake GPU trains across four with Shard = parameters" fails on CUDA and on Vulkan, passes on the CPU: every rank
+holds 1,835,012 B at each epoch's end against its share of 1,572,864 B, constant over the epochs (no growth), so
+262,148 B above the share = one 256 x 256 weight of the test's model (262,144 B) and one float. On the GPU backends a
+gathered unit's weight, or a backend scratch sized to the largest operand, stays in use at the epoch's end where the
+CPU gives it back. C8b first makes the test name what is held (the device's live storages by size and owner on
+failure), so the owner's next GPU run says which, then fixes it in the library; the test's bound stays as it is.
+
 ### C9: the dashboard (set up, control and monitor in a browser)
 
 Beside C8, once C6 and C7 have landed (two agents). Decided by the owner (decision 8): simulated runs are set up,
@@ -1206,7 +1352,7 @@ folder; KPI tiles with the time left; a card per rank with its state, loss, step
 network against blocked time; the loss drawn by the page; the links table; rank 0's output or the ranks' lines) and
 Events (newest first, each fault with its replay key); light and dark by `prefers-color-scheme`, IBM Plex when installed
 and system fonts otherwise, no address outside the server; right to left with its labels in Arabic when the tool's
-language is. Tests: 6 in `tests/Idrak.Tests/ClusterDashboardTests.cs` (`ClusterDashboardGroup`, after
+language is. Tests: 7 in `tests/Idrak.Tests/ClusterDashboardTests.cs` (the seventh, the sharded stop, after the merge below) (`ClusterDashboardGroup`, after
 `ClusterPipelineGroup`), each through the real server on 127.0.0.1 and a port the system picks. Measured on the CPU (two
 ranks carved from it, the tiny model): a run started paused from the API, resumed, paused at a step boundary (every rank
 waiting before the same step), resumed and stopped after 19 steps wrote checkpoint-19 with the losses and weights of an
@@ -1240,11 +1386,28 @@ not an in-memory test server: the test project does not reference the test host,
 owner runs. **The inspection gained the per-phase breakdown** (`PredictPhases`) and the pair matrix (`Pairs`) the owner's
 five views need, played on the same virtual clock as the totals.
 
-Open, found while testing (C4's code, not changed here): with `IDRAK_CLUSTER_BUCKET_BYTES` set, a step that leaves a
-rank without rows (three ranks, two rows a step) fails at once: the ranks with rows reduce their buckets during the
-backward pass while the rank without rows goes to the header, and the collectives meet mismatched ("a 21848-byte
-message from rank 1 (tag -11) does not fit rank 2's 36-byte buffer"); the measured bucket size (the variable unset) runs.
-Reproduced with `cluster sim` alone, no dashboard; the C9 tests leave the variable unset.
+**After merging C6 (2026-10-18).** The stop of a sharded run: every rank stops at the same step boundary (the gate), and
+every rank then takes part in its checkpoint as a saving step does in C6 (the weights gathered, the optimizer state
+joined, rank 0 writes, a barrier), so the checkpoint holds every rank's share; a stop of an unsharded run is rank 0's
+alone as before. The pretrainer now catches `ClusterRunStoppedException` (not any cancellation) at the step boundary.
+"cluster: ui a sharded run (Shard = parameters) pauses … stop …" checks it against an uninterrupted sharded run: the
+weights, the optimizer state and the losses byte for byte. Pause needs nothing more for a sharded run (ranks wait at the
+gate, between steps). **Fixed, found while testing C9 (C4's code):** a rank with no rows in a step ran no backward pass,
+so it never opened the overlap and sent the header before its buckets while the ranks that overlapped sent their buckets
+first; with `IDRAK_CLUSTER_BUCKET_BYTES` set (more than one bucket), three ranks and two rows a step failed at once ("a
+21848-byte message from rank 1 (tag -11) does not fit rank 2's 36-byte buffer"), and a measured size of several
+buckets would have failed alike from the second step. The bucket layout never depended on rows; the order of the
+collectives did. Every rank now opens the overlap in every step it takes part in, rows or not: the fine-tuner's step
+without rows and its recorded step (`Synced`, the lost overlap's reason given after it opens) and the `Trainer`'s step
+without a batch; `IGradientSync.Overlap`'s documentation states the rule. "cluster: a rank with no rows in a step takes part
+in the bucketed reduction as the others do" (3 ranks, buckets of 4 KiB, two sequences a step) equals one process. Two
+"cli health" checks the wider filter runs failed already on the main line and are fixed: `cluster sim` declared
+`--seed`, a common option, as its own (C4); and `env set`, asked, found no variable for "port" once several names
+held it (`IDRAK_CLUSTER_PORT`, now `IDRAK_CLUSTER_UI_PORT`): of several matches, the one named `IDRAK_` and the part
+is taken. After the merge, one build, the dumps and the inventory regenerated, then on the CPU the filter `cluster:|public
+API|abstraction inventory|cli health|cli polish|cli arabic: every message|cli dev: trace|cli serve|profiler:|pretrain:|cli
+pretrain:|training:|fine-tuning:|callbacks:|offloading: HostOptimizer`: 175 passed, 0 failed, no process left. A sharded
+run (parameters) paused at step 11 and stopped after 28 steps wrote the uninterrupted run's checkpoint.
 
 Deferred, with the phase: a stop under pipeline placement writes no checkpoint (its checkpoint gathers every stage in a
 collective the stopping ranks no longer run; C8, with the stage-own checkpoint); the fine-tuner and the `Trainer` do not

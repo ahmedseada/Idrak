@@ -98,8 +98,12 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public Idrak.Abstraction.Cluster.WireType Wire { get; init; }
   public System.Collections.Generic.IReadOnlyList<int>? PipelineCuts { get; init; }
   public System.TimeSpan RetryDelay { get; init; }
+  public System.TimeSpan SharedMemoryCheck { get; init; }
   public System.TimeSpan Timeout { get; init; }
   public System.TimeSpan? MessageCost { get; init; }
+  public System.TimeSpan? SharedMemorySpin { get; init; }
+  public bool AsyncStaging { get; init; }
+  public bool DeviceCollectives { get; init; }
   public bool ErrorFeedback { get; init; }
   public bool Overlap { get; init; }
   public bool Pipelined { get; }
@@ -122,6 +126,8 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public long SharedMemoryBytes { get; init; }
   public long? BucketBytes { get; init; }
   public long? ChunkBytes { get; init; }
+  public long? GatherBytes { get; init; }
+  public long? ReceiveBytes { get; init; }
   public long? SocketBufferBytes { get; init; }
   public static Idrak.Abstraction.Cluster.ClusterOptions FromEnvironment(Idrak.Abstraction.Cluster.ClusterOptions? defaults = null)
   public static System.Collections.Generic.IReadOnlyList<string> Variables { get; }
@@ -267,10 +273,16 @@ public interface Idrak.Abstraction.Cluster.IFailureModel
   public string Summary { get; }
 
 public interface Idrak.Abstraction.Cluster.IGradientSync : System.IDisposable
+  public (default) System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue>? SaveOptimizerState()
+  public (default) System.IDisposable? Gather()
   public (default) System.IDisposable? Overlap(double tokens, bool normalized = false)
   public (default) bool BeginStep(long step)
+  public (default) bool LoadOptimizerState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
+  public (default) bool Updates { get; }
+  public (default) double? Update(float maxNorm, bool readNorm = false)
   public (default) int Rank { get; }
   public (default) int WorldSize { get; }
+  public (default) void End()
   public (default) void OverlapLost(string reason)
   public Idrak.Abstraction.Cluster.GradientSyncResult Reduce(double tokens, double loss, bool normalized = false)
   public Idrak.Abstraction.Cluster.ICollectives Collectives { get; }
@@ -295,6 +307,8 @@ public interface Idrak.Abstraction.Cluster.IHostGradients
   public void ReloadParameters()
 
 public interface Idrak.Abstraction.Cluster.IHostValueCollectives
+  public (default) bool TryAllGather(System.Span<float> values, System.ReadOnlySpan<int> counts)
+  public (default) bool TryReduceScatter(System.Span<float> values, System.ReadOnlySpan<int> counts, Idrak.Abstraction.Cluster.ReduceOp op, Idrak.Abstraction.Cluster.WireType wire)
   public System.TimeSpan SimulatedTime { get; }
   public bool SupportsHostValues { get; }
   public bool TryAllGather(System.Span<float> all, int count)
@@ -1594,6 +1608,8 @@ public interface Idrak.Abstraction.Devices.IBackwardStaging : System.IDisposable
   public void Before(int index)
 
 public interface Idrak.Abstraction.Devices.IHostStaging : System.IDisposable
+  public (default) bool PlacesCopies { get; }
+  public (default) void Download(Idrak.Abstraction.Devices.Storage source, int offset, int slot, int slotOffset, int floats)
   public System.Span<float> Slot(int slot)
   public int SlotFloats { get; }
   public void Download(Idrak.Abstraction.Devices.Storage source, int offset, int slot, int floats)
@@ -1754,7 +1770,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.CollectiveCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.CollectiveCompleted>
-  public CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived, System.TimeSpan Wall, System.TimeSpan Simulated, System.TimeSpan Blocked, int SlowestRank)
+  public CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived, System.TimeSpan Wall, System.TimeSpan Simulated, System.TimeSpan Blocked, int SlowestRank, string? Staging = null)
   public System.TimeSpan Blocked { get; init; }
   public System.TimeSpan Simulated { get; init; }
   public System.TimeSpan Wall { get; init; }
@@ -1765,6 +1781,7 @@ public readonly record struct Idrak.Abstraction.Diagnostics.CollectiveCompleted 
   public long BytesSent { get; init; }
   public string Collective { get; init; }
   public string Operation { get; init; }
+  public string? Staging { get; init; }
 
 public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstraction.Diagnostics.ITelemetryHook
   public ConsoleLogger(Idrak.Abstraction.Diagnostics.TelemetryLevel levels = (Idrak.Abstraction.Diagnostics.TelemetryLevel)1, int epochInterval = 1, int batchInterval = 1, System.IO.TextWriter? output = null)
@@ -2381,6 +2398,11 @@ public enum Idrak.Abstraction.Formats.WeightFormat : int
   BFloat16 = 2
   Float16 = 1
   Float32 = 0
+
+public static class Idrak.Abstraction.ForwardHooks
+  public static System.IDisposable OnEnter(System.Func<Idrak.Abstraction.Module, System.IDisposable?> enter)
+  public static System.IDisposable? Enter(Idrak.Abstraction.Module module)
+  public static bool Listening { get; }
 
 public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstraction.Generation.PackedWeight
   public Idrak.Abstraction.Tensor Packed { get; }
@@ -4650,6 +4672,7 @@ public abstract class Idrak.Abstraction.Training.Optimizer : System.IDisposable
   public double GradientNorm()
   public float LearningRate { get; set; }
   public virtual System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
+  public virtual int? StateParameter(string name)
   public virtual void ClipAndStep(float maxNorm)
   public virtual void Dispose()
   public virtual void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)

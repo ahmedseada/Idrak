@@ -20,8 +20,10 @@ public readonly record struct Idrak.Networking.Abstractions.GradientPiece : Syst
   public int Parameter { get; init; }
 
 public interface Idrak.Networking.Abstractions.IDeviceTransport : Idrak.Abstraction.Cluster.ITransport, System.IDisposable
+  public System.Threading.Tasks.Task PostDevice(int to, Idrak.Abstraction.Devices.Storage source, int count, int tag)
   public void ReceiveDevice(int from, Idrak.Abstraction.Devices.Storage destination, int count, int tag)
   public void SendDevice(int to, Idrak.Abstraction.Devices.Storage source, int count, int tag)
+  public void WaitTaken(System.Threading.Tasks.Task posted, int to, int tag)
 
 public interface Idrak.Networking.Abstractions.IGradientCompression
   public Idrak.Networking.Abstractions.IGradientCompressor Create(Idrak.Abstraction.Cluster.ICollectives collectives, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> parameters, Idrak.Abstraction.Cluster.ClusterOptions options)

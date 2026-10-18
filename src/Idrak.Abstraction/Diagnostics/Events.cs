@@ -339,8 +339,13 @@ public readonly record struct TransferCompleted(string Transport, int From, int 
 /// The rank the others waited on longest; on a simulated transport, the origin of the critical path that last held this
 /// rank's virtual clock back (<see cref="Cluster.ITransport.SimulatedCriticalRank"/>), which names a slow worker on every rank.
 /// </param>
+/// <param name="Staging">
+/// Where a call on device buffers moved its values (plan 23, phase C6): "device" when they stayed on the device and were
+/// summed there (a transport that moves device memory, "pcie-host" or "nvlink" in one process), "host" when they were
+/// staged through host memory; null for values the caller held on the host already.
+/// </param>
 public readonly record struct CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived,
-    TimeSpan Wall, TimeSpan Simulated, TimeSpan Blocked, int SlowestRank);
+    TimeSpan Wall, TimeSpan Simulated, TimeSpan Blocked, int SlowestRank, string? Staging = null);
 
 /// <summary>
 /// Published at <c>TelemetryLevel.Network</c> by a gradient synchronisation once per training step on each rank (plan 23,

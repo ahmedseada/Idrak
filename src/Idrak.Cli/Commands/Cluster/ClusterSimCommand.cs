@@ -105,7 +105,7 @@ internal sealed class ClusterSimCommand : Command
           idrak cluster sim --topology two.json --dashboard -- pretrain my-model --tokens tokens.bin --steps 500 -o run
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--topology", "--collective", "--wire", "--mode", "--failures", "--seed", "--port"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--topology", "--collective", "--wire", "--mode", "--failures", "--port"];   // --seed: a common option
 
     public override IReadOnlyCollection<string> Flags => ["--dashboard", "--no-browser"];
 

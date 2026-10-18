@@ -308,6 +308,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 else
                 {
                     Optimizer.ZeroGrad();
+                    // No rows here this step: the overlap opened all the same, so this rank's buckets and header go in the
+                    // order of the ranks that ran a backward pass (plan 23, C4; found in C9).
+                    sync?.Overlap(0)?.Dispose();
                 }
 
                 double reducedLoss = double.NaN;
@@ -324,7 +327,13 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 }
 
                 double? gradientNorm = null;
-                if (sync is not null && Optimizer is IHostGradients)
+                if (sync is { Updates: true })
+                {
+                    // A sharded run (plan 23, C6): each rank clips by the global norm and steps the parameters it owns; the
+                    // weights come back from their owners.
+                    gradientNorm = sync.Update(MaxGradientNorm ?? 0f, readNorm: Telemetry.IsEnabled(TelemetryLevel.Gradients));
+                }
+                else if (sync is not null && Optimizer is IHostGradients)
                 {
                     Optimizer.ClipAndStep(MaxGradientNorm ?? 0f);           // the reduced gradients are on the host: clipped there
                 }
@@ -395,7 +404,13 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             }
 
             var (trainLoss, trainMetrics) = Read(totals, samples);
-            EvaluationResult? validationResult = validation is null ? null : sync is null ? Evaluate(validation) : EvaluateAcross(validation, sync);
+            EvaluationResult? validationResult = null;
+            if (validation is not null)
+            {
+                using var whole = sync?.Gather();                           // a sharded run's weights whole for the evaluation
+                validationResult = sync is null ? Evaluate(validation) : EvaluateAcross(validation, sync);
+            }
+
             double monitored = validationResult?.Loss ?? trainLoss;
             bool isBest = monitored < history.BestLoss - MinImprovement;
             if (isBest)
@@ -405,6 +420,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 epochsWithoutImprovement = 0;
                 if (EarlyStoppingPatience is not null && RestoreBestWeights)
                 {
+                    using var whole = sync?.Gather();
                     bestWeights = [.. Model.Parameters().Select(p => p.ToArray())];
                 }
             }
@@ -441,6 +457,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             {
                 break;
             }
+        }
+
+        if (!cancelled)
+        {
+            sync?.End();                                                    // a sharded run's weights whole on every rank again
         }
 
         // Also when the run reached its last epoch: a last epoch that was not the best leaves worse weights than

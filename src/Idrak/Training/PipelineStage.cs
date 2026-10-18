@@ -161,6 +161,16 @@ public sealed class PipelineStage : IDisposable
         ArgumentNullException.ThrowIfNull(network);
         ArgumentNullException.ThrowIfNull(cluster);
         options ??= cluster.Context?.Options ?? ClusterOptions.FromEnvironment();
+        if (options.Shard != ShardMode.None)
+        {
+            // Plan 23, C6 against C7: a stage clips by the norm over every stage and rank 0's checkpoint gathers each stage's whole
+            // weights and optimizer state, where a sharded synchronisation keeps each replica's share and clips over the replicas
+            // alone; and the parameters shard's gathers would run between the stage-to-stage sends. Refused before anything moves.
+            throw new NotSupportedException($"Pipeline placement (IDRAK_CLUSTER_PLACEMENT=pipeline) does not combine with sharding (IDRAK_CLUSTER_SHARD="
+                + $"{options.Shard.ToString().ToLowerInvariant()}): a pipeline already splits the parameters by stage, and its clipping and checkpoints need each stage's whole state "
+                + "on its replicas. Use one or the other (IDRAK_CLUSTER_SHARD=none with the pipeline).");
+        }
+
         var transport = cluster.Transport ?? throw new NotSupportedException(
             $"The collectives '{cluster.Name}' give no transport (ICollectives.Transport): a pipeline sends activations from stage to stage, point to point.");
         var layout = PipelineLayout.For(cluster.WorldSize, options);

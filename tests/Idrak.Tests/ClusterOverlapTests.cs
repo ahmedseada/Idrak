@@ -38,6 +38,7 @@ internal static partial class Tests
         ("cluster: a late joiner across the Trainer's epoch end: each step's samples shared among the ranks that take part, so the run equals the run without the fault and every rank ends alike; a source sharded by epoch fails at once naming the cause", ClusterTrainerLateJoin),
         ("cluster: a replay stops at a step bit for bit: the pretrainer's checkpoint, losses and clocks through step N as the whole run's; the Trainer's weights as one step's", ClusterTrainingReplay),
         ("cluster: cli cluster sim --failures MODEL --seed S injects the faults into the training and lists them with their replay key; an unknown model is named", ClusterCliSimFailures),
+        ("cluster: a rank with no rows in a step takes part in the bucketed reduction as the others do (3 ranks, buckets of a set size sent during the backward pass, two sequences a step): the pretrainer's losses and weights as one process's", ClusterBucketsRankWithoutRows),
     ];
 
     // A classifier of a few layers (several parameters to bucket), without batch norm or dropout.
@@ -549,6 +550,31 @@ internal static partial class Tests
             var (unknown, _, unknownError) = Idrak(["cluster", "sim", "--topology", topology, "--failures", "no-such-model", "--", .. Pretrain(Path.Combine(folder, "other"))]);
             Check(unknown != ExitCodes.Ok && unknownError.Contains("no-such-model", StringComparison.Ordinal) && unknownError.Contains("not registered", StringComparison.Ordinal),
                 $"an unknown failure model is named: {unknownError}");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // Found in C9: a rank with no rows ran no backward pass, so it never opened the overlap and sent the header before its
+    // buckets while the others sent their buckets first; every collective then met a mismatched one. Every rank now opens
+    // the overlap each step, rows or not.
+    private static void ClusterBucketsRankWithoutRows(Device device)
+    {
+        string folder = TempFolder("cluster-no-rows");
+        try
+        {
+            // Two sequences a step over 3 ranks: rank 2 trains none; buckets of 4 KiB, many of them, sent during the backward pass.
+            string corpus = PretrainData("tokens.bin");
+            var options = DpOptions() with { Collective = "ring", BucketBytes = 4L << 10 };
+            PretrainingOptions Options(ICollectives? cluster) => DpPretraining(corpus, 3, cluster, options) with { SequencesPerStep = 2, BatchTokens = 32, GradientAccumulation = 1 };
+            var alone = DpPretrain(device, Options(null), Path.Combine(folder, "alone"));
+            var (ranks, seen) = OverlapRun(DpTopology(device, 3), options, rank => DpPretrain(rank.Device, Options(rank.Collectives), Path.Combine(folder, "three")));
+            AssertClose(alone.Losses, ranks[0].Losses, 1e-5f, "the token-weighted losses of ranks with 1, 1 and 0 sequences against one process");
+            AssertClose(alone.Weights, ranks[0].Weights, 1e-5f, "the weights against one process");
+            var synced = seen.Synchronisations.Where(s => s.Rank == 2).ToList();
+            Check(synced.Count == 3 && synced.All(s => s.Buckets > 1), $"the rank without rows reduced every step's buckets ({string.Join(", ", synced.Select(s => s.Buckets))})");
         }
         finally
         {

@@ -4,6 +4,8 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -18,11 +20,18 @@ namespace Idrak.Networking.Transports;
 /// two positions only grow and sit on cache lines of their own; a position is written after the bytes it covers
 /// (<see cref="Volatile.Write(ref long, long)"/>), so the other side never reads bytes not yet copied. Files, not named
 /// maps or semaphores, so it works alike on every system .NET runs on (rule 70).
+/// <para>
+/// Phase C6: a side with nothing to do after a short spin raises its flag in the header (the reader: "waiting for bytes";
+/// the writer: "waiting for room") and blocks on its <see cref="Doorbell"/>, whose port the header holds; the other side,
+/// after publishing a position, takes the flag and rings that doorbell. Each side writes its position (or flag), then a
+/// full fence, then reads the other's flag (or position), so a wake is never lost.
+/// </para>
 /// </summary>
 internal sealed unsafe class SharedRing : IDisposable
 {
     public const int HeaderBytes = 128;
     private const int WriteAt = 0, ReadAt = 64, WriterPidAt = 72, ReaderPidAt = 76, StateAt = 80, CapacityAt = 88;
+    private const int ReaderBellAt = 96, ReaderWaitingAt = 100, WriterBellAt = 104, WriterWaitingAt = 108;
     private const int Ready = 1, WriterClosed = 2;
     private readonly MemoryMappedFile _file;
     private readonly MemoryMappedViewAccessor _view;
@@ -58,8 +67,53 @@ internal sealed unsafe class SharedRing : IDisposable
 
     public bool WriterHasClosed => (Volatile.Read(ref State) & WriterClosed) != 0;
 
+    private ref int ReaderWaiting => ref Unsafe.AsRef<int>(_base + ReaderWaitingAt);
+
+    private ref int WriterWaiting => ref Unsafe.AsRef<int>(_base + WriterWaitingAt);
+
+    /// <summary>The port of the reader's doorbell (set by the reader as it makes the ring).</summary>
+    public int ReaderBell => Volatile.Read(ref Unsafe.AsRef<int>(_base + ReaderBellAt));
+
+    /// <summary>The port of the writer's doorbell (set by the writer as it opens the ring).</summary>
+    public int WriterBell => Volatile.Read(ref Unsafe.AsRef<int>(_base + WriterBellAt));
+
+    /// <summary>The reader is about to block: the writer rings it after its next published piece.</summary>
+    public void ReaderWaits()
+    {
+        Volatile.Write(ref ReaderWaiting, 1);
+        Interlocked.MemoryBarrier();                                 // the flag before the reader's last look at the position
+    }
+
+    public void ReaderAwake() => Volatile.Write(ref ReaderWaiting, 0);
+
+    /// <summary>After a published piece: whether the reader waits for it (taking the flag, so it is rung once).</summary>
+    public bool TakeReaderWaiting()
+    {
+        Interlocked.MemoryBarrier();                                 // the position before the look at the flag
+        return Volatile.Read(ref ReaderWaiting) != 0 && Interlocked.Exchange(ref ReaderWaiting, 0) != 0;
+    }
+
+    /// <summary>The writer is about to block for room: the reader rings it after it next frees some.</summary>
+    public void WriterWaits()
+    {
+        Volatile.Write(ref WriterWaiting, 1);
+        Interlocked.MemoryBarrier();
+    }
+
+    public void WriterAwake() => Volatile.Write(ref WriterWaiting, 0);
+
+    /// <summary>After freeing room: whether the writer waits for it (taking the flag).</summary>
+    public bool TakeWriterWaiting()
+    {
+        Interlocked.MemoryBarrier();
+        return Volatile.Read(ref WriterWaiting) != 0 && Interlocked.Exchange(ref WriterWaiting, 0) != 0;
+    }
+
+    /// <summary>The room the writer at <paramref name="written"/> has.</summary>
+    public long Free(long written) => Capacity - (written - Volatile.Read(ref ReadPosition));
+
     /// <summary>The receiver makes its ring afresh (an old file of that name is removed first) and marks it ready last.</summary>
-    public static SharedRing Create(string path, long capacity)
+    public static SharedRing Create(string path, long capacity, int readerBell)
     {
         try
         {
@@ -78,6 +132,7 @@ internal sealed unsafe class SharedRing : IDisposable
             var ring = new SharedRing(path, file, file.CreateViewAccessor(0, HeaderBytes + capacity), capacity);
             Unsafe.AsRef<long>(ring._base + CapacityAt) = capacity;
             Unsafe.AsRef<int>(ring._base + ReaderPidAt) = Environment.ProcessId;
+            Unsafe.AsRef<int>(ring._base + ReaderBellAt) = readerBell;
             Volatile.Write(ref ring.State, Ready);
             return ring;
         }
@@ -89,7 +144,7 @@ internal sealed unsafe class SharedRing : IDisposable
     }
 
     /// <summary>The sender's end, or null while the receiver has not made the ring yet.</summary>
-    public static SharedRing? TryOpen(string path)
+    public static SharedRing? TryOpen(string path, int writerBell)
     {
         FileStream stream;
         try
@@ -119,6 +174,7 @@ internal sealed unsafe class SharedRing : IDisposable
             }
 
             Unsafe.AsRef<int>(ring._base + WriterPidAt) = Environment.ProcessId;
+            Volatile.Write(ref Unsafe.AsRef<int>(ring._base + WriterBellAt), writerBell);
             return ring;
         }
         catch
@@ -129,10 +185,10 @@ internal sealed unsafe class SharedRing : IDisposable
     }
 
     /// <summary>
-    /// Copies <paramref name="bytes"/> in as room frees, publishing each piece; <paramref name="wait"/> is called while the
-    /// ring is full and throws to give up.
+    /// Copies <paramref name="bytes"/> in as room frees, publishing each piece (<paramref name="published"/> after each);
+    /// <paramref name="wait"/> is called while the ring is full and throws to give up.
     /// </summary>
-    public void Write(ReadOnlySpan<byte> bytes, ref long written, Action wait)
+    public void Write(ReadOnlySpan<byte> bytes, ref long written, Action wait, Action published)
     {
         long capacity = Capacity;
         while (!bytes.IsEmpty)
@@ -150,6 +206,7 @@ internal sealed unsafe class SharedRing : IDisposable
             bytes = bytes[n..];
             written += n;
             Volatile.Write(ref WritePosition, written);
+            published();
         }
     }
 
@@ -199,17 +256,127 @@ internal sealed unsafe class SharedRing : IDisposable
 }
 
 /// <summary>
+/// A wake-up between processes of one machine (plan 23, phase C6): a datagram socket on loopback, which every system .NET
+/// runs on has (rule 70). A side that has nothing to do blocks on its own doorbell (<see cref="Wait"/>, with a timeout so
+/// a peer that vanished is still noticed); the other side rings it by port (<see cref="Ring"/>) only when the waiting
+/// side's flag says it waits. A wake costs a datagram on loopback, microseconds, where sleeping waited a timer tick.
+/// </summary>
+internal sealed class Doorbell : IDisposable
+{
+    private static readonly byte[] Knock = [1];
+    private readonly Socket _socket;
+    private readonly byte[] _drain = new byte[64];
+
+    public Doorbell()
+    {
+        _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        try
+        {
+            _socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        }
+        catch
+        {
+            _socket.Dispose();
+            throw;
+        }
+
+        Port = ((IPEndPoint)_socket.LocalEndPoint!).Port;
+    }
+
+    /// <summary>The loopback port others ring.</summary>
+    public int Port { get; }
+
+    /// <summary>Rings the doorbell at <paramref name="port"/> (nothing when it is gone).</summary>
+    public void Ring(int port)
+    {
+        if (port <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            lock (_socket)
+            {
+                _socket.SendTo(Knock, new IPEndPoint(IPAddress.Loopback, port));
+            }
+        }
+        catch (Exception e) when (e is SocketException or ObjectDisposedException)
+        {
+            // The other side is gone: its waits end with its own timeout.
+        }
+    }
+
+    /// <summary>Blocks until rung or <paramref name="timeout"/> passed; every ring that arrived meanwhile is taken. True when rung.</summary>
+    public bool Wait(TimeSpan timeout)
+    {
+        try
+        {
+            bool rung = _socket.Poll((int)Math.Clamp(timeout.TotalMicroseconds, 0, int.MaxValue), SelectMode.SelectRead);
+            while (_socket.Available > 0)
+            {
+                _socket.Receive(_drain);
+            }
+
+            return rung;
+        }
+        catch (Exception e) when (e is SocketException or ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    public void Dispose() => _socket.Dispose();
+
+    /// <summary>
+    /// What a wake costs on this machine: a thread blocked on a doorbell, rung from another thread, until it runs again (the
+    /// median of a few, measured once per process). A side that spins this long before it blocks pays at most twice what an
+    /// oracle would (the classic spin-then-block bound), so it is the default spin (<see cref="ClusterOptions.SharedMemorySpin"/>).
+    /// </summary>
+    public static TimeSpan WakeCost => LazyWakeCost.Value;
+
+    private static readonly Lazy<TimeSpan> LazyWakeCost = new(() =>
+    {
+        using var bell = new Doorbell();
+        var times = new double[7];
+        for (int i = 0; i < times.Length; i++)
+        {
+            long rung = 0, woke = 0;
+            var waiter = new Thread(() =>
+            {
+                bell.Wait(TimeSpan.FromSeconds(1));
+                woke = Stopwatch.GetTimestamp();
+            }) { IsBackground = true, Name = "doorbell wake measurement" };
+            waiter.Start();
+            Thread.Sleep(2);                                         // the waiter is blocked by now
+            rung = Stopwatch.GetTimestamp();
+            bell.Ring(bell.Port);
+            waiter.Join();
+            times[i] = Math.Max(0, woke - rung) / (double)Stopwatch.Frequency;
+        }
+
+        Array.Sort(times);
+        return TimeSpan.FromSeconds(times[times.Length / 2]);
+    });
+}
+
+/// <summary>
 /// "shared-memory" (plan 23): the ranks of one machine, each pair joined by two <see cref="SharedRing"/>s under a folder of
 /// the run's own (named after <see cref="ClusterOptions.RunId"/>, else the coordinator, in
 /// <see cref="ClusterOptions.SharedMemoryFolder"/>). Each rank makes the rings it reads, opens the ones it writes, and
 /// sends a hello first: the HMAC of a nonce under the cluster key, refused when it does not prove it. One reader thread per
-/// rank drains every ring into the queues, spinning briefly, then yielding, then sleeping a millisecond while nothing
-/// arrives; while it sleeps it checks now and then that each writer's process is still there.
+/// rank drains every ring into the queues, spinning for <see cref="ClusterOptions.SharedMemorySpin"/> while nothing arrives,
+/// then blocking on its <see cref="Doorbell"/> (phase C6: it slept a millisecond between looks before, a whole timer tick
+/// on some systems, which held every message back by that much); while it waits it checks every
+/// <see cref="ClusterOptions.SharedMemoryCheck"/> that each writer's process is still there. A writer facing a full ring
+/// spins the same, then blocks on a doorbell of its own the reader rings as it frees room.
 /// </summary>
 internal sealed class SharedMemoryTransport : FramedTransport
 {
-    private static readonly TimeSpan Napping = TimeSpan.FromMilliseconds(5);       // idle this long, then sleep between looks
-    private static readonly TimeSpan Checking = TimeSpan.FromSeconds(1);           // while idle, look for vanished writers this often
+    private readonly TimeSpan _spin;                          // idle this long, then block on the doorbell
+    private readonly TimeSpan _check;                         // while idle, look for vanished writers this often
+    private readonly Doorbell _bell;                          // the reader thread's
+    private readonly Doorbell?[] _roomBells;                  // each outgoing ring's writer waits on its own
     private readonly SharedRing?[] _incoming;
     private readonly SharedRing?[] _outgoing;
     private readonly long[] _written;
@@ -221,7 +388,7 @@ internal sealed class SharedMemoryTransport : FramedTransport
     private readonly Thread _reader;
     private volatile bool _stopping;
 
-    private SharedMemoryTransport(int rank, int world, string folder, ClusterOptions options) : base("shared-memory", rank, world, options.Timeout)
+    private SharedMemoryTransport(int rank, int world, string folder, ClusterOptions options) : base("shared-memory", rank, world, options)
     {
         _folder = folder;
         _key = options.Key;
@@ -231,6 +398,15 @@ internal sealed class SharedMemoryTransport : FramedTransport
         _writing = [.. Enumerable.Range(0, world).Select(_ => new Lock())];
         _greeted = new bool[world];
         _hellos = new CountdownEvent(world - 1);
+        _spin = options.SharedMemorySpin ?? Doorbell.WakeCost;
+        _check = options.SharedMemoryCheck;
+        _bell = new Doorbell();
+        _roomBells = new Doorbell?[world];
+        for (int p = 0; p < world; p++)
+        {
+            _roomBells[p] = p == rank ? null : new Doorbell();
+        }
+
         _reader = new Thread(ReadLoop) { IsBackground = true, Name = $"shared-memory rank {rank}" };
     }
 
@@ -251,7 +427,7 @@ internal sealed class SharedMemoryTransport : FramedTransport
             {
                 if (p != me)
                 {
-                    transport._incoming[p] = SharedRing.Create(RingPath(folder, p, me), capacity);
+                    transport._incoming[p] = SharedRing.Create(RingPath(folder, p, me), capacity, transport._bell.Port);
                 }
             }
 
@@ -261,7 +437,7 @@ internal sealed class SharedMemoryTransport : FramedTransport
                 while (p != me && transport._outgoing[p] is null)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    transport._outgoing[p] = SharedRing.TryOpen(RingPath(folder, me, p));
+                    transport._outgoing[p] = SharedRing.TryOpen(RingPath(folder, me, p), transport._roomBells[p]!.Port);
                     if (transport._outgoing[p] is null)
                     {
                         if (Stopwatch.GetTimestamp() > deadline)
@@ -269,7 +445,7 @@ internal sealed class SharedMemoryTransport : FramedTransport
                             throw new TimeoutException($"rank {me} waited {options.Timeout.TotalSeconds:F0} s for rank {p} to join on this machine (its ring in {folder} did not appear)");
                         }
 
-                        Thread.Sleep(5);
+                        Thread.Sleep(5);                          // once, while the peer process starts: not on any message's path
                     }
                 }
             }
@@ -330,6 +506,7 @@ internal sealed class SharedMemoryTransport : FramedTransport
             WireFormat.WriteHeader(head, header);
             long since = Stopwatch.GetTimestamp();
             var idle = new SpinWait();
+            var bell = _roomBells[to]!;
             void Wait()
             {
                 if (GoneReason(to) is { } reason)
@@ -337,24 +514,45 @@ internal sealed class SharedMemoryTransport : FramedTransport
                     throw new InvalidOperationException($"rank {Rank} cannot send to rank {to}: {reason}");
                 }
 
-                if (Stopwatch.GetElapsedTime(since) > (Disposed ? Napping * 40 : Timeout))   // a goodbye to a full ring waits briefly
+                var waited = Stopwatch.GetElapsedTime(since);
+                var limit = Disposed ? _check : Timeout;              // a goodbye to a full ring waits briefly
+                if (waited > limit)
                 {
                     throw new TimeoutException($"rank {Rank} waited {Timeout.TotalSeconds:F0} s to send to rank {to}: its ring stayed full (it does not take its messages)");
                 }
 
-                if (Stopwatch.GetElapsedTime(since) > Napping)
-                {
-                    Thread.Sleep(1);
-                }
-                else
+                if (waited < _spin)
                 {
                     idle.SpinOnce(sleep1Threshold: -1);
+                    return;
+                }
+
+                ring.WriterWaits();                                 // the reader rings as it frees room
+                if (ring.Free(_written[to]) <= 0)
+                {
+                    bell.Wait(Shortest(_check, limit - waited));
+                }
+
+                ring.WriterAwake();
+            }
+
+            void Published()
+            {
+                if (ring.TakeReaderWaiting())
+                {
+                    _bell.Ring(ring.ReaderBell);                    // the reader blocked on its doorbell: wake it
                 }
             }
 
-            ring.Write(head, ref _written[to], Wait);
-            ring.Write(payload, ref _written[to], Wait);
+            ring.Write(head, ref _written[to], Wait, Published);
+            ring.Write(payload, ref _written[to], Wait, Published);
         }
+    }
+
+    private static TimeSpan Shortest(TimeSpan a, TimeSpan b)
+    {
+        var shortest = a < b ? a : b;
+        return shortest < TimeSpan.Zero ? TimeSpan.Zero : shortest;
     }
 
     protected override void CloseCarriers()
@@ -362,9 +560,14 @@ internal sealed class SharedMemoryTransport : FramedTransport
         _stopping = true;
         foreach (var ring in _outgoing)
         {
-            ring?.MarkWriterClosed();
+            if (ring is not null)
+            {
+                ring.MarkWriterClosed();
+                _bell.Ring(ring.ReaderBell);                        // the peer's reader learns it now, not at its next check
+            }
         }
 
+        _bell.Ring(_bell.Port);                                     // this rank's reader stops now
         if (_reader.IsAlive)
         {
             _reader.Join(TimeSpan.FromSeconds(5));
@@ -400,6 +603,11 @@ internal sealed class SharedMemoryTransport : FramedTransport
         }
 
         _hellos.Dispose();
+        _bell.Dispose();
+        foreach (var bell in _roomBells)
+        {
+            bell?.Dispose();
+        }
     }
 
     // Every incoming ring in turn: a frame's header, then its payload into a pooled buffer, handed to the queues whole.
@@ -436,7 +644,7 @@ internal sealed class SharedMemoryTransport : FramedTransport
                         moved = true;
                         if (headers[p] is null)
                         {
-                            filled[p] += ring.Read(head[p].AsSpan(filled[p]), ref read[p]);
+                            filled[p] += Take(ring, head[p].AsSpan(filled[p]), ref read[p]);
                             if (filled[p] < WireFormat.HeaderBytes)
                             {
                                 continue;
@@ -456,7 +664,7 @@ internal sealed class SharedMemoryTransport : FramedTransport
 
                         var current = headers[p]!.Value;
                         int length = (int)current.PayloadBytes;
-                        filled[p] += ring.Read(payloads[p].AsSpan(filled[p], length - filled[p]), ref read[p]);
+                        filled[p] += Take(ring, payloads[p].AsSpan(filled[p], length - filled[p]), ref read[p]);
                         if (filled[p] < length)
                         {
                             continue;
@@ -481,19 +689,43 @@ internal sealed class SharedMemoryTransport : FramedTransport
                     continue;
                 }
 
-                if (Stopwatch.GetElapsedTime(idleSince, now) < Napping)
+                if (Stopwatch.GetElapsedTime(idleSince, now) < _spin)
                 {
                     spin.SpinOnce(sleep1Threshold: -1);
                     continue;
                 }
 
-                if (Stopwatch.GetElapsedTime(lastCheck, now) > Checking)
+                if (Stopwatch.GetElapsedTime(lastCheck, now) > _check)
                 {
                     lastCheck = now;
                     CheckWriters();
                 }
 
-                Thread.Sleep(1);
+                // Nothing for a while: raise the flag on every ring, look once more (a piece published before the flag was
+                // seen), then block on the doorbell until a writer rings it or the check is due.
+                for (int p = 0; p < world; p++)
+                {
+                    _incoming[p]?.ReaderWaits();
+                }
+
+                bool any = false;
+                for (int p = 0; p < world && !any; p++)
+                {
+                    any = _incoming[p] is { } ring && (ring.HasData(read[p]) || ring.WriterHasClosed && GoneReason(p) is null);
+                }
+
+                if (!any && !_stopping)
+                {
+                    _bell.Wait(_check - Stopwatch.GetElapsedTime(lastCheck, Stopwatch.GetTimestamp()));
+                }
+
+                for (int p = 0; p < world; p++)
+                {
+                    _incoming[p]?.ReaderAwake();
+                }
+
+                idleSince = Stopwatch.GetTimestamp();
+                spin.Reset();
             }
         }
         catch (Exception e) when (e is InvalidDataException or OverflowException or ObjectDisposedException)
@@ -516,6 +748,18 @@ internal sealed class SharedMemoryTransport : FramedTransport
                 }
             }
         }
+    }
+
+    // Copies what arrived out of a ring and, when its writer waits for room, rings it.
+    private int Take(SharedRing ring, Span<byte> into, ref long read)
+    {
+        int n = ring.Read(into, ref read);
+        if (n > 0 && ring.TakeWriterWaiting())
+        {
+            _bell.Ring(ring.WriterBell);
+        }
+
+        return n;
     }
 
     // A whole frame from `from`: the hello is checked here; nothing else is taken from a rank before its hello passed.

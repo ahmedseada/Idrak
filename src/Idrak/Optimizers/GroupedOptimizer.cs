@@ -66,6 +66,26 @@ public sealed class GroupedOptimizer : Optimizer
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>An entry "group{g}.{name}" is group g's entry: its parameter is that group's, counted after the groups before it.</remarks>
+    public override int? StateParameter(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        int before = 0;
+        for (int g = 0; g < _groups.Length; g++)
+        {
+            string prefix = $"group{g}.";
+            if (name.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return _groups[g].StateParameter(name[prefix.Length..]) is { } local ? before + local : null;
+            }
+
+            before += _groups[g].Parameters.Count;
+        }
+
+        return null;
+    }
+
     /// <summary>The combined optimizers, in order.</summary>
     public IReadOnlyList<Optimizer> Groups => _groups;
 

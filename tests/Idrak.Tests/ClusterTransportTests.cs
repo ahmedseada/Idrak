@@ -109,6 +109,9 @@ internal static partial class Tests
                     }
                 }
 
+                case "shm-speed":
+                    return SharedMemorySpeedChild(folder);       // phase C6: the doorbell's latency and a ring's rate
+
                 default:
                     Console.Error.WriteLine($"no cluster child scenario '{scenario}'");
                     return 2;
