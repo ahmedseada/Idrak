@@ -196,6 +196,12 @@ internal abstract class SyncCore : IGradientSync
 
     public virtual bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state) => false;
 
+    public virtual int? Owner(Tensor parameter) => null;
+
+    public virtual IDisposable? Local() => null;
+
+    public virtual IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState() => null;
+
     public virtual void End()
     {
     }
@@ -251,7 +257,10 @@ internal abstract class SyncCore : IGradientSync
 
         foreach (var tensor in tensors)
         {
-            if (tensor.Size > 0)
+            // An evicted tensor (plan 23, C8b: a deferred load's, read from the checkpoint every rank reads alike when it is
+            // restored, or a parameters shard's, gathered from its owner) is not in memory to send: its values come from
+            // its recomputation, the same on every rank.
+            if (tensor.Size > 0 && !tensor.Storage.Evicted)
             {
                 Collectives.Broadcast(tensor.Storage, tensor.Size, root);
             }
@@ -405,6 +414,11 @@ internal abstract class SyncCore : IGradientSync
         for (int i = 0; i < count; i++)
         {
             var p = Parameters[i];
+            if (p.Storage.Evicted)
+            {
+                continue;                                          // not in memory (C8b): its recomputation is every rank's alike
+            }
+
             var values = ArrayPool<float>.Shared.Rent(Math.Max(1, p.Size));
             try
             {

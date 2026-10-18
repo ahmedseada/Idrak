@@ -609,11 +609,22 @@ internal sealed class CheckpointWeights(ITensorStore reader, PretrainedArchitect
     /// <summary>The time spent putting bfloat16 weights read as their bits on the device so far (memory and upload).</summary>
     public TimeSpan UploadTime => Stopwatch.GetElapsedTime(0, _uploadTicks);
 
+    /// <summary>
+    /// A deferred build (plan 23, C8b): each weight is checked against the checkpoint's header and answered with a placeholder
+    /// (<see cref="DeferredTensors.Placeholder"/>), nothing read; the loader gives each tensor its source afterwards.
+    /// </summary>
+    public bool Deferred { get; init; }
+
     public float[]? Read(string name, IReadOnlyList<int> shape)
     {
         if (Stored(name, shape) is not { } stored)
         {
             return null;
+        }
+
+        if (Deferred)
+        {
+            return DeferredTensors.Placeholder(shape.Aggregate(1, (a, b) => checked(a * b)));
         }
 
         // Transposed while reading: one full array per tensor instead of the stored order plus its transpose.

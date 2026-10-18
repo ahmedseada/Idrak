@@ -104,8 +104,9 @@ public static partial class Pretrainer
                 using var optimizer = CreateOptimizer(parameters, options, stage);
                 if (resume is { } rs && rs.Stage == stageIndex)
                 {
+                    // This stage's entries alone are read from the checkpoint (plan 23, C8b).
                     string prefix = $"{PipelineKey}.{pipe.Stage}.";
-                    optimizer.LoadState(ReadOptimizerState(rs.Folder).Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal))
+                    optimizer.LoadState(ReadOptimizerState(rs.Folder, name => name.StartsWith(prefix, StringComparison.Ordinal))
                         .ToDictionary(e => e.Key[prefix.Length..], e => e.Value, StringComparer.Ordinal));
                 }
 
@@ -132,7 +133,21 @@ public static partial class Pretrainer
                 {
                     var (drawn, positions) = next.GetAwaiter().GetResult();
                     next = stageStep + 1 < stage.Steps ? Task.Run(() => Draw(readers, options, model)) : Task.FromResult<(List<TrainingSequence>, (long, long, long)[])>(([], []));
-                    if (collectives is IStepGroup group && !group.BeginStep(step))
+                    bool present;
+                    try
+                    {
+                        present = collectives is not IStepGroup group || group.BeginStep(step);
+                    }
+                    catch (ClusterRunStoppedException) when (step > 0 && last != Path.Combine(outputFolder, $"checkpoint-{step}"))
+                    {
+                        // Stopped at this step boundary (a dashboard's stop, plan 23 C9; written since C8b): every rank stops
+                        // here alike, so every stage gives its part of the last finished step's checkpoint as a saving step does.
+                        last = SavePipelined(model, pipe, collectives, optimizer, options, cluster, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations);
+                        trace?.Invoke($"stopped: checkpoint {last}");
+                        throw;
+                    }
+
+                    if (!present)
                     {
                         if (cluster.Simulation.ReplayStep is not { } replayed || step <= replayed)
                         {
@@ -201,7 +216,7 @@ public static partial class Pretrainer
 
                     if (stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0)
                     {
-                        last = SavePipelined(model, pipe, collectives, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
+                        last = SavePipelined(model, pipe, collectives, optimizer, options, cluster, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
                         trace?.Invoke($"checkpoint {last}");
                     }
 
@@ -364,9 +379,14 @@ public static partial class Pretrainer
     // (stage 0), which loads them into the copies it kept of the other stages, writes the model, every stage's optimizer
     // state (under "pipeline.<stage>.") and the run's state with the cut; then every rank meets.
     private static string SavePipelined(PretrainedModel model, PipelineStage pipe, ICollectives collectives, Optimizer optimizer, PretrainingOptions options,
-        string outputFolder, int stage, int stageStep, int step, (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
+        ClusterOptions cluster, string outputFolder, int stage, int stageStep, int step, (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
     {
         string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
+        if (cluster.StreamedSave)
+        {
+            return SavePipelinedStreamed(model, pipe, collectives, optimizer, options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);
+        }
+
         if (pipe.Replica == 0)
         {
             if (pipe.Stage != 0)
@@ -418,31 +438,91 @@ public static partial class Pretrainer
                 model.SaveHuggingFace(folder, SafeTensorType.F32);
                 SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)), SafeTensorType.F32,
                     new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name, ["pipeline"] = pipe.Layout.Stages.ToString(CultureInfo.InvariantCulture) });
-                var json = new JsonObject
-                {
-                    ["format"] = StateFormat,
-                    ["stage"] = stage,
-                    ["stage_step"] = stageStep,
-                    ["step"] = step,
-                    ["sources"] = new JsonArray([.. positions.Select(p => (JsonNode)new JsonObject { ["pass"] = p.Item1, ["next"] = p.Item2, ["drawn"] = p.Item3 })]),
-                    ["losses"] = new JsonArray([.. losses.Select(l => (JsonNode)(float.IsFinite(l) ? l : float.NaN.ToString(CultureInfo.InvariantCulture)))]),
-                    ["evaluations"] = new JsonArray([.. evaluations.Select(e => (JsonNode)new JsonObject { ["step"] = e.Item1, ["loss"] = e.Item2 })]),
-                    ["options"] = options.ToJson(),
-                    [PipelineKey] = new JsonObject { ["stages"] = pipe.Layout.Stages, ["starts"] = new JsonArray([.. pipe.Plan.Stages.Select(s => (JsonNode)s.Start)]) },
-                };
-                File.WriteAllText(Path.Combine(folder, StateFile), json.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n");
-                if (options.KeepCheckpoints > 0)
-                {
-                    foreach (var old in Checkpoints(outputFolder).SkipLast(options.KeepCheckpoints))
-                    {
-                        Directory.Delete(old.Folder, recursive: true);
-                    }
-                }
+                WritePipelineState(pipe, options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);
             }
         }
 
         collectives.Barrier();
         return folder;
+    }
+
+    // The checkpoint streamed to rank 0 (plan 23, C8b): replica 0 of every other stage answers rank 0's requests a tensor at a
+    // time (its weights, its optimizer entries) while rank 0 writes the files one process writes (the stage's entries under
+    // "pipeline.<stage>.", in stage order), so no rank holds another stage's state, and rank 0 never more than one tensor of it.
+    private static string SavePipelinedStreamed(PretrainedModel model, PipelineStage pipe, ICollectives collectives, Optimizer optimizer, PretrainingOptions options,
+        string folder, string outputFolder, int stage, int stageStep, int step, (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
+    {
+        var transport = pipe.Transport;
+        int writer = pipe.Layout.RankOf(0, 0);
+        if (pipe.Replica == 0 && pipe.Stage != 0)
+        {
+            var mine = new Dictionary<int, Tensor>();
+            for (int i = 0; i < pipe.Parameters.Count; i++)
+            {
+                mine[pipe.ParameterIndices[i]] = pipe.Parameters[i];
+            }
+
+            StreamedCheckpoint.Serve(transport, writer, global => mine[global].ToArray(), optimizer.SaveState());
+        }
+        else if (pipe.Replica == 0)
+        {
+            var global = new Dictionary<Tensor, int>(ReferenceEqualityComparer.Instance);
+            foreach (var p in model.Network.Parameters())
+            {
+                global.TryAdd(p, global.Count);
+            }
+
+            var owners = Enumerable.Range(1, pipe.Layout.Stages - 1).Select(s => pipe.Layout.RankOf(s, 0)).ToList();
+            var entries = owners.Select(rank => StreamedCheckpoint.AskEntries(transport, rank)).ToList();
+            model.SaveHuggingFace(folder, SafeTensorType.F32, null, stored =>
+            {
+                int index = global[stored.Tensor];
+                int holder = pipe.HolderOf(index);
+                return holder == 0 ? stored.Tensor.ToArray() : StreamedCheckpoint.AskWeight(transport, pipe.Layout.RankOf(holder, 0), index);
+            });
+
+            var own = optimizer.SaveState();
+            var tensors = own.Select(e => ($"{PipelineKey}.0.{e.Key}", e.Value.Shape, (Func<float[]>)(() => e.Value.Values))).ToList();
+            for (int o = 0; o < owners.Count; o++)
+            {
+                int rank = owners[o], s = o + 1;
+                tensors.AddRange(entries[o].Select((e, i) => ($"{PipelineKey}.{s}.{e.Name}", e.Shape, (Func<float[]>)(() => StreamedCheckpoint.AskEntry(transport, rank, i)))));
+            }
+
+            SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), tensors, SafeTensorType.F32,
+                new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name, ["pipeline"] = pipe.Layout.Stages.ToString(CultureInfo.InvariantCulture) });
+            owners.ForEach(rank => StreamedCheckpoint.Finish(transport, rank));
+            WritePipelineState(pipe, options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);
+        }
+
+        collectives.Barrier();
+        return folder;
+    }
+
+    // The run's state with the cut (rank 0, last: a checkpoint counts once its state file is there), and old checkpoints gone.
+    private static void WritePipelineState(PipelineStage pipe, PretrainingOptions options, string folder, string outputFolder, int stage, int stageStep, int step,
+        (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
+    {
+        var json = new JsonObject
+        {
+            ["format"] = StateFormat,
+            ["stage"] = stage,
+            ["stage_step"] = stageStep,
+            ["step"] = step,
+            ["sources"] = new JsonArray([.. positions.Select(p => (JsonNode)new JsonObject { ["pass"] = p.Item1, ["next"] = p.Item2, ["drawn"] = p.Item3 })]),
+            ["losses"] = new JsonArray([.. losses.Select(l => (JsonNode)(float.IsFinite(l) ? l : float.NaN.ToString(CultureInfo.InvariantCulture)))]),
+            ["evaluations"] = new JsonArray([.. evaluations.Select(e => (JsonNode)new JsonObject { ["step"] = e.Item1, ["loss"] = e.Item2 })]),
+            ["options"] = options.ToJson(),
+            [PipelineKey] = new JsonObject { ["stages"] = pipe.Layout.Stages, ["starts"] = new JsonArray([.. pipe.Plan.Stages.Select(s => (JsonNode)s.Start)]) },
+        };
+        File.WriteAllText(Path.Combine(folder, StateFile), json.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n");
+        if (options.KeepCheckpoints > 0)
+        {
+            foreach (var old in Checkpoints(outputFolder).SkipLast(options.KeepCheckpoints))
+            {
+                Directory.Delete(old.Folder, recursive: true);
+            }
+        }
     }
 
     // The parameters this stage writes into a whole checkpoint: each once, a table several stages hold by the first of them.

@@ -433,6 +433,7 @@ public sealed record Idrak.Nlp.FineTuningOptions : System.IEquatable<Idrak.Nlp.F
   public int Rank { get; init; }
   public int SaveEvery { get; init; }
   public int Seed { get; init; }
+  public string? ResumeFrom { get; init; }
 
 public sealed record Idrak.Nlp.FineTuningProfile : System.IEquatable<Idrak.Nlp.FineTuningProfile>
   public FineTuningProfile(System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.GpuProfileEntry> Kernels, int ProfiledSteps, long ProfiledTokens, double SecondsPerStep, double TokensPerStep)

@@ -153,6 +153,22 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// </summary>
     public ICollectives? Cluster { get; init; }
 
+    /// <summary>
+    /// Where a stopped cluster run writes the checkpoint of its last finished step (plan 23, C8b): a run steered through
+    /// <c>ClusterRunControl</c> or a launcher's control file (a dashboard's stop) stops every rank at one step boundary with
+    /// <see cref="ClusterRunStoppedException"/>, and first writes <c>checkpoint-STEP</c> here (the weights, the optimizer's
+    /// state, every rank's share joined in a sharded run, and the step), which <see cref="ResumeFrom"/> goes on from. Null:
+    /// the stop writes nothing.
+    /// </summary>
+    public string? StopFolder { get; init; }
+
+    /// <summary>
+    /// A checkpoint a stop wrote (<see cref="StopFolder"/>) to go on from: its weights and optimizer state are loaded, and
+    /// the steps it finished are drawn as before but not trained, so the run ends as the uninterrupted one. Its
+    /// <see cref="Fit"/> must be the stopped run's (the same data, batches, epochs and seeds). Null: from the start.
+    /// </summary>
+    public string? ResumeFrom { get; init; }
+
     /// <summary>The cluster settings a <see cref="Cluster"/> run uses (the synchronisation, the wire, the starting state), or null: <see cref="Abstraction.Cluster.ClusterOptions.FromEnvironment"/>.</summary>
     public ClusterOptions? ClusterOptions { get; init; }
 
@@ -200,10 +216,36 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         bool lead = sync is null || sync.Rank == 0;                         // the rank that publishes telemetry
         List<Tensor> buffers = sync is null ? [] : [.. Model.Buffers().Where(b => b.Size > 0)];
         using var seeds = sync is null ? null : Layers.Dropout.SeedsForRank(sync.Rank);
+        long resumeStep = 0;
+        if (ResumeFrom is { } from)
+        {
+            if (sync is not null && stepLoader is null)
+            {
+                throw new NotSupportedException("A cluster run resumes from a stop's checkpoint with a DataLoader over a sample source (shared by step); this run's source is sharded by epoch.");
+            }
+
+            resumeStep = ReadStop(from, sync);
+        }
+
         if (sync is not null)
         {
             sync.Start();                                                   // every rank from the same weights
             sync.Broadcast(buffers);
+        }
+
+        // The run steered from outside stops at a step boundary (ClusterRunStoppedException): the last finished step's
+        // checkpoint first (plan 23, C8b), every rank taking part as a saving step does.
+        bool Begin(long at)
+        {
+            try
+            {
+                return sync!.BeginStep(at);
+            }
+            catch (ClusterRunStoppedException) when (StopFolder is not null && at > resumeStep)
+            {
+                WriteStop(StopFolder, at, sync!);
+                throw;
+            }
         }
 
         if (lead && Telemetry.IsEnabled(TelemetryLevel.Training))
@@ -243,9 +285,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 : Shard(train, sync)).GetEnumerator();
             while (true)
             {
-                if (stepLoader is not null && step != begun)
+                if (stepLoader is not null && step != begun && step >= resumeStep)
                 {
-                    present = sync!.BeginStep(step);                        // before the step is drawn: its share follows the group
+                    present = Begin(step);                                  // before the step is drawn: its share follows the group
                     begun = step;
                 }
 
@@ -259,9 +301,19 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
 
                 var batch = has ? batches.Current : null;
                 using var _ = batch;
+                if (step < resumeStep)
+                {
+                    // A step the stopped run finished (ResumeFrom): drawn alike, so every order and share stays the same, not trained.
+                    step++;
+                    epochStep++;
+                    context.Step = step;
+                    dataStart = Stopwatch.GetTimestamp();
+                    continue;
+                }
+
                 if (sync is not null && stepLoader is null && step != begun)
                 {
-                    present = sync.BeginStep(step);                         // a simulated cluster's faults, late joins and replays act here
+                    present = Begin(step);                                  // a simulated cluster's faults, late joins and replays act here
                     begun = step;
                 }
 
@@ -393,6 +445,12 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 break;
             }
 
+            if (resumeStep > 0 && step <= resumeStep)
+            {
+                Scheduler?.Step();                                          // an epoch the stopped run summarized already
+                continue;
+            }
+
             var totals = sums.ToArray();
             if (sync is not null)
             {
@@ -490,6 +548,51 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     }
 
     private Action<EpochCompleted>? _epochCallback;
+
+    private const string StopStateFile = "train-state.json", StopWeightsFile = "model.ikw", StopOptimizerFile = "optimizer.safetensors";
+
+    // The checkpoint of the steps finished before `step`: the weights, the optimizer's state (a sharded run's joined) and the
+    // step, written by rank 0 while every rank takes part; every rank waits for it.
+    private void WriteStop(string root, long step, IGradientSync sync)
+    {
+        string folder = Path.Combine(root, $"checkpoint-{step}");
+        using (sync.Gather())
+        {
+            var state = sync.SaveOptimizerState() ?? Optimizer.SaveState();
+            if (sync.Rank == 0)
+            {
+                Directory.CreateDirectory(folder);
+                Model.Save(Path.Combine(folder, StopWeightsFile));
+                Models.SafeTensorsWriter.Write(Path.Combine(folder, StopOptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), Models.SafeTensorType.F32,
+                    new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = Optimizer.GetType().Name });
+                File.WriteAllText(Path.Combine(folder, StopStateFile), new System.Text.Json.Nodes.JsonObject { ["format"] = "idrak-train-state/1", ["step"] = step }.ToJsonString() + "\n");
+            }
+        }
+
+        sync.Barrier();
+    }
+
+    // A stop's checkpoint into the model and the optimizer (a sharded run keeps its share); the steps it finished.
+    private long ReadStop(string folder, IGradientSync? sync)
+    {
+        string state = Path.Combine(folder, StopStateFile);
+        if (!File.Exists(state))
+        {
+            throw new FileNotFoundException($"{folder} holds no stopped run's state ({StopStateFile}); give a checkpoint-STEP folder a stop wrote (Trainer.StopFolder).", state);
+        }
+
+        long step = (long)System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(state))!["step"]!;
+        Model.Load(Path.Combine(folder, StopWeightsFile));
+        using var reader = Models.SafeTensorsReader.Open(Path.Combine(folder, StopOptimizerFile));
+        Abstraction.Formats.ITensorStore store = reader;
+        var saved = store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
+        if (sync?.LoadOptimizerState(saved) != true)
+        {
+            Optimizer.LoadState(saved);
+        }
+
+        return step;
+    }
 
     /// <summary>
     /// Runs <see cref="Fit"/> on a thread-pool thread, so UI and server threads stay free. <paramref name="progress"/>

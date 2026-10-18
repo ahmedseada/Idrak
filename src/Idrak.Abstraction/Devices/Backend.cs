@@ -195,18 +195,29 @@ public readonly record struct AttentionVariant(int Window, float Softcap)
 /// <see cref="Backend.Allocate"/>; when the last reference is released the block goes back to its device
 /// (<see cref="Backend.Return"/>).
 /// </summary>
-/// <param name="backend">The device the memory belongs to.</param>
-/// <param name="length">The number of floats.</param>
-public abstract class Storage(Backend backend, int length)
+public abstract class Storage
 {
     private int _refs = 1;
     private int _version;
 
+    /// <summary>A storage of <paramref name="length"/> floats on <paramref name="backend"/> (recorded while <see cref="StorageTracking"/> is on).</summary>
+    /// <param name="backend">The device the memory belongs to.</param>
+    /// <param name="length">The number of floats.</param>
+    protected Storage(Backend backend, int length)
+    {
+        Backend = backend;
+        Length = length;
+        if (StorageTracking.On)
+        {
+            StorageTracking.Created(this);
+        }
+    }
+
     /// <summary>The device the memory belongs to.</summary>
-    public Backend Backend { get; } = backend;
+    public Backend Backend { get; }
 
     /// <summary>The number of floats.</summary>
-    public int Length { get; } = length;
+    public int Length { get; }
 
     /// <summary>Adds a reference: the block stays until <see cref="Release"/> has been called once more than this.</summary>
     public void AddRef() => Interlocked.Increment(ref _refs);
@@ -701,10 +712,33 @@ public abstract partial class Backend
             return false;
         }
 
-        Attach(storage, Allocate(storage.Length, zeroed: false));
+        var fresh = Allocate(storage.Length, zeroed: false);
+        Attach(storage, fresh);
+        if (StorageTracking.On)
+        {
+            StorageTracking.Moved(fresh);                          // its memory is the restored storage's now
+        }
+
         storage.Evicted = false;
         storage.Recompute!(storage);
         return true;
+    }
+
+    /// <summary>
+    /// Sets what restores <paramref name="storage"/>'s values from now on: for an evicted storage, its recomputation is
+    /// replaced (a deferred load's read from a checkpoint becomes a gather from the rank owning it, say); a storage in memory
+    /// is evicted with it (<see cref="Evict"/>).
+    /// </summary>
+    public void SetRecompute(Storage storage, Action<Storage>? recompute)
+    {
+        ArgumentNullException.ThrowIfNull(storage);
+        if (storage.Evicted)
+        {
+            storage.Recompute = recompute;
+            return;
+        }
+
+        Evict(storage, recompute);
     }
 
     /// <summary>
@@ -733,6 +767,50 @@ public abstract partial class Backend
 
     /// <summary>Copies destination.Length floats starting at element <paramref name="offset"/>.</summary>
     public abstract void DownloadRange(Storage source, int offset, Span<float> destination);
+
+    /// <summary>
+    /// Copies <paramref name="source"/> into floats [<paramref name="offset"/>, offset + source.Length) of
+    /// <paramref name="destination"/>. Devices override it with a copy straight to the offset; the default goes through a
+    /// block of the source's size taken from the pool and given back at once (nothing kept), then a copy into place.
+    /// </summary>
+    public virtual void UploadRange(ReadOnlySpan<float> source, Storage destination, int offset)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if ((uint)offset > (uint)destination.Length || source.Length > destination.Length - offset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), $"Floats {offset} to {offset + source.Length} of a storage of {destination.Length}.");
+        }
+
+        if (source.IsEmpty)
+        {
+            return;
+        }
+
+        if (offset == 0)
+        {
+            Upload(source, destination);
+            return;
+        }
+
+        var block = Allocate(source.Length, zeroed: false);
+        try
+        {
+            Upload(source, block);
+            Copy2D(block, 0, source.Length, destination, offset, source.Length, 1, source.Length, accumulate: false);
+        }
+        finally
+        {
+            block.Release();
+        }
+    }
+
+    /// <summary>
+    /// The storages this device holds, largest first, with who holds each (a debug listing: only storages made while
+    /// <see cref="StorageTracking"/> is on are known; others are in <see cref="GetMemoryUsage"/>'s bytes in use but not
+    /// here). A device may add blocks of its own (scratch it keeps) by overriding it.
+    /// </summary>
+    /// <param name="name">Names a storage's owner where the caller knows it (a parameter's name), or null.</param>
+    public virtual IReadOnlyList<LiveStorage> LiveStorages(Func<Storage, string?>? name = null) => StorageTracking.List(this, name);
 
     /// <summary>y[i] = value for i &lt; n.</summary>
     public virtual void FillKernel(Storage y, int n, float value)

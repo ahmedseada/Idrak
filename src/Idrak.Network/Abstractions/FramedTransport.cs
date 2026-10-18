@@ -4,7 +4,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Threading.Channels;
 
 namespace Idrak.Networking.Abstractions;
 
@@ -32,12 +31,13 @@ internal abstract class FramedTransport : ITransport
     /// <summary>The tag barrier frames are queued under: below every tag a program or an algorithm uses.</summary>
     protected const int BarrierTag = int.MinValue;
 
-    private readonly ConcurrentDictionary<(int From, int Tag), Channel<Inbound>> _inbox = new();
+    private readonly ConcurrentDictionary<(int From, int Tag), InboxQueue> _inbox = new();
     private readonly ConcurrentDictionary<(int To, int Tag), StrongBox> _sequence = new();
     private readonly ConcurrentDictionary<(int To, int Tag), Credit> _credits = new();
     private readonly string?[] _gone;
     private readonly int _inFlight;
     private readonly long? _receiveBytes;
+    private readonly bool _directWake;
     private volatile bool _disposed;
     private long _queued;
     private long _peakQueued;
@@ -51,6 +51,7 @@ internal abstract class FramedTransport : ITransport
         Timeout = options.Timeout;
         _inFlight = Math.Max(1, options.InFlight);
         _receiveBytes = options.ReceiveBytes;
+        _directWake = options.DirectWake;
         _gone = new string?[worldSize];
     }
 
@@ -199,23 +200,10 @@ internal abstract class FramedTransport : ITransport
     public async ValueTask<int> ReceiveAsync(int from, Memory<byte> bytes, int tag, CancellationToken cancellationToken = default)
     {
         Check(from, nameof(from));
-        var reader = Inbox(from, tag).Reader;
-        if (!reader.TryRead(out var message))
+        var inbox = Inbox(from, tag);
+        if (!inbox.TryRead(out var message))
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(Timeout);
-            try
-            {
-                message = await reader.ReadAsync(timeout.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw TimedOut(from, tag);
-            }
-            catch (ChannelClosedException)
-            {
-                throw Gone(from, tag);
-            }
+            message = await inbox.ReadAsync(Timeout, () => TimedOut(from, tag), () => Gone(from, tag), cancellationToken).ConfigureAwait(false);
         }
 
         return Deliver(from, tag, message, bytes.Span);
@@ -278,10 +266,10 @@ internal abstract class FramedTransport : ITransport
             credit.Wake();                                         // senders waiting for credit see the transport closed
         }
 
-        foreach (var (_, channel) in _inbox)
+        foreach (var (_, inbox) in _inbox)
         {
-            channel.Writer.TryComplete();
-            while (channel.Reader.TryRead(out var left))
+            inbox.Complete();
+            while (inbox.TryRead(out var left))
             {
                 Return(left);
             }
@@ -310,7 +298,7 @@ internal abstract class FramedTransport : ITransport
                     Queued(length);
                 }
 
-                if (!Inbox(from, tag).Writer.TryWrite(new Inbound(buffer, length)))
+                if (!Inbox(from, tag).TryWrite(new Inbound(buffer, length)))
                 {
                     if (header.Kind == WireMessageKind.Chunk)
                     {
@@ -362,11 +350,11 @@ internal abstract class FramedTransport : ITransport
 
         for (int pass = 0; pass < 2; pass++)                       // twice: a queue made while the first pass ran
         {
-            foreach (var ((source, _), channel) in _inbox)
+            foreach (var ((source, _), inbox) in _inbox)
             {
                 if (source == from)
                 {
-                    channel.Writer.TryComplete();
+                    inbox.Complete();
                 }
             }
         }
@@ -377,40 +365,23 @@ internal abstract class FramedTransport : ITransport
 
     protected static void Return(Inbound message) => ArrayPool<byte>.Shared.Return(message.Buffer);
 
-    private Channel<Inbound> Inbox(int from, int tag) => _inbox.GetOrAdd((from, tag), static (key, self) =>
+    private InboxQueue Inbox(int from, int tag) => _inbox.GetOrAdd((from, tag), static (key, self) =>
     {
-        var channel = Channel.CreateUnbounded<Inbound>(new UnboundedChannelOptions { SingleReader = false, SingleWriter = true });
+        var inbox = new InboxQueue(self._directWake);
         if (self.GoneReason(key.From) is not null || self._disposed)
         {
-            channel.Writer.TryComplete();
+            inbox.Complete();
         }
 
-        return channel;
+        return inbox;
     }, this);
 
     private Inbound Take(int from, int tag)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         Check(from, nameof(from));
-        var reader = Inbox(from, tag).Reader;
-        if (reader.TryRead(out var message))
-        {
-            return message;
-        }
-
-        using var timeout = new CancellationTokenSource(Timeout);
-        try
-        {
-            return reader.ReadAsync(timeout.Token).AsTask().GetAwaiter().GetResult();
-        }
-        catch (OperationCanceledException)
-        {
-            throw TimedOut(from, tag);
-        }
-        catch (ChannelClosedException)
-        {
-            throw Gone(from, tag);
-        }
+        var inbox = Inbox(from, tag);
+        return inbox.TryRead(out var message) ? message : inbox.Take(Timeout, () => TimedOut(from, tag), () => Gone(from, tag));
     }
 
     private int Deliver(int from, int tag, Inbound message, Span<byte> bytes)
@@ -494,6 +465,150 @@ internal abstract class FramedTransport : ITransport
     private sealed class StrongBox
     {
         public long Value;
+    }
+
+    /// <summary>
+    /// One peer's and tag's received messages, oldest first (plan 23, C8b). A receive that waits blocks on the queue's own
+    /// monitor and the reader that queues a message wakes it directly (<see cref="ClusterOptions.DirectWake"/>); turned off,
+    /// the waiter is woken as a channel wakes it, through a continuation the thread pool runs (C5's path, kept to measure
+    /// against). An awaited receive awaits a task either way. Completed (the peer gone, the transport closed), it still
+    /// hands out what it holds, then ends every wait.
+    /// </summary>
+    private sealed class InboxQueue(bool direct)
+    {
+        private readonly Queue<Inbound> _items = new();
+        private readonly object _gate = new();
+        private bool _completed;
+        private int _blocked;                                      // threads waiting in Take on the monitor
+        private TaskCompletionSource? _signal;                     // the awaited (and the pooled) waiters' wake
+
+        public bool TryWrite(Inbound message)
+        {
+            TaskCompletionSource? signal;
+            lock (_gate)
+            {
+                if (_completed)
+                {
+                    return false;
+                }
+
+                _items.Enqueue(message);
+                if (_blocked > 0)
+                {
+                    Monitor.Pulse(_gate);                          // the waiting thread runs next, no pool hop
+                }
+
+                (signal, _signal) = (_signal, null);
+            }
+
+            signal?.TrySetResult();
+            return true;
+        }
+
+        public bool TryRead(out Inbound message)
+        {
+            lock (_gate)
+            {
+                return _items.TryDequeue(out message);
+            }
+        }
+
+        public void Complete()
+        {
+            TaskCompletionSource? signal;
+            lock (_gate)
+            {
+                _completed = true;
+                Monitor.PulseAll(_gate);
+                (signal, _signal) = (_signal, null);
+            }
+
+            signal?.TrySetResult();
+        }
+
+        // Blocks up to `timeout` for the oldest message.
+        public Inbound Take(TimeSpan timeout, Func<Exception> timedOut, Func<Exception> gone)
+        {
+            long deadline = Stopwatch.GetTimestamp() + Ticks(timeout);
+            while (true)
+            {
+                Task wake;
+                lock (_gate)
+                {
+                    if (_items.TryDequeue(out var message))
+                    {
+                        return message;
+                    }
+
+                    if (_completed)
+                    {
+                        throw gone();
+                    }
+
+                    var left = Remaining(deadline);
+                    if (left <= TimeSpan.Zero)
+                    {
+                        throw timedOut();
+                    }
+
+                    if (direct)
+                    {
+                        _blocked++;
+                        try
+                        {
+                            Monitor.Wait(_gate, left);
+                        }
+                        finally
+                        {
+                            _blocked--;
+                        }
+
+                        continue;
+                    }
+
+                    wake = (_signal ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+                }
+
+                wake.Wait(Remaining(deadline));                    // its continuation runs on the thread pool, as a channel's does
+            }
+        }
+
+        public async ValueTask<Inbound> ReadAsync(TimeSpan timeout, Func<Exception> timedOut, Func<Exception> gone, CancellationToken cancellationToken)
+        {
+            long deadline = Stopwatch.GetTimestamp() + Ticks(timeout);
+            while (true)
+            {
+                Task wake;
+                lock (_gate)
+                {
+                    if (_items.TryDequeue(out var message))
+                    {
+                        return message;
+                    }
+
+                    if (_completed)
+                    {
+                        throw gone();
+                    }
+
+                    if (Remaining(deadline) <= TimeSpan.Zero)
+                    {
+                        throw timedOut();
+                    }
+
+                    wake = (_signal ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+                }
+
+                try
+                {
+                    await wake.WaitAsync(Remaining(deadline), cancellationToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    // checked again above: a message may have come in meanwhile
+                }
+            }
+        }
     }
 
     /// <summary>What a sender has outstanding with one peer under one tag: messages and bytes the peer has not taken yet.</summary>
