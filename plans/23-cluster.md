@@ -620,6 +620,73 @@ reproduces the fault schedule and the clock bit for bit" (two replays, equal log
 
 **Done when** the simulator shows the hierarchical win and every fault replays.
 
+**C3 as built (2026-10-18).** `src/Idrak.Network/Collectives/HierarchicalCollectives.cs`: `hierarchical`, registered
+beside `naive` and `ring`. An all-reduce reduce-scatters inside each node (a ring of the node's ranks over its link),
+runs one ring across the nodes per column of values with one rank per node (the owner of that column's slice in each
+node), then all-gathers inside; columns are cut at every node's slice boundary, so nodes of different sizes work. Each
+sum is made in an order fixed by the topology and the sizes (inside the node in ring order, then across nodes in ring
+order), so every rank and every rerun hold identical bytes, within float rounding of ring, exact on whole numbers.
+Reduce-scatter, all-gather and broadcast are two-level too (cross-node pieces cut where the destination nodes' slices
+begin, then delivered inside the node; all-gather the same backwards; broadcast a chain of one rank per node, then a
+chain inside each). The ring steps moved into `HostCollectives` as `RingScatter`/`RingGather` over any list of ranks, and
+`ring` runs on them with the same operations in the same order. `ClusterOptions.CollectiveFor(topology)` makes
+`hierarchical` the default with more than one node, `ring` on one. `TopologyInspection.PredictAllReduce` plays `ring`,
+`naive` and `hierarchical` message for message (the algorithms' pieces, tags, message numbers and chunks), so a
+prediction equals a run's simulated time even with jitter or loss in the profiles; `idrak cluster inspect` prints all
+three with the default marked and the transport per pair (grouped; per pair in `-j`). Selection: `TransportPlan`
+(`src/Idrak.Abstraction/Cluster/Selection.cs`) asks every registered transport for its availability per pair, lets the
+selector choose (a forced `ClusterOptions.Transport` wins for every pair it can join, and is refused naming the pair and
+its reason where it cannot), and publishes `TransportChosen` once per pair; `InProcessCluster` starts through it.
+Failures (`src/Idrak.Cluster/Failures.cs`): `none`, `slow-worker`, `dropped-worker`, `link-loss`, `partition`,
+`late-join`, `mixed` (`BuiltInFailures`), drawing with `FailureSettings` (`IDRAK_CLUSTER_FAULT_RATE`, `_SLOW_FACTOR`,
+`_FAULT_DURATION`, `_LOSS_SHARE`, `_LATE_STEPS`). The injector (`Faults.cs`) draws step s's faults once, from a
+generator seeded with (seed, s) alone, logs each and publishes `FaultInjected`; a rank applies them as it begins the step
+(`ClusterRank.BeginStep(step)`), each state change logged and published as `RankStateChanged` with its seed and step; the
+virtual clock asks it, per transfer, what the sender's active faults do (a slow worker's transfers stretched by its
+factor, a lossy link's extra loss with each lost message sent again, a partition's hold). A dropped worker breaks the
+group at once: every rank's step ends naming it. A partition for the rest of the run, or for the timeout or longer, fails
+at once on every rank with a `TimeoutException` naming both sides (the virtual clock knows the message would never
+arrive in time); a shorter one holds the messages across and heals (`Partitioned`, then `Rejoined`). A late joiner sits
+out its first steps while the others run them as a group of their own over the same clock (`GroupTopology`, the
+collectives behind `ClusterRank.Collectives` switching groups); when the group changes its ranks meet at a barrier, so
+the joiner's clock joins theirs. On a simulated transport `CollectiveCompleted.Blocked` is the virtual clock's wait and
+`SlowestRank` the origin of the critical path (`ITransport.SimulatedCriticalRank`), so a slow worker is named on every
+rank, the same on every run. `EventLog.cs`: a binary log (`BinaryPrimitives`) of the faults, each rank's clock as it
+begins every step and as it finishes, its state changes and its transfers (`IDRAK_CLUSTER_LOG_TRANSFERS`), kept per rank
+in pooled 64 KiB blocks and joined rank by rank, so a run of a seed writes the same bytes every time; on
+`ClusterRunResult.Log`, and in the file `IDRAK_CLUSTER_EVENT_LOG` names. `Replay.cs`: `ClusterReplay.Run` reruns the work
+with a seed through a step (`SimulationOptions.ReplayStep`: every rank sits out the later steps) and
+`ClusterReplay.Schedule` gives the fault schedule without running. Tests: 11 in `ClusterTopologyTests.cs`
+(`ClusterTopologyGroup`); the C3 filter with the C0 and C1 tests, the API guard, the inventory, the CLI health, polish,
+Arabic and trace checks and the profiler: 48 passed, 0 failed on the CPU. Hierarchical against ring, 1 MiB a rank on two
+machines of four fake devices (`nvlink-900g` inside, `ethernet-1g` between): ring 14.680 ms, hierarchical 2.111 ms of
+simulated network time, ratio 6.95.
+
+Changes from the plan, kept: **`TransportPlan` is in Idrak.Abstraction**, not `Idrak.Network/Selection/`: the in-process
+cluster (Idrak.Cluster) and C5's launchers (Idrak.Network) both start groups and the packages do not reference each
+other; `FastestSelector` moved to `src/Idrak.Network/Selection/FastestSelector.cs`, and `ITransportSelector` and
+`TransportSelectors` left `shared-contracts.txt` (Abstraction uses them now). **Steps are `ClusterRank.BeginStep`**: faults
+are drawn and applied at step boundaries, so work that begins no step runs without faults (C2's training loops call it at
+the start of each step). **Fault semantics fixed**: a duration is simulated time from the start of the step, on the
+affected rank's (for a link, the sender's) clock, zero for the rest of the run; a late join is drawn at step 0 only;
+`mixed` draws the kinds a run survives (slow worker, lossy link, late join), a drop and a partition only by name.
+**`RankStateChanged` gained `Seed`** (optional, last), written by the console and JSON-lines loggers, so every fault and
+state change carries the replay key. **New settings**: `SimulationOptions.CarveFrom` (`IDRAK_CLUSTER_CARVE_FROM`: every
+fake device carved from one device here, so a topology written for other machines, the test's `cuda:0` to `cuda:3` per
+machine included, runs on this one), `.EventLog` and `.LogTransfers`; the five failure settings; all in the CLI's table.
+The "beats ring" test names distinct devices per machine because the reader joins ranks naming one device by
+`same-device`, which would replace the `nvlink-900g` link. **Contention stays per pair of ranks and direction** (as in
+C1): a node's network adapter shared by its ranks is not modelled, because a shared lane charged from several threads
+would depend on their order and break the bit-for-bit replay; the 6.95 above is the win with an adapter per rank pair
+(were the four rings across the nodes to share one adapter per machine, the same arithmetic gives about 1.75). An event-ordered model of shared
+adapters moves to C5, where the LAN measures them. The event log is joined at the end of a run (in memory until then,
+`IDRAK_CLUSTER_LOG_TRANSFERS=0` keeps it to clocks, faults and states), not flushed while it runs: flushing moves to C8
+with `cluster sim`'s long runs. Moved: "rank 0's log holds every rank's per-step summary in localhost mode" to C5 (the
+localhost cluster); "runs show charts the network share" to C8 (`cluster sim` runs training through C2's hooks, and
+`runs show` reads its log); the `idrak cluster replay` command to C8 (it reruns a training step; C3 gives the
+`ClusterReplay` API); a group over several transports at once (a routed transport) to C5, with the real transports; until
+then an in-process run whose plan mixes transports is refused naming them.
+
 ### C4: overlap, buckets, compression, local SGD
 
 **Files.** `Training/GradientBuckets.cs` (a hook per parameter at the end of its backward; buckets of `BucketBytes`

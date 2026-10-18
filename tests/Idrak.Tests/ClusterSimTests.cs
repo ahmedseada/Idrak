@@ -16,7 +16,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterSimGroup =
     [
-        ("cluster: the packages register sim devices, the sim transport, the built-in links, the none model, naive and ring, the fastest selector and both probes; carved devices are never listed; Idrak.Cluster and Idrak.Network reference Idrak.Abstraction only", ClusterRegistrations),
+        ("cluster: the packages register sim devices, the sim transport, the built-in links, the failure models, naive, ring and hierarchical, the fastest selector and both probes; carved devices are never listed; Idrak.Cluster and Idrak.Network reference Idrak.Abstraction only", ClusterRegistrations),
         ("cluster: a carved device is its physical device's type and kernels with its own pool: past its cap an allocation fails naming it; the same carving gives the same device; a carved device is not carved again", ClusterCarvedDevice),
         ("cluster: the virtual clock charges bytes / bandwidth + latency, one transfer at a time each way, a lost message again, and is the same for a seed", ClusterVirtualClock),
         ("cluster: the sim transport passes the kit's TransportSuite", ClusterSimTransportSuite),
@@ -59,6 +59,10 @@ internal static partial class Tests
 
         Check(DeviceProviders.Find("sim") is not null && Transports.Find("sim") is not null && FailureModels.Find("none") is not null, "sim devices, the sim transport and the none model");
         Check(Collectives.Find("naive") is not null && Collectives.Find("ring") is not null && TransportSelectors.Find("fastest") is not null, "naive, ring and fastest");
+        // C3 adds hierarchical beside naive and ring, and the six seeded failure models beside none.
+        Check(Collectives.Find("hierarchical") is not null && Collectives.Origin("hierarchical") == Overrides.Library, "C3 registers the hierarchical collective as a library default");
+        Check(BuiltInFailures.Names.All(n => FailureModels.Find(n) is not null && FailureModels.Origin(n) == Overrides.Library),
+            $"C3 registers the built-in failure models ({string.Join(", ", BuiltInFailures.Names)}); registered: {string.Join(", ", FailureModels.Names)}");
         Check(ProfileProbes.Names.Contains("network") && ProfileProbes.Names.Contains("cluster"), $"the probes: {string.Join(", ", ProfileProbes.Names)}");
         foreach (var assembly in new[] { typeof(SimulatedDevices).Assembly, Collectives.Get("ring").GetType().Assembly })
         {

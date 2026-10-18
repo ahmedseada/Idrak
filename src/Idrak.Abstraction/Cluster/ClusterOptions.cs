@@ -92,11 +92,27 @@ public sealed record SimulationOptions
     /// <summary>The failure model, or null for the topology's (<c>IDRAK_CLUSTER_FAILURES</c>).</summary>
     public string? Failures { get; init; }
 
-    /// <summary>The step a replay reruns, or null for a whole run (<c>IDRAK_CLUSTER_REPLAY_STEP</c>).</summary>
+    /// <summary>
+    /// The last step a replay runs (steps 0 to this one, then every rank sits the rest out), or null for a whole run
+    /// (<c>IDRAK_CLUSTER_REPLAY_STEP</c>).
+    /// </summary>
     public long? ReplayStep { get; init; }
 
     /// <summary>The clock throughput figures use (<c>IDRAK_CLUSTER_CLOCK</c>: wall or simulated).</summary>
     public ThroughputClock Clock { get; init; } = ThroughputClock.Wall;
+
+    /// <summary>
+    /// The device on this machine every fake device is carved from ("cuda:0", "cpu"), whatever its topology entry names,
+    /// or null for the entry's own (<c>IDRAK_CLUSTER_CARVE_FROM</c>). It runs a topology written for other machines (a
+    /// rental's cuda:0 to cuda:7) on this one: links keep the file's names, devices come from here.
+    /// </summary>
+    public string? CarveFrom { get; init; }
+
+    /// <summary>The file the run's event log is written to, or null to keep it in memory only (<c>IDRAK_CLUSTER_EVENT_LOG</c>).</summary>
+    public string? EventLog { get; init; }
+
+    /// <summary>Whether the event log records every transfer beside the steps' clocks and the faults (<c>IDRAK_CLUSTER_LOG_TRANSFERS</c>: 1 or 0).</summary>
+    public bool LogTransfers { get; init; } = true;
 }
 
 /// <summary>
@@ -198,6 +214,16 @@ public sealed record ClusterOptions
     /// <summary>The simulation's settings.</summary>
     public SimulationOptions Simulation { get; init; } = new();
 
+    /// <summary>
+    /// The collective algorithm a group on <paramref name="topology"/> runs: <see cref="Collective"/> when set, else
+    /// "hierarchical" when the topology has more than one node (inside each node first, then across), else "ring".
+    /// </summary>
+    public string CollectiveFor(IClusterTopology topology)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        return Collective ?? (topology.Nodes.Count > 1 ? "hierarchical" : "ring");
+    }
+
     /// <summary>The environment variables these options read, in order.</summary>
     public static IReadOnlyList<string> Variables { get; } =
     [
@@ -208,7 +234,7 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
-        "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK",
+        "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_LOG_TRANSFERS",
     ];
 
     /// <summary>
@@ -273,6 +299,9 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_FAILURES") is { } failures) s = s with { Failures = failures };
         if (Read(variable, "IDRAK_CLUSTER_REPLAY_STEP") is { } step) s = s with { ReplayStep = long.TryParse(step, NumberStyles.None, CultureInfo.InvariantCulture, out long st) ? st : throw Bad("IDRAK_CLUSTER_REPLAY_STEP", step, "a step number, 0 or more") };
         if (Read(variable, "IDRAK_CLUSTER_CLOCK") is { } clock) s = s with { Clock = Choice<ThroughputClock>("IDRAK_CLUSTER_CLOCK", clock, "wall or simulated") };
+        if (Read(variable, "IDRAK_CLUSTER_CARVE_FROM") is { } carveFrom) s = s with { CarveFrom = carveFrom };
+        if (Read(variable, "IDRAK_CLUSTER_EVENT_LOG") is { } eventLog) s = s with { EventLog = eventLog };
+        if (Read(variable, "IDRAK_CLUSTER_LOG_TRANSFERS") is { } logTransfers) s = s with { LogTransfers = Flag("IDRAK_CLUSTER_LOG_TRANSFERS", logTransfers) };
         return o with { Simulation = s };
     }
 

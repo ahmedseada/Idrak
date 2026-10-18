@@ -331,8 +331,14 @@ public readonly record struct TransferCompleted(string Transport, int From, int 
 /// <param name="BytesReceived">The bytes this rank received.</param>
 /// <param name="Wall">The time it took here.</param>
 /// <param name="Simulated">The time on the virtual clock, or zero on a real transport.</param>
-/// <param name="Blocked">The time this rank waited for others before its first byte arrived.</param>
-/// <param name="SlowestRank">The rank the others waited on longest.</param>
+/// <param name="Blocked">
+/// The time this rank waited in its receives for the others; on a simulated transport, on the virtual clock (the
+/// simulated cluster's wait), else wall time.
+/// </param>
+/// <param name="SlowestRank">
+/// The rank the others waited on longest; on a simulated transport, the origin of the critical path that last held this
+/// rank's virtual clock back (<see cref="Cluster.ITransport.SimulatedCriticalRank"/>), which names a slow worker on every rank.
+/// </param>
 public readonly record struct CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived,
     TimeSpan Wall, TimeSpan Simulated, TimeSpan Blocked, int SlowestRank);
 
@@ -370,7 +376,8 @@ public enum RankState
 /// <param name="State">Its new state.</param>
 /// <param name="Step">The training step, or -1 outside one.</param>
 /// <param name="Detail">More, or null.</param>
-public readonly record struct RankStateChanged(int Rank, RankState State, long Step, string? Detail);
+/// <param name="Seed">The seed of the simulation whose fault changed the state (the replay key with <paramref name="Step"/>), or null outside one.</param>
+public readonly record struct RankStateChanged(int Rank, RankState State, long Step, string? Detail, int? Seed = null);
 
 /// <summary>
 /// Published at <c>TelemetryLevel.Network</c> when a simulation injected a fault: the seed and step are the replay key

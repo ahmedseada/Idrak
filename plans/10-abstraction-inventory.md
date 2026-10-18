@@ -40,18 +40,18 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
-| `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | naive, ring | Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | none | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology |  | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | NaiveCollectives, RingCollectives |  | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | NaiveProvider, RingProvider |  | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | NoFailures |  | Cluster | Abstraction |
+| `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, mixed, none, partition, slow-worker | Cluster | Abstraction |
+| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology |  | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | HierarchicalProvider, NaiveProvider, RingProvider |  | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | NoFailures, SeededFailures |  | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | SimTransport |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportProvider` | interface | public | — | SimTransportProvider |  | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | FastestSelector |  | Network | Abstraction |
+| `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | FastestSelector |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | direct-link, ethernet, ethernet-100g, ethernet-10g, ethernet-1g, ethernet-2.5g, infiniband, nvlink, +7 | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | fastest | Network | Abstraction |
+| `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | fastest | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | sim | Cluster | Abstraction |
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, resize, resized-crop, +2 | Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Nlp | Abstraction |
@@ -299,7 +299,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
-| `Idrak.Networking.Abstractions.HostCollectives` | abstract class | internal | Device, Storage | NaiveCollectives, RingCollectives |  | Network | Network |
+| `Idrak.Networking.Abstractions.HostCollectives` | abstract class | internal | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives |  | Network | Network |
 
 ## The device contract (`Backend`)
 

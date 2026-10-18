@@ -65,3 +65,108 @@ public static class TransportSelectors
     /// <summary>Each selector as "name: summary", one a line.</summary>
     public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
 }
+
+/// <summary>
+/// The transport joining each pair of ranks of a group (plan 23, phase C3), made once when the group starts: every
+/// registered transport says whether it can join the pair here (<see cref="ITransportProvider.Availability"/>), and the
+/// selector <see cref="ClusterOptions.Selector"/> names picks among them, so different pairs may use different pipes (peer
+/// copies inside a machine, TCP between machines). A transport <see cref="ClusterOptions.Transport"/> forces wins over the
+/// selector for every pair it can join. Each choice is published once per pair as <see cref="TransportChosen"/>.
+/// </summary>
+public sealed class TransportPlan
+{
+    private readonly (string Transport, string Reason)[] _pairs;
+
+    private TransportPlan(int worldSize, (string, string)[] pairs, IReadOnlyList<string> used)
+    {
+        WorldSize = worldSize;
+        _pairs = pairs;
+        Used = used;
+    }
+
+    /// <summary>The number of ranks.</summary>
+    public int WorldSize { get; }
+
+    /// <summary>The transports the plan uses, in the order of their first pair.</summary>
+    public IReadOnlyList<string> Used { get; }
+
+    /// <summary>The one transport every pair uses, or null when pairs use different ones (or there is no pair).</summary>
+    public string? Single => Used.Count == 1 ? Used[0] : null;
+
+    /// <summary>The transport joining <paramref name="rankA"/> and <paramref name="rankB"/> (either order), and why.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not two different ranks of the group.</exception>
+    public (string Transport, string Reason) this[int rankA, int rankB] => _pairs[Index(rankA, rankB)];
+
+    /// <summary>
+    /// Plans every pair of <paramref name="topology"/> under <paramref name="options"/> and publishes each choice once
+    /// (<see cref="Telemetry.TransportChosen"/>, at <see cref="TelemetryLevel.Network"/>).
+    /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// The forced transport or the selector is not registered; the forced transport cannot join a pair (the message names the
+    /// pair and the transport's reason); or no transport can join a pair (the selector names each one's reason).
+    /// </exception>
+    public static TransportPlan Make(IClusterTopology topology, ClusterOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        ArgumentNullException.ThrowIfNull(options);
+        int world = topology.WorldSize;
+        bool auto = string.Equals(options.Transport, "auto", StringComparison.OrdinalIgnoreCase);
+        var forced = auto ? null : Transports.Get(options.Transport);
+        var selector = auto ? TransportSelectors.Get(options.Selector) : null;
+        IReadOnlyList<ITransportProvider> providers = auto ? Transports.All : [];
+        var answers = new TransportAvailability[providers.Count];
+        var pairs = new (string, string)[checked(world * (world - 1) / 2)];
+        var used = new List<string>();
+        bool publish = Telemetry.IsEnabled(TelemetryLevel.Network);
+        for (int a = 0; a < world; a++)
+        {
+            var context = new ClusterContext(topology, a, options);
+            for (int b = a + 1; b < world; b++)
+            {
+                (string Transport, string Reason) choice;
+                if (forced is not null)
+                {
+                    var answer = forced.Availability(context, b);
+                    choice = answer.Available
+                        ? (forced.Name, $"forced by the options (IDRAK_CLUSTER_TRANSPORT): {answer.Reason}")
+                        : throw new NotSupportedException($"Transport '{forced.Name}' is forced (ClusterOptions.Transport, IDRAK_CLUSTER_TRANSPORT) but cannot join ranks {a} and {b}: {answer.Reason}.");
+                }
+                else
+                {
+                    for (int i = 0; i < providers.Count; i++)
+                    {
+                        answers[i] = providers[i].Availability(context, b);
+                    }
+
+                    choice = selector!.Choose(a, b, topology, answers);
+                }
+
+                pairs[Index(world, a, b)] = choice;
+                if (!used.Contains(choice.Transport, StringComparer.OrdinalIgnoreCase))
+                {
+                    used.Add(choice.Transport);
+                }
+
+                if (publish)
+                {
+                    Telemetry.TransportChosen(new TransportChosen(a, b, choice.Transport, choice.Reason));
+                }
+            }
+        }
+
+        return new TransportPlan(world, pairs, used);
+    }
+
+    private int Index(int rankA, int rankB)
+    {
+        if (rankA == rankB || (uint)rankA >= (uint)WorldSize || (uint)rankB >= (uint)WorldSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rankB), $"Ranks {rankA} and {rankB} are not two different ranks of 0 to {WorldSize - 1}.");
+        }
+
+        return Index(WorldSize, Math.Min(rankA, rankB), Math.Max(rankA, rankB));
+    }
+
+    // The pair (a, b), a < b, in row order of the upper triangle.
+    private static int Index(int world, int a, int b) => (a * ((2 * world) - a - 1) / 2) + (b - a - 1);
+}
