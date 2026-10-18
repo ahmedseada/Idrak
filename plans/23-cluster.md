@@ -599,8 +599,11 @@ device does".
 - `idrak transports` (every registered transport, available or not on this machine, with its capabilities)
 - `--profile` on `cluster sim` and `--cluster FILE` on `profile` (the two probes above; `-j` for the JSON the
   calibration reads); `idrak tuning show` lists the calibrated profiles and the measured chunk and bucket sizes
-- `--cluster FILE` on `train`, `pretrain`, `tune`, `resume`, `distill`; `--worker N` for this process's rank and
-  `--workers N` for the world size (`--rank` is already the LoRA rank in `tune` and `distill`; decision 3); the key only
+- `--cluster FILE` on `train`, `pretrain`, `tune`, `resume`, `distill`; `--rank N` for this process's rank and
+  `--world-size N` for the world size, the words every cluster tool uses (decision 3). On `tune` and `distill` the LoRA
+  rank becomes `--lora-rank` (the `tune` option `--alpha` stays; `distill` keeps `--lora-alpha`); a `--rank` given to
+  either without `--cluster` is refused with "`--rank` is now the cluster rank; the adapter's rank is `--lora-rank`",
+  never silently reinterpreted; `tune init` and the docs are updated with it; the key only
   from `IDRAK_CLUSTER_KEY`.
 
 **Tests** (`"cluster: cli …"`): one per command through `CommandLine.Run`; "cluster: cli pretrain --cluster
@@ -608,7 +611,8 @@ home-3-node-1g --mode localhost writes one run folder from rank 0"; "cluster: cl
 run whose log it reads" and from a bench's JSON; "cluster: cli cluster init answers through the test input write the file, --yes with options writes the same, and
 without a terminal the usage error names the option to add"; "cluster: cli cluster sim --profile prints kernel rows beside the network
 and cluster probes' rows, the predicted step beside the measured"; "cluster: cli profile --cluster shows a token's hops
-through a simulated pipeline"; "cluster: cli --workers without --coordinator is a usage error naming it"; help within 120
+through a simulated pipeline"; "cluster: cli --world-size without --coordinator is a usage error naming it"; "cluster: cli tune --rank without
+--cluster is refused naming --lora-rank, and --lora-rank sets the adapter"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
 
 ## Memory and speed, where every byte goes
@@ -640,9 +644,11 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 1. **Decided by the owner (2026-10-18): `Idrak.Cluster` references `Idrak.Abstraction`** and implements the contracts
    itself; no bridge, no duplicate types; on extraction the contracts and used types move with it.
 2. **Decided (2026-10-18): the topology file is JSON** with the spec's keys; no YAML reader.
-3. **Decided (2026-10-18): `--worker N` for this process's rank and `--workers N` for the world size**, with
-   `--coordinator HOST:PORT` (`--rank` stays the LoRA rank in `tune` and `distill`; "node" stays the topology file's
-   word for a machine). The variables stay `IDRAK_RANK`, `IDRAK_WORLD_SIZE`, `IDRAK_COORDINATOR`.
+3. **Decided (the owner, 2026-10-18): `--rank N` for this process's rank and `--world-size N` for the world size**,
+   with `--coordinator HOST:PORT`: the words anyone from another cluster tool already knows, matching `IDRAK_RANK`,
+   `IDRAK_WORLD_SIZE` and `IDRAK_COORDINATOR`. The LoRA rank on `tune` and `distill` is renamed `--lora-rank`, and the
+   old meaning is refused with a message naming the new option rather than reinterpreted. "Node" stays the topology
+   file's word for a machine; a rank is one worker on one device, numbered from zero across the nodes in file order.
 4. **Decided (2026-10-18): the wire type defaults to float32, and the library measures and suggests.** A `"cluster"`
    `ISettingAdvisor` registered in `SettingAdvisors` by `Idrak.Network`: during the first warm steps it measures the
    network share of the step (`CollectiveCompleted.Blocked` and `Wall` against the step), and on a sample slice the
