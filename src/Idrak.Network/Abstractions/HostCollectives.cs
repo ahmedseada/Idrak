@@ -47,6 +47,7 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         Transport = transport ?? throw new ArgumentNullException(nameof(transport));
         Device = device ?? throw new ArgumentNullException(nameof(device));
         ArgumentNullException.ThrowIfNull(context);
+        Context = context;
         // A message holds at most what one array can: the structural limit, not a tuning.
         _chunkBytes = Math.Clamp(context.Options.ChunkBytes ?? Array.MaxLength / 2, sizeof(float), Array.MaxLength / 2);
         _summarize = transport.Capabilities.CrossProcess && transport.WorldSize > 1;
@@ -62,6 +63,11 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     public Device Device { get; }
 
     protected ITransport Transport { get; }
+
+    // The transport for messages of one's own (tags 0 and up), and the context the collectives were made for (plan 23, C7).
+    ITransport? ICollectives.Transport => Transport;
+
+    public ClusterContext? Context { get; }
 
     public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32)
     {

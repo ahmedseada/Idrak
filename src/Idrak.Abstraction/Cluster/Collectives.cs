@@ -66,6 +66,15 @@ public interface ICollectives : IDisposable
 
     /// <summary>Returns once every rank has called it.</summary>
     void Barrier();
+
+    /// <summary>
+    /// The transport the collectives run over, for point-to-point messages of one's own (a pipeline's activations, plan 23
+    /// phase C7) on tags 0 and up (collectives use negative ones), or null when the collectives do not offer it.
+    /// </summary>
+    ITransport? Transport => null;
+
+    /// <summary>The topology, rank and options the collectives were made for, or null when they do not say.</summary>
+    ClusterContext? Context => null;
 }
 
 /// <summary>One collective algorithm, registered by name in <see cref="Collectives"/>: it builds a rank's collectives over a connected transport.</summary>
