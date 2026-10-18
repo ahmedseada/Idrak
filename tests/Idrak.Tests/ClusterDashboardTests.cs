@@ -20,6 +20,20 @@ using EventLog = Idrak.Cluster.EventLog;
 // calls it as the page does, over HTTP; every wait is bounded, and every server, run and process is ended in finally.
 internal static partial class Tests
 {
+    // A file another handle is still writing (the pretrainer's log): Windows refuses a reader that does not share writing.
+    private static List<string> SharedLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var lines = new List<string>();
+        while (reader.ReadLine() is { } line)
+        {
+            lines.Add(line);
+        }
+
+        return lines;
+    }
+
     private static readonly (string Name, Action<Device> Run)[] ClusterDashboardGroup =
     [
         ("cluster: ui the builder API asks cluster init's questions (each with its description, default and suggestion, a refused answer saying why) and writes the file cluster init --yes writes for the same answers; the inspection's phases add up to each prediction", ClusterUiBuilder),
@@ -285,7 +299,7 @@ internal static partial class Tests
             Check(control is { PauseAt: 0, LastStep: -1, Observed: false } && server.Runs.Listening == 0, "paused before step 0, no rank began it; nobody observes");
             UiOk(http, "POST", $"/api/runs/{id}/resume");
             string log = Path.Combine(steered, "log.jsonl");
-            Check(UiWait(() => File.Exists(log) && File.ReadLines(log).Count(l => l.Contains("\"event\":\"batch\"", StringComparison.Ordinal)) >= 3, 180),
+            Check(UiWait(() => File.Exists(log) && SharedLines(log).Count(l => l.Contains("\"event\":\"batch\"", StringComparison.Ordinal)) >= 3, 180),
                 "three steps trained with no page listening");
             // Paused before the page connects, so what it gets first is what was kept while nobody listened.
             long early = (long)UiOk(http, "POST", $"/api/runs/{id}/pause")["at"]!;
