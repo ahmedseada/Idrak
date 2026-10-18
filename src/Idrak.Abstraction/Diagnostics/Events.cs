@@ -305,3 +305,92 @@ public readonly record struct OverrideFailed(string Registry, string Slot, strin
 /// <param name="OverrideBytes">Managed memory the app's implementation allocated on the calling thread.</param>
 public readonly record struct OverrideCompared(string Registry, string Slot, string Implementation, string Origin, bool Agreed, string? Difference,
     Exception? Exception, TimeSpan LibraryTime, TimeSpan OverrideTime, long LibraryBytes, long OverrideBytes);
+
+/// <summary>
+/// Published at <c>TelemetryLevel.Network</c> when a transfer between two ranks completed (plan 23): its bytes, the time it
+/// took here, and the time the simulator's virtual clock charged for it (zero on a real transport).
+/// </summary>
+/// <param name="Transport">The transport that carried it ("sim", "tcp", …).</param>
+/// <param name="From">The sending rank.</param>
+/// <param name="To">The receiving rank.</param>
+/// <param name="Tag">The tag it was sent under.</param>
+/// <param name="Bytes">The bytes carried.</param>
+/// <param name="Wall">The time it took here, measured after the device's queued work (a copy is not counted as free).</param>
+/// <param name="Simulated">The time the link profile charged on the virtual clock, or zero.</param>
+public readonly record struct TransferCompleted(string Transport, int From, int To, int Tag, long Bytes, TimeSpan Wall, TimeSpan Simulated);
+
+/// <summary>
+/// Published at <c>TelemetryLevel.Network</c> when a collective operation completed on a rank: what it moved, how long it
+/// took, how long the rank waited on the others, and which rank was slowest.
+/// </summary>
+/// <param name="Collective">The algorithm ("ring", "hierarchical", …).</param>
+/// <param name="Operation">The operation ("all-reduce", "all-gather", "reduce-scatter", "broadcast", "barrier").</param>
+/// <param name="Rank">The rank reporting.</param>
+/// <param name="WorldSize">The number of ranks.</param>
+/// <param name="BytesSent">The bytes this rank sent.</param>
+/// <param name="BytesReceived">The bytes this rank received.</param>
+/// <param name="Wall">The time it took here.</param>
+/// <param name="Simulated">The time on the virtual clock, or zero on a real transport.</param>
+/// <param name="Blocked">The time this rank waited for others before its first byte arrived.</param>
+/// <param name="SlowestRank">The rank the others waited on longest.</param>
+public readonly record struct CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived,
+    TimeSpan Wall, TimeSpan Simulated, TimeSpan Blocked, int SlowestRank);
+
+/// <summary>Published at <c>TelemetryLevel.Network</c> once per pair of ranks when a group starts: the transport joining them, and why.</summary>
+/// <param name="RankA">One rank.</param>
+/// <param name="RankB">The other.</param>
+/// <param name="Transport">The transport chosen.</param>
+/// <param name="Reason">Why (the selector's rule, or "forced by the options").</param>
+public readonly record struct TransportChosen(int RankA, int RankB, string Transport, string Reason);
+
+/// <summary>How a rank stands in its group.</summary>
+public enum RankState
+{
+    /// <summary>It connected.</summary>
+    Joined,
+
+    /// <summary>The others wait on it noticeably.</summary>
+    Slow,
+
+    /// <summary>It stopped answering.</summary>
+    Dropped,
+
+    /// <summary>Some of its links are closed.</summary>
+    Partitioned,
+
+    /// <summary>It came back.</summary>
+    Rejoined,
+
+    /// <summary>It finished its run.</summary>
+    Finished,
+}
+
+/// <summary>Published at <c>TelemetryLevel.Network</c> when a rank's state changes.</summary>
+/// <param name="Rank">The rank.</param>
+/// <param name="State">Its new state.</param>
+/// <param name="Step">The training step, or -1 outside one.</param>
+/// <param name="Detail">More, or null.</param>
+public readonly record struct RankStateChanged(int Rank, RankState State, long Step, string? Detail);
+
+/// <summary>
+/// Published at <c>TelemetryLevel.Network</c> when a simulation injected a fault: the seed and step are the replay key
+/// (<c>idrak cluster replay --seed S --step N</c>).
+/// </summary>
+/// <param name="Seed">The run's seed.</param>
+/// <param name="Step">The step it starts at.</param>
+/// <param name="Kind">What goes wrong.</param>
+/// <param name="Ranks">The ranks it touches.</param>
+/// <param name="Duration">How long it lasts, or zero for the rest of the run.</param>
+/// <param name="Factor">The kind's figure (a slowdown, a loss share, a number of steps late).</param>
+public readonly record struct FaultInjected(int Seed, long Step, Cluster.FaultKind Kind, IReadOnlyList<int> Ranks, TimeSpan Duration, double Factor);
+
+/// <summary>Published at <c>TelemetryLevel.Network</c> when a calibration corrected a link profile from measured transfers.</summary>
+/// <param name="Link">The profile's name.</param>
+/// <param name="BandwidthBefore">Its bandwidth before, bytes a second.</param>
+/// <param name="BandwidthAfter">Its bandwidth after.</param>
+/// <param name="LatencyBefore">Its latency before.</param>
+/// <param name="LatencyAfter">Its latency after.</param>
+/// <param name="Residual">The fit's root-mean-square error, seconds.</param>
+/// <param name="Samples">The transfers the fit used.</param>
+public readonly record struct ProfileCalibrated(string Link, double BandwidthBefore, double BandwidthAfter, TimeSpan LatencyBefore, TimeSpan LatencyAfter,
+    double Residual, int Samples);

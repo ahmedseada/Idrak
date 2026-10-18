@@ -288,4 +288,48 @@ public static class Conformance
         ArgumentNullException.ThrowIfNull(cache);
         return Check(cache, new FeatureCacheSuite(device), options ?? new ContractCheckOptions { RandomCases = 6 });
     }
+
+    /// <summary>
+    /// Checks a cluster transport (plan 23) on groups of 2 to 8 ranks (<see cref="TransportSuite"/>): every message whole
+    /// and in order under its tag, barriers, refusals and a timeout naming the silent rank. Four random cases unless
+    /// <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="transport">Connects a group of ranks of the transport.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckTransport(TransportUnderTest transport, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(transport);
+        return Check(transport, new TransportSuite(), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>
+    /// Checks a collective algorithm (plan 23) on groups of 2 to 8 ranks (<see cref="CollectivesSuite"/>): every operation
+    /// against the sum, largest and smallest in rank order, identical bytes on every rank and on a rerun. Four random cases
+    /// unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="collectives">Connects a group of ranks of the algorithm.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckCollectives(CollectivesUnderTest collectives, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(collectives);
+        return Check(collectives, new CollectivesSuite(), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>Checks a link profile (plan 23, <see cref="LinkProfileSuite"/>).</summary>
+    /// <param name="profile">The profile.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckLinkProfile(Cluster.ILinkProfile profile, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        return Check(profile, new LinkProfileSuite(), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>Checks a cluster topology (plan 23, <see cref="TopologySuite"/>).</summary>
+    /// <param name="topology">The topology.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckTopology(Cluster.IClusterTopology topology, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        return Check(topology, new TopologySuite(), options ?? new ContractCheckOptions { RandomCases = 2 });
+    }
 }

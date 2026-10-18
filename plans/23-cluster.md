@@ -34,8 +34,10 @@ the profiles**. Same topology file, same launcher, same training code on every t
   rented buffers returned in `finally` (rules 7-14, 25, 74); gradients are reduced **in place, slice by slice**, never
   copied whole (rule 77: device memory does not grow across steps); every wait on a link is a telemetry number (78),
   cold and warm apart (76); ranks, chunks and both ring directions run at once and the first step reports what the
-  spread paid (79); every sum is made in a fixed order (86) so every rank holds bit-identical values and the simulator
-  and the real transport agree bit for bit (71).
+  spread paid (79); every sum is made in an order fixed by the algorithm and the sizes (86), never by timing, so every
+  rank holds bit-identical values, a rerun gives bit-identical values, and the simulator and a real transport running
+  the same algorithm agree bit for bit (71). Two algorithms (naive and ring) order a sum differently, so they agree
+  within float rounding, exactly on whole numbers (found while writing C0's suite; the plan had claimed bit equality).
 - **Nothing fixed.** Every size, chunk, bucket, timeout, retry count, port, address, wire type, sync interval, placement
   and the transport choice is a library option (`ClusterOptions`, `SimulationOptions`) with an
   environment variable, listed in `src/Idrak.Cli/Shared/EnvironmentVariables.cs` under a new group `"Cluster"` (the
@@ -189,9 +191,9 @@ public interface IFailureModel
 // Every registry copies RandomTextSources (src/Idrak.Nlp/Abstractions/RandomTextData.cs): a SlotTable named after the
 // class, OrdinalIgnoreCase, RegisterDefault inside LibraryDefaults.Ensure, [NoInlining] Register(T) with the calling
 // assembly as Origin, Unregister, Names, Find, Get (the "is not registered (registered: …); add one with X.Register" message), Default, Origin, Describe.
-public static class Transports { }          // unguarded SlotTable<string, Func<ClusterOptions, ITransport>>; "sim" from Idrak.Cluster, the real ones from Idrak.Network
-public static class Collectives { }         // unguarded; "naive", "ring", "hierarchical"
-public static class LinkProfiles { }        // guarded (a profile is data; two may answer the same name: the calibrated one wins)
+public static class Transports { }          // unguarded SlotTable<string, ITransportProvider> (Availability per pair, Connect a rank); "sim" from Idrak.Cluster, the real ones from Idrak.Network
+public static class Collectives { }         // unguarded SlotTable<string, ICollectivesProvider> (Create a rank's collectives over a transport); "naive", "ring", "hierarchical"
+public static class LinkProfiles { }        // unguarded (a profile is data, no call to fall back from): an app's or a calibrated profile takes the built-in's place; Resolve reads a rate suffix ("direct-link-10g")
 public static class TransportSelectors { }  // unguarded
 public static class FailureModels { }       // unguarded
 ```
@@ -338,6 +340,13 @@ no YAML reader and no dependencies, so the same keys in JSON, comments and trail
   per node), else `--coordinator` / `IDRAK_COORDINATOR`. `IDRAK_RANK` and `IDRAK_WORLD_SIZE` remain for a run with
   no file (bare `--coordinator`, every rank on its own device) and for launchers that set them; a value that
   contradicts the file stops the run before it starts, naming both.
+- **The built-in profiles carry no hardware figure** (C1, card-agnostic rule): a name that states its rate carries
+  exactly that rate (`ethernet-1g` is 1 Gb/s, `direct-link-10g` 10 Gb/s); a link this machine can measure
+  (`same-device`, `shared-memory`, `pcie` through host staging, `nvlink` where peers exist) is measured at first use and
+  kept in the tuning cache; any other (`infiniband`, `roce`, `wifi`) has no rate until the topology gives one in its
+  name (`infiniband-200g`) or a bench measures it, and `Predict` refuses to guess (the C0 contract already does).
+- **The reader picks `same-device` itself**: two ranks naming one device of one node are joined by it, so
+  `"intra-node"` is needed only where a node has different devices (decided while writing C0).
 - **Two workers on one card** (the owner's question, 2026-10-18) are joined by the `same-device` link: a copy between
   them is a device-to-device copy inside one memory, at the card's own memory bandwidth, faster than NVLink or PCIe.
   Its bandwidth and latency are **measured on the device at first use** (one timed device copy, kept in the tuning
@@ -397,7 +406,7 @@ collectives in `Idrak.Network` do the reduction arithmetic on whichever device t
 | `udp` | any machines | optional, later: control messages (barrier, heartbeats) and loss-tolerant gradient chunks with sequence numbers; `Reliable = false` so collectives that need delivery refuse it |
 | `rdma` | InfiniBand, RoCE | a registered name with no library default (native verbs); a plug-in later |
 
-**The wire format** (`WireFormat`, public in Abstraction so a plug-in transport speaks it): a 32-byte little-endian
+**The wire format** (`WireFormat`, public in Abstraction so a plug-in transport speaks it): a 36-byte little-endian
 header (`TryReadHeader(ReadOnlySpan<byte>, out WireHeader)`, `WriteHeader(Span<byte>, in WireHeader)`): magic `IDRK`,
 version (u16), kind (u16: hello, welcome, chunk, ack, barrier, heartbeat, bye, error), rank, sequence, tag, chunk index,
 chunk count, element type (f32, bf16), op, payload bytes. The hello carries an HMAC over (nonce ‖ rank ‖ world) under
@@ -412,7 +421,7 @@ this machine; `idrak cluster inspect` prints the choice per pair.
 **Collectives** (`src/Idrak.Network/Collectives/`), each an `ICollectives` over any `ITransport`:
 
 - `naive`: every rank sends to rank 0, rank 0 sums in rank order and broadcasts. The first implementation and the
-  reference every other collective is compared with (bit-exact, since all sum in rank order).
+  reference every other collective is compared with (within float rounding; exactly on whole numbers).
 - `ring`: reduce-scatter then all-gather over the ring; slice *j*'s sum is formed at rank (*j* - 1) mod N by adding
   ranks *j*, *j*+1, … in that order whatever the timing (rule 86), chunks of `ChunkBytes` with `InFlight` outstanding
   per direction; the receive side sums in float32 straight from the rented receive buffer into the staging slot.
@@ -454,19 +463,44 @@ Reruns write the same bytes.
 
 **Suites.** `TransportSuite` (every message size including 0, 1, 7, 65,537 bytes and a size above `ChunkBytes`; tags;
 both directions at once; a receive from a rank that never sends times out naming it), `CollectivesSuite` (every
-operation against the CPU reference on 2, 3, 4 and 8 ranks, sizes that are not multiples of the world size, bit-exact
-for `Sum`), `LinkProfileSuite` (`Predict` is monotonic in bytes, jitter is reproducible for a seed, `With` keeps the
+operation against the sum in rank order on 2, 3, 4 and 8 ranks, sizes that are not multiples of the world size, exact
+on whole numbers and within float rounding otherwise, identical bytes on every rank and on a rerun), `LinkProfileSuite` (`Predict` is monotonic in bytes, jitter is reproducible for a seed, `With` keeps the
 other fields), `TopologySuite` (every rank placed once, every pair has a link, overrides win, a file the builder
 wrote reads back to the same topology).
 
 **Tests** (`"cluster: "`): "cluster: ddp fixture agrees with single"; "cluster: wire header round trip, refuses a wrong
 magic and a newer version"; "cluster: options from environment, the key never in ToString"; "cluster: every registry
-describes its defaults and refuses an unregistered name with the Register hint"; "cluster: topology file parses and inspect
-prints every pair"; "cluster: the builder's questions each carry a description, a default from this machine and a
-validation, and the answers write a file that reads back"; inventory and API dumps regenerated (Abstraction +1
-namespace).
+describes its defaults and refuses an unregistered name with the Register hint"; "cluster: topology file parses";
+the kit's suites checked on a reference in-memory transport and naive collectives written in the test project, and on
+broken twins they must fail; inventory and API dumps regenerated (Abstraction +1 namespace). The builder's questions
+and `inspect` move to C1, where `Idrak.Cluster` holds the builder.
 
 **Done when** the fixture exists with its README, two script runs write the same bytes, and the filter passes on the CPU.
+
+**C0 as built (2026-10-18).** In `src/Idrak.Abstraction/Cluster/`: `ITransport` with `ITransportProvider`,
+`TransportCapabilities`, `TransportAvailability` and `ClusterContext`; `ICollectives` with `ICollectivesProvider`,
+`ReduceOp`, `WireType`; `ILinkProfile` with the data record `LinkProfile` and `LinkProfiles.Resolve` (a registered name,
+or one with a rate suffix in bits a second); `IClusterTopology` with the reader and writer `ClusterTopology` (JSON with
+comments and trailing commas, unknown keys refused by name, memory sizes per decision 7, `same-device` picked by the
+reader for ranks sharing a device, the first node's address as `Coordinator`); `ITransportSelector`; `IFailureModel` with
+`Fault` and `FaultKind`; the five unguarded registries (`Transports`, `Collectives`, `LinkProfiles`,
+`TransportSelectors`, `FailureModels`); `ClusterOptions` and `SimulationOptions` with 35 variables (`ClusterKey` keeps
+the secret out of every `ToString`); `WireFormat` (36-byte header, the HMAC hello). `LibraryDefaults` lists
+`Idrak.Cluster` and `Idrak.Network`. Telemetry: `TelemetryLevel.Network` (in `All` and in `trace`'s default and
+`--levels network`), the six events, their publishers and hook methods, carried by `ConsoleLogger`, `MetricsRecorder`
+(`Collectives`), `ChannelTelemetry`, `JsonLinesLogger` and `TelemetryJson`. Kit: `TransportSuite`,
+`CollectivesSuite`, `LinkProfileSuite`, `TopologySuite`, `TransportUnderTest`, `CollectivesUnderTest` and
+`Conformance.CheckTransport|CheckCollectives|CheckLinkProfile|CheckTopology`. Tests: `tests/Idrak.Tests/ClusterTests.cs`
+(nine `"cluster: "` tests) and `ClusterReference.cs` (an in-memory transport and naive collectives, each with a broken
+twin the suites fail). The variables are in the CLI's table under "Cluster" (listed for `test` until C2 gives the
+training commands their part). The DDP fixture: `tools/cluster/make_tiny_ddp.py` and `tests/Idrak.Tests/data/cluster/`
+(torch 2.14.1, transformers 5.19.0; ddp against single within 1e-5: SGD weights 1.2e-7, AdamW 2.3e-6, folded AdamW
+6.7e-6; bf16 against ddp: gradients 5.9e-4, weights 1.6e-4; three runs wrote identical bytes). One build of the test
+project; `IDRAK_DEVICES=cpu` with the filter `cluster:|public API|abstraction inventory|cli health: …|cli polish: …|cli
+dev: trace|profiler:`: 22 passed, 0 failed (the transport suite 2.4 s, the collectives suite 1.6 s). API dumps of
+Idrak.Abstraction and Idrak.Abstraction.Testing and the inventory regenerated. Left for C1: the `sim` transport and
+devices, the built-in profiles and failure models, `naive` and `ring` in Idrak.Network, the builder and `cluster
+init|inspect|sim`.
 
 ### C1: Idrak.Cluster in-process, the `sim` transport, `naive` and `ring`
 
@@ -482,16 +516,15 @@ the `Create(ordinal, limit)` overload in `DeviceProvider` and the four providers
 `tests/Idrak.Tests/ApiSurfaceTests.cs` and the dumps `api/Idrak.Cluster.txt`, `api/Idrak.Network.txt`;
 `LibraryAssemblyNames` in `InventoryTests.cs`; `LibraryDefaults.Assemblies` and a `[DynamicDependency]` for each; a
 `ProjectReference` in `tests/Idrak.Tests/Idrak.Tests.csproj` and in `Idrak.Cli.csproj`; a `README.md` per package
-listing its contracts (packed with it); `Idrak.Abstraction.Cluster` added to the global usings in
-`Directory.Build.props` and `src/Idrak.Abstraction/buildTransitive/Idrak.Abstraction.props`, and to the inventory's
-namespace-to-area map and allow list; every contract only `Idrak.Network` uses today but any package may use later
+listing its contracts (packed with it); `Idrak.Abstraction.Cluster` is not a global using (its short names, `Fault`,
+`Transports`, would reach every project; the packages that use it say `using Idrak.Abstraction.Cluster;`); every contract only `Idrak.Network` uses today but any package may use later
 (`ICollectives`, `ITransportSelector`) justified in `tests/Idrak.Tests/data/shared-contracts.txt` (`ITransport`,
 `ILinkProfile`, `IClusterTopology` and `IFailureModel` have two users, Cluster and Network, so decision 10 places them in
 Abstraction on its own). The csproj of each: `IsAotCompatible`, `GenerateDocumentationFile`, `InternalsVisibleTo
 Idrak.Tests`, one `ProjectReference` (Abstraction), and a test asserts that neither references the other or anything
 else ("cluster: Idrak.Cluster and Idrak.Network reference Idrak.Abstraction only").
 
-**Tests** (`"cluster: "`): "cluster: sim ring all-reduce equals naive and the plain sum bit for bit" (2, 3, 4, 8 ranks;
+**Tests** (`"cluster: "`): "cluster: sim ring all-reduce equals naive within float rounding, exactly on whole numbers, identical on every rank and rerun" (2, 3, 4, 8 ranks;
 sizes 1, 7, 1,023, 65,537; sum, max, min); "cluster: sim all-gather, reduce-scatter, broadcast, barrier";
 "cluster: a rank that never arrives times out naming it"; "cluster: the virtual clock charges bytes / bandwidth +
 latency and is deterministic for a seed" (two runs, equal logs); "cluster: a bounded pipe makes a fast rank wait";
@@ -523,7 +556,8 @@ already downloads.
 same as equal splits.
 
 **Tests** (`"cluster: "`): "cluster: data parallel 2 ranks on sim matches the ddp fixture" (grads 1e-4, losses and
-weights 1e-5, SGD and AdamW); "cluster: 2 ranks equal one process with the global batch" (rule 71, Idrak against Idrak);
+weights 1e-5, SGD and AdamW; the fixture's own ddp-against-single gap for folded AdamW is already 6.7e-6, so that
+comparison is against `ddp/adamw-folded/` and its tolerance is set from that measured gap, not widened by guess); "cluster: 2 ranks equal one process with the global batch" (rule 71, Idrak against Idrak);
 "cluster: 3 ranks with unequal token counts give the token-weighted gradient"; "cluster: bf16 wire within the fixture's
 tolerance"; "cluster: rank 0 alone writes the checkpoint; a 2-rank run resumes as 3 ranks giving the 3-rank run's
 losses"; "cluster: mixed kinds (cpu and a fake device of every listed kind) sync weights every K steps"; "cluster:
@@ -537,7 +571,7 @@ batches split by measured speed give the one-process losses"; "cluster: HostOpti
 **Files.** `Collectives/HierarchicalCollectives.cs`, `Selection/` (availability per transport), `src/Idrak.Cluster/Faults.cs`,
 `EventLog.cs`, `Replay.cs`.
 
-**Tests** (`"cluster: "`): "cluster: hierarchical equals ring bit for bit"; "cluster: hierarchical beats ring in
+**Tests** (`"cluster: "`): "cluster: hierarchical equals ring within float rounding, every rank and rerun identical"; "cluster: hierarchical beats ring in
 simulated time on a two-level topology" (a file the test builds: two machines of four fake devices, `nvlink` inside,
 `ethernet-1g` between; the ratio is
 printed and must be above 1); "cluster: the selector picks per pair in the fastest-first order and logs it; a forced
@@ -688,10 +722,9 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 6. **Decided (2026-10-18): no presets.** The topology file is built by `idrak cluster init`, an interactive builder
    with a description for every input and a default found on this machine, with options for every answer so it also
    runs without a terminal.
-7. **Open: the memory suffix in the topology file.** `"8GB"` reads as what the box says, but device memory is counted
-   in powers of 1,024 (MiB, GiB), and the device listing prints MiB. Recommended: accept both spellings (`GB`, `GiB`,
-   `MB`, `MiB`), treat all as powers of 1,024, and have `inspect` print MiB beside the declared value, as `devices`
-   does. The alternative: `GB` as a power of 1,000 like the drive makers, which would make `"16GB"` less than the card.
+7. **Decided (2026-10-18): memory sizes in the topology file accept `B`, `KB`/`KiB`, `MB`/`MiB`, `GB`/`GiB`, `TB`/`TiB`,
+   all as powers of 1,024** (device memory is counted that way, and `"16GB"` must mean the whole card); `inspect` prints
+   MiB beside the declared value, as `devices` does.
 
 ## Runs
 

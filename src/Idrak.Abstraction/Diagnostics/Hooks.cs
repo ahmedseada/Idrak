@@ -142,6 +142,36 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
 
     /// <inheritdoc />
     public void OnSuggestion(in SettingSuggestion e) => _out.WriteLine($"Suggested for {e.Device}: {e.Setting} = {e.Value} ({e.Reason}) [{e.Source}]");
+
+    /// <inheritdoc />
+    public void OnTransfer(in TransferCompleted e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Transfer {e.Transport} {e.From}->{e.To} (tag {e.Tag}): {e.Bytes:N0} B in {e.Wall.TotalMilliseconds:F3} ms") + Simulated(e.Simulated));
+
+    /// <inheritdoc />
+    public void OnCollective(in CollectiveCompleted e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Collective {e.Collective} {e.Operation} rank {e.Rank}/{e.WorldSize}: sent {e.BytesSent:N0} B, received {e.BytesReceived:N0} B in {e.Wall.TotalMilliseconds:F3} ms, blocked {e.Blocked.TotalMilliseconds:F3} ms, slowest rank {e.SlowestRank}")
+            + Simulated(e.Simulated));
+
+    /// <inheritdoc />
+    public void OnTransportChosen(in TransportChosen e) => _out.WriteLine($"Ranks {e.RankA} and {e.RankB} use {e.Transport} ({e.Reason})");
+
+    /// <inheritdoc />
+    public void OnRankState(in RankStateChanged e) =>
+        _out.WriteLine($"Rank {e.Rank} {e.State.ToString().ToLowerInvariant()}" + (e.Step >= 0 ? string.Create(CultureInfo.InvariantCulture, $" at step {e.Step}") : "") + (e.Detail is { } d ? ": " + d : ""));
+
+    /// <inheritdoc />
+    public void OnFault(in FaultInjected e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Fault {e.Kind} at step {e.Step} on rank(s) {string.Join(",", e.Ranks)} (factor {e.Factor:G4}, {(e.Duration > TimeSpan.Zero ? $"{e.Duration.TotalMilliseconds:F1} ms" : "for the rest of the run")}); replay with --seed {e.Seed} --step {e.Step}"));
+
+    /// <inheritdoc />
+    public void OnCalibrated(in ProfileCalibrated e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Calibrated {e.Link}: {e.BandwidthBefore / 1e6:F1} -> {e.BandwidthAfter / 1e6:F1} MB/s, latency {e.LatencyBefore.TotalMicroseconds:F1} -> {e.LatencyAfter.TotalMicroseconds:F1} us ({e.Samples} transfers, residual {e.Residual * 1e3:F3} ms)"));
+
+    private static string Simulated(TimeSpan simulated) =>
+        simulated > TimeSpan.Zero ? string.Create(CultureInfo.InvariantCulture, $", simulated {simulated.TotalMilliseconds:F3} ms") : "";
 }
 
 /// <summary>Keeps every epoch (and optionally batch) event in memory, for charts, reports or CSV export.</summary>
@@ -149,6 +179,7 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
 {
     private readonly List<EpochCompleted> _epochs = [];
     private readonly List<BatchCompleted> _batches = [];
+    private readonly List<CollectiveCompleted> _collectives = [];
     private readonly Lock _lock = new();
 
     /// <inheritdoc />
@@ -178,12 +209,33 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
         }
     }
 
+    /// <summary>Recorded collective operations, in order (needs <see cref="TelemetryLevel.Network"/>): each step's network time, bytes and wait.</summary>
+    public IReadOnlyList<CollectiveCompleted> Collectives
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return [.. _collectives];
+            }
+        }
+    }
+
     /// <inheritdoc />
     public void OnEpochCompleted(in EpochCompleted e)
     {
         lock (_lock)
         {
             _epochs.Add(e);
+        }
+    }
+
+    /// <inheritdoc />
+    public void OnCollective(in CollectiveCompleted e)
+    {
+        lock (_lock)
+        {
+            _collectives.Add(e);
         }
     }
 
@@ -320,6 +372,24 @@ public sealed class ChannelTelemetry : ITelemetryHook
 
     /// <inheritdoc />
     public void OnSuggestion(in SettingSuggestion e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnTransfer(in TransferCompleted e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnCollective(in CollectiveCompleted e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnTransportChosen(in TransportChosen e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnRankState(in RankStateChanged e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnFault(in FaultInjected e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnCalibrated(in ProfileCalibrated e) => Write(e);
 }
 
 /// <summary>
@@ -393,6 +463,24 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnSuggestion(in SettingSuggestion e) => _channel.OnSuggestion(in e);
+
+    /// <inheritdoc />
+    public void OnTransfer(in TransferCompleted e) => _channel.OnTransfer(in e);
+
+    /// <inheritdoc />
+    public void OnCollective(in CollectiveCompleted e) => _channel.OnCollective(in e);
+
+    /// <inheritdoc />
+    public void OnTransportChosen(in TransportChosen e) => _channel.OnTransportChosen(in e);
+
+    /// <inheritdoc />
+    public void OnRankState(in RankStateChanged e) => _channel.OnRankState(in e);
+
+    /// <inheritdoc />
+    public void OnFault(in FaultInjected e) => _channel.OnFault(in e);
+
+    /// <inheritdoc />
+    public void OnCalibrated(in ProfileCalibrated e) => _channel.OnCalibrated(in e);
 
     private async Task WriteAsync(FileStream stream)
     {
@@ -595,6 +683,68 @@ public static class TelemetryJson
                 w.WriteString("reason", e.Reason);
                 w.WriteString("device", e.Device);
                 w.WriteString("source", e.Source);
+                break;
+            case TransferCompleted e:
+                w.WriteString("event", "transfer");
+                w.WriteString("transport", e.Transport);
+                w.WriteNumber("from", e.From);
+                w.WriteNumber("to", e.To);
+                w.WriteNumber("tag", e.Tag);
+                w.WriteNumber("bytes", e.Bytes);
+                w.WriteNumber("wall_ms", e.Wall.TotalMilliseconds);
+                w.WriteNumber("simulated_ms", e.Simulated.TotalMilliseconds);
+                break;
+            case CollectiveCompleted e:
+                w.WriteString("event", "collective");
+                w.WriteString("collective", e.Collective);
+                w.WriteString("operation", e.Operation);
+                w.WriteNumber("rank", e.Rank);
+                w.WriteNumber("world_size", e.WorldSize);
+                w.WriteNumber("bytes_sent", e.BytesSent);
+                w.WriteNumber("bytes_received", e.BytesReceived);
+                w.WriteNumber("wall_ms", e.Wall.TotalMilliseconds);
+                w.WriteNumber("simulated_ms", e.Simulated.TotalMilliseconds);
+                w.WriteNumber("blocked_ms", e.Blocked.TotalMilliseconds);
+                w.WriteNumber("slowest_rank", e.SlowestRank);
+                break;
+            case TransportChosen e:
+                w.WriteString("event", "transport_chosen");
+                w.WriteNumber("rank_a", e.RankA);
+                w.WriteNumber("rank_b", e.RankB);
+                w.WriteString("transport", e.Transport);
+                w.WriteString("reason", e.Reason);
+                break;
+            case RankStateChanged e:
+                w.WriteString("event", "rank_state");
+                w.WriteNumber("rank", e.Rank);
+                w.WriteString("state", e.State.ToString().ToLowerInvariant());
+                w.WriteNumber("step", e.Step);
+                if (e.Detail is { } detail) w.WriteString("detail", detail);
+                break;
+            case FaultInjected e:
+                w.WriteString("event", "fault");
+                w.WriteNumber("seed", e.Seed);
+                w.WriteNumber("step", e.Step);
+                w.WriteString("kind", e.Kind.ToString());
+                w.WriteStartArray("ranks");
+                foreach (int rank in e.Ranks)
+                {
+                    w.WriteNumberValue(rank);
+                }
+
+                w.WriteEndArray();
+                w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
+                Number(w, "factor", e.Factor);
+                break;
+            case ProfileCalibrated e:
+                w.WriteString("event", "profile_calibrated");
+                w.WriteString("link", e.Link);
+                Number(w, "bandwidth_before", e.BandwidthBefore);
+                Number(w, "bandwidth_after", e.BandwidthAfter);
+                w.WriteNumber("latency_before_us", e.LatencyBefore.TotalMicroseconds);
+                w.WriteNumber("latency_after_us", e.LatencyAfter.TotalMicroseconds);
+                Number(w, "residual_s", e.Residual);
+                w.WriteNumber("samples", e.Samples);
                 break;
         }
 

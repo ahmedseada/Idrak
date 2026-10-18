@@ -63,8 +63,15 @@ public enum TelemetryLevel
     /// </summary>
     Suggestions = 1 << 10,
 
+    /// <summary>
+    /// A cluster's traffic (plan 23): every transfer and collective with its wall and simulated time and the time blocked
+    /// on the slowest rank, the transport chosen for each pair, ranks joining, slowing, dropping and finishing, each fault
+    /// a simulation injected (with its seed and step, to replay it), and each link profile a calibration corrected.
+    /// </summary>
+    Network = 1 << 11,
+
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions | Network,
 }
 
 /// <summary>
@@ -154,6 +161,36 @@ public interface ITelemetryHook
 
     /// <summary>A setting was suggested from the device's capabilities and a run's figures (<see cref="TelemetryLevel.Suggestions"/>).</summary>
     void OnSuggestion(in SettingSuggestion e)
+    {
+    }
+
+    /// <summary>A transfer between two ranks completed (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnTransfer(in TransferCompleted e)
+    {
+    }
+
+    /// <summary>A collective operation completed on a rank (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnCollective(in CollectiveCompleted e)
+    {
+    }
+
+    /// <summary>A transport was chosen for a pair of ranks (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnTransportChosen(in TransportChosen e)
+    {
+    }
+
+    /// <summary>A rank joined, slowed, dropped, rejoined or finished (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnRankState(in RankStateChanged e)
+    {
+    }
+
+    /// <summary>A simulation injected a fault (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnFault(in FaultInjected e)
+    {
+    }
+
+    /// <summary>A calibration corrected a link profile (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnCalibrated(in ProfileCalibrated e)
     {
     }
 }
@@ -332,6 +369,78 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Suggestions) != 0)
             {
                 h.OnSuggestion(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a transfer between two ranks, to the hooks listening at <see cref="TelemetryLevel.Network"/>; check <see cref="IsEnabled"/> first.</summary>
+    public static void Transfer(in TransferCompleted e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnTransfer(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a collective operation on a rank, to the hooks listening at <see cref="TelemetryLevel.Network"/>; check <see cref="IsEnabled"/> first.</summary>
+    public static void Collective(in CollectiveCompleted e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnCollective(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports the transport chosen for a pair of ranks, to the hooks listening at <see cref="TelemetryLevel.Network"/>.</summary>
+    public static void TransportChosen(in TransportChosen e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnTransportChosen(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a rank's change of state, to the hooks listening at <see cref="TelemetryLevel.Network"/>.</summary>
+    public static void RankState(in RankStateChanged e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnRankState(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a fault a simulation injected, to the hooks listening at <see cref="TelemetryLevel.Network"/>.</summary>
+    public static void Fault(in FaultInjected e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnFault(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a link profile a calibration corrected, to the hooks listening at <see cref="TelemetryLevel.Network"/>.</summary>
+    public static void Calibrated(in ProfileCalibrated e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnCalibrated(in e);
             }
         }
     }
