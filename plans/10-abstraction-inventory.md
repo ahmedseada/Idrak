@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 66 | 13 | 37 | 115 | 0 |
+| `Idrak.Abstraction` | 68 | 13 | 37 | 117 | 0 |
 | `Idrak` | 11 | 4 | 12 | 27 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -20,7 +20,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
 | `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
 | `Idrak.Cluster` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Network` | 0 | 1 | 0 | 1 | 0 |
+| `Idrak.Network` | 2 | 2 | 1 | 5 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -42,15 +42,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, mixed, none, partition, slow-worker | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce | Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce, local-sgd | Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | HierarchicalProvider, NaiveProvider, RingProvider |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | NoFailures, SeededFailures |  | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.IGradientSync` | interface | public | Tensor | GradientReduction |  | Abstraction, Idrak, Network, Nlp | Abstraction |
-| `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider |  | Abstraction, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IGradientSync` | interface | public | Tensor | GradientReduction, LocalSgd |  | Abstraction, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider, LocalSgdProvider |  | Abstraction, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostGradients` | interface | public | — | HostOptimizer |  | Idrak, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.IHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IStepGroup` | interface | public | — | SimStepper |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | SimTransport |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportProvider` | interface | public | — | SimTransportProvider |  | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | FastestSelector |  | Abstraction, Cluster, Network | Abstraction |
@@ -303,7 +305,11 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Networking.Abstractions.GradientCompressions` | registry | public | Tensor |  | bf16, none, top-k | Network | Network |
 | `Idrak.Networking.Abstractions.HostCollectives` | abstract class | internal | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives |  | Network | Network |
+| `Idrak.Networking.Abstractions.IGradientCompression` | interface | public | Tensor | BFloat16Compression, PlainCompression, TopKCompression |  | Network | Network |
+| `Idrak.Networking.Abstractions.IGradientCompressor` | interface | public | — | DenseCompressor, TopKCompressor |  | Network | Network |
+| `Idrak.Networking.Abstractions.SyncCore` | abstract class | internal | Tensor | GradientReduction, LocalSgd |  | Network | Network |
 
 ## The device contract (`Backend`)
 

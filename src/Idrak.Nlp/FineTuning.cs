@@ -1238,6 +1238,16 @@ public static class FineTuner
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var global = batches.Skip(first).Take(perStep).ToList();
+                if (sync is not null && !sync.BeginStep(step))
+                {
+                    // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's last
+                    // step): the ranks that take part share the step's batches; the schedule moves on alike.
+                    schedule.Step();
+                    step++;
+                    continue;
+                }
+
+                bool writes = sync is null || sync.Rank == 0;            // the step's group's first rank writes and scores
                 var group = sync is null ? global : Share(global, train, sync, runner, trace);
                 var watch = Stopwatch.StartNew();
                 if (vision is not null)
@@ -1281,7 +1291,7 @@ public static class FineTuner
                 }
 
                 // Generated answers are scored on rank 0 alone (every rank holds the same weights; the scores train nothing).
-                var answers = lead && options.Answers is { } scorer && scorer.IsDue(step, lastOfEpoch) ? scorer.Score(model, vision, cancellationToken: cancellationToken) : null;
+                var answers = writes && options.Answers is { } scorer && scorer.IsDue(step, lastOfEpoch) ? scorer.Score(model, vision, cancellationToken: cancellationToken) : null;
                 if (answers is not null)
                 {
                     trace?.Invoke($"answers at step {step}: {answers} ({answers.MeanTokens:F0} tokens each, {answers.Duration.TotalSeconds:F1} s)");
@@ -1289,7 +1299,7 @@ public static class FineTuner
 
                 if (outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0)
                 {
-                    if (lead)
+                    if (writes)
                     {
                         Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
                     }
@@ -1709,6 +1719,7 @@ public static class FineTuner
                     model.Network.Train();
                     var (loss, tokens) = graph.Run(_train, batch);
                     trace?.Invoke($"{label(0)}: {batch.Describe(_train)}, replayed: loss {loss:F4}, {watch.Elapsed.TotalSeconds:F2} s");
+                    sync?.OverlapLost("a recorded step: the graph runs no hook, so its gradients are reduced after the replay");
                     (loss, tokens) = Synced(loss, tokens, batch.Sequences.Sum(i => _train[i].TrainedTokens));
                     Update(model, optimizer, options, loss);
                     return (loss, tokens);
@@ -1865,7 +1876,12 @@ public static class FineTuner
                 lossTensor += (balance * (options.LoadBalancingWeight / group.Count)).Reshape(lossTensor.Shape);
             }
 
-            lossTensor.Backward();                                           // queued behind the forward pass, no wait between
+            // queued behind the forward pass, no wait between; the last batch's gradients go across the ranks while it runs
+            using (b == group.Count - 1 ? sync?.Overlap(trained, whole) : null)
+            {
+                lossTensor.Backward();
+            }
+
             float batchLoss = lossTensor.Item();                             // waits for the batch's forward and backward
             loss += batchLoss;
             tokens += count;

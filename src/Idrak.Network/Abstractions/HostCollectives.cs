@@ -19,7 +19,7 @@ namespace Idrak.Networking.Abstractions;
 /// (<see cref="RingScatter"/>, <see cref="RingGather"/>) run over any list of ranks, so an algorithm builds rings inside a
 /// node or across nodes from them.
 /// </summary>
-internal abstract class HostCollectives : ICollectives
+internal abstract class HostCollectives : ICollectives, IHostValueCollectives
 {
     private readonly long _chunkBytes;
     private bool _measuring;
@@ -96,15 +96,7 @@ internal abstract class HostCollectives : ICollectives
     /// </summary>
     internal void AllReduceHostValues(Span<float> values, ReduceOp op, WireType wire)
     {
-        if (!Telemetry.IsEnabled(TelemetryLevel.Network))
-        {
-            AllReduceHost(values, op, wire);
-            return;
-        }
-
-        (_measuring, _sent, _received, _blockedTicks, _longestWait, _slowest) = (true, 0, 0, 0, 0, Rank);
-        var simulated = Transport.SimulatedTime;
-        long start = Stopwatch.GetTimestamp();
+        bool timed = BeginTiming(out long start, out var simulated);
         try
         {
             AllReduceHost(values, op, wire);
@@ -114,8 +106,59 @@ internal abstract class HostCollectives : ICollectives
             _measuring = false;
         }
 
-        Telemetry.Collective(new CollectiveCompleted(Name, "all-reduce", Rank, WorldSize, _sent, _received, Stopwatch.GetElapsedTime(start),
-            Transport.SimulatedTime - simulated, TimeSpan.FromSeconds(_blockedTicks / (double)Stopwatch.Frequency), _slowest));
+        EndTiming(timed, "all-reduce", start, simulated);
+    }
+
+    public bool SupportsHostValues => true;
+
+    public TimeSpan SimulatedTime => Transport.SimulatedTime;
+
+    public bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire)
+    {
+        AllReduceHostValues(values, op, wire);
+        return true;
+    }
+
+    public bool TryAllGather(Span<float> all, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (all.Length != checked(count * WorldSize))
+        {
+            throw new ArgumentException($"An all-gather of {count} values a rank over {WorldSize} ranks takes {count * WorldSize} values, not {all.Length}.", nameof(all));
+        }
+
+        bool timed = BeginTiming(out long start, out var simulated);
+        try
+        {
+            AllGatherHost(all, count);
+        }
+        finally
+        {
+            _measuring = false;
+        }
+
+        EndTiming(timed, "all-gather", start, simulated);
+
+        return true;
+    }
+
+    public bool TryBroadcast(Span<float> values, int root)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(root);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(root, WorldSize);
+        bool timed = BeginTiming(out long start, out var simulated);
+        try
+        {
+            BroadcastHost(values, root);
+        }
+        finally
+        {
+            _measuring = false;
+        }
+
+        EndTiming(timed, "broadcast", start, simulated);
+
+        return true;
     }
 
     public virtual void Dispose()
@@ -386,15 +429,7 @@ internal abstract class HostCollectives : ICollectives
 
     private void Time(string operation, Action body)
     {
-        if (!Telemetry.IsEnabled(TelemetryLevel.Network))
-        {
-            body();
-            return;
-        }
-
-        (_measuring, _sent, _received, _blockedTicks, _longestWait, _slowest, _simulatedBlocked) = (true, 0, 0, 0, 0, Rank, TimeSpan.Zero);
-        var simulated = Transport.SimulatedTime;
-        long start = Stopwatch.GetTimestamp();
+        bool timed = BeginTiming(out long start, out var simulated);
         try
         {
             body();
@@ -404,9 +439,36 @@ internal abstract class HostCollectives : ICollectives
             _measuring = false;
         }
 
+        EndTiming(timed, operation, start, simulated);
+    }
+
+    // Starts counting a call's bytes, waits and times, only while someone listens (rule 78).
+    private bool BeginTiming(out long start, out TimeSpan simulated)
+    {
+        (start, simulated) = (0, TimeSpan.Zero);
+        if (!Telemetry.IsEnabled(TelemetryLevel.Network))
+        {
+            return false;
+        }
+
+        (_measuring, _sent, _received, _blockedTicks, _longestWait, _slowest, _simulatedBlocked) = (true, 0, 0, 0, 0, Rank, TimeSpan.Zero);
+        simulated = Transport.SimulatedTime;
+        start = Stopwatch.GetTimestamp();
+        return true;
+    }
+
+    // Publishes the call as CollectiveCompleted: on a simulated transport the blocked time is the virtual clock's and the
+    // slowest rank the critical path's origin, so a slow worker is named the same on every rank and run.
+    private void EndTiming(bool timed, string operation, long start, TimeSpan simulated)
+    {
+        if (!timed)
+        {
+            return;
+        }
+
         var wall = Stopwatch.GetElapsedTime(start);
         var simulatedTime = Transport.SimulatedTime - simulated;
-        bool onClock = simulatedTime > TimeSpan.Zero;                 // a simulated transport: its clock is the cluster's
+        bool onClock = Transport.SimulatedTime > TimeSpan.Zero;       // a simulated transport (its clock has moved): the cluster's time, even for a call that took none
         Telemetry.Collective(new CollectiveCompleted(Name, operation, Rank, WorldSize, _sent, _received, wall, simulatedTime,
             onClock ? _simulatedBlocked : TimeSpan.FromSeconds(_blockedTicks / (double)Stopwatch.Frequency),
             onClock && Transport.SimulatedCriticalRank is { } critical ? critical : _slowest));

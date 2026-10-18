@@ -469,6 +469,18 @@ public static class Pretrainer
                     {
                         var (drawn, positions) = next.GetAwaiter().GetResult();
                         next = stageStep + 1 < stage.Steps ? Task.Run(() => Draw(readers, options, model)) : Task.FromResult<(List<TrainingSequence>, (long, long, long)[])>(([], []));
+                        if (sync is not null && !sync.BeginStep(step))
+                        {
+                            // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's
+                            // last step): it drew the step as every rank does, so the sources stay alike, and the ranks that take
+                            // part share the step's sequences. Its own losses hold the steps it trained.
+                            schedule.Step();
+                            finished = positions;
+                            step++;
+                            stageStep++;
+                            continue;
+                        }
+
                         int imageTokens = drawn.Sum(q => q.Images.Sum(im => im.Tokens));
                         runner ??= new FineTuner.StepRunner(model, drawn, optimizer, tuning, Rows(options) * options.MaxLength, distillation, trace,
                             (long)Rows(options) * options.MaxLength, imageTokens, sync);
@@ -531,7 +543,7 @@ public static class Pretrainer
                             // Data parallel: rank 0 writes it (where every source is over every rank's draws, so it resumes at
                             // any world size) and every rank waits until it is written.
                             partSources.Keep();
-                            last = lead ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations)
+                            last = (sync is null ? lead : sync.Rank == 0) ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations)
                                 : Path.Combine(outputFolder, $"checkpoint-{step}");
                             sync?.Barrier();
                             trace?.Invoke($"checkpoint {last}");

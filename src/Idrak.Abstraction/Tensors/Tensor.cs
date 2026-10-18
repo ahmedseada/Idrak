@@ -566,12 +566,14 @@ public sealed partial class Tensor : IDisposable
         Backend.Axpy(gradient.Storage, GradStorage(), Size, 1f);
 
         var (reads, held) = (new List<Storage>(), new List<Storage>());
+        Autograd.Backward(begins: true);
         try
         {
             BackwardNodes(reads, held);
         }
         finally
         {
+            Autograd.Backward(begins: false);
             foreach (var storage in held)
             {
                 Reevict(storage);
@@ -594,8 +596,16 @@ public sealed partial class Tensor : IDisposable
         using var staging = TensorOffloading.ForBackward is { } stage && Device.Backend.Offload is { OffloadedCount: > 0 }
             ? stage(Device, order.ConvertAll(n => n._stage))                              // the layer each node was recorded under
             : null;
+        // Someone listens for finished gradients (a data-parallel overlap): each parameter is told right after the last step
+        // of this pass that reads it, so the last layers' are told first.
+        var finishes = Autograd.ListensForGradients ? Finishes(order) : null;
         for (int index = 0; index < order.Count; index++)
         {
+            if (finishes is not null && index > 0)
+            {
+                Finished(finishes[index - 1]);
+            }
+
             var node = order[index];
             if (node._backward is null || node.Grad is null)
             {
@@ -640,6 +650,58 @@ public sealed partial class Tensor : IDisposable
             node._backward = null;
             node._parents = null;
             node._stage = null;
+        }
+
+        if (finishes is not null && order.Count > 0)
+        {
+            Finished(finishes[order.Count - 1]);
+        }
+    }
+
+    // The parameters (leaves that need gradients) whose last reader in `order` is each step, in the order they are read;
+    // a leaf nothing reads (the root itself) at its own place.
+    private static List<Tensor>?[] Finishes(List<Tensor> order)
+    {
+        var last = new Dictionary<Tensor, int>(ReferenceEqualityComparer.Instance);
+        for (int i = 0; i < order.Count; i++)
+        {
+            foreach (var parent in order[i]._parents ?? [])
+            {
+                if (parent._backward is null && parent.RequiresGrad)
+                {
+                    last[parent] = i;
+                }
+            }
+        }
+
+        var finishes = new List<Tensor>?[order.Count + 1];
+        for (int i = 0; i < order.Count; i++)
+        {
+            foreach (var parent in order[i]._parents ?? [])
+            {
+                if (last.TryGetValue(parent, out int at) && at == i && !(finishes[i]?.Contains(parent) ?? false))
+                {
+                    (finishes[i] ??= []).Add(parent);
+                }
+            }
+
+            if (order[i]._backward is null && !last.ContainsKey(order[i]))
+            {
+                (finishes[i] ??= []).Add(order[i]);
+            }
+        }
+
+        return finishes;
+    }
+
+    private static void Finished(List<Tensor>? leaves)
+    {
+        foreach (var leaf in leaves ?? [])
+        {
+            if (leaf.Grad is not null)
+            {
+                Autograd.GradientFinished(leaf);
+            }
         }
     }
 

@@ -752,7 +752,10 @@ then an in-process run whose plan mixes transports is refused naming them.
 **After merging C2 and C3 (2026-10-18).** Open: training on the simulator does not yet call
 `ClusterRank.BeginStep(step)`, so `idrak cluster sim` runs without injected faults. A rank that sits a step out (a late
 join, a replay's end) changes the group the gradients are summed over and the token weighting, so the trainers'
-step loop needs to take part in that, not just the launcher; it lands with C4, which reworks the same step.
+step loop needs to take part in that, not just the launcher; it lands with C4, which reworks the same step. **Closed by
+C4** (below): the Trainer, the fine-tuner and the pretrainer begin every step through `IGradientSync.BeginStep`, so
+`idrak cluster sim` (now with `--failures` and `--seed`) runs with the faults injected; what remains is the Trainer's
+late join across an epoch's end (see C4's note).
 
 ### C4: overlap, buckets, compression, local SGD
 
@@ -765,6 +768,84 @@ steps, the average of the weights, not the gradients).
 slow link" (the simulator's number, asserted); "cluster: top-k with error feedback converges on the Spirals sample within
 the full-gradient loss after N steps" (the tolerance measured on the CPU and written into the test name); "cluster:
 local SGD every k steps equals one process at k = 1 and runs k times fewer collectives".
+
+**C4 as built (2026-10-18).** Overlap: `Autograd.OnGradientReady(Action<Tensor, bool>)` (Idrak.Abstraction) calls a
+listener on the training thread for each parameter right after the last step of the backward pass that reads it (the
+second argument false inside a pass nested in another's, a checkpointed block's); the backward loop pays for it only
+while someone listens. `IGradientSync` gained `BeginStep(step)`, `Overlap(tokens, normalized)` (a scope the trainers put
+around the step's last `Backward()`) and `OverlapLost(reason)`, as default members. `src/Idrak.Network/Training/`
+`GradientBuckets.cs` holds `BucketLayout` (pieces packed in reverse parameter order, the order a backward pass finishes
+them), `OverlapWorker` (a thread per rank reducing queued buckets in bucket order) and `BucketSizing`;
+`GradientReduction.cs` ("all-reduce") sends each bucket whose parameters are all finished while the backward pass goes
+on, through one host buffer of the gradients allocated once, and the rest, then a header (tokens, loss, a presence flag
+per parameter, a changed flag per bucket) at `Reduce`; without overlap the header goes first and each bucket is reduced
+and written back through one pooled buffer. Every bucket is this rank's values times its tokens, summed, then divided by
+the step's tokens, in both modes, so overlap on and off give the same bits (rule 71, every world size and algorithm). A
+gradient that changes after its bucket went (a weight shared into a checkpointed block) marks the bucket; every rank
+learns it from the header and sums it again, whole and uncompressed. Unset `BucketBytes` is measured once on the first
+step (16 MiB buckets as the first probe): the backward pass's time, the latency (a tiny collective timed after another
+that takes what is still queued on the links) and the slowest bucket's time, the largest of each over the ranks, choose
+the bucket count with the least predicted wait after the backward pass (at most 256, a bucket kept to what the link
+moves in a hundred latencies); on a simulated transport the backward pass is not timed (taken as long as the gradients'
+transfer), so the choice comes from the virtual clock alone and a seed's run stays the same bit for bit. A recorded
+fine-tuning step (a CUDA graph runs no hook) reduces after the replay and says so (`OverlapLost`). Telemetry: one new
+event, `GradientsSynced` (sync, compression, rank, step, buckets, how many went during the backward pass, bucket bytes,
+bytes, backward, network and exposed time, the lost overlap's reason), carried by the console, `MetricsRecorder`
+(`Synchronisations`), the channel, JSON lines and `TelemetryJson`; on a simulated transport "exposed" is predicted from
+the backward pass's measured time and each bucket's simulated time. Compression: `IGradientCompression`,
+`IGradientCompressor` and the registry `GradientCompressions` in `Idrak.Networking.Abstractions` (only Idrak.Network uses
+them) with "none", "bf16" (`Compression/Compressions.cs`) and "top-k" (`Compression/TopK.cs`: per bucket, in blocks of
+2^24 values so an index travels exactly as float32, the k largest by magnitude found by a selection pass, ties to the
+lower index, sent as (index, value) pairs every rank all-gathers and sums in rank order; error feedback keeps the rest in
+a residual of one float per trained value, allocated once per parameter); `ClusterOptions.Compression`
+(`IDRAK_CLUSTER_COMPRESSION`; unset: top-k with `TopK`, bf16 with `Wire=bf16`, else none). Local SGD: "local-sgd"
+(`Training/LocalSgd.cs`) beside "all-reduce": each rank steps on its own gradients; every `LocalSgdEvery` steps the
+weights are averaged, each rank weighted by its rows since the last average; `GradientSync` unset picks it when
+`LocalSgdEvery` is set (`ClusterOptions.GradientSyncName`). The shared part of both (`Abstractions/SyncCore.cs`): the
+start, the weight sync, the speed split, and the step groups. Step groups: `IStepGroup` and `IHostValueCollectives`
+(Idrak.Abstraction: Idrak.Cluster implements them, Idrak.Network uses them); the in-process rank's collectives implement
+both; when a step's group changed, the ranks take the trained state of a rank that trained the step before (the
+synchronisation's bucket size, the weights, and the optimizer's state through `SaveState`/`LoadState` in two broadcasts),
+the shares go even over the group and the speed measurement starts again; a rank that sits a step out runs no collective.
+Trainers: each step begins through `BeginStep`; a rank that sits out keeps its draws, schedule and step count alike and
+trains nothing; the fine-tuner and the pretrainer share each step's draws over the ranks that take part (so a late join
+still trains every draw, token-weighted: the run equals the run without the fault), and the step's group's first rank
+writes its checkpoints. `idrak cluster sim` gained `--failures MODEL` and `--seed S` (registered value options; `--seed`
+was read in C2 but not declared) and lists the faults injected with their replay key (text and `-j`). New settings:
+`Overlap` (`IDRAK_CLUSTER_OVERLAP`, 1) and `Compression` (`IDRAK_CLUSTER_COMPRESSION`), in `ClusterOptions.Variables` and
+the CLI's table; `BucketBytes`, `LocalSgdEvery` and `GradientSync` described anew. Tests: 10 in
+`tests/Idrak.Tests/ClusterOverlapTests.cs` (`ClusterOverlapGroup`); the `"cluster:"` filter with the API guard, the
+inventory and the help layout: 63 passed, 0 failed on the CPU; the fine-tuning, pretraining, Trainer, callback,
+HostOptimizer, CLI health, polish, Arabic, trace and profiler filters pass unchanged. Measured on the CPU (4 cores):
+overlap on `ethernet-1g`, 2 ranks, 520 KiB of gradients in 9 buckets: exposed network time 3.73 ms a step against 4.26
+ms without (12.5% shorter; the backward pass measured 1.4 ms); the measured bucket size there 2 KiB (256 buckets: the
+built-in profiles carry no latency, so the latency term is near zero); top-k 10% with error feedback on the Spirals
+sample after 20 epochs: training loss 0.3703 against the full gradient's 0.3536 (gap 0.0167, the test holds it to 0.02),
+1,810 KiB sent against 8,951 KiB (without error feedback 0.3680, so error feedback did not help on this small run); local
+SGD: 24 weight averages at k = 1, 6 at k = 4 over 24 steps; slow worker (x8) in the pretrainer: ranks 0 and 1 blocked
+0.32 ms of simulated time against 0.05 ms without.
+
+Changes from the plan, kept: **the hook is a listener on autograd, not a module hook**: a parameter is finished when the
+last step of the pass that reads it has run, which a module cannot see (a tied weight, a weight read by two layers).
+**Every bucket is weighted by the rank's tokens and divided by the step's after the sum** (C2 weighted later buckets by
+tokens / total before they travelled): overlap sends buckets before the step's tokens are known, and the same arithmetic
+in both modes is what makes them equal bit for bit. **The header is its own small collective** (C2 put it in the first
+bucket on a float32 wire): one more latency a step, the price of identical buckets in both modes. **Bucket order is
+reversed parameter order** (C2: parameter order). **Compression's contract lives in Idrak.Networking.Abstractions** and
+the `Wire` setting stays (it implies "bf16"). **`HostCollectives` decides "simulated" by the transport's clock having
+moved**, not by the call's own simulated time: a tiny header that took no simulated time had its blocked time taken from
+the wall clock. **Overlap is off for the HostOptimizer** (it downloads the gradients itself after the backward pass) and
+behind a plug-in's device-only collectives; the telemetry names why. **Local SGD still sums a two-float header every
+step** (the step's loss over every rank, and the epoch's end for ranks of unequal shares); "k times fewer collectives"
+counts the weight averages. **The Trainer's step groups are partial**: it shards its batches per epoch, so a rank that
+sits a step out leaves its share of that step untrained (the step is weighted over the samples trained), and a rank
+sitting out across an epoch's end ends the epoch on its own batches (a late join drawn near an epoch's end can stall the
+Trainer; the simulator draws late joins at step 0 for a few steps); the pretrainer and fine-tuner, which share each
+step's draws, are exact. A rank's own loss list holds the steps it trained. Not run here: the CUDA check that a
+replayed fine-tuning step names the lost overlap (`SupportsGraphs` only) and the GPU runs of the whole filter (the
+owner's). Moved: overlap with device-side staging copies (`IHostStaging`) for GPU gradients (C5, with the real
+transports; here a finished bucket is downloaded on the training thread), the `--profile` of a step's buckets (C8), and
+persisting the measured bucket size in the tuning cache (C8, with `idrak tuning show`).
 
 ### C5: real transports on localhost, then the home LAN, then a rental
 

@@ -174,6 +174,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A gradient synchronisation finished a training step on a rank (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnGradientSync(in GradientsSynced e)
+    {
+    }
+
     /// <summary>A transport was chosen for a pair of ranks (<see cref="TelemetryLevel.Network"/>).</summary>
     void OnTransportChosen(in TransportChosen e)
     {
@@ -429,6 +434,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Network) != 0)
             {
                 h.OnFault(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a training step's gradient synchronisation on a rank, to the hooks listening at <see cref="TelemetryLevel.Network"/>; check <see cref="IsEnabled"/> first.</summary>
+    public static void GradientSync(in GradientsSynced e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnGradientSync(in e);
             }
         }
     }
