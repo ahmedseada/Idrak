@@ -176,6 +176,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         bool cancelled = false, present = true;
         var callbacks = Callbacks.ToArray();
         var clusterOptions = Cluster is null ? null : ClusterOptions ?? Abstraction.Cluster.ClusterOptions.FromEnvironment();
+        if (clusterOptions is { Pipelined: true })
+        {
+            throw new NotSupportedException("Pipeline placement (IDRAK_CLUSTER_PLACEMENT=pipeline) cuts a decoder into stages (PipelineStage; the Pretrainer trains through it); the Trainer runs with single placement.");
+        }
+
         using var sync = Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, clusterOptions) : null;
         if (sync is not null && train is DataLoader { Shuffle: true, Seed: null })
         {

@@ -119,6 +119,8 @@ internal static partial class Tests
             // C6: receive credit in bytes, background staging, device collectives, a sharded layer's gather size, the shared-memory doorbell.
             ["IDRAK_CLUSTER_RECEIVE_BYTES"] = "1MB", ["IDRAK_CLUSTER_ASYNC_STAGING"] = "0", ["IDRAK_CLUSTER_DEVICE_COLLECTIVES"] = "0",
             ["IDRAK_CLUSTER_GATHER_BYTES"] = "64MB", ["IDRAK_CLUSTER_SHM_SPIN"] = "0.0001", ["IDRAK_CLUSTER_SHM_CHECK"] = "2",
+            // C7: a pipeline's stages and how they are cut.
+            ["IDRAK_CLUSTER_STAGES"] = "2", ["IDRAK_CLUSTER_PIPELINE_BALANCE"] = "memory", ["IDRAK_CLUSTER_PIPELINE_CUTS"] = "3,6",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();

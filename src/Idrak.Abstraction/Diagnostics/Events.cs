@@ -371,6 +371,26 @@ public readonly record struct CollectiveCompleted(string Collective, string Oper
 public readonly record struct GradientsSynced(string Sync, string Compression, int Rank, int WorldSize, long Step, int Buckets, int Overlapped, long BucketBytes,
     long Bytes, TimeSpan Backward, TimeSpan Network, TimeSpan Exposed, string? Lost);
 
+/// <summary>
+/// Published at <c>TelemetryLevel.Network</c> by each rank of a pipeline (plan 23, phase C7) once per training step: its
+/// stage, the micro-batches, how long the step took and how long the stage waited for its neighbours (the bubble).
+/// </summary>
+/// <param name="Schedule">The schedule ("gpipe").</param>
+/// <param name="Rank">The rank reporting.</param>
+/// <param name="Stage">Its stage, from 0.</param>
+/// <param name="Stages">The pipeline's stages.</param>
+/// <param name="Replica">Its pipeline, when several run side by side as data-parallel replicas; else 0.</param>
+/// <param name="MicroBatches">The step's micro-batches.</param>
+/// <param name="Step">The training step, or -1 when the caller gave none.</param>
+/// <param name="Wall">The step's time on this rank, from its first forward to its last message.</param>
+/// <param name="Blocked">The part of it spent waiting for an activation or a gradient from a neighbouring stage.</param>
+/// <param name="Bubble">Blocked over Wall: the share of the step the stage stood idle.</param>
+/// <param name="IdealBubble">The schedule's own arithmetic for stages of equal cost: (stages - 1) / (micro-batches + stages - 1) for GPipe.</param>
+/// <param name="BytesSent">The activation and gradient bytes this stage sent.</param>
+/// <param name="BytesReceived">The bytes it received.</param>
+public readonly record struct PipelineStepped(string Schedule, int Rank, int Stage, int Stages, int Replica, int MicroBatches, long Step, TimeSpan Wall,
+    TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived);
+
 /// <summary>Published at <c>TelemetryLevel.Network</c> once per pair of ranks when a group starts: the transport joining them, and why.</summary>
 /// <param name="RankA">One rank.</param>
 /// <param name="RankB">The other.</param>
