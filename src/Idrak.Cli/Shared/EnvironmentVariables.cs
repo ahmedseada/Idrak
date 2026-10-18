@@ -232,6 +232,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_FAILURES", Cluster, "the topology file's", "The failure model of a simulation (none, slow-worker, dropped-worker, link-loss, partition, late-join, mixed)", ClusterRun),
         new("IDRAK_CLUSTER_REPLAY_STEP", Cluster, "not set: the whole run", "The step a replay reruns", ClusterRun),
         new("IDRAK_CLUSTER_CLOCK", Cluster, "wall", "wall or simulated: the clock throughput figures use", ClusterRun),
+        new("IDRAK_CLUSTER_PROBE_BYTES", Cluster, "32 MiB (at most an eighth of the free memory)", "The bytes a link measurement copies (same-device, shared-memory, pcie)", ["cluster init", "cluster inspect", "test"]),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
         new("PROCESSOR_IDENTIFIER", Devices, "as the system sets it", "The processor's name on Windows (device listings, tuning keys)", OnDevice),

@@ -111,7 +111,7 @@ public sealed class Device
                 : $"{provider.Display} device {ordinal} does not exist; {provider.Count} device(s) found.");
         }
 
-        return Devices.GetOrAdd((provider.Kind, ordinal), static (key, p) => new Device(p.Type, key.Ordinal, p), provider);
+        return Devices.GetOrAdd((provider.Kind, ordinal), static (key, p) => new Device(p.TypeOf(key.Ordinal), key.Ordinal, p), provider);
     }
 
     /// <summary>The device a name such as "cpu", "cuda", "cuda:1" or "vulkan:0" stands for (no ordinal: 0).</summary>
@@ -159,6 +159,19 @@ public sealed class Device
 
     /// <summary>The device's backend (the device contract: memory, copies and kernels), started on first use.</summary>
     public Backend Backend => field ??= _provider is null ? CpuBackend.Instance : _provider.Create(Ordinal);
+
+    /// <summary>
+    /// A new backend of this device, apart from <see cref="Backend"/>: its own memory pool, streams and memory cap, sharing
+    /// the hardware (plan 23: a simulated cluster's devices are carved from a physical one this way).
+    /// </summary>
+    /// <exception cref="NotSupportedException">The device's kind cannot make a separate backend.</exception>
+    public Backend CreateSeparateBackend(SeparateBackendOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return _provider is null
+            ? CpuBackend.CreateSeparate(options)
+            : _provider.CreateSeparate(Ordinal, options) ?? throw new NotSupportedException($"{_provider.Display} devices cannot be carved into separate backends yet.");
+    }
 
     /// <summary>Waits until all queued work on this device has finished.</summary>
     public void Synchronize() => Backend.Synchronize();

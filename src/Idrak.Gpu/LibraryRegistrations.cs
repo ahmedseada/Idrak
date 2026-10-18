@@ -51,6 +51,8 @@ internal static class LibraryRegistrations
 
         public override bool IsStarted(int ordinal) => CudaBackend.IsInitialized(ordinal);
 
+        public override Backend? CreateSeparate(int ordinal, SeparateBackendOptions options) => CudaBackend.CreateSeparate(ordinal, options);
+
         public override int? DefaultRank(int ordinal) => ordinal == 0 ? 100 : 99;   // the first GPU, as before
 
         public override Guid? DeviceUuid(int ordinal) => CudaBackend.DeviceUuid(ordinal);

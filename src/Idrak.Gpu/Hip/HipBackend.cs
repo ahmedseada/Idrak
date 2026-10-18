@@ -49,7 +49,11 @@ internal sealed unsafe partial class HipBackend : Backend
     /// <summary>A device the probe found: its runtime ordinal and what it reports.</summary>
     internal sealed record HipDevice(int RuntimeOrdinal, HipDeviceLimits Limits, int RuntimeVersion, int DriverVersion);
 
-    private HipBackend(HipDevice device)
+    // A separate backend of the device (plan 23: a simulated cluster's devices carved from one GPU): its own stream, pool
+    // and cap. HIP has no host offloading, so the cap is hard.
+    internal static HipBackend CreateSeparate(int ordinal, SeparateBackendOptions options) => new(Probe.Value.Devices[ordinal], options);
+
+    private HipBackend(HipDevice device, SeparateBackendOptions? separate = null)
     {
         _device = device;
         MakeCurrent();
@@ -60,7 +64,13 @@ internal sealed unsafe partial class HipBackend : Backend
         string architecture = limits.Architecture.Length > 0 ? $", {limits.Architecture.Split(':')[0]}" : "";
         Name = $"{limits.Name} ({limits.TotalMemory / (1024 * 1024)} MiB, {limits.ComputeUnits} compute units{architecture}, "
                + $"{limits.WarpSize}-lane wavefronts, HIP {FormatVersion(device.RuntimeVersion)})";
-        _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, $"hip:{Ordinal}");
+        long? cap = separate?.MemoryLimit;
+        if (separate is not null)
+        {
+            Name = $"{separate.Name}: {Name}";
+        }
+
+        _memory = new MemoryAccountant(() => cap ?? ComputeResources.GpuMemoryLimit, separate?.Name ?? $"hip:{Ordinal}");
     }
 
     /// <summary>The number of HIP devices found (0 when there is no runtime or no device).</summary>
@@ -430,6 +440,8 @@ internal sealed class HipProvider : DeviceProvider
     public override string? UnavailableReason => HipBackend.UnavailableReason;
 
     public override Backend Create(int ordinal) => HipBackend.Get(ordinal);
+
+    public override Backend? CreateSeparate(int ordinal, SeparateBackendOptions options) => HipBackend.CreateSeparate(ordinal, options);
 
     public override bool IsStarted(int ordinal) => HipBackend.IsInitialized(ordinal);
 

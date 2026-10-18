@@ -21,6 +21,12 @@ public abstract class DeviceProvider
     /// <summary>The <see cref="DeviceType"/> of its devices.</summary>
     public abstract DeviceType Type { get; }
 
+    /// <summary>
+    /// The <see cref="DeviceType"/> of device <paramref name="ordinal"/>: <see cref="Type"/> unless the provider's devices
+    /// differ (a simulated cluster's devices are each the type of the device they are carved from).
+    /// </summary>
+    public virtual DeviceType TypeOf(int ordinal) => Type;
+
     /// <summary>The number of devices found (0 when the driver is missing).</summary>
     public abstract int Count { get; }
 
@@ -32,6 +38,13 @@ public abstract class DeviceProvider
 
     /// <summary>Whether device <paramref name="ordinal"/>'s backend has been started.</summary>
     public abstract bool IsStarted(int ordinal);
+
+    /// <summary>
+    /// A new backend of device <paramref name="ordinal"/>, apart from the one <see cref="Create"/> returns: its own memory
+    /// pool, streams and memory cap (<see cref="SeparateBackendOptions"/>), sharing the hardware. A simulated cluster carves
+    /// several devices out of one this way (plan 23). Null when the kind cannot make one.
+    /// </summary>
+    public virtual Backend? CreateSeparate(int ordinal, SeparateBackendOptions options) => null;
 
     /// <summary>
     /// Whether <see cref="Device.Available"/> (and so the test runner) lists the device; false for devices only worth
@@ -91,3 +104,13 @@ public static class DeviceProviders
     /// <summary>Who registered the provider of <paramref name="kind"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string kind) => Table.Origin(kind);
 }
+
+/// <summary>What a separate backend of a device (<see cref="DeviceProvider.CreateSeparate"/>, <see cref="Device.CreateSeparateBackend"/>) is given.</summary>
+/// <param name="Name">Its name in messages and listings ("sim:2 (cuda:0, 8 GB cap)").</param>
+/// <param name="MemoryLimit">Its hard cap in bytes, or null for the limit every device of its kind has.</param>
+/// <param name="Offload">
+/// Whether allocations past the cap go to pinned host memory where the kind can (CUDA), or null for
+/// <see cref="ComputeResources.OffloadToHostMemory"/>. Where the kind cannot, the cap is hard: an allocation past it throws
+/// <see cref="ResourceLimitExceededException"/>.
+/// </param>
+public sealed record SeparateBackendOptions(string Name, long? MemoryLimit, bool? Offload = null);

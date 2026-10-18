@@ -178,7 +178,7 @@ internal static partial class Tests
         }
 
         Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "operations", "kernels", "stages"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "operations", "kernels", "stages", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.

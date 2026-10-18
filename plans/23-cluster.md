@@ -542,6 +542,42 @@ listed when `sim` is not active).
 **Done when** the filter passes on the CPU after one build of Idrak.Abstraction, Idrak.Cluster, Idrak.Network and the
 tests; the owner's `cuda` and `vulkan` runs of the same filter pass with fake devices carved from the GPU.
 
+**C1 as built (2026-10-18).** `src/Idrak.Cluster/`: `SimulatedDevices` (kind `sim`; `Carve(physical, cap, slot,
+offload)` gives a device of the physical one's type and kernels on a backend instance of its own with its own memory
+accountant capped at `cap`; the same carving gives the same device, a carved device is never listed or carved again,
+and it reports its card's UUID), `VirtualClock` (network time only: bytes / bandwidth + latency, one transfer at a time
+each way, jitter and loss drawn from a SplitMix64 hash of seed, ends, tag and message number, a lost message sent
+again), `SimTransport.cs` (the `sim` provider: a hub per coordinator name, bounded queues of `InFlight` messages per
+receiver and tag, timeouts and a left rank named at once), `Profiles.cs` (`BuiltInLinks`: the ethernet rates from their
+names, the bases at bandwidth 0 until a rate suffix, `same-device`, `shared-memory` and `pcie` measured here once per
+device with `IDRAK_CLUSTER_PROBE_BYTES` (default 32 MiB, at most an eighth of the free memory); the `none` failure
+model), `InProcessCluster` (a thread per rank on carved devices, `ClusterRunResult` with every rank's error),
+`TopologyBuilder` (`MachineFacts.Gather()`, one `TopologyQuestion` per input with a description, a default and the
+suggestion's reason; answers by key; a commented file), `TopologyInspection` (the links as this machine resolves them;
+`PredictAllReduce` plays ring or naive on the clock), the `cluster` probe. `src/Idrak.Network/` (root namespace
+`Idrak.Networking`, below): `Abstractions/HostCollectives.cs` (one pooled host buffer per call, chunks of
+`ChunkBytes`, chunk-interleaved exchange so a ring never waits in a circle, `CollectiveCompleted` only while a hook
+listens), `Collectives/Algorithms.cs` (`naive`, `ring`), `WireValues.cs` (float32 and bfloat16 with a Vector256 loop
+and a scalar tail), `Providers.cs` (the providers and the `fastest` selector), the `network` probe. Devices:
+`DeviceProvider.TypeOf(ordinal)` and `CreateSeparate(ordinal, SeparateBackendOptions)` (name, memory limit, offload)
+in place of the planned `Create(ordinal, limit)`; `Device.CreateSeparateBackend`; CPU, CUDA (its own stream, module
+and accountant on the retained primary context; offload per instance), Vulkan and HIP implement it. CLI: `idrak
+cluster init` and `idrak cluster inspect` (group "Cluster"). Tests: 14 in `ClusterSimTests.cs`, 36 in the C0+C1
+filter, passing on the CPU.
+
+Changes from the plan, kept: **the namespace is `Idrak.Networking`** (the package and assembly stay `Idrak.Network`):
+a namespace `Idrak.Network` hides the `Idrak.Network` builder from every file in an `Idrak.*` namespace that
+references the package (the CLI broke on it); `LibraryDefaults.Assemblies` pairs each assembly with its root namespace,
+and the package's own contracts go in `Idrak.Networking.Abstractions`. The contracts only one package uses so far
+(`ITransportProvider`, `Transports`, `ITransportSelector`, `TransportSelectors`, `IFailureModel`, `FailureModels`) are
+justified in `shared-contracts.txt` (both packages use them by C5). A carved device's cap is hard on the CPU, Vulkan
+and HIP (an allocation past it fails naming the device); on CUDA it spills to host memory when offload is on (the
+owner's CUDA run checks it). HIP carving is compiled, not yet run. Moved: `idrak cluster sim` to C2 (it runs training);
+the measured chunk size and its cache to C5 (in C1 `ChunkBytes` is a setting, unset means one message per piece);
+`TransportChosen` to C3 (the in-process cluster uses `sim` alone until the selector chooses across pipes); the
+`slow`, `drop`, `loss`, `partition` and `late` failure models to C3; `hierarchical` and its default to C3 (C1's default
+collective is `ring`).
+
 ### C2: data parallel on the simulator
 
 **Files.** `src/Idrak.Nlp/FineTuning.cs` (the hook in `RunStep`), `Pretraining.cs` (the rank's share of the draw, rank

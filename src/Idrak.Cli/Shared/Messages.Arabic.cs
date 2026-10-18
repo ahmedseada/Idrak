@@ -26,6 +26,7 @@ internal static partial class Messages
         ["Serve"] = "الخدمة عبر الشبكة",
         ["Models"] = "النماذج",
         ["Train"] = "التدريب",
+        ["Cluster"] = "العنقود",
         ["Data"] = "البيانات",
         ["Retrieval"] = "الاسترجاع",
         ["Measure"] = "القياس",
@@ -339,6 +340,8 @@ internal static partial class Messages
         ["What works on this machine and what to fix: runtime, backends, devices, caches, disk, environment"] =
             "ما يعمل على هذا الجهاز وما يجب إصلاحه: بيئة التشغيل والواجهات الخلفية والأجهزة والتخزين المؤقت والقرص والبيئة",
         ["Every environment variable Idrak reads: value, default and meaning"] = "كل متغيرات البيئة التي تقرؤها إدراك: القيمة والافتراضي والمعنى",
+        ["Builds a cluster topology file, asking for each input with a suggestion from this machine"] = "إنشاء ملف بنية العنقود بالسؤال عن كل مدخل مع اقتراح من هذا الجهاز",
+        ["Shows a topology file: its ranks, its links and the time an all-reduce would take on it"] = "عرض ملف بنية العنقود: رتبه وروابطه والوقت الذي يستغرقه الجمع الشامل عليه",
         ["Writes the config file: default device, cache folder, model aliases"] = "كتابة ملف الإعدادات: الجهاز الافتراضي ومجلد التخزين المؤقت وأسماء النماذج المختصرة",
         ["Stores a token for the Hugging Face hub, GitHub or Kaggle where the library reads it"] = "حفظ رمز دخول لمستودع Hugging Face أو GitHub أو Kaggle حيث تقرؤه المكتبة",
         ["Removes a stored token (Hugging Face hub, GitHub or Kaggle)"] = "إزالة رمز دخول محفوظ (مستودع Hugging Face أو GitHub أو Kaggle)",

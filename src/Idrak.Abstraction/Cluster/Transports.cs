@@ -61,6 +61,12 @@ public interface ITransport : IDisposable
 
     /// <summary>Returns once every rank of the group has called it.</summary>
     void Barrier();
+
+    /// <summary>
+    /// This rank's time on the virtual clock of a simulated transport (the network time the simulated cluster would have
+    /// spent so far); zero on a real transport. A collective's simulated time is the difference across it.
+    /// </summary>
+    TimeSpan SimulatedTime => TimeSpan.Zero;
 }
 
 /// <summary>Whether a transport can join two ranks here, and why not when it cannot.</summary>

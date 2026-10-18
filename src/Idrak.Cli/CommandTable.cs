@@ -20,6 +20,7 @@ internal static class CommandTable
         ("Models", ModelCommands.All),
         ("Voices", VoiceCommands.All),
         ("Train", TrainCommands.All),
+        ("Cluster", ClusterCommands.All),
         ("Data", DataCommands.All),
         ("Retrieval", RetrievalCommands.All),
         ("Measure", MeasureCommands.All),

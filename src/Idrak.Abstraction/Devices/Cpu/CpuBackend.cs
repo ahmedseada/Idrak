@@ -28,11 +28,23 @@ internal sealed partial class CpuBackend : Backend
     internal static int ParallelThreshold => CpuTuning.ParallelElements;
 
     private readonly Dictionary<int, Stack<float[]>> _pool = [];
-    private readonly MemoryAccountant _memory = new(() => ComputeResources.CpuMemoryLimit, "the CPU");
+    private readonly MemoryAccountant _memory;
+    private readonly string? _name;
 
     private CpuBackend()
     {
+        _memory = new(() => ComputeResources.CpuMemoryLimit, "the CPU");
     }
+
+    // A separate CPU backend (Device.CreateSeparateBackend): its own pool, held to its own cap (the CPU's limit when none).
+    private CpuBackend(SeparateBackendOptions options)
+    {
+        long? cap = options.MemoryLimit;
+        _memory = new(() => cap ?? ComputeResources.CpuMemoryLimit, options.Name);
+        _name = options.Name;
+    }
+
+    internal static CpuBackend CreateSeparate(SeparateBackendOptions options) => new(options);
 
     // The CPU's own limits, all from its numerical contract (CpuTuning): its packed products stream the weights for up to
     // CpuTuning.FewRows rows before expanding them once for the register-tiled product (the split decides the int4
@@ -51,7 +63,7 @@ internal sealed partial class CpuBackend : Backend
 
     public override string Kind => "cpu";
 
-    public override string Name => $"CPU ({Environment.ProcessorCount} threads, {System.Numerics.Vector<float>.Count}-wide SIMD)";
+    public override string Name => _name ?? $"CPU ({Environment.ProcessorCount} threads, {System.Numerics.Vector<float>.Count}-wide SIMD)";
 
     public override BackendHardware Hardware => new()
     {

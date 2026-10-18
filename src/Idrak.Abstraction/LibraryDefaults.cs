@@ -24,11 +24,14 @@ internal static class LibraryDefaults
     private static List<System.Reflection.MethodInfo>? _registrations;
 
     // The first-party assemblies that register built-ins, in order (core first: the others build on it). Each may define
-    // an internal static class `<assembly>.LibraryRegistrations` with a static `RegisterFor(Type registry)`; one that is
-    // missing (not shipped with the application) is skipped. Planned packages are listed so they work the day they appear.
-    private static readonly string[] Assemblies =
-        ["Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio", "Idrak.Cluster",
-            "Idrak.Network"];
+    // an internal static class `<root namespace>.LibraryRegistrations` with a static `RegisterFor(Type registry)`; one
+    // that is missing (not shipped with the application) is skipped. The root namespace is the assembly's name except
+    // Idrak.Network's (Idrak.Networking: a namespace Idrak.Network would hide the Idrak.Network builder from code in
+    // Idrak.* namespaces). Planned packages are listed so they work the day they appear.
+    private static readonly (string Assembly, string Namespace)[] Assemblies =
+        [("Idrak", "Idrak"), ("Idrak.Gpu", "Idrak.Gpu"), ("Idrak.Imaging", "Idrak.Imaging"), ("Idrak.Data", "Idrak.Data"), ("Idrak.Nlp", "Idrak.Nlp"),
+            ("Idrak.Vision", "Idrak.Vision"), ("Idrak.Diffusion", "Idrak.Diffusion"), ("Idrak.Audio", "Idrak.Audio"), ("Idrak.Cluster", "Idrak.Cluster"),
+            ("Idrak.Network", "Idrak.Networking")];
 
     /// <summary>
     /// Has the first-party assemblies register their built-ins of <paramref name="registry"/>, unless done already (on
@@ -43,7 +46,7 @@ internal static class LibraryDefaults
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Cluster.LibraryRegistrations", "Idrak.Cluster")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Network.LibraryRegistrations", "Idrak.Network")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Networking.LibraryRegistrations", "Idrak.Network")]
     public static void Ensure(Type registry)
     {
         lock (Gate)   // re-entrant: a registration that touches another registry comes back here
@@ -69,12 +72,12 @@ internal static class LibraryDefaults
     private static List<System.Reflection.MethodInfo> Find()
     {
         var found = new List<System.Reflection.MethodInfo>();
-        foreach (string assembly in Assemblies)
+        foreach (var (assembly, root) in Assemblies)
         {
             Type? registrations;
             try
             {
-                registrations = Type.GetType($"{assembly}.LibraryRegistrations, {assembly}", throwOnError: false);
+                registrations = Type.GetType($"{root}.LibraryRegistrations, {assembly}", throwOnError: false);
             }
             catch (Exception e) when (e is FileLoadException or FileNotFoundException or BadImageFormatException)
             {

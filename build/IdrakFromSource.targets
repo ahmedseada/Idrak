@@ -22,7 +22,7 @@
 
   <ItemGroup Condition="'$(IdrakFromSource)' != ''">
     <!-- The library's packages, as src/ names them (tests/Idrak.Tests checks the list against src/). -->
-    <_IdrakSourcePackage Include="Idrak;Idrak.Abstraction;Idrak.Abstraction.Testing;Idrak.Gpu;Idrak.Imaging;Idrak.Data;Idrak.Nlp;Idrak.Vision;Idrak.Audio;Idrak.Mcp;Idrak.AspNetCore;Idrak.Onnx.Runtime" />
+    <_IdrakSourcePackage Include="Idrak;Idrak.Abstraction;Idrak.Abstraction.Testing;Idrak.Gpu;Idrak.Imaging;Idrak.Data;Idrak.Nlp;Idrak.Vision;Idrak.Audio;Idrak.Cluster;Idrak.Network;Idrak.Mcp;Idrak.AspNetCore;Idrak.Onnx.Runtime" />
     <!-- The app's references among them, each swapped for the clone's project. -->
     <_IdrakNotReferenced Include="@(_IdrakSourcePackage)" Exclude="@(PackageReference)" />
     <_IdrakReferenced Include="@(_IdrakSourcePackage)" Exclude="@(_IdrakNotReferenced)" />

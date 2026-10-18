@@ -500,6 +500,8 @@ public static class ProfileProbes
 {
     private static readonly SlotTable<string, IProfileProbe> Table = BuiltIn();
 
+    static ProfileProbes() => LibraryDefaults.Ensure(typeof(ProfileProbes));   // the packages' probes ("network", "cluster")
+
     private static SlotTable<string, IProfileProbe> BuiltIn()
     {
         var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
