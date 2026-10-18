@@ -602,15 +602,25 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 
 1. **Decided by the owner (2026-10-18): `Idrak.Cluster` references `Idrak.Abstraction`** and implements the contracts
    itself; no bridge, no duplicate types; on extraction the contracts and used types move with it.
-2. **The topology file's format.** JSON now with the spec's keys (recommended: no new reader, no dependency), or a small
-   YAML-subset reader in `Idrak.Cluster` for the spec's exact text.
-3. **Option names.** `--node`/`--nodes` (recommended; `--rank` is the LoRA rank in `tune` and `distill`), or `--rank`
-   with the LoRA option renamed.
-4. **The default wire type.** float32 everywhere, `bf16` opt-in (recommended until the LAN run compares both and the
-   fixture's tolerance holds), or bf16 across machines by default.
-5. **`udp`.** In C5 as a control channel only, or left out until a measurement shows the TCP barrier's latency matters
-   (recommended: left out; the name stays registered with no default).
-6. **Preset names.** Shape names as above (recommended by the card-agnostic rule), or the spec's product names.
+2. **Decided (2026-10-18): the topology file is JSON** with the spec's keys; no YAML reader.
+3. **Option names for this process's rank and the world size** (`--rank` is the LoRA rank in `tune` and `distill`).
+   Proposed to the owner: `--worker N` and `--workers N` (the spec's own word for a rank; reads as "worker 1 of 3"),
+   with `--coordinator HOST:PORT`; alternatives `--node`/`--nodes` (a node holds several workers in a topology, so the
+   word is taken) or `--member`/`--members`. Pending the owner's pick.
+4. **Decided (2026-10-18): the wire type defaults to float32, and the library measures and suggests.** A `"cluster"`
+   `ISettingAdvisor` registered in `SettingAdvisors` by `Idrak.Network`: during the first warm steps it measures the
+   network share of the step (`CollectiveCompleted.Blocked` and `Wall` against the step), and on a sample slice the
+   loss of precision bf16 would cause (the slice reduced both ways, the largest relative difference); when the share
+   is above `IDRAK_CLUSTER_SUGGEST_SHARE` (default a fifth of the step) and the bf16 error is within
+   `IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE` (default the fixture's measured tolerance), it suggests `--wire bf16`; by the
+   same measurements it suggests `--local-sgd K`, gradient accumulation, `--bucket-bytes`, `--topk` or the
+   hierarchical collective when the topology has more than one node and `ring` is set. Each suggestion is a
+   `SettingSuggestion` (setting, value, reason with the numbers, device, source) through `Telemetry.Suggestion`, shown
+   once on the progress line, listed by `idrak suggest`, and never applied on its own.
+5. **Decided (2026-10-18): `udp` stays out of C5**; the name stays registered with no library default.
+6. **Preset names.** Proposed to the owner: a grammar `{nodes}x{gpus-per-node}-{intra-node link}[-{inter-node link}]`,
+   so the name is the topology: `1x8-nvlink`, `2x8-nvlink-infiniband`, `3x1-pcie-ethernet-1g`, `1x4-pcie`, `1x4-cpu`;
+   with readable aliases `home-lan`, `rental-4-gpu`, `cpu-only` resolved by `TopologyPresets`. Pending the owner's pick.
 
 ## Runs
 
