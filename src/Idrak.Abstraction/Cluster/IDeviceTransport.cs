@@ -1,10 +1,13 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Networking.Abstractions;
+using Idrak.Abstraction.Devices;
+
+namespace Idrak.Abstraction.Cluster;
 
 /// <summary>
-/// A transport whose ranks share one process and can hand device memory over (plan 23, phase C5: "pcie-host" and "nvlink"):
+/// A transport whose ranks share one process and can hand device memory over (plan 23, phase C5: "pcie-host" and "nvlink" of
+/// Idrak.Network; in Idrak.Abstraction since C8b, where a pipeline's boundaries hand activations over through it):
 /// the receiver copies straight from the sender's storage into its own (<see cref="Backend.CopyTo"/>), a peer copy where
 /// the devices reach each other, through host memory where they do not. Bytes still travel through
 /// <see cref="ITransport.Send"/> and <see cref="ITransport.Receive"/>.

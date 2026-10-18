@@ -309,6 +309,19 @@ internal sealed class ResumeCommand : Command
         }
 
         string checkpoint = Path.Combine(run.Folder, "last.ikw");
+
+        // A cluster run a dashboard stopped (plan 23, C8b): its last stop's checkpoint, newer than the last epoch's weights, goes
+        // on from the step it stopped at, the run's own epochs and seed.
+        var stop = Directory.GetDirectories(run.Folder, "checkpoint-*").Select(d => Path.Combine(d, "train-state.json")).Where(File.Exists)
+            .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+        if (stop is not null && run.Settings is { } stoppedSettings && stoppedSettings["image"] is null
+            && (!File.Exists(checkpoint) || File.GetLastWriteTimeUtc(stop) > File.GetLastWriteTimeUtc(checkpoint)))
+        {
+            string from = Path.GetDirectoryName(stop)!;
+            context.Write($"Resuming  {run.Name} from {Path.GetFileName(from)} (a stopped run)");
+            return TrainSession.Run(context, RunSettings.FromJson(stoppedSettings), run.Folder, stopped: from);
+        }
+
         if (!File.Exists(checkpoint))
         {
             context.Error($"{run.Folder} has no checkpoint (last.ikw): the run stopped before its first epoch ended. Train it again with idrak train.");

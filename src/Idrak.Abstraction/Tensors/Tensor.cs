@@ -203,6 +203,16 @@ public sealed partial class Tensor : IDisposable
         return t;
     }
 
+    // A tensor no scope captures whose memory is given back at once, its values made by `recompute` on its first restore
+    // (Backend.Restore): a deferred tensor moved inside DeferredTensors.StayDeferred.
+    internal static Tensor Evicted(ReadOnlySpan<int> shape, Device device, bool requiresGrad, Action<Storage> recompute)
+    {
+        var t = Empty(shape, device, track: false);
+        device.Backend.Evict(t.Storage, recompute);
+        t.RequiresGrad = requiresGrad;
+        return t;
+    }
+
     /// <summary>Overwrites this tensor's data in place with <paramref name="values"/> (same element count).</summary>
     public void Load(ReadOnlySpan<float> values)
     {

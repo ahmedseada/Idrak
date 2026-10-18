@@ -225,6 +225,35 @@ public sealed record ClusterOptions
     public bool DeviceCollectives { get; init; } = true;
 
     /// <summary>
+    /// Whether a pipeline's activations and their gradients cross between stages device to device over a transport that
+    /// hands device memory over (<see cref="IDeviceTransport"/>: "pcie-host", "nvlink" in one process), instead of through
+    /// host memory; the values are the same bit for bit, and the pipeline's telemetry says which (plan 23, C8b;
+    /// <c>IDRAK_CLUSTER_DEVICE_ACTIVATIONS</c>: 1 or 0).
+    /// </summary>
+    public bool DeviceActivations { get; init; } = true;
+
+    /// <summary>
+    /// Whether a real transport's receive that waits is woken directly by the thread that queues its message, instead of
+    /// through the thread pool (a channel's continuation); the messages are the same (plan 23, C8b; <c>IDRAK_CLUSTER_DIRECT_WAKE</c>: 1 or 0).
+    /// </summary>
+    public bool DirectWake { get; init; } = true;
+
+    /// <summary>
+    /// Whether a rank that holds part of a model (a pipeline stage, a parameters shard) reads only its own tensors from the
+    /// checkpoint: the model is loaded deferred (no weight read until a rank moves its part to its device), so no rank builds
+    /// or holds the whole model on the host or the device; 0 loads the whole model on every rank first, as before C8b (plan
+    /// 23, C8b; <c>IDRAK_CLUSTER_OWN_TENSORS</c>: 1 or 0).
+    /// </summary>
+    public bool OwnTensorsOnly { get; init; } = true;
+
+    /// <summary>
+    /// Whether a checkpoint of a pipeline or a sharded run is streamed to rank 0 one tensor at a time (each rank sends its
+    /// own tensors and optimizer entries as rank 0 writes them, in the one-process format), instead of every rank's share
+    /// gathered whole first; the files are the same byte for byte (plan 23, C8b; <c>IDRAK_CLUSTER_STREAMED_SAVE</c>: 1 or 0).
+    /// </summary>
+    public bool StreamedSave { get; init; } = true;
+
+    /// <summary>
     /// With <see cref="Shard"/> = parameters: the most bytes of weights one layer gathered whole holds; a module whose
     /// parameters fit is gathered just before its forward (and its backward) and freed after, a larger one is entered
     /// through its children. Null: each rank's share of the trained parameters (their bytes over the world size), so a
@@ -430,7 +459,8 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_MESSAGE_COST", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
-        "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_PLACEMENT",
+        "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_DEVICE_ACTIVATIONS", "IDRAK_CLUSTER_DIRECT_WAKE", "IDRAK_CLUSTER_OWN_TENSORS", "IDRAK_CLUSTER_STREAMED_SAVE",
+        "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_EVENT_LOG_FLUSH", "IDRAK_CLUSTER_LOG_TRANSFERS",
@@ -502,6 +532,10 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_GATHER_BYTES") is { } gather) o = o with { GatherBytes = Size("IDRAK_CLUSTER_GATHER_BYTES", gather) };
         if (Read(variable, "IDRAK_CLUSTER_ASYNC_STAGING") is { } staging) o = o with { AsyncStaging = Flag("IDRAK_CLUSTER_ASYNC_STAGING", staging) };
         if (Read(variable, "IDRAK_CLUSTER_DEVICE_COLLECTIVES") is { } deviceCollectives) o = o with { DeviceCollectives = Flag("IDRAK_CLUSTER_DEVICE_COLLECTIVES", deviceCollectives) };
+        if (Read(variable, "IDRAK_CLUSTER_DEVICE_ACTIVATIONS") is { } deviceActivations) o = o with { DeviceActivations = Flag("IDRAK_CLUSTER_DEVICE_ACTIVATIONS", deviceActivations) };
+        if (Read(variable, "IDRAK_CLUSTER_DIRECT_WAKE") is { } directWake) o = o with { DirectWake = Flag("IDRAK_CLUSTER_DIRECT_WAKE", directWake) };
+        if (Read(variable, "IDRAK_CLUSTER_OWN_TENSORS") is { } ownTensors) o = o with { OwnTensorsOnly = Flag("IDRAK_CLUSTER_OWN_TENSORS", ownTensors) };
+        if (Read(variable, "IDRAK_CLUSTER_STREAMED_SAVE") is { } streamed) o = o with { StreamedSave = Flag("IDRAK_CLUSTER_STREAMED_SAVE", streamed) };
         if (Read(variable, "IDRAK_CLUSTER_PLACEMENT") is { } placement)
         {
             o = o with { Placement = placement.ToLowerInvariant() is "single" or "pipeline" ? placement.ToLowerInvariant() : throw Bad("IDRAK_CLUSTER_PLACEMENT", placement, "single or pipeline") };

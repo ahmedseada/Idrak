@@ -76,7 +76,11 @@ public static class DeviceProviders
     private static readonly SlotTable<string, DeviceProvider> Table = new(nameof(DeviceProviders), comparer: StringComparer.OrdinalIgnoreCase,
         unguarded: "a provider makes devices, which hold memory and state, and a device never falls back to another");
 
-    static DeviceProviders() => LibraryDefaults.Ensure(typeof(DeviceProviders));   // Idrak.Gpu's devices, first
+    static DeviceProviders()
+    {
+        LibraryDefaults.Ensure(typeof(DeviceProviders));                  // Idrak.Gpu's devices, first
+        Table.RegisterDefault(DeferredTensors.Kind, new DeferredProvider());   // tensors not read yet (plan 23, C8b): by name only
+    }
 
     /// <summary>The registered providers, in registration order.</summary>
     public static IReadOnlyList<DeviceProvider> All => Table.Values;
