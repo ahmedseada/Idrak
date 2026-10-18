@@ -6,19 +6,18 @@ using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.Mp3Audio;
 
-// The MP3 plug-in's encoder (samples/Mp3Audio, Mp3Encoder): an IAudioEncoder registered in AudioEncoders. Its streams are
-// decoded with the plug-in's own decoder; mp3enc/ holds files it wrote that ffmpeg decoded without an error when they
+// The MP3 encoder (src/Idrak.Audio/Mp3, Mp3Encoder): the library's IAudioEncoder for .mp3. Its streams are
+// decoded with the library's own decoder; mp3enc/ holds files it wrote that ffmpeg decoded without an error when they
 // were made (tools/audio/make_mp3_encoder_fixture.cs), with ffmpeg's lengths, SNRs and block RMS, so ffmpeg is not needed
 // here. A decoder gives the sound Mp3Encoder.Delay (1057) samples late: the tests align by it.
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AudioMp3EncodeGroup =
     [
-        ("audio codecs: mp3 encode: tones, chirps and noise at every rate (MPEG-1 32, 44.1, 48 kHz; MPEG-2 16, 22.05, 24 kHz), mono and stereo, at the lowest, the default and the highest bit rate decode through the plug-in to whole frames covering the sound and the 1057-sample delay, constant frames of the bit rate, and a tone's SNR after the delay above its floor (128 kbit/s 44.1 kHz stereo and 64 kbit/s 16 kHz mono: 40 dB); the WAV fixture's signals too", d => { if (d == Device.Cpu) Mp3EncodeRoundTrip(); }),
-        ("audio codecs: mp3 encode: the ffmpeg-checked fixture (mp3enc: all six rates, joint, plain and mixed-down stereo, 32 to 320 kbit/s, the three qualities) is what the encoder writes now, byte for byte, and the plug-in decodes it to ffmpeg's lengths, SNR and block RMS", d => { if (d == Device.Cpu) Mp3EncodeFixture(); }),
-        ("audio codecs: mp3 encode: AudioEncoders.Save writes .mp3 once the plug-in is registered and refuses it, not registered, before and after; bit rates, sample rates, channels and the lowpass are checked against what MPEG takes (the message names the allowed ones); defaults, resampling, the mono mix and the IDRAK_MP3_* variables", d => { if (d == Device.Cpu) Mp3EncodeRegistryAndOptions(); }),
+        ("audio codecs: mp3 encode: tones, chirps and noise at every rate (MPEG-1 32, 44.1, 48 kHz; MPEG-2 16, 22.05, 24 kHz), mono and stereo, at the lowest, the default and the highest bit rate decode through the library's decoder to whole frames covering the sound and the 1057-sample delay, constant frames of the bit rate, and a tone's SNR after the delay above its floor (128 kbit/s 44.1 kHz stereo and 64 kbit/s 16 kHz mono: 40 dB); the WAV fixture's signals too", d => { if (d == Device.Cpu) Mp3EncodeRoundTrip(); }),
+        ("audio codecs: mp3 encode: the ffmpeg-checked fixture (mp3enc: all six rates, joint, plain and mixed-down stereo, 32 to 320 kbit/s, the three qualities) is what the encoder writes now, byte for byte, and the library decodes it to ffmpeg's lengths, SNR and block RMS", d => { if (d == Device.Cpu) Mp3EncodeFixture(); }),
+        ("audio codecs: mp3 encode: AudioEncoders.Save writes .mp3 with the library's encoder; bit rates, sample rates, channels and the lowpass are checked against what MPEG takes (the message names the allowed ones); defaults, resampling, the mono mix and the IDRAK_MP3_* variables", d => { if (d == Device.Cpu) Mp3EncodeRegistryAndOptions(); }),
         ("audio codecs: mp3 encode: the same input gives the same bytes, in parallel and in order for every frames-per-task; three minutes of 44.1 kHz stereo and a minute of 16 kHz mono encode at the speed reported with little memory", d => { if (d == Device.Cpu) Mp3EncodeDeterminismAndSpeed(); }),
     ];
 
@@ -240,10 +239,10 @@ internal static partial class Tests
             var decoded = codec.Decode(stored);
             int channels = (int)entry["ffmpeg_channels"]!;
             Check(decoded.Channels == channels && decoded.SampleRate == (int)entry["ffmpeg_rate"]! && decoded.Length == (int)entry["ffmpeg_samples"]!,
-                $"{name}: the plug-in decodes {decoded.Channels} x {decoded.Length} at {decoded.SampleRate} Hz, ffmpeg {channels} x {(int)entry["ffmpeg_samples"]!} at {(int)entry["ffmpeg_rate"]!}");
+                $"{name}: the library decodes {decoded.Channels} x {decoded.Length} at {decoded.SampleRate} Hz, ffmpeg {channels} x {(int)entry["ffmpeg_samples"]!} at {(int)entry["ffmpeg_rate"]!}");
             var expected = signal.Channels > channels ? MonoOf(signal) : signal;
             double snr = Mp3Snr(expected, decoded), ffmpegSnr = (double)entry["ffmpeg_snr_db"]!;
-            Check(Math.Abs(snr - ffmpegSnr) < 0.01, $"{name}: the plug-in's decoding has an SNR of {snr:F3} dB, ffmpeg's {ffmpegSnr:F3}");
+            Check(Math.Abs(snr - ffmpegSnr) < 0.01, $"{name}: the library's decoding has an SNR of {snr:F3} dB, ffmpeg's {ffmpegSnr:F3}");
             var rms = entry["ffmpeg_block_rms"]!.AsArray();
             for (int c = 0; c < channels; c++)
             {
@@ -281,15 +280,11 @@ internal static partial class Tests
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-mp3enc-{Environment.ProcessId}");
         var tone = Mp3Tone(44100, 2, 44100);
         string path = Path.Combine(folder, "tone.mp3");
-        var before = AudioEncoders.Names.ToArray();
         try
         {
-            ThrowsNaming<NotSupportedException>(() => AudioEncoders.Save(path, tone), "an .mp3 without the plug-in", "'.mp3'", "not registered", "AudioEncoders.Register");
-            Mp3AudioPlugin.Register(encodeOptions: new Mp3EncodeOptions());
-            try
             {
-                Check(AudioEncoders.For(path) is Mp3Encoder && AudioEncoders.Get("MP3") is Mp3Encoder && AudioEncoders.Origin("mp3") == typeof(Mp3Encoder).Assembly.GetName().Name
-                      && AudioEncoders.Extensions.Contains(".mp3"), $"the plug-in's encoder writes .mp3: {string.Join(", ", AudioEncoders.Names)} ({AudioEncoders.Origin("mp3")})");
+                Check(AudioEncoders.For(path) is Mp3Encoder && AudioEncoders.Get("MP3") is Mp3Encoder && AudioEncoders.Extensions.Contains(".mp3"),
+                    $"the library's encoder writes .mp3: {string.Join(", ", AudioEncoders.Names)}");
                 AudioEncoders.Save(path, tone, new AudioEncodeOptions { BitsPerSample = 24 });   // a WAV's options: MP3 has no sample format and ignores them
                 byte[] saved = File.ReadAllBytes(path);
                 Check(saved.AsSpan().SequenceEqual(new Mp3Encoder().Encode(tone)), "AudioEncoders.Save writes the encoder's bytes");
@@ -297,13 +292,6 @@ internal static partial class Tests
                 Check(read.Channels == 2 && read.SampleRate == 44100 && Mp3Snr(tone, read) > 40, $"the saved file reads back through AudioCodecs: {read.Channels} x {read.Length}, SNR {Mp3Snr(tone, read):F1} dB");
                 Check(Mp3FrameProblem(saved, 44100, 2, 128, out _, out _) is null, "44.1 kHz stereo is 128 kbit/s unless set");
             }
-            finally
-            {
-                Check(Mp3AudioPlugin.Unregister(), "Unregister removes the registrations");
-            }
-
-            Check(AudioEncoders.Names.SequenceEqual(before), $"Unregister brings the library's encoders back: {string.Join(", ", AudioEncoders.Names)}");
-            ThrowsNaming<NotSupportedException>(() => AudioEncoders.Save(path, tone), "an .mp3 after Unregister", "not registered");
         }
         finally
         {

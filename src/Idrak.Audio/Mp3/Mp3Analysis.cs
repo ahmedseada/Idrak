@@ -3,9 +3,9 @@
 
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using static Idrak.Mp3Audio.Mp3EncoderTables;
+using static Idrak.Audio.Mp3EncoderTables;
 
-namespace Idrak.Mp3Audio;
+namespace Idrak.Audio;
 
 /// <summary>
 /// The encoder's hybrid filterbank (ISO/IEC 11172-3 Annex C): the polyphase analysis of each 32 samples into 32

@@ -10,7 +10,6 @@ using Idrak.Cli.Commands.Data;
 using Idrak.Cli.Commands.Run;
 using Idrak.Cli.Shared;
 using Idrak.Models;
-using Idrak.Mp3Audio;
 using Idrak.OpenVoice;
 using Idrak.VitsSpeech;
 using Idrak.WhisperSpeech;
@@ -23,7 +22,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] AudioCliGroup =
     [
         ("audio cli: transcribe -P the Whisper plug-in on tiny-whisper writes the library's text, JSON, SRT and VTT (from the segments' timestamps) to files and a folder, -j prints one document; without the plug-in the family exits 1 with the -P remedy", AudioCliTranscribe),
-        ("audio cli: speak -P the VITS plug-in on tiny-vits writes a float WAV within 1e-3 of reference/waveform.npy's largest sample (noise 0, not silent) and an MP3 with the Mp3Audio plug-in; an .mp3 without it, a missing text and an unregistered family are refused naming the remedy; --list-voices lists the store", AudioCliSpeak),
+        ("audio cli: speak -P the VITS plug-in on tiny-vits writes a float WAV within 1e-3 of reference/waveform.npy's largest sample (noise 0, not silent) and an MP3 with the library's encoder; a missing text and an unregistered family are refused naming the remedy; --list-voices lists the store", AudioCliSpeak),
         ("audio cli: voice add (consent required, the clips' agreement printed and flagged), list, show, export, remove, import (again refused, --overwrite replaces) with tiny-openvoice and the fixture's WAVs; speak --voice the installed embedding voice gives VoicedSynthesizer's samples", AudioCliVoice),
         ("audio cli: data audio turns a 44.1 kHz stereo file into 16 kHz mono (the resampled mean within 1e-5), writes manifest.jsonl with --transcripts' text, splits a two-tone file at its silence and by seconds, and --stats describes the inputs alone", d => { if (d == Device.Cpu) AudioCliDataAudio(); }),
         ("audio cli: data mel writes the fixture's log-mel features within 1e-4 ([frames, mels], and [mels, frames] with --transpose) and features.json from tiny-whisper's preprocessor_config.json", AudioCliDataMel),
@@ -36,8 +35,6 @@ internal static partial class Tests
     private static string VitsPlugin => typeof(VitsSpeechPlugin).Assembly.Location;
 
     private static string OpenVoicePluginPath => typeof(OpenVoicePlugin).Assembly.Location;
-
-    private static string Mp3Plugin => typeof(Mp3AudioPlugin).Assembly.Location;
 
     private static (int Code, string Out, string Err) AudioCli(params string[] args)
     {
@@ -130,7 +127,6 @@ internal static partial class Tests
         string text = (string)JsonNode.Parse(File.ReadAllText(Path.Combine(model, "reference", "input.json")))!["text"]!;
         var expected = ReadNpyFloat32(Path.Combine(model, "reference", "waveform.npy"));
         VitsSpeechPlugin.Unregister();
-        Mp3AudioPlugin.Unregister();
         try
         {
             string wav = Path.Combine(root, "abc.wav");
@@ -151,11 +147,8 @@ internal static partial class Tests
                   && verbose.Err.Contains("peak device memory", StringComparison.Ordinal), $"-v: cold and warm stage times: {verbose.Err}");
 
             string mp3 = Path.Combine(root, "abc.mp3");
-            var noEncoder = AudioCli("speak", "-P", VitsPlugin, model, text, "-o", mp3, "-d", d);
-            Check(noEncoder.Code == 1 && noEncoder.Err.Contains("Idrak.Mp3Audio.dll", StringComparison.Ordinal) && noEncoder.Err.Contains("-P", StringComparison.Ordinal) && !File.Exists(mp3),
-                $"an .mp3 without the encoder names its plug-in: {noEncoder.Err}");
-            var asMp3 = AudioCli("speak", "-P", VitsPlugin, "-P", Mp3Plugin, model, text, "--noise", "0", "--duration-noise", "0", "-o", mp3, "-d", d);
-            Check(asMp3.Code == 0 && File.Exists(mp3), $"-o abc.mp3 with the plug-in: {asMp3.Err}");
+            var asMp3 = AudioCli("speak", "-P", VitsPlugin, model, text, "--noise", "0", "--duration-noise", "0", "-o", mp3, "-d", d);
+            Check(asMp3.Code == 0 && File.Exists(mp3), $"-o abc.mp3 with the library's encoder: {asMp3.Err}");
             var decoded = AudioCodecs.Decode(mp3);
             Check(decoded.Length >= expected.Length && decoded.Channels == 1 && decoded.Samples.Any(v => v != 0), $"the MP3 decodes to {decoded.Length} samples at {decoded.SampleRate} Hz");
 
@@ -173,8 +166,7 @@ internal static partial class Tests
         finally
         {
             VitsSpeechPlugin.Unregister();
-            Mp3AudioPlugin.Unregister();
-            Directory.Delete(root, recursive: true);
+                Directory.Delete(root, recursive: true);
         }
     }
 

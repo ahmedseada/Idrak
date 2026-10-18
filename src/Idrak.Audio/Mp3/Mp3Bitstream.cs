@@ -2,9 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Runtime.CompilerServices;
-using static Idrak.Mp3Audio.Mp3EncoderTables;
+using static Idrak.Audio.Mp3EncoderTables;
 
-namespace Idrak.Mp3Audio;
+namespace Idrak.Audio;
 
 /// <summary>Writes bits most significant first into a span (zeros pad the last byte).</summary>
 internal ref struct Mp3BitWriter(Span<byte> buffer)

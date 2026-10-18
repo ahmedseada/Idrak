@@ -166,7 +166,7 @@ idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
 idrak tokenize qwen --chat "Hello" --count
 idrak agent qwen "Add a test for Parse" --workspace ./src
 idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav -o talk.srt   # -j: segments and stage times
-idrak speak -P Idrak.VitsSpeech.dll ./mms-tts-eng "Hello." -o hello.wav            # -P Idrak.Mp3Audio.dll for .mp3
+idrak speak -P Idrak.VitsSpeech.dll ./mms-tts-eng "Hello." -o hello.wav            # -o hello.mp3 writes MP3
 idrak run -P MyAudioFamily.dll ./audio-model --audio clip.wav "What is said?"      # an audio-language model
 ```
 
@@ -668,6 +668,7 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_GPU_CHUNK_MB`, `IDRAK_GPU_STACK_BYTES` | The chunks long-lived GPU blocks share (0: off); each GPU thread's stack |
 | `IDRAK_CPU_THREADS`, `IDRAK_CPU_MEMORY_LIMIT_MB`, `IDRAK_GPU_MEMORY_LIMIT_MB` | The most CPU threads (default every core) and the most MiB of tensor memory on the CPU and on each GPU (default unlimited) |
 | `IDRAK_GPU_MEMORY_RESERVE_MB`, `IDRAK_OFFLOAD_RETURN_HEADROOM_MB`, `IDRAK_WORKSPACE_SHARE` | MiB kept free on a GPU for the display (default a sixteenth); MiB kept free when offloaded tensors return (an eighth); the share of free memory one operation's working buffers may take (0.5) |
+| `IDRAK_MP3_BITRATE`, `IDRAK_MP3_RATE`, `IDRAK_MP3_CHANNELS`, `IDRAK_MP3_QUALITY`, `IDRAK_MP3_LOWPASS`, `IDRAK_MP3_FRAMES_PER_TASK` | the MP3 encoder `speak -o x.mp3` writes with: the bit rate in kbit/s (128 stereo, 64 mono), the rate (the sound's), joint, stereo or mono, the effort a granule (fast, standard, high), the low-pass in Hz, the frames an encoding task takes |
 | `HF_TOKEN`, `HF_ENDPOINT`, `HF_HOME` | The Hugging Face token, hub address and folder |
 | `IDRAK_API_KEY` | The key `serve` requires and the client commands send |
 | `IDRAK_PORT` | The port `serve` and `ui` listen on and the client commands call (`--port` wins; default 7317) |

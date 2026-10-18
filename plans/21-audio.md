@@ -842,7 +842,7 @@ every `TranscriptionOptions` value an option, `-w`/`-k` for `SpeechModelOptions`
 console, a file or a folder; srt and vtt ask for timestamps; `-v` the stage times, the first file cold, a single file
 again warm, and the peak device bytes; a progress line per file with the stage and segment), `idrak speak`
 (`SpeakCommand.cs`: `SpeechSynthesisModels.Load` in a `VoicedSynthesizer`, every `SpeechSynthesisOptions` value an
-option, the output's encoder checked before the model loads and a missing one refused naming `-P Idrak.Mp3Audio.dll`,
+option, the output's encoder checked before the model loads and a missing one refused with the `-P` remedy (MP3 was a plug-in then; plan 22 row 6h moved it into Idrak.Audio),
 `--list-voices`, `-v` cold and warm), `idrak voice add|list|show|remove|export|import` (`Commands/Voices/`, a "Voices"
 group: `voice.cs`'s behaviour, consent required, each clip's agreement printed and flagged under `--warn-agreement`,
 0.8 by default, `--voices DIR` for the store), `idrak data audio` (`DataAudioCommand.cs`: mono, resampling,

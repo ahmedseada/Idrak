@@ -232,8 +232,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Audio.Abstractions.AudioAugmentations` | registry | public | — |  | noise, spec-mask, speed | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioCleaners` | registry | public | — |  | denoise, highpass, normalize, trim | Audio | Audio |
-| `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, wav | Audio | Audio |
-| `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | wav | — | Audio |
+| `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, mp3, wav | Audio | Audio |
+| `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | mp3, wav | — | Audio |
 | `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioFeatureExtractors` | registry | public | — |  | log-mel | — | Audio |
 | `Idrak.Audio.Abstractions.AudioSplitters` | registry | public | — |  | seconds, silence | — | Audio |
@@ -241,8 +241,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioAugmentation` | interface | public | — | NoiseAugmentation, SpecMaskAugmentation, SpeedAugmentation |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCleaner` | interface | public | — | DenoiseCleaner, HighPassCleaner, NormalizeCleaner, TrimCleaner |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioCodec` | interface | public | — | AudioCodecs.GuardedCodec, FlacCodec, WavCodec |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioEncoder` | interface | public | — | AudioEncoders.GuardedEncoder, WavEncoder |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioCodec` | interface | public | — | AudioCodecs.GuardedCodec, FlacCodec, Mp3Codec, WavCodec |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioEncoder` | interface | public | — | AudioEncoders.GuardedEncoder, Mp3Encoder, WavEncoder |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioFamily` | interface | public | — | — |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | — |  | Audio | Audio |

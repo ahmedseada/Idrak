@@ -1109,6 +1109,51 @@ public static class Idrak.Audio.MonotonicAlignment
   public static int[] Durations(System.ReadOnlySpan<int> path, int tokens)
   public static int[] Search(System.ReadOnlySpan<float> scores, int frames, int tokens)
 
+public enum Idrak.Audio.Mp3ChannelMode : int
+  JointStereo = 0
+  Mono = 2
+  Stereo = 1
+
+public sealed class Idrak.Audio.Mp3Codec : Idrak.Audio.Abstractions.IAudioCodec
+  public Idrak.Audio.Abstractions.AudioData Decode(System.ReadOnlySpan<byte> file)
+  public Idrak.Audio.Abstractions.AudioInfo? ReadInfo(System.ReadOnlySpan<byte> header)
+  public Idrak.Audio.Mp3Options Options { get; }
+  public Mp3Codec(Idrak.Audio.Mp3Options? options = null)
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public string Name { get; }
+
+public sealed record Idrak.Audio.Mp3EncodeOptions : System.IEquatable<Idrak.Audio.Mp3EncodeOptions>
+  public Idrak.Audio.Mp3ChannelMode ChannelMode { get; init; }
+  public Idrak.Audio.Mp3Quality Quality { get; init; }
+  public Mp3EncodeOptions()
+  public int FramesPerTask { get; init; }
+  public int? Bitrate { get; init; }
+  public int? LowpassHz { get; init; }
+  public int? SampleRate { get; init; }
+  public static Idrak.Audio.Mp3EncodeOptions FromEnvironment()
+  public static System.Collections.Generic.IReadOnlyList<int> Bitrates(int sampleRate)
+  public static System.Collections.Generic.IReadOnlyList<int> SampleRates { get; }
+  public static int DefaultBitrate(int sampleRate, int channels)
+
+public sealed class Idrak.Audio.Mp3Encoder : Idrak.Audio.Abstractions.IAudioEncoder
+  public Idrak.Audio.Mp3EncodeOptions Options { get; }
+  public Mp3Encoder(Idrak.Audio.Mp3EncodeOptions? options = null)
+  public const int Delay = 1057
+  public string Extension { get; }
+  public string Name { get; }
+  public void Encode(Idrak.Audio.Abstractions.AudioData audio, System.IO.Stream output, Idrak.Audio.Abstractions.AudioEncodeOptions? options = null)
+
+public sealed record Idrak.Audio.Mp3Options : System.IEquatable<Idrak.Audio.Mp3Options>
+  public Mp3Options()
+  public bool Gapless { get; init; }
+  public int FramesPerTask { get; init; }
+  public int SyncFramesAfterJunk { get; init; }
+
+public enum Idrak.Audio.Mp3Quality : int
+  Fast = 0
+  High = 2
+  Standard = 1
+
 public sealed record Idrak.Audio.ResampleOptions : System.IEquatable<Idrak.Audio.ResampleOptions>
   public ResampleOptions()
   public double Rolloff { get; init; }

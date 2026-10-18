@@ -108,9 +108,9 @@ internal static class HelpTopics
         return $$$"""
             idrak help audio
 
-            Sound files are decoded and written in C#, with no outside program: WAV and FLAC are built in, MP3 comes with
-            the Mp3Audio plug-in (-P Idrak.Mp3Audio.dll). Speech models are families, registered by plug-ins and never by
-            the library: a model whose family is not registered is refused with "not registered" and the -P remedy.
+            Sound files are decoded and written in C#, with no outside program: WAV, FLAC and MP3 (MP2 read too) are
+            built in. Speech models are families, registered by plug-ins and never by the library: a model whose family
+            is not registered is refused with "not registered" and the -P remedy.
 
               idrak transcribe MODEL AUDIO...       speech to text: text, JSON, SRT or WebVTT
               idrak speak MODEL TEXT -o OUT         text to speech, in a speaker or an installed voice (--voice)

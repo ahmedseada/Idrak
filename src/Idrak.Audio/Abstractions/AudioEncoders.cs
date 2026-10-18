@@ -45,6 +45,7 @@ public static class AudioEncoders
     {
         var table = new SlotTable<string, IAudioEncoder>(nameof(AudioEncoders), (slot, app, library) => new GuardedEncoder(slot, app, library), StringComparer.OrdinalIgnoreCase);
         table.RegisterDefault("wav", new WavEncoder());
+        table.RegisterDefault("mp3", new Mp3Encoder());
         return table;
     }
 

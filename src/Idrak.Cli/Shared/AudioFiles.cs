@@ -52,12 +52,9 @@ internal static class AudioFiles
     /// <summary>The argument that stands for standard input.</summary>
     public const string StandardInputName = "-";
 
-    // Sample plug-ins of this repository for formats the library does not decode or encode itself, named in the remedy.
-    private static readonly Dictionary<string, string> SamplePlugins = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [".mp3"] = "Idrak.Mp3Audio.dll (samples/Mp3Audio)",
-        [".mp2"] = "Idrak.Mp3Audio.dll (samples/Mp3Audio)",
-    };
+    // Sample plug-ins of this repository for formats the library does not decode or encode itself, named in the remedy
+    // (none today: WAV, FLAC and MP3 are the library's).
+    private static readonly Dictionary<string, string> SamplePlugins = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The files <paramref name="inputs"/> name, in the order given: a file as it is, a folder's files a registered codec
@@ -121,7 +118,7 @@ internal static class AudioFiles
 
     /// <summary>
     /// The encoder that writes <paramref name="path"/> (by its extension), checked before any work is done; none is
-    /// refused with the <c>-P</c> remedy (for .mp3, the Mp3Audio sample plug-in).
+    /// refused with the <c>-P</c> remedy (naming this repository's plug-in for the extension when it has one).
     /// </summary>
     public static IAudioEncoder EncoderFor(string path)
     {

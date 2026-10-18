@@ -79,7 +79,7 @@ internal static partial class Tests
 
         Throws<InvalidDataException>(() => AudioCodecs.Decode("not a wav"u8.ToArray()), "bytes of no registered format are refused");
         Check(AudioCodecs.ReadInfo("RIFF"u8.ToArray()) is null, "a file shorter than a header is not a wav");
-        Throws<NotSupportedException>(() => AudioCodecs.Get("mp3"), "an unregistered codec name");
+        Throws<NotSupportedException>(() => AudioCodecs.Get("ogg"), "an unregistered codec name");
     }
 
     private static void AudioWavEncodes(Device device)
@@ -136,7 +136,7 @@ internal static partial class Tests
             string path = Path.Combine(folder, "sub", "out.wav");
             AudioEncoders.Save(path, audio, new AudioEncodeOptions { BitsPerSample = 24 });
             Check(AudioCodecs.ReadInfo(path) is { BitsPerSample: 24, Channels: 2 }, "Save writes by the extension, with the options");
-            Throws<NotSupportedException>(() => AudioEncoders.Save(Path.Combine(folder, "out.mp3"), audio), "an extension no encoder writes");
+            Throws<NotSupportedException>(() => AudioEncoders.Save(Path.Combine(folder, "out.ogg"), audio), "an extension no encoder writes");
             Throws<ArgumentException>(() => encoder.Encode(audio, new AudioEncodeOptions { BitsPerSample = 12 }), "12 bits are refused");
         }
         finally

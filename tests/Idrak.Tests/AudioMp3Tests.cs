@@ -6,9 +6,8 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.Mp3Audio;
 
-// The MP3 plug-in (samples/Mp3Audio): an IAudioCodec registered in AudioCodecs. The files come from
+// The MP3 codec (src/Idrak.Audio/Mp3): the library's IAudioCodec for .mp3 and .mp2. The files come from
 // tools/audio/make_tiny_audio.py (mp3/: LAME, shine and ffmpeg's Layer II encoder; the references are ffmpeg's decoding,
 // checked there against mpg123's).
 internal static partial class Tests
@@ -17,7 +16,7 @@ internal static partial class Tests
     [
         ("audio codecs: mp3: every MP3 and MP2 of the fixture (LAME and shine; MPEG-1, 2 and 2.5; mono, stereo and joint stereo; CBR and VBR; Layer II) decodes to ffmpeg's samples within 1e-4 and its exact length (a LAME or Lavc tag's delay and padding trimmed); its header is read from the first bytes", d => { if (d == Device.Cpu) AudioMp3Fixture(); }),
         ("audio codecs: mp3: ID3v2 and ID3v1 tags are skipped, a file cut inside a frame gives its whole frames, Gapless off gives every decoded sample, junk before the stream and a lost sync are passed over, Layer I and bytes of no format are refused, and the parallel decode equals decoding in order bit for bit", d => { if (d == Device.Cpu) AudioMp3Edges(); }),
-        ("audio codecs: mp3: the plug-in registers mp3 in AudioCodecs (asked before the library's codecs; ChatAudio and AudioCodecs.Load read .mp3 and .mp2) and Unregister removes it; the codec suite passes on the fixture; minutes of sound decode into one block at the speed reported", d => { if (d == Device.Cpu) AudioMp3PluginAndSuite(); }),
+        ("audio codecs: mp3: mp3 is a library codec (AudioCodecs lists it; ChatAudio and AudioCodecs.Load read .mp3 and .mp2); the codec suite passes on the fixture; minutes of sound decode into one block at the speed reported", d => { if (d == Device.Cpu) AudioMp3CodecAndSuite(); }),
         ("audio codecs: mp3: a WAV file whose samples hold MPEG frames is read by the WAV codec (from its path: the codecs listing .wav are asked first; from its bytes: a RIFF file is never MPEG frames), an MP3 file named .wav still decodes as MP3, and junk before fewer frames in a row than SyncFramesAfterJunk is refused", d => { if (d == Device.Cpu) AudioMp3NotInOtherFormats(); }),
     ];
 
@@ -26,8 +25,6 @@ internal static partial class Tests
 
     private static void AudioMp3NotInOtherFormats()
     {
-        bool registered = AudioCodecs.Names.Contains("mp3");
-        Mp3AudioPlugin.Register();
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-mp3-other-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         try
@@ -65,10 +62,6 @@ internal static partial class Tests
         finally
         {
             Directory.Delete(folder, recursive: true);
-            if (!registered)
-            {
-                Mp3AudioPlugin.Unregister();
-            }
         }
     }
 
@@ -184,37 +177,25 @@ internal static partial class Tests
         throw new InvalidOperationException("no frame found");
     }
 
-    private static void AudioMp3PluginAndSuite()
+    private static void AudioMp3CodecAndSuite()
     {
-        var before = AudioCodecs.Names.ToArray();
-        Throws<InvalidDataException>(() => AudioCodecs.Decode(AudioData("mp3/lame-joint44k.mp3")), "without the plug-in an MP3 is no registered format");
-        Mp3AudioPlugin.Register();
-        try
-        {
-            Check(AudioCodecs.Names.First() == "mp3" && AudioCodecs.Origin("mp3") == typeof(Mp3Codec).Assembly.GetName().Name && AudioCodecs.CanDecode("talk.mp3") && AudioCodecs.CanDecode("old.mp2"),
-                $"the plug-in's mp3 is asked first: {string.Join(", ", AudioCodecs.Names)} ({AudioCodecs.Origin("mp3")})");
-            var expected = Mp3Reference("lame-joint44k");
-            AssertClose(expected, AudioCodecs.Decode(AudioData("mp3/lame-joint44k.mp3")).Samples, 1e-4f, "AudioCodecs.Decode reads an MP3 through the plug-in");
-            Check(AudioCodecs.Load(AudioData("mp3/mp2-44k.mp2"), channels: 1).Channels == 1, "AudioCodecs.Load reads an MP2 and mixes it to one channel");
-            var part = ChatAudio.FromFile(AudioData("mp3/lame-16k-mono.mp3"));
-            Check(part.MediaType == "audio/mpeg" && part.Decode().Length == 24000, $"a chat part of an MP3 is audio/mpeg and decodes: {part}");
-            Check(AudioCodecs.Decode(AudioData("wav/pcm16.wav")).Length == 24000 && AudioCodecs.Decode(AudioData("flac/pcm16.flac")).Length == 24000, "WAV and FLAC still decode with mp3 asked first");
+        Check(AudioCodecs.Names.Contains("mp3") && AudioCodecs.CanDecode("talk.mp3") && AudioCodecs.CanDecode("old.mp2"),
+            $"mp3 is a library codec: {string.Join(", ", AudioCodecs.Names)}");
+        var expected = Mp3Reference("lame-joint44k");
+        AssertClose(expected, AudioCodecs.Decode(AudioData("mp3/lame-joint44k.mp3")).Samples, 1e-4f, "AudioCodecs.Decode reads an MP3");
+        Check(AudioCodecs.Load(AudioData("mp3/mp2-44k.mp2"), channels: 1).Channels == 1, "AudioCodecs.Load reads an MP2 and mixes it to one channel");
+        var part = ChatAudio.FromFile(AudioData("mp3/lame-16k-mono.mp3"));
+        Check(part.MediaType == "audio/mpeg" && part.Decode().Length == 24000, $"a chat part of an MP3 is audio/mpeg and decodes: {part}");
+        Check(AudioCodecs.Decode(AudioData("wav/pcm16.wav")).Length == 24000 && AudioCodecs.Decode(AudioData("flac/pcm16.flac")).Length == 24000, "WAV and FLAC decode beside mp3");
 
-            // The codec suite on the fixture.
-            var codec = AudioCodecs.Get("mp3");
-            var samples = Mp3FixtureFiles().Select(f => new AudioSample(AudioData($"mp3/{(string)f.Entry["file"]!}"),
-                new DecodedAudio((int)f.Entry["rate"]!, (int)f.Entry["channels"]!, Mp3Reference(f.Name)), 1e-4f)).ToList();
-            var report = Conformance.CheckAudioCodec(new AudioCodecUnderTest(
-                bytes => codec.ReadInfo(bytes.Span) is { } i ? new AudioHeader(i.SampleRate, i.Channels, i.Samples) : null,
-                bytes => { var a = codec.Decode(bytes.Span); return new DecodedAudio(a.SampleRate, a.Channels, a.Samples); }), samples);
-            Check(report.Passed, $"the audio codec suite on mp3: {report}");
-        }
-        finally
-        {
-            Mp3AudioPlugin.Unregister();
-        }
-
-        Check(AudioCodecs.Names.SequenceEqual(before) && !AudioCodecs.CanDecode("talk.mp3"), "Unregister brings the library's codecs back");
+        // The codec suite on the fixture.
+        var codec = AudioCodecs.Get("mp3");
+        var samples = Mp3FixtureFiles().Select(f => new AudioSample(AudioData($"mp3/{(string)f.Entry["file"]!}"),
+            new DecodedAudio((int)f.Entry["rate"]!, (int)f.Entry["channels"]!, Mp3Reference(f.Name)), 1e-4f)).ToList();
+        var report = Conformance.CheckAudioCodec(new AudioCodecUnderTest(
+            bytes => codec.ReadInfo(bytes.Span) is { } i ? new AudioHeader(i.SampleRate, i.Channels, i.Samples) : null,
+            bytes => { var a = codec.Decode(bytes.Span); return new DecodedAudio(a.SampleRate, a.Channels, a.Samples); }), samples);
+        Check(report.Passed, $"the audio codec suite on mp3: {report}");
 
         // Three minutes of 44.1 kHz stereo (the untagged file's frames over and over, its ID3v2 tag left out), decoded warm into one block.
         byte[] file = File.ReadAllBytes(AudioData("mp3/lame-notag44k.mp3"));

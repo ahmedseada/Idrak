@@ -77,7 +77,7 @@ internal sealed class TranscribeCommand : Command
         Examples:
           idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav
           idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small lecture.flac -l ar --timestamps -o lecture.srt
-          idrak transcribe -P Idrak.WhisperSpeech.dll -P Idrak.Mp3Audio.dll ./whisper-small recordings/ -o texts/ --format vtt -d cuda
+          idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small recordings/ -o texts/ --format vtt -d cuda
           idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav --beam 4 -j -v
           cat talk.wav | idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small -
         """;
