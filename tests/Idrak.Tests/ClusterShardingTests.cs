@@ -108,12 +108,49 @@ internal static partial class Tests
         Check(GradientSyncs.Find("sharded") is not null && GradientSyncs.Origin("sharded") == Overrides.Library, $"Idrak.Network registers sharded: {GradientSyncs.Describe()}");
     }
 
-    // Each rank's memory as each epoch ends (the step's tensors released).
+    // Each rank's memory as each epoch ends (the step's tensors released), and, while storages are tracked, what it holds:
+    // the device's live storages by size and owner (a parameter's name where Name knows it, else the allocating method).
     private sealed class MemoryProbe(Device device) : ITrainerCallback
     {
         public List<long> InUse { get; } = [];
 
-        public void OnEpochEnd(TrainerContext context, EpochCompleted epoch) => InUse.Add(device.Backend.GetMemoryUsage().InUse);
+        public List<string> Held { get; } = [];
+
+        public Func<Storage, string?>? Name { get; set; }
+
+        public void OnEpochEnd(TrainerContext context, EpochCompleted epoch)
+        {
+            InUse.Add(device.Backend.GetMemoryUsage().InUse);
+            if (StorageTracking.Enabled)
+            {
+                Held.Add(StorageTracking.Describe(device.Backend.LiveStorages(Name)));
+            }
+        }
+    }
+
+    // Names a model's parameter storages and their gradients' ("3.weight [256, 256]"), for the memory listings.
+    private static Func<Storage, string?> ParameterNames(Module model)
+    {
+        var names = new Dictionary<Storage, string>(ReferenceEqualityComparer.Instance);
+        var parameters = model.Parameters().ToList();
+        return storage =>
+        {
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                var p = parameters[i];
+                if (ReferenceEquals(p.Storage, storage))
+                {
+                    return $"parameter {i} {Tensor.FormatShape(p.Shape)}";
+                }
+
+                if (p.Grad is { } g && ReferenceEquals(g.Storage, storage))
+                {
+                    return $"gradient of parameter {i} {Tensor.FormatShape(p.Shape)}";
+                }
+            }
+
+            return names.GetValueOrDefault(storage);
+        };
     }
 
     private static Sequential WideModel(Device device)
@@ -145,16 +182,16 @@ internal static partial class Tests
             $"    {values:N0} values: {values * 4 / 1048576.0:F2} MiB of weights, {training / 1048576.0:F2} MiB of training state with Adam; each fake GPU's cap {cap / 1048576.0:F0} MiB"));
         Check(training > cap, "the training state is over one fake GPU's cap");
 
-        (float[] Weights, List<long> InUse, long Peak, long Owned) Fit(ClusterRank rank, ClusterOptions options, int epochs)
+        (float[] Weights, List<long> InUse, long Peak, long Owned, List<string> Held) Fit(ClusterRank rank, ClusterOptions options, int epochs)
         {
             using var model = WideModel(rank.Device);
             using var optimizer = new Adam(model.Parameters(), 0.002f);
-            var memory = new MemoryProbe(rank.Device);
+            var memory = new MemoryProbe(rank.Device) { Name = ParameterNames(model) };
             var trainer = new Trainer(model, optimizer, Losses.CrossEntropy) { Cluster = rank.Collectives, ClusterOptions = options, Callbacks = { memory } };
             trainer.Fit(new DataLoader(data, 8, shuffle: true, device: rank.Device, seed: 5), epochs);
             var owners = ShardOwners.Assign([.. model.Parameters()], rank.Collectives.WorldSize);
             long owned = model.Parameters().Where((_, i) => owners[i] == rank.Rank).Sum(p => (long)p.Size);
-            return ([.. model.Parameters().SelectMany(p => p.ToArray())], memory.InUse, rank.Device.Backend.GetMemoryUsage().Peak, owned);
+            return ([.. model.Parameters().SelectMany(p => p.ToArray())], memory.InUse, rank.Device.Backend.GetMemoryUsage().Peak, owned, memory.Held);
         }
 
         // One fake GPU alone cannot train it (a hard cap: CPU, Vulkan, HIP; a CUDA carve spills to host memory instead).
@@ -179,17 +216,26 @@ internal static partial class Tests
 
         var capped = ClusterTopology.Create([new ClusterNodeSpec("box", null, [.. Enumerable.Repeat(new ClusterDeviceSpec(device.ToString(), cap), 4)])], null, null);
         var options = DpOptions() with { Collective = "naive", Shard = ShardMode.Parameters, BucketBytes = 256L << 10 };
-        var sharded = DpRun(capped, options, rank => Fit(rank, options, 3));
+        // Every storage tracked (plan 23, C8b): a bound that fails names what each rank's device held at each epoch's end.
+        (float[] Weights, List<long> InUse, long Peak, long Owned, List<string> Held)[] sharded;
+        using (StorageTracking.Track())
+        {
+            sharded = DpRun(capped, options, rank => Fit(rank, options, 3));
+        }
+
         var plain = DpRun(DpTopology(device, 4), DpOptions() with { Collective = "naive", BucketBytes = 256L << 10 }, rank => Fit(rank, DpOptions() with { Collective = "naive", BucketBytes = 256L << 10 }, 3));
         for (int r = 0; r < 4; r++)
         {
-            var (_, inUse, peak, owned) = sharded[r];
+            var (_, inUse, peak, owned, held) = sharded[r];
             long share = 3 * owned * sizeof(float);                          // its master copies and their two moments
             long slack = 256L << 10;                                         // the loader's and the epoch's sums, the scratch of a bucket
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"    rank {r}: owns {owned:N0} values ({owned * 100.0 / values:F1}%), share {share / 1048576.0:F2} MiB, in use at each epoch's end [{string.Join(", ", inUse.Select(b => (b / 1048576.0).ToString("F2", CultureInfo.InvariantCulture)))}] MiB, peak {peak / 1048576.0:F2} MiB"));
-            Check(inUse.Count == 3 && inUse.All(b => b >= share && b <= share + slack), $"rank {r} holds its share: {string.Join(", ", inUse)} B against {share} B (+{slack} B)");
-            Check(inUse.Skip(1).All(b => b == inUse[0]), $"rank {r}'s device memory does not grow over the epochs (rule 77): {string.Join(", ", inUse)}");
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"    rank {r} holds at the last epoch's end: {held.LastOrDefault()}"));
+            Check(inUse.Count == 3 && inUse.All(b => b >= share && b <= share + slack),
+                $"rank {r} holds its share: {string.Join(", ", inUse)} B against {share} B (+{slack} B); the device's live storages at each epoch's end: "
+                + string.Join(" | ", held.Select((h, e) => $"epoch {e + 1}: {h}")));
+            Check(inUse.Skip(1).All(b => b == inUse[0]), $"rank {r}'s device memory does not grow over the epochs (rule 77): {string.Join(", ", inUse)}; held: {string.Join(" | ", held)}");
             Check(peak <= cap, $"rank {r}'s peak {peak} B within its cap {cap} B");
             Check(sharded[r].Weights.SequenceEqual(plain[r].Weights), $"rank {r}: the weights after 3 epochs bit for bit the unsharded run's (largest gap {Gap(sharded[r].Weights, plain[r].Weights):G3})");
         }

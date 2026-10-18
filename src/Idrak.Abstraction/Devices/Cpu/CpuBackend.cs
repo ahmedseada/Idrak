@@ -156,6 +156,8 @@ internal sealed partial class CpuBackend : Backend
 
     public override void Download(Storage source, Span<float> destination) => D(source).AsSpan(0, destination.Length).CopyTo(destination);
 
+    public override void UploadRange(ReadOnlySpan<float> source, Storage destination, int offset) => source.CopyTo(D(destination).AsSpan(offset, source.Length));
+
     public override void FillKernel(Storage y, int n, float value) => D(y).AsSpan(0, n).Fill(value);
 
     public override void Copy(Storage x, Storage y, int n) => D(x).AsSpan(0, n).CopyTo(D(y));

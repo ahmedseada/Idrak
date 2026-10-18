@@ -1256,6 +1256,118 @@ gathered unit's weight, or a backend scratch sized to the largest operand, stays
 CPU gives it back. C8b first makes the test name what is held (the device's live storages by size and owner on
 failure), so the owner's next GPU run says which, then fixes it in the library; the test's bound stays as it is.
 
+**C8b as built (2026-10-18).** Memory and speed. **The 262,148 B (closed, from the code; the owner's GPU run to confirm):**
+`GradientReduction.Write` copied a piece of a parameter cut across buckets through a device scratch (`_scratch`,
+`Math.Max(n, BucketValues)` floats, made once and kept for the run) on every non-CPU device; the CPU wrote host memory
+in place. With `BucketBytes` 256 KiB the 256 x 256 weights straddle buckets, so every GPU rank kept 65,536 floats
+(262,144 B) beside its share; the float is the `Trainer`'s epoch sums (`Tensor.Zeros([1 + metrics])`), which the CPU
+holds too (the CPU now prints 1,572,868 B = share + 4 per rank, the listing below). Fixed by a device contract:
+`Backend.UploadRange(source, destination, offset)` (default: a pooled block of the piece's size taken and given back at
+once, then `Copy2D`; CPU, CUDA (`cuMemcpyHtoD(Async)` at the offset, through the pinned staging ring) and Vulkan (mapped
+memory at the offset, else the staging buffer copied to the offset) override it), and the scratch is gone. The test
+names what is held on failure: `StorageTracking` (`Track()`, or `IDRAK_TRACK_STORAGES=1` for a whole process; one
+static read per storage made when off) records each storage with the method that made it, `Backend.LiveStorages(name)`
+(a virtual on the device contract: the tracked storages alive and in memory, largest first; a device may add its own
+blocks) and `StorageTracking.Describe`; "cluster: a model whose training state is over the cap…" prints each rank's
+listing at the last epoch's end ("7 storage(s), 1,572,868 B; 4 x 262,144 B Optimizer.CreateState; 2 x 262,144 B
+ShardedWeights..ctor; 4 B Trainer.Fit") and every epoch's in its failure message, parameters and gradients by index and
+shape. The bound is unchanged. **Stage 0 holding 102,404 B against its 102,656 B on CUDA** (the coordinator's second GPU
+item): nothing between 94819b0 (passed) and 8e4b84c changes where a stage's tensors live (that range is C9: the
+dashboard, the control gate, the no-rows overlap); 102,404 = 102,656 - 256 + 4 (the boundary's token), and 256 B is one
+64-float tensor, e.g. `ShardModel`'s first weight [2, 32], which the C9-era tests before the pipeline group (the no-rows
+reduction on carved slots 0-2) can leave to the finalizer. So the likely cause is a release by a finalizer inside the
+measured window on carved slot 0, not a stage tensor missing. The test now collects (full collection and finalizers)
+before it measures, tracks storages from there, checks each of the stage's tensors is on its device and in memory, and on
+failure names each one that is not (its module path, shape, bytes, and where: released, evicted, on another device) and
+what was made or released on the device meanwhile; IDRAK_TRACK_STORAGES=1 names what earlier tests left too. Not certain
+without the owner's run (no GPU here).
+
+**A stage and a shard load only their own tensors (closed).** `DeferredTensors` (Idrak.Abstraction): a device "deferred"
+(`DeferredProvider`, registered by `DeviceProviders` itself, by name only: never listed, never the default) whose storages
+hold no memory; each tensor's values come from a source (`SetSource`) read when it moves to a real device
+(`Module.MoveTensor`: one tensor at a time); a build on it hands out placeholders (`Build`, `Placeholder`: one array per
+length per thread, never written) so **any family's builder runs unchanged** and an upload of a placeholder keeps nothing,
+while values a build computes (rotary tables) are kept; inside `StayDeferred` a move gives a tensor on the device whose
+memory is given back at once (`Backend.Evict`) and read on its first `Restore`. `PretrainedOptions.Deferred`
+(`PretrainedModel.Load`): every weight is checked against the checkpoint's header and answered with a placeholder
+(`CheckpointWeights.Deferred`), then given its place in the file through the save mapping (`PretrainedModel.StoredTensors()`:
+each weight's checkpoint name, stored shape and transposition, the names the architecture contract gives, so no family
+is named); a parameter the mapping does not cover fails naming its module ("load the model whole"); packed weights and a
+merged adapter are refused (a deferred load reads float32 weights). `PretrainedModel.BytesRead` (`ITensorStore.BytesRead`,
+counted by `SafeTensorsReader` per tensor byte range), `IsDeferred`, `Place()`. Pipeline: `PipelineStage.Place` works as
+before on a deferred network: the stage's modules are read as they move, the others released (or kept by rank 0 with no
+memory). Shard = parameters: the pretrainer moves the deferred network inside `StayDeferred` (nothing read), every rank
+reads what no shard trains, and `ShardedWeights` reads a rank's own parameters as its share is made (the others'
+recomputation replaced by the broadcast from their owner, `Backend.SetRecompute`); `SyncCore.Start`'s broadcast and the
+starting-state check skip evicted tensors (every rank's are read from the same file). `ClusterOptions.OwnTensorsOnly`
+(`IDRAK_CLUSTER_OWN_TENSORS`, on); `pretrain` loads deferred under a pipeline or a parameters shard. Measured (tiny model,
+2 ranks carved from the CPU): a pipeline rank read 0 B at the load and 102,656 / 102,784 B when placed (73% each of the
+file's 139,904 B: the tied table is read by both stages), in use 102,660 / 102,788 B, the deferred device keeping 2,048 B
+(the unplaced modules' rotary tables), weights bit for bit one process's; a parameters shard read 70,016 / 69,888 B
+(50% each, together the file once) against 139,904 B each loaded whole, the losses and checkpoint byte for byte the
+whole-load run's.
+
+**Checkpoints: streamed through rank 0 (chosen over a sharded format with an index).** Each rank answers rank 0's
+requests a tensor at a time (`StreamedCheckpoint`: the owner's optimizer entries' names and shapes for the header, then
+each weight and entry as rank 0 writes it), and rank 0 writes the one-process files (`model.safetensors`,
+`optimizer.safetensors`): the joined checkpoints byte for byte, so every reader and resume is unchanged, and no rank holds
+another's share or more than one tensor of it. Why not shards with an index: the ranks of a cluster do not share a file
+system (separate machines; the tests give each rank its own folder), so shards would be scattered over machines, and the
+index's readers (`SafeTensorsReader` reads one already) would need every part gathered anyway; the bytes cross the network
+once either way. `PretrainedModel.SaveHuggingFace(…, values)` takes each weight's values from a delegate (rank 0's own, or
+the owner's over the transport); the pipeline's writer (`SavePipelinedStreamed`, the cut and state in `WritePipelineState`)
+and the sharded one (`SaveShardedStreamed`; `IGradientSync.Owner`, `Local`, `SaveOwnOptimizerState`, new default members)
+replace the gathers: a sharded save no longer calls `Gather()` or joins the state on every rank. A pipeline stage resumes
+reading only its own optimizer entries. `ClusterOptions.StreamedSave` (`IDRAK_CLUSTER_STREAMED_SAVE`, on; off: C6's and
+C7's joined saves). Left: **evaluation under Shard = parameters still gathers the whole weights** (`Gather()`): a decoder
+block's inference forward hands its sum to the next block's norm (`NextNorm`, a gain outside its own module) and the ranks'
+evaluation shares run unequal forwards, so per-layer gathers cannot serve it yet; `End()` gives every rank the whole model
+after the last step (the shard test's peak, 612,736 B, is that and the activations, equal to the whole-load run's), and an
+optimizer's `SaveState` copies a stage's or a share's whole state to the host before it is streamed.
+
+**Activations device to device (closed).** `IDeviceTransport` moved to `Idrak.Abstraction.Cluster` (Idrak's pipeline uses
+it now; Idrak.Network implements it as before). `PipelineBoundary` (new `deviceActivations` parameter): over a transport
+that hands device memory over, the shape still travels as bytes and the values are posted (`PostDevice`, the storage
+held by a reference until taken) and copied by the receiver (`ReceiveDevice`); `Flush` waits for them at a step's or an
+evaluation's end. `PipelineStepped.Staging` ("device" or "host") in the console and JSON lines. `ClusterOptions.DeviceActivations`
+(`IDRAK_CLUSTER_DEVICE_ACTIVATIONS`, on). Measured: 2 stages over pcie-host, logits and every gradient bit-identical to host
+staging, 32,832 B a step either way.
+
+**The receive inbox wakes its waiter directly (closed; no measurable gain here).** `FramedTransport`'s queues are an
+`InboxQueue` of its own: a blocked receive waits on the queue's monitor and the thread that queues a message pulses it;
+`ClusterOptions.DirectWake` (`IDRAK_CLUSTER_DIRECT_WAKE`, on; off: the channel's wake through the thread pool, kept to
+measure against). Measured on this machine (4 cores, shared), a message after an idle gap: between two processes over
+shared memory 265 to 279 us median through the pool against 260 to 307 us directly; between two threads over pcie-host
+60.2 to 69.5 us against 53.0 to 67.8 us. The wait is the OS waking a descheduled thread (the doorbell's, then the
+receiver's); the pool hop is a small part of it. Not changed: `LocalTransport`'s device handoffs still wake through a
+channel.
+
+**A stop under pipeline placement writes its checkpoint (closed).** The pipelined pretrainer answers
+`ClusterRunStoppedException` at a step boundary with the last finished step's checkpoint (every stage's part streamed to
+rank 0) and rethrows. Measured: stopped after 4 steps, the checkpoint byte for byte the uninterrupted 4-step run's; resumed
+(each stage reading its own part) to 7 steps, losses and weights the 7-step run's. **The Trainer and the fine-tuner answer
+a stop too** (the coordinator's addition): `Trainer.StopFolder` (`checkpoint-STEP`: `model.ikw`, `optimizer.safetensors`,
+`train-state.json`; a sharded run's weights gathered and state joined) and `Trainer.ResumeFrom` (weights and optimizer
+state loaded, the finished steps drawn alike and not trained; a cluster run needs a `DataLoader` over a sample source);
+the fine-tuner writes `checkpoint-STEP` in its output folder (the adapters, `optimizer.safetensors`, `tune-state.json`) and
+`FineTuningOptions.ResumeFrom` goes on from it (adapters loaded into the ones just made, a trained vision part or part
+source refused). Tested: stopped at step 3 and resumed, the Trainer (unsharded and Shard = parameters) and the fine-tuner
+(unsharded and Shard = optimizer) end with the uninterrupted run's weights bit for bit.
+
+**Sharding with a pipeline, top-k with sharding: kept refused.** The numbers do not ask for them yet: a stage of the tiny
+model holds 73% of it with 2 stages (the tied table on both), a stage's replicas only exist from 4 ranks, and the stage's
+gathers would run between the stage-to-stage sends; a sharded reduce-scatter sends no more bytes than the all-reduce, and
+top-k's gain (C4: under half the bytes at 10%) is for a network-bound step, which no run here is (the owner's LAN and rental
+runs and C8a's advisor are what would show the need). Both refusals stay, naming the settings.
+
+Tests: `tests/Idrak.Tests/ClusterMemoryTests.cs` (`ClusterMemoryGroup`, 7 tests after `ClusterDashboardGroup`); updated:
+the over-the-cap sharding test (the listing), "a rank holds only its stage's tensors" (collect first, per-tensor
+residency), the options test (the four variables). One build of the test project, the API dumps (Idrak.Abstraction,
+Idrak, Idrak.Nlp, Idrak.Network) and the inventory regenerated, then on the CPU the filter `cluster:|public API|abstraction
+inventory|cli health|cli polish|cli arabic: every message|profiler:|pretrain:|cli pretrain:|training:|fine-tuning:|callbacks:|offloading:|generation:|decoder:|pretrained:|minimal:|minimum backend:`:
+216 passed, 1 failed (the options test, which lacked the new variables), fixed and rerun. Not run here: everything on a
+GPU (the UploadRange overrides on CUDA and Vulkan, the two GPU items above, pcie-host and nvlink between GPUs).
+
 ### C9: the dashboard (set up, control and monitor in a browser)
 
 Beside C8, once C6 and C7 have landed (two agents). Decided by the owner (decision 8): simulated runs are set up,
