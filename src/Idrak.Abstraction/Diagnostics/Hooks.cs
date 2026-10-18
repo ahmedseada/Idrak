@@ -154,6 +154,12 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             + Simulated(e.Simulated));
 
     /// <inheritdoc />
+    public void OnGradientSync(in GradientsSynced e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Gradients {e.Sync} ({e.Compression}) rank {e.Rank}/{e.WorldSize}{(e.Step >= 0 ? $" step {e.Step}" : "")}: {e.Buckets} bucket(s) of {e.BucketBytes:N0} B, {e.Overlapped} during the backward pass, {e.Bytes:N0} B; "
+            + $"backward {e.Backward.TotalMilliseconds:F3} ms, network {e.Network.TotalMilliseconds:F3} ms, exposed {e.Exposed.TotalMilliseconds:F3} ms") + (e.Lost is { } lost ? $"; overlap lost: {lost}" : ""));
+
+    /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => _out.WriteLine($"Ranks {e.RankA} and {e.RankB} use {e.Transport} ({e.Reason})");
 
     /// <inheritdoc />
@@ -181,6 +187,7 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
     private readonly List<EpochCompleted> _epochs = [];
     private readonly List<BatchCompleted> _batches = [];
     private readonly List<CollectiveCompleted> _collectives = [];
+    private readonly List<GradientsSynced> _syncs = [];
     private readonly Lock _lock = new();
 
     /// <inheritdoc />
@@ -231,12 +238,33 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
         }
     }
 
+    /// <summary>Recorded gradient synchronisations, one per rank and step (needs <see cref="TelemetryLevel.Network"/>): each step's buckets, overlap and exposed network time.</summary>
+    public IReadOnlyList<GradientsSynced> Synchronisations
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return [.. _syncs];
+            }
+        }
+    }
+
     /// <inheritdoc />
     public void OnCollective(in CollectiveCompleted e)
     {
         lock (_lock)
         {
             _collectives.Add(e);
+        }
+    }
+
+    /// <inheritdoc />
+    public void OnGradientSync(in GradientsSynced e)
+    {
+        lock (_lock)
+        {
+            _syncs.Add(e);
         }
     }
 
@@ -381,6 +409,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnCollective(in CollectiveCompleted e) => Write(e);
 
     /// <inheritdoc />
+    public void OnGradientSync(in GradientsSynced e) => Write(e);
+
+    /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => Write(e);
 
     /// <inheritdoc />
@@ -470,6 +501,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnCollective(in CollectiveCompleted e) => _channel.OnCollective(in e);
+
+    /// <inheritdoc />
+    public void OnGradientSync(in GradientsSynced e) => _channel.OnGradientSync(in e);
 
     /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => _channel.OnTransportChosen(in e);
@@ -707,6 +741,26 @@ public static class TelemetryJson
                 w.WriteNumber("simulated_ms", e.Simulated.TotalMilliseconds);
                 w.WriteNumber("blocked_ms", e.Blocked.TotalMilliseconds);
                 w.WriteNumber("slowest_rank", e.SlowestRank);
+                break;
+            case GradientsSynced e:
+                w.WriteString("event", "gradient_sync");
+                w.WriteString("sync", e.Sync);
+                w.WriteString("compression", e.Compression);
+                w.WriteNumber("rank", e.Rank);
+                w.WriteNumber("world_size", e.WorldSize);
+                w.WriteNumber("step", e.Step);
+                w.WriteNumber("buckets", e.Buckets);
+                w.WriteNumber("overlapped", e.Overlapped);
+                w.WriteNumber("bucket_bytes", e.BucketBytes);
+                w.WriteNumber("bytes", e.Bytes);
+                w.WriteNumber("backward_ms", e.Backward.TotalMilliseconds);
+                w.WriteNumber("network_ms", e.Network.TotalMilliseconds);
+                w.WriteNumber("exposed_ms", e.Exposed.TotalMilliseconds);
+                if (e.Lost is { } lost)
+                {
+                    w.WriteString("lost", lost);
+                }
+
                 break;
             case TransportChosen e:
                 w.WriteString("event", "transport_chosen");

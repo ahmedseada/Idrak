@@ -342,6 +342,30 @@ public readonly record struct TransferCompleted(string Transport, int From, int 
 public readonly record struct CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived,
     TimeSpan Wall, TimeSpan Simulated, TimeSpan Blocked, int SlowestRank);
 
+/// <summary>
+/// Published at <c>TelemetryLevel.Network</c> by a gradient synchronisation once per training step on each rank (plan 23,
+/// phase C4): how the step's gradients (or, with local SGD, weights) went across the ranks, how much of it ran while the
+/// backward pass went on, and how much of the network time the step still waited for after it.
+/// </summary>
+/// <param name="Sync">The synchronisation ("all-reduce", "local-sgd", …).</param>
+/// <param name="Compression">The compression of its buckets ("none", "bf16", "top-k", …).</param>
+/// <param name="Rank">The rank reporting, in the step's group.</param>
+/// <param name="WorldSize">The ranks of the step's group.</param>
+/// <param name="Step">The training step (as the trainer began it), or -1 when the trainer began none.</param>
+/// <param name="Buckets">The buckets reduced (0 on a local SGD step that sent no weights).</param>
+/// <param name="Overlapped">The buckets sent while the backward pass ran.</param>
+/// <param name="BucketBytes">The bytes of a bucket (set, or measured on the first step).</param>
+/// <param name="Bytes">The bytes of gradient (or weight) values reduced this step, before compression.</param>
+/// <param name="Backward">The backward pass's time, from the overlap's start to the reduction's (zero without one).</param>
+/// <param name="Network">The reduction's time: on a simulated transport the virtual clock's, else the wall time.</param>
+/// <param name="Exposed">
+/// The network time the step waited for after its backward pass: on a simulated transport predicted from the backward's
+/// measured time and each bucket's simulated time, else measured.
+/// </param>
+/// <param name="Lost">Why the step's buckets were not sent during its backward pass (a recorded step replayed, overlap off, …), or null.</param>
+public readonly record struct GradientsSynced(string Sync, string Compression, int Rank, int WorldSize, long Step, int Buckets, int Overlapped, long BucketBytes,
+    long Bytes, TimeSpan Backward, TimeSpan Network, TimeSpan Exposed, string? Lost);
+
 /// <summary>Published at <c>TelemetryLevel.Network</c> once per pair of ranks when a group starts: the transport joining them, and why.</summary>
 /// <param name="RankA">One rank.</param>
 /// <param name="RankB">The other.</param>

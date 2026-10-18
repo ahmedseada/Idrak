@@ -172,8 +172,8 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         var totalTime = Stopwatch.StartNew();
         float[][]? bestWeights = null;
         int epochsWithoutImprovement = 0;
-        long step = 0;
-        bool cancelled = false;
+        long step = 0, begun = -1;
+        bool cancelled = false, present = true;
         var callbacks = Callbacks.ToArray();
         using var sync = Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, ClusterOptions ?? Abstraction.Cluster.ClusterOptions.FromEnvironment()) : null;
         if (sync is not null && train is DataLoader { Shuffle: true, Seed: null })
@@ -237,6 +237,27 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
 
                 var batch = has ? batches.Current : null;
                 using var _ = batch;
+                if (sync is not null && step != begun)
+                {
+                    present = sync.BeginStep(step);                         // a simulated cluster's faults, late joins and replays act here
+                    begun = step;
+                }
+
+                if (!present)
+                {
+                    // This rank sits the step out (a late joiner before it joins, every rank past a replay's last step): its
+                    // batch is not trained; the ranks that take part sum the step's gradients over their own samples.
+                    if (!has)
+                    {
+                        break;
+                    }
+
+                    step++;
+                    epochStep++;
+                    context.Step = step;
+                    dataStart = Stopwatch.GetTimestamp();
+                    continue;
+                }
                 using var scope = new TensorScope();
                 var dataTime = Stopwatch.GetElapsedTime(dataStart);
                 long computeStart = Stopwatch.GetTimestamp();
@@ -247,7 +268,10 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                     predictions = Model.Forward(batch.Features);
                     batchLoss = Loss(predictions, batch.Targets);
                     Optimizer.ZeroGrad();
-                    batchLoss.Backward();
+                    using (sync?.Overlap(batch.Size))                       // gradient buckets go while the backward pass runs
+                    {
+                        batchLoss.Backward();
+                    }
                 }
                 else
                 {

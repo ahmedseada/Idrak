@@ -3,181 +3,275 @@
 
 using System.Buffers;
 using System.Diagnostics;
-using System.Numerics;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using Idrak.Networking.Abstractions;
+using Idrak.Networking.Compression;
 
 namespace Idrak.Networking.Training;
 
-/// <summary>"all-reduce" in <see cref="GradientSyncs"/>: every step's gradients summed across the ranks after the backward pass.</summary>
+/// <summary>"all-reduce" in <see cref="GradientSyncs"/>: every step's gradients summed across the ranks, a bucket at a time, each sent while the backward pass goes on.</summary>
 internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 {
     public string Name => "all-reduce";
 
-    public string Summary => "every step's gradients summed across the ranks after the backward pass, token-weighted, a bucket at a time";
+    public string Summary => "every step's gradients summed across the ranks, token-weighted, a bucket at a time, each sent while the backward pass goes on";
 
     public IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => new GradientReduction(collectives, optimizer, options);
 }
 
 /// <summary>
-/// The gradient all-reduce of data-parallel training (plan 23, phase C2). The gradients are addressed as (parameter,
-/// offset, count) pieces in parameter order and reduced a bucket at a time (<see cref="ClusterOptions.BucketBytes"/>)
-/// through one pooled host buffer, returned after every step: no packed copy on the device, and device memory that does
-/// not grow (rule 77). The step's header (this rank's tokens, its loss and which parameters have a gradient here) travels
-/// in the first bucket on a float32 wire, so a step is one collective per bucket; on a bfloat16 wire the header goes
-/// first on its own in float32, so no count is rounded. The sum is token-weighted: each rank's gradient, a mean over its
-/// own tokens, is weighted by them, so the result is the gradient one process would compute on every rank's rows. An
-/// optimizer that holds the gradients on the host (<see cref="IHostGradients"/>, the HostOptimizer) is reduced there, on
-/// the pieces it downloaded.
+/// The gradient all-reduce of data-parallel training (plan 23, phases C2 and C4). The gradients are addressed as
+/// (parameter, offset, count) pieces packed into buckets in reverse parameter order (<see cref="BucketLayout"/>), never a
+/// packed copy on the device. Each bucket is this rank's values times its tokens (its rows; 1 when the losses are already
+/// the step's shares), summed across the ranks through the run's compression (<see cref="GradientCompressions"/>: none,
+/// bf16, top-k), then divided by the step's tokens over every rank, which a small header collective of float32 values
+/// gives (the tokens, the loss and which parameters have a gradient on any rank). So the sum is token-weighted: the
+/// gradient one process would compute on every rank's rows.
+/// <para>
+/// With overlap (<see cref="ClusterOptions.Overlap"/>, the trainers' <see cref="IGradientSync.Overlap"/> scope around the
+/// step's last backward pass) a hook per parameter (<see cref="Autograd.OnGradientReady"/>) notes each finished gradient,
+/// and a bucket whose parameters are all finished is copied to the host and reduced on a thread of its own while the
+/// backward pass goes on; <see cref="Reduce"/> sends the rest, the header last, and writes every bucket back. Without it
+/// the header goes first and each bucket is reduced and written back in turn through one pooled buffer. Both send the same
+/// buckets with the same values, so the result is the same bit for bit (rule 71); overlap holds the step's gradients on the
+/// host until the header says the step's tokens (one host buffer, allocated once). A parameter whose gradient changes after
+/// its bucket was sent (a weight shared into a checkpointed block) marks the bucket, every rank learns it in the header,
+/// and the bucket is summed again, whole and uncompressed.
+/// </para>
+/// <para>
+/// The bucket size is <see cref="ClusterOptions.BucketBytes"/>, or measured on the first step (<see cref="BucketSizing"/>).
+/// An optimizer that holds the gradients on the host (<see cref="IHostGradients"/>, the HostOptimizer) is reduced there,
+/// after the backward pass. Each step is published as <see cref="GradientsSynced"/>: the buckets, how many went during
+/// the backward pass, the network time and the part of it the step waited for after the backward pass, and why overlap
+/// was lost (a recorded step replayed as a graph runs no hook).
+/// </para>
 /// </summary>
-internal sealed class GradientReduction : IGradientSync
+internal sealed class GradientReduction : SyncCore
 {
-    private const int HeaderFloats = 2;                       // tokens, loss; then one presence flag per parameter
-    private const long DefaultBucketBytes = 16L << 20;        // until phase C4 measures it (IDRAK_CLUSTER_BUCKET_BYTES)
+    private const int HeaderFloats = 2;                       // tokens, loss; then a presence flag per parameter, a changed flag per bucket
 
-    private readonly ClusterOptions _options;
-    private readonly HostCollectives? _host;                  // the library's collectives: buckets reduced straight from the host buffer
-    private readonly IHostGradients? _hostGradients;
-    private readonly int _bucket;                             // values a bucket holds
-    private readonly bool _piggyback;                         // the header rides in the first bucket
-    private readonly List<(int Parameter, int Offset, int Count)> _pieces = [];
-    private readonly List<(int First, int Count, int Values)> _buckets = [];
+    private readonly IGradientCompressor _compressor;
+    private readonly Dictionary<Tensor, int> _index = new(ReferenceEqualityComparer.Instance);
     private readonly bool[] _present;
-    private readonly int _largest;                            // the most values one collective of a step carries
-    private double[] _shares;
-    private Tensor? _scratch;                                 // device staging, made on first need and kept
+    private readonly List<(double ReadyAt, TimeSpan Simulated, TimeSpan Wall)> _sent = [];
+    private BucketLayout _layout;
+    private bool _sized;
+    private Tensor? _scratch;                                 // device staging of a piece of a parameter larger than a bucket, made once
+    private OverlapWorker? _worker;
+    private float[]? _held;                                   // overlap: every bucket's values, then the header
 
-    private long _steps;
-    private long _mark;
-    private double _measuredTokens, _measuredSeconds;
-    private long _nextExchange;
+    // The step's overlap (Overlap to Reduce).
+    private bool _overlapping;
+    private double _tokens;
+    private bool _normalized;
+    private float _weight;
+    private long _backwardStart;
+    private bool[] _ready = [];
+    private int[] _pending = [];
+    private bool[] _launched = [];
+    private bool[] _changed = [];
+    private (double ReadyAt, TimeSpan Simulated, TimeSpan Wall)[] _took = [];
+    private int _next, _overlapped;
+    private int _header;                                      // the header's place among the step's timed collectives
+    private IDisposable? _hook;
+    private string? _lost;
 
     public GradientReduction(ICollectives collectives, Optimizer optimizer, ClusterOptions options)
+        : base(collectives, optimizer, options)
     {
-        Collectives = collectives ?? throw new ArgumentNullException(nameof(collectives));
-        ArgumentNullException.ThrowIfNull(optimizer);
-        _options = options ?? throw new ArgumentNullException(nameof(options));
-        Parameters = optimizer.Parameters;
-        _host = collectives as HostCollectives;
-        _hostGradients = optimizer as IHostGradients;
-        _bucket = (int)Math.Clamp((options.BucketBytes ?? DefaultBucketBytes) / sizeof(float), 1, Array.MaxLength / 2);
+        _compressor = GradientCompressions.Create(collectives, Parameters, options);
         _present = new bool[Parameters.Count];
-        _shares = [.. DrawShares.Even(collectives.WorldSize)];
-        _nextExchange = options.RebalanceSteps > 0 ? 1 + options.RebalanceSteps : long.MaxValue;
         for (int i = 0; i < Parameters.Count; i++)
         {
-            if (!ReferenceEquals(Parameters[i].Backend, collectives.Device.Backend))
-            {
-                throw new ArgumentException($"Parameter {i} {Tensor.FormatShape(Parameters[i].Shape)} is on {Parameters[i].Device}; rank {collectives.Rank}'s collectives are on {collectives.Device}: "
-                                            + "train each rank's model on its rank's device.", nameof(optimizer));
-            }
+            _index.TryAdd(Parameters[i], i);
         }
 
-        int header = HeaderFloats + Parameters.Count;
-        _piggyback = options.Wire == WireType.Float32 && header < _bucket;
-        Layout(_piggyback ? _bucket - header : _bucket);
-        _largest = Math.Max(header + (_piggyback ? _buckets[0].Values : 0), _buckets.Max(b => b.Values));
+        _sized = options.BucketBytes is not null;
+        _layout = new BucketLayout(Parameters, ValuesOf(options.BucketBytes ?? BucketSizing.ProbeBytes));
     }
 
-    public string Name => "all-reduce";
+    public override string Name => "all-reduce";
 
-    public ICollectives Collectives { get; }
+    /// <summary>The bucket layout in use (its size measured on the first step when unset).</summary>
+    internal BucketLayout Layout => _layout;
 
-    public IReadOnlyList<Tensor> Parameters { get; }
+    private int HeaderLength => HeaderFloats + Parameters.Count + _layout.Count;
 
-    public IReadOnlyList<double> Shares => _shares;
-
-    private int World => Collectives.WorldSize;
-
-    public void Start()
+    public override IDisposable? Overlap(double tokens, bool normalized = false)
     {
-        if (World > 1)
+        if (World == 1 || !Present)
         {
-            if (_options.StartingState == StartingState.Check)
-            {
-                CheckSame();
-            }
-            else
-            {
-                Broadcast(Parameters);
-                _hostGradients?.ReloadParameters();
-            }
+            return null;
         }
 
-        _mark = Stopwatch.GetTimestamp();
+        EndOverlap();                                          // a step that never reached Reduce (it threw) leaves nothing behind
+        _backwardStart = Stopwatch.GetTimestamp();
+        (_tokens, _normalized) = (tokens, normalized);
+        _lost = !Options.Overlap ? "overlap is off (IDRAK_CLUSTER_OVERLAP=0)"
+            : HostGradients is not null ? "the optimizer brings the gradients to the host after the backward pass (HostOptimizer)"
+            : !Values.OnHost ? "the collectives take device buffers only"
+            : null;
+        if (_lost is not null || _layout.Count == 1)
+        {
+            return null;                                       // one bucket: it is finished when the backward pass is
+        }
+
+        int buckets = _layout.Count;
+        if (_ready.Length != Parameters.Count)
+        {
+            _ready = new bool[Parameters.Count];
+        }
+
+        if (_pending.Length != buckets)
+        {
+            (_pending, _launched, _changed, _took) = (new int[buckets], new bool[buckets], new bool[buckets], new (double, TimeSpan, TimeSpan)[buckets]);
+        }
+
+        Array.Clear(_ready);
+        Array.Clear(_launched);
+        Array.Clear(_changed);
+        for (int b = 0; b < buckets; b++)
+        {
+            _pending[b] = _layout.ParametersOf(b).Length;
+        }
+
+        if (_held is null || _held.Length < _layout.Total + HeaderLength)
+        {
+            _held = GC.AllocateUninitializedArray<float>(_layout.Total + HeaderLength);
+        }
+
+        _weight = Weight(tokens, normalized);
+        (_next, _overlapped, _overlapping) = (0, 0, true);
+        _hook = Autograd.OnGradientReady(Finished);
+        return new OverlapScope(this);
     }
 
-    public GradientSyncResult Reduce(double tokens, double loss, bool normalized = false)
+    public override void OverlapLost(string reason) => _lost = reason;
+
+    public override GradientSyncResult Reduce(double tokens, double loss, bool normalized = false)
     {
-        if (!(tokens >= 0) || double.IsInfinity(tokens))
-        {
-            throw new ArgumentOutOfRangeException(nameof(tokens), tokens, "A rank's tokens are 0 or more.");
-        }
-
-        long now = Stopwatch.GetTimestamp();
-        if (++_steps > 1 && _mark != 0)
-        {
-            _measuredSeconds += Stopwatch.GetElapsedTime(_mark, now).TotalSeconds;   // the first, cold step aside (rule 76)
-            _measuredTokens += tokens;
-        }
-
+        Count(tokens);
+        double backward = _backwardStart != 0 ? BucketSizing.Seconds(_backwardStart) : 0;
+        _backwardStart = 0;
         if (World == 1)
         {
+            EndOverlap();
             return new(tokens, loss);
         }
 
-        _hostGradients?.DownloadGradients();
-        bool own = tokens > 0;
-        int count = Parameters.Count, header = HeaderFloats + count;
-        var buffer = ArrayPool<float>.Shared.Rent(Math.Max(_bucket, header));
+        if (!Present)
+        {
+            throw new InvalidOperationException($"This rank sits out step {CurrentStep} (IGradientSync.BeginStep returned false): it reduces nothing that step.");
+        }
+
+        HostGradients?.DownloadGradients();
+        long started = Stopwatch.GetTimestamp();
+        _sent.Clear();
+        int overlapped = 0;
+        GradientSyncResult result;
         try
         {
-            buffer[0] = (float)tokens;
-            buffer[1] = own ? (float)(normalized ? loss : loss * tokens) : 0f;
-            for (int i = 0; i < count; i++)
+            if (_overlapping)
             {
-                buffer[HeaderFloats + i] = HasGradient(i) ? 1f : 0f;
-            }
-
-            int first = 0;
-            double total, losses;
-            if (_piggyback)
-            {
-                // The header and the first bucket in one collective: each rank's gradients weighted by its tokens now, the
-                // sum divided by the step's tokens once they are known.
-                var (_, _, values) = _buckets[0];
-                var bucket = buffer.AsSpan(0, header + values);
-                Gather(0, bucket[header..], own ? (normalized ? 1f : (float)tokens) : 0f);
-                AllReduce(bucket, WireType.Float32);
-                (total, losses) = Header(bucket);
-                if (total <= 0)
+                if (tokens != _tokens || normalized != _normalized)
                 {
-                    return new(0, 0);
+                    throw new ArgumentException($"Reduce was given {tokens} tokens (normalized: {normalized}), the step's Overlap {_tokens} (normalized: {_normalized}): give both the same.", nameof(tokens));
                 }
 
-                Scale(bucket[header..], normalized ? 1f : (float)(1 / total));
-                Scatter(0, bucket[header..]);
-                first = 1;
+                overlapped = _overlapped;
+                result = ReduceOverlapped(tokens, loss, normalized, backward);
             }
             else
             {
-                var head = buffer.AsSpan(0, header);
-                AllReduce(head, WireType.Float32);
-                (total, losses) = Header(head);
-                if (total <= 0)
-                {
-                    return new(0, 0);
-                }
+                result = ReduceAfter(tokens, loss, normalized, backward);
+            }
+        }
+        finally
+        {
+            EndOverlap();
+        }
+
+        var network = TimeSpan.Zero;
+        bool onClock = Values.SimulatedTime > TimeSpan.Zero;
+        double end = 0;
+        foreach (var (readyAt, simulated, wall) in _sent)
+        {
+            var took = onClock ? simulated : wall;
+            network += took;
+            end = Math.Max(end, readyAt) + took.TotalSeconds;
+        }
+
+        // On a simulated transport the wait after the backward pass is predicted from the buckets' simulated times and when
+        // each was ready; on a real one it is the time Reduce took.
+        var exposed = onClock ? TimeSpan.FromSeconds(Math.Max(0, end - backward)) : Stopwatch.GetElapsedTime(started);
+        Publish(_compressor.Name, _layout.Count, overlapped, (long)_layout.BucketValues * sizeof(float), (long)_layout.Total * sizeof(float),
+            TimeSpan.FromSeconds(backward), network, exposed, overlapped > 0 ? null : _lost ?? (backward > 0 && _layout.Count == 1 ? "one bucket holds every gradient" : null));
+        _lost = null;
+        if (!_sized && result.Tokens > 0)
+        {
+            Measure(backward);
+        }
+
+        return result;
+    }
+
+    public override void Dispose()
+    {
+        EndOverlap();
+        _worker?.Dispose();
+        _worker = null;
+        _scratch?.Dispose();
+        _scratch = null;
+        _compressor.Dispose();
+        base.Dispose();
+    }
+
+    protected override void ShareState(int holder)
+    {
+        // The holder's bucket size, so a rank that joins after the first step's measurement lays its buckets out alike.
+        var (high, low) = Split(_layout.BucketValues);
+        Span<float> state = [_sized ? 1f : 0f, high, low];
+        Values.Broadcast(state, holder);
+        _sized = state[0] > 0;
+        int values = (int)Join(state[1], state[2]);
+        if (values != _layout.BucketValues)
+        {
+            _layout = new BucketLayout(Parameters, values);
+        }
+    }
+
+    private static int ValuesOf(long bytes) => (int)Math.Clamp(bytes / sizeof(float), 1, Array.MaxLength / 2);
+
+    private static float Weight(double tokens, bool normalized) => tokens > 0 ? (normalized ? 1f : (float)tokens) : 0f;
+
+    // The header goes first, then each bucket is reduced, divided by the step's tokens and written back in turn through
+    // one pooled buffer.
+    private GradientSyncResult ReduceAfter(double tokens, double loss, bool normalized, double backward)
+    {
+        float weight = Weight(tokens, normalized);
+        int header = HeaderLength;
+        var buffer = ArrayPool<float>.Shared.Rent(Math.Max(_layout.BucketValues, header));
+        try
+        {
+            var head = buffer.AsSpan(0, header);
+            WriteHeader(head, tokens, loss, normalized, changed: null);
+            var headMark = Mark();
+            Values.AllReduce(head, WireType.Float32);
+            _header = Sent(backward, headMark);
+            var (total, losses) = ReadHeader(head);
+            if (total <= 0)
+            {
+                return new(0, 0);
             }
 
-            // Every other bucket weighted before it travels: this rank's share of the step's tokens.
-            float weight = own ? (normalized ? 1f : (float)(tokens / total)) : 0f;
-            for (int b = first; b < _buckets.Count; b++)
+            float divide = normalized ? 1f : (float)(1 / total);
+            for (int b = 0; b < _layout.Count; b++)
             {
-                var bucket = buffer.AsSpan(0, _buckets[b].Values);
-                Gather(b, bucket, weight);
-                AllReduce(bucket, _options.Wire);
+                var bucket = buffer.AsSpan(0, _layout.Size(b));
+                Gather(b, bucket);
+                var mark = Mark();
+                _compressor.Reduce(bucket, weight, _layout.Pieces(b));
+                Sent(backward, mark);
+                DenseCompressor.Scale(bucket, divide);
                 Scatter(b, bucket);
             }
 
@@ -189,158 +283,247 @@ internal sealed class GradientReduction : IGradientSync
         }
     }
 
-    public void Stepped(long step)
+    // The buckets the backward pass did not finish are sent now, after those it did; the header goes last (with every
+    // rank's changed buckets), a changed bucket is summed again, and every bucket is divided and written back.
+    private GradientSyncResult ReduceOverlapped(double tokens, double loss, bool normalized, double backward)
     {
-        if (World > 1)
+        _hook?.Dispose();
+        _hook = null;
+        _worker?.Wait();
+        var held = _held!;
+        foreach (var took in _took.AsSpan(0, _next))
         {
-            if (_options.SyncWeightsEvery > 0 && step > 0 && step % _options.SyncWeightsEvery == 0)
-            {
-                Broadcast(Parameters);                         // ranks of different device kinds round apart: rank 0's values
-                _hostGradients?.ReloadParameters();
-            }
+            _sent.Add(took);
+        }
 
-            if (_steps >= _nextExchange)
+        for (int b = _next; b < _layout.Count; b++)
+        {
+            var bucket = held.AsSpan(_layout.Start(b), _layout.Size(b));
+            Gather(b, bucket);
+            var mark = Mark();
+            _compressor.Reduce(bucket, _weight, _layout.Pieces(b));
+            Sent(backward, mark);
+        }
+
+        var head = held.AsSpan(_layout.Total, HeaderLength);
+        WriteHeader(head, tokens, loss, normalized, _changed);
+        var headMark = Mark();
+        Values.AllReduce(head, WireType.Float32);
+        _header = Sent(backward, headMark);
+        var (total, losses) = ReadHeader(head);
+        for (int b = 0; b < _layout.Count; b++)
+        {
+            if (head[HeaderFloats + Parameters.Count + b] > 0f)
             {
-                Rebalance();
+                // A gradient changed after its bucket went: the bucket again, whole and uncompressed, on every rank.
+                var bucket = held.AsSpan(_layout.Start(b), _layout.Size(b));
+                Gather(b, bucket);
+                _compressor.Forget(_layout.Pieces(b));
+                DenseCompressor.Scale(bucket, _weight);
+                var mark = Mark();
+                Values.AllReduce(bucket, WireType.Float32);
+                Sent(backward, mark);
             }
         }
 
-        _mark = Stopwatch.GetTimestamp();
-    }
-
-    public void Sum(Span<float> values)
-    {
-        if (World > 1 && values.Length > 0)
+        if (total <= 0)
         {
-            AllReduce(values, WireType.Float32);
+            return new(0, 0);
         }
+
+        float divide = normalized ? 1f : (float)(1 / total);
+        for (int b = 0; b < _layout.Count; b++)
+        {
+            var bucket = held.AsSpan(_layout.Start(b), _layout.Size(b));
+            DenseCompressor.Scale(bucket, divide);
+            Scatter(b, bucket);
+        }
+
+        return new(total, normalized ? losses : losses / total);
     }
 
-    public void Broadcast(IReadOnlyList<Tensor> tensors, int root = 0)
+    // A collective of the step is timed from its mark (the clock and the wall); it was ready at `readyAt`. Returns its place.
+    private (TimeSpan Simulated, long Wall) Mark() => (Values.SimulatedTime, Stopwatch.GetTimestamp());
+
+    private int Sent(double readyAt, (TimeSpan Simulated, long Wall) mark)
     {
-        ArgumentNullException.ThrowIfNull(tensors);
-        if (World == 1)
+        _sent.Add((readyAt, Values.SimulatedTime - mark.Simulated, Stopwatch.GetElapsedTime(mark.Wall)));
+        return _sent.Count - 1;
+    }
+
+    // A parameter's gradient is finished in the backward pass (the training thread): a bucket whose parameters all are
+    // goes to the worker, in bucket order. A gradient that changes after its bucket went marks the bucket; one finished in
+    // a pass nested in another's (a checkpointed block's) is not final until the outer pass ends.
+    private void Finished(Tensor leaf, bool outermost)
+    {
+        if (!_overlapping || !_index.TryGetValue(leaf, out int p))
         {
             return;
         }
 
-        foreach (var tensor in tensors)
+        var buckets = _layout.BucketsOf(p);
+        if (_ready[p] || !outermost)
         {
-            if (tensor.Size > 0)
+            foreach (int b in buckets)
             {
-                Collectives.Broadcast(tensor.Storage, tensor.Size, root);
+                _changed[b] |= _launched[b];
+            }
+
+            return;
+        }
+
+        _ready[p] = true;
+        foreach (int b in buckets)
+        {
+            _pending[b]--;
+        }
+
+        while (_next < _layout.Count && _pending[_next] == 0)
+        {
+            Launch(_next++);
+        }
+    }
+
+    private void Launch(int bucket)
+    {
+        Gather(bucket, _held!.AsSpan(_layout.Start(bucket), _layout.Size(bucket)));
+        _took[bucket] = (BucketSizing.Seconds(_backwardStart), TimeSpan.Zero, TimeSpan.Zero);
+        _launched[bucket] = true;
+        _overlapped++;
+        _worker ??= new OverlapWorker(ReduceQueued, $"rank {Collectives.Rank} gradient buckets");
+        _worker.Queue(bucket);
+    }
+
+    // The worker's part: one bucket through the compression, timed.
+    private void ReduceQueued(int bucket)
+    {
+        var simulated = Values.SimulatedTime;
+        long wall = Stopwatch.GetTimestamp();
+        _compressor.Reduce(_held!.AsSpan(_layout.Start(bucket), _layout.Size(bucket)), _weight, _layout.Pieces(bucket));
+        _took[bucket] = (_took[bucket].ReadyAt, Values.SimulatedTime - simulated, Stopwatch.GetElapsedTime(wall));
+    }
+
+    private void EndOverlap()
+    {
+        _hook?.Dispose();
+        _hook = null;
+        if (_overlapping)
+        {
+            _overlapping = false;
+            try
+            {
+                _worker?.Wait();                               // nothing of this step is left running
+            }
+            catch (InvalidOperationException)
+            {
+                // Reported by the Reduce that failed.
             }
         }
     }
 
-    public void Barrier()
+    // The first step's figures, the largest of each over every rank, choose the bucket size from the next step on: the
+    // backward pass's time, the latency (a tiny collective timed after another, which takes any transfer still queued on the
+    // links) and a bucket's time (the slowest, the first collective after the backward pass aside unless it is the only one).
+    private void Measure(double backward)
     {
-        if (World > 1)
+        bool onClock = Values.SimulatedTime > TimeSpan.Zero;
+        double Seconds(TimeSpan simulated, TimeSpan wall) => (onClock ? simulated : wall).TotalSeconds;
+        var buckets = Enumerable.Range(0, _sent.Count).Where(i => i != _header).ToList();
+        double bucketSeconds = buckets.Skip(buckets.Count > 1 ? 1 : 0).Select(i => Seconds(_sent[i].Simulated, _sent[i].Wall)).DefaultIfEmpty(0).Max();
+        int bucketValues = 0;
+        for (int b = 0; b < _layout.Count; b++)
         {
-            Collectives.Barrier();
+            bucketValues = Math.Max(bucketValues, _layout.Size(b));
+        }
+
+        Span<float> probe = [0f];
+        Values.AllReduce(probe, WireType.Float32);
+        var simulated = Values.SimulatedTime;
+        long wall = Stopwatch.GetTimestamp();
+        Values.AllReduce(probe, WireType.Float32);
+        double latency = Seconds(Values.SimulatedTime - simulated, Stopwatch.GetElapsedTime(wall));
+        Span<float> figures = [onClock ? -1f : (float)backward, (float)latency, (float)bucketSeconds];
+        Values.AllReduce(figures, WireType.Float32, ReduceOp.Max);
+        int values = BucketSizing.Choose(_layout.Total, figures[0], figures[1], figures[2], bucketValues);
+        _sized = true;
+        if (values != _layout.BucketValues)
+        {
+            _layout = new BucketLayout(Parameters, values);
         }
     }
 
-    public void Dispose()
+    private void WriteHeader(Span<float> head, double tokens, double loss, bool normalized, bool[]? changed)
     {
-        _scratch?.Dispose();
-        _scratch = null;
-    }
-
-    // The pieces and buckets: every parameter's values in order, cut where a bucket fills (the first holds less beside the
-    // header when it rides along). The same on every rank: it depends on the parameters' sizes alone.
-    private void Layout(int firstCapacity)
-    {
-        int capacity = firstCapacity, used = 0, firstPiece = 0;
+        bool own = tokens > 0;
+        head[0] = (float)tokens;
+        head[1] = own ? (float)(normalized ? loss : loss * tokens) : 0f;
         for (int i = 0; i < Parameters.Count; i++)
         {
-            int size = Parameters[i].Size;
-            for (int offset = 0; offset < size;)
-            {
-                if (used == capacity)
-                {
-                    _buckets.Add((firstPiece, _pieces.Count - firstPiece, used));
-                    (firstPiece, used, capacity) = (_pieces.Count, 0, _bucket);
-                }
-
-                int n = Math.Min(size - offset, capacity - used);
-                _pieces.Add((i, offset, n));
-                (used, offset) = (used + n, offset + n);
-            }
+            head[HeaderFloats + i] = HasGradient(i) ? 1f : 0f;
         }
 
-        if (_pieces.Count > firstPiece || _buckets.Count == 0)
+        var flags = head[(HeaderFloats + Parameters.Count)..];
+        for (int b = 0; b < flags.Length; b++)
         {
-            _buckets.Add((firstPiece, _pieces.Count - firstPiece, used));
+            flags[b] = changed is not null && b < changed.Length && changed[b] ? 1f : 0f;
         }
     }
 
     // The step's tokens and loss sum, and which parameters have a gradient on any rank.
-    private (double Total, double Losses) Header(ReadOnlySpan<float> header)
+    private (double Total, double Losses) ReadHeader(ReadOnlySpan<float> head)
     {
         for (int i = 0; i < _present.Length; i++)
         {
-            _present[i] = header[HeaderFloats + i] > 0f;
+            _present[i] = head[HeaderFloats + i] > 0f;
         }
 
-        return (header[0], header[1]);
+        return (head[0], head[1]);
     }
 
-    private bool HasGradient(int parameter) => _hostGradients is { } host ? !host.HostGradient(parameter).IsEmpty : Parameters[parameter].Grad is not null;
+    private bool HasGradient(int parameter) => HostGradients is { } host ? !host.HostGradient(parameter).IsEmpty : Parameters[parameter].Grad is not null;
 
-    // This rank's values of a bucket's pieces, times `weight` (zeros where it has no gradient or no rows).
-    private void Gather(int bucket, Span<float> values, float weight)
+    // This rank's values of a bucket's pieces (zeros where it has no gradient).
+    private void Gather(int bucket, Span<float> values)
     {
-        var (first, count, _) = _buckets[bucket];
-        int at = 0;
-        for (int k = first; k < first + count; k++)
+        foreach (var (parameter, offset, n, at) in _layout.Pieces(bucket))
         {
-            var (parameter, offset, n) = _pieces[k];
             var target = values.Slice(at, n);
-            at += n;
-            if (weight == 0f || !HasGradient(parameter))
+            if (!HasGradient(parameter))
             {
                 target.Clear();
                 continue;
             }
 
-            if (_hostGradients is { } host)
+            if (HostGradients is { } host)
             {
                 host.HostGradient(parameter).Slice(offset, n).CopyTo(target);
+                continue;
+            }
+
+            var gradient = Parameters[parameter].Grad!;
+            if (offset == 0 && n == gradient.Size)
+            {
+                gradient.Backend.Download(gradient.Storage, target);
             }
             else
             {
-                var gradient = Parameters[parameter].Grad!;
-                if (offset == 0 && n == gradient.Size)
-                {
-                    gradient.Backend.Download(gradient.Storage, target);
-                }
-                else
-                {
-                    gradient.Backend.DownloadRange(gradient.Storage, offset, target);
-                }
+                gradient.Backend.DownloadRange(gradient.Storage, offset, target);
             }
-
-            Scale(target, weight);
         }
     }
 
     // The reduced values back into every piece's gradient (made where this rank had none and another rank had one).
     private void Scatter(int bucket, ReadOnlySpan<float> values)
     {
-        var (first, count, _) = _buckets[bucket];
-        int at = 0;
-        for (int k = first; k < first + count; k++)
+        foreach (var (parameter, offset, n, at) in _layout.Pieces(bucket))
         {
-            var (parameter, offset, n) = _pieces[k];
             var source = values.Slice(at, n);
-            at += n;
             if (!_present[parameter])
             {
                 continue;                                          // no rank has a gradient for it: the optimizer skips it everywhere
             }
 
-            if (_hostGradients is { } host)
+            if (HostGradients is { } host)
             {
                 var target = host.HostGradient(parameter);
                 if (target.IsEmpty)
@@ -373,124 +556,24 @@ internal sealed class GradientReduction : IGradientSync
         }
     }
 
-    // A sum across the ranks of host values: straight from the host buffer with the library's collectives, through a
-    // device buffer with another algorithm (a plug-in's collectives work on device storage).
-    private void AllReduce(Span<float> values, WireType wire)
-    {
-        if (_host is { } host)
-        {
-            host.AllReduceHostValues(values, ReduceOp.Sum, wire);
-            return;
-        }
-
-        var scratch = Scratch(values.Length);
-        var backend = Collectives.Device.Backend;
-        backend.Upload(values, scratch.Storage);
-        Collectives.AllReduce(scratch.Storage, values.Length, ReduceOp.Sum, wire);
-        backend.Download(scratch.Storage, values);
-    }
-
     private Tensor Scratch(int values)
     {
         if (_scratch is null || _scratch.Size < values)
         {
             _scratch?.Dispose();
-            _scratch = Tensor.PersistentZeros([Math.Max(values, _largest)], Collectives.Device);
+            _scratch = Tensor.PersistentZeros([Math.Max(values, _layout.BucketValues)], Collectives.Device);
         }
 
         return _scratch;
     }
 
-    // Each rank's tokens per second over the steps since the last exchange, summed into one list every rank holds; the
-    // shares follow them unless the ranks are within the tolerance of each other (then equal, so noise moves no rows).
-    private void Rebalance()
+    // Ends the hook when the trainer's backward pass is over (Reduce does the rest).
+    private sealed class OverlapScope(GradientReduction owner) : IDisposable
     {
-        var rates = new float[World];
-        rates[Collectives.Rank] = _measuredTokens > 0 && _measuredSeconds > 0 ? (float)(_measuredTokens / _measuredSeconds) : 0f;
-        AllReduce(rates, WireType.Float32);
-        (_measuredTokens, _measuredSeconds) = (0, 0);
-        _nextExchange = _options.RebalanceEvery > 0 ? _steps + _options.RebalanceEvery : long.MaxValue;
-        float slowest = rates.Min(), fastest = rates.Max();
-        if (!(slowest > 0))
+        public void Dispose()
         {
-            return;                                                // a rank had no rows to time: the shares stay
-        }
-
-        if (fastest / slowest - 1 <= _options.RebalanceTolerance)
-        {
-            _shares = [.. DrawShares.Even(World)];
-            return;
-        }
-
-        double sum = rates.Sum(r => (double)r);
-        _shares = [.. rates.Select(r => r / sum)];
-    }
-
-    // Starting values compared across the ranks: each parameter's SHA-256 (its first 64 bits, as four 16-bit whole numbers
-    // that float32 carries exactly), gathered from every rank; the first rank and parameter that differ from rank 0's are named.
-    private void CheckSame()
-    {
-        int count = Parameters.Count;
-        var mine = new float[Math.Max(1, count * 4)];
-        Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
-        for (int i = 0; i < count; i++)
-        {
-            var p = Parameters[i];
-            var values = ArrayPool<float>.Shared.Rent(Math.Max(1, p.Size));
-            try
-            {
-                p.Backend.Download(p.Storage, values.AsSpan(0, p.Size));
-                SHA256.HashData(MemoryMarshal.AsBytes(values.AsSpan(0, p.Size)), digest);
-            }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(values);
-            }
-
-            for (int c = 0; c < 4; c++)
-            {
-                mine[(i * 4) + c] = (digest[2 * c] << 8) | digest[(2 * c) + 1];
-            }
-        }
-
-        using var input = Tensor.Persistent(mine, [mine.Length], Collectives.Device);
-        using var output = Tensor.PersistentZeros([mine.Length * World], Collectives.Device);
-        Collectives.AllGather(input.Storage, mine.Length, output.Storage);
-        var all = output.ToArray();
-        for (int r = 1; r < World; r++)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                if (!all.AsSpan((r * mine.Length) + (i * 4), 4).SequenceEqual(all.AsSpan(i * 4, 4)))
-                {
-                    throw new InvalidOperationException($"Rank {r} starts from other values than rank 0 (parameter {i} of {count}, {Tensor.FormatShape(Parameters[i].Shape)}): "
-                                                        + "give every rank the same seed and weights, or let rank 0's values be sent (IDRAK_CLUSTER_START=broadcast).");
-                }
-            }
-        }
-    }
-
-    // values *= factor: a vector loop and a scalar tail.
-    private static void Scale(Span<float> values, float factor)
-    {
-        if (factor == 1f)
-        {
-            return;
-        }
-
-        int i = 0;
-        if (Vector.IsHardwareAccelerated)
-        {
-            var f = new Vector<float>(factor);
-            for (; i <= values.Length - Vector<float>.Count; i += Vector<float>.Count)
-            {
-                (new Vector<float>(values[i..]) * f).CopyTo(values[i..]);
-            }
-        }
-
-        for (; i < values.Length; i++)
-        {
-            values[i] *= factor;
+            owner._hook?.Dispose();
+            owner._hook = null;
         }
     }
 }

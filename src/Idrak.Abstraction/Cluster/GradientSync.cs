@@ -51,6 +51,36 @@ public interface IGradientSync : IDisposable
     /// </summary>
     IReadOnlyList<double> Shares { get; }
 
+    /// <summary>
+    /// Begins training step <paramref name="step"/> (from 0; steps go forward; the trainers call it as each step starts):
+    /// true when this rank takes part. A rank of a group that changes from step to step (<see cref="IStepGroup"/>: a
+    /// simulated late joiner, a replay's end) sits a step out when this returns false: it runs none of the step's work and
+    /// no collective, while the others sum the step's gradients over the ranks that train it, each weighted by its rows.
+    /// When the group changed, every rank of it takes the trained state (the weights and the optimizer's state) of a rank
+    /// that trained the step before. A fixed group takes part in every step.
+    /// </summary>
+    bool BeginStep(long step) => Collectives is not IStepGroup group || group.BeginStep(step);
+
+    /// <summary>
+    /// Opens the reduction of the step's gradients while its last backward pass runs (plan 23, phase C4): until the
+    /// returned scope is disposed, each parameter whose gradient the backward pass finished is noted, and each bucket of
+    /// <see cref="ClusterOptions.BucketBytes"/> whose parameters are all finished is sent while the backward pass goes on;
+    /// <see cref="Reduce"/> sends the rest and waits. The trainers put it around the step's last <c>Backward()</c> only (a
+    /// gradient accumulated over several passes is finished in the last). The result equals the reduction after the
+    /// backward pass, bit for bit. Null (the default) when the synchronisation does not overlap.
+    /// </summary>
+    /// <param name="tokens">This rank's tokens in the step, as <see cref="Reduce"/> will be given them.</param>
+    /// <param name="normalized">As <see cref="Reduce"/> will be given it.</param>
+    IDisposable? Overlap(double tokens, bool normalized = false) => null;
+
+    /// <summary>
+    /// Says why this step's gradients cannot be reduced while its backward pass runs (a recorded step replayed as one
+    /// graph runs no hook), so the step's <c>GradientsSynced</c> telemetry names the overlap it lost.
+    /// </summary>
+    void OverlapLost(string reason)
+    {
+    }
+
     /// <summary>Makes every rank start from the same parameter values (<see cref="ClusterOptions.StartingState"/>). Called once, before the first step.</summary>
     /// <exception cref="InvalidOperationException">With <see cref="StartingState.Check"/>: a rank's values differ from rank 0's; the message names the rank and the parameter.</exception>
     void Start();
@@ -120,8 +150,10 @@ public interface IHostGradients
 }
 
 /// <summary>
-/// The gradient synchronisations, by name (plan 23). Idrak.Network registers "all-reduce" (the gradients summed after the
-/// backward pass, every step); none is built into Idrak.Abstraction. <see cref="ClusterOptions.GradientSync"/> names the one a run uses.
+/// The gradient synchronisations, by name (plan 23). Idrak.Network registers "all-reduce" (the gradients summed every step,
+/// a bucket at a time while the backward pass continues) and "local-sgd" (each rank steps on its own gradients and the
+/// weights are averaged every <see cref="ClusterOptions.LocalSgdEvery"/> steps); none is built into Idrak.Abstraction.
+/// <see cref="ClusterOptions.GradientSyncName"/> names the one a run uses.
 /// </summary>
 public static class GradientSyncs
 {
@@ -166,7 +198,7 @@ public static class GradientSyncs
     public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
 
     /// <summary>
-    /// The synchronisation <paramref name="options"/> names (<see cref="ClusterOptions.GradientSync"/>) of
+    /// The synchronisation <paramref name="options"/> names (<see cref="ClusterOptions.GradientSyncName"/>) of
     /// <paramref name="optimizer"/>'s parameters over <paramref name="collectives"/>.
     /// </summary>
     public static IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions? options = null)
@@ -174,7 +206,7 @@ public static class GradientSyncs
         ArgumentNullException.ThrowIfNull(collectives);
         ArgumentNullException.ThrowIfNull(optimizer);
         options ??= ClusterOptions.FromEnvironment();
-        return Get(options.GradientSync).Create(collectives, optimizer, options);
+        return Get(options.GradientSyncName).Create(collectives, optimizer, options);
     }
 }
 

@@ -170,10 +170,28 @@ public sealed record ClusterOptions
     public long? SocketBufferBytes { get; init; }
 
     /// <summary>
-    /// The bytes of a gradient bucket: the gradients are reduced a bucket at a time through one host buffer of this size;
-    /// null: 16 MiB until phase C4 measures it against the step (<c>IDRAK_CLUSTER_BUCKET_BYTES</c>).
+    /// The bytes of a gradient bucket: the gradients are reduced a bucket at a time, each bucket sent as soon as the
+    /// backward pass finished its parameters (<see cref="Overlap"/>); null: measured once at run time, on the first step
+    /// (the backward pass's time, the link's latency and rate against the gradients' size, the same on every rank), never
+    /// a fixed size (<c>IDRAK_CLUSTER_BUCKET_BYTES</c>).
     /// </summary>
     public long? BucketBytes { get; init; }
+
+    /// <summary>
+    /// Whether gradient buckets are reduced while the backward pass continues (each bucket sent once the backward pass
+    /// finished its parameters) rather than all after it; the result is the same bit for bit (<c>IDRAK_CLUSTER_OVERLAP</c>: 1 or 0).
+    /// </summary>
+    public bool Overlap { get; init; } = true;
+
+    /// <summary>
+    /// How a gradient bucket is compressed on its way: a <c>GradientCompressions</c> name of Idrak.Network ("none",
+    /// "bf16", "top-k", or a plug-in's), or null: "top-k" when <see cref="TopK"/> is set, "bf16" on a bfloat16
+    /// <see cref="Wire"/>, else "none" (<c>IDRAK_CLUSTER_COMPRESSION</c>).
+    /// </summary>
+    public string? Compression { get; init; }
+
+    /// <summary>The compression a run uses: <see cref="Compression"/>, or the one <see cref="TopK"/> and <see cref="Wire"/> imply.</summary>
+    public string CompressionName => Compression ?? (TopK > 0 ? "top-k" : Wire == WireType.BFloat16 ? "bf16" : "none");
 
     /// <summary>How gradients travel (<c>IDRAK_CLUSTER_WIRE</c>: f32 or bf16).</summary>
     public WireType Wire { get; init; } = WireType.Float32;
@@ -184,7 +202,11 @@ public sealed record ClusterOptions
     /// <summary>Whether values top-k leaves out are added to the next step's (<c>IDRAK_CLUSTER_ERROR_FEEDBACK</c>: 1 or 0).</summary>
     public bool ErrorFeedback { get; init; } = true;
 
-    /// <summary>Synchronize the weights every this many steps instead of the gradients every step; 0 for every step (<c>IDRAK_CLUSTER_LOCAL_SGD</c>).</summary>
+    /// <summary>
+    /// Local SGD: each rank steps on its own gradients and the weights (not the gradients) are averaged across the ranks
+    /// every this many steps, weighted by each rank's rows; 0 sums the gradients every step (<c>IDRAK_CLUSTER_LOCAL_SGD</c>).
+    /// Setting it picks the "local-sgd" synchronisation unless <see cref="GradientSync"/> names another.
+    /// </summary>
     public int LocalSgdEvery { get; init; }
 
     /// <summary>Rank 0 sends its weights every this many steps (ranks of different device kinds round apart); 0 never (<c>IDRAK_CLUSTER_SYNC_WEIGHTS</c>).</summary>
@@ -205,8 +227,14 @@ public sealed record ClusterOptions
     /// </summary>
     public double RebalanceTolerance { get; init; } = 0.1;
 
-    /// <summary>How gradients are kept in step across the ranks: a <see cref="GradientSyncs"/> name (<c>IDRAK_CLUSTER_GRADIENT_SYNC</c>).</summary>
-    public string GradientSync { get; init; } = "all-reduce";
+    /// <summary>
+    /// How gradients are kept in step across the ranks: a <see cref="GradientSyncs"/> name ("all-reduce", "local-sgd", or a
+    /// plug-in's), or null: "local-sgd" when <see cref="LocalSgdEvery"/> is set, else "all-reduce" (<c>IDRAK_CLUSTER_GRADIENT_SYNC</c>).
+    /// </summary>
+    public string? GradientSync { get; init; }
+
+    /// <summary>The synchronisation a run uses: <see cref="GradientSync"/>, or the one <see cref="LocalSgdEvery"/> implies.</summary>
+    public string GradientSyncName => GradientSync ?? (LocalSgdEvery > 0 ? "local-sgd" : "all-reduce");
 
     /// <summary>How every rank starts from the same values: rank 0's sent to all, or every rank's hash checked (<c>IDRAK_CLUSTER_START</c>: broadcast or check).</summary>
     public StartingState StartingState { get; init; } = StartingState.Broadcast;
@@ -251,7 +279,7 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_TOPOLOGY", "IDRAK_CLUSTER_NODE", "IDRAK_RANK", "IDRAK_WORLD_SIZE", "IDRAK_COORDINATOR", "IDRAK_CLUSTER_TRANSPORT",
         "IDRAK_CLUSTER_SELECTOR", "IDRAK_CLUSTER_COLLECTIVE", "IDRAK_CLUSTER_KEY", "IDRAK_CLUSTER_PORT", "IDRAK_CLUSTER_TIMEOUT",
         "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_SOCKET_BUFFER",
-        "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
+        "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
@@ -290,6 +318,8 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_IN_FLIGHT") is { } inFlight) o = o with { InFlight = Whole("IDRAK_CLUSTER_IN_FLIGHT", inFlight, 1) };
         if (Read(variable, "IDRAK_CLUSTER_SOCKET_BUFFER") is { } socket) o = o with { SocketBufferBytes = Size("IDRAK_CLUSTER_SOCKET_BUFFER", socket) };
         if (Read(variable, "IDRAK_CLUSTER_BUCKET_BYTES") is { } bucket) o = o with { BucketBytes = Size("IDRAK_CLUSTER_BUCKET_BYTES", bucket) };
+        if (Read(variable, "IDRAK_CLUSTER_OVERLAP") is { } overlap) o = o with { Overlap = Flag("IDRAK_CLUSTER_OVERLAP", overlap) };
+        if (Read(variable, "IDRAK_CLUSTER_COMPRESSION") is { } compression) o = o with { Compression = compression };
         if (Read(variable, "IDRAK_CLUSTER_WIRE") is { } wire)
         {
             o = o with

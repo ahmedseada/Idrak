@@ -212,7 +212,7 @@ public static class InProcessCluster
 /// of the ranks that take part (its own queues over the same clock, numbered from 0, with the topology of those ranks).
 /// When the group changes its ranks meet at a barrier, so a late joiner's clock moves to theirs as it joins.
 /// </summary>
-internal sealed class SimStepper : ICollectives
+internal sealed class SimStepper : ICollectives, IStepGroup, IHostValueCollectives
 {
     private readonly SimTransport _root;
     private readonly SimWorld _world;
@@ -235,6 +235,17 @@ internal sealed class SimStepper : ICollectives
     }
 
     public long Step { get; private set; } = -1;
+
+    public bool Present => _present;
+
+    public bool Changed { get; private set; }
+
+    public int Holder { get; private set; }
+
+    public TimeSpan SimulatedTime => _current.Transport.SimulatedTime;
+
+    // Every group's collectives come from one provider: they all take host values, or none does.
+    public bool SupportsHostValues => _current.Collectives is IHostValueCollectives { SupportsHostValues: true };
 
     public string Name => _current.Collectives.Name;
 
@@ -265,6 +276,7 @@ internal sealed class SimStepper : ICollectives
         }
 
         Step = step;
+        (Changed, Holder) = (false, 0);
         if (_world.Options.Simulation.ReplayStep is { } last && step > last)
         {
             (_present, _joinsAt) = (false, null);
@@ -290,9 +302,13 @@ internal sealed class SimStepper : ICollectives
         }
 
         _current = group;
-        if (!members.AsSpan().SequenceEqual(_world.Faults.Members(step - 1)))
+        var before = _world.Faults.Members(step - 1);
+        if (!members.AsSpan().SequenceEqual(before))
         {
             group.Transport.Barrier();                         // the group changed: its ranks meet, their clocks at the latest
+            // The trained state is a rank's that took part in the step before too: the first of them, in the group's numbering.
+            int holder = Array.FindIndex(members, r => Array.BinarySearch(before, r) >= 0);
+            (Changed, Holder) = (true, Math.Max(0, holder));
         }
 
         _world.Faults.Begin(Real, step, _world.Clock.Now(Real));
@@ -312,6 +328,12 @@ internal sealed class SimStepper : ICollectives
     public void Broadcast(Storage buffer, int count, int root) => Current.Broadcast(buffer, count, root);
 
     public void Barrier() => Current.Barrier();
+
+    public bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire) => Current is IHostValueCollectives host && host.TryAllReduce(values, op, wire);
+
+    public bool TryAllGather(Span<float> all, int count) => Current is IHostValueCollectives host && host.TryAllGather(all, count);
+
+    public bool TryBroadcast(Span<float> values, int root) => Current is IHostValueCollectives host && host.TryBroadcast(values, root);
 
     public void Dispose()
     {
