@@ -481,7 +481,21 @@ public static partial class Pretrainer
                     {
                         var (drawn, positions) = next.GetAwaiter().GetResult();
                         next = stageStep + 1 < stage.Steps ? Task.Run(() => Draw(readers, options, model)) : Task.FromResult<(List<TrainingSequence>, (long, long, long)[])>(([], []));
-                        if (sync is not null && !sync.BeginStep(step))
+                        bool present;
+                        try
+                        {
+                            present = sync is null || sync.BeginStep(step);
+                        }
+                        catch (OperationCanceledException) when (step > 0 && lead && last != Path.Combine(outputFolder, $"checkpoint-{step}"))
+                        {
+                            // Stopped at this step boundary (a dashboard's stop, plan 23 C9: every rank stops here alike): the
+                            // checkpoint is the last finished step's, as a cancelled step's is.
+                            partSources.Keep();
+                            last = SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations);
+                            throw;
+                        }
+
+                        if (!present)
                         {
                             // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's
                             // last step): it drew the step as every rank does, so the sources stay alike, and the ranks that take

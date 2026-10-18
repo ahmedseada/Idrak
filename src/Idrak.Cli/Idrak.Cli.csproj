@@ -38,6 +38,11 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <!-- idrak cluster ui: the dashboard's page, one self-contained file served as it is (plan 23, phase C9). -->
+  <ItemGroup>
+    <EmbeddedResource Include="Commands\Cluster\Dashboard\dashboard.html" LogicalName="Dashboard/dashboard.html" WithCulture="false" />
+  </ItemGroup>
+
   <!-- idrak new: the project templates, embedded as Templates/KIND/PATH (file names and contents carry __NAME__ and
        the other placeholders NewCommand fills in); they are not part of this project's own build. -->
   <ItemGroup>

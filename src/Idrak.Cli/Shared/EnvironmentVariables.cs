@@ -75,7 +75,10 @@ internal static class EnvironmentVariables
 
     // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
     // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
-    private static readonly string[] ClusterRun = ["cluster sim", "cluster start", "cluster bench", "pretrain", "test"];
+    private static readonly string[] ClusterRun = ["cluster sim", "cluster start", "cluster bench", "cluster ui", "pretrain", "test"];
+
+    // Plan 23, phase C9: the dashboard (cluster ui, and cluster sim --dashboard).
+    private static readonly string[] ClusterUi = ["cluster ui", "cluster sim"];
 
     /// <summary>The table, in listing order.</summary>
     public static IReadOnlyList<Variable> All { get; } =
@@ -172,7 +175,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CONFIG", Tool, "~/.idrak/config.json", "The config file (--config wins)", [Every]),
         new("IDRAK_PROFILE", Tool, "the config's \"profile\"", "The config profile to use (a name under \"profiles\" in the config)", [Every]),
         new("IDRAK_PORT", Tool, "the config's serve.port, else 7317", "The port serve and ui listen on and the client commands call when --port is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload"]),
-        new("IDRAK_API_KEY", Tool, "not set", "The key serve requires and the client commands (api, ping, server ...) send when --api-key is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload"], Secret: true),
+        new("IDRAK_API_KEY", Tool, "not set", "The key serve requires and the client commands (api, ping, server ...) send when --api-key is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload", "cluster ui", "cluster sim"], Secret: true),
         new("IDRAK_TRACE", Tool, "not set", "1 or true: errors print the stack as well", [Every]),
         new("IDRAK_LANG", Tool, "en", "The language of the tool's messages: en or ar (--lang and the config's \"lang\" win); JSON stays English", [Every]),
         new("IDRAK_LANG_RENDER", Tool, "auto", "How Arabic reaches the terminal: auto, visual (shaped and reordered by the tool), visual-right or logical (--lang-render and the config's \"lang-render\" win)", [Every]),
@@ -256,7 +259,13 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_RETRY_DELAY", Cluster, "1", "Seconds before the first retry at the rendezvous, doubled at each later one", ClusterRun),
         new("IDRAK_CLUSTER_SHM_BYTES", Cluster, "4 MiB", "The size of each shared-memory ring (one per pair of ranks and direction on a machine; B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_SHM_FOLDER", Cluster, "the system's temporary folder", "The folder the shared-memory rings are mapped from", ClusterRun),
-        new("IDRAK_CLUSTER_PROBE_BYTES", Cluster, "32 MiB (at most an eighth of the free memory)", "The bytes a link measurement copies (same-device, shared-memory, pcie)", ["cluster init", "cluster inspect", "test"]),
+        new("IDRAK_CLUSTER_CONTROL", Cluster, "not set (the dashboard sets it for a localhost run it starts)", "The control file a launcher pauses, resumes and stops a run's processes through: rank 0 reads it as each step begins (run, pause or stop)", ClusterRun),
+        new("IDRAK_CLUSTER_CONTROL_POLL", Cluster, "0.2", "Seconds between rank 0's reads of the control file while the run is paused", ClusterRun),
+        new("IDRAK_CLUSTER_UI_PORT", Cluster, "0 (the system picks, printed)", "The port the cluster dashboard listens on when --port is not given", ClusterUi),
+        new("IDRAK_CLUSTER_UI_HOST", Cluster, "127.0.0.1", "The address the cluster dashboard listens on; off this machine, requests need an API key (idrak server keys add, IDRAK_API_KEY)", ClusterUi),
+        new("IDRAK_CLUSTER_UI_HISTORY", Cluster, "20000", "Records the dashboard keeps per run for a page that connects late", ClusterUi),
+        new("IDRAK_CLUSTER_UI_POLL", Cluster, "0.5", "Seconds between the dashboard's reads of a followed run folder while a page listens", ClusterUi),
+        new("IDRAK_CLUSTER_PROBE_BYTES", Cluster, "32 MiB (at most an eighth of the free memory)", "The bytes a link measurement copies (same-device, shared-memory, pcie)", ["cluster init", "cluster inspect", "cluster ui", "test"]),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
         new("PROCESSOR_IDENTIFIER", Devices, "as the system sets it", "The processor's name on Windows (device listings, tuning keys)", OnDevice),

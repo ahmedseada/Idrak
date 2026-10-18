@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Cluster;
 using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
 using Idrak.Models;
@@ -241,6 +242,20 @@ internal sealed class PretrainCommand : Command
                 try
                 {
                     result = Pretrainer.Train(model, options, run, resume, reports, interrupt.Token, context.Verbose ? context.Detail : null);
+                }
+                catch (ClusterRunStoppedException stopped)
+                {
+                    // Stopped as asked (a dashboard's stop, plan 23 C9): every rank stops at this step boundary, rank 0 wrote the checkpoint.
+                    line.Erase();
+                    string? last = Pretrainer.LatestCheckpoint(run);
+                    if (rank is not { Rank: > 0 })
+                    {
+                        context.Write($"stopped as asked before step {stopped.Step}");
+                        context.Write(last is null ? "no checkpoint was written (no step finished)" : $"checkpoint {last}; idrak resume {run} continues");
+                    }
+
+                    context.WriteJson(new JsonObject { ["run"] = Path.GetFullPath(run), ["stopped"] = true, ["step"] = stopped.Step, ["checkpoint"] = last });
+                    return ExitCodes.Ok;
                 }
                 catch (OperationCanceledException) when (interrupt.Requested)
                 {

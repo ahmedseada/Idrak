@@ -113,6 +113,16 @@ public sealed record SimulationOptions
 
     /// <summary>Whether the event log records every transfer beside the steps' clocks and the faults (<c>IDRAK_CLUSTER_LOG_TRANSFERS</c>: 1 or 0).</summary>
     public bool LogTransfers { get; init; } = true;
+
+    /// <summary>
+    /// The control file a launcher steers this run's processes through (<see cref="ClusterControlFile"/>: pause, resume and
+    /// stop at a step boundary; plan 23, phase C9), or null for none (<c>IDRAK_CLUSTER_CONTROL</c>; the dashboard sets it for a
+    /// localhost run it starts). Read by rank 0 of a group of processes as it begins each step.
+    /// </summary>
+    public string? Control { get; init; }
+
+    /// <summary>How often rank 0 reads the control file again while the run is paused (<c>IDRAK_CLUSTER_CONTROL_POLL</c>, seconds).</summary>
+    public TimeSpan ControlPoll { get; init; } = TimeSpan.FromMilliseconds(200);
 }
 
 /// <summary>
@@ -346,6 +356,7 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_LOG_TRANSFERS",
+        "IDRAK_CLUSTER_CONTROL", "IDRAK_CLUSTER_CONTROL_POLL",
         "IDRAK_CLUSTER_DEVICE", "IDRAK_CLUSTER_RUN", "IDRAK_CLUSTER_PARENT", "IDRAK_CLUSTER_RETRY_DELAY", "IDRAK_CLUSTER_SHM_BYTES", "IDRAK_CLUSTER_SHM_FOLDER",
     ];
 
@@ -440,6 +451,8 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_CARVE_FROM") is { } carveFrom) s = s with { CarveFrom = carveFrom };
         if (Read(variable, "IDRAK_CLUSTER_EVENT_LOG") is { } eventLog) s = s with { EventLog = eventLog };
         if (Read(variable, "IDRAK_CLUSTER_LOG_TRANSFERS") is { } logTransfers) s = s with { LogTransfers = Flag("IDRAK_CLUSTER_LOG_TRANSFERS", logTransfers) };
+        if (Read(variable, "IDRAK_CLUSTER_CONTROL") is { } control) s = s with { Control = control };
+        if (Read(variable, "IDRAK_CLUSTER_CONTROL_POLL") is { } poll) s = s with { ControlPoll = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_CONTROL_POLL", poll, "a number of seconds above 0", v => v > 0)) };
         return o with { Simulation = s };
     }
 

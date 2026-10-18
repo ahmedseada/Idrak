@@ -13,6 +13,38 @@ namespace Idrak.Cluster;
 /// <param name="Source">Where the figures come from ("measured on cuda:0", "the name's rate", "none").</param>
 public sealed record TopologyLink(string Between, int FirstRank, int SecondRank, string Link, double BandwidthBytesPerSecond, TimeSpan Latency, string Source);
 
+/// <summary>How two ranks are joined (<see cref="TopologyPair.Kind"/>).</summary>
+public enum TopologyPairKind
+{
+    /// <summary>Two ranks on one device of one node: a copy inside one memory.</summary>
+    SameDevice,
+
+    /// <summary>Different devices of one node: the topology's intra-node link.</summary>
+    InsideNode,
+
+    /// <summary>Two nodes: the topology's inter-node link.</summary>
+    BetweenNodes,
+
+    /// <summary>Two nodes with a link of their own (an override: a cable that skips the switch).</summary>
+    Override,
+}
+
+/// <summary>One pair of ranks of a topology and its link as this machine resolves it (plan 23, phase C9: the dashboard's link matrix).</summary>
+/// <param name="A">The lower rank.</param>
+/// <param name="B">The higher rank.</param>
+/// <param name="Link">The profile's name.</param>
+/// <param name="BandwidthBytesPerSecond">Its bandwidth (0: not known).</param>
+/// <param name="Latency">Its latency.</param>
+/// <param name="Kind">How the two ranks are joined.</param>
+public sealed record TopologyPair(int A, int B, string Link, double BandwidthBytesPerSecond, TimeSpan Latency, TopologyPairKind Kind);
+
+/// <summary>One phase of an all-reduce as <see cref="TopologyInspection.PredictPhases"/> plays it.</summary>
+/// <param name="Name">What the phase does ("reduce-scatter inside each node").</param>
+/// <param name="Where">Which ranks take part, in a line.</param>
+/// <param name="Links">The links its messages cross, by profile name, slowest first.</param>
+/// <param name="Time">The network time it adds to the slowest rank's clock.</param>
+public sealed record AllReducePhase(string Name, string Where, IReadOnlyList<string> Links, TimeSpan Time);
+
 /// <summary>
 /// What <c>idrak cluster inspect</c> shows of a topology (plan 23): each kind of link it uses with its figures as this
 /// machine resolves them (measured links measured here), and the network time an all-reduce would take on it, played on
@@ -55,6 +87,52 @@ public static class TopologyInspection
         return links;
     }
 
+    /// <summary>
+    /// Every pair of ranks (a lower than b) with its link as this machine resolves it (measured links measured here, once a
+    /// device), and how the two are joined.
+    /// </summary>
+    public static IReadOnlyList<TopologyPair> Pairs(IClusterTopology topology)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
+        var overrides = topology is ClusterTopology file ? file.Overrides : [];
+        var pairs = new List<TopologyPair>(topology.WorldSize * (topology.WorldSize - 1) / 2);
+        for (int a = 0; a < topology.WorldSize; a++)
+        {
+            for (int b = a + 1; b < topology.WorldSize; b++)
+            {
+                var (na, la) = topology.Place(a);
+                var (nb, lb) = topology.Place(b);
+                string deviceA = topology.Nodes[na].Devices[la].Device;
+                var link = Resolve(topology.Link(a, b), deviceA);
+                string nameA = topology.Nodes[na].Name, nameB = topology.Nodes[nb].Name;
+                var kind = na == nb
+                    ? string.Equals(deviceA, topology.Nodes[nb].Devices[lb].Device, StringComparison.OrdinalIgnoreCase) ? TopologyPairKind.SameDevice : TopologyPairKind.InsideNode
+                    : overrides.Any(o => (o.A.Equals(nameA, StringComparison.OrdinalIgnoreCase) && o.B.Equals(nameB, StringComparison.OrdinalIgnoreCase))
+                                         || (o.A.Equals(nameB, StringComparison.OrdinalIgnoreCase) && o.B.Equals(nameA, StringComparison.OrdinalIgnoreCase)))
+                        ? TopologyPairKind.Override : TopologyPairKind.BetweenNodes;
+                pairs.Add(new TopologyPair(a, b, link.Name, link.BandwidthBytesPerSecond, link.Latency, kind));
+            }
+        }
+
+        return pairs;
+    }
+
+    /// <summary>
+    /// The phases of an all-reduce of <paramref name="bytes"/> with <paramref name="algorithm"/> on
+    /// <paramref name="topology"/>, played on one virtual clock as <see cref="PredictAllReduce"/> plays it (the same messages):
+    /// ring's reduce-scatter and all-gather around the ring; naive's gather to rank 0 and its sends back; hierarchical's
+    /// reduce-scatter inside each node, its ring across the nodes on the shards, and its all-gather inside each node. Each
+    /// phase's time is what it adds to the slowest rank's clock, so the times add up to the prediction.
+    /// </summary>
+    /// <exception cref="NotSupportedException">An algorithm this method cannot play.</exception>
+    /// <exception cref="InvalidOperationException">A link the play crosses has no known bandwidth.</exception>
+    public static IReadOnlyList<AllReducePhase> PredictPhases(IClusterTopology topology, string algorithm, long bytes, int? seed = null, long? chunkBytes = null)
+    {
+        var phases = new List<AllReducePhase>();
+        Predict(topology, algorithm, bytes, seed, chunkBytes, phases);
+        return phases;
+    }
+
     /// <summary>The collective algorithms <see cref="PredictAllReduce"/> plays.</summary>
     public static IReadOnlyList<string> Playable { get; } = ["ring", "naive", "hierarchical"];
 
@@ -67,7 +145,10 @@ public static class TopologyInspection
     /// </summary>
     /// <exception cref="NotSupportedException">An algorithm this method cannot play.</exception>
     /// <exception cref="InvalidOperationException">A link the play crosses has no known bandwidth.</exception>
-    public static TimeSpan PredictAllReduce(IClusterTopology topology, string algorithm, long bytes, int? seed = null, long? chunkBytes = null)
+    public static TimeSpan PredictAllReduce(IClusterTopology topology, string algorithm, long bytes, int? seed = null, long? chunkBytes = null) =>
+        Predict(topology, algorithm, bytes, seed, chunkBytes, null);
+
+    private static TimeSpan Predict(IClusterTopology topology, string algorithm, long bytes, int? seed, long? chunkBytes, List<AllReducePhase>? phases)
     {
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentNullException.ThrowIfNull(algorithm);
@@ -80,13 +161,17 @@ public static class TopologyInspection
             var (node, local) = topology.Place(r);
             return topology.Nodes[node].Devices[local].Device;
         }).ToArray();
-        var play = new Play(new VirtualClock(world, (a, b) => Resolve(topology.Link(a, b), devices[a]), seed ?? topology.Simulation.Seed), chunkBytes);
+        var play = new Play(new VirtualClock(world, (a, b) => Resolve(topology.Link(a, b), devices[a]), seed ?? topology.Simulation.Seed), chunkBytes)
+        {
+            Phases = phases,
+            LinkOf = (a, b) => Resolve(topology.Link(a, b), devices[a]),
+        };
         if (world > 1)
         {
             switch (algorithm.ToLowerInvariant())
             {
                 case "ring":
-                    play.Ring([.. Enumerable.Range(0, world)], (int)values);
+                    play.Ring([.. Enumerable.Range(0, world)], (int)values, RingPath(world));
                     break;
                 case "naive":
                     play.Naive(world, (int)values);
@@ -104,6 +189,10 @@ public static class TopologyInspection
 
     private static ILinkProfile Resolve(ILinkProfile link, string device) => MeasuredLink.Resolve(link, device);
 
+    private static string RingPath(int count) => count <= 6
+        ? "rank " + string.Join(" → ", Enumerable.Range(0, count).Append(0))
+        : $"rank 0 → 1 → … → {count - 1} → 0";
+
     // The algorithms of Idrak.Network's Collectives/Algorithms.cs and HierarchicalCollectives.cs, played on the clock: the
     // same pieces (ring's cut), the same tags (mirrored here; the two packages do not reference each other), each send
     // charged at the sender's time after what it received before it, as HostCollectives.Exchange interleaves chunks.
@@ -116,12 +205,36 @@ public static class TopologyInspection
         private readonly long _chunk = Math.Clamp(chunkBytes ?? Array.MaxLength / 2, sizeof(float), Array.MaxLength / 2);
         private readonly Dictionary<(int, int, int), long> _sequence = [];
 
+        private readonly Dictionary<string, double> _crossed = new(StringComparer.Ordinal);
+        private double _mark;
+
         public VirtualClock Clock => clock;
 
-        public void Ring(int[] members, int values)
+        // Where each phase goes, when the caller asks for phases; and the link a pair's messages cross.
+        public List<AllReducePhase>? Phases { get; init; }
+
+        public Func<int, int, ILinkProfile>? LinkOf { get; init; }
+
+        public void Ring(int[] members, int values, string where)
         {
             Scatter(members, s => Size(values, members.Length, s), RingScatter);
+            Phase("reduce-scatter around the ring", where);
             Gather(members, s => Size(values, members.Length, s), RingGather);
+            Phase("all-gather around the ring", where);
+        }
+
+        // Ends a phase: what it added to the slowest rank's clock, and the links its messages crossed (slowest first).
+        private void Phase(string name, string where)
+        {
+            if (Phases is null)
+            {
+                return;
+            }
+
+            double now = Enumerable.Range(0, clock.WorldSize).Max(clock.Now);
+            Phases.Add(new AllReducePhase(name, where, [.. _crossed.OrderBy(c => c.Value).Select(c => c.Key)], TimeSpan.FromSeconds(Math.Max(0, now - _mark))));
+            _mark = now;
+            _crossed.Clear();
         }
 
         public void Naive(int world, int values)
@@ -141,6 +254,7 @@ public static class TopologyInspection
                 clock.Arrive(0, charged.Arrives, charged.OwedTo);
             }
 
+            Phase("every rank sends its values to rank 0", $"ranks 1 to {world - 1} → rank 0, summed in rank order");
             for (int r = 1; r < world; r++)
             {
                 foreach (long chunk in Chunks(values, per))
@@ -149,6 +263,8 @@ public static class TopologyInspection
                     clock.Arrive(r, charged.Arrives, charged.OwedTo);
                 }
             }
+
+            Phase("rank 0 sends the sum to every rank", $"rank 0 → ranks 1 to {world - 1}");
         }
 
         public void Hierarchical(IClusterTopology topology, int values)
@@ -160,6 +276,8 @@ public static class TopologyInspection
                 Scatter(mine, s => Size(values, mine.Length, s), IntraScatter);
             }
 
+            string inside = Inside(topology, ranks);
+            Phase("reduce-scatter inside each node", inside);
             if (nodes > 1)
             {
                 foreach (var (start, end, members) in Columns(ranks, values))
@@ -168,12 +286,26 @@ public static class TopologyInspection
                     Scatter(members, s => Size(span, nodes, s), CrossScatter);
                     Gather(members, s => Size(span, nodes, s), CrossGather);
                 }
+
+                Phase("ring across the nodes, one rank of each, on the shards",
+                    $"{string.Join(" → ", topology.Nodes.Select(n => n.Name).Append(topology.Nodes[0].Name))}: each shard's owners");
             }
 
             foreach (var mine in ranks)
             {
                 Gather(mine, s => Size(values, mine.Length, s), IntraGather);
             }
+
+            Phase("all-gather inside each node", inside);
+        }
+
+        // Which nodes have ranks to reduce among themselves (a node of one rank skips the phases inside a node).
+        private static string Inside(IClusterTopology topology, int[][] ranks)
+        {
+            var several = Enumerable.Range(0, ranks.Length).Where(n => ranks[n].Length > 1).ToList();
+            return several.Count == 0 ? "every node has one rank: nothing to do inside a node"
+                : string.Join("; ", several.Select(n => $"{topology.Nodes[n].Name}: ranks {string.Join(", ", ranks[n])}"))
+                  + (several.Count < ranks.Length ? "; nodes of one rank skip it" : "");
         }
 
         // HierarchicalCollectives' columns for an all-reduce: split at every node's slice boundary, one owner per node.
@@ -258,6 +390,12 @@ public static class TopologyInspection
         private Charged Send(int from, int to, long bytes, int tag)
         {
             ref long sequence = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(_sequence, (from, to, tag), out _);
+            if (Phases is not null && LinkOf is { } linkOf)
+            {
+                var link = linkOf(from, to);
+                _crossed[link.Name] = link.BandwidthBytesPerSecond;
+            }
+
             return clock.Charge(from, to, bytes, tag, sequence++);
         }
 
