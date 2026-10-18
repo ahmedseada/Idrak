@@ -1028,6 +1028,56 @@ missing --rank"; "cluster: cli tune --cluster with IDRAK_RANK keeps --rank as th
 world size that contradicts the file is refused naming both"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
 
+### C9: the dashboard (set up, control and monitor in a browser)
+
+Beside C8, once C6 and C7 have landed (two agents). Decided by the owner (decision 8): simulated runs are set up,
+started and controlled from the page; every run is monitored there, real `cluster start` runs across machines
+read-only.
+
+**Commands.** `idrak cluster ui [--topology FILE] [--port N] [--host H] [--no-browser]` opens the dashboard on its own
+(set up a topology, then start runs from the page), as `idrak ui` opens the chat page; `--dashboard [--port N]` on
+`idrak cluster sim` opens it on a run started from the terminal. The port defaults to one the system picks, printed with
+the URL (`IDRAK_CLUSTER_UI_PORT` sets it); the host defaults to `127.0.0.1` (`IDRAK_CLUSTER_UI_HOST`); off loopback an
+API key is required (the `idrak server keys` store and `Authorization: Bearer` / `X-API-Key`, as `serve`), CORS off.
+
+**Server.** ASP.NET Core minimal APIs in `Idrak.Cli` (which already references it for `serve`), built the way
+`ServeHost` builds its app; live data as server-sent events (`Results.Stream`, flushed per event) from a
+`ChannelTelemetry` subscribed only while a page listens (rule 78: nothing measured for nobody). Endpoints:
+`GET /api/machine` (the builder's `MachineFacts`); `POST /api/topology/questions` (the builder's next question with its
+description, default and suggestion, an answer in, the refusal or the next question out: the same `TopologyBuilder`
+`cluster init` asks with); `POST /api/topology` (validate, save; the commented JSON `cluster init` writes);
+`GET /api/topology/inspect` (`TopologyInspection`: ranks, links, predicted all-reduce per algorithm, the transport per
+pair); `POST /api/runs` (start `cluster sim`, in-process or localhost, with its training command and options);
+`POST /api/runs/{id}/pause|resume|stop`; `POST /api/runs/{id}/faults` (inject now); `GET /api/runs` and
+`GET /api/runs/{id}/events` (SSE). Every long action reports progress (what, how far, how fast, time left).
+
+**Control through the library, not the page.** `Idrak.Cluster` gains a run controller: pause and resume take effect at
+the next step boundary (the trainers' `BeginStep` waits while paused), stop cancels after the current step and the
+trainer writes its checkpoint, and faults asked for live are queued to a `"live"` failure model registered in
+`FailureModels` that hands them to the next step and composes with the run's own model. Every live fault is written to
+the event log with its step, so `--seed S --step N` replays a run steered from the page bit for bit. A localhost run
+takes pause, resume and stop through its processes' environment channel (the launcher's), not faults (C5: faults
+belong to the simulated transport).
+
+**Monitoring.** Per rank: state, step, loss, tokens a second, network time against blocked time (the virtual clock's
+for a simulated run), memory in use against its cap; per link: bytes and time; the fault and rank-state timeline; the
+collectives as they run (`CollectiveCompleted`, `GradientsSynced`), the hierarchical/ring choice and the bubble number
+(C7) when a pipeline runs. A real run is followed read-only from its run folder: rank 0's `log.jsonl` (C5 writes every
+rank's per-step summary there) and the launcher's rank lines; its controls are disabled with the reason shown.
+
+**The page.** One self-contained HTML/CSS/JS page (as `ChatPage`): no CDN or external URL, charts drawn by the page
+itself, works offline, light and dark; the topology drawn as nodes, ranks and links, updating as the form changes;
+sizes in the `--unit` the user picks (powers of 1,024, decision 7); the CLI's language (Arabic, right to left) where
+the CLI's messages are Arabic.
+
+**Tests** (`"cluster: ui …"`, through an in-memory test server): the builder API asks `cluster init`'s questions and
+writes the file `cluster init --yes` writes for the same answers; a sim run started from the API pauses at a step
+boundary, resumes, and stops with a checkpoint, the losses equal to an uninterrupted run's; a fault injected live is in
+the event log and a replay reproduces it bit for bit; the event stream carries every rank's step, collective and fault
+events in order, and nothing is measured while no page listens; the dashboard binds to `127.0.0.1` by default and
+refuses an off-loopback request without a key; the page names no external URL and every endpoint it calls exists; a
+run folder written by `cluster start` is followed read-only and its controls are refused naming why.
+
 ## Memory and speed, where every byte goes
 
 | Where | What is held | Bound by | Measured with |
@@ -1049,7 +1099,7 @@ calibration keeps the prediction honest against every measured run.
 C0 → C1 → C2 and C3 in parallel (two agents: C2 is `Idrak.Nlp` and core over `sim`; C3 is `Idrak.Network` and
 `Idrak.Cluster` only) → C4 → C5 (localhost tests here; the LAN and rental runs are the owner's) → C6 → C7 → C8 (the
 training options can land with C2; `cluster init|inspect|sim` with C1; `cluster start` and `bench` with C5;
-`calibrate` after C5's bench). Each phase is one
+`calibrate` after C5's bench) beside C9 (the dashboard, two agents). Each phase is one
 commit series on `abstraction` with its "as built" note appended here. Every step: the filter green on the simulator
 with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 
@@ -1079,8 +1129,11 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
    with a description for every input and a default found on this machine, with options for every answer so it also
    runs without a terminal.
 7. **Decided (2026-10-18): memory sizes in the topology file accept `B`, `KB`/`KiB`, `MB`/`MiB`, `GB`/`GiB`, `TB`/`TiB`,
-   all as powers of 1,024** (device memory is counted that way, and `"16GB"` must mean the whole card); `inspect` prints
-   MiB beside the declared value, as `devices` does.
+   all as powers of 1,024** (device memory is counted that way, and `"16GB"` must mean the whole card); `inspect` shows
+   each size in the largest unit it fills, or the one `--unit` names; a size without a unit is refused by the builder.
+8. **Decided by the owner (2026-10-18): a web dashboard (C9)** sets up topologies, starts, pauses, stops and injects
+   faults into simulated runs, and monitors every run, real `cluster start` runs across machines read-only. Opened by
+   `idrak cluster ui` and by `--dashboard` on `idrak cluster sim`; built next, beside C8.
 
 ## Runs
 
