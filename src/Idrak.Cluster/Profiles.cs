@@ -191,13 +191,3 @@ internal sealed class MeasuredLink(string name, string summary, Func<Device, (do
     // `link` for a rank on `device` (a name: "cuda:0"): measured there when it is a measured link.
     public static ILinkProfile Resolve(ILinkProfile link, string device) => link is MeasuredLink measured ? measured.On(Device.Parse(device)) : link;
 }
-
-/// <summary>The "none" failure model: a run with no faults.</summary>
-internal sealed class NoFailures : IFailureModel
-{
-    public string Name => "none";
-
-    public string Summary => "no faults";
-
-    public IReadOnlyList<Fault> Draw(long step, IClusterTopology topology, Random seeded) => [];
-}

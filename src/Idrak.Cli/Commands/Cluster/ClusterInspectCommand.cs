@@ -25,8 +25,9 @@ internal sealed class ClusterInspectCommand : Command
 
         Reads the topology file (idrak cluster init writes one) and checks it: the node this machine is (by its host
         name), every rank with its node, device and memory cap, each kind of link the ranks use with its bandwidth and
-        latency (links measured on this machine are measured now), and the network time an all-reduce of SIZE would
-        take on the topology with each algorithm, played on the simulator's virtual clock.
+        latency (links measured on this machine are measured now), the network time an all-reduce of SIZE would take
+        on the topology with each algorithm (ring, naive, hierarchical; the default marked), played on the simulator's
+        virtual clock, and the transport the selector picks for each pair of ranks in a simulation here.
 
         Arguments:
           FILE              the topology file
@@ -52,6 +53,16 @@ internal sealed class ClusterInspectCommand : Command
         catch (FormatException e)
         {
             throw new UsageException($"--bytes: {e.Message}");
+        }
+
+        ClusterOptions settings;
+        try
+        {
+            settings = ClusterOptions.FromEnvironment() with { Simulation = new SimulationOptions { Mode = SimulationMode.InProcess } };
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
         }
 
         ClusterTopology topology;
@@ -98,13 +109,15 @@ internal sealed class ClusterInspectCommand : Command
         context.Write("");
 
         var predictions = new JsonObject();
-        foreach (string algorithm in new[] { "ring", "naive" })
+        string collective = settings.CollectiveFor(topology);
+        foreach (string algorithm in TopologyInspection.Playable)
         {
+            string mark = algorithm == collective ? " (the default here)" : "";
             try
             {
                 var time = TopologyInspection.PredictAllReduce(topology, algorithm, bytes);
                 predictions[algorithm] = time.TotalSeconds;
-                context.Write($"all-reduce of {ClusterTopology.FormatMemory(bytes)} with {algorithm}: {time.TotalMilliseconds.ToString("F2", inv)} ms of network time");
+                context.Write($"all-reduce of {ClusterTopology.FormatMemory(bytes)} with {algorithm}: {time.TotalMilliseconds.ToString("F2", inv)} ms of network time{mark}");
             }
             catch (InvalidOperationException e)
             {
@@ -113,7 +126,31 @@ internal sealed class ClusterInspectCommand : Command
             }
         }
 
-        context.Write("simulated: every rank in this process over the sim transport; real transports join in a later phase.");
+        // The transport per pair, as the selector chooses it for a simulation in this process.
+        var pairs = new JsonArray();
+        string? planned = null;
+        try
+        {
+            var plan = TransportPlan.Make(topology, settings);
+            var groups = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            for (int a = 0; a < topology.WorldSize; a++)
+            {
+                for (int b = a + 1; b < topology.WorldSize; b++)
+                {
+                    var (transport, reason) = plan[a, b];
+                    pairs.Add(new JsonObject { ["a"] = a, ["b"] = b, ["transport"] = transport, ["reason"] = reason });
+                    groups[transport] = groups.GetValueOrDefault(transport) + 1;
+                }
+            }
+
+            planned = string.Join(", ", groups.Select(g => $"{g.Key} for {g.Value.ToString(inv)} pair(s)"));
+            context.Write(groups.Count == 0 ? "one rank: no transport is needed." : $"transports (a simulation in this process): {planned}; the reason per pair is in -j.");
+        }
+        catch (NotSupportedException e)
+        {
+            context.Write($"transports: not chosen ({e.Message})");
+        }
+
         context.WriteJson(new JsonObject
         {
             ["path"] = Path.GetFullPath(path),
@@ -126,6 +163,8 @@ internal sealed class ClusterInspectCommand : Command
             })]),
             ["all_reduce_bytes"] = bytes,
             ["all_reduce_seconds"] = predictions,
+            ["default_collective"] = collective,
+            ["transports"] = pairs,
         });
         return ExitCodes.Ok;
     }

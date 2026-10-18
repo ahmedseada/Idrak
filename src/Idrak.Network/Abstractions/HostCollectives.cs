@@ -12,8 +12,12 @@ namespace Idrak.Networking.Abstractions;
 /// buffer per call (returned in <c>finally</c>; device memory does not grow, rule 77), the algorithm works on it, and the
 /// result goes back up once; messages are cut into chunks of <see cref="ClusterOptions.ChunkBytes"/> (one message per
 /// piece when unset); each call is published as <see cref="CollectiveCompleted"/> with its bytes, wall and simulated
-/// time, the time blocked on peers and the peer waited on longest, measured only while someone listens (rule 78).
-/// Collectives use negative tags, so a program's own messages (tags 0 and up) never mix with theirs.
+/// time, the time blocked on peers and the peer waited on longest, measured only while someone listens (rule 78); on a
+/// simulated transport the blocked time is the virtual clock's and the slowest rank is the origin of the critical path
+/// (<see cref="ITransport.SimulatedCriticalRank"/>), so a slow worker is named on every rank, the same on every run.
+/// Collectives use negative tags, so a program's own messages (tags 0 and up) never mix with theirs. The ring steps
+/// (<see cref="RingScatter"/>, <see cref="RingGather"/>) run over any list of ranks, so an algorithm builds rings inside a
+/// node or across nodes from them.
 /// </summary>
 internal abstract class HostCollectives : ICollectives
 {
@@ -24,6 +28,7 @@ internal abstract class HostCollectives : ICollectives
     private long _blockedTicks;
     private long _longestWait;
     private int _slowest;
+    private TimeSpan _simulatedBlocked;
 
     protected HostCollectives(ITransport transport, Device device, ClusterContext context)
     {
@@ -178,6 +183,81 @@ internal abstract class HostCollectives : ICollectives
         }
     }
 
+    /// <summary>
+    /// Reduce-scatter around the ring <paramref name="members"/> (ranks in ring order; this rank at
+    /// <paramref name="position"/>): after <c>members.Length - 1</c> steps the member at position p holds piece p (values
+    /// [offset(p), offset(p) + size(p)) of <paramref name="values"/>) reduced over every member, in the order p+1, p+2, …,
+    /// p: an order fixed by the sizes alone (rule 86). On a bfloat16 wire each member's own values are rounded as they
+    /// first travel and the partial sums travel as bfloat16; the sums are made in float32.
+    /// </summary>
+    protected void RingScatter(Span<float> values, ReadOnlySpan<int> members, int position, Func<int, int> offset, Func<int, int> size, ReduceOp op,
+        WireType wire, int tag)
+    {
+        int count = members.Length;
+        if (count <= 1)
+        {
+            return;
+        }
+
+        int next = members[(position + 1) % count], previous = members[(position - 1 + count) % count];
+        int largest = 0;
+        for (int s = 0; s < count; s++)
+        {
+            largest = Math.Max(largest, size(s));
+        }
+
+        var arrived = ArrayPool<float>.Shared.Rent(Math.Max(1, largest));
+        try
+        {
+            for (int step = 0; step < count - 1; step++)
+            {
+                int send = Wrap(position - 1 - step, count), take = Wrap(position - 2 - step, count);
+                var outgoing = values.Slice(offset(send), size(send));
+                if (wire == WireType.BFloat16 && step == 0)
+                {
+                    WireValues.RoundToBFloat16(outgoing);          // this rank's own values as they first travel
+                }
+
+                var incoming = arrived.AsSpan(0, size(take));
+                Exchange(next, outgoing, previous, incoming, tag, wire);
+                var mine = values.Slice(offset(take), size(take));
+                if (wire == WireType.BFloat16)
+                {
+                    WireValues.RoundToBFloat16(mine);              // as every rank's own values travel
+                }
+
+                Combine(mine, incoming, op);                       // what arrived, then this rank's own
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(arrived);
+        }
+    }
+
+    /// <summary>
+    /// All-gather around the ring <paramref name="members"/>: the member at position p holds piece p; after
+    /// <c>members.Length - 1</c> steps every member holds every piece, passed round as float32.
+    /// </summary>
+    protected void RingGather(Span<float> values, ReadOnlySpan<int> members, int position, Func<int, int> offset, Func<int, int> size, int tag)
+    {
+        int count = members.Length;
+        if (count <= 1)
+        {
+            return;
+        }
+
+        int next = members[(position + 1) % count], previous = members[(position - 1 + count) % count];
+        for (int step = 0; step < count - 1; step++)
+        {
+            int send = Wrap(position - step, count), take = Wrap(position - 1 - step, count);
+            Exchange(next, values.Slice(offset(send), size(send)), previous, values.Slice(offset(take), size(take)), tag, WireType.Float32);
+        }
+    }
+
+    /// <summary><paramref name="value"/> modulo <paramref name="count"/>, from 0.</summary>
+    protected static int Wrap(int value, int count) => ((value % count) + count) % count;
+
     /// <summary>values[i] = values[i] (op) other[i].</summary>
     protected static void Combine(Span<float> values, ReadOnlySpan<float> other, ReduceOp op)
     {
@@ -232,9 +312,11 @@ internal abstract class HostCollectives : ICollectives
     {
         int expected = into.Length * WireValues.BytesPerValue(wire);
         long start = _measuring ? Stopwatch.GetTimestamp() : 0;
+        var simulatedBefore = _measuring ? Transport.SimulatedTime : TimeSpan.Zero;
         int length = Transport.Receive(from, bytes.AsSpan(0, Math.Max(1, expected)), tag);
         if (_measuring)
         {
+            _simulatedBlocked += Transport.SimulatedTime - simulatedBefore;
             long waited = Stopwatch.GetTimestamp() - start;
             _blockedTicks += waited;
             if (waited > _longestWait)
@@ -282,7 +364,7 @@ internal abstract class HostCollectives : ICollectives
             return;
         }
 
-        (_measuring, _sent, _received, _blockedTicks, _longestWait, _slowest) = (true, 0, 0, 0, 0, Rank);
+        (_measuring, _sent, _received, _blockedTicks, _longestWait, _slowest, _simulatedBlocked) = (true, 0, 0, 0, 0, Rank, TimeSpan.Zero);
         var simulated = Transport.SimulatedTime;
         long start = Stopwatch.GetTimestamp();
         try
@@ -294,8 +376,12 @@ internal abstract class HostCollectives : ICollectives
             _measuring = false;
         }
 
-        Telemetry.Collective(new CollectiveCompleted(Name, operation, Rank, WorldSize, _sent, _received, Stopwatch.GetElapsedTime(start),
-            Transport.SimulatedTime - simulated, TimeSpan.FromSeconds(_blockedTicks / (double)Stopwatch.Frequency), _slowest));
+        var wall = Stopwatch.GetElapsedTime(start);
+        var simulatedTime = Transport.SimulatedTime - simulated;
+        bool onClock = simulatedTime > TimeSpan.Zero;                 // a simulated transport: its clock is the cluster's
+        Telemetry.Collective(new CollectiveCompleted(Name, operation, Rank, WorldSize, _sent, _received, wall, simulatedTime,
+            onClock ? _simulatedBlocked : TimeSpan.FromSeconds(_blockedTicks / (double)Stopwatch.Frequency),
+            onClock && Transport.SimulatedCriticalRank is { } critical ? critical : _slowest));
     }
 
     private void Check(Storage storage, int count, string name)
