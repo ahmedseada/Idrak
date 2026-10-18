@@ -47,6 +47,12 @@ with it). The inventory test and the public API
 - **The fix workflow.** Each phase: fix every error first, update the tests the fixes touch, build once (only the
   projects that changed), run the phase's filter once with `--no-build`, commit and push on `abstraction`, hand the owner
   the command list. At most two agents at a time.
+- **References measure, they never limit** (the owner, 2026-10-18). The PyTorch DDP fixture and any other outside
+  reference exist only to check a result Idrak also produces; they bound nothing Idrak builds. Where Idrak.Cluster or
+  Idrak.Network goes beyond what the reference tool can do (the virtual clock, fake devices with caps, seeded replay,
+  the hierarchical reduction's predicted win, calibration, a transport or a collective PyTorch has no equal of), the
+  feature is designed from this plan and proven by Idrak's own tests (the one-process equivalence, the conformance
+  suites, the simulator's determinism), and no reference's absence is a reason to leave it out or shrink it.
 - **Dated runs** (simulated predictions, LAN measurements, rental measurements, calibration deltas) are appended to the
   "Runs" section at the end of this file, newest last.
 
