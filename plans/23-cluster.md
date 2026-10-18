@@ -1248,6 +1248,14 @@ the reader, so no rank holds the whole model; activations between stages moved d
 can; a receive inbox that wakes its waiter directly; then sharding with a pipeline, and top-k with sharding, if the
 measured numbers justify them).
 
+**Owner's GPU run after C6 + C7 (2026-10-18), open for C8b.** "cluster: a model whose training state is over the cap
+of one fake GPU trains across four with Shard = parameters" fails on CUDA and on Vulkan, passes on the CPU: every rank
+holds 1,835,012 B at each epoch's end against its share of 1,572,864 B, constant over the epochs (no growth), so
+262,148 B above the share = one 256 x 256 weight of the test's model (262,144 B) and one float. On the GPU backends a
+gathered unit's weight, or a backend scratch sized to the largest operand, stays in use at the epoch's end where the
+CPU gives it back. C8b first makes the test name what is held (the device's live storages by size and owner on
+failure), so the owner's next GPU run says which, then fixes it in the library; the test's bound stays as it is.
+
 ### C9: the dashboard (set up, control and monitor in a browser)
 
 Beside C8, once C6 and C7 have landed (two agents). Decided by the owner (decision 8): simulated runs are set up,
