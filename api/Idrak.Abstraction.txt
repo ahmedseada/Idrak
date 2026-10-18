@@ -392,6 +392,7 @@ public interface Idrak.Abstraction.Cluster.IHostGradients
   public void ReloadParameters()
 
 public interface Idrak.Abstraction.Cluster.IHostValueCollectives
+  public (default) bool Simulated { get; }
   public (default) bool TryAllGather(System.Span<float> values, System.ReadOnlySpan<int> counts)
   public (default) bool TryReduceScatter(System.Span<float> values, System.ReadOnlySpan<int> counts, Idrak.Abstraction.Cluster.ReduceOp op, Idrak.Abstraction.Cluster.WireType wire)
   public System.TimeSpan SimulatedTime { get; }
@@ -426,6 +427,7 @@ public interface Idrak.Abstraction.Cluster.IStepGroup
 
 public interface Idrak.Abstraction.Cluster.ITransport : System.IDisposable
   public (default) System.TimeSpan SimulatedTime { get; }
+  public (default) bool Simulated { get; }
   public (default) int? SimulatedCriticalRank { get; }
   public Idrak.Abstraction.Cluster.TransportCapabilities Capabilities { get; }
   public System.Threading.Tasks.ValueTask SendAsync(int to, System.ReadOnlyMemory<byte> bytes, int tag, System.Threading.CancellationToken cancellationToken = default)

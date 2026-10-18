@@ -50,6 +50,9 @@ public interface IHostValueCollectives
     /// <summary>This rank's network time on a simulated transport's virtual clock; zero on a real transport.</summary>
     TimeSpan SimulatedTime { get; }
 
+    /// <summary>Whether the transport under these collectives is a simulated one (<see cref="ITransport.Simulated"/>).</summary>
+    bool Simulated => false;
+
     /// <summary>Reduces <paramref name="values"/> across the ranks in place, as <see cref="ICollectives.AllReduce"/> does.</summary>
     bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire);
 

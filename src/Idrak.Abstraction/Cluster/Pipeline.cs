@@ -494,6 +494,8 @@ internal sealed class SubsetTransport(ITransport whole, int[] members, int rank)
 
     public TimeSpan SimulatedTime => whole.SimulatedTime;
 
+    public bool Simulated => whole.Simulated;
+
     public int? SimulatedCriticalRank => whole.SimulatedCriticalRank is { } critical && Array.IndexOf(members, critical) is >= 0 and var at ? at : null;
 
     public void Send(int to, ReadOnlySpan<byte> bytes, int tag) => whole.Send(Member(to, nameof(to)), bytes, tag);

@@ -21,6 +21,9 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
     /// <summary>This rank's time on a simulated transport's clock (zero on a real one, or behind device-only collectives).</summary>
     public TimeSpan SimulatedTime => _host?.SimulatedTime ?? TimeSpan.Zero;
 
+    /// <summary>Whether the transport under the collectives is a simulated one, behind device-only collectives too.</summary>
+    public bool Simulated => _host?.Simulated ?? collectives.Transport?.Simulated ?? false;
+
     public ICollectives Collectives => collectives;
 
     /// <summary>Sums <paramref name="values"/> across the ranks in place.</summary>

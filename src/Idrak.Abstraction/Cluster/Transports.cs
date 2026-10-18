@@ -69,6 +69,13 @@ public interface ITransport : IDisposable
     TimeSpan SimulatedTime => TimeSpan.Zero;
 
     /// <summary>
+    /// Whether this transport's time is a simulated cluster's virtual clock (the <c>sim</c> transport), whether or not the
+    /// clock has moved yet: a link cheaper than the clock's smallest tick leaves <see cref="SimulatedTime"/> at zero on a
+    /// simulated run, so callers ask this rather than read the clock. False on a real transport.
+    /// </summary>
+    bool Simulated => false;
+
+    /// <summary>
     /// On a simulated transport, the rank (in this group's numbering) whose delay this rank's simulated clock last waited
     /// for: the origin of the critical path that reached it (a slow worker, say). Null on a real transport, or when the
     /// rank that held this one back is not in the group.
