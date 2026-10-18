@@ -187,6 +187,14 @@ internal abstract class SyncCore : IGradientSync
         }
     }
 
+    /// <summary>
+    /// A step this rank took part in ended (<see cref="Stepped"/>, before its weight sync and speed exchange):
+    /// <paramref name="wall"/> since the previous step ended (the whole step: its draws, passes, reduction and update).
+    /// </summary>
+    protected virtual void StepTimed(TimeSpan wall)
+    {
+    }
+
     /// <summary>A step began (<see cref="CurrentStep"/>), its group known: <paramref name="present"/> when this rank takes part.</summary>
     protected virtual void Began(bool present)
     {
@@ -219,6 +227,7 @@ internal abstract class SyncCore : IGradientSync
     {
         if (World > 1 && Present)
         {
+            StepTimed(_mark != 0 ? Stopwatch.GetElapsedTime(_mark) : TimeSpan.Zero);
             if (Options.SyncWeightsEvery > 0 && step > 0 && step % Options.SyncWeightsEvery == 0)
             {
                 using (Gather())                                 // a sharded run's weights whole for it (each has one owner anyway)

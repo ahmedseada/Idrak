@@ -26,10 +26,12 @@ internal sealed class SuggestCommand : Command
     public override string Summary => "Design a network and its training setup for a data set";
 
     public override string Usage =>
-        "DATA [options]\n\n" +
+        "DATA|RUN [options]\n\n" +
         "DATA is a CSV, TSV, JSON Lines, JSON or Parquet file (or a folder of them), a folder of class folders of images,\n" +
         "chat rows (conversations or text) or preference rows (chosen and rejected answers). Writes network.json (the\n" +
-        "network builder's JSON: Network.FromJson and idrak train read it), train.json and prep.json; with --base, tune.json.\n\n" +
+        "network builder's JSON: Network.FromJson and idrak train read it), train.json and prep.json; with --base, tune.json.\n" +
+        "RUN (a run folder, its log.jsonl, or a name from idrak runs list) lists the settings the library suggested while\n" +
+        "the run trained (a cluster run's: a bf16 wire, local SGD, accumulation, buckets, top-k, the collective).\n\n" +
         "Options:\n" +
         "  -t, --target COL        the column to predict (default: a column named like a target, else the last one)\n" +
         "      --text COL          a text column: designs a text model (words as tokens)\n" +
@@ -47,7 +49,8 @@ internal sealed class SuggestCommand : Command
         "  idrak sg houses.csv -t SalePrice -e            design a network for a CSV, with the reasons\n" +
         "  idrak sg ./shapes -n 6 -d vulkan:0             try 6 CNN variants on the GPU, keep the best\n" +
         "  idrak sg reviews.jsonl -t label --text review  a text classifier\n" +
-        "  idrak sg chats.jsonl -b owner/model -o ./run    LoRA setup sized to the device\n\n" +
+        "  idrak sg chats.jsonl -b owner/model -o ./run    LoRA setup sized to the device\n" +
+        "  idrak sg ./run                                 the settings suggested while a run trained\n\n" +
         "Limits: 12-bit and arithmetic-coded JPEG files are not decoded;\n" +
         "a GPU's memory is known only through a configured limit (the library does not report it).";
 
@@ -67,6 +70,11 @@ internal sealed class SuggestCommand : Command
         if (context.Positional.Count > 1)
         {
             throw new UsageException($"One DATA argument, not {context.Positional.Count}.");
+        }
+
+        if (Cluster.RunSuggestions.LogOf(context, data) is { } log)
+        {
+            return ListRun(context, data, log);
         }
 
         string? task = context.Option("--task")?.ToLowerInvariant();
@@ -197,6 +205,32 @@ internal sealed class SuggestCommand : Command
             ["reasons"] = new JsonArray([.. design.Reasons.Select(r => (JsonNode)new JsonObject { ["area"] = r.Area, ["choice"] = r.Choice, ["rule"] = r.Rule })]),
             ["assist"] = assist,
             ["next"] = next,
+        });
+        return ExitCodes.Ok;
+    }
+
+    // RUN: the settings the library suggested while the run trained (its log's setting_suggestion records), each once.
+    private static int ListRun(CommandContext context, string run, string log)
+    {
+        var found = Cluster.RunSuggestions.Read(log);
+        if (found.Count == 0)
+        {
+            context.Write($"No setting was suggested while {run} trained (a cluster run's advisor measures while someone listens; IDRAK_CLUSTER_SUGGEST=1 always).");
+        }
+
+        foreach (var s in found)
+        {
+            context.Write(Cluster.SuggestionLine.Format(s.Setting, s.Value, s.Source, s.Device, s.Reason));
+        }
+
+        context.WriteJson(new JsonObject
+        {
+            ["run"] = Path.GetFullPath(run),
+            ["log"] = Path.GetFullPath(log),
+            ["suggestions"] = new JsonArray([.. found.Select(s => (JsonNode)new JsonObject
+            {
+                ["setting"] = s.Setting, ["value"] = s.Value, ["reason"] = s.Reason, ["device"] = s.Device, ["source"] = s.Source,
+            })]),
         });
         return ExitCodes.Ok;
     }

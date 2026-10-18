@@ -23,6 +23,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan NeverDrawn = TimeSpan.FromSeconds(-1);                // not MinValue: now - MinValue overflows
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<ProgressLine, byte> Drawn = new();   // the lines on a screen now
     private readonly TextWriter _writer;
     private readonly Stopwatch _watch = Stopwatch.StartNew();
     private TimeSpan _lastDraw = NeverDrawn;
@@ -43,6 +44,11 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         Unit = unit;
         _writer = context.ErrorOutput;
         Enabled = enabled ?? (!context.Quiet && !context.Json && !context.Plain && Terminal.IsTerminal(_writer));
+        if (Enabled)
+        {
+            Drawn[this] = 0;
+        }
+
         if (Enabled && unit == ProgressUnit.Elapsed)
         {
             // Work without amounts (loading a model): the time so far, redrawn twice a second.
@@ -86,6 +92,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         }
 
         _finished = true;
+        Drawn.TryRemove(this, out _);
         _clock?.Dispose();
         if (!Enabled)
         {
@@ -109,6 +116,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         }
 
         _finished = true;
+        Drawn.TryRemove(this, out _);
         _clock?.Dispose();
         if (!Enabled)
         {
@@ -143,6 +151,21 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
     }
 
     public void Dispose() => Finish();
+
+    /// <summary>
+    /// Takes every progress line drawn on <paramref name="writer"/> off the screen for a moment (<see cref="Erase"/>), so
+    /// a line another part of the command writes (a suggestion the library published) does not land inside one.
+    /// </summary>
+    public static void EraseOn(TextWriter writer)
+    {
+        foreach (var line in Drawn.Keys)
+        {
+            if (ReferenceEquals(line._writer, writer))
+            {
+                line.Erase();
+            }
+        }
+    }
 
     /// <summary>
     /// The line's text: "label  45%  12.3 MB / 27.0 MB  3.1 MB/s  4s left" (without a total: "label  12.3 MB  3.1 MB/s");

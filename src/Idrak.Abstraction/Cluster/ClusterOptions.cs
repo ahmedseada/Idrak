@@ -358,8 +358,27 @@ public sealed record ClusterOptions
     /// <summary>The share of a step spent on the network above which the advisor suggests sending less (<c>IDRAK_CLUSTER_SUGGEST_SHARE</c>).</summary>
     public double SuggestShare { get; init; } = 0.2;
 
-    /// <summary>The largest relative error of bfloat16 gradients the advisor accepts, or null for the reference's measured one (<c>IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE</c>).</summary>
+    /// <summary>
+    /// The largest relative error of bfloat16 gradients the advisor accepts (a sample slice reduced over both wires, the
+    /// largest difference over the slice's largest value), or null for the reference's measured one: the PyTorch DDP
+    /// fixture's bfloat16 gradients against float32's in the same measure, each tensor a slice, at worst 2.71e-3
+    /// (<c>IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE</c>).
+    /// </summary>
     public double? SuggestBFloat16Tolerance { get; init; }
+
+    /// <summary>
+    /// Whether a run's gradient synchronisation measures its first warm steps for the "cluster" setting advisor (plan 23,
+    /// decision 4): null while someone listens at <see cref="Diagnostics.TelemetryLevel.Suggestions"/>, true always, false never
+    /// (<c>IDRAK_CLUSTER_SUGGEST</c>: 1 or 0). The measurement adds two small collectives once (a sample slice reduced over
+    /// both wires); nothing a run computes changes.
+    /// </summary>
+    public bool? Suggest { get; init; }
+
+    /// <summary>The warm steps (the first, cold step aside) the advisor measures before it suggests (<c>IDRAK_CLUSTER_SUGGEST_STEPS</c>).</summary>
+    public int SuggestSteps { get; init; } = 3;
+
+    /// <summary>The gradient values of the sample slice the advisor reduces over a float32 and a bfloat16 wire (<c>IDRAK_CLUSTER_SUGGEST_SLICE</c>).</summary>
+    public int SuggestSliceValues { get; init; } = 65536;
 
     /// <summary>The calibrated link profiles' file, or null for the tuning cache's (<c>IDRAK_CLUSTER_PROFILES_FILE</c>).</summary>
     public string? ProfilesFile { get; init; }
@@ -432,6 +451,7 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
         "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
+        "IDRAK_CLUSTER_SUGGEST", "IDRAK_CLUSTER_SUGGEST_STEPS", "IDRAK_CLUSTER_SUGGEST_SLICE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_EVENT_LOG_FLUSH", "IDRAK_CLUSTER_LOG_TRANSFERS",
         "IDRAK_CLUSTER_CONTROL", "IDRAK_CLUSTER_CONTROL_POLL",
@@ -520,6 +540,9 @@ public sealed record ClusterOptions
         }
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_SHARE") is { } share) o = o with { SuggestShare = Number("IDRAK_CLUSTER_SUGGEST_SHARE", share, "a share from 0 to 1", v => v is >= 0 and <= 1) };
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE") is { } tolerance) o = o with { SuggestBFloat16Tolerance = Number("IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE", tolerance, "a number above 0", v => v > 0) };
+        if (Read(variable, "IDRAK_CLUSTER_SUGGEST") is { } suggest) o = o with { Suggest = Flag("IDRAK_CLUSTER_SUGGEST", suggest) };
+        if (Read(variable, "IDRAK_CLUSTER_SUGGEST_STEPS") is { } suggestSteps) o = o with { SuggestSteps = Whole("IDRAK_CLUSTER_SUGGEST_STEPS", suggestSteps, 1) };
+        if (Read(variable, "IDRAK_CLUSTER_SUGGEST_SLICE") is { } slice) o = o with { SuggestSliceValues = Whole("IDRAK_CLUSTER_SUGGEST_SLICE", slice, 1) };
         if (Read(variable, "IDRAK_CLUSTER_PROFILES_FILE") is { } profiles) o = o with { ProfilesFile = profiles };
         if (Read(variable, "IDRAK_CLUSTER_DEVICE") is { } device) o = o with { Device = device };
         if (Read(variable, "IDRAK_CLUSTER_RUN") is { } run) o = o with { RunId = run };

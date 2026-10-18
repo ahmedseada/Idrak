@@ -497,7 +497,7 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
     private readonly FileStream _stream = new(path, FileMode.Append, FileAccess.Write, FileShare.Read);
     private readonly object _gate = new();
 
-    public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Network;
+    public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Network | TelemetryLevel.Suggestions;
 
     // Whether transfers over real transports are written (for idrak cluster calibrate --from RUN; IDRAK_CLUSTER_LOG_TRANSFERS).
     private readonly bool _transfers = Environment.GetEnvironmentVariable("IDRAK_CLUSTER_LOG_TRANSFERS") is not ("0" or "false" or "off");
@@ -516,6 +516,10 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
     public void OnGradientSync(in GradientsSynced e) => Write(e);
 
     public void OnPipelineStep(in PipelineStepped e) => Write(e);
+
+    // The settings the library suggested while the run trained (a cluster run's "cluster" advisor, plan 23 decision 4):
+    // idrak suggest RUN lists them.
+    public void OnSuggestion(in SettingSuggestion e) => Write(e);
 
     // A transfer over a real transport (a simulated one took the virtual clock's time): what a calibration fits.
     public void OnTransfer(in TransferCompleted e)

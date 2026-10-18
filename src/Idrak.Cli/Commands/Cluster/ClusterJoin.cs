@@ -50,7 +50,7 @@ internal static class ClusterJoin
                 throw new UsageException($"{(node is not null ? "--node" : placement is not null ? "--placement" : "--stages")} is for a cluster run: give --cluster FILE (or --coordinator).");
             }
 
-            return ClusterSession.JoinStarted();                          // a rank process of idrak cluster start (phase C5)
+            return Showing(context, ClusterSession.JoinStarted());        // a rank process of idrak cluster start (phase C5)
         }
 
         ClusterOptions options;
@@ -156,7 +156,21 @@ internal static class ClusterJoin
         }
 
         ClusterSession.Current = joined.Rank;
-        return new Leave(joined);
+        return Showing(context, new Leave(joined));
+    }
+
+    // A rank shows the settings the library suggests while it trains (decision 4; rank 0 publishes them), above its progress
+    // line; every rank listens alike, so the ranks' processes agree to measure.
+    private static IDisposable? Showing(CommandContext context, IDisposable? joined) =>
+        joined is null ? null : new Both(SuggestionLine.Show(context.Output, context.ErrorOutput), joined);
+
+    private sealed class Both(IDisposable shown, IDisposable joined) : IDisposable
+    {
+        public void Dispose()
+        {
+            shown.Dispose();
+            joined.Dispose();
+        }
     }
 
     private static int Whole(string option, string text, int min) =>
