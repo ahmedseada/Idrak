@@ -2,7 +2,6 @@
 
 **Status (2026-10-18, `abstraction`):** planned 2026-10-18 from the owner's spec (plan 23, draft 2) against fec56e1.
 Every phase is built and merged: C0-C7, C8a, C8b, C8c (the setting advisor, decision 4) and C9. Each phase's "as built" note below has the details; the owner's GPU runs are listed per phase.
-C10 (the dashboard redesigned) is planned: four steps, each started only when the owner says so.
 
 | Phase | What | State |
 |---|---|---|
@@ -18,7 +17,6 @@ C10 (the dashboard redesigned) is planned: four steps, each started only when th
 | C8b | Own-tensor loads and saves, device-to-device activations, direct wake, train/tune stops | Done (e016c9f); CPU, CUDA, Vulkan pass |
 | C8c | The `"cluster"` setting advisor (decision 4) | Done (a36bfd1, 6f9592c); CPU, CUDA, Vulkan pass |
 | C9 | The dashboard (`idrak cluster ui`) | Done (8e4b84c); CPU, CUDA pass |
-| C10 | The dashboard redesigned (the page acts as the cluster) | Planned 2026-10-18; design approved by the owner; not started |
 
 **Supersedes plan 6** (`6-network.md`): that plan put the simulator inside `Idrak.Abstraction` as a `"local"` transport and
 built data parallel straight on TCP. This plan builds the simulator first, as its own package native to Idrak, and every
@@ -1788,61 +1786,6 @@ collective the stopping ranks no longer run; C8, with the stage-own checkpoint);
 yet answer a stop with a checkpoint (`cluster sim` runs `pretrain` only; C8 brings `tune` and `train`); `idrak cluster
 replay --events FILE` (C8, with the replay command); messages from the server (errors, run details) stay English on the
 Arabic page; the owner's GPU run of the filter and a browser check of the page.
-
-### C10: the dashboard redesigned (the page acts as the cluster)
-
-Asked by the owner 2026-10-18, after C9: the page set up and steered runs, but it needed a lot of data and setup, and the
-command line was simpler. The redesign makes the page stand on its own and act as a real cluster: build, save, bench
-and run a topology from it, and watch the cluster live. The page replaces the command line (no command input on it).
-The design is the owner-approved mock-up; each step below starts only when the owner says so, and ends with one build,
-the targeted CPU filters once, a push to `abstraction`, and the owner's PowerShell commands.
-
-**The design (approved).**
-
-- Each machine is a datacenter rack; each card in it is drawn as a card, cut into one slice per rank on it (the rank's
-  size on the slice); the cpu as a chip, cut alike.
-- Each link is drawn as what it is, with its speed on it: Ethernet between machines through a switch (a port per
-  machine), Wi-Fi through a router with radio waves (the router cabled to the switch when there is one), InfiniBand
-  through a fabric switch of its own, a direct cable straight between two machines; inside a machine, a ⚡ badge on a
-  card for its slices, a ⚡ wire between cards or a card and the cpu, an NVLink bridge drawn across two bridged cards.
-- A colour key above the canvas: every link kind, its colour and its speed; wire thickness and packet speed follow the
-  bandwidth.
-- Nothing overlaps: racks and network boxes are pushed apart, wires bend round the boxes in their way, speed labels slide
-  along their wire until they clear every box and label. Racks and boxes can be dragged (the others make room); a wire
-  is bent by dragging its label (double-click straightens it); zoom, and Tidy up to lay out again.
-- The side panel collapses, so the cluster view takes the full width.
-- Any number of machines and ranks. A rank is carved like a disk partition: the device (a full one cannot be picked),
-  then the unit (B, KB, MB, GB, TB), then the free room shown in that unit, then the size, refused past the free room
-  ("exceeds the 12 GB free on card 0").
-- Each link is suggested (the best the pair can have, and why) and can be changed freely; a change is marked as the
-  owner's and can go back to the suggestion.
-- Three steps across the top: Build, Bench, Run. Run: simulate here, processes here, or the machines (each machine
-  lights up as it joins). While it runs: live transmission (packets on every wire in the collective's order, slices
-  glowing while they compute, each wire's label the rate it carries now), with a toggle to show or hide it; step, ETA,
-  tokens a second, network share, waiting, loss, the last steps; pause, stop and faults where the run takes them.
-
-**C10a: the page only** (`src/Idrak.Cli/Commands/Cluster/Dashboard/dashboard.html`; the dashboard tests where the
-route check needs it). The design above on the API the server answers today: topologies of any size through the
-existing endpoints (each rank's device and cap, one link inside machines, one link between them, and per-pair
-overrides), sim and localhost runs with their controls, a followed run folder, live transmission from the `links` and
-`collectives` records the event stream already carries. Free room comes from this machine's detected memory. Filter:
-`cluster: ui`.
-
-**C10b: the dashboard server** (`DashboardServer.cs`, `DashboardRuns.cs`, the page, the dashboard tests). Bench and
-calibrate started from the page with live progress, and a run started on the real machines from the page (this machine's
-ranks started as `cluster start` starts them, the run followed). Filters: `cluster: ui`, `cluster: cli bench`.
-
-**C10c: the topology format** (the only step that changes the library: `Idrak.Abstraction/Cluster/Topology.cs`,
-`Idrak.Cluster/TopologyInspection.cs`, `api/Idrak.txt`, the topology tests, the page). Optional per machine: each
-device's whole memory (so a remote machine's free room survives a save), links between particular devices of one
-machine (NVLink between two cards, PCIe to the cpu), and the machine's network adapter (a pair without an override
-joins at the slower adapter, the library's suggestion). Files written before load unchanged. Filters: `cluster:`,
-`public API`, `abstraction inventory`.
-
-**C10d: the record.** This section's "as built" notes and the status row; the owner's CUDA and Vulkan filters, marked
-here once green.
-
-Order: C10a first (useful on its own); C10b and C10c after it in either order, or together (two agents).
 
 ## Memory and speed, where every byte goes
 
