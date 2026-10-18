@@ -1,11 +1,16 @@
 # Idrak.Network
 
-The collective algorithms of an Idrak cluster (plan 23), over any transport registered in `Transports` (the
-simulator's `sim` included), and the transport selector. The real transports (shared memory, host-staged and peer
-copies, a direct cable, TCP) join in phase C5.
+The real transports and the collective algorithms of an Idrak cluster (plan 23): every transport registered in
+`Transports` speaks the same wire format (`WireFormat`: a 36-byte header, a keyed hello first), and the collectives run
+over any of them (the simulator's `sim` included), or over a group routed per pair across several.
 
 | Part | What it does |
 |------|--------------|
+| `shared-memory` | The ranks of one machine: a memory-mapped ring per direction (a file, so it works alike everywhere), a message larger than the ring streaming through it; a hello with the HMAC of a nonce under the cluster key first |
+| `tcp` | Any machines: rank 0 listens at the coordinator, every rank proves the key in a challenge each way, then the ranks connect pairwise; Nagle off; a reader per socket; without a key nothing listens beyond loopback |
+| `direct-link` | A cable between two machines (a topology override of `direct-link`, `thunderbolt` or `usb4`): the same sockets as tcp, dialled at the peer's address in the file |
+| `pcie-host`, `nvlink` (`p2p`) | GPUs of one process: device memory handed over (`IDeviceTransport`) and copied through host memory, or device to device where the driver grants peer access (`Backend.CopyTo`); refused peers fall back, said once per pair |
+| `LinkBench` | Bandwidth and latency of every pair, the first round apart from the warm ones (`idrak cluster bench`) |
 | `naive` | Every rank to rank 0, combined in rank order and sent back: the reference the others agree with |
 | `ring` | Reduce-scatter then all-gather around the ranks: each sends and receives 2(N-1)/N of the values |
 | `hierarchical` | Reduce-scatter inside each node over its link, a ring across the nodes on the shards (one rank per node), all-gather inside: the slow links carry only the shards; the default across several nodes |

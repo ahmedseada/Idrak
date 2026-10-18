@@ -20,7 +20,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
 | `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
 | `Idrak.Cluster` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Network` | 0 | 1 | 0 | 1 | 0 |
+| `Idrak.Network` | 1 | 3 | 0 | 4 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -43,7 +43,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, mixed, none, partition, slow-worker | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce | Idrak, Network, Nlp | Abstraction |
-| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
+| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology, SubsetTopology |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | HierarchicalProvider, NaiveProvider, RingProvider |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | NoFailures, SeededFailures |  | Cluster | Abstraction |
@@ -51,12 +51,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider |  | Abstraction, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostGradients` | interface | public | — | HostOptimizer |  | Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
-| `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | SimTransport |  | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.ITransportProvider` | interface | public | — | SimTransportProvider |  | Cluster | Abstraction |
+| `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | NvlinkTransport, PciHostTransport, RoutedTransport, SharedMemoryTransport, SimTransport, TcpTransport, +1 |  | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.ITransportProvider` | interface | public | — | DirectLinkProvider, NvlinkProvider, PciHostProvider, SharedMemoryProvider, SimTransportProvider, TcpProvider |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | FastestSelector |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | direct-link, ethernet, ethernet-100g, ethernet-10g, ethernet-1g, ethernet-2.5g, infiniband, nvlink, +7 | Abstraction, Cluster, Idrak, Network, Nlp | Abstraction |
 | `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | fastest | Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | sim | Cluster | Abstraction |
+| `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | direct-link, nvlink, p2p, pcie-host, shared-memory, sim, tcp | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, resize, resized-crop, +2 | Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, RandomAffine, +4 |  | Abstraction, Imaging, Vision | Abstraction |
@@ -303,20 +303,23 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Networking.Abstractions.FramedTransport` | abstract class | internal | — | NvlinkTransport, PciHostTransport, SharedMemoryTransport, TcpTransport |  | Network | Network |
 | `Idrak.Networking.Abstractions.HostCollectives` | abstract class | internal | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives |  | Network | Network |
+| `Idrak.Networking.Abstractions.IDeviceTransport` | interface | public | Storage | NvlinkTransport, PciHostTransport |  | Network | Network |
+| `Idrak.Networking.Abstractions.LocalTransport` | abstract class | internal | Storage | NvlinkTransport, PciHostTransport |  | Network | Network |
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 172 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 174 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (151, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 135 of 182 |
-| `CudaBackend` | 177 of 182 |
-| `HipBackend` | 23 of 182 |
-| `VulkanBackend` | 133 of 182 |
+| `CpuBackend` | 135 of 184 |
+| `CudaBackend` | 179 of 184 |
+| `HipBackend` | 23 of 184 |
+| `VulkanBackend` | 133 of 184 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -373,8 +376,10 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ConvolutionBackwardInputKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `ConvolutionBackwardWeightKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `ConvolutionKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `CopiesDirectlyTo(1)` | virtual |  | ✓ |  |  |
 | `Copy(3)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Copy2D(9)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `CopyTo(3)` | virtual |  | ✓ |  |  |
 | `CreateHostStaging(2)` | virtual |  | ✓ |  |  |
 | `CtcLossBackwardKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
 | `CtcLossKernel(12)` | virtual | ✓ | ✓ |  | ✓ |
