@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Cluster;
 using Idrak.Data;
 using Idrak.Datasets.Abstractions;
 using Idrak.Diagnostics;
@@ -966,6 +967,21 @@ public sealed record FineTuningOptions
     /// Null: none.
     /// </summary>
     public TuningAnswerScorer? Answers { get; init; }
+
+    /// <summary>
+    /// Data-parallel fine-tuning (plan 23): this rank's collectives, or null (the default) to train in this process alone,
+    /// exactly as without it. Every rank runs <see cref="FineTuner.Train(PretrainedModel, IReadOnlyList{TrainingSequence}, IReadOnlyList{TrainingSequence}?, FineTuningOptions, string?, IProgress{FineTuningProgress}?, CancellationToken, Action{string}?)"/>
+    /// with its own model on its rank's device and the same sequences and seed: each step covers
+    /// <see cref="GradientAccumulation"/> batches per rank, rank r taking the step's batches k·W + r (or a share by the
+    /// ranks' measured speeds, <see cref="ClusterOptions.RebalanceSteps"/>), so W ranks train as one process with W times
+    /// the accumulation; the gradients are summed after the last batch's backward pass, weighted by each rank's trained
+    /// tokens (a loss of one's own sees the whole step's token and sequence counts); the reported and evaluated losses
+    /// are over every rank's; rank 0 writes the adapters and checkpoints; dropout masks differ by rank.
+    /// </summary>
+    public ICollectives? Cluster { get; init; }
+
+    /// <summary>The cluster settings a <see cref="Cluster"/> run uses, or null: <see cref="Abstraction.Cluster.ClusterOptions.FromEnvironment"/>.</summary>
+    public ClusterOptions? ClusterOptions { get; init; }
 }
 
 /// <summary>What <see cref="FineTuner.Profile"/> measured.</summary>
@@ -1197,30 +1213,38 @@ public static class FineTuner
 
         using var float8 = PrepareFloat8(model, train, options, trace);
         using var optimizer = CreateOptimizer(parameters, options);
+        // Data parallel (plan 23): every rank makes the same batches from the same seed; a step covers the accumulation's
+        // batches on every rank, and each rank runs its share of them.
+        using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, options.ClusterOptions ?? ClusterOptions.FromEnvironment()) : null;
+        using var seeds = sync is null ? null : Dropout.SeedsForRank(sync.Rank);
+        sync?.Start();
+        bool lead = sync is null || sync.Rank == 0;
         var random = new Random(options.Seed);
         var epochBatches = Enumerable.Range(0, options.Epochs)
             .Select(_ => pairs ? PairBatches(train, options.BatchTokens, random) : MakeBatches(model, train, options, random)).ToList();
         int accumulation = Math.Max(1, options.GradientAccumulation);
-        int totalSteps = epochBatches.Sum(b => (b.Count + accumulation - 1) / accumulation);
+        int perStep = accumulation * (sync?.WorldSize ?? 1);
+        int totalSteps = epochBatches.Sum(b => (b.Count + perStep - 1) / perStep);
         var schedule = (options.Scheduler ?? FineTuningSchedules.Cosine(options.WarmupFraction, options.MinLearningRate))(optimizer, Math.Max(1, totalSteps))
             ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
         var evaluations = new List<float>();
         int step = 0, nonFinite = 0;
         using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), custom, trace,
-            Largest(epochBatches.SelectMany(b => b)), MostImageTokens(epochBatches.SelectMany(b => b), train));
+            Largest(epochBatches.SelectMany(b => b)), MostImageTokens(epochBatches.SelectMany(b => b), train), sync);
         for (int epoch = 0; epoch < options.Epochs; epoch++)
         {
             var batches = epochBatches[epoch];
-            for (int first = 0; first < batches.Count; first += accumulation)
+            for (int first = 0; first < batches.Count; first += perStep)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var group = batches.Skip(first).Take(accumulation).ToList();
+                var global = batches.Skip(first).Take(perStep).ToList();
+                var group = sync is null ? global : Share(global, train, sync, runner, trace);
                 var watch = Stopwatch.StartNew();
                 if (vision is not null)
                 {
                     // The next step's images made on workers while this one runs (its own were started the step before).
-                    var coming = first + accumulation < batches.Count ? batches.Skip(first + accumulation).Take(accumulation)
-                        : epoch + 1 < options.Epochs ? epochBatches[epoch + 1].Take(accumulation) : [];
+                    var coming = first + perStep < batches.Count ? batches.Skip(first + perStep).Take(perStep)
+                        : epoch + 1 < options.Epochs ? epochBatches[epoch + 1].Take(perStep) : [];
                     vision.Prefetch(coming.SelectMany(b => b.Sequences.SelectMany(i => train[i].Images)));
                 }
 
@@ -1245,16 +1269,19 @@ public static class FineTuner
 
                 schedule.Step();
                 step++;
+                sync?.Stepped(step);
                 float? evaluationLoss = null;
-                bool lastOfEpoch = first + accumulation >= batches.Count;
+                bool lastOfEpoch = first + perStep >= batches.Count;
                 if (evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch))
                 {
-                    evaluationLoss = custom is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision)
-                        : EvaluateCustom(model, evaluation, pairs, custom, options, trace);
+                    evaluationLoss = custom is not null ? EvaluateCustom(model, evaluation, pairs, custom, options, trace)
+                        : sync is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision)
+                        : EvaluateAcross(model, evaluation, sync, options.BatchTokens, options.LossChunkRows, trace, vision);
                     evaluations.Add(evaluationLoss.Value);
                 }
 
-                var answers = options.Answers is { } scorer && scorer.IsDue(step, lastOfEpoch) ? scorer.Score(model, vision, cancellationToken: cancellationToken) : null;
+                // Generated answers are scored on rank 0 alone (every rank holds the same weights; the scores train nothing).
+                var answers = lead && options.Answers is { } scorer && scorer.IsDue(step, lastOfEpoch) ? scorer.Score(model, vision, cancellationToken: cancellationToken) : null;
                 if (answers is not null)
                 {
                     trace?.Invoke($"answers at step {step}: {answers} ({answers.MeanTokens:F0} tokens each, {answers.Duration.TotalSeconds:F1} s)");
@@ -1262,7 +1289,12 @@ public static class FineTuner
 
                 if (outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0)
                 {
-                    Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
+                    if (lead)
+                    {
+                        Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
+                    }
+
+                    sync?.Barrier();                                       // rank 0 has written it
                 }
 
                 progress?.Report(new FineTuningProgress(step, totalSteps, epoch + 1, loss, rate, tokens / Math.Max(1e-9, watch.Elapsed.TotalSeconds), evaluationLoss) { Answers = answers });
@@ -1272,10 +1304,39 @@ public static class FineTuner
         network.Eval();
         if (outputFolder is not null)
         {
-            Save(outputFolder);
+            if (lead)
+            {
+                Save(outputFolder);
+            }
+
+            sync?.Barrier();
         }
 
         return evaluations;
+    }
+
+    // This rank's share of a step's batches (by the ranks' shares: draws k·W + r while they are equal), and the step's
+    // totals over every rank for a loss of one's own; a change of the shares is traced.
+    private static List<Batch> Share(List<Batch> global, IReadOnlyList<TrainingSequence> train, IGradientSync sync, StepRunner runner, Action<string>? trace)
+    {
+        var sizes = global.Select(b => (long)b.Sequences.Sum(i => train[i].TrainedTokens)).ToArray();
+        var owners = DrawShares.Owners(sizes, sync.Shares);
+        runner.StepTotals = ((float)Math.Max(1, sizes.Sum()), global.Sum(b => b.Sequences.Count()));
+        runner.TraceShares(trace);
+        return [.. global.Where((_, i) => owners[i] == sync.Rank)];
+    }
+
+    // The mean loss per trained token of `sequences` over every rank: each rank evaluates the sequences k·W + r, and the
+    // ranks' token-weighted sums are added.
+    internal static float EvaluateAcross(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, IGradientSync sync, int batchTokens, int chunkRows,
+        Action<string>? trace, TuningVision? vision = null, IReadOnlyList<ISoftPartSource>? parts = null)
+    {
+        var mine = sequences.Where((_, i) => i % sync.WorldSize == sync.Rank).ToList();
+        long trained = mine.Sum(q => (long)q.TrainedTokens);
+        float mean = mine.Count > 0 ? Evaluate(model, mine, batchTokens, chunkRows, trace, vision, parts) : 0f;
+        float[] totals = [(float)(mean * (double)trained), trained];
+        sync.Sum(totals);
+        return totals[1] > 0 ? totals[0] / totals[1] : 0f;
     }
 
     // The trained parameters of the trainable part sources, for the optimizer.
@@ -1316,9 +1377,49 @@ public static class FineTuner
     // custom: a loss of one's own (FineTuningOptions.Loss), or null for the token cross-entropy.
     // largest: the most positions any batch of the run holds (the first step's measured bytes per position say whether it fits).
     // imageTokens: the most image tokens any batch holds (a recorded step with images is made for them).
+    // sync: data parallel (plan 23): the gradients are summed across the ranks after the step's backward passes, before
+    // the update; null in one process.
     internal sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
-        int lossRows, CustomLoss? custom, Action<string>? trace, long largest, int imageTokens) : IDisposable
+        int lossRows, CustomLoss? custom, Action<string>? trace, long largest, int imageTokens, IGradientSync? sync = null) : IDisposable
     {
+        private IReadOnlyList<double>? _tracedShares;
+
+        /// <summary>
+        /// The step's trained tokens and sequences over every rank (data parallel): a loss of one's own divides by them, so
+        /// each rank's loss is its share of the step's and the ranks' gradients add up; null in one process.
+        /// </summary>
+        public (float Tokens, int Sequences)? StepTotals { get; set; }
+
+        /// <summary>Traces the ranks' shares of a step when they changed (measured from their speeds).</summary>
+        public void TraceShares(Action<string>? trace)
+        {
+            if (sync is null || ReferenceEquals(_tracedShares, sync.Shares) || _tracedShares is not null && _tracedShares.SequenceEqual(sync.Shares))
+            {
+                _tracedShares = sync?.Shares;
+                return;
+            }
+
+            bool first = _tracedShares is null;
+            _tracedShares = sync.Shares;
+            if (!first || sync.Shares.Distinct().Count() > 1)
+            {
+                trace?.Invoke("rows split by the ranks' measured speeds: "
+                              + string.Join(", ", sync.Shares.Select((share, r) => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"rank {r} {share * 100:F0}%"))));
+            }
+        }
+
+        // Sums the step's gradients across the ranks (nothing in one process) and gives the step's loss over every rank.
+        private (float Loss, long Tokens) Synced(float loss, long tokens, double trained)
+        {
+            if (sync is null)
+            {
+                return (loss, tokens);
+            }
+
+            var reduced = sync.Reduce(trained, loss, normalized: custom is not null && StepTotals is not null);
+            return ((float)reduced.Loss, (long)reduced.Tokens);
+        }
+
         // The sequences the batches of the current step index (the run's, or one step's when sequences stream in, Run's
         // overload with them).
         private IReadOnlyList<TrainingSequence> _train = train;
@@ -1378,6 +1479,15 @@ public static class FineTuner
 
         public (float Loss, long Tokens) Run(IReadOnlyList<Batch> group, CancellationToken cancellationToken, Func<int, string> label, bool graphs = true)
         {
+            if (group.Count == 0)
+            {
+                // Data parallel: this rank has none of the step's rows; it adds nothing to the sum and updates with the others.
+                optimizer.ZeroGrad();
+                var (loss, tokens) = Synced(0f, 0, 0);
+                Update(model, optimizer, _options, loss);
+                return (loss, tokens);
+            }
+
             // Every step with images whose vision side trains runs ordinarily (its features need gradients); said once.
             if (!_toldImages && options.Vision is { Parameters.Count: > 0 } && _graphsAllowed && group.Any(b => b.HasImages(_train)))
             {
@@ -1599,6 +1709,7 @@ public static class FineTuner
                     model.Network.Train();
                     var (loss, tokens) = graph.Run(_train, batch);
                     trace?.Invoke($"{label(0)}: {batch.Describe(_train)}, replayed: loss {loss:F4}, {watch.Elapsed.TotalSeconds:F2} s");
+                    (loss, tokens) = Synced(loss, tokens, batch.Sequences.Sum(i => _train[i].TrainedTokens));
                     Update(model, optimizer, options, loss);
                     return (loss, tokens);
                 }
@@ -1610,7 +1721,7 @@ public static class FineTuner
         private (float Loss, long Tokens) Ordinary(IReadOnlyList<Batch> group, (int, int, int) shape, CancellationToken cancellationToken, Func<int, string> label)
         {
             _seen[shape] = _seen.GetValueOrDefault(shape) + 1;
-            return RunStep(model, _train, group, optimizer, _options, custom, cancellationToken, trace, label);
+            return RunStep(model, _train, group, optimizer, _options, custom, cancellationToken, trace, label, sync, StepTotals);
         }
 
         // Whether another graph may be recorded: always the first; another while the device's free memory, measured now,
@@ -1721,12 +1832,17 @@ public static class FineTuner
 
     // One optimizer step over a group of batches (gradient accumulation): forward, backward, clipping, update. Returns
     // the mean loss per trained token and the tokens covered.
+    // With a cluster (sync) the gradients are summed across the ranks before the update: weighted by each rank's trained
+    // tokens for the token loss; a loss of one's own divides by the whole step's counts (stepTotals) and is summed.
     private static (float Loss, long Tokens) RunStep(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<Batch> group, Optimizer optimizer,
-        FineTuningOptions options, CustomLoss? custom, CancellationToken cancellationToken, Action<string>? trace, Func<int, string> label)
+        FineTuningOptions options, CustomLoss? custom, CancellationToken cancellationToken, Action<string>? trace, Func<int, string> label,
+        IGradientSync? sync = null, (float Tokens, int Sequences)? stepTotals = null)
     {
         var network = model.Network;
-        float normalizer = Math.Max(1, group.Sum(b => b.Sequences.Sum(i => train[i].TrainedTokens)));
-        int sequences = group.Sum(b => b.Sequences.Count());
+        int trained = group.Sum(b => b.Sequences.Sum(i => train[i].TrainedTokens));
+        bool whole = custom is not null && sync is not null && stepTotals is not null;
+        float normalizer = whole ? stepTotals!.Value.Tokens : Math.Max(1, trained);
+        int sequences = whole ? stepTotals!.Value.Sequences : group.Sum(b => b.Sequences.Count());
         float loss = 0f;
         long tokens = 0;
         network.Train();
@@ -1759,6 +1875,12 @@ public static class FineTuner
                   + $"pass{(v.LastFeatures.Passes == 1 ? "" : "es")}, {v.LastFeatures.Milliseconds:F1} ms"
                 : "";
             trace?.Invoke($"  forward and backward {batchWatch.Elapsed.TotalSeconds:F2} s, loss {shown:F4}{imageCounts}");
+        }
+
+        if (sync is not null)
+        {
+            var reduced = sync.Reduce(trained, loss, normalized: whole);
+            (loss, tokens) = ((float)reduced.Loss, (long)reduced.Tokens);
         }
 
         Update(model, optimizer, options, loss);

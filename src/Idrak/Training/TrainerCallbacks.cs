@@ -141,11 +141,22 @@ public sealed class Checkpoint(string directory, int everyEpochs = 1, bool keepB
     public string BestPath => Path.Combine(Directory, "best.ikw");
 
     /// <inheritdoc />
-    public void OnTrainBegin(TrainerContext context) => System.IO.Directory.CreateDirectory(Directory);
+    public void OnTrainBegin(TrainerContext context)
+    {
+        if (context.Rank == 0)
+        {
+            System.IO.Directory.CreateDirectory(Directory);
+        }
+    }
 
     /// <inheritdoc />
     public void OnEpochEnd(TrainerContext context, EpochCompleted epoch)
     {
+        if (context.Rank != 0)
+        {
+            return;                                                         // data parallel: rank 0 writes, every rank holds the same weights
+        }
+
         if (epoch.Epoch % EveryEpochs == 0)
         {
             Save(context.Model, LastPath);
@@ -184,12 +195,20 @@ public sealed class CsvLog(string path) : ITrainerCallback
     {
         _metrics = null;
         _validationMetrics = null;
-        File.WriteAllText(Path, "");
+        if (context.Rank == 0)
+        {
+            File.WriteAllText(Path, "");
+        }
     }
 
     /// <inheritdoc />
     public void OnEpochEnd(TrainerContext context, EpochCompleted epoch)
     {
+        if (context.Rank != 0)
+        {
+            return;                                                         // data parallel: rank 0 writes the log
+        }
+
         var inv = CultureInfo.InvariantCulture;
         using var writer = new StreamWriter(Path, append: true);
         if (_metrics is null)

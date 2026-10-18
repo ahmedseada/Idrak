@@ -73,9 +73,9 @@ internal static class EnvironmentVariables
         Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET",
         Cluster = "Cluster";
 
-    // Plan 23, phase C0: read by ClusterOptions.FromEnvironment (the library and its tests); the training and cluster
-    // commands that start ranks take them from phase C2 on.
-    private static readonly string[] ClusterRun = ["test"];
+    // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
+    // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
+    private static readonly string[] ClusterRun = ["cluster sim", "test"];
 
     /// <summary>The table, in listing order.</summary>
     public static IReadOnlyList<Variable> All { get; } =
@@ -212,13 +212,17 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_CHUNK_BYTES", Cluster, "measured at first use", "The bytes of a chunk in flight (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_IN_FLIGHT", Cluster, "2", "Chunks in flight each way", ClusterRun),
         new("IDRAK_CLUSTER_SOCKET_BUFFER", Cluster, "the system's", "The socket buffers' size (B, KB, MB, GB)", ClusterRun),
-        new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "measured against the step", "The size of a gradient bucket reduced during the backward pass (B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "16 MiB (measured against the step from phase C4)", "The size of a gradient bucket: gradients are reduced a bucket at a time (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_WIRE", Cluster, "f32", "f32 or bf16: how gradients travel (sums are always made in float32)", ClusterRun),
         new("IDRAK_CLUSTER_TOPK", Cluster, "0 (every value)", "The share of gradient values sent, largest first, from 0 to 1", ClusterRun),
         new("IDRAK_CLUSTER_ERROR_FEEDBACK", Cluster, "1", "1 or 0: values top-k leaves out are added to the next step's", ClusterRun),
         new("IDRAK_CLUSTER_LOCAL_SGD", Cluster, "0 (every step)", "Synchronize the weights every this many steps instead of the gradients every step", ClusterRun),
         new("IDRAK_CLUSTER_SYNC_WEIGHTS", Cluster, "0 (never)", "Rank 0 sends its weights every this many steps (ranks of different device kinds round apart)", ClusterRun),
         new("IDRAK_CLUSTER_REBALANCE_EVERY", Cluster, "0 (the first warm steps only)", "Re-measure each rank's speed and re-split the batch every this many steps", ClusterRun),
+        new("IDRAK_CLUSTER_REBALANCE_STEPS", Cluster, "3", "Warm steps each rank times before a step's rows are split by the ranks' measured speeds; 0 keeps equal splits", ClusterRun),
+        new("IDRAK_CLUSTER_REBALANCE_TOLERANCE", Cluster, "0.1", "How far apart the ranks' measured speeds may be (fastest over slowest, minus 1) and still split equally", ClusterRun),
+        new("IDRAK_CLUSTER_GRADIENT_SYNC", Cluster, "all-reduce", "How gradients are kept in step across the ranks (all-reduce, or a plug-in's)", ClusterRun),
+        new("IDRAK_CLUSTER_START", Cluster, "broadcast", "broadcast or check: rank 0's starting values sent to every rank, or every rank's hash compared", ClusterRun),
         new("IDRAK_CLUSTER_SHARD", Cluster, "none", "none, optimizer, gradients or parameters: the state split across ranks", ClusterRun),
         new("IDRAK_CLUSTER_PLACEMENT", Cluster, "single", "single or pipeline: how the model is placed", ClusterRun),
         new("IDRAK_CLUSTER_MICROBATCHES", Cluster, "the gradient accumulation", "A pipeline's micro-batches in flight", ClusterRun),

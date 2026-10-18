@@ -104,6 +104,7 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_TIMEOUT"] = "2.5", ["IDRAK_CLUSTER_RETRIES"] = "5", ["IDRAK_CLUSTER_CHUNK_BYTES"] = "4MB", ["IDRAK_CLUSTER_IN_FLIGHT"] = "4",
             ["IDRAK_CLUSTER_SOCKET_BUFFER"] = "512KiB", ["IDRAK_CLUSTER_BUCKET_BYTES"] = "25MB", ["IDRAK_CLUSTER_WIRE"] = "bf16", ["IDRAK_CLUSTER_TOPK"] = "0.01",
             ["IDRAK_CLUSTER_ERROR_FEEDBACK"] = "0", ["IDRAK_CLUSTER_LOCAL_SGD"] = "4", ["IDRAK_CLUSTER_SYNC_WEIGHTS"] = "10", ["IDRAK_CLUSTER_REBALANCE_EVERY"] = "50",
+            ["IDRAK_CLUSTER_REBALANCE_STEPS"] = "5", ["IDRAK_CLUSTER_REBALANCE_TOLERANCE"] = "0.25", ["IDRAK_CLUSTER_GRADIENT_SYNC"] = "mine", ["IDRAK_CLUSTER_START"] = "check",
             ["IDRAK_CLUSTER_SHARD"] = "parameters", ["IDRAK_CLUSTER_PLACEMENT"] = "pipeline", ["IDRAK_CLUSTER_MICROBATCHES"] = "8", ["IDRAK_CLUSTER_SCHEDULE"] = "1f1b",
             ["IDRAK_CLUSTER_SUGGEST_SHARE"] = "0.3", ["IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE"] = "0.002", ["IDRAK_CLUSTER_PROFILES_FILE"] = "profiles.txt",
             ["IDRAK_CLUSTER_SEED"] = "7", ["IDRAK_CLUSTER_MODE"] = "localhost", ["IDRAK_CLUSTER_THROTTLE"] = "off", ["IDRAK_CLUSTER_FAILURES"] = "mixed",
@@ -119,6 +120,7 @@ internal static partial class Tests
         }
 
         var all = ClusterOptions.From(n => good.GetValueOrDefault(n), null);
+        Check(all is { RebalanceSteps: 5, RebalanceTolerance: 0.25, GradientSync: "mine", StartingState: StartingState.Check }, $"the data-parallel settings parsed: {all}");
         Check(all is { Rank: 2, WorldSize: 4, Wire: WireType.BFloat16, Shard: ShardMode.Parameters, ChunkBytes: 4L << 20, SocketBufferBytes: 512L << 10, BucketBytes: 25L << 20,
                   TopK: 0.01, ErrorFeedback: false, LocalSgdEvery: 4, Simulation: { Seed: 7, Mode: SimulationMode.Localhost, Throttle: false, Failures: "mixed", ReplayStep: 12, Clock: ThroughputClock.Simulated } }
               && all.Timeout == TimeSpan.FromSeconds(2.5) && all.Key is not null,
@@ -129,6 +131,7 @@ internal static partial class Tests
                      ("IDRAK_RANK", "-1", "0 or more"), ("IDRAK_CLUSTER_WIRE", "fp8", "f32 or bf16"), ("IDRAK_CLUSTER_CHUNK_BYTES", "4QB", "size"),
                      ("IDRAK_CLUSTER_KEY", "short", "16"), ("IDRAK_CLUSTER_TOPK", "2", "0 to 1"), ("IDRAK_CLUSTER_MODE", "cloud", "in-process or localhost"),
                      ("IDRAK_CLUSTER_PORT", "70000", "0 to 65535"), ("IDRAK_CLUSTER_SHARD", "3", "none, optimizer"),
+                     ("IDRAK_CLUSTER_START", "copy", "broadcast or check"), ("IDRAK_CLUSTER_REBALANCE_TOLERANCE", "-1", "0 or more"),
                  })
         {
             ThrowsNaming<ArgumentException>(() => ClusterOptions.From(n => n == name ? value : null, null), $"{name}={value}", name, expected);

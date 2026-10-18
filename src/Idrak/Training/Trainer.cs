@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using Idrak.Abstraction.Cluster;
 using Idrak.Datasets;
 using Idrak.Datasets.Abstractions;
 using Idrak.Diagnostics;
@@ -138,6 +139,23 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// <summary>When set, gradients are clipped to this global L2 norm before each step (recommended for RNNs).</summary>
     public float? MaxGradientNorm { get; init; }
 
+    /// <summary>
+    /// Data-parallel training (plan 23): this rank's collectives (a simulated cluster's rank, or a real one's), or null (the
+    /// default) to train in this process alone, exactly as without it. With a cluster every rank runs <see cref="Fit"/>
+    /// with a model of its own on its rank's device: a <see cref="DataLoader"/>'s samples are sharded by position (rank r
+    /// takes the epoch's samples k·W + r, so batch k of every rank together is batch k of one process with batches W times
+    /// as large; a shuffling loader needs a seed, so every rank draws the same order), another batch source by batch.
+    /// After each backward pass the gradients are summed across the ranks, weighted by each rank's samples
+    /// (<see cref="GradientSyncs"/>), so every rank updates with the gradient of the whole step; the reported losses and
+    /// metrics are over every rank's samples, so every rank makes the same early-stopping decision; validation is
+    /// sharded the same way; the model's buffers (batch-norm statistics) are rank 0's at every epoch's end; dropout masks
+    /// differ by rank; callbacks that write files write on rank 0.
+    /// </summary>
+    public ICollectives? Cluster { get; init; }
+
+    /// <summary>The cluster settings a <see cref="Cluster"/> run uses (the synchronisation, the wire, the starting state), or null: <see cref="Abstraction.Cluster.ClusterOptions.FromEnvironment"/>.</summary>
+    public ClusterOptions? ClusterOptions { get; init; }
+
     private Device Device => Model.WeightsDevice ?? Device.Default;
 
     /// <summary>
@@ -157,11 +175,25 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         long step = 0;
         bool cancelled = false;
         var callbacks = Callbacks.ToArray();
-        var context = new TrainerContext(Model, Optimizer, epochs, history, cancellationToken);
+        using var sync = Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, ClusterOptions ?? Abstraction.Cluster.ClusterOptions.FromEnvironment()) : null;
+        if (sync is not null && train is DataLoader { Shuffle: true, Seed: null })
+        {
+            throw new ArgumentException("Data-parallel training draws one order of the samples on every rank: give the training DataLoader a seed.", nameof(train));
+        }
+
+        var context = new TrainerContext(Model, Optimizer, epochs, history, cancellationToken) { Rank = sync?.Rank ?? 0, WorldSize = sync?.WorldSize ?? 1 };
         bool batchCallbacks = callbacks.Length > 0;
         bool callbacksNeedLoss = callbacks.Any(c => c.NeedsBatchLoss);
+        bool lead = sync is null || sync.Rank == 0;                         // the rank that publishes telemetry
+        List<Tensor> buffers = sync is null ? [] : [.. Model.Buffers().Where(b => b.Size > 0)];
+        using var seeds = sync is null ? null : Layers.Dropout.SeedsForRank(sync.Rank);
+        if (sync is not null)
+        {
+            sync.Start();                                                   // every rank from the same weights
+            sync.Broadcast(buffers);
+        }
 
-        if (Telemetry.IsEnabled(TelemetryLevel.Training))
+        if (lead && Telemetry.IsEnabled(TelemetryLevel.Training))
         {
             Telemetry.TrainingStarted(new TrainingStarted(
                 Model.Summary(), Optimizer.GetType().Name, device, epochs, train.SampleCount ?? 0, validation?.SampleCount,
@@ -189,34 +221,81 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             var epochTime = Stopwatch.StartNew();
             Model.Train();
             sums.Backend.Fill(sums.Storage, sums.Size, 0f);
-            int samples = 0;
-            bool perBatch = Telemetry.IsEnabled(TelemetryLevel.Batches);
+            int samples = 0, epochStep = 0;
+            bool perBatch = lead && Telemetry.IsEnabled(TelemetryLevel.Batches);
             long dataStart = Stopwatch.GetTimestamp();
 
-            foreach (var batch in train)
+            using var batches = (sync is null ? train : Shard(train, sync)).GetEnumerator();
+            while (true)
             {
+                // With a cluster a rank whose share of the epoch has ended goes on adding nothing until every rank's has.
+                bool has = batches.MoveNext();
+                if (!has && sync is null)
+                {
+                    break;
+                }
+
+                var batch = has ? batches.Current : null;
                 using var _ = batch;
                 using var scope = new TensorScope();
                 var dataTime = Stopwatch.GetElapsedTime(dataStart);
                 long computeStart = Stopwatch.GetTimestamp();
 
-                var predictions = Model.Forward(batch.Features);
-                var batchLoss = Loss(predictions, batch.Targets);
-                Optimizer.ZeroGrad();
-                batchLoss.Backward();
-                double? gradientNorm = MaxGradientNorm is { } maxNorm ? Optimizer.ClipGradientNorm(maxNorm)
-                    : Telemetry.IsEnabled(TelemetryLevel.Gradients) ? Optimizer.GradientNorm() : null;
-                Optimizer.Step();
-                Accumulate(sums, batchLoss, predictions, batch.Targets, batch.Size);
-                samples += batch.Size;
+                Tensor? predictions = null, batchLoss = null;
+                if (batch is not null)
+                {
+                    predictions = Model.Forward(batch.Features);
+                    batchLoss = Loss(predictions, batch.Targets);
+                    Optimizer.ZeroGrad();
+                    batchLoss.Backward();
+                }
+                else
+                {
+                    Optimizer.ZeroGrad();
+                }
+
+                double reducedLoss = double.NaN;
+                if (sync is not null)
+                {
+                    // The gradients of every rank's samples, weighted by each rank's count: one process's gradient of the step.
+                    var reduced = sync.Reduce(batch?.Size ?? 0, batchLoss?.Item() ?? 0);
+                    if (reduced.Tokens <= 0)
+                    {
+                        break;                                              // every rank's share of the epoch has ended
+                    }
+
+                    reducedLoss = reduced.Loss;
+                }
+
+                double? gradientNorm = null;
+                if (sync is not null && Optimizer is IHostGradients)
+                {
+                    Optimizer.ClipAndStep(MaxGradientNorm ?? 0f);           // the reduced gradients are on the host: clipped there
+                }
+                else
+                {
+                    gradientNorm = MaxGradientNorm is { } maxNorm ? Optimizer.ClipGradientNorm(maxNorm)
+                        : Telemetry.IsEnabled(TelemetryLevel.Gradients) ? Optimizer.GradientNorm() : null;
+                    Optimizer.Step();
+                }
+
+                if (batch is not null)
+                {
+                    Accumulate(sums, batchLoss!, predictions!, batch.Targets, batch.Size);
+                    samples += batch.Size;
+                }
+
                 step++;
+                epochStep++;
                 context.Step = step;
+                sync?.Stepped(step);
 
                 if (perBatch || batchCallbacks)
                 {
-                    // Reading the loss synchronizes (so compute time is real time); skipped when nobody needs it.
-                    double lossValue = perBatch || callbacksNeedLoss ? batchLoss.Item() : double.NaN;
-                    var completed = new BatchCompleted(epoch, batch.Index + 1, train.BatchCount ?? 0, step, batch.Size,
+                    // Reading the loss synchronizes (so compute time is real time); skipped when nobody needs it. With a
+                    // cluster the loss is the step's over every rank, the same on each, so callbacks decide alike.
+                    double lossValue = sync is not null ? reducedLoss : perBatch || callbacksNeedLoss ? batchLoss!.Item() : double.NaN;
+                    var completed = new BatchCompleted(epoch, batch is null ? epochStep : batch.Index + 1, train.BatchCount ?? 0, step, batch?.Size ?? 0,
                         lossValue, Optimizer.LearningRate, gradientNorm, dataTime, Stopwatch.GetElapsedTime(computeStart));
                     if (perBatch)
                     {
@@ -249,8 +328,18 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 break;
             }
 
-            var (trainLoss, trainMetrics) = Read(sums, samples);
-            EvaluationResult? validationResult = validation is null ? null : Evaluate(validation);
+            var totals = sums.ToArray();
+            if (sync is not null)
+            {
+                // Every rank's sums and samples: the epoch's loss and metrics over all of them, the same on every rank.
+                float[] all = [.. totals, samples];
+                sync.Sum(all);
+                (totals, samples) = (all[..^1], (int)all[^1]);
+                sync.Broadcast(buffers);                                    // rank 0's batch-norm statistics on every rank
+            }
+
+            var (trainLoss, trainMetrics) = Read(totals, samples);
+            EvaluationResult? validationResult = validation is null ? null : sync is null ? Evaluate(validation) : EvaluateAcross(validation, sync);
             double monitored = validationResult?.Loss ?? trainLoss;
             bool isBest = monitored < history.BestLoss - MinImprovement;
             if (isBest)
@@ -273,7 +362,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 Optimizer.LearningRate, epochTime.Elapsed, samples / Math.Max(epochTime.Elapsed.TotalSeconds, 1e-9),
                 ComputeResources.GetMemoryUsage(device), isBest);
             history.Add(summary);
-            if (Telemetry.IsEnabled(TelemetryLevel.Training))
+            if (lead && Telemetry.IsEnabled(TelemetryLevel.Training))
             {
                 Telemetry.EpochCompleted(summary);
             }
@@ -313,7 +402,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             callback.OnTrainEnd(context, history);
         }
 
-        if (Telemetry.IsEnabled(TelemetryLevel.Training))
+        if (lead && Telemetry.IsEnabled(TelemetryLevel.Training))
         {
             Telemetry.TrainingCompleted(new TrainingCompleted(Math.Min(epoch, epochs), totalTime.Elapsed,
                 history.Epochs.Count > 0 ? history.Epochs[^1].Loss : double.NaN, history.BestEpoch, history.BestLoss, history.StoppedEarly, cancelled));
@@ -404,6 +493,24 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// <summary>Computes the loss and metrics on <paramref name="data"/> in evaluation mode.</summary>
     public EvaluationResult Evaluate(IBatchSource data)
     {
+        var (totals, samples) = Sums(data, data);
+        var (lossValue, metrics) = Read(totals, samples);
+        return new EvaluationResult(lossValue, metrics, samples);
+    }
+
+    // Validation in data-parallel training: each rank its share of the batches, the sums over every rank's.
+    private EvaluationResult EvaluateAcross(IBatchSource data, IGradientSync sync)
+    {
+        var (totals, samples) = Sums(data, Shard(data, sync));
+        float[] all = [.. totals, samples];
+        sync.Sum(all);
+        var (lossValue, metrics) = Read(all[..^1], (int)all[^1]);
+        return new EvaluationResult(lossValue, metrics, (int)all[^1]);
+    }
+
+    // The batch-size-weighted sums of the loss and metrics over `batches` (of `data`), and the samples.
+    private (float[] Totals, int Samples) Sums(IBatchSource data, IEnumerable<Batch> batches)
+    {
         bool wasTraining = Model.IsTraining;
         Model.Eval();
         try
@@ -412,7 +519,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             int samples = 0;
             using (Autograd.NoGrad())
             {
-                foreach (var batch in data)
+                foreach (var batch in batches)
                 {
                     using var _ = batch;
                     using var scope = new TensorScope();
@@ -422,12 +529,31 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 }
             }
 
-            var (lossValue, metrics) = Read(sums, samples);
-            return new EvaluationResult(lossValue, metrics, samples);
+            return (sums.ToArray(), samples);
         }
         finally
         {
             Model.Train(wasTraining);
+        }
+    }
+
+    // A rank's share of a batch source: a loader's samples by position, any other source's batches by position.
+    private static IEnumerable<Batch> Shard(IBatchSource source, IGradientSync sync) =>
+        source is DataLoader loader ? loader.Shard(sync.Rank, sync.WorldSize) : ByBatch(source, sync.Rank, sync.WorldSize);
+
+    private static IEnumerable<Batch> ByBatch(IBatchSource source, int rank, int world)
+    {
+        int position = 0;
+        foreach (var batch in source)
+        {
+            if (position++ % world == rank)
+            {
+                yield return batch;
+            }
+            else
+            {
+                batch.Dispose();                                            // another rank's
+            }
         }
     }
 
@@ -485,9 +611,8 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         }
     }
 
-    private (double Loss, Dictionary<string, double> Metrics) Read(Tensor sums, int samples)
+    private (double Loss, Dictionary<string, double> Metrics) Read(float[] values, int samples)
     {
-        var values = sums.ToArray();
         double n = Math.Max(samples, 1);
         var metrics = new Dictionary<string, double>(Metrics.Count);
         for (int i = 0; i < Metrics.Count; i++)

@@ -9,6 +9,7 @@ copies, a direct cable, TCP) join in phase C5.
 | `naive` | Every rank to rank 0, combined in rank order and sent back: the reference the others agree with |
 | `ring` | Reduce-scatter then all-gather around the ranks: each sends and receives 2(N-1)/N of the values |
 | `fastest` | For a pair of ranks, the first transport available between them, fastest first |
+| `all-reduce` (`GradientSyncs`) | Data-parallel training: each step's gradients summed across the ranks after the backward pass, token-weighted, a bucket at a time; the starting values sent or checked, weights re-sent every `SyncWeightsEvery` steps, a step's rows split by the ranks' measured speeds; reduced on the host where a `HostOptimizer` holds them |
 | The `network` profiler probe | Collectives and transfers: wall time, bytes, time blocked on peers, the pairs that cost most |
 
 Every sum is made in an order fixed by the algorithm and the sizes, so every rank ends with identical bytes and a rerun

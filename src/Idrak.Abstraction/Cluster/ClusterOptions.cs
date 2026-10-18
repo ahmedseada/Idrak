@@ -153,7 +153,10 @@ public sealed record ClusterOptions
     /// <summary>The socket buffers' bytes, or null for the system's (<c>IDRAK_CLUSTER_SOCKET_BUFFER</c>).</summary>
     public long? SocketBufferBytes { get; init; }
 
-    /// <summary>The bytes of a gradient bucket reduced during the backward pass, or null: measured against the step (<c>IDRAK_CLUSTER_BUCKET_BYTES</c>).</summary>
+    /// <summary>
+    /// The bytes of a gradient bucket: the gradients are reduced a bucket at a time through one host buffer of this size;
+    /// null: 16 MiB until phase C4 measures it against the step (<c>IDRAK_CLUSTER_BUCKET_BYTES</c>).
+    /// </summary>
     public long? BucketBytes { get; init; }
 
     /// <summary>How gradients travel (<c>IDRAK_CLUSTER_WIRE</c>: f32 or bf16).</summary>
@@ -173,6 +176,24 @@ public sealed record ClusterOptions
 
     /// <summary>Re-measure each rank's speed and re-split the batch every this many steps; 0 measures the first warm steps only (<c>IDRAK_CLUSTER_REBALANCE_EVERY</c>).</summary>
     public int RebalanceEvery { get; init; }
+
+    /// <summary>
+    /// The warm steps (the first, cold step aside) each rank times before the ranks' tokens per second are compared and a
+    /// step's rows are split in proportion; 0 keeps equal splits (<c>IDRAK_CLUSTER_REBALANCE_STEPS</c>).
+    /// </summary>
+    public int RebalanceSteps { get; init; } = 3;
+
+    /// <summary>
+    /// How far apart the ranks' measured speeds may be (the fastest over the slowest, minus 1) and still be split equally,
+    /// so the noise of equal devices never moves rows between ranks (<c>IDRAK_CLUSTER_REBALANCE_TOLERANCE</c>).
+    /// </summary>
+    public double RebalanceTolerance { get; init; } = 0.1;
+
+    /// <summary>How gradients are kept in step across the ranks: a <see cref="GradientSyncs"/> name (<c>IDRAK_CLUSTER_GRADIENT_SYNC</c>).</summary>
+    public string GradientSync { get; init; } = "all-reduce";
+
+    /// <summary>How every rank starts from the same values: rank 0's sent to all, or every rank's hash checked (<c>IDRAK_CLUSTER_START</c>: broadcast or check).</summary>
+    public StartingState StartingState { get; init; } = StartingState.Broadcast;
 
     /// <summary>The state split across ranks (<c>IDRAK_CLUSTER_SHARD</c>: none, optimizer, gradients or parameters).</summary>
     public ShardMode Shard { get; init; } = ShardMode.None;
@@ -205,7 +226,8 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_SELECTOR", "IDRAK_CLUSTER_COLLECTIVE", "IDRAK_CLUSTER_KEY", "IDRAK_CLUSTER_PORT", "IDRAK_CLUSTER_TIMEOUT",
         "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_SOCKET_BUFFER",
         "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
-        "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_PLACEMENT",
+        "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
+        "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK",
@@ -260,6 +282,10 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_LOCAL_SGD") is { } localSgd) o = o with { LocalSgdEvery = Whole("IDRAK_CLUSTER_LOCAL_SGD", localSgd, 0) };
         if (Read(variable, "IDRAK_CLUSTER_SYNC_WEIGHTS") is { } sync) o = o with { SyncWeightsEvery = Whole("IDRAK_CLUSTER_SYNC_WEIGHTS", sync, 0) };
         if (Read(variable, "IDRAK_CLUSTER_REBALANCE_EVERY") is { } rebalance) o = o with { RebalanceEvery = Whole("IDRAK_CLUSTER_REBALANCE_EVERY", rebalance, 0) };
+        if (Read(variable, "IDRAK_CLUSTER_REBALANCE_STEPS") is { } rebalanceSteps) o = o with { RebalanceSteps = Whole("IDRAK_CLUSTER_REBALANCE_STEPS", rebalanceSteps, 0) };
+        if (Read(variable, "IDRAK_CLUSTER_REBALANCE_TOLERANCE") is { } rebalanceTolerance) o = o with { RebalanceTolerance = Number("IDRAK_CLUSTER_REBALANCE_TOLERANCE", rebalanceTolerance, "a number, 0 or more", v => v >= 0) };
+        if (Read(variable, "IDRAK_CLUSTER_GRADIENT_SYNC") is { } gradientSync) o = o with { GradientSync = gradientSync };
+        if (Read(variable, "IDRAK_CLUSTER_START") is { } start) o = o with { StartingState = Choice<StartingState>("IDRAK_CLUSTER_START", start, "broadcast or check") };
         if (Read(variable, "IDRAK_CLUSTER_SHARD") is { } shard) o = o with { Shard = Choice<ShardMode>("IDRAK_CLUSTER_SHARD", shard, "none, optimizer, gradients or parameters") };
         if (Read(variable, "IDRAK_CLUSTER_PLACEMENT") is { } placement) o = o with { Placement = placement };
         if (Read(variable, "IDRAK_CLUSTER_MICROBATCHES") is { } micro) o = o with { MicroBatches = Whole("IDRAK_CLUSTER_MICROBATCHES", micro, 1) };

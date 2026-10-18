@@ -73,6 +73,7 @@ public sealed class DataLoader : IBatchSource
         DropLast = dropLast;
         Device = device ?? Device.Default;
         _random = seed is { } s ? new Random(s) : new Random();
+        Seed = seed;
         _transformSeed = seed ?? Random.Shared.Next();
         _featureShape = [.. featureShape];
         _targetShape = [.. targetShape];
@@ -124,14 +125,39 @@ public sealed class DataLoader : IBatchSource
 
     int? IBatchSource.BatchSize => BatchSize;
 
+    /// <summary>The seed given, or null when the loader draws its own.</summary>
+    internal int? Seed { get; private init; }
+
     /// <inheritdoc />
-    public IEnumerator<Batch> GetEnumerator()
+    public IEnumerator<Batch> GetEnumerator() => Enumerate(0, 1);
+
+    /// <summary>
+    /// One rank's share of each epoch (plan 23, data parallel): the epoch's order drawn as one process draws it (the same
+    /// seed on every rank), and rank <paramref name="rank"/> of <paramref name="world"/> takes the samples at positions
+    /// k·world + rank, in batches of <see cref="BatchSize"/>. Batch k of every rank together are batch k of one process
+    /// with batches world times as large.
+    /// </summary>
+    internal IEnumerable<Batch> Shard(int rank, int world)
     {
-        int epoch = Interlocked.Increment(ref _epoch) - 1;
-        return Source is not null ? FromSource(Source, epoch) : FromStream(Stream!, epoch);
+        ArgumentOutOfRangeException.ThrowIfNegative(rank);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(rank, world);
+        return new Sharded(this, rank, world);
     }
 
-    private IEnumerator<Batch> FromSource(ISampleSource source, int epoch)
+    private IEnumerator<Batch> Enumerate(int rank, int world)
+    {
+        int epoch = Interlocked.Increment(ref _epoch) - 1;
+        return Source is not null ? FromSource(Source, epoch, rank, world) : FromStream(Stream!, epoch, rank, world);
+    }
+
+    private sealed class Sharded(DataLoader loader, int rank, int world) : IEnumerable<Batch>
+    {
+        public IEnumerator<Batch> GetEnumerator() => loader.Enumerate(rank, world);
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private IEnumerator<Batch> FromSource(ISampleSource source, int epoch, int rank, int world)
     {
         int[] order = [.. Enumerable.Range(0, source.Count)];
         if (Shuffle)
@@ -139,7 +165,12 @@ public sealed class DataLoader : IBatchSource
             _random.Shuffle(order);
         }
 
-        int batches = BatchCount;
+        if (world > 1)
+        {
+            order = [.. order.Where((_, position) => position % world == rank)];   // draws k·world + rank
+        }
+
+        int batches = world > 1 ? (DropLast ? order.Length / BatchSize : (order.Length + BatchSize - 1) / BatchSize) : BatchCount;
         if (batches == 0)
         {
             yield break;
@@ -171,20 +202,21 @@ public sealed class DataLoader : IBatchSource
         }
     }
 
-    private IEnumerator<Batch> FromStream(ISampleStream stream, int epoch)
+    private IEnumerator<Batch> FromStream(ISampleStream stream, int epoch, int rank, int world)
     {
         int f = _featureSize, t = _targetSize;
         bool prefetch = BatchSize * (f + t) >= PrefetchThreshold && ComputeResources.AllowParallel;
         var buffers = Buffers(prefetch);
         using var feed = new StreamFeed(stream.Open(), f, t, ShuffleBuffer, _random);
+        var cursor = new StreamCursor(rank, world);
         int samples = 0, b = 0;
-        Task<int>? pending = prefetch ? Task.Run(() => Gather(feed, buffers[0], 0, epoch)) : null;
+        Task<int>? pending = prefetch ? Task.Run(() => Gather(feed, buffers[0], cursor, epoch)) : null;
         try
         {
             while (true)
             {
                 var buffer = buffers[prefetch ? b & 1 : 0];
-                int size = prefetch ? pending!.GetAwaiter().GetResult() : Gather(feed, buffer, samples, epoch);
+                int size = prefetch ? pending!.GetAwaiter().GetResult() : Gather(feed, buffer, cursor, epoch);
                 pending = null;
                 bool last = size < BatchSize;
                 if (size == 0 || last && DropLast)
@@ -195,8 +227,8 @@ public sealed class DataLoader : IBatchSource
                 samples += size;
                 if (prefetch && !last)
                 {
-                    int next = b + 1, start = samples;
-                    pending = Task.Run(() => Gather(feed, buffers[next & 1], start, epoch));
+                    int next = b + 1;
+                    pending = Task.Run(() => Gather(feed, buffers[next & 1], cursor, epoch));
                 }
 
                 yield return MakeBatch(buffer, size, b);
@@ -207,8 +239,11 @@ public sealed class DataLoader : IBatchSource
                 }
             }
 
-            _streamBatches = b;
-            _streamSamples = samples;
+            if (world == 1)
+            {
+                _streamBatches = b;
+                _streamSamples = samples;
+            }
         }
         finally
         {
@@ -251,7 +286,7 @@ public sealed class DataLoader : IBatchSource
     private int Gather(ISampleSource source, int[] order, int batch, (float[] X, float[] Y) buffer, int epoch)
     {
         int start = batch * BatchSize;
-        int size = Math.Min(BatchSize, source.Count - start);
+        int size = Math.Min(BatchSize, order.Length - start);
         int f = _featureSize, t = _targetSize;
         for (int r = 0; r < size; r++)
         {
@@ -265,8 +300,11 @@ public sealed class DataLoader : IBatchSource
         return size;
     }
 
-    /// <summary>Reads up to a batch of samples from the stream; returns the count (smaller at the end).</summary>
-    private int Gather(StreamFeed feed, (float[] X, float[] Y) buffer, int first, int epoch)
+    /// <summary>
+    /// Reads up to a batch of samples from the stream (one rank's: the samples at its positions); returns the count
+    /// (smaller at the end).
+    /// </summary>
+    private int Gather(StreamFeed feed, (float[] X, float[] Y) buffer, StreamCursor cursor, int epoch)
     {
         int f = _featureSize, t = _targetSize, size = 0;
         while (size < BatchSize)
@@ -278,11 +316,28 @@ public sealed class DataLoader : IBatchSource
                 break;
             }
 
-            Transform(x, y, epoch, first + size);
+            int position = cursor.Position++;
+            if (cursor.World > 1 && position % cursor.World != cursor.Rank)
+            {
+                continue;                                                     // another rank's sample
+            }
+
+            Transform(x, y, epoch, position);
             size++;
         }
 
         return size;
+    }
+
+    // Where a pass over a stream is (its samples read so far), and which of them are this rank's. Batches are gathered one
+    // after another (a prefetch starts once the batch before it is done), so the count needs no lock.
+    private sealed class StreamCursor(int rank, int world)
+    {
+        public int Rank { get; } = rank;
+
+        public int World { get; } = world;
+
+        public int Position { get; set; }
     }
 
     private void Transform(Span<float> features, Span<float> targets, int epoch, int sample)
