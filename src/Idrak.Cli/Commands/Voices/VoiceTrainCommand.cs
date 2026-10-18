@@ -434,7 +434,10 @@ internal sealed class VoiceTrainCommand : Command
             using var watching = Telemetry.Subscribe(watch);
             try
             {
-                result = train(new Reports(context, line, watch, (int?)settings["log_every"] ?? 10), interrupt.Token, context.Verbose ? context.Detail : null);
+                // A trace line (-v: a checkpoint written, a batch halved) takes the progress line off the screen first, so it
+                // is not glued onto it; the next step's report draws the line again below it.
+                Action<string>? trace = context.Verbose ? s => { line.Erase(); context.Detail(s); } : null;
+                result = train(new Reports(context, line, watch, (int?)settings["log_every"] ?? 10), interrupt.Token, trace);
             }
             catch (OperationCanceledException) when (interrupt.Requested)
             {
