@@ -113,6 +113,18 @@ public enum Idrak.Abstraction.Testing.CheckStatus : int
   Passed = 0
   Skipped = 2
 
+public sealed class Idrak.Abstraction.Testing.CollectivesSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.CollectivesUnderTest>
+  public CollectivesSuite()
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.CollectivesUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.CollectivesUnderTest
+  public CollectivesUnderTest(string name, System.Func<int, System.TimeSpan, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ICollectives>> connect)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ICollectives> Connect(int worldSize, System.TimeSpan timeout)
+  public string Name { get; }
+
 public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport Check(Idrak.Abstraction.Device device, Idrak.Abstraction.Testing.DeviceCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport Check(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Testing.DeviceCheckOptions? options = null)
@@ -121,11 +133,15 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport Check<TKernel>(Idrak.Abstraction.Operations.PluginOperation<TKernel> operation, Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Devices.Backend, TKernel, int, float[]> run, int cases = 8, float tolerance = 1E-05f) where TKernel : System.Delegate
   public static Idrak.Abstraction.Testing.ConformanceReport CheckAudioCodec(Idrak.Abstraction.Testing.AudioCodecUnderTest codec, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.AudioSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckChatPartKind(string name, Idrak.Abstraction.Generation.IChatPartKind? kind = null, System.Collections.Generic.IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckCollectives(Idrak.Abstraction.Testing.CollectivesUnderTest collectives, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckLinkProfile(Idrak.Abstraction.Cluster.ILinkProfile profile, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckSpeechRecognizer(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckTopology(Idrak.Abstraction.Cluster.IClusterTopology topology, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckTransport(Idrak.Abstraction.Testing.TransportUnderTest transport, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTuningDataFormat(System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>> read, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckVisionEncoder(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f, Idrak.Abstraction.Testing.ContractCheckOptions? options = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckVoiceConverter(Idrak.Abstraction.Testing.VoiceConverterUnderTest converter, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -279,6 +295,13 @@ public sealed class Idrak.Abstraction.Testing.ImageModelUnderTest : System.IDisp
   public System.Collections.Generic.IReadOnlyList<string>? Labels { get; }
   public string Task { get; }
   public void Dispose()
+
+public sealed class Idrak.Abstraction.Testing.LinkProfileSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Cluster.ILinkProfile>
+  public LinkProfileSuite()
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Cluster.ILinkProfile implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public readonly record struct Idrak.Abstraction.Testing.PowerSpectra : System.IEquatable<Idrak.Abstraction.Testing.PowerSpectra>
   public PowerSpectra(int Frames, int Bins, float[] Power)
@@ -446,6 +469,25 @@ public sealed class Idrak.Abstraction.Testing.TokenizerSuite : Idrak.Abstraction
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.ITokenizer implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.TopologySuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Cluster.IClusterTopology>
+  public TopologySuite()
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Cluster.IClusterTopology implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.TransportSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.TransportUnderTest>
+  public TransportSuite()
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.TransportUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.TransportUnderTest
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ITransport> Connect(int worldSize, System.TimeSpan timeout)
+  public TransportUnderTest(string name, System.Func<int, System.TimeSpan, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ITransport>> connect)
+  public string Name { get; }
 
 public sealed class Idrak.Abstraction.Testing.TuningDataFormatSuite : Idrak.Abstraction.Testing.ContractSuite<System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>>>
   public TuningDataFormatSuite(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples)

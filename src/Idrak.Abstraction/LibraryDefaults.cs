@@ -27,7 +27,8 @@ internal static class LibraryDefaults
     // an internal static class `<assembly>.LibraryRegistrations` with a static `RegisterFor(Type registry)`; one that is
     // missing (not shipped with the application) is skipped. Planned packages are listed so they work the day they appear.
     private static readonly string[] Assemblies =
-        ["Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio"];
+        ["Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio", "Idrak.Cluster",
+            "Idrak.Network"];
 
     /// <summary>
     /// Has the first-party assemblies register their built-ins of <paramref name="registry"/>, unless done already (on
@@ -41,6 +42,8 @@ internal static class LibraryDefaults
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Cluster.LibraryRegistrations", "Idrak.Cluster")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Network.LibraryRegistrations", "Idrak.Network")]
     public static void Ensure(Type registry)
     {
         lock (Gate)   // re-entrant: a registration that touches another registry comes back here

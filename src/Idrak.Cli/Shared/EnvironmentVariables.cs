@@ -70,7 +70,12 @@ internal static class EnvironmentVariables
     public const string ChildGroup = Child;
 
     private const string Devices = "Devices and backends", Tuning = "Tuning and caches", Precision = "Precision and memory", Cpu = "CPU",
-        Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET";
+        Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET",
+        Cluster = "Cluster";
+
+    // Plan 23, phase C0: read by ClusterOptions.FromEnvironment (the library and its tests); the training and cluster
+    // commands that start ranks take them from phase C2 on.
+    private static readonly string[] ClusterRun = ["test"];
 
     /// <summary>The table, in listing order.</summary>
     public static IReadOnlyList<Variable> All { get; } =
@@ -191,6 +196,42 @@ internal static class EnvironmentVariables
         new("IDRAK_PROFILE_STATISTIC", Tests, "median", "median, mean, min or max: the warm runs' figure a profile reports", ["test"]),
         new("IDRAK_PROFILE_FORMAT", Tests, "table", "The writer a profile is written with (table, markdown, csv, json, or one registered)", ["test"]),
         new("IDRAK_PROFILE_OUT", Tests, "the console", "A file a profile is appended to", ["test"]),
+
+        new("IDRAK_CLUSTER_TOPOLOGY", Cluster, "none: one node with the devices given", "The topology file of a cluster run (idrak cluster init writes it)", ClusterRun),
+        new("IDRAK_CLUSTER_NODE", Cluster, "the node named after this host", "Which node of the topology file this machine is", ClusterRun),
+        new("IDRAK_RANK", Cluster, "from the topology file", "This process's rank; needed only on a node with several ranks when a process is started by hand", ClusterRun),
+        new("IDRAK_WORLD_SIZE", Cluster, "the topology file's device count", "The number of ranks; with a file, only checked against it", ClusterRun),
+        new("IDRAK_COORDINATOR", Cluster, "the topology's first node's address", "host:port where rank 0 listens", ClusterRun),
+        new("IDRAK_CLUSTER_TRANSPORT", Cluster, "auto", "The transport (sim, shared-memory, pcie-host, nvlink, direct-link, tcp, or a plug-in's), or auto for the fastest available per pair", ClusterRun),
+        new("IDRAK_CLUSTER_SELECTOR", Cluster, "fastest", "The transport selector", ClusterRun),
+        new("IDRAK_CLUSTER_COLLECTIVE", Cluster, "hierarchical with several nodes, else ring", "The collective algorithm (naive, ring, hierarchical, or a plug-in's)", ClusterRun),
+        new("IDRAK_CLUSTER_KEY", Cluster, "not set: nothing listens beyond this machine", "The shared secret every rank proves in its first message (at least 16 characters); never an option, never written", ClusterRun, Secret: true),
+        new("IDRAK_CLUSTER_PORT", Cluster, "0 (the system picks)", "The port this rank listens on for its peers", ClusterRun),
+        new("IDRAK_CLUSTER_TIMEOUT", Cluster, "120", "Seconds any wait for a peer lasts", ClusterRun),
+        new("IDRAK_CLUSTER_RETRIES", Cluster, "3", "Connection attempts at the rendezvous", ClusterRun),
+        new("IDRAK_CLUSTER_CHUNK_BYTES", Cluster, "measured at first use", "The bytes of a chunk in flight (B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_IN_FLIGHT", Cluster, "2", "Chunks in flight each way", ClusterRun),
+        new("IDRAK_CLUSTER_SOCKET_BUFFER", Cluster, "the system's", "The socket buffers' size (B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "measured against the step", "The size of a gradient bucket reduced during the backward pass (B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_WIRE", Cluster, "f32", "f32 or bf16: how gradients travel (sums are always made in float32)", ClusterRun),
+        new("IDRAK_CLUSTER_TOPK", Cluster, "0 (every value)", "The share of gradient values sent, largest first, from 0 to 1", ClusterRun),
+        new("IDRAK_CLUSTER_ERROR_FEEDBACK", Cluster, "1", "1 or 0: values top-k leaves out are added to the next step's", ClusterRun),
+        new("IDRAK_CLUSTER_LOCAL_SGD", Cluster, "0 (every step)", "Synchronize the weights every this many steps instead of the gradients every step", ClusterRun),
+        new("IDRAK_CLUSTER_SYNC_WEIGHTS", Cluster, "0 (never)", "Rank 0 sends its weights every this many steps (ranks of different device kinds round apart)", ClusterRun),
+        new("IDRAK_CLUSTER_REBALANCE_EVERY", Cluster, "0 (the first warm steps only)", "Re-measure each rank's speed and re-split the batch every this many steps", ClusterRun),
+        new("IDRAK_CLUSTER_SHARD", Cluster, "none", "none, optimizer, gradients or parameters: the state split across ranks", ClusterRun),
+        new("IDRAK_CLUSTER_PLACEMENT", Cluster, "single", "single or pipeline: how the model is placed", ClusterRun),
+        new("IDRAK_CLUSTER_MICROBATCHES", Cluster, "the gradient accumulation", "A pipeline's micro-batches in flight", ClusterRun),
+        new("IDRAK_CLUSTER_SCHEDULE", Cluster, "gpipe", "A pipeline's schedule", ClusterRun),
+        new("IDRAK_CLUSTER_SUGGEST_SHARE", Cluster, "0.2", "The share of a step spent on the network above which the advisor suggests sending less", ClusterRun),
+        new("IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE", Cluster, "the reference's measured one", "The largest relative error of bfloat16 gradients the advisor accepts", ClusterRun),
+        new("IDRAK_CLUSTER_PROFILES_FILE", Cluster, "the tuning cache's", "The calibrated link profiles' file", ClusterRun),
+        new("IDRAK_CLUSTER_SEED", Cluster, "the topology file's", "The seed of a simulation's jitter and faults", ClusterRun),
+        new("IDRAK_CLUSTER_MODE", Cluster, "in-process", "in-process or localhost: where a simulation's ranks run", ClusterRun),
+        new("IDRAK_CLUSTER_THROTTLE", Cluster, "1", "1 or 0: localhost transfers are paced to the topology's links", ClusterRun),
+        new("IDRAK_CLUSTER_FAILURES", Cluster, "the topology file's", "The failure model of a simulation (none, slow-worker, dropped-worker, link-loss, partition, late-join, mixed)", ClusterRun),
+        new("IDRAK_CLUSTER_REPLAY_STEP", Cluster, "not set: the whole run", "The step a replay reruns", ClusterRun),
+        new("IDRAK_CLUSTER_CLOCK", Cluster, "wall", "wall or simulated: the clock throughput figures use", ClusterRun),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
         new("PROCESSOR_IDENTIFIER", Devices, "as the system sets it", "The processor's name on Windows (device listings, tuning keys)", OnDevice),

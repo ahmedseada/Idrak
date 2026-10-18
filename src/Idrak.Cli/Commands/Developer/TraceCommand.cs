@@ -26,12 +26,13 @@ internal sealed class TraceCommand : Command
         ["engine"] = TelemetryLevel.Engine,
         ["devices"] = TelemetryLevel.Devices,
         ["overrides"] = TelemetryLevel.Overrides,
+        ["network"] = TelemetryLevel.Network,
         ["all"] = TelemetryLevel.All,
     };
 
     /// <summary>What is traced without <c>--levels</c>: everything but the per-operation events and gradient norms.</summary>
     public const TelemetryLevel DefaultLevels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Layers
-        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions;
+        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions | TelemetryLevel.Network;
 
     public override string Name => "trace";
 
@@ -49,7 +50,8 @@ internal sealed class TraceCommand : Command
         "      --levels LIST   what to trace, separated by commas: training, batches, gradients, layers, operations\n" +
         "                      (every tensor operation and kernel, very verbose), inference, tools, engine,\n" +
         "                      devices (GPU failures and operations retried on the CPU),\n" +
-        "                      overrides (an app's implementation falling back or compared in shadow), all\n" +
+        "                      overrides (an app's implementation falling back or compared in shadow),\n" +
+        "                      network (a cluster's transfers, collectives, ranks and faults), all\n" +
         "                      (default: all but operations and gradients)\n" +
         "      --sync          synchronize the device before each timing (true GPU times, slower)\n\n" +
         "Examples:\n" +

@@ -42,6 +42,328 @@ public enum Idrak.Abstraction.BoxOverlap : int
   GIoU = 1
   IoU = 0
 
+public sealed record Idrak.Abstraction.Cluster.ClusterContext : System.IEquatable<Idrak.Abstraction.Cluster.ClusterContext>
+  public ClusterContext(Idrak.Abstraction.Cluster.IClusterTopology Topology, int Rank, Idrak.Abstraction.Cluster.ClusterOptions Options)
+  public Idrak.Abstraction.Cluster.ClusterNodeSpec Node { get; }
+  public Idrak.Abstraction.Cluster.ClusterOptions Options { get; init; }
+  public Idrak.Abstraction.Cluster.IClusterTopology Topology { get; init; }
+  public int Rank { get; init; }
+
+public sealed record Idrak.Abstraction.Cluster.ClusterDeviceSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterDeviceSpec>
+  public ClusterDeviceSpec(string Device, long? MemoryBytes)
+  public long? MemoryBytes { get; init; }
+  public string Device { get; init; }
+
+public sealed class Idrak.Abstraction.Cluster.ClusterKey
+  public const int MinimumLength = 16
+  public override string ToString()
+  public static Idrak.Abstraction.Cluster.ClusterKey FromText(string text)
+
+public sealed record Idrak.Abstraction.Cluster.ClusterLinkOverride : System.IEquatable<Idrak.Abstraction.Cluster.ClusterLinkOverride>
+  public ClusterLinkOverride(string A, string B, string Link)
+  public string A { get; init; }
+  public string B { get; init; }
+  public string Link { get; init; }
+
+public sealed record Idrak.Abstraction.Cluster.ClusterNodeSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterNodeSpec>
+  public ClusterNodeSpec(string Name, string? Address, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterDeviceSpec> Devices)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterDeviceSpec> Devices { get; init; }
+  public string Name { get; init; }
+  public string? Address { get; init; }
+
+public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatable<Idrak.Abstraction.Cluster.ClusterOptions>
+  public ClusterOptions()
+  public Idrak.Abstraction.Cluster.ClusterKey? Key { get; init; }
+  public Idrak.Abstraction.Cluster.ShardMode Shard { get; init; }
+  public Idrak.Abstraction.Cluster.SimulationOptions Simulation { get; init; }
+  public Idrak.Abstraction.Cluster.WireType Wire { get; init; }
+  public System.TimeSpan Timeout { get; init; }
+  public bool ErrorFeedback { get; init; }
+  public double SuggestShare { get; init; }
+  public double TopK { get; init; }
+  public double? SuggestBFloat16Tolerance { get; init; }
+  public int InFlight { get; init; }
+  public int ListenPort { get; init; }
+  public int LocalSgdEvery { get; init; }
+  public int RebalanceEvery { get; init; }
+  public int Retries { get; init; }
+  public int SyncWeightsEvery { get; init; }
+  public int? MicroBatches { get; init; }
+  public int? Rank { get; init; }
+  public int? WorldSize { get; init; }
+  public long? BucketBytes { get; init; }
+  public long? ChunkBytes { get; init; }
+  public long? SocketBufferBytes { get; init; }
+  public static Idrak.Abstraction.Cluster.ClusterOptions FromEnvironment(Idrak.Abstraction.Cluster.ClusterOptions? defaults = null)
+  public static System.Collections.Generic.IReadOnlyList<string> Variables { get; }
+  public string Placement { get; init; }
+  public string Schedule { get; init; }
+  public string Selector { get; init; }
+  public string Transport { get; init; }
+  public string? Collective { get; init; }
+  public string? Coordinator { get; init; }
+  public string? Node { get; init; }
+  public string? ProfilesFile { get; init; }
+  public string? Topology { get; init; }
+
+public sealed record Idrak.Abstraction.Cluster.ClusterSimulationSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterSimulationSpec>
+  public ClusterSimulationSpec(int Seed, string Failures)
+  public int Seed { get; init; }
+  public string Failures { get; init; }
+
+public sealed class Idrak.Abstraction.Cluster.ClusterTopology : Idrak.Abstraction.Cluster.IClusterTopology
+  public (int, int) Place(int rank)
+  public Idrak.Abstraction.Cluster.ClusterSimulationSpec Simulation { get; }
+  public Idrak.Abstraction.Cluster.ILinkProfile Link(int rankA, int rankB)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterLinkOverride> Overrides { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterNodeSpec> Nodes { get; }
+  public System.Collections.Generic.IReadOnlyList<int> Ranks(int node)
+  public const string Format = "idrak-topology/1"
+  public const string SameDevice = "same-device"
+  public int WorldSize { get; }
+  public int? NodeOf(string hostName)
+  public static Idrak.Abstraction.Cluster.ClusterTopology Create(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterNodeSpec> nodes, string? intraNode, string? interNode, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterLinkOverride>? overrides = null, Idrak.Abstraction.Cluster.ClusterSimulationSpec? simulation = null)
+  public static Idrak.Abstraction.Cluster.ClusterTopology Load(string path)
+  public static Idrak.Abstraction.Cluster.ClusterTopology Parse(System.ReadOnlySpan<byte> utf8Json)
+  public static Idrak.Abstraction.Cluster.ClusterTopology Parse(string json)
+  public static long ParseMemory(System.ReadOnlySpan<char> text)
+  public static string FormatMemory(long bytes)
+  public string ToJson()
+  public string? Coordinator { get; }
+  public string? InterNode { get; }
+  public string? IntraNode { get; }
+
+public static class Idrak.Abstraction.Cluster.Collectives
+  public static Idrak.Abstraction.Cluster.ICollectivesProvider Get(string name)
+  public static Idrak.Abstraction.Cluster.ICollectivesProvider? Default(string name)
+  public static Idrak.Abstraction.Cluster.ICollectivesProvider? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ICollectivesProvider> All { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.ICollectivesProvider provider)
+
+public static class Idrak.Abstraction.Cluster.FailureModels
+  public static Idrak.Abstraction.Cluster.IFailureModel Get(string name)
+  public static Idrak.Abstraction.Cluster.IFailureModel? Default(string name)
+  public static Idrak.Abstraction.Cluster.IFailureModel? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.IFailureModel model)
+
+public readonly record struct Idrak.Abstraction.Cluster.Fault : System.IEquatable<Idrak.Abstraction.Cluster.Fault>
+  public Fault(Idrak.Abstraction.Cluster.FaultKind Kind, long Step, System.Collections.Generic.IReadOnlyList<int> Ranks, System.TimeSpan Duration, double Factor)
+  public Idrak.Abstraction.Cluster.FaultKind Kind { get; init; }
+  public System.Collections.Generic.IReadOnlyList<int> Ranks { get; init; }
+  public System.TimeSpan Duration { get; init; }
+  public double Factor { get; init; }
+  public long Step { get; init; }
+
+public enum Idrak.Abstraction.Cluster.FaultKind : int
+  DroppedWorker = 1
+  LateJoin = 4
+  LinkLoss = 2
+  Partition = 3
+  SlowWorker = 0
+
+public interface Idrak.Abstraction.Cluster.IClusterTopology
+  public (int, int) Place(int rank)
+  public Idrak.Abstraction.Cluster.ClusterSimulationSpec Simulation { get; }
+  public Idrak.Abstraction.Cluster.ILinkProfile Link(int rankA, int rankB)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterNodeSpec> Nodes { get; }
+  public System.Collections.Generic.IReadOnlyList<int> Ranks(int node)
+  public int WorldSize { get; }
+  public int? NodeOf(string hostName)
+
+public interface Idrak.Abstraction.Cluster.ICollectives : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public int Rank { get; }
+  public int WorldSize { get; }
+  public string Name { get; }
+  public void AllGather(Idrak.Abstraction.Devices.Storage input, int count, Idrak.Abstraction.Devices.Storage output)
+  public void AllReduce(Idrak.Abstraction.Devices.Storage buffer, int count, Idrak.Abstraction.Cluster.ReduceOp op, Idrak.Abstraction.Cluster.WireType wire = (Idrak.Abstraction.Cluster.WireType)0)
+  public void Barrier()
+  public void Broadcast(Idrak.Abstraction.Devices.Storage buffer, int count, int root)
+  public void ReduceScatter(Idrak.Abstraction.Devices.Storage input, int count, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Cluster.ReduceOp op)
+
+public interface Idrak.Abstraction.Cluster.ICollectivesProvider
+  public Idrak.Abstraction.Cluster.ICollectives Create(Idrak.Abstraction.Cluster.ITransport transport, Idrak.Abstraction.Device device, Idrak.Abstraction.Cluster.ClusterContext context)
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Cluster.IFailureModel
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.Fault> Draw(long step, Idrak.Abstraction.Cluster.IClusterTopology topology, System.Random seeded)
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Cluster.ILinkProfile
+  public Idrak.Abstraction.Cluster.ILinkProfile With(double? bandwidthBytesPerSecond = null, System.TimeSpan? latency = null, System.TimeSpan? jitter = null, double? lossRate = null, double? failureRate = null, string? name = null)
+  public System.TimeSpan Jitter { get; }
+  public System.TimeSpan Latency { get; }
+  public System.TimeSpan Predict(long bytes, System.Random seeded)
+  public double BandwidthBytesPerSecond { get; }
+  public double FailureRate { get; }
+  public double LossRate { get; }
+  public string Name { get; }
+
+public interface Idrak.Abstraction.Cluster.ITransport : System.IDisposable
+  public Idrak.Abstraction.Cluster.TransportCapabilities Capabilities { get; }
+  public System.Threading.Tasks.ValueTask SendAsync(int to, System.ReadOnlyMemory<byte> bytes, int tag, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.ValueTask<int> ReceiveAsync(int from, System.Memory<byte> bytes, int tag, System.Threading.CancellationToken cancellationToken = default)
+  public int Rank { get; }
+  public int Receive(int from, System.Span<byte> bytes, int tag)
+  public int WorldSize { get; }
+  public string Name { get; }
+  public void Barrier()
+  public void Send(int to, System.ReadOnlySpan<byte> bytes, int tag)
+
+public interface Idrak.Abstraction.Cluster.ITransportProvider
+  public Idrak.Abstraction.Cluster.ITransport Connect(Idrak.Abstraction.Cluster.ClusterContext context, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Cluster.TransportAvailability Availability(Idrak.Abstraction.Cluster.ClusterContext context, int peer)
+  public Idrak.Abstraction.Cluster.TransportCapabilities Capabilities { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Cluster.ITransportSelector
+  public (string, string) Choose(int rankA, int rankB, Idrak.Abstraction.Cluster.IClusterTopology topology, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.TransportAvailability> available)
+  public string Name { get; }
+  public string Summary { get; }
+
+public sealed record Idrak.Abstraction.Cluster.LinkProfile : Idrak.Abstraction.Cluster.ILinkProfile, System.IEquatable<Idrak.Abstraction.Cluster.LinkProfile>
+  public Idrak.Abstraction.Cluster.ILinkProfile With(double? bandwidthBytesPerSecond = null, System.TimeSpan? latency = null, System.TimeSpan? jitter = null, double? lossRate = null, double? failureRate = null, string? name = null)
+  public LinkProfile(string name, double bandwidthBytesPerSecond, System.TimeSpan latency)
+  public System.TimeSpan Jitter { get; init; }
+  public System.TimeSpan Latency { get; init; }
+  public System.TimeSpan Predict(long bytes, System.Random seeded)
+  public double BandwidthBytesPerSecond { get; init; }
+  public double FailureRate { get; init; }
+  public double LossRate { get; init; }
+  public static void Validate(Idrak.Abstraction.Cluster.ILinkProfile profile)
+  public string Name { get; init; }
+  public string Summary { get; init; }
+
+public static class Idrak.Abstraction.Cluster.LinkProfiles
+  public static Idrak.Abstraction.Cluster.ILinkProfile Resolve(string name)
+  public static Idrak.Abstraction.Cluster.ILinkProfile? Default(string name)
+  public static Idrak.Abstraction.Cluster.ILinkProfile? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ILinkProfile> All { get; }
+  public static bool TryParseRate(System.ReadOnlySpan<char> text, out double bytesPerSecond)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.ILinkProfile profile)
+
+public enum Idrak.Abstraction.Cluster.ReduceOp : int
+  Max = 1
+  Min = 2
+  Sum = 0
+
+public enum Idrak.Abstraction.Cluster.ShardMode : int
+  Gradients = 2
+  None = 0
+  Optimizer = 1
+  Parameters = 3
+
+public enum Idrak.Abstraction.Cluster.SimulationMode : int
+  InProcess = 0
+  Localhost = 1
+
+public sealed record Idrak.Abstraction.Cluster.SimulationOptions : System.IEquatable<Idrak.Abstraction.Cluster.SimulationOptions>
+  public Idrak.Abstraction.Cluster.SimulationMode Mode { get; init; }
+  public Idrak.Abstraction.Cluster.ThroughputClock Clock { get; init; }
+  public SimulationOptions()
+  public bool Throttle { get; init; }
+  public int? Seed { get; init; }
+  public long? ReplayStep { get; init; }
+  public string? Failures { get; init; }
+
+public enum Idrak.Abstraction.Cluster.ThroughputClock : int
+  Simulated = 1
+  Wall = 0
+
+public readonly record struct Idrak.Abstraction.Cluster.TransportAvailability : System.IEquatable<Idrak.Abstraction.Cluster.TransportAvailability>
+  public TransportAvailability(string Transport, bool Available, string Reason)
+  public bool Available { get; init; }
+  public string Reason { get; init; }
+  public string Transport { get; init; }
+
+public readonly record struct Idrak.Abstraction.Cluster.TransportCapabilities : System.IEquatable<Idrak.Abstraction.Cluster.TransportCapabilities>
+  public System.TimeSpan Latency { get; init; }
+  public TransportCapabilities(double BandwidthBytesPerSecond, System.TimeSpan Latency, bool ZeroCopy, bool GpuDirect, bool Reliable, bool CrossProcess, bool CrossMachine)
+  public bool CrossMachine { get; init; }
+  public bool CrossProcess { get; init; }
+  public bool GpuDirect { get; init; }
+  public bool Reliable { get; init; }
+  public bool ZeroCopy { get; init; }
+  public double BandwidthBytesPerSecond { get; init; }
+
+public static class Idrak.Abstraction.Cluster.TransportSelectors
+  public static Idrak.Abstraction.Cluster.ITransportSelector Get(string name)
+  public static Idrak.Abstraction.Cluster.ITransportSelector? Default(string name)
+  public static Idrak.Abstraction.Cluster.ITransportSelector? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.ITransportSelector selector)
+
+public static class Idrak.Abstraction.Cluster.Transports
+  public static Idrak.Abstraction.Cluster.ITransportProvider Get(string name)
+  public static Idrak.Abstraction.Cluster.ITransportProvider? Default(string name)
+  public static Idrak.Abstraction.Cluster.ITransportProvider? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ITransportProvider> All { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.ITransportProvider provider)
+
+public enum Idrak.Abstraction.Cluster.WireElement : byte
+  BFloat16 = 2
+  Bytes = 0
+  Float32 = 1
+
+public static class Idrak.Abstraction.Cluster.WireFormat
+  public const int HeaderBytes = 36
+  public const int MacBytes = 32
+  public const int NonceBytes = 32
+  public const ushort Version = 1
+  public static bool TryReadHeader(System.ReadOnlySpan<byte> source, out Idrak.Abstraction.Cluster.WireHeader header)
+  public static bool VerifyHello(Idrak.Abstraction.Cluster.ClusterKey key, System.ReadOnlySpan<byte> nonce, int rank, int worldSize, System.ReadOnlySpan<byte> mac)
+  public static void NewNonce(System.Span<byte> nonce)
+  public static void SignHello(Idrak.Abstraction.Cluster.ClusterKey key, System.ReadOnlySpan<byte> nonce, int rank, int worldSize, System.Span<byte> mac)
+  public static void WriteHeader(System.Span<byte> destination, in Idrak.Abstraction.Cluster.WireHeader header)
+
+public readonly record struct Idrak.Abstraction.Cluster.WireHeader : System.IEquatable<Idrak.Abstraction.Cluster.WireHeader>
+  public Idrak.Abstraction.Cluster.ReduceOp Op { get; init; }
+  public Idrak.Abstraction.Cluster.WireElement Element { get; init; }
+  public Idrak.Abstraction.Cluster.WireMessageKind Kind { get; init; }
+  public WireHeader(Idrak.Abstraction.Cluster.WireMessageKind Kind, int Rank, int Tag, uint Sequence, uint ChunkIndex, uint ChunkCount, Idrak.Abstraction.Cluster.WireElement Element, Idrak.Abstraction.Cluster.ReduceOp Op, ushort Flags, uint PayloadBytes)
+  public int Rank { get; init; }
+  public int Tag { get; init; }
+  public uint ChunkCount { get; init; }
+  public uint ChunkIndex { get; init; }
+  public uint PayloadBytes { get; init; }
+  public uint Sequence { get; init; }
+  public ushort Flags { get; init; }
+
+public enum Idrak.Abstraction.Cluster.WireMessageKind : ushort
+  Ack = 4
+  Barrier = 5
+  Bye = 7
+  Chunk = 3
+  Error = 8
+  Heartbeat = 6
+  Hello = 1
+  Welcome = 2
+
+public enum Idrak.Abstraction.Cluster.WireType : int
+  BFloat16 = 1
+  Float32 = 0
+
 public static class Idrak.Abstraction.Comparisons
   public static bool Close(float expected, float actual, float tolerance)
   public static string? Difference(System.Collections.Generic.IReadOnlyList<int> expected, System.Collections.Generic.IReadOnlyList<int> actual)
@@ -1197,9 +1519,12 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public System.Threading.Channels.ChannelReader<Idrak.Abstraction.Diagnostics.TelemetryRecord> Reader { get; }
   public void Complete()
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
+  public void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -1207,19 +1532,38 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
+  public void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
+
+public readonly record struct Idrak.Abstraction.Diagnostics.CollectiveCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.CollectiveCompleted>
+  public CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived, System.TimeSpan Wall, System.TimeSpan Simulated, System.TimeSpan Blocked, int SlowestRank)
+  public System.TimeSpan Blocked { get; init; }
+  public System.TimeSpan Simulated { get; init; }
+  public System.TimeSpan Wall { get; init; }
+  public int Rank { get; init; }
+  public int SlowestRank { get; init; }
+  public int WorldSize { get; init; }
+  public long BytesReceived { get; init; }
+  public long BytesSent { get; init; }
+  public string Collective { get; init; }
+  public string Operation { get; init; }
 
 public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstraction.Diagnostics.ITelemetryHook
   public ConsoleLogger(Idrak.Abstraction.Diagnostics.TelemetryLevel levels = (Idrak.Abstraction.Diagnostics.TelemetryLevel)1, int epochInterval = 1, int batchInterval = 1, System.IO.TextWriter? output = null)
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
+  public void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -1227,10 +1571,13 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
+  public void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.DeviceFailed : System.IEquatable<Idrak.Abstraction.Diagnostics.DeviceFailed>
@@ -1270,6 +1617,15 @@ public readonly record struct Idrak.Abstraction.Diagnostics.EpochCompleted : Sys
   public int Epoch { get; init; }
   public int Epochs { get; init; }
 
+public readonly record struct Idrak.Abstraction.Diagnostics.FaultInjected : System.IEquatable<Idrak.Abstraction.Diagnostics.FaultInjected>
+  public FaultInjected(int Seed, long Step, Idrak.Abstraction.Cluster.FaultKind Kind, System.Collections.Generic.IReadOnlyList<int> Ranks, System.TimeSpan Duration, double Factor)
+  public Idrak.Abstraction.Cluster.FaultKind Kind { get; init; }
+  public System.Collections.Generic.IReadOnlyList<int> Ranks { get; init; }
+  public System.TimeSpan Duration { get; init; }
+  public double Factor { get; init; }
+  public int Seed { get; init; }
+  public long Step { get; init; }
+
 public readonly record struct Idrak.Abstraction.Diagnostics.HostFallback : System.IEquatable<Idrak.Abstraction.Diagnostics.HostFallback>
   public HostFallback(string Device, string Operation)
   public string Device { get; init; }
@@ -1294,9 +1650,12 @@ public interface Idrak.Abstraction.Diagnostics.ISettingAdvisor
 
 public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
+  public (default) void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public (default) void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public (default) void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public (default) void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public (default) void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public (default) void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public (default) void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public (default) void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public (default) void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -1304,10 +1663,13 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public (default) void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public (default) void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public (default) void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public (default) void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public (default) void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public (default) void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public (default) void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public (default) void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
+  public (default) void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public (default) void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
 
@@ -1347,9 +1709,12 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public System.Threading.Tasks.ValueTask DisposeAsync()
   public void Dispose()
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
+  public void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -1357,10 +1722,13 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public void OnToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public void OnTrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public void OnTrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
+  public void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.LayerForward : System.IEquatable<Idrak.Abstraction.Diagnostics.LayerForward>
@@ -1378,8 +1746,10 @@ public sealed class Idrak.Abstraction.Diagnostics.MetricsRecorder : Idrak.Abstra
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
   public MetricsRecorder(Idrak.Abstraction.Diagnostics.TelemetryLevel levels = (Idrak.Abstraction.Diagnostics.TelemetryLevel)1)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.BatchCompleted> Batches { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.CollectiveCompleted> Collectives { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.EpochCompleted> Epochs { get; }
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
+  public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void SaveCsv(string path)
 
@@ -1415,6 +1785,16 @@ public readonly record struct Idrak.Abstraction.Diagnostics.OverrideFailed : Sys
   public string Registry { get; init; }
   public string Slot { get; init; }
   public string? Hint { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.ProfileCalibrated : System.IEquatable<Idrak.Abstraction.Diagnostics.ProfileCalibrated>
+  public ProfileCalibrated(string Link, double BandwidthBefore, double BandwidthAfter, System.TimeSpan LatencyBefore, System.TimeSpan LatencyAfter, double Residual, int Samples)
+  public System.TimeSpan LatencyAfter { get; init; }
+  public System.TimeSpan LatencyBefore { get; init; }
+  public double BandwidthAfter { get; init; }
+  public double BandwidthBefore { get; init; }
+  public double Residual { get; init; }
+  public int Samples { get; init; }
+  public string Link { get; init; }
 
 public sealed record Idrak.Abstraction.Diagnostics.ProfileOptions : System.IEquatable<Idrak.Abstraction.Diagnostics.ProfileOptions>
   public Idrak.Abstraction.Diagnostics.ProfileStatistic Statistic { get; init; }
@@ -1514,6 +1894,21 @@ public static class Idrak.Abstraction.Diagnostics.ProfileWriters
 public static class Idrak.Abstraction.Diagnostics.Profiler
   public static Idrak.Abstraction.Diagnostics.ProfileReport Run(string name, Idrak.Abstraction.Device device, System.Action<Idrak.Abstraction.Diagnostics.ProfileRun> workload, Idrak.Abstraction.Diagnostics.ProfileOptions? options = null)
 
+public enum Idrak.Abstraction.Diagnostics.RankState : int
+  Dropped = 2
+  Finished = 5
+  Joined = 0
+  Partitioned = 3
+  Rejoined = 4
+  Slow = 1
+
+public readonly record struct Idrak.Abstraction.Diagnostics.RankStateChanged : System.IEquatable<Idrak.Abstraction.Diagnostics.RankStateChanged>
+  public Idrak.Abstraction.Diagnostics.RankState State { get; init; }
+  public RankStateChanged(int Rank, Idrak.Abstraction.Diagnostics.RankState State, long Step, string? Detail)
+  public int Rank { get; init; }
+  public long Step { get; init; }
+  public string? Detail { get; init; }
+
 public static class Idrak.Abstraction.Diagnostics.SettingAdvisors
   public static Idrak.Abstraction.Diagnostics.ISettingAdvisor? Default(string name)
   public static Idrak.Abstraction.Diagnostics.ISettingAdvisor? Find(string name)
@@ -1542,14 +1937,20 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static bool SynchronizeForTiming { get; set; }
   public static long Start(Idrak.Abstraction.Diagnostics.TelemetryLevel level)
   public static void BatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
+  public static void Calibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public static void Collective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public static void DeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public static void Engine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public static void EpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
+  public static void Fault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0)
+  public static void RankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public static void Suggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
   public static void ToolCall(in Idrak.Abstraction.Diagnostics.ToolCallCompleted e)
   public static void TrainingCompleted(in Idrak.Abstraction.Diagnostics.TrainingCompleted e)
   public static void TrainingStarted(in Idrak.Abstraction.Diagnostics.TrainingStarted e)
+  public static void Transfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
+  public static void TransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
 
 public sealed class Idrak.Abstraction.Diagnostics.TelemetryBuilder
   public Idrak.Abstraction.Diagnostics.TelemetryBuilder Channel(out Idrak.Abstraction.Diagnostics.ChannelTelemetry channel, Idrak.Abstraction.Diagnostics.TelemetryLevel levels, int capacity = 100000)
@@ -1564,13 +1965,14 @@ public static class Idrak.Abstraction.Diagnostics.TelemetryJson
   public static void Write(System.Text.Json.Utf8JsonWriter w, Idrak.Abstraction.Diagnostics.TelemetryRecord record)
 
 [Flags] public enum Idrak.Abstraction.Diagnostics.TelemetryLevel : int
-  All = 2047
+  All = 4095
   Batches = 2
   Devices = 256
   Engine = 128
   Gradients = 4
   Inference = 32
   Layers = 8
+  Network = 2048
   None = 0
   Operations = 16
   Overrides = 512
@@ -1619,6 +2021,23 @@ public readonly record struct Idrak.Abstraction.Diagnostics.TrainingStarted : Sy
   public long ParameterCount { get; init; }
   public string Model { get; init; }
   public string Optimizer { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.TransferCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.TransferCompleted>
+  public System.TimeSpan Simulated { get; init; }
+  public System.TimeSpan Wall { get; init; }
+  public TransferCompleted(string Transport, int From, int To, int Tag, long Bytes, System.TimeSpan Wall, System.TimeSpan Simulated)
+  public int From { get; init; }
+  public int Tag { get; init; }
+  public int To { get; init; }
+  public long Bytes { get; init; }
+  public string Transport { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.TransportChosen : System.IEquatable<Idrak.Abstraction.Diagnostics.TransportChosen>
+  public TransportChosen(int RankA, int RankB, string Transport, string Reason)
+  public int RankA { get; init; }
+  public int RankB { get; init; }
+  public string Reason { get; init; }
+  public string Transport { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.TuningCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.TuningCompleted>
   public System.TimeSpan Duration { get; init; }

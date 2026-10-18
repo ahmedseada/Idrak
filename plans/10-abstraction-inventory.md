@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 55 | 13 | 31 | 98 | 0 |
+| `Idrak.Abstraction` | 63 | 13 | 36 | 111 | 0 |
 | `Idrak` | 11 | 4 | 12 | 27 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -38,6 +38,19 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | — |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | — |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | — |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | — |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.ITransportProvider` | interface | public | — | — |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | — |  | — | Abstraction |
+| `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | — | — | Abstraction |
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, resize, resized-crop, +2 | Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, RandomAffine, +4 |  | Abstraction, Imaging, Vision | Abstraction |
