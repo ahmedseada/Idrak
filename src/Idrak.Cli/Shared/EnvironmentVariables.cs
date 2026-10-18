@@ -75,7 +75,11 @@ internal static class EnvironmentVariables
 
     // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
     // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
-    private static readonly string[] ClusterRun = ["cluster sim", "cluster start", "cluster bench", "pretrain", "test"];
+    private static readonly string[] ClusterRun =
+    [
+        "cluster sim", "cluster start", "cluster bench", "cluster replay", "cluster calibrate", "cluster inspect", "transports", "pretrain", "train", "tune",
+        "resume", "distill", "profile", "tuning show", "test",
+    ];
 
     /// <summary>The table, in listing order.</summary>
     public static IReadOnlyList<Variable> All { get; } =
@@ -209,13 +213,15 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_PORT", Cluster, "0 (the system picks)", "The port this rank listens on for its peers", ClusterRun),
         new("IDRAK_CLUSTER_TIMEOUT", Cluster, "120", "Seconds any wait for a peer lasts", ClusterRun),
         new("IDRAK_CLUSTER_RETRIES", Cluster, "3", "Connection attempts at the rendezvous", ClusterRun),
-        new("IDRAK_CLUSTER_CHUNK_BYTES", Cluster, "measured at first use", "The bytes of a chunk in flight (B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_CHUNK_BYTES", Cluster, "measured at the first collective over a real transport, kept in the tuning cache", "The bytes of a chunk in flight (B, KB, MB, GB); on the simulator unset is one message a piece", ClusterRun),
+        new("IDRAK_CLUSTER_CHUNK_PROBE", Cluster, "4 MiB", "The all-reduce each candidate chunk size is timed with when the chunk is measured (B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_TUNING_FILE", Cluster, "the tuning cache's cluster/tuning.txt", "The file the measured chunk and bucket sizes are kept in (empty: none kept)", ClusterRun),
         new("IDRAK_CLUSTER_IN_FLIGHT", Cluster, "2", "Chunks in flight each way: messages a peer has not taken yet, per peer and tag", ClusterRun),
         new("IDRAK_CLUSTER_RECEIVE_BYTES", Cluster, "none (IDRAK_CLUSTER_IN_FLIGHT bounds it)", "The most bytes received from one peer under one tag and not yet taken; a larger message travels alone (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_ASYNC_STAGING", Cluster, "1", "1 or 0: a finished gradient bucket is copied to the host in the background (pinned slots), not on the training thread", ClusterRun),
         new("IDRAK_CLUSTER_DEVICE_COLLECTIVES", Cluster, "1", "1 or 0: collectives over pcie-host or nvlink keep chunks on the device and sum them there (the same sums)", ClusterRun),
         new("IDRAK_CLUSTER_SOCKET_BUFFER", Cluster, "the system's", "The socket buffers' size (B, KB, MB, GB)", ClusterRun),
-        new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "measured on the first step", "The size of a gradient bucket: gradients are reduced a bucket at a time, each sent once the backward pass finished it (B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "measured on the first step (kept in the tuning cache over a real transport)", "The size of a gradient bucket: gradients are reduced a bucket at a time, each sent once the backward pass finished it (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_MESSAGE_COST", Cluster, "measured on this machine", "Seconds one collective's messages cost beyond their bytes, which the measured bucket size counts", ClusterRun),
         new("IDRAK_CLUSTER_OVERLAP", Cluster, "1", "1 or 0: gradient buckets are reduced while the backward pass continues (the same result either way)", ClusterRun),
         new("IDRAK_CLUSTER_COMPRESSION", Cluster, "top-k with IDRAK_CLUSTER_TOPK, bf16 with IDRAK_CLUSTER_WIRE=bf16, else none", "How gradient buckets are compressed on their way: none, bf16, top-k, or a plug-in's", ClusterRun),
@@ -239,7 +245,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_PIPELINE_CUTS", Cluster, "measured", "A pipeline's cuts by hand: the first top-level module of each stage after the first (\"3,6\")", ClusterRun),
         new("IDRAK_CLUSTER_SUGGEST_SHARE", Cluster, "0.2", "The share of a step spent on the network above which the advisor suggests sending less", ClusterRun),
         new("IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE", Cluster, "the reference's measured one", "The largest relative error of bfloat16 gradients the advisor accepts", ClusterRun),
-        new("IDRAK_CLUSTER_PROFILES_FILE", Cluster, "the tuning cache's", "The calibrated link profiles' file", ClusterRun),
+        new("IDRAK_CLUSTER_PROFILES_FILE", Cluster, "a file per link in the tuning cache's cluster folder", "The one file every calibrated link profile is kept in and read from (empty: none kept)", ClusterRun),
         new("IDRAK_CLUSTER_SEED", Cluster, "the topology file's", "The seed of a simulation's jitter and faults", ClusterRun),
         new("IDRAK_CLUSTER_MODE", Cluster, "in-process", "in-process or localhost: where a simulation's ranks run", ClusterRun),
         new("IDRAK_CLUSTER_THROTTLE", Cluster, "1", "1 or 0: localhost transfers are paced to the topology's links", ClusterRun),
@@ -247,8 +253,9 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_REPLAY_STEP", Cluster, "not set: the whole run", "The step a replay reruns", ClusterRun),
         new("IDRAK_CLUSTER_CLOCK", Cluster, "wall", "wall or simulated: the clock throughput figures use", ClusterRun),
         new("IDRAK_CLUSTER_CARVE_FROM", Cluster, "each topology entry's own device", "The device on this machine every fake device of a simulation is carved from (cuda:0, cpu), so a topology written for other machines runs here", ClusterRun),
-        new("IDRAK_CLUSTER_EVENT_LOG", Cluster, "kept in memory only", "The file a simulation's event log (faults, each rank's clock per step, state changes, transfers) is written to", ClusterRun),
-        new("IDRAK_CLUSTER_LOG_TRANSFERS", Cluster, "1", "1 or 0: a simulation's event log records every transfer beside the steps' clocks and the faults", ClusterRun),
+        new("IDRAK_CLUSTER_EVENT_LOG", Cluster, "the run folder's (cluster sim), else kept in memory", "The file a simulation's event log (faults, each rank's clock per step, state changes, transfers) is written to", ClusterRun),
+        new("IDRAK_CLUSTER_EVENT_LOG_FLUSH", Cluster, "1", "Steps between the event log's writes to its file while a simulation runs (0: at the end only)", ClusterRun),
+        new("IDRAK_CLUSTER_LOG_TRANSFERS", Cluster, "1", "1 or 0: a simulation's event log, and a run's log (transfers over real transports), record every transfer", ClusterRun),
         new("IDRAK_CLUSTER_FAULT_RATE", Cluster, "0.1", "The chance a simulated step draws a fault (the built-in failure models), from 0 to 1", ClusterRun),
         new("IDRAK_CLUSTER_SLOW_FACTOR", Cluster, "4", "How many times as long a slow worker's transfers take, 1 or more", ClusterRun),
         new("IDRAK_CLUSTER_FAULT_DURATION", Cluster, "0 (the rest of the run)", "Seconds of simulated time a slow worker, a lossy link or a partition lasts; a partition for the rest of the run, or the timeout or longer, times out", ClusterRun),

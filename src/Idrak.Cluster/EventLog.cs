@@ -28,6 +28,10 @@ public sealed class EventLog
 
     internal static ReadOnlySpan<byte> Magic => "IDRKLOG\0"u8;
 
+    // The file a run's log is appended to while it goes (SimulationOptions.EventLogFlushSteps): the same header, then
+    // chunks of one stream each (-1: the faults; r: rank r's records) in the order they were written.
+    internal static ReadOnlySpan<byte> JournalMagic => "IDRKJRN\0"u8;
+
     private readonly Dictionary<(int Rank, long Step), double> _clocks;
 
     private EventLog(byte[] bytes, int seed, int worldSize, string failures, IReadOnlyList<Fault> faults, IReadOnlyList<ClockRecord> clocks,
@@ -83,13 +87,17 @@ public sealed class EventLog
     /// <summary>Writes the log to <paramref name="path"/>.</summary>
     public void Save(string path) => File.WriteAllBytes(path, Bytes.ToArray());
 
-    /// <summary>Reads the log at <paramref name="path"/>.</summary>
+    /// <summary>Reads the log at <paramref name="path"/>: a finished run's, or what a run still going wrote so far.</summary>
     /// <exception cref="InvalidDataException">It is not an event log of this version; the message names the file.</exception>
     public static EventLog Load(string path)
     {
         try
         {
-            return Parse(File.ReadAllBytes(path));
+            // Shared for writing: a run still going appends to it (SimulationOptions.EventLogFlushSteps).
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var bytes = new byte[file.Length];
+            file.ReadExactly(bytes);
+            return Parse(bytes);
         }
         catch (InvalidDataException e)
         {
@@ -97,10 +105,18 @@ public sealed class EventLog
         }
     }
 
-    /// <summary>Reads a log from its bytes.</summary>
+    /// <summary>
+    /// Reads a log from its bytes: a finished log, or the file of a run still going (what its ranks recorded so far, each
+    /// rank's records in order; a chunk being written as it was read is left out).
+    /// </summary>
     /// <exception cref="InvalidDataException">They are not an event log of this version, or end early.</exception>
     public static EventLog Parse(ReadOnlySpan<byte> bytes)
     {
+        if (bytes.StartsWith(JournalMagic))
+        {
+            return Parse(FromJournal(bytes));
+        }
+
         var r = new Reader(bytes);
         if (!r.Take(Magic.Length).SequenceEqual(Magic))
         {
@@ -175,12 +191,79 @@ public sealed class EventLog
 
     internal const byte RecordClock = 1, RecordState = 2, RecordTransfer = 3, RecordEnd = 4;
 
+    // A journal's chunks joined into a finished log's layout: the header, the faults, then each rank's records.
+    internal static byte[] FromJournal(ReadOnlySpan<byte> journal)
+    {
+        var r = new Reader(journal);
+        r.Take(JournalMagic.Length);
+        int version = r.UInt16();
+        if (version != Version)
+        {
+            throw new InvalidDataException($"event log version {version}; this Idrak reads version {Version}.");
+        }
+
+        int seed = r.Int32(), world = r.Int32();
+        string failures = r.Text();
+        if (world is < 1 or > 1 << 20)
+        {
+            throw new InvalidDataException($"an event log of {world} ranks.");
+        }
+
+        var streams = new List<byte[]>[world + 1];
+        for (int i = 0; i <= world; i++)
+        {
+            streams[i] = [];
+        }
+
+        while (r.Remaining >= 8)
+        {
+            int stream = BinaryPrimitives.ReadInt32LittleEndian(r.Peek(8));
+            int length = BinaryPrimitives.ReadInt32LittleEndian(r.Peek(8)[4..]);
+            if (stream < -1 || stream >= world || length < 0 || r.Remaining - 8 < length)
+            {
+                break;                                                     // a chunk still being written
+            }
+
+            r.Take(8);
+            streams[stream + 1].Add(r.Take(length).ToArray());
+        }
+
+        var output = new MemoryStream();
+        Span<byte> field = stackalloc byte[8];
+        output.Write(Magic);
+        BinaryPrimitives.WriteUInt16LittleEndian(field, Version);
+        output.Write(field[..2]);
+        BinaryPrimitives.WriteInt32LittleEndian(field, seed);
+        output.Write(field[..4]);
+        BinaryPrimitives.WriteInt32LittleEndian(field, world);
+        output.Write(field[..4]);
+        int nameLength = Encoding.UTF8.GetByteCount(failures);
+        BinaryPrimitives.WriteUInt16LittleEndian(field, (ushort)nameLength);
+        output.Write(field[..2]);
+        output.Write(Encoding.UTF8.GetBytes(failures));
+        foreach (var stream in streams)
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(field, stream.Sum(c => (long)c.Length));
+            output.Write(field);
+            foreach (var chunk in stream)
+            {
+                output.Write(chunk);
+            }
+        }
+
+        return output.ToArray();
+    }
+
     // Reads little-endian fields from the front of a span, refusing to read past its end.
     private ref struct Reader(ReadOnlySpan<byte> bytes)
     {
         private ReadOnlySpan<byte> _rest = bytes;
 
         public readonly bool Done => _rest.IsEmpty;
+
+        public readonly int Remaining => _rest.Length;
+
+        public readonly ReadOnlySpan<byte> Peek(int count) => _rest[..count];
 
         public ReadOnlySpan<byte> Take(int count)
         {
@@ -211,28 +294,55 @@ public sealed class EventLog
 // One transfer a rank sent, as the virtual clock charged it.
 internal readonly record struct TransferRecord(int From, int To, int Tag, long Sequence, long Bytes, double Sent, double Arrives, int Resends);
 
-// Writes a run's event log while it runs: the faults (under the injector's lock) and each rank's records (by that rank's
-// thread alone) into pooled blocks, joined at the end; the blocks go back to the pool when it is disposed.
-internal sealed class EventLogWriter(int seed, int worldSize, string failures, bool transfers) : IDisposable
+// Writes a run's event log while it runs: the faults (under a lock of their own) and each rank's records (by that rank's
+// thread alone) into pooled blocks. With a file (SimulationOptions.EventLog) and a flush interval, each rank appends its
+// records since its last flush to the file's journal every few steps it begins (Flush, on its own thread), so the file is
+// readable while the run goes and the blocks go back to the pool; Seal joins the journal and what is left into the
+// finished log, the same bytes as without flushing, and writes it over the journal.
+internal sealed class EventLogWriter : IDisposable
 {
     private const int MaxDetailChars = 300;
 
+    private readonly int _seed;
+    private readonly int _worldSize;
+    private readonly string _failures;
     private readonly Blocks _faults = new();
-    private readonly Blocks[] _ranks = [.. Enumerable.Range(0, worldSize).Select(_ => new Blocks())];
+    private readonly Blocks[] _ranks;
+    private readonly long[] _began;
+    private readonly Lock _faultGate = new();
+    private readonly Lock _fileGate = new();
+    private readonly string? _path;
+    private readonly int _flushSteps;
+    private FileStream? _journal;
 
-    public bool LogsTransfers => transfers;
+    public EventLogWriter(int seed, int worldSize, string failures, bool transfers, string? path = null, int flushSteps = 0)
+    {
+        _seed = seed;
+        _worldSize = worldSize;
+        _failures = failures;
+        LogsTransfers = transfers;
+        _ranks = [.. Enumerable.Range(0, worldSize).Select(_ => new Blocks())];
+        _began = new long[worldSize];
+        _path = path;
+        _flushSteps = path is null ? 0 : Math.Max(0, flushSteps);
+    }
+
+    public bool LogsTransfers { get; }
 
     public void Fault(Fault fault)
     {
-        var b = _faults.Take(8 + 1 + 8 + 8 + 4 + (4 * fault.Ranks.Count));
-        BinaryPrimitives.WriteInt64LittleEndian(b, fault.Step);
-        b[8] = (byte)fault.Kind;
-        BinaryPrimitives.WriteInt64LittleEndian(b[9..], fault.Duration.Ticks);
-        BinaryPrimitives.WriteDoubleLittleEndian(b[17..], fault.Factor);
-        BinaryPrimitives.WriteInt32LittleEndian(b[25..], fault.Ranks.Count);
-        for (int i = 0; i < fault.Ranks.Count; i++)
+        lock (_faultGate)
         {
-            BinaryPrimitives.WriteInt32LittleEndian(b[(29 + (4 * i))..], fault.Ranks[i]);
+            var b = _faults.Take(8 + 1 + 8 + 8 + 4 + (4 * fault.Ranks.Count));
+            BinaryPrimitives.WriteInt64LittleEndian(b, fault.Step);
+            b[8] = (byte)fault.Kind;
+            BinaryPrimitives.WriteInt64LittleEndian(b[9..], fault.Duration.Ticks);
+            BinaryPrimitives.WriteDoubleLittleEndian(b[17..], fault.Factor);
+            BinaryPrimitives.WriteInt32LittleEndian(b[25..], fault.Ranks.Count);
+            for (int i = 0; i < fault.Ranks.Count; i++)
+            {
+                BinaryPrimitives.WriteInt32LittleEndian(b[(29 + (4 * i))..], fault.Ranks[i]);
+            }
         }
     }
 
@@ -242,6 +352,10 @@ internal sealed class EventLogWriter(int seed, int worldSize, string failures, b
         b[0] = EventLog.RecordClock;
         BinaryPrimitives.WriteInt64LittleEndian(b[1..], step);
         BinaryPrimitives.WriteDoubleLittleEndian(b[9..], seconds);
+        if (_flushSteps > 0 && ++_began[rank] % _flushSteps == 0)
+        {
+            Flush(rank);
+        }
     }
 
     public void State(int rank, long step, RankState state, string? detail)
@@ -258,7 +372,7 @@ internal sealed class EventLogWriter(int seed, int worldSize, string failures, b
 
     public void Transfer(int from, int to, int tag, long sequence, long bytes, in Charged charged)
     {
-        if (!transfers)
+        if (!LogsTransfers)
         {
             return;
         }
@@ -281,20 +395,69 @@ internal sealed class EventLogWriter(int seed, int worldSize, string failures, b
         BinaryPrimitives.WriteDoubleLittleEndian(b[1..], seconds);
     }
 
-    // The log: the header, the faults, then each rank's records.
+    // Appends rank `rank`'s records (and the faults drawn) since the last flush to the journal; called on that rank's thread.
+    public void Flush(int rank)
+    {
+        if (_path is null)
+        {
+            return;
+        }
+
+        lock (_fileGate)
+        {
+            var journal = Journal();
+            lock (_faultGate)
+            {
+                Append(journal, -1, _faults);
+            }
+
+            Append(journal, rank, _ranks[rank]);
+            journal.Flush();
+        }
+    }
+
+    // The log: the header, the faults, then each rank's records (joined from the journal when the run kept one).
     public EventLog Seal()
     {
-        int nameLength = Encoding.UTF8.GetByteCount(failures);
+        if (_journal is not null)
+        {
+            byte[] canonical;
+            lock (_fileGate)
+            {
+                lock (_faultGate)
+                {
+                    Append(_journal, -1, _faults);
+                }
+
+                for (int rank = 0; rank < _worldSize; rank++)
+                {
+                    Append(_journal, rank, _ranks[rank]);
+                }
+
+                _journal.Flush();
+                _journal.Position = 0;
+                var journal = new byte[_journal.Length];
+                _journal.ReadExactly(journal);
+                _journal.Dispose();
+                _journal = null;
+                canonical = EventLog.FromJournal(journal);
+                File.WriteAllBytes(_path!, canonical);
+            }
+
+            return EventLog.Parse(canonical);
+        }
+
+        int nameLength = Encoding.UTF8.GetByteCount(_failures);
         long total = EventLog.Magic.Length + 2 + 4 + 4 + 2 + nameLength + 8 + _faults.Length + _ranks.Sum(s => 8 + s.Length);
         var bytes = new byte[checked((int)total)];
         var b = bytes.AsSpan();
         EventLog.Magic.CopyTo(b);
         int at = EventLog.Magic.Length;
         BinaryPrimitives.WriteUInt16LittleEndian(b[at..], EventLog.Version);
-        BinaryPrimitives.WriteInt32LittleEndian(b[(at + 2)..], seed);
-        BinaryPrimitives.WriteInt32LittleEndian(b[(at + 6)..], worldSize);
+        BinaryPrimitives.WriteInt32LittleEndian(b[(at + 2)..], _seed);
+        BinaryPrimitives.WriteInt32LittleEndian(b[(at + 6)..], _worldSize);
         BinaryPrimitives.WriteUInt16LittleEndian(b[(at + 10)..], (ushort)nameLength);
-        at += 12 + Encoding.UTF8.GetBytes(failures, b[(at + 12)..]);
+        at += 12 + Encoding.UTF8.GetBytes(_failures, b[(at + 12)..]);
         foreach (var stream in (Blocks[])[_faults, .. _ranks])
         {
             BinaryPrimitives.WriteInt64LittleEndian(b[at..], stream.Length);
@@ -307,6 +470,8 @@ internal sealed class EventLogWriter(int seed, int worldSize, string failures, b
 
     public void Dispose()
     {
+        _journal?.Dispose();
+        _journal = null;
         _faults.Dispose();
         foreach (var stream in _ranks)
         {
@@ -314,7 +479,52 @@ internal sealed class EventLogWriter(int seed, int worldSize, string failures, b
         }
     }
 
-    // Records in pooled blocks (rule 10: rented, returned when the log is disposed).
+    // The journal, made with its header on the first flush (readers may open it meanwhile).
+    private FileStream Journal()
+    {
+        if (_journal is not null)
+        {
+            return _journal;
+        }
+
+        string? folder = Path.GetDirectoryName(Path.GetFullPath(_path!));
+        if (folder is not null)
+        {
+            Directory.CreateDirectory(folder);
+        }
+
+        var journal = new FileStream(_path!, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
+        int nameLength = Encoding.UTF8.GetByteCount(_failures);
+        var header = new byte[EventLog.JournalMagic.Length + 2 + 4 + 4 + 2 + nameLength];
+        EventLog.JournalMagic.CopyTo(header);
+        int at = EventLog.JournalMagic.Length;
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(at), EventLog.Version);
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(at + 2), _seed);
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(at + 6), _worldSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(at + 10), (ushort)nameLength);
+        Encoding.UTF8.GetBytes(_failures, header.AsSpan(at + 12));
+        journal.Write(header);
+        _journal = journal;
+        return journal;
+    }
+
+    // One chunk of a stream's records, then the stream's blocks go back to the pool.
+    private static void Append(FileStream journal, int stream, Blocks blocks)
+    {
+        if (blocks.Length == 0)
+        {
+            return;
+        }
+
+        Span<byte> head = stackalloc byte[8];
+        BinaryPrimitives.WriteInt32LittleEndian(head, stream);
+        BinaryPrimitives.WriteInt32LittleEndian(head[4..], checked((int)blocks.Length));
+        journal.Write(head);
+        blocks.WriteTo(journal);
+        blocks.Dispose();
+    }
+
+    // Records in pooled blocks (rule 10: rented, returned when written to the journal or when the log is disposed).
     private sealed class Blocks : IDisposable
     {
         private const int BlockBytes = 64 * 1024;
@@ -348,6 +558,14 @@ internal sealed class EventLogWriter(int seed, int worldSize, string failures, b
             return at;
         }
 
+        public void WriteTo(Stream stream)
+        {
+            foreach (var (block, used) in _blocks)
+            {
+                stream.Write(block, 0, used);
+            }
+        }
+
         public void Dispose()
         {
             foreach (var (block, _) in _blocks)
@@ -356,6 +574,7 @@ internal sealed class EventLogWriter(int seed, int worldSize, string failures, b
             }
 
             _blocks.Clear();
+            Length = 0;
         }
     }
 }

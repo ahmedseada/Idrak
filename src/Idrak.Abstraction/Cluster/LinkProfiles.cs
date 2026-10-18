@@ -74,6 +74,13 @@ public sealed record LinkProfile : ILinkProfile
     /// <inheritdoc />
     public double FailureRate { get; init; }
 
+    /// <summary>
+    /// The rate of one network adapter a machine's ranks share on this link, or 0 when each pair of ranks has the link to
+    /// itself (bytes a second; a calibration from a bench of concurrent pairs finds it, plan 23 C8). A topology gives each
+    /// pair the adapter's rate over the ranks of the larger node it joins, never more than <see cref="BandwidthBytesPerSecond"/>.
+    /// </summary>
+    public double AdapterBytesPerSecond { get; init; }
+
     /// <inheritdoc />
     public TimeSpan Predict(long bytes, Random seeded)
     {
@@ -130,13 +137,20 @@ public sealed record LinkProfile : ILinkProfile
         {
             throw new ArgumentException($"Link '{profile.Name}': loss and failure rates are shares from 0 to 1.");
         }
+
+        if (profile is LinkProfile { AdapterBytesPerSecond: var adapter } && (!double.IsFinite(adapter) || adapter < 0))
+        {
+            throw new ArgumentException($"Link '{profile.Name}': the shared adapter's rate {adapter} is not a number of bytes a second (0 or more).");
+        }
     }
 }
 
 /// <summary>
 /// The link profiles, by name (plan 23). Idrak.Cluster registers the built-ins; a name may end in a rate that sets the
 /// bandwidth of the profile before it (<c>direct-link-10g</c>: "direct-link" at 10 Gb/s; <c>wifi-300m</c>: 300 Mb/s),
-/// in bits a second as links are sold, powers of 1,000.
+/// in bits a second as links are sold, powers of 1,000. A calibration (<c>idrak cluster calibrate</c>, kept by
+/// <see cref="ClusterCache"/>) takes the library's profile's place in <see cref="Resolve"/>; an app's registration stays
+/// above both.
 /// </summary>
 public static class LinkProfiles
 {
@@ -176,13 +190,16 @@ public static class LinkProfiles
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         if (Table.Find(name) is { } exact)
         {
-            return exact;
+            // A calibrated profile of that name takes the library's place; an app's registration stays above both.
+            return !ReferenceEquals(Table.Default(name), exact) ? exact
+                : ClusterCache.Calibrated(name) is { } calibrated ? calibrated.Apply(exact) : exact;
         }
 
         int dash = name.LastIndexOf('-');
         if (dash > 0 && TryParseRate(name.AsSpan(dash + 1), out double bytesPerSecond) && Table.Find(name[..dash]) is { } named)
         {
-            return named.With(bandwidthBytesPerSecond: bytesPerSecond, name: name);
+            var rated = named.With(bandwidthBytesPerSecond: bytesPerSecond, name: name);
+            return ClusterCache.Calibrated(name) is { } calibrated ? calibrated.Apply(rated) : rated;
         }
 
         throw new NotSupportedException($"Link profile '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); a registered name may end in a rate (\"-10g\", \"-300m\"), or add one with LinkProfiles.Register.");

@@ -53,107 +53,86 @@ internal static class ClusterSession
 }
 
 /// <summary>
-/// <c>idrak cluster sim --topology FILE -- pretrain …</c> (plan 23, phase C2): runs a training command once per rank of a
-/// topology file, every rank a thread of this process on a device carved from the physical device its entry names, joined
-/// by the simulated transport; rank 0 writes the run folder and prints, and each rank's network time on the virtual clock
-/// is reported beside the wall time.
+/// <c>idrak cluster sim --topology FILE -- pretrain|tune|train|resume …</c> (plan 23, phases C2 and C8): runs a training
+/// command once per rank of a topology file, every rank a thread of this process on a device carved from the physical
+/// device its entry names, joined by the simulated transport; rank 0 writes the run and prints, and each rank's network
+/// time on the virtual clock is reported beside the wall time. The run's event log goes to its run folder, flushed as it
+/// goes. <c>--profile</c> profiles the run (kernel, network and cluster probes; the predicted step beside the measured).
 /// </summary>
 internal sealed class ClusterSimCommand : Command
 {
-    // The commands whose training takes a simulated rank (ClusterSession); the others join with --cluster in phase C8.
-    private static readonly string[] Trainers = ["pretrain"];
+    // The commands whose training takes a cluster's rank (ClusterSession), and the option naming the folder rank 0 writes.
+    private static readonly (string Command, string[] Output, string Hint)[] Trainers =
+    [
+        ("pretrain", ["-o", "--out"], "-o RUN"),
+        ("tune", ["-o", "--out"], "-o DIR"),
+        ("train", ["--run"], "--run DIR"),
+        ("resume", [], "RUN"),
+    ];
+
+    /// <summary>The event log's file name in a run folder.</summary>
+    internal const string EventLogFile = "cluster-events.idrklog";
 
     public override string Name => "cluster sim";
 
     public override string Summary => "Runs training on a simulated cluster: every rank of a topology file in this process";
 
     public override string Usage => """
-        --topology FILE [options] -- pretrain MODEL [options] -o RUN
+        --topology FILE [options] -- pretrain|tune|train|resume ARGS
 
         Runs the training command after -- once per rank of the topology file: every rank a thread of this process on
         a device carved from the physical device its entry names (the entry's memory as a hard cap), the ranks joined
         by the simulated transport. Each step's rows are shared across the ranks and the gradients summed after the
-        backward pass, so the run trains as one process would; rank 0 writes the run folder and its output is shown.
-        Each training step draws the failure model's faults from the seed (a slow worker, a lossy link, a late joiner
-        that sits out its first steps while the others train them, a dropped worker that ends the run naming it); the
-        faults injected are listed with their replay key. At the end each rank's network time on the virtual clock
-        (what the cluster the file describes would spend on its links) is printed beside the wall time. With --mode
-        localhost every rank is a process of its own, joined by the real transports (shared memory inside a node, TCP
-        between nodes) paced to the links' profiles (IDRAK_CLUSTER_THROTTLE=0 lets them run free); one line per rank
-        shows its progress; faults are the simulated transport's, so a localhost run has none. The other cluster
-        settings come from the IDRAK_CLUSTER_ variables (idrak env lists them).
+        backward pass, so the run trains as one process would; rank 0 writes the run (pretrain -o RUN, tune -o DIR,
+        train --run DIR, resume RUN) and its output is shown. Each training step draws the failure model's faults from
+        the seed (a slow worker, a lossy link, a late joiner that sits out its first steps while the others train them,
+        a dropped worker that ends the run naming it); the faults injected are listed with their replay key, and the
+        event log (faults, each rank's clock per step) is written to the run folder as it goes (idrak cluster replay
+        reads it). At the end each rank's network time on the virtual clock (what the cluster the file describes would
+        spend on its links) is printed beside the wall time. With --mode localhost every rank is a process of its own,
+        joined by the real transports (shared memory inside a node, TCP between nodes) paced to the links' profiles
+        (IDRAK_CLUSTER_THROTTLE=0 lets them run free); one line per rank shows its progress; faults are the simulated
+        transport's, so a localhost run has none. With --profile the run is profiled (in-process): cold and warm apart
+        (IDRAK_PROFILE_WARM warm runs, 1 here; the later runs train into folders of their own, removed after), the
+        probes' rows (cpu, memory, the device's kernels where it times them, the network's collectives, transfers and
+        gradient buckets, the cluster's simulated links) and the step measured here beside the step predicted for the
+        topology's links. The other cluster settings come from the IDRAK_CLUSTER_ variables (idrak env lists them).
 
         Options:
               --topology FILE    the topology file (idrak cluster init writes one)
               --mode M           in-process (threads, the virtual clock) or localhost (processes) (IDRAK_CLUSTER_MODE)
-              --collective NAME  the collective algorithm: ring or naive (ring)
+              --collective NAME  the collective algorithm: ring, naive or hierarchical (hierarchical with several nodes)
               --wire W           how gradients travel: f32 or bf16 (f32)
               --failures MODEL   the failure model: none, slow-worker, dropped-worker, link-loss, partition,
                                  late-join or mixed (the file's)
               --seed N           the seed of the simulation's jitter and faults (the file's)
+              --placement P      single or pipeline: the whole model on every rank, or a stage each (pretrain)
+              --stages N         a pipeline's stages, dividing the ranks (one per rank)
+              --event-log FILE   where the event log goes (the run folder's cluster-events.idrklog)
+              --profile          profile the run: the probes' rows and the predicted step beside the measured
 
         Examples:
           idrak cluster init -y --nodes 1 --devices cpu,cpu -o two.json
           idrak cluster sim --topology two.json -- pretrain my-model --tokens tokens.bin --steps 100 -o run
           idrak cluster sim --topology two.json --mode localhost -- pretrain my-model --tokens tokens.bin -o run
           idrak cluster sim --topology two.json --failures slow-worker --seed 7 -- pretrain my-model --tokens t.bin -o run
+          idrak cluster sim --topology two.json --placement pipeline -- pretrain my-model --tokens t.bin -o run
+          idrak cluster sim --topology two.json --profile -- train network.json --data houses.csv --run run
+          idrak cluster sim --topology two.json -- tune train my-model chats.jsonl -o adapters/chat
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--topology", "--collective", "--wire", "--mode", "--failures", "--seed"];
+    public override IReadOnlyCollection<string> ValueOptions =>
+        ["--topology", "--collective", "--wire", "--mode", "--failures", "--placement", "--stages", "--event-log"];
+
+    public override IReadOnlyCollection<string> Flags => ["--profile"];
 
     public override int Run(CommandContext context)
     {
         string path = context.Option("--topology") ?? throw new UsageException("Give the topology file with --topology (idrak cluster init writes one).");
         var inner = context.Positional;
-        if (inner.Count == 0 || !Trainers.Contains(inner[0], StringComparer.Ordinal))
+        var (options, topology) = Prepare(context, path, inner);
+        if (topology is null)
         {
-            throw new UsageException($"Give the training command after --: {string.Join(" or ", Trainers)} (got {(inner.Count == 0 ? "nothing" : inner[0])}).");
-        }
-
-        if (!inner.Any(a => a is "-o" or "--out" || a.StartsWith("--out=", StringComparison.Ordinal)))
-        {
-            throw new UsageException($"Give the run folder after {inner[0]} (-o RUN): every rank trains into one run, rank 0 writes it.");
-        }
-
-        var options = ClusterOptions.FromEnvironment() with { Topology = path };
-        if (context.Option("--collective") is { } collective)
-        {
-            options = options with { Collective = collective };
-        }
-
-        if (context.Option("--wire") is { } wire)
-        {
-            options = options with
-            {
-                Wire = wire.ToLowerInvariant() switch
-                {
-                    "f32" or "float32" => WireType.Float32,
-                    "bf16" or "bfloat16" => WireType.BFloat16,
-                    _ => throw new UsageException($"--wire is f32 or bf16, not '{wire}'."),
-                },
-            };
-        }
-
-        if (context.Option("--seed") is { } seed)
-        {
-            options = options with { Simulation = options.Simulation with { Seed = int.TryParse(seed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int s) ? s : throw new UsageException($"--seed is a whole number, not '{seed}'.") } };
-        }
-
-        if (context.Option("--failures") is { } failures)
-        {
-            options = options with { Simulation = options.Simulation with { Failures = failures } };
-        }
-
-        ClusterTopology topology;
-        try
-        {
-            topology = ClusterTopology.Load(path);
-            _ = Collectives.Get(options.CollectiveFor(topology));
-            _ = FailureModels.Get(options.Simulation.Failures ?? topology.Simulation.Failures);
-        }
-        catch (Exception e) when (e is InvalidDataException or NotSupportedException or FileNotFoundException)
-        {
-            context.Error(e.Message);
             return ExitCodes.Failed;
         }
 
@@ -182,36 +161,31 @@ internal sealed class ClusterSimCommand : Command
                                          + "a localhost run joins its processes by the real transports, which inject no faults.");
             }
 
+            if (context.Flag("--profile"))
+            {
+                throw new UsageException("--profile needs --mode in-process: the probes read this process's telemetry, and a localhost run's ranks are processes of their own.");
+            }
+
             return Localhost(context, path, topology, options, inner);
         }
 
         var inv = CultureInfo.InvariantCulture;
         string model = options.Simulation.Failures ?? topology.Simulation.Failures;
         int runSeed = options.Simulation.Seed ?? topology.Simulation.Seed;
+        options = WithEventLog(context, options, inner);
         context.Write($"simulating {topology.WorldSize} rank(s) of {path} in this process ({options.CollectiveFor(topology)}, {(options.Wire == WireType.BFloat16 ? "bf16" : "f32")} wire, "
-                      + $"failures {model}, seed {runSeed.ToString(inv)}): idrak {string.Join(' ', inner)}");
-        int world = topology.WorldSize;
-        var codes = new int[world];
-        var errors = new StringWriter[world];
-        var result = InProcessCluster.Run(topology, options, rank =>
+                      + $"failures {model}, seed {runSeed.ToString(inv)}{(options.Pipelined ? $", pipeline of {options.Stages ?? topology.WorldSize} stage(s)" : "")}): idrak {string.Join(' ', inner)}");
+        int[] codes;
+        ClusterRunResult result;
+        JsonNode? profile = null;
+        if (context.Flag("--profile"))
         {
-            errors[rank.Rank] = new StringWriter(inv);
-            ClusterSession.Current = rank;
-            try
-            {
-                // Rank 0's output is the run's; the others' errors are kept to name a rank that failed.
-                codes[rank.Rank] = CommandLine.Run(inner, rank.Rank == 0 ? context.Output : TextWriter.Null, rank.Rank == 0 ? context.ErrorOutput : errors[rank.Rank]);
-            }
-            finally
-            {
-                ClusterSession.Current = null;
-            }
-
-            if (codes[rank.Rank] != ExitCodes.Ok)
-            {
-                throw new InvalidOperationException($"{inner[0]} ended with exit code {codes[rank.Rank]}" + (errors[rank.Rank].ToString().Trim() is { Length: > 0 } text ? $": {text.Split('\n')[0]}" : ""));
-            }
-        });
+            (codes, result, profile) = Profiled(context, topology, options, inner);
+        }
+        else
+        {
+            (codes, result) = Simulate(context, topology, options, inner);
+        }
 
         var faults = result.Log?.Faults ?? [];
         if (faults.Count > 0)
@@ -222,10 +196,15 @@ internal sealed class ClusterSimCommand : Command
 
         context.Write("network time on the virtual clock: " + string.Join(", ", result.Simulated.Select((t, r) => $"rank {r} {t.TotalSeconds.ToString("F3", inv)} s"))
                       + $"; wall {result.Wall.TotalSeconds.ToString("F1", inv)} s");
+        if (options.Simulation.EventLog is { } eventLog && result.Log is not null)
+        {
+            context.Write($"event log: {eventLog} (idrak cluster replay --topology {path} --seed {runSeed.ToString(inv)} --step N --from {eventLog})");
+        }
+
         context.WriteJson(new JsonObject
         {
             ["topology"] = Path.GetFullPath(path),
-            ["ranks"] = world,
+            ["ranks"] = topology.WorldSize,
             ["command"] = string.Join(' ', inner),
             ["failures"] = model,
             ["seed"] = runSeed,
@@ -238,7 +217,297 @@ internal sealed class ClusterSimCommand : Command
             ["simulated_seconds"] = new JsonArray([.. result.Simulated.Select(t => (JsonNode)t.TotalSeconds)]),
             ["wall_seconds"] = result.Wall.TotalSeconds,
             ["exit_codes"] = new JsonArray([.. codes.Select(c => (JsonNode)c)]),
+            ["event_log"] = options.Simulation.EventLog is { } log ? Path.GetFullPath(log) : null,
+            ["profile"] = profile,
         });
+        return Outcome(context, result, codes);
+    }
+
+    /// <summary>
+    /// The options and topology a simulated run of <paramref name="inner"/> takes (the file, the collective, wire, seed,
+    /// failures, placement and stages given); null topology when the file cannot be read (the error is written).
+    /// </summary>
+    internal static (ClusterOptions Options, ClusterTopology? Topology) Prepare(CommandContext context, string path, IReadOnlyList<string> inner)
+    {
+        if (inner.Count == 0 || Trainers.All(t => t.Command != inner[0]))
+        {
+            throw new UsageException($"Give the training command after --: {string.Join(", ", Trainers.Select(t => t.Command))} (got {(inner.Count == 0 ? "nothing" : inner[0])}).");
+        }
+
+        var trainer = Trainers.First(t => t.Command == inner[0]);
+        if (trainer.Output.Length > 0 && !inner.Any(a => trainer.Output.Contains(a) || trainer.Output.Any(o => o.StartsWith("--", StringComparison.Ordinal) && a.StartsWith(o + "=", StringComparison.Ordinal))))
+        {
+            throw new UsageException($"Give the folder rank 0 writes after {inner[0]} ({trainer.Hint}): every rank trains into one run, rank 0 writes it.");
+        }
+
+        ClusterOptions options;
+        try
+        {
+            options = ClusterOptions.FromEnvironment() with { Topology = path };
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
+        }
+
+        if (context.Option("--collective") is { } collective)
+        {
+            options = options with { Collective = collective };
+        }
+
+        if (context.Option("--wire") is { } wire)
+        {
+            options = options with
+            {
+                Wire = wire.ToLowerInvariant() switch
+                {
+                    "f32" or "float32" => WireType.Float32,
+                    "bf16" or "bfloat16" => WireType.BFloat16,
+                    _ => throw new UsageException($"--wire is f32 or bf16, not '{wire}'."),
+                },
+            };
+        }
+
+        if (context.Option("--seed") is { } seed)
+        {
+            options = options with { Simulation = options.Simulation with { Seed = int.TryParse(seed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int s) ? s : throw new UsageException($"--seed is a whole number, not '{seed}'.") } };
+        }
+
+        if (context.Option("--failures") is { } failures)
+        {
+            options = options with { Simulation = options.Simulation with { Failures = failures } };
+        }
+
+        if (context.Option("--placement") is { } placement)
+        {
+            options = options with
+            {
+                Placement = placement.ToLowerInvariant() is "single" or "pipeline" ? placement.ToLowerInvariant() : throw new UsageException($"--placement is single or pipeline, not '{placement}'."),
+            };
+        }
+
+        if (context.Option("--stages") is { } stages)
+        {
+            options = options with { Stages = int.TryParse(stages, NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n >= 1 ? n : throw new UsageException($"--stages is a whole number, 1 or more, not '{stages}'.") };
+        }
+
+        if (options.Pipelined && inner[0] != "pretrain" && !(inner[0] == "resume"))
+        {
+            throw new UsageException($"--placement pipeline trains with pretrain (and resumes its runs); {inner[0]} trains the whole model on every rank.");
+        }
+
+        if (context.Option("--event-log") is { } eventLog)
+        {
+            options = options with { Simulation = options.Simulation with { EventLog = Path.GetFullPath(eventLog) } };
+        }
+
+        try
+        {
+            var topology = ClusterTopology.Load(path);
+            _ = Collectives.Get(options.CollectiveFor(topology));
+            _ = FailureModels.Get(options.Simulation.Failures ?? topology.Simulation.Failures);
+            if (options.Stages is { } count && topology.WorldSize % count != 0)
+            {
+                throw new UsageException($"--stages {count} does not divide the {topology.WorldSize} rank(s) of {path}.");
+            }
+
+            return (options, topology);
+        }
+        catch (Exception e) when (e is InvalidDataException or NotSupportedException or FileNotFoundException or DirectoryNotFoundException)
+        {
+            context.Error(e.Message);
+            return (options, null);
+        }
+    }
+
+    // The event log in the run folder rank 0 writes, unless IDRAK_CLUSTER_EVENT_LOG or --event-log names one.
+    internal static ClusterOptions WithEventLog(CommandContext context, ClusterOptions options, IReadOnlyList<string> inner)
+    {
+        if (options.Simulation.EventLog is not null || RunFolder(inner) is not { } folder)
+        {
+            return options;
+        }
+
+        Directory.CreateDirectory(folder);
+        return options with { Simulation = options.Simulation with { EventLog = Path.Combine(Path.GetFullPath(folder), EventLogFile) } };
+    }
+
+    // The run folder a training command writes (pretrain -o, train --run, resume RUN), or null (tune's adapter folder).
+    private static string? RunFolder(IReadOnlyList<string> inner)
+    {
+        string? Value(params string[] names)
+        {
+            for (int i = 1; i < inner.Count; i++)
+            {
+                foreach (string name in names)
+                {
+                    if (inner[i] == name && i + 1 < inner.Count)
+                    {
+                        return inner[i + 1];
+                    }
+
+                    if (name.StartsWith("--", StringComparison.Ordinal) && inner[i].StartsWith(name + "=", StringComparison.Ordinal))
+                    {
+                        return inner[i][(name.Length + 1)..];
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        return inner[0] switch
+        {
+            "pretrain" => Value("-o", "--out"),
+            "train" => Value("--run"),
+            "resume" => inner.Skip(1).FirstOrDefault(a => !a.StartsWith('-')) is { } run && Directory.Exists(run) ? run : null,
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Runs <paramref name="inner"/> on every rank of <paramref name="topology"/> in this process (rank 0's output is the
+    /// run's; the others' errors are kept to name a rank that failed); each rank's exit code beside the run's result.
+    /// </summary>
+    internal static (int[] Codes, ClusterRunResult Result) Simulate(CommandContext context, ClusterTopology topology, ClusterOptions options, IReadOnlyList<string> inner)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        int world = topology.WorldSize;
+        var codes = new int[world];
+        var errors = new StringWriter[world];
+        var result = InProcessCluster.Run(topology, options, rank =>
+        {
+            errors[rank.Rank] = new StringWriter(inv);
+            ClusterSession.Current = rank;
+            try
+            {
+                codes[rank.Rank] = CommandLine.Run(inner, rank.Rank == 0 ? context.Output : TextWriter.Null, rank.Rank == 0 ? context.ErrorOutput : errors[rank.Rank]);
+            }
+            finally
+            {
+                ClusterSession.Current = null;
+            }
+
+            if (codes[rank.Rank] != ExitCodes.Ok)
+            {
+                throw new InvalidOperationException($"{inner[0]} ended with exit code {codes[rank.Rank]}" + (errors[rank.Rank].ToString().Trim() is { Length: > 0 } text ? $": {text.Split('\n')[0]}" : ""));
+            }
+        });
+        return (codes, result);
+    }
+
+    // The run under the profiler: the first (cold) run trains into the run folder, each later one into a folder of its own,
+    // removed after; the report's rows go to the output (JSON with -j), with the predicted step beside the measured.
+    private static (int[] Codes, ClusterRunResult Result, JsonNode? Profile) Profiled(CommandContext context, ClusterTopology topology, ClusterOptions options,
+        IReadOnlyList<string> inner)
+    {
+        ProfileOptions profileOptions;
+        try
+        {
+            var probes = ProfileProbes.Names.Where(n => ProfileProbes.Find(n) is { Intrusive: false } || n == "kernels").ToList();
+            profileOptions = ProfileOptions.FromEnvironment(new ProfileOptions { WarmRuns = 1, Probes = probes });
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
+        }
+
+        int[] codes = [];
+        ClusterRunResult? first = null;
+        var extra = new List<string>();
+        string? folder = RunFolder(inner) ?? Value(inner, "-o", "--out");
+        var device = ClusterDevice(topology, options);
+        ProfileReport report;
+        try
+        {
+            report = Profiler.Run($"cluster sim {inner[0]}", device, run =>
+            {
+                var args = inner.ToList();
+                var runOptions = options;
+                if (run.Index > 0 && folder is not null)
+                {
+                    string other = $"{Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder))}.profile-{run.Index.ToString(CultureInfo.InvariantCulture)}";
+                    extra.Add(other);
+                    args = [.. args.Select(a => a == folder ? other : a)];
+                    runOptions = options with { Simulation = options.Simulation with { EventLog = null } };
+                }
+
+                var (runCodes, result) = Simulate(context, topology, runOptions, args);
+                if (first is null)
+                {
+                    (codes, first) = (runCodes, result);
+                }
+
+                if (!result.Succeeded)
+                {
+                    throw new InvalidOperationException(string.Join("; ", result.Errors.Select((e, r) => e is null ? null : $"rank {r}: {e.Message}").OfType<string>()));
+                }
+            }, profileOptions);
+        }
+        catch (InvalidOperationException) when (first is not null && !first.Succeeded)
+        {
+            return (codes, first, null);
+        }
+        finally
+        {
+            foreach (string other in extra.Where(Directory.Exists))
+            {
+                Directory.Delete(other, recursive: true);
+            }
+        }
+
+        var inv = CultureInfo.InvariantCulture;
+        using var text = new StringWriter(inv);
+        report.Write(text, context.Json ? ProfileWriters.Json : ProfileWriters.Table);
+        if (!context.Json)
+        {
+            context.Write(text.ToString().TrimEnd());
+        }
+
+        if (report["measured step"] is { } measured && report["predicted step"] is { } predicted)
+        {
+            context.Write($"step: measured {Ms(measured.Value ?? measured.Cold)} here, predicted {Ms(predicted.Value ?? predicted.Cold)} on the topology's links "
+                          + $"(cold {Ms(measured.Cold)} and {Ms(predicted.Cold)})");
+        }
+
+        JsonNode? json = null;
+        if (context.Json)
+        {
+            try
+            {
+                json = JsonNode.Parse(text.ToString());
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                json = text.ToString();
+            }
+        }
+
+        return (codes, first!, json);
+
+        static string Ms(double? ms) => ms is { } v ? v.ToString("F2", CultureInfo.InvariantCulture) + " ms" : "-";
+    }
+
+    private static string? Value(IReadOnlyList<string> inner, params string[] names)
+    {
+        for (int i = 1; i + 1 < inner.Count; i++)
+        {
+            if (names.Contains(inner[i]))
+            {
+                return inner[i + 1];
+            }
+        }
+
+        return null;
+    }
+
+    // The device the profile is reported for: rank 0's physical device.
+    private static Device ClusterDevice(ClusterTopology topology, ClusterOptions options) =>
+        Device.Parse(options.Simulation.CarveFrom ?? topology.Nodes[0].Devices[0].Device);
+
+    /// <summary>The exit code of a simulated run, naming every rank that failed.</summary>
+    internal static int Outcome(CommandContext context, ClusterRunResult result, int[] codes)
+    {
         if (result.Succeeded)
         {
             return ExitCodes.Ok;
@@ -249,7 +518,7 @@ internal sealed class ClusterSimCommand : Command
             context.Error($"rank {rank}: {error!.Message}");
         }
 
-        return codes[0] != ExitCodes.Ok ? codes[0] : ExitCodes.Failed;
+        return codes.Length > 0 && codes[0] != ExitCodes.Ok ? codes[0] : ExitCodes.Failed;
     }
 
     // --mode localhost: every rank a process of its own (this tool again), joined by the real transports.
@@ -267,6 +536,11 @@ internal sealed class ClusterSimCommand : Command
             environment["IDRAK_CLUSTER_SEED"] = seed.ToString(inv);
         }
 
+        environment["IDRAK_CLUSTER_PLACEMENT"] = options.Placement;
+        if (options.Stages is { } stages)
+        {
+            environment["IDRAK_CLUSTER_STAGES"] = stages.ToString(inv);
+        }
         int world = topology.WorldSize;
         var ranks = Enumerable.Range(0, world).ToList();
         var devices = ranks.Select(r => options.Simulation.CarveFrom ?? topology.Nodes[topology.Place(r).Node].Devices[topology.Place(r).Local].Device).ToList();

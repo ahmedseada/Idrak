@@ -385,9 +385,20 @@ internal sealed class TuneTool(ToolConsole console)
     {
         string command = positional[0];
 
+        // A rank of a cluster (idrak cluster sim, or tune --cluster) trains on its device with its collectives; the
+        // process-wide default device stays as it is (the ranks of a simulation share the process).
+        if (Cluster.ClusterSession.Current is { } rank)
+        {
+            device = rank.Device;
+            tuning = tuning with { Cluster = rank.Collectives, ClusterOptions = rank.Context.Options };
+        }
+
         // Tensor cores (bfloat16) for the larger products unless asked otherwise.
         MixedPrecision.Default = matmul ?? MatMulPrecision.BFloat16;
-        Device.Default = device;
+        if (Cluster.ClusterSession.Current is null)
+        {
+            Device.Default = device;
+        }
         cacheLayout = kvLayout ?? KeyValueLayouts.For(kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32);
         downloads = console.CreateDownloader();
 
@@ -619,18 +630,27 @@ internal sealed class TuneTool(ToolConsole console)
                 }
             }
 
+            bool writes = Cluster.ClusterSession.Current is not { Rank: > 0 };   // a cluster's rank 0 writes the adapter folder
             try
             {
                 work(progress, cancel.Token, Trace);
-                record.Save(output!);
+                if (writes)
+                {
+                    record.Save(output!);
+                }
+
                 console.Finish();
                 _out.WriteLine($"trained in {Elapsed(clock.Elapsed)}{(lastEvaluation is { } l ? $", evaluation loss {l:F4}" : "")}"
                                + $"{(lastAnswers is { } a ? $", {Score(a)}" : "")}; adapter written to {Path.GetFullPath(output!)}");
             }
             catch (OperationCanceledException)
             {
-                saveSoFar(output!);
-                record.Save(output!);
+                if (writes)
+                {
+                    saveSoFar(output!);
+                    record.Save(output!);
+                }
+
                 console.Clear();
                 _out.WriteLine($"stopped after {Elapsed(clock.Elapsed)}; the adapter so far written to {Path.GetFullPath(output!)}");
             }
