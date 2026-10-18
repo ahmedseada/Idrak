@@ -15,7 +15,7 @@ Every phase is built and merged: C0-C7, C8a, C8b, C8c (the setting advisor, deci
 | C7 | Pipeline parallelism | Done (00a0d8f); CPU, CUDA, Vulkan pass |
 | C8a | `replay`, `calibrate`, `transports`, `--profile`, `--cluster` on the training commands | Done (7c41b8d, c3dbe13); CPU, CUDA, Vulkan pass |
 | C8b | Own-tensor loads and saves, device-to-device activations, direct wake, train/tune stops | Done (e016c9f); CPU, CUDA, Vulkan pass |
-| C8c | The `"cluster"` setting advisor (decision 4) | Done (MERGE_SHA); CPU passes, owner's GPU run pending |
+| C8c | The `"cluster"` setting advisor (decision 4) | Done (a36bfd1); CPU passes, owner's GPU run pending |
 | C9 | The dashboard (`idrak cluster ui`) | Done (8e4b84c); CPU, CUDA pass |
 
 **Supersedes plan 6** (`6-network.md`): that plan put the simulator inside `Idrak.Abstraction` as a `"local"` transport and
