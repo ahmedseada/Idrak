@@ -13,7 +13,7 @@ C0-C7, C8a, C8b and C9 are built and merged; C8c (the setting advisor, decision 
 | C5 | Real transports, localhost mode, `cluster start`, `cluster bench` | Done (dcb68ec); CPU, CUDA, Vulkan pass |
 | C6 | ZeRO sharding, flow control, GPU staging, shared-memory wake-up | Done (cb514b4); CPU, CUDA, Vulkan pass (the 262,148 B fixed in C8b) |
 | C7 | Pipeline parallelism | Done (00a0d8f); CPU, CUDA, Vulkan pass |
-| C8a | `replay`, `calibrate`, `transports`, `--profile`, `--cluster` on the training commands | Done (7c41b8d); CPU, Vulkan pass; CUDA one `--profile` failure fixed after, rerun pending |
+| C8a | `replay`, `calibrate`, `transports`, `--profile`, `--cluster` on the training commands | Done (7c41b8d, c3dbe13); CPU, CUDA, Vulkan pass |
 | C8b | Own-tensor loads and saves, device-to-device activations, direct wake, train/tune stops | Done (e016c9f); CPU, CUDA, Vulkan pass |
 | C8c | The `"cluster"` setting advisor (decision 4) | In progress |
 | C9 | The dashboard (`idrak cluster ui`) | Done (8e4b84c); CPU, CUDA pass |
