@@ -12,6 +12,8 @@ namespace Idrak.Networking.Training;
 /// a fixed number of values, in reverse parameter order (the order a backward pass finishes them: the last layers' first),
 /// so the first bucket fills first. The layout depends on the parameters' sizes and the bucket size alone, so it is the
 /// same on every rank. Each bucket knows the parameters it holds, so it can be sent as soon as all of them are finished.
+/// In a sharded run (phase C6) each bucket's pieces are grouped by the rank that owns their parameter, in rank order, so a
+/// rank's piece of the bucket is contiguous (<see cref="Counts"/>) and a reduce-scatter leaves each rank its own.
 /// </summary>
 internal sealed class BucketLayout
 {
@@ -19,8 +21,9 @@ internal sealed class BucketLayout
     private readonly (int First, int Count, int Start, int Values)[] _buckets;
     private readonly int[][] _bucketParameters;                 // the distinct parameters each bucket holds
     private readonly int[][] _parameterBuckets;                 // the buckets each parameter's pieces are in
+    private readonly int[][]? _counts;                          // sharded: each rank's values in each bucket
 
-    public BucketLayout(IReadOnlyList<Tensor> parameters, int bucketValues)
+    public BucketLayout(IReadOnlyList<Tensor> parameters, int bucketValues, int[]? owners = null, int world = 1)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(bucketValues, 1);
         BucketValues = bucketValues;
@@ -47,6 +50,28 @@ internal sealed class BucketLayout
         if (pieces.Count > firstPiece || buckets.Count == 0)
         {
             buckets.Add((firstPiece, pieces.Count - firstPiece, start, used));
+        }
+
+        if (owners is not null)
+        {
+            // Each bucket's pieces grouped by owner (stable, so parameter order within a rank's piece), placed anew.
+            _counts = new int[buckets.Count][];
+            for (int b = 0; b < buckets.Count; b++)
+            {
+                var (first, count, _, _) = buckets[b];
+                var counts = new int[world];
+                var grouped = pieces.GetRange(first, count).OrderBy(p => owners[p.Parameter]).ToList();
+                int at = 0;
+                for (int j = 0; j < grouped.Count; j++)
+                {
+                    var piece = grouped[j];
+                    pieces[first + j] = piece with { At = at };
+                    at += piece.Count;
+                    counts[owners[piece.Parameter]] += piece.Count;
+                }
+
+                _counts[b] = counts;
+            }
         }
 
         _pieces = [.. pieces];
@@ -95,6 +120,25 @@ internal sealed class BucketLayout
 
     /// <summary>The buckets parameter <paramref name="parameter"/>'s pieces are in.</summary>
     public ReadOnlySpan<int> BucketsOf(int parameter) => _parameterBuckets[parameter];
+
+    /// <summary>Whether the pieces are grouped by owner (a sharded run).</summary>
+    public bool Sharded => _counts is not null;
+
+    /// <summary>Sharded: each rank's values in bucket <paramref name="bucket"/>, in rank order (its piece of the bucket).</summary>
+    public ReadOnlySpan<int> Counts(int bucket) => _counts![bucket];
+
+    /// <summary>Sharded: where rank <paramref name="rank"/>'s piece of bucket <paramref name="bucket"/> starts and how long it is.</summary>
+    public (int Start, int Count) Piece(int bucket, int rank)
+    {
+        var counts = _counts![bucket];
+        int start = 0;
+        for (int r = 0; r < rank; r++)
+        {
+            start += counts[r];
+        }
+
+        return (start, counts[rank]);
+    }
 }
 
 /// <summary>

@@ -1282,7 +1282,11 @@ public static class FineTuner
                 sync?.Stepped(step);
                 float? evaluationLoss = null;
                 bool lastOfEpoch = first + perStep >= batches.Count;
-                if (evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch))
+                bool evaluate = evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch);
+                bool saving = outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0;
+                // A sharded run's weights whole on every rank while they are read (plan 23, C6; nothing to do otherwise).
+                using var whole = evaluate || saving || options.Answers is { } due && due.IsDue(step, lastOfEpoch) ? sync?.Gather() : null;
+                if (evaluate && evaluation is not null)
                 {
                     evaluationLoss = custom is not null ? EvaluateCustom(model, evaluation, pairs, custom, options, trace)
                         : sync is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision)
@@ -1297,7 +1301,7 @@ public static class FineTuner
                     trace?.Invoke($"answers at step {step}: {answers} ({answers.MeanTokens:F0} tokens each, {answers.Duration.TotalSeconds:F1} s)");
                 }
 
-                if (outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0)
+                if (saving && outputFolder is not null)
                 {
                     if (writes)
                     {
@@ -1311,6 +1315,7 @@ public static class FineTuner
             }
         }
 
+        sync?.End();                                                       // a sharded run's weights whole on every rank again
         network.Eval();
         if (outputFolder is not null)
         {
@@ -1447,7 +1452,7 @@ public static class FineTuner
         private readonly bool _graphsAllowed = options.CudaGraphs && options.GradientAccumulation <= 1
             && !ComputeResources.OffloadToHostMemory && !options.HostOptimizer
             && model.Device.Backend.SupportsGraphs
-            && custom is null && Recordable(optimizer)
+            && custom is null && Recordable(optimizer) && sync is not { Updates: true }   // a sharded update gathers and sends, which a recording cannot
             && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f } or MixtureOfExperts);   // a recorded pass would reuse dropout masks
 
         // An optimizer of one's own (FineTuningOptions.Optimizer): the recorded backward pass writes into the gradient
@@ -1827,11 +1832,17 @@ public static class FineTuner
 
     // Clipping and the optimizer's update, after the gradients of a step whose loss (read already) is finite; a NaN or
     // infinite loss drops the step's gradients instead, so one bad step leaves the parameters as they were.
-    private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options, float loss)
+    private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options, float loss, IGradientSync? sync = null)
     {
         if (!float.IsFinite(loss))
         {
             optimizer.ZeroGrad();
+            return;
+        }
+
+        if (sync is { Updates: true })
+        {
+            sync.Update(options.MaxGradientNorm);                       // a sharded run: each rank steps its own share (plan 23, C6)
             return;
         }
 
@@ -1899,7 +1910,7 @@ public static class FineTuner
             (loss, tokens) = ((float)reduced.Loss, (long)reduced.Tokens);
         }
 
-        Update(model, optimizer, options, loss);
+        Update(model, optimizer, options, loss, sync);
         return (loss, tokens);
     }
 

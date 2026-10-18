@@ -24,7 +24,7 @@ internal sealed class TcpTransport : FramedTransport
     private readonly Lock[] _writing;
     private readonly Thread[] _readers;
 
-    public TcpTransport(string name, int rank, int worldSize, Socket?[] sockets, ClusterOptions options) : base(name, rank, worldSize, options.Timeout)
+    public TcpTransport(string name, int rank, int worldSize, Socket?[] sockets, ClusterOptions options) : base(name, rank, worldSize, options)
     {
         _sockets = sockets;
         _writing = [.. Enumerable.Range(0, worldSize).Select(_ => new Lock())];

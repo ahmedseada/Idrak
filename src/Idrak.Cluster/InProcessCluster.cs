@@ -336,6 +336,11 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IHostValueCollectiv
 
     public bool TryBroadcast(Span<float> values, int root) => Current is IHostValueCollectives host && host.TryBroadcast(values, root);
 
+    public bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op, WireType wire) =>
+        Current is IHostValueCollectives host && host.TryReduceScatter(values, counts, op, wire);
+
+    public bool TryAllGather(Span<float> values, ReadOnlySpan<int> counts) => Current is IHostValueCollectives host && host.TryAllGather(values, counts);
+
     public void Dispose()
     {
         foreach (var (transport, collectives) in _groups.Values)

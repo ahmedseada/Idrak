@@ -79,6 +79,8 @@ public sealed partial class Conv2d
             throw new ArgumentException($"A {KernelHeight}x{KernelWidth} kernel (dilation {DilationHeight}x{DilationWidth}) does not fit a {g.H}x{g.W} input with padding {PaddingHeight}x{PaddingWidth}.");
         }
 
+        using var gathered = ForwardHooks.Enter(this);                  // a sharded run's weights (plan 23, C6): the norm's too, read in this pass
+        using var gatheredNorm = norm is null ? null : ForwardHooks.Enter(norm);
         using var offload = input.Device.Backend.Offload is not null ? TensorOffloading.EnterForward?.Invoke(this, input) : null;
         using var normOffload = norm is not null && input.Device.Backend.Offload is not null ? TensorOffloading.EnterForward?.Invoke(norm, input) : null;
         if (norm is null)

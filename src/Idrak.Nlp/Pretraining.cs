@@ -417,13 +417,19 @@ public static class Pretrainer
                 var evaluation = ReadEvaluation(options, context);
                 var parameters = Trainable(model, stage, vision, partSources);
                 using var optimizer = CreateOptimizer(parameters, options, stage);
-                if (resume is { } rs && rs.Stage == stageIndex)
-                {
-                    optimizer.LoadState(ReadOptimizerState(rs.Folder));
-                }
 
                 // Data parallel (plan 23): every rank draws each step's sequences alike and trains its share of them.
                 using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, options.ClusterOptions ?? ClusterOptions.FromEnvironment()) : null;
+                if (resume is { } rs && rs.Stage == stageIndex)
+                {
+                    // The checkpoint's whole state: a sharded run (C6) keeps its share of it, any other loads it all.
+                    var saved = ReadOptimizerState(rs.Folder);
+                    if (sync?.LoadOptimizerState(saved) != true)
+                    {
+                        optimizer.LoadState(saved);
+                    }
+                }
+
                 sync?.Start();
 
                 var schedule = FineTuningSchedules.Create(stage.Schedule, stage.WarmupFraction, stage.MinLearningRate)(optimizer, stage.Steps);
@@ -496,7 +502,7 @@ public static class Pretrainer
                             (loss, tokens) = runner.Run(batches, sequences, cancellationToken,
                                 b => $"{stage.Name} step {stageStep + 1}/{stage.Steps}, batch {b + 1}/{batches.Count}");
                         }
-                        catch (OperationCanceledException) when (done > 0 && lead)
+                        catch (OperationCanceledException) when (done > 0 && lead && sync is not { Updates: true })   // a sharded run's state is every rank's
                         {
                             // No update was made (a step is cancelled before its update): the checkpoint is the last finished step's.
                             partSources.Keep();
@@ -525,7 +531,13 @@ public static class Pretrainer
 
                         float? evaluationLoss = null;
                         bool stageEnd = stageStep == stage.Steps;
-                        if (evaluation.Count > 0 && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : stageEnd))
+                        bool saving = stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0;
+                        bool evaluate = evaluation.Count > 0 && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : stageEnd);
+                        // A sharded run's weights whole on every rank while they are read (plan 23, C6; nothing to do otherwise),
+                        // and its optimizer state joined for the checkpoint (every rank takes part).
+                        using var whole = evaluate || saving ? sync?.Gather() : null;
+                        var joinedState = saving ? sync?.SaveOptimizerState() : null;
+                        if (evaluate)
                         {
                             evaluationLoss = sync is null ? FineTuner.Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision, partSources.Sources)
                                 : FineTuner.EvaluateAcross(model, evaluation, sync, options.BatchTokens, options.LossChunkRows, trace, vision, partSources.Sources);
@@ -537,13 +549,13 @@ public static class Pretrainer
                             Telemetry.BatchCompleted(new BatchCompleted(stageIndex + 1, stageStep, stage.Steps, step, drawn.Count, loss, rate, null, TimeSpan.Zero, watch.Elapsed));
                         }
 
-                        if (stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0)
+                        if (saving)
                         {
                             // The stage it is in and its steps done (a finished stage is skipped on resume, or goes on when its steps grew).
                             // Data parallel: rank 0 writes it (where every source is over every rank's draws, so it resumes at
                             // any world size) and every rank waits until it is written.
                             partSources.Keep();
-                            last = (sync is null ? lead : sync.Rank == 0) ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations)
+                            last = (sync is null ? lead : sync.Rank == 0) ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations, joinedState)
                                 : Path.Combine(outputFolder, $"checkpoint-{step}");
                             sync?.Barrier();
                             trace?.Invoke($"checkpoint {last}");
@@ -555,6 +567,8 @@ public static class Pretrainer
                         progress?.Report(new PretrainingProgress(stage.Name, stageIndex, stageStep, stage.Steps, step, totalSteps, loss, rate,
                             tokens / Math.Max(1e-9, seconds), images / Math.Max(1e-9, seconds), peak, remaining, evaluationLoss));
                     }
+
+                    sync?.End();                                             // a sharded run's weights whole on every rank again (C6)
 
                     // The vision parts this stage trained live in its encoder: the model keeps them, so the next stage's encoder
                     // (and every save) starts from them.
@@ -948,7 +962,8 @@ public static class Pretrainer
 
     // A checkpoint: the model folder, the optimizer's state, and where the run is.
     private static string SaveCheckpoint(PretrainedModel model, TuningVision? vision, Optimizer optimizer, PretrainingOptions options, string outputFolder, int stage,
-        int stageStep, int step, (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
+        int stageStep, int step, (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations,
+        IReadOnlyDictionary<string, OptimizerStateValue>? joinedState = null)
     {
         string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
 
@@ -977,7 +992,7 @@ public static class Pretrainer
             }
         }
 
-        var state = optimizer.SaveState();
+        var state = joinedState ?? optimizer.SaveState();               // a sharded run's: every rank's share joined (C6)
         Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)),
             Idrak.Models.SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
         var json = new JsonObject
