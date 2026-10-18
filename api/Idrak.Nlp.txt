@@ -397,6 +397,8 @@ public static class Idrak.Nlp.FineTuningOptimizers
 
 public sealed record Idrak.Nlp.FineTuningOptions : System.IEquatable<Idrak.Nlp.FineTuningOptions>
   public FineTuningOptions()
+  public Idrak.Abstraction.Cluster.ClusterOptions? ClusterOptions { get; init; }
+  public Idrak.Abstraction.Cluster.ICollectives? Cluster { get; init; }
   public Idrak.Nlp.Abstractions.DistillationTeacher? Teacher { get; init; }
   public Idrak.Nlp.FineTuningLoss? Loss { get; init; }
   public Idrak.Nlp.TuningAnswerScorer? Answers { get; init; }
@@ -809,6 +811,8 @@ public sealed record Idrak.Nlp.PretrainingCheckpoint : System.IEquatable<Idrak.N
   public string Folder { get; init; }
 
 public sealed record Idrak.Nlp.PretrainingOptions : System.IEquatable<Idrak.Nlp.PretrainingOptions>
+  public Idrak.Abstraction.Cluster.ClusterOptions? ClusterOptions { get; init; }
+  public Idrak.Abstraction.Cluster.ICollectives? Cluster { get; init; }
   public Idrak.Nlp.Abstractions.DistillationTeacher? Teacher { get; init; }
   public Idrak.Nlp.TuningImages Images { get; init; }
   public PretrainingOptions()

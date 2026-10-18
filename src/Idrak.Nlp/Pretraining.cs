@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Cluster;
 using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Models;
@@ -173,6 +174,21 @@ public sealed record PretrainingOptions
 
     /// <summary>The teacher's share of the loss, 0 to 1 (with <see cref="Teacher"/>).</summary>
     public float DistillationAlpha { get; init; } = 0.5f;
+
+    /// <summary>
+    /// Data-parallel pretraining (plan 23): this rank's collectives, or null (the default) to train in this process
+    /// alone, exactly as without it. Every rank runs <see cref="Pretrainer.Train"/> with its own model on its rank's
+    /// device and the same options: each step draws the same sequences on every rank (the step the options describe, the
+    /// same at any world size) and rank r trains the step's draws k·W + r (or a share by the ranks' measured speeds,
+    /// <see cref="ClusterOptions.RebalanceSteps"/>); the gradients are summed after the last micro-batch's backward pass,
+    /// weighted by each rank's trained tokens, so W ranks give one process's steps and losses; rank 0 writes the
+    /// checkpoints and every rank waits for it, so a checkpoint resumes at any world size; held-out losses are over every
+    /// rank's share; dropout masks differ by rank. Not saved in checkpoints.
+    /// </summary>
+    public ICollectives? Cluster { get; init; }
+
+    /// <summary>The cluster settings a <see cref="Cluster"/> run uses, or null: <see cref="Abstraction.Cluster.ClusterOptions.FromEnvironment"/>. Not saved in checkpoints.</summary>
+    public ClusterOptions? ClusterOptions { get; init; }
 
     /// <summary>The options as JSON ("format": "idrak-pretrain/1").</summary>
     public JsonObject ToJson() => new()
@@ -353,6 +369,8 @@ public static class Pretrainer
         double secondsPerStep = 0;
         int timedSteps = 0;
         bool startedTelemetry = false;
+        bool lead = options.Cluster is not { Rank: > 0 };                  // data parallel: rank 0 writes and publishes
+        using var seeds = options.Cluster is { } ranked ? Dropout.SeedsForRank(ranked.Rank) : null;
 
         for (int stageIndex = resume?.Stage ?? 0; stageIndex < options.Stages.Count; stageIndex++)
         {
@@ -404,6 +422,10 @@ public static class Pretrainer
                     optimizer.LoadState(ReadOptimizerState(rs.Folder));
                 }
 
+                // Data parallel (plan 23): every rank draws each step's sequences alike and trains its share of them.
+                using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, options.ClusterOptions ?? ClusterOptions.FromEnvironment()) : null;
+                sync?.Start();
+
                 var schedule = FineTuningSchedules.Create(stage.Schedule, stage.WarmupFraction, stage.MinLearningRate)(optimizer, stage.Steps);
                 for (int i = 0; i < stageStep; i++)
                 {
@@ -429,7 +451,7 @@ public static class Pretrainer
                     Optimizer = optimizer is AdamW && !options.HostOptimizer ? null : _ => optimizer,
                 };
 
-                if (!startedTelemetry)
+                if (!startedTelemetry && lead)
                 {
                     startedTelemetry = true;
                     Telemetry.TrainingStarted(new TrainingStarted((string?)model.Config["architectures"]?[0] ?? "model", options.Optimizer, model.Device, options.Stages.Count,
@@ -445,12 +467,13 @@ public static class Pretrainer
                     var next = Task.Run(() => Draw(readers, options, model));
                     while (stageStep < stage.Steps)
                     {
-                        var (sequences, positions) = next.GetAwaiter().GetResult();
+                        var (drawn, positions) = next.GetAwaiter().GetResult();
                         next = stageStep + 1 < stage.Steps ? Task.Run(() => Draw(readers, options, model)) : Task.FromResult<(List<TrainingSequence>, (long, long, long)[])>(([], []));
+                        int imageTokens = drawn.Sum(q => q.Images.Sum(im => im.Tokens));
+                        runner ??= new FineTuner.StepRunner(model, drawn, optimizer, tuning, Rows(options) * options.MaxLength, distillation, trace,
+                            (long)Rows(options) * options.MaxLength, imageTokens, sync);
+                        var sequences = sync is null ? drawn : Share(drawn, sync, runner, trace);
                         var batches = Batches(model, sequences, options);
-                        int imageTokens = sequences.Sum(q => q.Images.Sum(im => im.Tokens));
-                        runner ??= new FineTuner.StepRunner(model, sequences, optimizer, tuning, Rows(options) * options.MaxLength, distillation, trace,
-                            (long)Rows(options) * options.MaxLength, imageTokens);
                         float rate = optimizer.LearningRate;
                         var watch = Stopwatch.StartNew();
                         int done = step;
@@ -461,7 +484,7 @@ public static class Pretrainer
                             (loss, tokens) = runner.Run(batches, sequences, cancellationToken,
                                 b => $"{stage.Name} step {stageStep + 1}/{stage.Steps}, batch {b + 1}/{batches.Count}");
                         }
-                        catch (OperationCanceledException) when (done > 0)
+                        catch (OperationCanceledException) when (done > 0 && lead)
                         {
                             // No update was made (a step is cancelled before its update): the checkpoint is the last finished step's.
                             partSources.Keep();
@@ -480,6 +503,7 @@ public static class Pretrainer
                         losses.Add(loss);
                         step++;
                         stageStep++;
+                        sync?.Stepped(step);
                         settings = runner.Settings;
                         double seconds = watch.Elapsed.TotalSeconds;
                         if (step > (resume?.Step ?? 0) + 1)
@@ -491,26 +515,31 @@ public static class Pretrainer
                         bool stageEnd = stageStep == stage.Steps;
                         if (evaluation.Count > 0 && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : stageEnd))
                         {
-                            evaluationLoss = FineTuner.Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision, partSources.Sources);
+                            evaluationLoss = sync is null ? FineTuner.Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision, partSources.Sources)
+                                : FineTuner.EvaluateAcross(model, evaluation, sync, options.BatchTokens, options.LossChunkRows, trace, vision, partSources.Sources);
                             evaluations.Add((step, evaluationLoss.Value));
                         }
 
-                        if (Telemetry.IsEnabled(TelemetryLevel.Batches))
+                        if (lead && Telemetry.IsEnabled(TelemetryLevel.Batches))
                         {
-                            Telemetry.BatchCompleted(new BatchCompleted(stageIndex + 1, stageStep, stage.Steps, step, sequences.Count, loss, rate, null, TimeSpan.Zero, watch.Elapsed));
+                            Telemetry.BatchCompleted(new BatchCompleted(stageIndex + 1, stageStep, stage.Steps, step, drawn.Count, loss, rate, null, TimeSpan.Zero, watch.Elapsed));
                         }
 
                         if (stageEnd || options.SaveEvery > 0 && step % options.SaveEvery == 0)
                         {
                             // The stage it is in and its steps done (a finished stage is skipped on resume, or goes on when its steps grew).
+                            // Data parallel: rank 0 writes it (where every source is over every rank's draws, so it resumes at
+                            // any world size) and every rank waits until it is written.
                             partSources.Keep();
-                            last = SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
+                            last = lead ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations)
+                                : Path.Combine(outputFolder, $"checkpoint-{step}");
+                            sync?.Barrier();
                             trace?.Invoke($"checkpoint {last}");
                         }
 
                         long peak = model.Device.Backend.GetMemoryUsage().Peak;
                         var remaining = TimeSpan.FromSeconds(secondsPerStep * (totalSteps - step));
-                        int images = sequences.Sum(q => q.Images.Count);
+                        int images = drawn.Sum(q => q.Images.Count);
                         progress?.Report(new PretrainingProgress(stage.Name, stageIndex, stageStep, stage.Steps, step, totalSteps, loss, rate,
                             tokens / Math.Max(1e-9, seconds), images / Math.Max(1e-9, seconds), peak, remaining, evaluationLoss));
                     }
@@ -538,9 +567,25 @@ public static class Pretrainer
         }
 
         model.Network.Eval();
-        Telemetry.TrainingCompleted(new TrainingCompleted(options.Stages.Count, started.Elapsed, losses.Count > 0 ? losses[^1] : double.NaN,
-            options.Stages.Count, evaluations.Count > 0 ? evaluations.Min(e => e.Item2) : double.NaN, false, false));
+        if (lead)
+        {
+            Telemetry.TrainingCompleted(new TrainingCompleted(options.Stages.Count, started.Elapsed, losses.Count > 0 ? losses[^1] : double.NaN,
+                options.Stages.Count, evaluations.Count > 0 ? evaluations.Min(e => e.Item2) : double.NaN, false, false));
+        }
+
         return new PretrainingResult(step, losses, evaluations, last, started.Elapsed, settings);
+    }
+
+    // This rank's share of a step's drawn sequences: draws k·W + r while the shares are equal, else by the ranks' measured
+    // speeds over the sequences' trained tokens; the step's totals over every rank go to the runner (a loss of one's own
+    // divides by them).
+    private static List<TrainingSequence> Share(List<TrainingSequence> drawn, IGradientSync sync, FineTuner.StepRunner runner, Action<string>? trace)
+    {
+        var sizes = drawn.Select(q => (long)q.TrainedTokens).ToArray();
+        var owners = DrawShares.Owners(sizes, sync.Shares);
+        runner.StepTotals = ((float)Math.Max(1, sizes.Sum()), drawn.Count);
+        runner.TraceShares(trace);
+        return [.. drawn.Where((_, i) => owners[i] == sync.Rank)];
     }
 
     // Rows of a micro-batch.
