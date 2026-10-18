@@ -153,7 +153,7 @@ public interface ICollectives : IDisposable
 
 public interface ILinkProfile
 {
-    string Name { get; }                             // "nvlink", "pcie", "infiniband", "roce", "thunderbolt", "direct-link", "shared-memory", "ethernet-1g", "ethernet-2.5g", "ethernet-10g", "ethernet-100g", "wifi"
+    string Name { get; }                             // "same-device", "nvlink", "pcie", "infiniband", "roce", "thunderbolt", "direct-link", "shared-memory", "ethernet-1g", "ethernet-2.5g", "ethernet-10g", "ethernet-100g", "wifi"
     double BandwidthBytesPerSecond { get; }
     TimeSpan Latency { get; }
     TimeSpan Jitter { get; }                         // the width of a seeded uniform draw added to each transfer
@@ -322,6 +322,23 @@ and no dependencies, so the same keys in JSON; a YAML subset reader is decision 
   description, default and validation, so an app can present them in its own UI) and the CLI only asks them.
 - Workers learn rank, world size and coordinator from the file or from `IDRAK_RANK`, `IDRAK_WORLD_SIZE`,
   `IDRAK_COORDINATOR`, exactly as real launchers set them.
+- **Two workers on one card** (the owner's question, 2026-10-18) are joined by the `same-device` link: a copy between
+  them is a device-to-device copy inside one memory, at the card's own memory bandwidth, faster than NVLink or PCIe.
+  Its bandwidth and latency are **measured on the device at first use** (one timed device copy, kept in the tuning
+  cache) rather than declared, so the profile holds no card figure. The builder picks it by itself when a node names
+  one physical device more than once. `nvlink` is two cards with peer access; `pcie` is two cards without it, or the
+  host-staged path; `shared-memory` is two processes on one machine.
+- **Every question suggests from the device it concerns** (the owner, 2026-10-18). The builder's default and the
+  one-line suggestion beside each answer are derived from what it finds, never from a table: a worker's memory cap
+  defaults to the physical device's measured memory, split evenly when the device is named more than once, with the
+  driver's reserve subtracted; the link inside a node defaults to `same-device` when workers share a card, `nvlink`
+  when the driver reports peer access between the named cards, `pcie` otherwise, and `shared-memory` for CPU workers;
+  the link between nodes defaults to the profile nearest the speed the network adapter reports
+  (`NetworkInterface.Speed`), or to `ethernet-1g` when none is up, and the suggestion names the adapter; the seed
+  suggests the last run's seed when a run folder is given; the failure model suggests `none` for a first run and
+  `mixed` once a run has passed. Where a profile was calibrated before, the calibrated figure is shown as the
+  suggestion with its date. The suggestions go through the same `ISettingAdvisor` the trainer uses (decision 4), so
+  `idrak suggest topology.json` prints them again for an existing file.
 
 ## Idrak.Cluster: the simulator (`src/Idrak.Cluster/`, on `Idrak.Abstraction`)
 
