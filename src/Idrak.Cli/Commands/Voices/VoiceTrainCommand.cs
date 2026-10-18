@@ -83,7 +83,9 @@ internal sealed class VoiceTrainCommand : Command
               --save-every N      a checkpoint every N steps (default 500; the last step always)
               --keep N            keep only the newest N checkpoints (default: all)
               --eval-every N      score --eval every N steps (default: at the end)
-              --log-every N       a progress line every N steps (default 10)
+              --log-every N       a line every N steps where the live line is not drawn (--plain, --quiet, not a
+                                  terminal; default 10); the live line carries the losses, and a line stays at each
+                                  held-out score
               --feature-cache C   disk, memory or none (default disk: a second pass takes no spectra)
               --checkpointing, --no-checkpointing
                                   keep only each block's output in the forward pass and run the block again in the backward
@@ -424,9 +426,15 @@ internal sealed class VoiceTrainCommand : Command
         using (var interrupt = new Interrupt(context))
         using (var line = new ProgressLine(context, "training the voice", total: options.Steps, unit: ProgressUnit.Items))
         {
+            // The first step of a batch shape measures every convolution shape of the model at that batch (seconds each on
+            // a large one): the line says so and counts them, instead of standing still until the step ends.
+            var watch = new TuningWatch(line, "training the voice");
+            line.Label = "training the voice: the first step (features, then the kernel choices of its batch shape)";
+            line.Report(0);
+            using var watching = Telemetry.Subscribe(watch);
             try
             {
-                result = train(new Reports(context, line, (int?)settings["log_every"] ?? 10), interrupt.Token, context.Verbose ? context.Detail : null);
+                result = train(new Reports(context, line, watch, (int?)settings["log_every"] ?? 10), interrupt.Token, context.Verbose ? context.Detail : null);
             }
             catch (OperationCanceledException) when (interrupt.Requested)
             {
@@ -509,7 +517,7 @@ internal sealed class VoiceTrainCommand : Command
         : float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : throw new UsageException($"{option} is a number, not '{text}'.");
 
     // The live line, and every N steps a line of the terms, the pace and the time left.
-    private sealed class Reports(CommandContext context, ProgressLine line, int every) : IProgress<SpeechTrainingProgress>
+    private sealed class Reports(CommandContext context, ProgressLine line, TuningWatch watch, int every) : IProgress<SpeechTrainingProgress>
     {
         private double? _micro;
 
@@ -522,6 +530,8 @@ internal sealed class VoiceTrainCommand : Command
                 return;
             }
 
+            watch.StepDone();
+
             // The device ran out of memory: say so when it happens (the run's notes repeat it at the end).
             if (_micro is { } before && p.MicroBatchSeconds < before)
             {
@@ -532,19 +542,50 @@ internal sealed class VoiceTrainCommand : Command
 
             _micro = p.MicroBatchSeconds;
 
+            // The live line carries the losses of every step; a line stays on the screen at a held-out score and at the
+            // end, and every --log-every steps where the line is not drawn (--plain, --quiet, a log).
+            var t = p.Terms;
+            string terms = t is null ? "" : FormattableString.Invariant(
+                $"  mel {t.GetValueOrDefault("mel"):F2}  kl {t.GetValueOrDefault("kl"):F2}  dur {t.GetValueOrDefault("duration"):F2}  adv {t.GetValueOrDefault("adversarial"):F2}  fm {t.GetValueOrDefault("feature_matching"):F2}  disc {t.GetValueOrDefault("discriminator"):F2}");
+            string pace = FormattableString.Invariant($"  {p.AudioSecondsPerSecond:F0}x") + (p.PeakDeviceBytes > 0 ? FormattableString.Invariant($"  {p.PeakDeviceBytes / 1073741824.0:F1} GiB") : "");
+            line.Label = FormattableString.Invariant($"loss {p.Loss:F2}") + terms + pace;
             line.Report(p.Step);
-            if (every > 0 && (p.Step % every == 0 || p.Step == p.Steps) || p.Evaluation is not null)
+            bool stays = p.Evaluation is not null || p.Step == p.Steps || !line.Enabled && every > 0 && p.Step % every == 0;
+            if (stays)
             {
                 line.Erase();
-                var t = p.Terms;
-                string terms = t is null ? "" : FormattableString.Invariant(
-                    $"  mel {t.GetValueOrDefault("mel"):F3}  kl {t.GetValueOrDefault("kl"):F3}  dur {t.GetValueOrDefault("duration"):F3}  adv {t.GetValueOrDefault("adversarial"):F3}  fm {t.GetValueOrDefault("feature_matching"):F3}  disc {t.GetValueOrDefault("discriminator"):F3}");
                 context.Write(FormattableString.Invariant($"step {p.Step}/{p.Steps} (epoch {p.Epoch})  loss {p.Loss:F3}") + terms
                     + FormattableString.Invariant($"  {p.AudioSecondsPerSecond:F1}x real time")
                     + (p.PeakDeviceBytes > 0 ? FormattableString.Invariant($"  {p.PeakDeviceBytes / 1048576.0:F0} MiB") : "")
                     + FormattableString.Invariant($"  {p.Remaining:hh\\:mm\\:ss} left")
-                    + (p.Evaluation is { } e ? FormattableString.Invariant($"  held-out mel {e:F4}") : ""));
+                    + (p.Evaluation is { } score ? FormattableString.Invariant($"  held-out mel {score:F4}") : ""));
             }
         }
+    }
+
+    // The kernel choices a step measures (TuningCompleted: each convolution shape once per batch shape, kept in the
+    // device's cache file after), shown on the line while they run, with their count and time; a finished step takes the
+    // plain label back.
+    private sealed class TuningWatch(ProgressLine line, string label) : ITelemetryHook
+    {
+        private int _measured;
+        private double _seconds;
+
+        public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+        public void OnTuning(in TuningCompleted e)
+        {
+            if (e.Nested)
+            {
+                return;
+            }
+
+            _measured++;
+            _seconds += e.Duration.TotalSeconds;
+            line.Label = FormattableString.Invariant($"{label}: step {line.Done + 1} measuring the kernel choices of its batch shape ({_measured} measured, {_seconds:F0} s)");
+            line.Report(line.Done);
+        }
+
+        public void StepDone() => (_measured, _seconds) = (0, 0);
     }
 }

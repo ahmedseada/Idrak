@@ -199,6 +199,19 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         _ => value.ToString("N0", CultureInfo.InvariantCulture),
     };
 
+    // The terminal's columns, or 0 where there is no terminal to ask (the line is not drawn then anyway).
+    private static int TerminalWidth()
+    {
+        try
+        {
+            return Console.IsErrorRedirected && Console.IsOutputRedirected ? 0 : Console.WindowWidth;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+    }
+
     private void Draw(bool force)
     {
         if (!Enabled || _finished)
@@ -221,6 +234,12 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 
             _lastDraw = now;
             string text = Format(Label, Done, Total, now, Unit);
+            int width = TerminalWidth();
+            if (width > 0 && text.Length >= width)
+            {
+                text = text[..(width - 1)];                                      // one line: a wrapped one cannot be redrawn in place
+            }
+
             _writer.Write("\r" + text.PadRight(_lastWidth));
             _lastWidth = text.Length;
             _writer.Flush();
