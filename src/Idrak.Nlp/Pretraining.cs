@@ -324,7 +324,7 @@ public sealed record PretrainingCheckpoint(string Folder, PretrainingOptions Opt
 /// (a model folder), the optimizer's state and where every source is, so a run stopped and resumed continues as if it
 /// had not stopped.
 /// </summary>
-public static class Pretrainer
+public static partial class Pretrainer
 {
     /// <summary>The options' format.</summary>
     public const string Format = "idrak-pretrain/1";
@@ -353,6 +353,18 @@ public static class Pretrainer
         if (model.Network.Descendants().OfType<Idrak.Layers.Linear>().Any(l => l.PackedWeight is not null || l.Adapter is not null))
         {
             throw new InvalidOperationException("Pretraining trains every weight: load the model with float32 weights and without adapters (merge them first).");
+        }
+
+        // Pipeline placement (plan 23, C7): each rank trains its stage of the model.
+        var clusterOptions = options.Cluster is null ? null : options.ClusterOptions ?? ClusterOptions.FromEnvironment();
+        if (clusterOptions is { Pipelined: true })
+        {
+            return TrainPipelined(model, options, clusterOptions, outputFolder, resume, progress, cancellationToken, trace);
+        }
+
+        if (resume is not null && ReadPipeline(resume.Folder) is not null)
+        {
+            throw new NotSupportedException($"The checkpoint {resume.Folder} was written by a pipeline (IDRAK_CLUSTER_PLACEMENT=pipeline): its optimizer state is kept per stage; resume it as a pipeline.");
         }
 
         options.Teacher?.Check(model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer: its vocabulary cannot be compared with the teacher's."));
@@ -423,7 +435,7 @@ public static class Pretrainer
                 }
 
                 // Data parallel (plan 23): every rank draws each step's sequences alike and trains its share of them.
-                using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, options.ClusterOptions ?? ClusterOptions.FromEnvironment()) : null;
+                using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, clusterOptions!) : null;
                 sync?.Start();
 
                 var schedule = FineTuningSchedules.Create(stage.Schedule, stage.WarmupFraction, stage.MinLearningRate)(optimizer, stage.Steps);

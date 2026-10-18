@@ -116,6 +116,8 @@ internal static partial class Tests
             // C5: the rank's device, the run's name, the launcher, the rendezvous's retry wait, the shared-memory rings.
             ["IDRAK_CLUSTER_DEVICE"] = "cuda:1", ["IDRAK_CLUSTER_RUN"] = "run-7", ["IDRAK_CLUSTER_PARENT"] = "4242", ["IDRAK_CLUSTER_RETRY_DELAY"] = "0.25",
             ["IDRAK_CLUSTER_SHM_BYTES"] = "1MB", ["IDRAK_CLUSTER_SHM_FOLDER"] = "rings",
+            // C7: a pipeline's stages and how they are cut.
+            ["IDRAK_CLUSTER_STAGES"] = "2", ["IDRAK_CLUSTER_PIPELINE_BALANCE"] = "memory", ["IDRAK_CLUSTER_PIPELINE_CUTS"] = "3,6",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();
