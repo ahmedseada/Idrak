@@ -27,7 +27,7 @@ internal static partial class Tests
         ("cluster: the real transports are registered (shared-memory, pcie-host, nvlink and p2p, direct-link, tcp), each says per pair whether it joins two ranks and why; direct-link and tcp share one carrier", ClusterTransportsRegistered),
         ("cluster: shared-memory, tcp, pcie-host and nvlink pass the kit's TransportSuite in one process (2 to 8 ranks, messages larger than a shared-memory ring)", ClusterRealTransportSuite),
         ("cluster: ring and naive pass the kit's CollectivesSuite over tcp and shared-memory, and hierarchical over a group routed across shared-memory and tcp", ClusterRealCollectivesSuite),
-        ("cluster: tcp rendezvous retries then fails naming the rank and address", ClusterRendezvousRetries),
+        ("cluster: tcp rendezvous retries then fails naming the rank and address, each attempt as long as one refused connect on this machine, not the timeout", ClusterRendezvousRetries),
         ("cluster: a hello with a wrong key is refused on tcp and shared-memory, the key never in a message; nothing listens off loopback without a key", ClusterWrongKey),
         ("cluster: a rank whose process ends leaves its peers an error naming it at once over tcp and shared-memory", ClusterRealRankDies),
         ("cluster: CopyTo default equals Download then Upload on every device (inside a device, between two backends of it, to and from the CPU), values past the count untouched", ClusterCopyTo),
@@ -401,10 +401,28 @@ internal static partial class Tests
 
         var topology = RealTopology([2]);
         var options = RealOptions(TimeSpan.FromSeconds(5)) with { Coordinator = $"127.0.0.1:{port}", Retries = 3, RetryDelay = TimeSpan.FromMilliseconds(50) };
+        // How long one refused connect takes here: at once on Linux, about 2 s on Windows (it resends the SYN before giving
+        // up). Each attempt must cost that, not the 5 s timeout; the waits between them are 50 and 100 ms.
+        var refusal = Stopwatch.StartNew();
+        using (var once = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+        {
+            try
+            {
+                once.Connect(new IPEndPoint(IPAddress.Loopback, port));
+            }
+            catch (SocketException)
+            {
+                // refused, as expected
+            }
+        }
+
+        var refused = refusal.Elapsed;
         var watch = Stopwatch.StartNew();
         ThrowsNaming<InvalidOperationException>(() => Transports.Get("tcp").Connect(new ClusterContext(topology, 1, options)).Dispose(), "a coordinator nobody listens at",
             "rank 1", $"127.0.0.1:{port}", "after 3 attempt(s)", "IDRAK_CLUSTER_RETRIES");
-        Check(watch.Elapsed < TimeSpan.FromSeconds(4), $"three attempts, the wait doubling from 50 ms: {watch.Elapsed.TotalSeconds:F1} s");
+        var bound = (refused * 3 * 1.5) + TimeSpan.FromMilliseconds(150) + TimeSpan.FromSeconds(1);
+        Check(watch.Elapsed < bound && bound < TimeSpan.FromSeconds(15),
+            $"three attempts, the wait doubling from 50 ms: {watch.Elapsed.TotalSeconds:F1} s against {bound.TotalSeconds:F1} s (a refused connect takes {refused.TotalMilliseconds:F0} ms here)");
     }
 
     private static void ClusterWrongKey(Device device)

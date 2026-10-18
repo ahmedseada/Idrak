@@ -1088,6 +1088,19 @@ throttled localhost run's paced arrivals change when each side goes idle), which
 runs are to confirm it. Not changed: a blocked receive still wakes through the thread pool (the channel's continuation),
 part of the 334 us; an inbox that wakes its waiter directly is left for C8, with the bench's calibration.
 
+**Merged with C7 (2026-10-18, onto 00a0d8f).** Sharding and pipeline placement are refused together, at the start of
+the run (`PipelineStage.Place`, the entry every pipeline run takes, before anything moves), naming
+`IDRAK_CLUSTER_PLACEMENT=pipeline` and `IDRAK_CLUSTER_SHARD` and why: a pipeline already splits the parameters by stage, a
+stage clips by the norm over every stage and rank 0's checkpoint gathers each stage's whole weights and optimizer state,
+where a sharded synchronisation over a stage's replicas would keep each replica's share and clip over the replicas alone,
+and the parameters shard's gathers would run between the stage-to-stage sends. Making them work together (each stage's
+replicas sharding that stage through C7's subgroups, the clipping norm summed over stages and shares, the checkpoint
+joining shares per stage) is left for after C8. A plain pipeline run is untouched by the gathers: `ForwardHooks` has no
+listener unless `Shard = parameters` installs one, so `Module.Forward` and the tied table's entry are one thread-static
+read, and `PipelineBoundary` holds no parameters. One build and one run of the C6 filter with `generation:|decoder:` added:
+178 passed, 0 failed on the CPU (C7's pipeline tests included; the shared-memory test measured 508 us median after an idle
+gap that run, 51 ms worst, the machine shared with another agent's build).
+
 Open, named with their phase: the measured `ChunkBytes` (C8, as C5 said); a sharded load (each rank building only its
 share) and a streamed checkpoint save for weights that never fit one device whole (C8); sharding with top-k (after C8's
 advisor shows a need). Not run here: everything on a GPU (the CUDA staging, peer copies and the device path on nvlink, the
@@ -1105,6 +1118,88 @@ through the stages; each keeps its own KV cache.
 "cluster: micro-batches 1, 2 and 4 give the same loss"; "cluster: a plan covers every block once, embeddings first,
 head last"; "cluster: a rank holds only its stage's tensors"; "cluster: chat through a 2-stage pipeline answers as one
 device does".
+
+**C7 as built (2026-10-18).** Contracts (`src/Idrak.Abstraction/Cluster/Pipeline.cs`): `PipelinePlan` (a model's
+top-level modules cut into contiguous stages, every module once, each stage at least one, embeddings first and the head
+last by construction; `Balance` finds the cut whose largest stage, over its share, is least, by a dynamic programme over the
+modules, ties to the earliest cut so every rank finds the same plan; `FromStarts` takes cuts by hand; `For` picks by the
+options), `PipelineModule`, `PipelineStageRange`, `PipelineLayout` (stages of world / stages ranks each, stage by stage in
+rank order: ranks 0 to R-1 are stage 0, so a stage's replicas sit together and only activations cross between stages),
+`PipelineBalance`, `IPipelineSchedule` with `PipelineWork` and the unguarded registry `PipelineSchedules`, and
+`ClusterGroups` (`Transport`: some ranks of a connected transport as a group of their own, a barrier on a tag below every
+collective's; `Topology`: the C5 `SubsetTopology`). `ICollectives` gained two default members, `Transport` (for messages of
+one's own on tags 0 and up) and `Context`; `HostCollectives` and the simulator's `SimStepper` give them. Idrak.Network
+registers `gpipe` (`src/Idrak.Network/Training/PipelineSchedules.cs`). Idrak: `PipelineBoundary : Module, ICachedModule`
+(`src/Idrak/Layers/PipelineBoundary.cs`): at a stage's end its forward is an `Autograd.Function` that sends the activation
+and returns the stage's root, whose backward receives the gradient; at a stage's start the mirror (receive forward, send the
+gradient in backward); one function per micro-batch, tags per micro-batch, float32 through one pooled host buffer over any
+transport; without autograd the first stage's boundary runs generation (below). `PipelineStage`
+(`src/Idrak/Training/PipelineStage.cs`): `PlanFor` measures any `Sequential`'s top-level modules (the distinct storages each
+holds or reads, a tied head counting the table it reads) and cuts them; `Place` does that on every rank alike, moves this
+rank's stage (and the table its tied head reads) to its device, releases every other module's tensors but never one the
+stage reads (`keepOthers` keeps them where they were loaded, for the rank that writes whole checkpoints), cuts a block's
+`NextNorm` hand-off when the next norm is another stage's, and with more ranks than stages makes the stage's replica group
+(`ClusterGroups`, the collective `CollectiveFor` names). `Step(M, input, loss, options)` runs the schedule's order (GPipe's
+nests each micro-batch's `TensorScope` so its activations go right after its backward pass; a schedule that does not nest
+keeps one scope a step), sums a tied table's gradient over the stages holding it in stage order (the same bits on each),
+gives every stage the last stage's loss, and publishes `PipelineStepped`; `Evaluate` (forward only), `SumStages`,
+`ClipAndStep` (the norm over the whole pipeline, a shared table counted by its first holder, `Owns`), `Serve` and
+`StopServing`. Telemetry: one event, `PipelineStepped` (schedule, rank, stage, stages, replica, micro-batches, step, wall,
+blocked, bubble, the schedule's ideal bubble, bytes each way) at `Network`, carried by the console, `MetricsRecorder`
+(`PipelineSteps`), the channel, JSON lines and `TelemetryJson`. Inference: rank 0's `PipelineStage.Network` is its modules
+and the boundary, so a `TextGenerator`/`ChatGenerator` over it runs the whole pipeline; each cached step sends a 32-byte
+header (the context's batch, capacity, length before the step, last-position-only, sliding steps, cache format, rows'
+starts) and the hidden state; each later stage keeps its own `DecodingContext` in step (made for the header's shape, reset
+or cut back with it, row starts mirrored), a middle stage passes every position on and the last applies last-position-only
+and sends the logits back to the first; a recorded decode step is refused through a boundary (`TextGenerator`), a custom
+cache layout and a cross-attention memory are refused by name. Training: **the pretrainer** (`src/Idrak.Nlp/PipelinePretraining.cs`,
+`Pretrainer` is now partial): with `ClusterOptions.Placement` pipeline it places the model, draws every step alike on every
+rank, gives each replica its share (`DrawShares` over the replica group), runs the step's micro-batches (`MicroBatches`, or
+the pretrainer's own batches, packed where the model packs), each micro-batch's chunked token loss over the pipeline's
+trained tokens on the last stage (the head run inside the loss), sums each stage over its replicas (`GradientSyncs` on the
+replica group), clips by the pipeline's norm, and writes whole checkpoints from rank 0 (every stage's replica 0 sends its
+parameters and optimizer state; the optimizer's under `pipeline.<stage>.`, the cut in the state file). Settings:
+`Stages` (`IDRAK_CLUSTER_STAGES`, one per rank), `PipelineBalance` (`IDRAK_CLUSTER_PIPELINE_BALANCE`, auto),
+`PipelineCuts` (`IDRAK_CLUSTER_PIPELINE_CUTS`); `IDRAK_CLUSTER_PLACEMENT` is now checked (single or pipeline); all in
+`ClusterOptions.Variables` and the CLI's table. Tests: 5 in `tests/Idrak.Tests/ClusterPipelineTests.cs`
+(`ClusterPipelineGroup`, after `ClusterTransportGroup`). One build of the test project, then on the CPU the filter
+`cluster:|public API|abstraction inventory|cli health: …|cli polish: …|cli arabic: every message|cli dev: trace|profiler:|fine-tuning:|fine-tuning
+options:|pretrain:|cli pretrain:|training:|callbacks:|generation:|decoder:`: 168 passed, 0 failed. Measured on the CPU (4
+cores, two ranks carved from it): the tiny model's two stages hold 102,656 and 102,784 B of its 139,904 B (73% each: the
+tied head's stage holds the embedding table too), `InUse` per rank 102,660 and 102,788 B; two stages against one device:
+logits equal, gradients within 1.0e-7; the pretrainer at 1, 2 and 4 micro-batches, with clipping at 0.5, and as 2 stages × 2
+replicas: losses and the gathered checkpoint's weights within 1e-5 of one process. **The bubble** (blocked over wall, the
+cold step aside), stage 0 and stage 1: M = 1: 60% and 18% (GPipe's arithmetic 50%); M = 2: 53% and 15% (33%); M = 4: 64% and
+6% (20%). On this tiny model a micro-batch's compute is about its messages' host staging, so more micro-batches do not
+shrink the measured bubble here; the first stage's wait is its backward pass waiting on the last stage.
+
+Changes from the plan, kept: **1F1B is not built**: the measured bubble does not justify it, and non-interleaved 1F1B has
+GPipe's bubble by the same arithmetic ((S-1)/(M+S-1)); it only bounds the activations held to S micro-batches, which GPipe's
+nested scopes already free one micro-batch at a time as its backward runs. An interleaved schedule (virtual stages) is what
+shrinks the bubble; `IPipelineSchedule` takes one as a plug-in (`InFlight` reports what it holds), left for when a GPU run's
+bubble asks for it. **Stages are cut by the bytes of the tensors the model was built with**, not the checkpoint file's sizes:
+the same for float32 checkpoints, and what the device will hold for packed or bfloat16 builds. **Each rank loads the whole
+model on the host, then keeps its stage** (`Place`): a build that reads only a stage's tensors needs every family's builder
+to build a range of modules, which a family's own `Build` does not offer; the device never holds the whole model, the host
+does once per process while placing (rank 0 keeps the other stages' modules on the host for whole checkpoints). **Pipeline
+with data parallel is built** (stages × replicas, `IDRAK_CLUSTER_STAGES`), not refused. **The pretrainer first**: the
+fine-tuner and the `Trainer` refuse pipeline placement naming the pretrainer (their adapters, recorded steps and data paths
+are single placement's); the pretrainer refuses conversation records (images and parts), a teacher, the host optimizer and
+training the vision part under pipeline placement, by name; a checkpoint resumes only with the placement and cut it was
+written with (its optimizer state is per stage), refused naming why otherwise. A late join (a step group that changes) is
+refused: a pipeline needs every stage in every step; a replay's end sits every rank out alike. Packed batches are the
+pretrainer's default batches; with `MicroBatches` set the step's sequences are shared into that many padded micro-batches.
+Activations cross through host memory (as the collectives' buffers do since C5); device-to-device copies through
+`IDeviceTransport` move to C8 with the profile of a token's hops. Deferred: `idrak profile MODEL --cluster FILE` (C8, as
+planned), `--placement pipeline` on `cluster sim` and `pretrain --cluster` (C8's command line), the GPU runs (the owner's).
+
+**After merging C7 (2026-10-18), open for C8: a stage's load.** Under pipeline placement each rank loads the whole
+model on the host and keeps only its stage, and rank 0 keeps every stage on the host to write whole checkpoints.
+Pipeline exists for models that do not fit one device, so this is a memory-heavy path the library fixes (CLAUDE.md):
+a rank reads only its stage's tensors from the checkpoint (the safetensors header names each tensor's offset; the
+model contracts map tensor names to blocks, generically, no family named), and each rank writes its own stage's
+shard of a checkpoint that a reader joins, so no rank ever holds the whole model. Activations between stages also
+move device to device where the transport can (C6's device-side chunks) instead of through host memory.
 
 ### C8: the command line and calibration
 
@@ -1142,6 +1237,56 @@ missing --rank"; "cluster: cli tune --cluster with IDRAK_RANK keeps --rank as th
 world size that contradicts the file is refused naming both"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
 
+### C9: the dashboard (set up, control and monitor in a browser)
+
+Beside C8, once C6 and C7 have landed (two agents). Decided by the owner (decision 8): simulated runs are set up,
+started and controlled from the page; every run is monitored there, real `cluster start` runs across machines
+read-only.
+
+**Commands.** `idrak cluster ui [--topology FILE] [--port N] [--host H] [--no-browser]` opens the dashboard on its own
+(set up a topology, then start runs from the page), as `idrak ui` opens the chat page; `--dashboard [--port N]` on
+`idrak cluster sim` opens it on a run started from the terminal. The port defaults to one the system picks, printed with
+the URL (`IDRAK_CLUSTER_UI_PORT` sets it); the host defaults to `127.0.0.1` (`IDRAK_CLUSTER_UI_HOST`); off loopback an
+API key is required (the `idrak server keys` store and `Authorization: Bearer` / `X-API-Key`, as `serve`), CORS off.
+
+**Server.** ASP.NET Core minimal APIs in `Idrak.Cli` (which already references it for `serve`), built the way
+`ServeHost` builds its app; live data as server-sent events (`Results.Stream`, flushed per event) from a
+`ChannelTelemetry` subscribed only while a page listens (rule 78: nothing measured for nobody). Endpoints:
+`GET /api/machine` (the builder's `MachineFacts`); `POST /api/topology/questions` (the builder's next question with its
+description, default and suggestion, an answer in, the refusal or the next question out: the same `TopologyBuilder`
+`cluster init` asks with); `POST /api/topology` (validate, save; the commented JSON `cluster init` writes);
+`GET /api/topology/inspect` (`TopologyInspection`: ranks, links, predicted all-reduce per algorithm, the transport per
+pair); `POST /api/runs` (start `cluster sim`, in-process or localhost, with its training command and options);
+`POST /api/runs/{id}/pause|resume|stop`; `POST /api/runs/{id}/faults` (inject now); `GET /api/runs` and
+`GET /api/runs/{id}/events` (SSE). Every long action reports progress (what, how far, how fast, time left).
+
+**Control through the library, not the page.** `Idrak.Cluster` gains a run controller: pause and resume take effect at
+the next step boundary (the trainers' `BeginStep` waits while paused), stop cancels after the current step and the
+trainer writes its checkpoint, and faults asked for live are queued to a `"live"` failure model registered in
+`FailureModels` that hands them to the next step and composes with the run's own model. Every live fault is written to
+the event log with its step, so `--seed S --step N` replays a run steered from the page bit for bit. A localhost run
+takes pause, resume and stop through its processes' environment channel (the launcher's), not faults (C5: faults
+belong to the simulated transport).
+
+**Monitoring.** Per rank: state, step, loss, tokens a second, network time against blocked time (the virtual clock's
+for a simulated run), memory in use against its cap; per link: bytes and time; the fault and rank-state timeline; the
+collectives as they run (`CollectiveCompleted`, `GradientsSynced`), the hierarchical/ring choice and the bubble number
+(C7) when a pipeline runs. A real run is followed read-only from its run folder: rank 0's `log.jsonl` (C5 writes every
+rank's per-step summary there) and the launcher's rank lines; its controls are disabled with the reason shown.
+
+**The page.** One self-contained HTML/CSS/JS page (as `ChatPage`): no CDN or external URL, charts drawn by the page
+itself, works offline, light and dark; the topology drawn as nodes, ranks and links, updating as the form changes;
+sizes in the `--unit` the user picks (powers of 1,024, decision 7); the CLI's language (Arabic, right to left) where
+the CLI's messages are Arabic.
+
+**Tests** (`"cluster: ui …"`, through an in-memory test server): the builder API asks `cluster init`'s questions and
+writes the file `cluster init --yes` writes for the same answers; a sim run started from the API pauses at a step
+boundary, resumes, and stops with a checkpoint, the losses equal to an uninterrupted run's; a fault injected live is in
+the event log and a replay reproduces it bit for bit; the event stream carries every rank's step, collective and fault
+events in order, and nothing is measured while no page listens; the dashboard binds to `127.0.0.1` by default and
+refuses an off-loopback request without a key; the page names no external URL and every endpoint it calls exists; a
+run folder written by `cluster start` is followed read-only and its controls are refused naming why.
+
 ## Memory and speed, where every byte goes
 
 | Where | What is held | Bound by | Measured with |
@@ -1163,7 +1308,7 @@ calibration keeps the prediction honest against every measured run.
 C0 → C1 → C2 and C3 in parallel (two agents: C2 is `Idrak.Nlp` and core over `sim`; C3 is `Idrak.Network` and
 `Idrak.Cluster` only) → C4 → C5 (localhost tests here; the LAN and rental runs are the owner's) → C6 → C7 → C8 (the
 training options can land with C2; `cluster init|inspect|sim` with C1; `cluster start` and `bench` with C5;
-`calibrate` after C5's bench). Each phase is one
+`calibrate` after C5's bench) beside C9 (the dashboard, two agents). Each phase is one
 commit series on `abstraction` with its "as built" note appended here. Every step: the filter green on the simulator
 with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 
@@ -1193,8 +1338,11 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
    with a description for every input and a default found on this machine, with options for every answer so it also
    runs without a terminal.
 7. **Decided (2026-10-18): memory sizes in the topology file accept `B`, `KB`/`KiB`, `MB`/`MiB`, `GB`/`GiB`, `TB`/`TiB`,
-   all as powers of 1,024** (device memory is counted that way, and `"16GB"` must mean the whole card); `inspect` prints
-   MiB beside the declared value, as `devices` does.
+   all as powers of 1,024** (device memory is counted that way, and `"16GB"` must mean the whole card); `inspect` shows
+   each size in the largest unit it fills, or the one `--unit` names; a size without a unit is refused by the builder.
+8. **Decided by the owner (2026-10-18): a web dashboard (C9)** sets up topologies, starts, pauses, stops and injects
+   faults into simulated runs, and monitors every run, real `cluster start` runs across machines read-only. Opened by
+   `idrak cluster ui` and by `--dashboard` on `idrak cluster sim`; built next, beside C8.
 
 ## Runs
 

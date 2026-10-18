@@ -160,6 +160,12 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             + $"backward {e.Backward.TotalMilliseconds:F3} ms, network {e.Network.TotalMilliseconds:F3} ms, exposed {e.Exposed.TotalMilliseconds:F3} ms") + (e.Lost is { } lost ? $"; overlap lost: {lost}" : ""));
 
     /// <inheritdoc />
+    public void OnPipelineStep(in PipelineStepped e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Pipeline {e.Schedule} rank {e.Rank} stage {e.Stage}/{e.Stages}{(e.Replica > 0 ? $" replica {e.Replica}" : "")}{(e.Step >= 0 ? $" step {e.Step}" : "")}: {e.MicroBatches} micro-batch(es) in {e.Wall.TotalMilliseconds:F3} ms, "
+            + $"blocked {e.Blocked.TotalMilliseconds:F3} ms, bubble {e.Bubble:P1} (schedule's {e.IdealBubble:P1}), sent {e.BytesSent:N0} B, received {e.BytesReceived:N0} B"));
+
+    /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => _out.WriteLine($"Ranks {e.RankA} and {e.RankB} use {e.Transport} ({e.Reason})");
 
     /// <inheritdoc />
@@ -188,6 +194,7 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
     private readonly List<BatchCompleted> _batches = [];
     private readonly List<CollectiveCompleted> _collectives = [];
     private readonly List<GradientsSynced> _syncs = [];
+    private readonly List<PipelineStepped> _pipelineSteps = [];
     private readonly Lock _lock = new();
 
     /// <inheritdoc />
@@ -250,6 +257,18 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
         }
     }
 
+    /// <summary>Recorded pipeline steps, one per rank and step (needs <see cref="TelemetryLevel.Network"/>): each stage's time, blocked time and bubble.</summary>
+    public IReadOnlyList<PipelineStepped> PipelineSteps
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return [.. _pipelineSteps];
+            }
+        }
+    }
+
     /// <inheritdoc />
     public void OnCollective(in CollectiveCompleted e)
     {
@@ -265,6 +284,15 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
         lock (_lock)
         {
             _syncs.Add(e);
+        }
+    }
+
+    /// <inheritdoc />
+    public void OnPipelineStep(in PipelineStepped e)
+    {
+        lock (_lock)
+        {
+            _pipelineSteps.Add(e);
         }
     }
 
@@ -412,6 +440,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnGradientSync(in GradientsSynced e) => Write(e);
 
     /// <inheritdoc />
+    public void OnPipelineStep(in PipelineStepped e) => Write(e);
+
+    /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => Write(e);
 
     /// <inheritdoc />
@@ -504,6 +535,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnGradientSync(in GradientsSynced e) => _channel.OnGradientSync(in e);
+
+    /// <inheritdoc />
+    public void OnPipelineStep(in PipelineStepped e) => _channel.OnPipelineStep(in e);
 
     /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => _channel.OnTransportChosen(in e);
@@ -746,6 +780,22 @@ public static class TelemetryJson
                     w.WriteString("staging", staging);
                 }
 
+                break;
+            case PipelineStepped e:
+                w.WriteString("event", "pipeline_step");
+                w.WriteString("schedule", e.Schedule);
+                w.WriteNumber("rank", e.Rank);
+                w.WriteNumber("stage", e.Stage);
+                w.WriteNumber("stages", e.Stages);
+                w.WriteNumber("replica", e.Replica);
+                w.WriteNumber("micro_batches", e.MicroBatches);
+                w.WriteNumber("step", e.Step);
+                w.WriteNumber("wall_ms", e.Wall.TotalMilliseconds);
+                w.WriteNumber("blocked_ms", e.Blocked.TotalMilliseconds);
+                Number(w, "bubble", e.Bubble);
+                Number(w, "ideal_bubble", e.IdealBubble);
+                w.WriteNumber("bytes_sent", e.BytesSent);
+                w.WriteNumber("bytes_received", e.BytesReceived);
                 break;
             case GradientsSynced e:
                 w.WriteString("event", "gradient_sync");

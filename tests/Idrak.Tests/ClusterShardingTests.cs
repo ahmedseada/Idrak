@@ -32,6 +32,7 @@ internal static partial class Tests
         ("cluster: a bucket finished during the backward pass is staged to the host in the background, waited for by the reducing thread: the gradients bit-identical to the synchronous copy, the training thread not waiting for the copies", ClusterAsyncStaging),
         ("cluster: receive flow control bounds a slow receiver's memory on tcp, shared-memory and pcie-host (credits per peer and tag), an awaited send beyond the credit waits without a thread, and every rank sending before it receives still completes", ClusterReceiveCredit),
         ("cluster: collectives over pcie-host keep each piece on the device and sum it there, bit-identical to staging through the host; the telemetry says which", ClusterDeviceCollectives),
+        ("cluster: pipeline placement with a shard is refused before anything moves, naming both settings", ClusterShardedPipelineRefused),
         ("cluster: shared memory between two processes wakes in far less than a timer tick (a doorbell, not a sleep) and moves 16 MB messages within a sane fraction of a memory copy", ClusterSharedMemorySpeed),
     ];
 
@@ -563,6 +564,18 @@ internal static partial class Tests
             $"pcie-host with device collectives: the sum, gather, scatter and broadcast on the device, the maximum through the host: {Paths(direct.Seen)}");
         Check(staged.Seen.Where(e => e.Operation != "barrier").All(e => e.Staging == "host") && tcp.Seen.Where(e => e.Operation != "barrier").All(e => e.Staging == "host"),
             $"turned off, and over tcp, every call is staged through the host: {Paths(staged.Seen)}; {Paths(tcp.Seen)}");
+    }
+
+    private static void ClusterShardedPipelineRefused(Device device)
+    {
+        var options = DpOptions() with { Placement = "pipeline", Shard = ShardMode.Optimizer };
+        DpRun(DpTopology(device, 2), options, rank =>
+        {
+            using var model = ShardModel(rank.Device);
+            ThrowsNaming<NotSupportedException>(() => PipelineStage.Place(model, rank.Collectives, options).Dispose(), "a pipeline with a shard",
+                "IDRAK_CLUSTER_PLACEMENT=pipeline", "IDRAK_CLUSTER_SHARD=optimizer");
+            return 0;
+        });
     }
 
     // The child of the shared-memory speed test: rank 0 times empty round trips after an idle gap (each side's reader has

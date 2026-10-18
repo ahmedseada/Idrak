@@ -296,11 +296,33 @@ public sealed record ClusterOptions
     /// <summary>How the model is placed: "single" (all of it on every rank) or "pipeline" (<c>IDRAK_CLUSTER_PLACEMENT</c>).</summary>
     public string Placement { get; init; } = "single";
 
+    /// <summary>Whether <see cref="Placement"/> is "pipeline": each rank holds one stage of the model (plan 23, phase C7).</summary>
+    public bool Pipelined => string.Equals(Placement, "pipeline", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>A pipeline's micro-batches in flight, or null: the gradient accumulation (<c>IDRAK_CLUSTER_MICROBATCHES</c>).</summary>
     public int? MicroBatches { get; init; }
 
-    /// <summary>A pipeline's schedule (<c>IDRAK_CLUSTER_SCHEDULE</c>: gpipe).</summary>
+    /// <summary>A pipeline's schedule, a <see cref="PipelineSchedules"/> name (<c>IDRAK_CLUSTER_SCHEDULE</c>: gpipe).</summary>
     public string Schedule { get; init; } = "gpipe";
+
+    /// <summary>
+    /// A pipeline's stages, or null: one stage per rank. With fewer stages than ranks (a divisor of the world size) each stage
+    /// is held by world size / stages ranks, data-parallel replicas that reduce that stage's gradients (<c>IDRAK_CLUSTER_STAGES</c>).
+    /// </summary>
+    public int? Stages { get; init; }
+
+    /// <summary>
+    /// How a pipeline's stages are cut when no <see cref="PipelineCuts"/> are given: equal bytes, or in proportion to the
+    /// ranks' declared memory; auto: memory when the topology declares every rank's and they differ (<c>IDRAK_CLUSTER_PIPELINE_BALANCE</c>:
+    /// auto, bytes or memory).
+    /// </summary>
+    public PipelineBalance PipelineBalance { get; init; } = PipelineBalance.Auto;
+
+    /// <summary>
+    /// A pipeline's cuts given by hand, or null: measured (<see cref="PipelineBalance"/>): the first top-level module of each
+    /// stage after the first, rising (<c>IDRAK_CLUSTER_PIPELINE_CUTS</c>, "3,6").
+    /// </summary>
+    public IReadOnlyList<int>? PipelineCuts { get; init; }
 
     /// <summary>The share of a step spent on the network above which the advisor suggests sending less (<c>IDRAK_CLUSTER_SUGGEST_SHARE</c>).</summary>
     public double SuggestShare { get; init; } = 0.2;
@@ -378,7 +400,7 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
         "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_PLACEMENT",
-        "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
+        "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_LOG_TRANSFERS",
         "IDRAK_CLUSTER_DEVICE", "IDRAK_CLUSTER_RUN", "IDRAK_CLUSTER_PARENT", "IDRAK_CLUSTER_RETRY_DELAY", "IDRAK_CLUSTER_SHM_BYTES", "IDRAK_CLUSTER_SHM_FOLDER",
@@ -446,9 +468,22 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_GATHER_BYTES") is { } gather) o = o with { GatherBytes = Size("IDRAK_CLUSTER_GATHER_BYTES", gather) };
         if (Read(variable, "IDRAK_CLUSTER_ASYNC_STAGING") is { } staging) o = o with { AsyncStaging = Flag("IDRAK_CLUSTER_ASYNC_STAGING", staging) };
         if (Read(variable, "IDRAK_CLUSTER_DEVICE_COLLECTIVES") is { } deviceCollectives) o = o with { DeviceCollectives = Flag("IDRAK_CLUSTER_DEVICE_COLLECTIVES", deviceCollectives) };
-        if (Read(variable, "IDRAK_CLUSTER_PLACEMENT") is { } placement) o = o with { Placement = placement };
+        if (Read(variable, "IDRAK_CLUSTER_PLACEMENT") is { } placement)
+        {
+            o = o with { Placement = placement.ToLowerInvariant() is "single" or "pipeline" ? placement.ToLowerInvariant() : throw Bad("IDRAK_CLUSTER_PLACEMENT", placement, "single or pipeline") };
+        }
+
         if (Read(variable, "IDRAK_CLUSTER_MICROBATCHES") is { } micro) o = o with { MicroBatches = Whole("IDRAK_CLUSTER_MICROBATCHES", micro, 1) };
         if (Read(variable, "IDRAK_CLUSTER_SCHEDULE") is { } schedule) o = o with { Schedule = schedule };
+        if (Read(variable, "IDRAK_CLUSTER_STAGES") is { } stages) o = o with { Stages = Whole("IDRAK_CLUSTER_STAGES", stages, 1) };
+        if (Read(variable, "IDRAK_CLUSTER_PIPELINE_BALANCE") is { } balance) o = o with { PipelineBalance = Choice<PipelineBalance>("IDRAK_CLUSTER_PIPELINE_BALANCE", balance, "auto, bytes or memory") };
+        if (Read(variable, "IDRAK_CLUSTER_PIPELINE_CUTS") is { } cuts)
+        {
+            o = o with
+            {
+                PipelineCuts = [.. cuts.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Select(c => Whole("IDRAK_CLUSTER_PIPELINE_CUTS", c, 1))],
+            };
+        }
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_SHARE") is { } share) o = o with { SuggestShare = Number("IDRAK_CLUSTER_SUGGEST_SHARE", share, "a share from 0 to 1", v => v is >= 0 and <= 1) };
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE") is { } tolerance) o = o with { SuggestBFloat16Tolerance = Number("IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE", tolerance, "a number above 0", v => v > 0) };
         if (Read(variable, "IDRAK_CLUSTER_PROFILES_FILE") is { } profiles) o = o with { ProfilesFile = profiles };

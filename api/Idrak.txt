@@ -1187,6 +1187,24 @@ public sealed class Idrak.Layers.PaddedSequences : System.IDisposable
   public int Positions { get; }
   public void Dispose()
 
+public sealed class Idrak.Layers.PipelineBoundary : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
+  public Idrak.Abstraction.Cluster.ITransport Transport { get; }
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
+  public Idrak.Abstraction.Tensor Token { get; }
+  public PipelineBoundary(Idrak.Abstraction.Cluster.ITransport transport, int peer, bool sends, Idrak.Abstraction.Device device, int? answerer = null)
+  public System.TimeSpan Blocked { get; }
+  public bool Generated { get; }
+  public bool Sends { get; }
+  public int MicroBatch { get; set; }
+  public int Peer { get; }
+  public int? Answerer { get; }
+  public long BytesReceived { get; }
+  public long BytesSent { get; }
+  public override string ToString()
+  public override void Dispose()
+  public void ResetCounters()
+
 public sealed class Idrak.Layers.PositionEmbedding : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Abstraction.Tensor Weight { get; }
@@ -2030,6 +2048,52 @@ public sealed record Idrak.Training.Metric : System.IEquatable<Idrak.Training.Me
   public static Idrak.Training.Metric RootMeanSquaredError { get; }
   public static Idrak.Training.Metric SparseAccuracy { get; }
   public string Name { get; init; }
+
+public sealed class Idrak.Training.PipelineStage : System.IDisposable
+  public Idrak.Abstraction.Cluster.ICollectives? Replicas { get; }
+  public Idrak.Abstraction.Cluster.IPipelineSchedule Schedule { get; }
+  public Idrak.Abstraction.Cluster.ITransport Transport { get; }
+  public Idrak.Abstraction.Cluster.PipelineLayout Layout { get; }
+  public Idrak.Abstraction.Cluster.PipelinePlan Plan { get; }
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Module Head { get; }
+  public Idrak.Layers.Sequential Network { get; }
+  public Idrak.Training.PipelineStepResult Step(int microBatches, System.Func<int, Idrak.Abstraction.Tensor>? input, System.Func<int, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor>? loss, Idrak.Training.PipelineStepOptions? options = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Module> Modules { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
+  public System.Collections.Generic.IReadOnlyList<int> ParameterIndices { get; }
+  public bool IsFirst { get; }
+  public bool IsLast { get; }
+  public bool Owns(int parameter)
+  public double Evaluate(int microBatches, System.Func<int, Idrak.Abstraction.Tensor>? input, System.Func<int, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor>? loss, System.Func<int, System.IDisposable?>? around = null)
+  public int Rank { get; }
+  public int Replica { get; }
+  public int Stage { get; }
+  public long Bytes { get; }
+  public static Idrak.Abstraction.Cluster.PipelinePlan PlanFor(Idrak.Layers.Sequential network, Idrak.Abstraction.Cluster.PipelineLayout layout, Idrak.Abstraction.Cluster.ClusterOptions? options = null, Idrak.Abstraction.Cluster.IClusterTopology? topology = null)
+  public static Idrak.Training.PipelineStage Place(Idrak.Layers.Sequential network, Idrak.Abstraction.Cluster.ICollectives cluster, Idrak.Abstraction.Cluster.ClusterOptions? options = null, bool keepOthers = false)
+  public void ClipAndStep(Idrak.Abstraction.Training.Optimizer optimizer, float maxNorm)
+  public void Dispose()
+  public void Serve(System.Threading.CancellationToken cancellationToken = default)
+  public void StopServing()
+  public void SumStages(System.Span<float> values)
+
+public sealed record Idrak.Training.PipelineStepOptions : System.IEquatable<Idrak.Training.PipelineStepOptions>
+  public PipelineStepOptions()
+  public System.Func<int, System.IDisposable?>? Around { get; init; }
+  public bool Checkpointing { get; init; }
+  public bool HeadInLoss { get; init; }
+  public long Step { get; init; }
+
+public readonly record struct Idrak.Training.PipelineStepResult : System.IEquatable<Idrak.Training.PipelineStepResult>
+  public PipelineStepResult(double Loss, System.TimeSpan Wall, System.TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived)
+  public System.TimeSpan Blocked { get; init; }
+  public System.TimeSpan Wall { get; init; }
+  public double Bubble { get; init; }
+  public double IdealBubble { get; init; }
+  public double Loss { get; init; }
+  public long BytesReceived { get; init; }
+  public long BytesSent { get; init; }
 
 public readonly record struct Idrak.Training.RegressionReport : System.IEquatable<Idrak.Training.RegressionReport>
   public RegressionReport(double MeanAbsoluteError, double RootMeanSquaredError, double MeanAbsolutePercentageError, double RSquared)

@@ -1215,7 +1215,13 @@ public static class FineTuner
         using var optimizer = CreateOptimizer(parameters, options);
         // Data parallel (plan 23): every rank makes the same batches from the same seed; a step covers the accumulation's
         // batches on every rank, and each rank runs its share of them.
-        using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, options.ClusterOptions ?? ClusterOptions.FromEnvironment()) : null;
+        var clusterOptions = options.Cluster is null ? null : options.ClusterOptions ?? ClusterOptions.FromEnvironment();
+        if (clusterOptions is { Pipelined: true })
+        {
+            throw new NotSupportedException("Pipeline placement (IDRAK_CLUSTER_PLACEMENT=pipeline) trains through the Pretrainer (plan 23, C7); fine-tuning runs with single placement.");
+        }
+
+        using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, clusterOptions!) : null;
         using var seeds = sync is null ? null : Dropout.SeedsForRank(sync.Rank);
         sync?.Start();
         bool lead = sync is null || sync.Rank == 0;
@@ -2408,7 +2414,7 @@ public static class FineTuner
     // The host side of a batch: inputs [rows · length], and the trained positions with their targets and weights.
     internal sealed record BatchData(float[] Inputs, int[] Trained, float[] Targets, float[] Weights, long Tokens);
 
-    private static BatchData Prepare(IReadOnlyList<TrainingSequence> sequences, Batch batch, float weight = 1f)
+    internal static BatchData Prepare(IReadOnlyList<TrainingSequence> sequences, Batch batch, float weight = 1f)
     {
         int length = batch.Length;
         int rows = batch.Rows.Length;

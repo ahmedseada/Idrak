@@ -179,6 +179,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A pipeline stage finished a training step on a rank (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnPipelineStep(in PipelineStepped e)
+    {
+    }
+
     /// <summary>A transport was chosen for a pair of ranks (<see cref="TelemetryLevel.Network"/>).</summary>
     void OnTransportChosen(in TransportChosen e)
     {
@@ -446,6 +451,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Network) != 0)
             {
                 h.OnGradientSync(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a pipeline stage's training step on a rank, to the hooks listening at <see cref="TelemetryLevel.Network"/>; check <see cref="IsEnabled"/> first.</summary>
+    public static void PipelineStep(in PipelineStepped e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnPipelineStep(in e);
             }
         }
     }

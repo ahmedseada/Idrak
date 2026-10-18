@@ -11,7 +11,8 @@ namespace Idrak.Networking;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction (plan 23): the "naive", "ring" and "hierarchical" collectives, the
-/// "fastest" transport selector, the "all-reduce", "local-sgd" and "sharded" gradient synchronisations and the "network" profiler probe
+/// "fastest" transport selector, the "all-reduce", "local-sgd" and "sharded" gradient synchronisations, the "gpipe" pipeline
+/// schedule and the "network" profiler probe
 /// (the gradient compressions are its own registry, <see cref="Abstractions.GradientCompressions"/>). <c>LibraryDefaults.Ensure</c> calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, when the application ships it.
 /// </summary>
@@ -41,6 +42,7 @@ internal static class LibraryRegistrations
             GradientSyncs.Register(new LocalSgdProvider());
             GradientSyncs.Register(new ShardedSyncProvider());
         },
+        [typeof(PipelineSchedules)] = () => PipelineSchedules.Register(new GPipeSchedule()),
         [typeof(ProfileProbes)] = () => ProfileProbes.Register(new NetworkProbe()),
     };
 
