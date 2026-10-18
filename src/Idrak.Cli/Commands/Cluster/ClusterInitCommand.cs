@@ -93,22 +93,24 @@ internal sealed class ClusterInitCommand : Command
         {
             while (builder.Next is { } question)
             {
-                context.ConsoleOutput.WriteLine();
+                // In colour: what the input means dim, the suggestion green, a refused answer red; Ask colours the rest.
+                var console = context.ConsoleOutput;
+                console.WriteLine();
                 foreach (string line in question.Description.Split('\n'))
                 {
-                    context.ConsoleOutput.WriteLine("  " + line);
+                    console.WriteLine("  " + Terminal.Paint(context, line, Colour.Dim, console));
                 }
 
                 if (question.Suggestion is { } suggestion)
                 {
-                    context.ConsoleOutput.WriteLine("  suggestion: " + suggestion);
+                    console.WriteLine("  " + Terminal.Paint(context, "suggestion: " + suggestion, Colour.Green, console));
                 }
 
                 string option = Option(question.Key);
                 string answer = Terminal.Ask(context, question.Prompt, question.Default ?? "", requireTerminal: $"--yes with {option}");
                 if (builder.Answer(answer) is { } problem)
                 {
-                    context.ConsoleOutput.WriteLine($"  {problem}");
+                    console.WriteLine("  " + Terminal.Paint(context, problem, Colour.Red, console));
                 }
             }
         }

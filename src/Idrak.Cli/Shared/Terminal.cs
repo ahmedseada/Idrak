@@ -117,9 +117,30 @@ internal static class Terminal
             throw new UsageException(Messages.T("'{0}' needs an answer, and there is no terminal to ask on{1}; {2}.", question, context.Json ? " with --json" : "", fix));
         }
 
-        context.ConsoleOutput.Write(fallback.Length > 0 ? $"{question} [{fallback}] " : $"{question} ");
-        ShowPrompt(context.ConsoleOutput);
-        string? line = (TestInput ?? Console.In).ReadLine();
+        // In colour: the question bold, its default cyan, the answer typed yellow, so the three never blend.
+        var output = context.ConsoleOutput;
+        bool colour = UseColour(context, output);
+        output.Write(Paint(context, question, Colour.Bold, output) + (fallback.Length > 0 ? " " + Paint(context, $"[{fallback}]", Colour.Cyan, output) : "") + " ");
+        if (colour)
+        {
+            output.Write($"\u001b[{(int)Colour.Yellow}m");
+        }
+
+        ShowPrompt(output);
+        string? line;
+        try
+        {
+            line = (TestInput ?? Console.In).ReadLine();
+        }
+        finally
+        {
+            if (colour)
+            {
+                output.Write("\u001b[0m");
+                ShowPrompt(output);
+            }
+        }
+
         return string.IsNullOrWhiteSpace(line) ? fallback : line.Trim();
     }
 

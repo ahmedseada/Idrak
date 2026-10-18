@@ -27,9 +27,9 @@ internal static partial class Tests
         ("cluster: the built-in links carry a rate only where the name states it, measure same-device, shared-memory and pcie here, refuse to predict the rest; the kit's LinkProfileSuite passes them all", ClusterBuiltInLinks),
         ("cluster: the fastest selector takes the first available, fastest first, and names every reason when none can", ClusterSelector),
         ("cluster: the network and cluster probes record a simulated run's collectives, transfers and network time through Profiler.Run", ClusterProbes),
-        ("cluster: the topology builder asks every question with a description and a default from the machine's facts, takes answers given by key, refuses a bad answer saying why, and writes a commented file that reads back", ClusterBuilder),
-        ("cluster: cli cluster init asked through the test input and with --yes and options writes the same topology; without a terminal the usage error names --yes; a bad option names it", ClusterCliInit),
-        ("cluster: cli cluster inspect lists the ranks, the links with their figures and the predicted all-reduce times, in text and JSON; a bad file names the key", ClusterCliInspect),
+        ("cluster: the topology builder asks every question with a description and a default from the machine's facts, takes answers given by key, refuses a bad answer saying why (a cap without a unit), splits a card among its ranks whichever backend names it, and writes a commented file that reads back", ClusterBuilder),
+        ("cluster: cli cluster init asked through the test input (in colour with --color always) and with --yes and options writes the same topology; without a terminal the usage error names --yes; a bad option names it", ClusterCliInit),
+        ("cluster: cli cluster inspect lists the ranks, the links with their figures and the predicted all-reduce times, in text (in the --unit asked) and JSON; a bad file names the key", ClusterCliInspect),
     ];
 
     // A group of `world` sim ranks on one node, every rank naming `device` (so every pair is same-device).
@@ -428,6 +428,19 @@ internal static partial class Tests
         Check(given.Build() is { WorldSize: 2, IntraNode: "pcie" }, "the rest take their defaults");
         ThrowsNaming<ArgumentException>(() => _ = new TopologyBuilder(ClusterFacts, new Dictionary<string, string> { ["nodes"] = "-1" }), "a bad given answer", "nodes");
         ThrowsNaming<ArgumentException>(() => _ = new TopologyBuilder(ClusterFacts, new Dictionary<string, string> { ["gpus"] = "1" }), "an unknown key", "gpus");
+
+        // Ranks on one card share its memory whichever backend each names (vulkan:0 beside cuda:0); a bare number is refused.
+        var twins = ClusterFacts with { Devices = [.. ClusterFacts.Devices, new MachineDevice("vulkan:0", DeviceType.Vulkan, 16L << 30, "a GPU (the card cuda:0 drives)", "cuda:0")] };
+        var shared = new TopologyBuilder(twins, new Dictionary<string, string> { ["nodes"] = "1", ["node.1.devices"] = "cuda:0,cuda:0,vulkan:0" });
+        while (shared.Next is { } q && !q.Key.EndsWith(".memory", StringComparison.Ordinal))
+        {
+            Check(shared.Answer(q.Default ?? "") is null, $"{q.Key} takes its default");
+        }
+
+        string third = ClusterTopology.FormatMemory((16L << 30) / 3 / (1 << 20) * (1 << 20));
+        Check(shared.Next is { Default: var split, Suggestion: var why } && split == third && why!.Contains("3 ranks", StringComparison.Ordinal),
+            $"three ranks on one card through two backends split it in three: {shared.Next?.Default} ({shared.Next?.Suggestion})");
+        Check(shared.Answer("4048") is { } unitless && unitless.Contains("4048MB", StringComparison.Ordinal), "a cap without a unit is refused, naming one");
     }
 
     private static void ClusterCliInit(Device device)
@@ -443,7 +456,8 @@ internal static partial class Tests
             string[] given = ["--nodes", "2", "--names", "desk,mini", "--address", "10.0.0.1:29500", "--devices", "cpu,cpu;cpu", "--memory", "64MB,64MB;64MB", "--inter", "ethernet-1g"];
             var (exit, output, error) = Cli(["cluster", "init", "-y", "-o", options, .. given]);
             Check(exit == 0 && output.Contains("2 rank(s)") == false && output.Contains("3 rank(s)") && File.Exists(options), $"cluster init -y: {output} {error}");
-            Terminal.TestInput = new StringReader("zero\n2\ndesk\n10.0.0.1:29500\nmini\ncpu,cpu\n64MB\n64MB\ncpu\n64MB\nethernet-1g\n\n\n\n");
+            const string answers = "zero\n2\ndesk\n10.0.0.1:29500\nmini\ncpu,cpu\n64\n64MB\n64MB\ncpu\n64MB\nethernet-1g\n\n\n\n";
+            Terminal.TestInput = new StringReader(answers);
             try
             {
                 (exit, output, error) = Cli("cluster", "init", "-o", typed);
@@ -453,7 +467,22 @@ internal static partial class Tests
                 Terminal.TestInput = null;
             }
 
-            Check(exit == 0 && output.Contains("a number of machines") && output.Contains("suggestion:"), $"cluster init asked: {output} {error}");
+            Check(exit == 0 && output.Contains("a number of machines") && output.Contains("suggestion:") && output.Contains("with its unit") && !output.Contains('\u001b'),
+                $"cluster init asked, refusing a cap without a unit, in no colour off a terminal: {output} {error}");
+            Terminal.TestInput = new StringReader(answers);
+            try
+            {
+                (exit, output, error) = Cli("cluster", "init", "-o", Path.Combine(folder, "coloured.json"), "--color", "always");
+            }
+            finally
+            {
+                Terminal.TestInput = null;
+            }
+
+            Check(exit == 0 && output.Contains("\u001b[2mA node is", StringComparison.Ordinal) && output.Contains("\u001b[32msuggestion:", StringComparison.Ordinal)
+                  && output.Contains("\u001b[1mHow many machines", StringComparison.Ordinal) && output.Contains("\u001b[36m[", StringComparison.Ordinal)
+                  && output.Contains("\u001b[33m", StringComparison.Ordinal) && output.Contains("\u001b[31m", StringComparison.Ordinal),
+                $"in colour the description is dim, the suggestion green, the question bold, its default cyan, the answer yellow, a refusal red: {output.Replace("\u001b", "ESC", StringComparison.Ordinal)}");
             Check(ClusterTopology.Load(typed).ToJson() == ClusterTopology.Load(options).ToJson(), "asked and given write the same topology");
             var (noTerminal, _, refusal) = Cli("cluster", "init", "-o", Path.Combine(folder, "x.json"));
             Check(noTerminal == 2 && refusal.Contains("--yes", StringComparison.Ordinal), $"no terminal: {refusal}");
@@ -480,8 +509,12 @@ internal static partial class Tests
         {
             Check(Cli("cluster", "init", "-y", "-o", file, "--nodes", "2", "--names", "desk,mini", "--devices", "cpu,cpu;cpu", "--memory", "64MB,64MB;64MB", "--inter", "ethernet-1g").Exit == 0, "a topology to inspect");
             var (exit, output, error) = Cli("cluster", "inspect", file);
-            Check(exit == 0 && output.Contains("2 node(s), 3 rank(s)") && output.Contains("64MB (64 MiB)") && output.Contains("ethernet-1g") && output.Contains("same-device")
-                  && output.Contains("all-reduce of 100MB with ring:"), $"cluster inspect: {output} {error}");
+            Check(exit == 0 && output.Contains("2 node(s), 3 rank(s)") && output.Contains("64 MB") && output.Contains("ethernet-1g") && output.Contains("same-device")
+                  && output.Contains("all-reduce of 100 MB with ring:"), $"cluster inspect: {output} {error}");
+            var inGb = Cli("cluster", "inspect", file, "--unit", "GiB");
+            Check(inGb.Exit == 0 && inGb.Out.Contains("0.0625 GB") && inGb.Out.Contains("all-reduce of 0.0977 GB") && inGb.Out.Contains(" GB/s"), $"--unit GiB shows GB: {inGb.Out} {inGb.Err}");
+            var badUnit = Cli("cluster", "inspect", file, "--unit", "PB");
+            Check(badUnit.Exit == 2 && badUnit.Err.Contains("--unit", StringComparison.Ordinal) && badUnit.Err.Contains("TB", StringComparison.Ordinal), $"a bad unit: {badUnit.Err}");
             var json = CliJson("cluster", "inspect", file, "--bytes", "1GB", "-j");
             Check((int)json["ranks"]! == 3 && json["links"]!.AsArray().Count == 2 && (double)json["all_reduce_seconds"]!["ring"]! > 0
                   && (double)json["all_reduce_seconds"]!["naive"]! > (double)json["all_reduce_seconds"]!["ring"]!, $"cluster inspect -j: {json}");

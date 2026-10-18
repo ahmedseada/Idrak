@@ -24,10 +24,12 @@ public static class Idrak.Cluster.InProcessCluster
 
 public sealed record Idrak.Cluster.MachineDevice : System.IEquatable<Idrak.Cluster.MachineDevice>
   public Idrak.Abstraction.DeviceType Type { get; init; }
-  public MachineDevice(string Device, Idrak.Abstraction.DeviceType Type, long? MemoryBytes, string Name)
+  public MachineDevice(string Device, Idrak.Abstraction.DeviceType Type, long? MemoryBytes, string Name, string? Card = null)
   public long? MemoryBytes { get; init; }
+  public string CardKey { get; }
   public string Device { get; init; }
   public string Name { get; init; }
+  public string? Card { get; init; }
 
 public sealed record Idrak.Cluster.MachineFacts : System.IEquatable<Idrak.Cluster.MachineFacts>
   public MachineFacts(string HostName, string? Address, string? AdapterName, double? AdapterBitsPerSecond, System.Collections.Generic.IReadOnlyList<Idrak.Cluster.MachineDevice> Devices)
