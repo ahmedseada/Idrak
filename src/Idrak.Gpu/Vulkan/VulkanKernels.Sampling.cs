@@ -390,6 +390,11 @@ internal static partial class VulkanKernels
         var part = k.Local(0f);
         k.For(start, end, 1, j => part.V = part.V + weight(j));
         parts[lane] = part.V;
+        k.If(lane.Eq(0), () =>
+        {
+            shared[k.Int(2)] = k.Int(-2).AsFloat();                             // -2: no lane wrote a token (every lane's sums are 0)
+            shared[k.Int(3)] = k.Float(0f);
+        });
         k.Barrier();
         var total = k.Local(0f);
         k.For(k.Int(0), k.Int(Block), 1, c => total.V = total.V + parts[c]);
