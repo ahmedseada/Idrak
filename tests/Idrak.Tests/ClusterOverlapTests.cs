@@ -7,6 +7,7 @@ using Idrak.Abstraction.Cluster;
 using Idrak.Cli;
 using Idrak.Cluster;
 using Idrak.Datasets;
+using Idrak.Datasets.Abstractions;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Networking.Abstractions;
@@ -34,6 +35,7 @@ internal static partial class Tests
         ("cluster: local SGD every k steps equals one process at k = 1 (plain SGD, the weights averaged by each rank's rows) and runs k times fewer weight averages at k = 4, the weights alike on every rank after each", ClusterLocalSgd),
         ("cluster: a simulated training run with a slow worker shows it as blocked time naming it: the pretrainer's gradient all-reduces on every other rank wait on rank 2, the losses as without the fault", ClusterTrainingSlowWorker),
         ("cluster: a late joiner joins at step N: the pretrainer's other ranks train steps 0 to N-1 over every step's draws, the joiner takes the trained weights and optimizer state, and the run equals the run without the fault (losses and weights within 1e-5)", ClusterTrainingLateJoin),
+        ("cluster: a late joiner across the Trainer's epoch end: each step's samples shared among the ranks that take part, so the run equals the run without the fault and every rank ends alike; a source sharded by epoch fails at once naming the cause", ClusterTrainerLateJoin),
         ("cluster: a replay stops at a step bit for bit: the pretrainer's checkpoint, losses and clocks through step N as the whole run's; the Trainer's weights as one step's", ClusterTrainingReplay),
         ("cluster: cli cluster sim --failures MODEL --seed S injects the faults into the training and lists them with their replay key; an unknown model is named", ClusterCliSimFailures),
     ];
@@ -424,6 +426,45 @@ internal static partial class Tests
         {
             Directory.Delete(folder, recursive: true);
         }
+    }
+
+    // A batch source that is not a DataLoader (sharded by epoch in data parallel).
+    private sealed class ForwardedBatches(IBatchSource inner) : IBatchSource
+    {
+        public IEnumerator<Batch> GetEnumerator() => inner.GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private static void ClusterTrainerLateJoin(Device device)
+    {
+        // 150 samples, 3 ranks of batch 10: 5 steps an epoch; rank 2 joins at step 7, in the second epoch.
+        using var late = Scripted("test-late-trainer", new Fault(FaultKind.LateJoin, 0, [2], TimeSpan.Zero, 7));
+        var data = Spirals(50, 3, 1);
+        (float[] Weights, double Loss) Fit(Device on, int batch, ICollectives? cluster, ClusterOptions? options, bool forwarded = false)
+        {
+            using var model = DpClassifier(on);
+            using var optimizer = new Sgd(model.Parameters(), 0.1f, momentum: 0.9f);
+            var loader = new DataLoader(data, batch, shuffle: true, device: on, seed: 7);
+            var history = new Trainer(model, optimizer, Losses.CrossEntropy) { Cluster = cluster, ClusterOptions = options }.Fit(forwarded ? new ForwardedBatches(loader) : loader, 3);
+            return ([.. model.Parameters().SelectMany(p => p.ToArray())], history.Epochs[^1].Loss);
+        }
+
+        var none = DpOptions() with { Collective = "ring", Simulation = new SimulationOptions { Failures = "none", Seed = 5 } };
+        var faulty = none with { Simulation = none.Simulation with { Failures = "test-late-trainer" } };
+        var alone = Fit(device, 30, null, null);
+        var whole = DpRun(DpTopology(device, 3), none, rank => Fit(rank.Device, 10, rank.Collectives, none));
+        var joined = DpRun(DpTopology(device, 3), faulty, rank => Fit(rank.Device, 10, rank.Collectives, faulty));
+        Check(joined.All(r => r.Weights.SequenceEqual(joined[0].Weights)), "every rank ends with the same weights (the joiner took the trained weights and momentum)");
+        AssertClose(whole[0].Weights, joined[0].Weights, 1e-5f, "the late-join run's weights against the run without the fault");
+        AssertClose(alone.Weights, joined[0].Weights, 1e-5f, "the late-join run's weights against one process with batch 30");
+        Check(Math.Abs(joined[0].Loss - whole[0].Loss) <= 1e-5 * Math.Max(1, Math.Abs(whole[0].Loss)), $"the last epoch's loss: {joined[0].Loss} against {whole[0].Loss}");
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var failed = InProcessCluster.Run(DpTopology(device, 3), faulty, rank => Fit(rank.Device, 10, rank.Collectives, faulty, forwarded: true));
+        Check(!failed.Succeeded && failed.Errors[2] is { } error && error.Message.Contains("sits out step 0", StringComparison.Ordinal) && error.Message.Contains("sharded by epoch", StringComparison.Ordinal),
+            $"a source sharded by epoch fails at once on the late joiner, naming why: {failed.Errors[2]?.Message}");
+        Check(started.Elapsed < TimeSpan.FromSeconds(60) && failed.Errors.All(e => e is not null), $"every rank ends at once, not at the timeout: {started.Elapsed.TotalSeconds:F1} s; {string.Join("; ", failed.Errors.Select(e => e?.Message))}");
     }
 
     private static void ClusterTrainingReplay(Device device)

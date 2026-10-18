@@ -30,6 +30,18 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     private int _slowest;
     private TimeSpan _simulatedBlocked;
 
+    // Phase C5: the step's totals over every collective, kept where the ranks are separate processes (their telemetry is
+    // their own), sent to rank 0 after each step (ReportStep) so rank 0's log describes the cluster.
+    private const int SummaryTag = -90;
+    private const int SummaryBytes = 44;
+    private readonly bool _summarize;
+    private long _stepSent;
+    private long _stepReceived;
+    private long _stepBlockedTicks;
+    private long _stepWallTicks;
+    private long _stepLongest;
+    private int _stepSlowest;
+
     protected HostCollectives(ITransport transport, Device device, ClusterContext context)
     {
         Transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -37,6 +49,8 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         ArgumentNullException.ThrowIfNull(context);
         // A message holds at most what one array can: the structural limit, not a tuning.
         _chunkBytes = Math.Clamp(context.Options.ChunkBytes ?? Array.MaxLength / 2, sizeof(float), Array.MaxLength / 2);
+        _summarize = transport.Capabilities.CrossProcess && transport.WorldSize > 1;
+        _stepSlowest = transport.Rank;
     }
 
     public abstract string Name { get; }
@@ -159,6 +173,64 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         EndTiming(timed, "broadcast", start, simulated);
 
         return true;
+    }
+
+    /// <summary>
+    /// Ends step <paramref name="step"/>'s summary where the ranks are separate processes: every rank sends rank 0 what its
+    /// collectives moved during the step (bytes each way, wall time, time blocked on peers, the peer waited on longest),
+    /// and rank 0 publishes one <see cref="CollectiveCompleted"/> per rank with the operation "step-summary", so rank 0's
+    /// log (<c>log.jsonl</c>) holds every rank's step. Every rank calls it after each step it takes part in (the gradient
+    /// syncs' <c>Stepped</c>); in one process (the simulator) it does nothing, the ranks sharing one telemetry already.
+    /// </summary>
+    internal void ReportStep(long step)
+    {
+        if (!_summarize)
+        {
+            return;
+        }
+
+        Span<byte> summary = stackalloc byte[SummaryBytes];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(summary, step);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(summary[8..], _stepSent);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(summary[16..], _stepReceived);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(summary[24..], _stepBlockedTicks * TimeSpan.TicksPerSecond / Stopwatch.Frequency);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(summary[32..], _stepWallTicks * TimeSpan.TicksPerSecond / Stopwatch.Frequency);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(summary[40..], _stepSlowest);
+        (_stepSent, _stepReceived, _stepBlockedTicks, _stepWallTicks, _stepLongest, _stepSlowest) = (0, 0, 0, 0, 0, Rank);
+        if (Rank != 0)
+        {
+            Transport.Send(0, summary, SummaryTag);
+            return;
+        }
+
+        bool publish = Telemetry.IsEnabled(TelemetryLevel.Network);
+        for (int r = 0; r < WorldSize; r++)
+        {
+            if (r > 0 && Transport.Receive(r, summary, SummaryTag) != SummaryBytes)
+            {
+                throw new InvalidDataException($"rank {r}'s step summary is not {SummaryBytes} bytes");
+            }
+
+            if (publish)
+            {
+                Telemetry.Collective(new CollectiveCompleted(Name, "step-summary", r, WorldSize,
+                    System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(summary[8..]), System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(summary[16..]),
+                    TimeSpan.FromTicks(System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(summary[32..])), TimeSpan.Zero,
+                    TimeSpan.FromTicks(System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(summary[24..])), System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(summary[40..])));
+            }
+        }
+    }
+
+    private void AddToStep(long wallTicks)
+    {
+        _stepSent += _sent;
+        _stepReceived += _received;
+        _stepBlockedTicks += _blockedTicks;
+        _stepWallTicks += wallTicks;
+        if (_longestWait > _stepLongest)
+        {
+            (_stepLongest, _stepSlowest) = (_longestWait, _slowest);
+        }
     }
 
     public virtual void Dispose()
@@ -442,11 +514,12 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
         EndTiming(timed, operation, start, simulated);
     }
 
-    // Starts counting a call's bytes, waits and times, only while someone listens (rule 78).
+    // Starts counting a call's bytes, waits and times, only while someone listens (rule 78) or the step's summary is kept
+    // for rank 0 (ranks in processes of their own, phase C5).
     private bool BeginTiming(out long start, out TimeSpan simulated)
     {
         (start, simulated) = (0, TimeSpan.Zero);
-        if (!Telemetry.IsEnabled(TelemetryLevel.Network))
+        if (!Telemetry.IsEnabled(TelemetryLevel.Network) && !_summarize)
         {
             return false;
         }
@@ -462,6 +535,12 @@ internal abstract class HostCollectives : ICollectives, IHostValueCollectives
     private void EndTiming(bool timed, string operation, long start, TimeSpan simulated)
     {
         if (!timed)
+        {
+            return;
+        }
+
+        AddToStep(Stopwatch.GetTimestamp() - start);
+        if (!Telemetry.IsEnabled(TelemetryLevel.Network))
         {
             return;
         }

@@ -175,11 +175,19 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         long step = 0, begun = -1;
         bool cancelled = false, present = true;
         var callbacks = Callbacks.ToArray();
-        using var sync = Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, ClusterOptions ?? Abstraction.Cluster.ClusterOptions.FromEnvironment()) : null;
+        var clusterOptions = Cluster is null ? null : ClusterOptions ?? Abstraction.Cluster.ClusterOptions.FromEnvironment();
+        using var sync = Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, clusterOptions) : null;
         if (sync is not null && train is DataLoader { Shuffle: true, Seed: null })
         {
             throw new ArgumentException("Data-parallel training draws one order of the samples on every rank: give the training DataLoader a seed.", nameof(train));
         }
+
+        // A loader over a sample source shares each step among the ranks that take part in it (every rank draws the step's
+        // samples as one process with batches W times as large, and keeps its own), so a group that changes from step to step
+        // (a simulated late join, a replay's end) still trains every sample and every rank runs the same steps. Another
+        // source is sharded by epoch, and a rank of it cannot sit a step out.
+        var stepLoader = sync is not null && train is DataLoader { Source: not null } loader ? loader : null;
+        int fullWorld = sync?.WorldSize ?? 1;                               // before any step: every rank
 
         var context = new TrainerContext(Model, Optimizer, epochs, history, cancellationToken) { Rank = sync?.Rank ?? 0, WorldSize = sync?.WorldSize ?? 1 };
         bool batchCallbacks = callbacks.Length > 0;
@@ -225,19 +233,28 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             bool perBatch = lead && Telemetry.IsEnabled(TelemetryLevel.Batches);
             long dataStart = Stopwatch.GetTimestamp();
 
-            using var batches = (sync is null ? train : Shard(train, sync)).GetEnumerator();
+            using var batches = (sync is null ? train
+                : stepLoader is not null ? stepLoader.StepShares(fullWorld, () => present ? (sync.Rank, sync.WorldSize) : null)
+                : Shard(train, sync)).GetEnumerator();
             while (true)
             {
-                // With a cluster a rank whose share of the epoch has ended goes on adding nothing until every rank's has.
+                if (stepLoader is not null && step != begun)
+                {
+                    present = sync!.BeginStep(step);                        // before the step is drawn: its share follows the group
+                    begun = step;
+                }
+
+                // With a cluster a rank whose share of the epoch has ended goes on adding nothing until every rank's has; a
+                // loader shared by step gives every rank the same steps.
                 bool has = batches.MoveNext();
-                if (!has && sync is null)
+                if (!has && (sync is null || stepLoader is not null))
                 {
                     break;
                 }
 
                 var batch = has ? batches.Current : null;
                 using var _ = batch;
-                if (sync is not null && step != begun)
+                if (sync is not null && stepLoader is null && step != begun)
                 {
                     present = sync.BeginStep(step);                         // a simulated cluster's faults, late joins and replays act here
                     begun = step;
@@ -245,8 +262,18 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
 
                 if (!present)
                 {
-                    // This rank sits the step out (a late joiner before it joins, every rank past a replay's last step): its
-                    // batch is not trained; the ranks that take part sum the step's gradients over their own samples.
+                    // This rank sits the step out (a late joiner before it joins, every rank past a replay's last step): the
+                    // ranks that take part train the step. Sharded by epoch, a rank cannot know where the others' epoch ends
+                    // while it sits out, so only a replay's end (every rank out) is allowed there; anything else fails now,
+                    // naming why, rather than leave the others waiting.
+                    bool replayEnded = clusterOptions!.Simulation.ReplayStep is { } last && step > last;
+                    if (stepLoader is null && !replayEnded)
+                    {
+                        throw new InvalidOperationException($"Rank {sync!.Rank} sits out step {step} (a simulated late join): the Trainer shares a step among the ranks "
+                            + $"that take part for a DataLoader over a sample source only; this run's training source ({train.GetType().Name}) is sharded by epoch, so the "
+                            + "rank cannot keep in step with the others. Train from a DataLoader over a sample source, or run without late joins.");
+                    }
+
                     if (!has)
                     {
                         break;
@@ -283,7 +310,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 {
                     // The gradients of every rank's samples, weighted by each rank's count: one process's gradient of the step.
                     var reduced = sync.Reduce(batch?.Size ?? 0, batchLoss?.Item() ?? 0);
-                    if (reduced.Tokens <= 0)
+                    if (reduced.Tokens <= 0 && stepLoader is null)
                     {
                         break;                                              // every rank's share of the epoch has ended
                     }

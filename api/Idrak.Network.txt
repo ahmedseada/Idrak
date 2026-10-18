@@ -19,6 +19,10 @@ public readonly record struct Idrak.Networking.Abstractions.GradientPiece : Syst
   public int Offset { get; init; }
   public int Parameter { get; init; }
 
+public interface Idrak.Networking.Abstractions.IDeviceTransport : Idrak.Abstraction.Cluster.ITransport, System.IDisposable
+  public void ReceiveDevice(int from, Idrak.Abstraction.Devices.Storage destination, int count, int tag)
+  public void SendDevice(int to, Idrak.Abstraction.Devices.Storage source, int count, int tag)
+
 public interface Idrak.Networking.Abstractions.IGradientCompression
   public Idrak.Networking.Abstractions.IGradientCompressor Create(Idrak.Abstraction.Cluster.ICollectives collectives, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> parameters, Idrak.Abstraction.Cluster.ClusterOptions options)
   public string Name { get; }
@@ -28,3 +32,31 @@ public interface Idrak.Networking.Abstractions.IGradientCompressor : System.IDis
   public (default) void Forget(System.ReadOnlySpan<Idrak.Networking.Abstractions.GradientPiece> pieces)
   public string Name { get; }
   public void Reduce(System.Span<float> values, float weight, System.ReadOnlySpan<Idrak.Networking.Abstractions.GradientPiece> pieces)
+
+public static class Idrak.Networking.Bench.LinkBench
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Networking.Bench.LinkBenchRow> Run(Idrak.Abstraction.Cluster.ITransport transport, Idrak.Networking.Bench.LinkBenchOptions? options = null, System.Func<int, int, string>? transportOf = null, System.IProgress<Idrak.Networking.Bench.LinkBenchProgress>? progress = null)
+
+public sealed record Idrak.Networking.Bench.LinkBenchOptions : System.IEquatable<Idrak.Networking.Bench.LinkBenchOptions>
+  public LinkBenchOptions()
+  public int Rounds { get; init; }
+  public long Bytes { get; init; }
+
+public readonly record struct Idrak.Networking.Bench.LinkBenchProgress : System.IEquatable<Idrak.Networking.Bench.LinkBenchProgress>
+  public LinkBenchProgress(int Done, int Total, int RankA, int RankB, System.TimeSpan Elapsed)
+  public System.TimeSpan Elapsed { get; init; }
+  public int Done { get; init; }
+  public int RankA { get; init; }
+  public int RankB { get; init; }
+  public int Total { get; init; }
+
+public sealed record Idrak.Networking.Bench.LinkBenchRow : System.IEquatable<Idrak.Networking.Bench.LinkBenchRow>
+  public LinkBenchRow(int RankA, int RankB, string Transport, long Bytes, int Rounds, double ColdBandwidth, double WarmBandwidth, System.TimeSpan ColdLatency, System.TimeSpan WarmLatency)
+  public System.TimeSpan ColdLatency { get; init; }
+  public System.TimeSpan WarmLatency { get; init; }
+  public double ColdBandwidth { get; init; }
+  public double WarmBandwidth { get; init; }
+  public int RankA { get; init; }
+  public int RankB { get; init; }
+  public int Rounds { get; init; }
+  public long Bytes { get; init; }
+  public string Transport { get; init; }

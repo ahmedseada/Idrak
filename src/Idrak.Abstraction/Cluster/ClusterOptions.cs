@@ -190,6 +190,14 @@ public sealed record ClusterOptions
     /// </summary>
     public string? Compression { get; init; }
 
+    /// <summary>
+    /// The cost of one collective's messages beyond their bytes (the wire header, the transport's own per-message work) that
+    /// the measured bucket size counts, or null: measured on this machine (on a real transport it is in the timed latency
+    /// already; on the simulator, whose built-in links carry no latency, it is the wall time of a tiny collective here,
+    /// measured once per process so a seed's run replays alike) (<c>IDRAK_CLUSTER_MESSAGE_COST</c>, seconds).
+    /// </summary>
+    public TimeSpan? MessageCost { get; init; }
+
     /// <summary>The compression a run uses: <see cref="Compression"/>, or the one <see cref="TopK"/> and <see cref="Wire"/> imply.</summary>
     public string CompressionName => Compression ?? (TopK > 0 ? "top-k" : Wire == WireType.BFloat16 ? "bf16" : "none");
 
@@ -260,6 +268,37 @@ public sealed record ClusterOptions
     /// <summary>The calibrated link profiles' file, or null for the tuning cache's (<c>IDRAK_CLUSTER_PROFILES_FILE</c>).</summary>
     public string? ProfilesFile { get; init; }
 
+    /// <summary>
+    /// The device this rank runs on ("cuda:0", "cpu"), or null: its topology entry's (<c>IDRAK_CLUSTER_DEVICE</c>; set by
+    /// <c>idrak cluster start</c> for each process it starts).
+    /// </summary>
+    public string? Device { get; init; }
+
+    /// <summary>
+    /// A name the ranks of one run share, so the files and rendezvous of two runs on one machine never meet (shared-memory
+    /// rings are named after it), or null: derived from the coordinator (<c>IDRAK_CLUSTER_RUN</c>; the launchers set a new
+    /// one for each run).
+    /// </summary>
+    public string? RunId { get; init; }
+
+    /// <summary>
+    /// The process id of the launcher that started this rank, or null: a rank ends itself when that process is gone, so
+    /// no rank outlives its launcher (<c>IDRAK_CLUSTER_PARENT</c>; set by the launchers).
+    /// </summary>
+    public int? Parent { get; init; }
+
+    /// <summary>The wait before the first retry at the rendezvous, doubled at each later one (<c>IDRAK_CLUSTER_RETRY_DELAY</c>, seconds).</summary>
+    public TimeSpan RetryDelay { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// The bytes of each shared-memory ring (one per sending rank and receiving rank on a machine); a message larger than
+    /// the ring streams through it (<c>IDRAK_CLUSTER_SHM_BYTES</c>).
+    /// </summary>
+    public long SharedMemoryBytes { get; init; } = 4L << 20;
+
+    /// <summary>The folder the shared-memory rings are mapped from, or null: the system's temporary folder (<c>IDRAK_CLUSTER_SHM_FOLDER</c>).</summary>
+    public string? SharedMemoryFolder { get; init; }
+
     /// <summary>The simulation's settings.</summary>
     public SimulationOptions Simulation { get; init; } = new();
 
@@ -279,12 +318,13 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_TOPOLOGY", "IDRAK_CLUSTER_NODE", "IDRAK_RANK", "IDRAK_WORLD_SIZE", "IDRAK_COORDINATOR", "IDRAK_CLUSTER_TRANSPORT",
         "IDRAK_CLUSTER_SELECTOR", "IDRAK_CLUSTER_COLLECTIVE", "IDRAK_CLUSTER_KEY", "IDRAK_CLUSTER_PORT", "IDRAK_CLUSTER_TIMEOUT",
         "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_SOCKET_BUFFER",
-        "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
+        "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_MESSAGE_COST", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_LOG_TRANSFERS",
+        "IDRAK_CLUSTER_DEVICE", "IDRAK_CLUSTER_RUN", "IDRAK_CLUSTER_PARENT", "IDRAK_CLUSTER_RETRY_DELAY", "IDRAK_CLUSTER_SHM_BYTES", "IDRAK_CLUSTER_SHM_FOLDER",
     ];
 
     /// <summary>
@@ -320,6 +360,7 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_BUCKET_BYTES") is { } bucket) o = o with { BucketBytes = Size("IDRAK_CLUSTER_BUCKET_BYTES", bucket) };
         if (Read(variable, "IDRAK_CLUSTER_OVERLAP") is { } overlap) o = o with { Overlap = Flag("IDRAK_CLUSTER_OVERLAP", overlap) };
         if (Read(variable, "IDRAK_CLUSTER_COMPRESSION") is { } compression) o = o with { Compression = compression };
+        if (Read(variable, "IDRAK_CLUSTER_MESSAGE_COST") is { } messageCost) o = o with { MessageCost = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_MESSAGE_COST", messageCost, "a number of seconds, 0 or more", v => v >= 0)) };
         if (Read(variable, "IDRAK_CLUSTER_WIRE") is { } wire)
         {
             o = o with
@@ -349,6 +390,12 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_SHARE") is { } share) o = o with { SuggestShare = Number("IDRAK_CLUSTER_SUGGEST_SHARE", share, "a share from 0 to 1", v => v is >= 0 and <= 1) };
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE") is { } tolerance) o = o with { SuggestBFloat16Tolerance = Number("IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE", tolerance, "a number above 0", v => v > 0) };
         if (Read(variable, "IDRAK_CLUSTER_PROFILES_FILE") is { } profiles) o = o with { ProfilesFile = profiles };
+        if (Read(variable, "IDRAK_CLUSTER_DEVICE") is { } device) o = o with { Device = device };
+        if (Read(variable, "IDRAK_CLUSTER_RUN") is { } run) o = o with { RunId = run };
+        if (Read(variable, "IDRAK_CLUSTER_PARENT") is { } parent) o = o with { Parent = Whole("IDRAK_CLUSTER_PARENT", parent, 1) };
+        if (Read(variable, "IDRAK_CLUSTER_RETRY_DELAY") is { } delay) o = o with { RetryDelay = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_RETRY_DELAY", delay, "a number of seconds, 0 or more", v => v >= 0)) };
+        if (Read(variable, "IDRAK_CLUSTER_SHM_BYTES") is { } shm) o = o with { SharedMemoryBytes = Size("IDRAK_CLUSTER_SHM_BYTES", shm) };
+        if (Read(variable, "IDRAK_CLUSTER_SHM_FOLDER") is { } shmFolder) o = o with { SharedMemoryFolder = shmFolder };
         if (Read(variable, "IDRAK_CLUSTER_SEED") is { } seed) s = s with { Seed = int.TryParse(seed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v : throw Bad("IDRAK_CLUSTER_SEED", seed, "a whole number") };
         if (Read(variable, "IDRAK_CLUSTER_MODE") is { } mode) s = s with { Mode = Choice<SimulationMode>("IDRAK_CLUSTER_MODE", mode, "in-process or localhost") };
         if (Read(variable, "IDRAK_CLUSTER_THROTTLE") is { } throttle) s = s with { Throttle = Flag("IDRAK_CLUSTER_THROTTLE", throttle) };

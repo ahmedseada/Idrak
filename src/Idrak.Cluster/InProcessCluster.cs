@@ -80,8 +80,8 @@ public static class InProcessCluster
 {
     /// <summary>Runs <paramref name="work"/> on every rank of <paramref name="topology"/> and waits for them all.</summary>
     /// <exception cref="NotSupportedException">
-    /// The collective algorithm, the transport or the failure model is not registered; the plan joins the ranks over
-    /// several transports (an in-process cluster runs one); or faults are asked of a transport that is not "sim".
+    /// The collective algorithm, the transport or the failure model is not registered, or faults are asked of a transport
+    /// that is not "sim". A plan that joins pairs over several transports runs them routed per pair (phase C5).
     /// </exception>
     public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, Action<ClusterRank> work)
     {
@@ -93,14 +93,15 @@ public static class InProcessCluster
             Simulation = (options?.Simulation ?? new SimulationOptions()) with { Mode = SimulationMode.InProcess },
         };
         var plan = TransportPlan.Make(topology, options);
-        string transportName = plan.Single ?? (plan.Used.Count == 0
+        // One transport for every pair, or (phase C5) several routed per pair, each carrier connected once.
+        string? transportName = plan.Single ?? (plan.Used.Count == 0
             ? (string.Equals(options.Transport, "auto", StringComparison.OrdinalIgnoreCase) ? "sim" : options.Transport)
-            : throw new NotSupportedException($"The selector joins this cluster's ranks over several transports ({string.Join(", ", plan.Used)}); an in-process cluster runs one: force it with ClusterOptions.Transport (IDRAK_CLUSTER_TRANSPORT)."));
-        var transports = Transports.Get(transportName);
+            : null);
+        var transports = transportName is null ? null : Transports.Get(transportName);
         string failures = options.Simulation.Failures ?? topology.Simulation.Failures;
         if (!string.Equals(transportName, "sim", StringComparison.OrdinalIgnoreCase) && !string.Equals(failures, "none", StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotSupportedException($"Faults ('{failures}') are injected by the sim transport; this run uses '{transportName}': set IDRAK_CLUSTER_FAILURES=none, or let the selector choose sim.");
+            throw new NotSupportedException($"Faults ('{failures}') are injected by the sim transport; this run uses '{transportName ?? string.Join("+", plan.Used)}': set IDRAK_CLUSTER_FAILURES=none, or let the selector choose sim.");
         }
 
         var collectives = Collectives.Get(options.CollectiveFor(topology));
@@ -129,7 +130,7 @@ public static class InProcessCluster
                 ClusterRank? me = null;
                 try
                 {
-                    transport = transports.Connect(context);
+                    transport = transports is not null ? transports.Connect(context) : plan.Connect(context);
                     SimStepper? stepper = null;
                     if (transport is SimTransport sim)
                     {

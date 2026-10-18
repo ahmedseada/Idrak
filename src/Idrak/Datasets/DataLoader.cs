@@ -144,6 +144,58 @@ public sealed class DataLoader : IBatchSource
         return new Sharded(this, rank, world);
     }
 
+    /// <summary>
+    /// The epoch one step at a time for a data-parallel group whose ranks can change from step to step (plan 23, phase C4):
+    /// drawn as one process with batches of <paramref name="world"/> · <see cref="BatchSize"/> draws it, each step's samples
+    /// shared among the ranks that take part in it. <paramref name="place"/> is asked as each step is drawn: this rank's
+    /// place among the ranks taking part and their count, or null when it sits the step out. Sample i of a step goes to
+    /// place i mod count, so with every rank taking part rank r has the samples <see cref="Shard"/> gives it, in the same
+    /// order. Every rank yields one item a step, the same number on every rank: its batch, or null when it has none (it sits
+    /// the step out, or the step's last samples went to the others). A loader over a sample source only.
+    /// </summary>
+    internal IEnumerable<Batch?> StepShares(int world, Func<(int Place, int Count)?> place)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(world);
+        ArgumentNullException.ThrowIfNull(place);
+        var source = Source ?? throw new InvalidOperationException("Steps shared among a changing group need a loader over a sample source (a stream's length is not known ahead).");
+        return Steps(source, world, place);
+    }
+
+    private IEnumerable<Batch?> Steps(ISampleSource source, int world, Func<(int Place, int Count)?> place)
+    {
+        int epoch = Interlocked.Increment(ref _epoch) - 1;
+        int[] order = [.. Enumerable.Range(0, source.Count)];
+        if (Shuffle)
+        {
+            _random.Shuffle(order);
+        }
+
+        int perStep = world * BatchSize;
+        int steps = DropLast ? order.Length / perStep : (order.Length + perStep - 1) / perStep;
+        int f = _featureSize, t = _targetSize;
+        var buffer = (X: new float[perStep * f], Y: new float[perStep * t]);   // a group of one takes the whole step
+        for (int k = 0; k < steps; k++)
+        {
+            if (place() is not { } mine || mine.Count <= 0)
+            {
+                yield return null;
+                continue;
+            }
+
+            int start = k * perStep, size = Math.Min(perStep, order.Length - start), n = 0;
+            for (int i = mine.Place; i < size; i += mine.Count, n++)
+            {
+                int index = order[start + i];
+                var x = buffer.X.AsSpan(n * f, f);
+                var y = buffer.Y.AsSpan(n * t, t);
+                source.Read(index, x, y);
+                Transform(x, y, epoch, index);
+            }
+
+            yield return n == 0 ? null : MakeBatch(buffer, n, k);
+        }
+    }
+
     private IEnumerator<Batch> Enumerate(int rank, int world)
     {
         int epoch = Interlocked.Increment(ref _epoch) - 1;

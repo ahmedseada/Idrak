@@ -157,6 +157,30 @@ public sealed class TransportPlan
         return new TransportPlan(world, pairs, used);
     }
 
+    /// <summary>
+    /// Connects <paramref name="context"/>'s rank as this plan joins it: over the one transport every pair uses, or, where
+    /// pairs use different ones (shared memory inside a machine, TCP between machines), over each transport's carrier for
+    /// the ranks its pairs join, routed per peer (<see cref="ITransportProvider.Carrier"/>). Every rank connects the
+    /// carriers in the same order, so no rank waits on another in a circle. A collective's barrier and every message go to
+    /// the transport of their pair.
+    /// </summary>
+    /// <exception cref="NotSupportedException">A transport the plan names is no longer registered, or a network carrier's ranks leave out rank 0 (its coordinator).</exception>
+    public ITransport Connect(ClusterContext context, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Topology.WorldSize != WorldSize)
+        {
+            throw new ArgumentException($"The plan has {WorldSize} ranks; the context's topology {context.Topology.WorldSize}.", nameof(context));
+        }
+
+        if (Single is { } single)
+        {
+            return Transports.Get(single).Connect(context, cancellationToken);
+        }
+
+        return RoutedTransport.Connect(this, context, cancellationToken);
+    }
+
     private int Index(int rankA, int rankB)
     {
         if (rankA == rankB || (uint)rankA >= (uint)WorldSize || (uint)rankB >= (uint)WorldSize)

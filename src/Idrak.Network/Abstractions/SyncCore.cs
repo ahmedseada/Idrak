@@ -67,7 +67,9 @@ internal abstract class SyncCore : IGradientSync
     protected long StepsInGroup { get; private set; }
 
     /// <summary>Whether this rank takes part in the current step (always, in a fixed group).</summary>
-    protected bool Present => Collectives is not IStepGroup { Present: false };
+    protected bool Present => Collectives is IStepGroup group ? group.Present : _fixedPresent;
+
+    private bool _fixedPresent = true;
 
     protected int World => Collectives.WorldSize;
 
@@ -95,8 +97,11 @@ internal abstract class SyncCore : IGradientSync
     {
         if (Collectives is not IStepGroup group)
         {
+            // A fixed group (a localhost or started cluster's processes, a real one): every rank takes part, until a replay's
+            // last step (SimulationOptions.ReplayStep, every rank alike) as ClusterRank.BeginStep has it.
             CurrentStep = step;
-            return true;
+            _fixedPresent = Options.Simulation.ReplayStep is not { } last || step <= last;
+            return _fixedPresent;
         }
 
         if (!group.BeginStep(step))
@@ -136,6 +141,8 @@ internal abstract class SyncCore : IGradientSync
             {
                 Rebalance();
             }
+
+            (Collectives as HostCollectives)?.ReportStep(step);   // separate processes: every rank's step goes to rank 0's log (C5)
         }
 
         _mark = Stopwatch.GetTimestamp();
