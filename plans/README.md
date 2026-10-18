@@ -13,7 +13,7 @@ audience first.
 | 3 | [AMD](3-amd.md) | Radeon RX 6000/7000/9000, Ryzen APU graphics, Instinct | not supported (runs on the CPU) | the largest group of GPUs without support; builds the Vulkan backend the Intel plan reuses |
 | 4 | [Intel](4-intel.md) | Iris Xe and Arc integrated GPUs, Arc discrete GPUs, AI Boost NPUs | not supported (runs on the CPU) | GPUs come almost free once plan 3's backend exists; the NPU is inference-only, an add-on, and last |
 | 5 | [Apple](5-apple.md) | Apple silicon Macs (M1–M4 GPU, Neural Engine) | not supported on the GPU; macOS untested | a smaller audience for this library, and a third kernel language (Metal); a Mac test run fills CPU gaps early |
-| 6 | [Idrak.Network](6-network.md) | several GPUs or machines on one job; several machines serving one API | detailed, not started (one device per model, one machine per server) | a new package rather than new hardware; useful to NVIDIA users now, so it can run alongside plans 3–5 |
+| 6 | [Idrak.Cluster and Idrak.Network](23-cluster.md) | a cluster of GPUs and machines simulated on one GPU (fake devices with hard caps, link profiles, a virtual clock that predicts a cluster's step time, seeded failures replayed bit for bit); every real transport (shared memory, host-staged and peer copies, direct link, TCP) measured on real links and calibrated back into the profiles; data parallel, topology-aware all-reduce, sharding and pipelines on top | planned 2026-10-18, nothing built; supersedes [plan 6](6-network.md) | everything distributed is proven locally and deterministically first; real machines only measure speed |
 | 7 | [Backends](7-backends.md) | a minimum backend (12 core operations, host fallbacks), devices by provider, public KV cache formats, the Vulkan backend (Intel GPUs first) | in progress on `architecture` | the shared work plans 3–5 wait on, then the first new backend |
 | 8 | [HIP](8-hip.md) | AMD GPUs through ROCm (Linux) and the HIP SDK (Windows): HIP runtime, hipRTC kernels | first slice on `backend/hip`, untested on real hardware | the third backend family (after CUDA and Vulkan): memory and copies on the device, a first kernel set, host fallbacks for the rest; input for the public backend API |
 
@@ -281,8 +281,9 @@ and the Intel plans need them.
    time allows.
 7. **Apple:** a test and `--bench-cpu` run on a Mac as soon as one is available (fills the CPU plan's macOS and ARM64
    gaps); the Metal backend after the Intel GPUs.
-8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: training over a local network first, for every kind
-   of training (machines over TCP, bfloat16 gradients), then several GPUs in one machine, models split across GPUs, and cluster serving.
+8. **Idrak.Cluster and Idrak.Network ([plan 23](23-cluster.md)):** the simulator first (fake devices, link profiles, the
+   virtual clock, failures and replay), data parallel and the topology-aware all-reduce proven on it, then the real
+   transports on localhost, the home LAN and a rental for speed and calibration, then sharding and pipelines.
 9. **High priority (see "Not supported yet"): AMD ROCm / HIP and NPUs.** A HIP backend for AMD's own compute stack
    (first slice: [plan 8](8-hip.md)), and the NPU add-ons, Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a
    one-week trial first.

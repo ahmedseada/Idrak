@@ -1,6 +1,10 @@
 # Plan 6: Idrak.Network (several devices and machines on one job; several machines serving one API)
 
-**Status:** sketched earlier; detailed 2026-10-15 against the code at `abstraction` 82d84937; not started. Idrak runs
+**Superseded (2026-10-18) by [plan 23](23-cluster.md), Idrak.Cluster and Idrak.Network.** Kept as history only:
+nothing is built from this file, and plan 23 does not depend on it. Where plan 23 reuses an idea from here (the fixed
+summation order, the wire header, the HMAC hello, the rank's share of the draw) it restates it in its own terms.
+
+**Status:** sketched earlier; detailed 2026-10-15 against the code at `abstraction` 82d84937; not started; superseded. Idrak runs
 every model on one device: several GPUs in one machine can each run their own model (`Device.Cuda(n)`), but one
 training job or one model cannot use more than one device, and the serving packages (`Idrak.AspNetCore`, the inference
 engine) run on one machine.
