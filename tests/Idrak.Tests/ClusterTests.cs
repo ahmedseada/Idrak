@@ -111,6 +111,9 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_REPLAY_STEP"] = "12", ["IDRAK_CLUSTER_CLOCK"] = "simulated",
             // C3: the carving device, the event log's file and whether it records transfers.
             ["IDRAK_CLUSTER_CARVE_FROM"] = "cpu", ["IDRAK_CLUSTER_EVENT_LOG"] = "run.events", ["IDRAK_CLUSTER_LOG_TRANSFERS"] = "0",
+            // C5: the rank's device, the run's name, the launcher, the rendezvous's retry wait, the shared-memory rings.
+            ["IDRAK_CLUSTER_DEVICE"] = "cuda:1", ["IDRAK_CLUSTER_RUN"] = "run-7", ["IDRAK_CLUSTER_PARENT"] = "4242", ["IDRAK_CLUSTER_RETRY_DELAY"] = "0.25",
+            ["IDRAK_CLUSTER_SHM_BYTES"] = "1MB", ["IDRAK_CLUSTER_SHM_FOLDER"] = "rings",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();
@@ -123,6 +126,8 @@ internal static partial class Tests
 
         var all = ClusterOptions.From(n => good.GetValueOrDefault(n), null);
         Check(all is { RebalanceSteps: 5, RebalanceTolerance: 0.25, GradientSync: "mine", StartingState: StartingState.Check }, $"the data-parallel settings parsed: {all}");
+        Check(all is { Device: "cuda:1", RunId: "run-7", Parent: 4242, SharedMemoryBytes: 1L << 20, SharedMemoryFolder: "rings" } && all.RetryDelay == TimeSpan.FromSeconds(0.25),
+            $"the C5 settings parsed: {all}");
         Check(all is { Rank: 2, WorldSize: 4, Wire: WireType.BFloat16, Shard: ShardMode.Parameters, ChunkBytes: 4L << 20, SocketBufferBytes: 512L << 10, BucketBytes: 25L << 20,
                   TopK: 0.01, ErrorFeedback: false, LocalSgdEvery: 4, Simulation: { Seed: 7, Mode: SimulationMode.Localhost, Throttle: false, Failures: "mixed", ReplayStep: 12, Clock: ThroughputClock.Simulated,
                       CarveFrom: "cpu", EventLog: "run.events", LogTransfers: false } }

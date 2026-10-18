@@ -205,6 +205,7 @@ internal sealed class GradientReduction : IGradientSync
             }
         }
 
+        _host?.ReportStep(step);                               // separate processes: every rank's step goes to rank 0's log
         _mark = Stopwatch.GetTimestamp();
     }
 
