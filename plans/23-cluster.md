@@ -1,8 +1,7 @@
 # Plan 23: Idrak.Cluster and Idrak.Network (a cluster simulated on one GPU; real transports measured on real links)
 
 **Status (2026-10-18, `abstraction`):** planned 2026-10-18 from the owner's spec (plan 23, draft 2) against fec56e1.
-C0-C7, C8a and C9 are built and merged; C8b (memory and speed) and C8c (the setting advisor, decision 4) are in
-progress. Each phase's "as built" note below has the details; the owner's GPU runs are listed per phase.
+C0-C7, C8a, C8b and C9 are built and merged; C8c (the setting advisor, decision 4) is in progress. Each phase's "as built" note below has the details; the owner's GPU runs are listed per phase.
 
 | Phase | What | State |
 |---|---|---|
@@ -12,10 +11,10 @@ progress. Each phase's "as built" note below has the details; the owner's GPU ru
 | C3 | Hierarchical all-reduce, transport selection, faults, replay | Done (92401af); CPU, CUDA, Vulkan pass |
 | C4 | Overlap, measured buckets, compression, local SGD, faults in training | Done (dcb68ec); CPU, CUDA, Vulkan pass |
 | C5 | Real transports, localhost mode, `cluster start`, `cluster bench` | Done (dcb68ec); CPU, CUDA, Vulkan pass |
-| C6 | ZeRO sharding, flow control, GPU staging, shared-memory wake-up | Done (cb514b4); GPU: 262,148 B above a shard's share (C8b) |
-| C7 | Pipeline parallelism | Done (00a0d8f); CUDA: a stage 252 B short of its tensors (C8b) |
+| C6 | ZeRO sharding, flow control, GPU staging, shared-memory wake-up | Done (cb514b4); GPU: 262,148 B above a shard's share, fixed in C8b, owner's GPU run pending |
+| C7 | Pipeline parallelism | Done (00a0d8f); CUDA: a stage 252 B short of its tensors, test made to name it in C8b, owner's GPU run pending |
 | C8a | `replay`, `calibrate`, `transports`, `--profile`, `--cluster` on the training commands | Done (7c41b8d); owner's GPU run pending |
-| C8b | Own-tensor loads and saves, device-to-device activations, direct wake, train/tune stops | In progress |
+| C8b | Own-tensor loads and saves, device-to-device activations, direct wake, train/tune stops | Done (e016c9f); CPU passes, owner's GPU run pending |
 | C8c | The `"cluster"` setting advisor (decision 4) | In progress |
 | C9 | The dashboard (`idrak cluster ui`) | Done (8e4b84c); CPU, CUDA pass |
 
