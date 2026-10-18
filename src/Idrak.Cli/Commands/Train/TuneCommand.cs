@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
 using Idrak.Nlp.Abstractions;
 
@@ -47,6 +48,12 @@ internal sealed class TuneCommand : Command
           and the options of each command above (Data, Training, Evaluate, Chat, Model). MODEL may be an alias from the
           config (its weights and KV format apply unless given); --json prints one JSON document at the end with the
           command's output lines.
+              --cluster FILE   train as one rank of a real cluster of the topology file (idrak cluster init writes one): its
+                               device count is the world size, and this host's node (--node) gives the rank; on a node of
+                               several workers IDRAK_RANK names this process's (--rank stays the adapter's rank)
+              --node NAME      this machine's node of the file (the node named after this host; IDRAK_CLUSTER_NODE)
+              --coordinator H:P  where rank 0 listens (the file's first node's address; IDRAK_COORDINATOR)
+              --world-size N   the ranks of a cluster without a file, with --coordinator and IDRAK_RANK (IDRAK_WORLD_SIZE)
 
         Examples:
           idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl && idrak tune --config tune.json
@@ -57,10 +64,11 @@ internal sealed class TuneCommand : Command
           idrak tune -P plugins/MyVision.dll -b owner/vlm --data train.json --eval val.json --images images.zip
               --train-projector --metric cer --metric-every 100 -w int4 -o adapters/ocr
           idrak tune evaluate owner/vlm val.json --images images.zip --adapter adapters/ocr --metric cer -P plugins/MyVision.dll
+          idrak tune train -b qwen chats.jsonl -o adapters/chat --rank 16 --cluster lan.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        [.. TuneTool.ValueOptions.Where(o => o is not ("--device" or "--seed")), "--weights", "--base", "--data"];      // --device and --seed are common options
+        [.. TuneTool.ValueOptions.Where(o => o is not ("--device" or "--seed")), "--weights", "--base", "--data", .. ClusterJoin.Options];      // --device and --seed are common options
 
     public override IReadOnlyCollection<string> Flags => TuneTool.Flags;
 
@@ -71,6 +79,7 @@ internal sealed class TuneCommand : Command
 
     public override int Run(CommandContext context)
     {
+        using var cluster = ClusterJoin.Join(context, ownsRank: true);    // --cluster FILE: one rank of a real cluster; --rank is the adapter's
         var settings = ReadSettings(context);
         var positional = context.Positional.ToList();
         string? command = positional.Count > 0 && TuneTool.Commands.Contains(positional[0]) ? positional[0] : null;
@@ -124,7 +133,7 @@ internal sealed class TuneCommand : Command
             args.AddRange(["--device", device]);
         }
 
-        foreach (string option in ValueOptions.Where(o => o is not ("--weights" or "--base" or "--data")).Append("--seed"))
+        foreach (string option in ValueOptions.Where(o => o is not ("--weights" or "--base" or "--data") && !ClusterJoin.Options.Contains(o)).Append("--seed"))
         {
             var values = option == "--kv" && choice.Kv is { } kv ? [kv] : context.Options(option);
             if (values.Count == 0 && Text(settings, option[2..]) is { } fromFile)

@@ -96,7 +96,7 @@ internal sealed class DashboardRun
     public bool Going => !Ended.Contains(State) && Kind != RunKind.Followed;
 
     /// <summary>The event log of an in-process run, in its run folder.</summary>
-    public string? EventLogPath => Folder is null ? null : Path.Combine(Folder, "cluster-events.bin");
+    public string? EventLogPath => Folder is null ? null : Path.Combine(Folder, ClusterSimCommand.EventLogFile);
 
     /// <summary>The control file of a localhost run, in its run folder.</summary>
     public string ControlPath => Path.Combine(Folder ?? Path.GetTempPath(), "cluster-control");

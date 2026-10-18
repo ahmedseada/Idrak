@@ -43,6 +43,39 @@ public enum Idrak.Abstraction.BoxOverlap : int
   GIoU = 1
   IoU = 0
 
+public sealed record Idrak.Abstraction.Cluster.CalibratedLink : System.IEquatable<Idrak.Abstraction.Cluster.CalibratedLink>
+  public CalibratedLink(string Link, double BandwidthBytesPerSecond, System.TimeSpan Latency, System.TimeSpan Jitter, double Residual, int Samples, double AdapterBytesPerSecond, System.DateTimeOffset Calibrated, string Source)
+  public Idrak.Abstraction.Cluster.ILinkProfile Apply(Idrak.Abstraction.Cluster.ILinkProfile profile)
+  public System.DateTimeOffset Calibrated { get; init; }
+  public System.TimeSpan Jitter { get; init; }
+  public System.TimeSpan Latency { get; init; }
+  public double AdapterBytesPerSecond { get; init; }
+  public double BandwidthBytesPerSecond { get; init; }
+  public double Residual { get; init; }
+  public int Samples { get; init; }
+  public string Link { get; init; }
+  public string Source { get; init; }
+
+public static class Idrak.Abstraction.Cluster.ClusterCache
+  public const string ProfilesHeader = "idrak-cluster-profiles 1"
+  public const string TuningHeader = "idrak-cluster-tuning 1"
+  public static Idrak.Abstraction.Cluster.CalibratedLink? Calibrated(string link, string? file = null)
+  public static Idrak.Abstraction.Cluster.ClusterTuning? FindTuning(string kind, string key, string? file = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.CalibratedLink> AllCalibrated(string? file = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.CalibratedLink> ParseProfiles(string text)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterTuning> AllTuning(string? file = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterTuning> ParseTuning(string text)
+  public static System.Collections.Generic.IReadOnlyList<string> ProfileFiles(string? file = null)
+  public static bool KeepsProfiles(string? file = null)
+  public static string SerializeProfiles(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Cluster.CalibratedLink> links)
+  public static string SerializeTuning(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Cluster.ClusterTuning> entries)
+  public static string? Folder { get; }
+  public static string? Keep(Idrak.Abstraction.Cluster.CalibratedLink calibrated, string? file = null)
+  public static string? Keep(Idrak.Abstraction.Cluster.ClusterTuning entry, string? file = null)
+  public static string? ProfilePath(string link, string? file = null)
+  public static string? ProfilesFile(string? file = null)
+  public static string? TuningPath(string? file = null)
+
 public sealed record Idrak.Abstraction.Cluster.ClusterContext : System.IEquatable<Idrak.Abstraction.Cluster.ClusterContext>
   public ClusterContext(Idrak.Abstraction.Cluster.IClusterTopology Topology, int Rank, Idrak.Abstraction.Cluster.ClusterOptions Options)
   public Idrak.Abstraction.Cluster.ClusterNodeSpec Node { get; }
@@ -77,10 +110,12 @@ public sealed class Idrak.Abstraction.Cluster.ClusterKey
   public static Idrak.Abstraction.Cluster.ClusterKey FromText(string text)
 
 public sealed record Idrak.Abstraction.Cluster.ClusterLinkOverride : System.IEquatable<Idrak.Abstraction.Cluster.ClusterLinkOverride>
-  public ClusterLinkOverride(string A, string B, string Link)
+  public ClusterLinkOverride(string A, string B, string Link, string? AddressA = null, string? AddressB = null)
   public string A { get; init; }
   public string B { get; init; }
   public string Link { get; init; }
+  public string? AddressA { get; init; }
+  public string? AddressB { get; init; }
 
 public sealed record Idrak.Abstraction.Cluster.ClusterNodeSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterNodeSpec>
   public ClusterNodeSpec(string Name, string? Address, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterDeviceSpec> Devices)
@@ -127,6 +162,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public int? Rank { get; init; }
   public int? Stages { get; init; }
   public int? WorldSize { get; init; }
+  public long ChunkProbeBytes { get; init; }
   public long SharedMemoryBytes { get; init; }
   public long? BucketBytes { get; init; }
   public long? ChunkBytes { get; init; }
@@ -152,6 +188,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public string? RunId { get; init; }
   public string? SharedMemoryFolder { get; init; }
   public string? Topology { get; init; }
+  public string? TuningFile { get; init; }
 
 public sealed class Idrak.Abstraction.Cluster.ClusterRunStoppedException : System.OperationCanceledException
   public ClusterRunStoppedException()
@@ -183,9 +220,18 @@ public sealed class Idrak.Abstraction.Cluster.ClusterTopology : Idrak.Abstractio
   public static long ParseMemory(System.ReadOnlySpan<char> text)
   public static string FormatMemory(long bytes)
   public string ToJson()
+  public string? AddressOf(int rank, int from)
   public string? Coordinator { get; }
   public string? InterNode { get; }
   public string? IntraNode { get; }
+
+public sealed record Idrak.Abstraction.Cluster.ClusterTuning : System.IEquatable<Idrak.Abstraction.Cluster.ClusterTuning>
+  public ClusterTuning(string Kind, string Key, long Value, System.DateTimeOffset Measured, string Detail)
+  public System.DateTimeOffset Measured { get; init; }
+  public long Value { get; init; }
+  public string Detail { get; init; }
+  public string Key { get; init; }
+  public string Kind { get; init; }
 
 public static class Idrak.Abstraction.Cluster.Collectives
   public static Idrak.Abstraction.Cluster.ICollectivesProvider Get(string name)
@@ -245,6 +291,7 @@ public static class Idrak.Abstraction.Cluster.GradientSyncs
   public static void Register(Idrak.Abstraction.Cluster.IGradientSyncProvider provider)
 
 public interface Idrak.Abstraction.Cluster.IClusterTopology
+  public (default) string? AddressOf(int rank, int from)
   public (int, int) Place(int rank)
   public Idrak.Abstraction.Cluster.ClusterSimulationSpec Simulation { get; }
   public Idrak.Abstraction.Cluster.ILinkProfile Link(int rankA, int rankB)
@@ -384,6 +431,7 @@ public sealed record Idrak.Abstraction.Cluster.LinkProfile : Idrak.Abstraction.C
   public System.TimeSpan Jitter { get; init; }
   public System.TimeSpan Latency { get; init; }
   public System.TimeSpan Predict(long bytes, System.Random seeded)
+  public double AdapterBytesPerSecond { get; init; }
   public double BandwidthBytesPerSecond { get; init; }
   public double FailureRate { get; init; }
   public double LossRate { get; init; }
@@ -486,6 +534,7 @@ public sealed record Idrak.Abstraction.Cluster.SimulationOptions : System.IEquat
   public System.TimeSpan ControlPoll { get; init; }
   public bool LogTransfers { get; init; }
   public bool Throttle { get; init; }
+  public int EventLogFlushSteps { get; init; }
   public int? Seed { get; init; }
   public long? ReplayStep { get; init; }
   public string? CarveFrom { get; init; }

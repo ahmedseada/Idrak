@@ -88,9 +88,16 @@ internal abstract class SyncCore : IGradientSync
                 Broadcast(Parameters);
                 HostGradients?.ReloadParameters();
             }
+
+            Started();
         }
 
         _mark = Stopwatch.GetTimestamp();
+    }
+
+    /// <summary>Every rank of the group started (a collective step every rank takes, after the starting state).</summary>
+    protected virtual void Started()
+    {
     }
 
     public bool BeginStep(long step)

@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Diagnostics;
+using System.Globalization;
 using Idrak.Networking.Abstractions;
 using Idrak.Networking.Compression;
 
@@ -637,6 +638,37 @@ internal sealed partial class GradientReduction : SyncCore
         }
     }
 
+    /// <summary>The kind of entry the measured bucket size is kept under in the tuning cache.</summary>
+    internal const string BucketKind = "bucket";
+
+    // What a kept bucket size was measured for: the synchronisation, the algorithm, the ranks, the device kind, the gradients'
+    // values and the compression (no spaces: the cache's lines are split on them).
+    private string BucketKey => string.Create(CultureInfo.InvariantCulture,
+        $"{Name}/{Collectives.Name}/{World}/{Collectives.Device.Type}/{_layout.Total}/{_compressor.Name}").Replace(' ', '_');
+
+    // Over a real transport an unset bucket size kept by an earlier run of the same shape is used from the first step, when
+    // every rank kept the same (each machine has its own cache); on a virtual clock it is measured each run (cheap and the
+    // same every time, from the clock).
+    protected override void Started()
+    {
+        if (_sized || Values.SimulatedTime > TimeSpan.Zero || Collectives.Transport?.SimulatedCriticalRank is not null)
+        {
+            return;
+        }
+
+        long kept = ClusterCache.FindTuning(BucketKind, BucketKey, Options.TuningFile) is { Value: > 0 and var bytes } ? ValuesOf(bytes) : 0;
+        Span<float> agree = [kept >> 20, kept & ((1 << 20) - 1), -(kept >> 20), -(kept & ((1 << 20) - 1))];   // each part exact in float32
+        Values.AllReduce(agree, WireType.Float32, ReduceOp.Max);
+        if (kept > 0 && agree[0] == -agree[2] && agree[1] == -agree[3])
+        {
+            _sized = true;
+            if (kept != _layout.BucketValues)
+            {
+                _layout = NewLayout((int)kept);
+            }
+        }
+    }
+
     // The first step's figures, the largest of each over every rank, choose the bucket size from the next step on: the
     // backward pass's time, the latency (a tiny collective timed after another, which takes any transfer still queued on the
     // links) and a bucket's time (the slowest, the first collective after the backward pass aside unless it is the only one).
@@ -676,6 +708,24 @@ internal sealed partial class GradientReduction : SyncCore
         long headerValues = 2L * (World - 1) * WireFormat.HeaderBytes / sizeof(float);   // a ring's messages each carry a header
         int values = BucketSizing.Choose(_layout.Total, figures[0], figures[1], figures[2], bucketValues, figures[3], headerValues);
         _sized = true;
+        if (!onClock)
+        {
+            // Kept for the next run of this shape (and shown by idrak tuning show) with the figures that chose it.
+            var inv = CultureInfo.InvariantCulture;
+            string detail = $"backward {(figures[0] * 1e3).ToString("F2", inv)} ms, latency {(figures[1] * 1e6).ToString("F0", inv)} us, "
+                            + $"a bucket of {((long)bucketValues * sizeof(float)).ToString(inv)} B {(figures[2] * 1e3).ToString("F2", inv)} ms, "
+                            + $"{((_layout.Total + values - 1) / values).ToString(inv)} bucket(s)";
+            string bucketKey = BucketKey;
+            try
+            {
+                ClusterCache.Keep(new ClusterTuning(BucketKind, bucketKey, (long)values * sizeof(float), DateTimeOffset.Now, detail), Options.TuningFile);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // A cache that cannot be written: the next run measures again.
+            }
+        }
+
         if (values != _layout.BucketValues)
         {
             _layout = NewLayout(values);

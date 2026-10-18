@@ -124,7 +124,7 @@ public sealed class TopologyBuilder
         _given = given ?? new Dictionary<string, string>();
         foreach (string key in _given.Keys.Where(k => !KnownKey(k)))
         {
-            throw new ArgumentException($"'{key}' is not a question of the topology builder (nodes, node.N.name, node.1.address, node.N.devices, node.N.device.M.memory, intra-node, inter-node, overrides, seed, failures).");
+            throw new ArgumentException($"'{key}' is not a question of the topology builder (nodes, node.N.name, node.1.address, node.N.devices, node.N.device.M.memory, intra-node, inter-node, overrides, override.N.address, seed, failures).");
         }
 
         TakeGiven();
@@ -191,8 +191,17 @@ public sealed class TopologyBuilder
             specs.Add(new ClusterNodeSpec(_answers[$"node.{i}.name"], i == 1 && _answers["node.1.address"] is { Length: > 0 } a ? a : null, devices));
         }
 
+        var overrides = Overrides(_answers.GetValueOrDefault("overrides") ?? "");
+        for (int i = 0; i < overrides.Count; i++)
+        {
+            if (_answers.GetValueOrDefault($"override.{i + 1}.address") is { Length: > 0 } cable && CableAddresses(cable) is var (first, second))
+            {
+                overrides[i] = overrides[i] with { AddressA = first, AddressB = second };
+            }
+        }
+
         return ClusterTopology.Create(specs, _answers.GetValueOrDefault("intra-node") is { Length: > 0 } intra ? intra : null,
-            _answers.GetValueOrDefault("inter-node") is { Length: > 0 } inter ? inter : null, Overrides(_answers.GetValueOrDefault("overrides") ?? ""),
+            _answers.GetValueOrDefault("inter-node") is { Length: > 0 } inter ? inter : null, overrides,
             new ClusterSimulationSpec(int.Parse(_answers["seed"], CultureInfo.InvariantCulture), _answers["failures"]));
     }
 
@@ -247,8 +256,9 @@ public sealed class TopologyBuilder
         }
 
         w.Append("    \"overrides\": [");
-        w.Append(string.Join(", ", topology.Overrides.Select(o => $"{{ \"between\": [{Q(o.A)}, {Q(o.B)}], \"type\": {Q(o.Link)} }}")));
-        w.Append("]   // pairs of machines with a link of their own (a cable that skips the switch)\n");
+        w.Append(string.Join(", ", topology.Overrides.Select(o => $"{{ \"between\": [{Q(o.A)}, {Q(o.B)}], \"type\": {Q(o.Link)}"
+            + (o.AddressA is not null || o.AddressB is not null ? $", \"address\": [{(o.AddressA is { } a ? Q(a) : "null")}, {(o.AddressB is { } b ? Q(b) : "null")}]" : "") + " }")));
+        w.Append("]   // pairs of machines with a link of their own (a cable that skips the switch; \"address\": each end's address on it)\n");
         w.Append("  },\n");
         w.Append("  \"simulation\": {\n");
         w.Append($"    \"seed\": {topology.Simulation.Seed.ToString(CultureInfo.InvariantCulture)},   // fixes jitter and faults: a simulated run replays bit for bit\n");
@@ -302,6 +312,14 @@ public sealed class TopologyBuilder
             {
                 yield return "inter-node";
                 yield return "overrides";
+                if (_answers.TryGetValue("overrides", out string? given))
+                {
+                    int count = Overrides(given).Count;
+                    for (int i = 1; i <= count; i++)
+                    {
+                        yield return $"override.{i}.address";
+                    }
+                }
             }
 
             yield return "seed";
@@ -328,6 +346,7 @@ public sealed class TopologyBuilder
     {
         string[] parts = key.Split('.');
         return key is "nodes" or "intra-node" or "inter-node" or "overrides" or "seed" or "failures" or "node.1.address"
+               || (parts.Length == 3 && parts[0] == "override" && int.TryParse(parts[1], out _) && parts[2] == "address")
                || (parts.Length == 3 && parts[0] == "node" && int.TryParse(parts[1], out _) && parts[2] is "name" or "devices")
                || (parts.Length == 5 && parts[0] == "node" && int.TryParse(parts[1], out _) && parts[2] == "device" && int.TryParse(parts[3], out _) && parts[4] == "memory");
     }
@@ -341,6 +360,19 @@ public sealed class TopologyBuilder
 
         string[] parts = key.Split('.');
         string first = _facts.Devices.FirstOrDefault(d => d.Type != DeviceType.Cpu)?.Device ?? "cpu";
+        if (parts.Length == 3 && parts[0] == "override")
+        {
+            var o = Overrides(_answers["overrides"])[int.Parse(parts[1], CultureInfo.InvariantCulture) - 1];
+            var others = OtherAdapters();
+            return new(key, $"Addresses of {o.A} and {o.B} on their own link ({o.A}'s,{o.B}'s; empty for their node addresses)?",
+                "A cable on a subnet of its own reaches each machine at an address the LAN does not use; the direct-link transport\n" +
+                "dials it. Give each end's address on the cable (a host; a port is ignored), or leave one side empty for its node's.",
+                "",
+                others.Count > 0
+                    ? $"this machine's adapters off the LAN: {string.Join(", ", others.Select(a => $"{a.Address} ({a.Adapter})"))}"
+                    : "none found off the LAN here: the nodes' own addresses");
+        }
+
         switch (key)
         {
             case "nodes":
@@ -417,6 +449,11 @@ public sealed class TopologyBuilder
         string[] parts = key.Split('.');
         try
         {
+            if (parts.Length == 3 && parts[0] == "override")
+            {
+                return value.Length == 0 || CableAddresses(value) is not null ? null : "two addresses separated by ',' (a side left empty takes its node's address)";
+            }
+
             switch (key)
             {
                 case "nodes":
@@ -474,6 +511,49 @@ public sealed class TopologyBuilder
         Enumerable.Range(1, Nodes).Any(i => _answers.GetValueOrDefault($"node.{i}.name")?.Equals(name, StringComparison.OrdinalIgnoreCase) == true)
             ? name
             : throw new ArgumentException($"no node is named {name}");
+
+    // "a,b" (either side may be empty: its node's address) as the two ends' addresses, or null when it is not that.
+    private static (string? First, string? Second)? CableAddresses(string text)
+    {
+        var parts = text.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 || parts.All(p => p.Length == 0) || parts.Any(p => p.Any(char.IsWhiteSpace)))
+        {
+            return null;
+        }
+
+        return (parts[0].Length > 0 ? parts[0] : null, parts[1].Length > 0 ? parts[1] : null);
+    }
+
+    // This machine's IPv4 addresses on adapters other than the LAN's (a cable's own subnet), for the cable question's suggestion.
+    private List<(string Address, string Adapter)> OtherAdapters()
+    {
+        var found = new List<(string, string)>();
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up || nic.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel)
+                {
+                    continue;
+                }
+
+                foreach (var address in nic.GetIPProperties().UnicastAddresses.Select(a => a.Address).Where(a => a.AddressFamily == AddressFamily.InterNetwork))
+                {
+                    string text = address.ToString();
+                    if (text != _facts.Address && !text.StartsWith("169.254.", StringComparison.Ordinal))
+                    {
+                        found.Add((text, nic.Name));
+                    }
+                }
+            }
+        }
+        catch (Exception e) when (e is NetworkInformationException or PlatformNotSupportedException)
+        {
+            // No adapters to read here: no suggestion.
+        }
+
+        return found;
+    }
 
     private static List<ClusterLinkOverride> Overrides(string text)
     {

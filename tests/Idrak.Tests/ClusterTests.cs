@@ -123,6 +123,8 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_GATHER_BYTES"] = "64MB", ["IDRAK_CLUSTER_SHM_SPIN"] = "0.0001", ["IDRAK_CLUSTER_SHM_CHECK"] = "2",
             // C7: a pipeline's stages and how they are cut.
             ["IDRAK_CLUSTER_STAGES"] = "2", ["IDRAK_CLUSTER_PIPELINE_BALANCE"] = "memory", ["IDRAK_CLUSTER_PIPELINE_CUTS"] = "3,6",
+            // C8: the chunk measurement's probe, the measured sizes' file, the event log's flush interval.
+            ["IDRAK_CLUSTER_CHUNK_PROBE"] = "1MB", ["IDRAK_CLUSTER_TUNING_FILE"] = "sizes.txt", ["IDRAK_CLUSTER_EVENT_LOG_FLUSH"] = "4",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();
@@ -149,6 +151,7 @@ internal static partial class Tests
                       CarveFrom: "cpu", EventLog: "run.events", LogTransfers: false } }
               && all.Timeout == TimeSpan.FromSeconds(2.5) && all.Key is not null,
             $"every value parsed: {all}");
+        Check(all is { ChunkProbeBytes: 1L << 20, TuningFile: "sizes.txt", Simulation.EventLogFlushSteps: 4 }, $"the C8 settings parsed: {all}");
         Check(!all.ToString().Contains("owner", StringComparison.Ordinal) && all.ToString().Contains("(secret)", StringComparison.Ordinal), "the key never in ToString");
         foreach (var (name, value, expected) in new[]
                  {

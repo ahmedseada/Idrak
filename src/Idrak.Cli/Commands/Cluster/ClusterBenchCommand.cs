@@ -21,36 +21,43 @@ internal sealed class ClusterBenchCommand : Command
     /// <summary>The line rank 0 writes with the rows, for the command that started it.</summary>
     internal const string RowsMarker = "idrak-cluster-bench ";
 
+    /// <summary>The line rank 0 writes with the concurrent pairs' rows.</summary>
+    internal const string ConcurrentMarker = "idrak-cluster-bench-concurrent ";
+
     public override string Name => "cluster bench";
 
     public override string Summary => "Measures the bandwidth and latency of every pair of ranks of a cluster, cold and warm apart";
 
     public override string Usage => """
-        --topology FILE [--bytes N] [--rounds N] [--node NAME | --localhost]
+        --topology FILE [--bytes N] [--rounds N] [--concurrent] [--node NAME | --localhost]
 
         Measures every pair of ranks of the topology file over the transport the cluster would use for it, one pair at a
         time: half the round trip of an empty message (latency) and a message of --bytes with its answer (bandwidth).
         The first round (cold: connections, compiling) is shown apart from the median of the warm ones. Run it on every
         machine of the cluster, as idrak cluster start runs a command: each starts its node's ranks, and the machine of
         rank 0 prints the table. With --localhost every rank of the file runs on this machine, the links paced to their
-        profiles (IDRAK_CLUSTER_THROTTLE=0 measures this machine's own pipes). -j prints the rows as JSON, the input of a
-        calibration.
+        profiles (IDRAK_CLUSTER_THROTTLE=0 measures this machine's own pipes). --concurrent also measures, between every
+        two machines of two or more ranks, as many pairs at once as the smaller holds: what they move together against
+        one pair alone shows a network adapter the machine's ranks share. -j prints the rows as JSON, the input of
+        idrak cluster calibrate.
 
         Options:
               --topology FILE  the topology file (idrak cluster init writes one)
               --bytes N        the message the bandwidth is measured with: B, KB, MB, GB (16MB)
               --rounds N       the warm rounds after the cold one (5)
+              --concurrent     also measure the pairs between two machines at once (a shared network adapter)
               --node NAME      this machine's node (the node named after this host)
               --localhost      every rank of the file on this machine, paced to the links
 
         Examples:
           idrak cluster bench --topology lan.json
           idrak cluster bench --topology two.json --localhost --bytes 4MB --rounds 3 -j
+          idrak cluster bench --topology lan.json --concurrent -j > bench.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--topology", "--bytes", "--rounds", "--node"];
 
-    public override IReadOnlyCollection<string> Flags => ["--localhost"];
+    public override IReadOnlyCollection<string> Flags => ["--localhost", "--concurrent"];
 
     public override int Run(CommandContext context)
     {
@@ -74,9 +81,16 @@ internal sealed class ClusterBenchCommand : Command
         var progress = new Progress(p => context.Write(string.Create(inv,
             $"pair {p.Done} of {p.Total} (ranks {p.RankA} and {p.RankB}), {100.0 * p.Done / p.Total:F0}%, {p.Elapsed.TotalSeconds:F1} s, {p.Elapsed.TotalSeconds / p.Done * (p.Total - p.Done):F1} s left")));
         var rows = LinkBench.Run(joined.Rank.Transport, bench, (a, b) => joined.Plan[a, b].Transport, progress);
+        IReadOnlyList<LinkBenchConcurrentRow> together = context.Flag("--concurrent")
+            ? LinkBench.RunConcurrent(joined.Rank.Transport, joined.Rank.Context.Topology, bench, (a, b) => joined.Plan[a, b].Transport)
+            : [];
         if (me == 0)
         {
             context.Write(RowsMarker + Json(rows).ToJsonString());
+            if (context.Flag("--concurrent"))
+            {
+                context.Write(ConcurrentMarker + Json(together).ToJsonString());
+            }
         }
 
         return ExitCodes.Ok;
@@ -103,10 +117,11 @@ internal sealed class ClusterBenchCommand : Command
         int[] ranks = node is null ? [.. Enumerable.Range(0, topology.WorldSize)] : [.. topology.Ranks(topology.NodeOf(node)!.Value)];
         var devices = ranks.Select(r => options.Simulation.CarveFrom ?? topology.Nodes[topology.Place(r).Node].Devices[topology.Place(r).Local].Device).ToList();
         var inv = CultureInfo.InvariantCulture;
-        var launch = ClusterLaunch.Program(["idrak", "cluster", "bench", "--topology", Path.GetFullPath(path), "--bytes", bench.Bytes.ToString(inv), "--rounds", bench.Rounds.ToString(inv)]);
+        var launch = ClusterLaunch.Program(["idrak", "cluster", "bench", "--topology", Path.GetFullPath(path), "--bytes", bench.Bytes.ToString(inv), "--rounds", bench.Rounds.ToString(inv),
+            .. context.Flag("--concurrent") ? new[] { "--concurrent" } : Array.Empty<string>()]);
         context.Write($"benchmarking {topology.WorldSize * (topology.WorldSize - 1) / 2} pair(s) of {path}, {ClusterTopology.FormatMemory(bench.Bytes)} messages, "
                       + $"{bench.Rounds} warm round(s): " + (node is null ? $"every rank on this machine{(options.Simulation.Throttle ? ", paced to the links" : "")}" : $"ranks {string.Join(", ", ranks)} of node {node}"));
-        JsonArray? rows = null;
+        JsonArray? rows = null, concurrent = null;
         using var board = new RankBoard(context, "cluster bench", ranks, devices, _ => false);
         LocalhostRunResult result;
         try
@@ -116,6 +131,12 @@ internal sealed class ClusterBenchCommand : Command
                 if (!line.IsError && line.Text.StartsWith(RowsMarker, StringComparison.Ordinal))
                 {
                     rows = JsonNode.Parse(line.Text[RowsMarker.Length..]) as JsonArray;
+                    return;
+                }
+
+                if (!line.IsError && line.Text.StartsWith(ConcurrentMarker, StringComparison.Ordinal))
+                {
+                    concurrent = JsonNode.Parse(line.Text[ConcurrentMarker.Length..]) as JsonArray;
                     return;
                 }
 
@@ -154,6 +175,12 @@ internal sealed class ClusterBenchCommand : Command
                           + $"latency {Micro((double)row["warm_latency_seconds"]!)} warm, {Micro((double)row["cold_latency_seconds"]!)} cold");
         }
 
+        foreach (var row in (concurrent ?? []).OfType<JsonObject>())
+        {
+            context.Write(string.Create(inv, $"ranks {(int)row["rank_a"]!}-{(int)row["rank_b"]!} and {(int)row["pairs"]! - 1} more pair(s) at once: ")
+                          + $"{Rate((double)row["warm_bytes_per_second"]!)} together warm, {Rate((double)row["cold_bytes_per_second"]!)} cold");
+        }
+
         context.WriteJson(new JsonObject
         {
             ["topology"] = Path.GetFullPath(path),
@@ -161,6 +188,7 @@ internal sealed class ClusterBenchCommand : Command
             ["rounds"] = bench.Rounds,
             ["throttled"] = node is null && options.Simulation.Throttle,
             ["rows"] = rows.DeepClone(),
+            ["concurrent"] = concurrent?.DeepClone(),
         });
         return ExitCodes.Ok;
     }
@@ -170,6 +198,12 @@ internal sealed class ClusterBenchCommand : Command
         ["rank_a"] = r.RankA, ["rank_b"] = r.RankB, ["transport"] = r.Transport, ["bytes"] = r.Bytes, ["rounds"] = r.Rounds,
         ["cold_bytes_per_second"] = r.ColdBandwidth, ["warm_bytes_per_second"] = r.WarmBandwidth,
         ["cold_latency_seconds"] = r.ColdLatency.TotalSeconds, ["warm_latency_seconds"] = r.WarmLatency.TotalSeconds,
+    })]);
+
+    internal static JsonArray Json(IEnumerable<LinkBenchConcurrentRow> rows) => new([.. rows.Select(r => (JsonNode)new JsonObject
+    {
+        ["rank_a"] = r.RankA, ["rank_b"] = r.RankB, ["pairs"] = r.Pairs, ["transport"] = r.Transport, ["bytes"] = r.Bytes, ["rounds"] = r.Rounds,
+        ["cold_bytes_per_second"] = r.ColdBandwidth, ["warm_bytes_per_second"] = r.WarmBandwidth,
     })]);
 
     private static long Size(string text)

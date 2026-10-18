@@ -83,6 +83,10 @@ internal static partial class Tests
                     $"Trainer, shard {shard}: stopped after {steps} steps and resumed, the weights after 4 epochs are the uninterrupted run's (largest gap {Gap(resumed[0], straight[0]):G3})");
             }
 
+            // The command line takes them under the dashboard now (C8a refused a steered tune and train: no checkpoint on a stop).
+            Idrak.Cli.Commands.Cluster.ClusterSimCommand.CheckTrainer(["tune", "train", "tiny", "data.jsonl", "-o", "adapters"]);
+            Idrak.Cli.Commands.Cluster.ClusterSimCommand.CheckTrainer(["train", "data.csv", "--run", "run"]);
+
             // The fine-tuner: LoRA on the tiny model, 2 epochs of 16 windows.
             var tokens = File.ReadAllBytes(PretrainData("tokens.bin"));
             var sequences = Enumerable.Range(0, 16).Select(w => new TrainingSequence(

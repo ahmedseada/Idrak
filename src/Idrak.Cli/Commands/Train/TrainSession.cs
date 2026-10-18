@@ -119,9 +119,13 @@ internal sealed record RunSettings
 internal static class TrainSession
 {
     /// <summary>Runs <paramref name="settings"/> in <paramref name="folder"/>; continues from <paramref name="resume"/> weights after <paramref name="epochsDone"/> epochs.</summary>
-    public static int Run(CommandContext context, RunSettings settings, string folder, string? resume = null, int epochsDone = 0, int? epochs = null)
+    /// <param name="stopped">A stopped cluster run's checkpoint-STEP to go on from (plan 23, C8b: Trainer.ResumeFrom), or null.</param>
+    public static int Run(CommandContext context, RunSettings settings, string folder, string? resume = null, int epochsDone = 0, int? epochs = null, string? stopped = null)
     {
-        var device = context.Device;
+        // A rank of a cluster (cluster sim, or --cluster) trains on its device with its collectives; rank 0 writes the run.
+        var rank = Cluster.ClusterSession.Current;
+        bool writes = rank is not { Rank: > 0 };
+        var device = rank?.Device ?? context.Device;
         var builder = Network.FromJson(settings.Network);
         int[] input = [.. builder.InputShape];
         int outputs = builder.CurrentShape.Aggregate(1, (a, b) => a * b);
@@ -158,10 +162,14 @@ internal static class TrainSession
 
         var trainSet = Prepare(train);
         var validationSet = validation is { Count: > 0 } ? Prepare(validation) : null;
-        featureScaler?.Save(scalerFile);
-        targetScaler?.Save(targetFile);
-        File.WriteAllText(Path.Combine(folder, "network.json"), settings.Network.ToJsonString(CommandContext.JsonOutput));
-        File.WriteAllText(Path.Combine(folder, "run.json"), settings.ToJson().ToJsonString(CommandContext.JsonOutput));
+        if (writes)
+        {
+            featureScaler?.Save(scalerFile);
+            targetScaler?.Save(targetFile);
+            File.WriteAllText(Path.Combine(folder, "network.json"), settings.Network.ToJsonString(CommandContext.JsonOutput));
+            File.WriteAllText(Path.Combine(folder, "run.json"), settings.ToJson().ToJsonString(CommandContext.JsonOutput));
+        }
+
         context.Write($"Split     {trainSet.Count:N0} training / {validationSet?.Count ?? 0:N0} validation rows (seed {settings.Seed})"
                       + (scale ? " · features standard-scaled" : "") + (targetScaler is not null ? " · target standard-scaled" : ""));
 
@@ -204,8 +212,12 @@ internal static class TrainSession
         using var progress = new ProgressLine(context, "training", unit: ProgressUnit.Items);
         using var trainer = new Trainer(model, loss, optimizer)
         {
+            Cluster = rank?.Collectives,
+            ClusterOptions = rank?.Context.Options,
             Metrics = { metric },
             EarlyStoppingPatience = patience is > 0 ? patience : null,
+            StopFolder = rank is null ? null : folder,                     // a dashboard's stop writes checkpoint-STEP here (plan 23, C8b)
+            ResumeFrom = stopped,
             OnEpoch = e =>
             {
                 if (e.Epoch % every == 0 || e.Epoch == 1 || e.Epoch == total)
@@ -222,16 +234,34 @@ internal static class TrainSession
         string log = Path.Combine(folder, "log.jsonl");
         trainer.Callbacks.Add(new Checkpoint(folder));
         trainer.Callbacks.Add(new TrainingProgress(progress, total, epochsDone));
-        trainer.Callbacks.Add(new RunLogWriter(log, new TrainingStarted(model.Name ?? "network", optimizerName, device, total + epochsDone, trainSet.Count,
-            validationSet?.Count, settings.Batch, (trainSet.Count + settings.Batch - 1) / settings.Batch, model.ParameterCount, settings.LearningRate,
-            ComputeResources.MaxCpuThreads), epochsDone));
+        if (writes)
+        {
+            trainer.Callbacks.Add(new RunLogWriter(log, new TrainingStarted(model.Name ?? "network", optimizerName, device, total + epochsDone, trainSet.Count,
+                validationSet?.Count, settings.Batch, (trainSet.Count + settings.Batch - 1) / settings.Batch, model.ParameterCount, settings.LearningRate,
+                ComputeResources.MaxCpuThreads), epochsDone));
+        }
+
         context.Write($"Training  {model.ParameterCount:N0} parameters on {device} · {optimizerName} {settings.LearningRate.ToString("G", CultureInfo.InvariantCulture)} · batch {settings.Batch} · "
                       + $"{(resume is null ? "" : $"from epoch {epochsDone + 1}, ")}up to {total} epochs" + (trainer.EarlyStoppingPatience is { } p ? $", early stop after {p}" : ""));
         // Ctrl+C or --timeout: training stops after the current batch, keeping the checkpoints (idrak resume continues).
         TrainingHistory history;
         using (var interrupt = new Interrupt(context))
         {
-            history = trainer.Fit(trainLoader, total, validationLoader, interrupt.Token);
+            try
+            {
+                history = trainer.Fit(trainLoader, total, validationLoader, interrupt.Token);
+            }
+            catch (Idrak.Abstraction.Cluster.ClusterRunStoppedException stop)
+            {
+                progress.Erase();
+                if (writes)
+                {
+                    context.Write($"Stopped   as asked before step {stop.Step}: checkpoint-{stop.Step} in the run; 'idrak resume {Path.GetFileName(folder)}' continues the run");
+                }
+
+                return ExitCodes.Ok;
+            }
+
             if (interrupt.Requested)
             {
                 context.Write(interrupt.TimedOut ? $"Stopped   --timeout ran out; 'idrak resume {Path.GetFileName(folder)}' continues the run" : $"Stopped   'idrak resume {Path.GetFileName(folder)}' continues the run");
@@ -281,8 +311,12 @@ internal static class TrainSession
             ["epochs"] = epochsDone + history.Epochs.Count,
             ["metrics"] = report,
         };
-        File.WriteAllText(Path.Combine(folder, "training.json"), meta.ToJsonString(CommandContext.JsonOutput));
-        Package(model, settings.Network, featureScaler, targetScaler, meta, settings.Output);
+        if (writes)
+        {
+            File.WriteAllText(Path.Combine(folder, "training.json"), meta.ToJsonString(CommandContext.JsonOutput));
+            Package(model, settings.Network, featureScaler, targetScaler, meta, settings.Output);
+        }
+
         double seconds = clock.Elapsed.TotalSeconds;
         context.Write($"Best      epoch {history.BestEpoch + epochsDone} (loss {RunLog.Format(history.BestLoss)}){(history.StoppedEarly ? ", stopped early and restored its weights" : "")} · {seconds:F1} s");
         context.Write($"Wrote     {settings.Output} · run {folder}");

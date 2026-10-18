@@ -232,7 +232,8 @@ internal sealed class TcpProvider : ITransportProvider
 
 /// <summary>
 /// "direct-link" (plan 23): two machines joined by a cable (crossover Ethernet, Thunderbolt or USB4 networking), the pair's
-/// link an override in the topology file; the socket goes straight to the peer node's address in the file. It rides on
+/// link an override in the topology file; the socket goes straight to the peer's address on the cable (the override's
+/// "address" for that end when the cable has a subnet of its own, else the peer node's address in the file). It rides on
 /// the "tcp" carrier: a group mixing the two connects one mesh of sockets.
 /// </summary>
 internal sealed class DirectLinkProvider : ITransportProvider
@@ -275,14 +276,14 @@ internal sealed class DirectLinkProvider : ITransportProvider
         }
 
         var node = topology.Nodes[topology.Place(peer).Node];
-        if (node.Address is null)
+        if (topology.AddressOf(peer, me) is not { } address)
         {
-            return new(Name, false, $"node {node.Name} has no address in the topology to reach it over the cable");
+            return new(Name, false, $"node {node.Name} has no address in the topology to reach it over the cable (its own, or the override's \"address\")");
         }
 
         return context.Options.Key is null
             ? new(Name, false, "no cluster key (IDRAK_CLUSTER_KEY): nothing listens beyond this machine without one")
-            : new(Name, true, $"a cable to {node.Name} at {node.Address}");
+            : new(Name, true, $"a cable to {node.Name} at {TcpRendezvous.HostOf(address)}");
     }
 
     public ITransport Connect(ClusterContext context, CancellationToken cancellationToken = default) => TcpRendezvous.Connect(Name, context, cancellationToken);
