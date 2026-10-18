@@ -23,8 +23,14 @@ public readonly record struct ClockRecord(int Rank, long Step, double Seconds);
 /// </summary>
 public sealed class EventLog
 {
-    /// <summary>The format version this one writes and reads.</summary>
-    public const int Version = 1;
+    /// <summary>
+    /// The format version this one writes (and reads, with version 1): version 2 adds the cluster advisor's setting to the
+    /// header (plan 23, C8c); a version 1 log was written before the advisor and reads as one with it off.
+    /// </summary>
+    public const int Version = 2;
+
+    // The advisor's setting in the header: on (a byte), its warm steps and its slice's values (two Int32s).
+    internal const int AdviceBytes = 9;
 
     internal static ReadOnlySpan<byte> Magic => "IDRKLOG\0"u8;
 
@@ -34,9 +40,10 @@ public sealed class EventLog
 
     private readonly Dictionary<(int Rank, long Step), double> _clocks;
 
-    private EventLog(byte[] bytes, int seed, int worldSize, string failures, IReadOnlyList<Fault> faults, IReadOnlyList<Fault> live, IReadOnlyList<ClockRecord> clocks,
-        IReadOnlyList<RankStateChanged> states, IReadOnlyList<TransferRecord> transfers, IReadOnlyList<double?> ends)
+    private EventLog(byte[] bytes, int seed, int worldSize, string failures, (bool On, int Steps, int Slice) advice, IReadOnlyList<Fault> faults, IReadOnlyList<Fault> live,
+        IReadOnlyList<ClockRecord> clocks, IReadOnlyList<RankStateChanged> states, IReadOnlyList<TransferRecord> transfers, IReadOnlyList<double?> ends)
     {
+        (Suggest, SuggestSteps, SuggestSliceValues) = advice;
         LiveFaults = live;
         Bytes = bytes;
         Seed = seed;
@@ -61,6 +68,25 @@ public sealed class EventLog
 
     /// <summary>The failure model's name.</summary>
     public string Failures { get; }
+
+    /// <summary>
+    /// Whether the run's ranks measured for the cluster setting advisor (<see cref="ClusterOptions.Suggest"/> as the run
+    /// resolved it): its slice's two collectives are on the clock, so a replay from this log measures alike.
+    /// </summary>
+    public bool Suggest { get; }
+
+    /// <summary>The warm steps the advisor measured (<see cref="ClusterOptions.SuggestSteps"/>).</summary>
+    public int SuggestSteps { get; }
+
+    /// <summary>The values of the advisor's slice (<see cref="ClusterOptions.SuggestSliceValues"/>).</summary>
+    public int SuggestSliceValues { get; }
+
+    /// <summary><paramref name="options"/> with the advisor's setting this log's run had, so a rerun charges the clock alike.</summary>
+    public ClusterOptions AdviceOf(ClusterOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return options with { Suggest = Suggest, SuggestSteps = SuggestSteps, SuggestSliceValues = SuggestSliceValues };
+    }
 
     /// <summary>The faults drawn, in step order (the live ones among them).</summary>
     public IReadOnlyList<Fault> Faults { get; }
@@ -131,13 +157,14 @@ public sealed class EventLog
         }
 
         int version = r.UInt16();
-        if (version != Version)
+        if (version is not (1 or Version))
         {
-            throw new InvalidDataException($"event log version {version}; this Idrak reads version {Version}.");
+            throw new InvalidDataException($"event log version {version}; this Idrak reads version 1 and version {Version}.");
         }
 
         int seed = r.Int32(), world = r.Int32();
         string failures = r.Text();
+        var advice = ReadAdvice(ref r, version);
         var faults = new List<Fault>();
         var live = new List<Fault>();
         var faultBytes = new Reader(r.Take(checked((int)r.Int64())));
@@ -200,7 +227,27 @@ public sealed class EventLog
             throw new InvalidDataException("bytes follow the last rank's events.");
         }
 
-        return new EventLog(bytes.ToArray(), seed, world, failures, faults, live, clocks, states, transfers, ends);
+        return new EventLog(bytes.ToArray(), seed, world, failures, advice, faults, live, clocks, states, transfers, ends);
+    }
+
+    // The advisor's setting after the failure model's name (version 2), or a run before the advisor (version 1): off.
+    private static (bool On, int Steps, int Slice) ReadAdvice(ref Reader r, int version)
+    {
+        if (version < 2)
+        {
+            var defaults = new ClusterOptions();
+            return (false, defaults.SuggestSteps, defaults.SuggestSliceValues);
+        }
+
+        bool on = r.Byte() != 0;
+        return (on, r.Int32(), r.Int32());
+    }
+
+    internal static void WriteAdvice(Span<byte> field, (bool On, int Steps, int Slice) advice)
+    {
+        field[0] = advice.On ? (byte)1 : (byte)0;
+        BinaryPrimitives.WriteInt32LittleEndian(field[1..], advice.Steps);
+        BinaryPrimitives.WriteInt32LittleEndian(field[5..], advice.Slice);
     }
 
     internal const byte RecordClock = 1, RecordState = 2, RecordTransfer = 3, RecordEnd = 4;
@@ -211,13 +258,14 @@ public sealed class EventLog
         var r = new Reader(journal);
         r.Take(JournalMagic.Length);
         int version = r.UInt16();
-        if (version != Version)
+        if (version is not (1 or Version))
         {
-            throw new InvalidDataException($"event log version {version}; this Idrak reads version {Version}.");
+            throw new InvalidDataException($"event log version {version}; this Idrak reads version 1 and version {Version}.");
         }
 
         int seed = r.Int32(), world = r.Int32();
         string failures = r.Text();
+        var advice = ReadAdvice(ref r, version);
         if (world is < 1 or > 1 << 20)
         {
             throw new InvalidDataException($"an event log of {world} ranks.");
@@ -255,6 +303,9 @@ public sealed class EventLog
         BinaryPrimitives.WriteUInt16LittleEndian(field, (ushort)nameLength);
         output.Write(field[..2]);
         output.Write(Encoding.UTF8.GetBytes(failures));
+        Span<byte> adviceField = stackalloc byte[AdviceBytes];
+        WriteAdvice(adviceField, advice);
+        output.Write(adviceField);
         foreach (var stream in streams)
         {
             BinaryPrimitives.WriteInt64LittleEndian(field, stream.Sum(c => (long)c.Length));
@@ -332,8 +383,11 @@ internal sealed class EventLogWriter : IDisposable
     private readonly int _flushSteps;
     private FileStream? _journal;
 
-    public EventLogWriter(int seed, int worldSize, string failures, bool transfers, string? path = null, int flushSteps = 0)
+    private readonly (bool On, int Steps, int Slice) _advice;
+
+    public EventLogWriter(int seed, int worldSize, string failures, bool transfers, string? path = null, int flushSteps = 0, (bool On, int Steps, int Slice) advice = default)
     {
+        _advice = advice;
         _seed = seed;
         _worldSize = worldSize;
         _failures = failures;
@@ -465,7 +519,7 @@ internal sealed class EventLogWriter : IDisposable
         }
 
         int nameLength = Encoding.UTF8.GetByteCount(_failures);
-        long total = EventLog.Magic.Length + 2 + 4 + 4 + 2 + nameLength + 8 + _faults.Length + _ranks.Sum(s => 8 + s.Length);
+        long total = EventLog.Magic.Length + 2 + 4 + 4 + 2 + nameLength + EventLog.AdviceBytes + 8 + _faults.Length + _ranks.Sum(s => 8 + s.Length);
         var bytes = new byte[checked((int)total)];
         var b = bytes.AsSpan();
         EventLog.Magic.CopyTo(b);
@@ -475,6 +529,8 @@ internal sealed class EventLogWriter : IDisposable
         BinaryPrimitives.WriteInt32LittleEndian(b[(at + 6)..], _worldSize);
         BinaryPrimitives.WriteUInt16LittleEndian(b[(at + 10)..], (ushort)nameLength);
         at += 12 + Encoding.UTF8.GetBytes(_failures, b[(at + 12)..]);
+        EventLog.WriteAdvice(b[at..], _advice);
+        at += EventLog.AdviceBytes;
         foreach (var stream in (Blocks[])[_faults, .. _ranks])
         {
             BinaryPrimitives.WriteInt64LittleEndian(b[at..], stream.Length);
@@ -512,14 +568,15 @@ internal sealed class EventLogWriter : IDisposable
 
         var journal = new FileStream(_path!, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
         int nameLength = Encoding.UTF8.GetByteCount(_failures);
-        var header = new byte[EventLog.JournalMagic.Length + 2 + 4 + 4 + 2 + nameLength];
+        var header = new byte[EventLog.JournalMagic.Length + 2 + 4 + 4 + 2 + nameLength + EventLog.AdviceBytes];
         EventLog.JournalMagic.CopyTo(header);
         int at = EventLog.JournalMagic.Length;
         BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(at), EventLog.Version);
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(at + 2), _seed);
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(at + 6), _worldSize);
         BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(at + 10), (ushort)nameLength);
-        Encoding.UTF8.GetBytes(_failures, header.AsSpan(at + 12));
+        int written = Encoding.UTF8.GetBytes(_failures, header.AsSpan(at + 12));
+        EventLog.WriteAdvice(header.AsSpan(at + 12 + written), _advice);
         journal.Write(header);
         _journal = journal;
         return journal;

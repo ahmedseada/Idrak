@@ -1192,7 +1192,7 @@ public sealed class Idrak.Layers.PipelineBoundary : Idrak.Abstraction.Module, Id
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Abstraction.Tensor Token { get; }
-  public PipelineBoundary(Idrak.Abstraction.Cluster.ITransport transport, int peer, bool sends, Idrak.Abstraction.Device device, int? answerer = null)
+  public PipelineBoundary(Idrak.Abstraction.Cluster.ITransport transport, int peer, bool sends, Idrak.Abstraction.Device device, int? answerer = null, bool deviceActivations = true)
   public System.TimeSpan Blocked { get; }
   public bool Generated { get; }
   public bool Sends { get; }
@@ -1203,6 +1203,8 @@ public sealed class Idrak.Layers.PipelineBoundary : Idrak.Abstraction.Module, Id
   public long BytesSent { get; }
   public override string ToString()
   public override void Dispose()
+  public string Staging { get; }
+  public void Flush()
   public void ResetCounters()
 
 public sealed class Idrak.Layers.PositionEmbedding : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
@@ -1690,26 +1692,32 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public System.Collections.Generic.IReadOnlyCollection<string> Parts { get; }
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedPartTensors { get; }
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedVisionTensors { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Models.StoredTensor> StoredTensors()
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Text.Json.Nodes.JsonObject Config { get; }
+  public bool IsDeferred { get; }
   public int AddAdapters(int rank, float alpha, System.Collections.Generic.IEnumerable<string> targets, int seed = 0, bool dora = false)
   public int KeepTrainedParts(System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors)
   public int KeepTrainedVision(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IEnumerable<string> parts)
   public int LoadAdapter(string folder)
   public int MaxPositions { get; }
+  public long? BytesRead { get; }
   public static Idrak.Models.PretrainedModel Create(string folder, Idrak.Abstraction.Generation.DecoderSpec spec, string architecture, Idrak.Models.ModelFiles files, Idrak.Models.CreateOptions? options = null)
   public static Idrak.Models.PretrainedModel Load(string folder, Idrak.Models.PretrainedOptions? options = null)
   public string Folder { get; }
   public void Dispose()
+  public void Place()
   public void SaveAdapter(string folder)
   public void SaveHuggingFace(string folder, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2)
   public void SaveHuggingFace(string folder, Idrak.Models.SafeTensorType type, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor>? vision)
+  public void SaveHuggingFace(string folder, Idrak.Models.SafeTensorType type, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor>? vision, System.Func<Idrak.Models.StoredTensor, float[]>? values)
 
 public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Models.PretrainedOptions>
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
   public PretrainedOptions()
   public bool BFloat16 { get; init; }
+  public bool Deferred { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
   public double SuggestionHeadroom { get; init; }
@@ -1756,6 +1764,7 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.I
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
   public float[] Read(string name)
   public float[] ReadTransposed(string name)
+  public long BytesRead { get; }
   public static Idrak.Models.SafeTensorsReader Open(string path)
   public void Dispose()
 
@@ -1788,6 +1797,13 @@ public sealed record Idrak.Models.StoredParameter : System.IEquatable<Idrak.Mode
   public bool Transposed { get; init; }
   public float[] Values(Idrak.Abstraction.Tensor? of = null)
   public int[] Stored { get; init; }
+  public string Name { get; init; }
+
+public sealed record Idrak.Models.StoredTensor : System.IEquatable<Idrak.Models.StoredTensor>
+  public Idrak.Abstraction.Tensor Tensor { get; init; }
+  public StoredTensor(string Name, int[] Shape, Idrak.Abstraction.Tensor Tensor, bool Transposed)
+  public bool Transposed { get; init; }
+  public int[] Shape { get; init; }
   public string Name { get; init; }
 
 public static class Idrak.Models.StoredWeights
@@ -2066,12 +2082,14 @@ public sealed class Idrak.Training.PipelineStage : System.IDisposable
   public bool IsLast { get; }
   public bool Owns(int parameter)
   public double Evaluate(int microBatches, System.Func<int, Idrak.Abstraction.Tensor>? input, System.Func<int, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor>? loss, System.Func<int, System.IDisposable?>? around = null)
+  public int HolderOf(int globalParameter)
   public int Rank { get; }
   public int Replica { get; }
   public int Stage { get; }
   public long Bytes { get; }
   public static Idrak.Abstraction.Cluster.PipelinePlan PlanFor(Idrak.Layers.Sequential network, Idrak.Abstraction.Cluster.PipelineLayout layout, Idrak.Abstraction.Cluster.ClusterOptions? options = null, Idrak.Abstraction.Cluster.IClusterTopology? topology = null)
   public static Idrak.Training.PipelineStage Place(Idrak.Layers.Sequential network, Idrak.Abstraction.Cluster.ICollectives cluster, Idrak.Abstraction.Cluster.ClusterOptions? options = null, bool keepOthers = false)
+  public string Staging { get; }
   public void ClipAndStep(Idrak.Abstraction.Training.Optimizer optimizer, float maxNorm)
   public void Dispose()
   public void Serve(System.Threading.CancellationToken cancellationToken = default)
@@ -2124,6 +2142,8 @@ public sealed class Idrak.Training.Trainer : System.IDisposable
   public float? MaxGradientNorm { get; init; }
   public float[,] Predict(Idrak.Abstraction.Data.ISampleSource data, int batchSize = 1024)
   public int? EarlyStoppingPatience { get; init; }
+  public string? ResumeFrom { get; init; }
+  public string? StopFolder { get; init; }
   public void Dispose()
 
 public sealed record Idrak.Training.TrainingRun : System.IEquatable<Idrak.Training.TrainingRun>

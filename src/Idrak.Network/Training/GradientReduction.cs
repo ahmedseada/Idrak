@@ -76,7 +76,6 @@ internal sealed partial class GradientReduction : SyncCore
     private readonly List<(double ReadyAt, TimeSpan Simulated, TimeSpan Wall)> _sent = [];
     private BucketLayout _layout;
     private bool _sized;
-    private Tensor? _scratch;                                 // device staging of a piece of a parameter larger than a bucket, made once
     private OverlapWorker? _worker;
     private float[]? _held;                                   // overlap: every bucket's values, then the header
 
@@ -275,7 +274,7 @@ internal sealed partial class GradientReduction : SyncCore
         }
 
         bool advising = AdviceStep;
-        if (advising && StepsInGroup == 1L + Options.SuggestSteps && _meter!.SliceCount == 0)
+        if (advising && StepsInGroup == 1L + _meter!.Warm && _meter.SliceCount == 0)
         {
             _meter.Capture = true;                             // the slice from the last measured step's own values (unless taken during its backward pass)
         }
@@ -345,8 +344,6 @@ internal sealed partial class GradientReduction : SyncCore
         _worker = null;
         _staging?.Dispose();
         _staging = null;
-        _scratch?.Dispose();
-        _scratch = null;
         _compressor.Dispose();
         StopAdvice();
         DisposeShards();
@@ -869,16 +866,11 @@ internal sealed partial class GradientReduction : SyncCore
         {
             backend.Upload(source, storage);
         }
-        else if (p.Device.Type == DeviceType.Cpu)
-        {
-            source.CopyTo(storage.HostMemory.Slice(offset, n));
-        }
         else
         {
-            // A piece of a parameter larger than a bucket: up into the staging buffer, then one strided copy into place.
-            var scratch = Scratch(n);
-            backend.Upload(source, scratch.Storage);
-            backend.Copy2D(scratch.Storage, 0, n, storage, offset, n, 1, n, accumulate: false);
+            // A piece of a parameter cut across buckets: straight to its offset. (It went through a device scratch of a
+            // bucket's size kept for the run, which the GPU backends held at every epoch's end: plan 23, C8b.)
+            backend.UploadRange(source, storage, offset);
         }
     }
 
@@ -893,17 +885,6 @@ internal sealed partial class GradientReduction : SyncCore
         {
             p.Backend.DownloadRange(storage, offset, target);
         }
-    }
-
-    private Tensor Scratch(int values)
-    {
-        if (_scratch is null || _scratch.Size < values)
-        {
-            _scratch?.Dispose();
-            _scratch = Tensor.PersistentZeros([Math.Max(values, _layout.BucketValues)], Collectives.Device);
-        }
-
-        return _scratch;
     }
 
     // Ends the hook when the trainer's backward pass is over (Reduce does the rest).

@@ -119,7 +119,8 @@ internal sealed record RunSettings
 internal static class TrainSession
 {
     /// <summary>Runs <paramref name="settings"/> in <paramref name="folder"/>; continues from <paramref name="resume"/> weights after <paramref name="epochsDone"/> epochs.</summary>
-    public static int Run(CommandContext context, RunSettings settings, string folder, string? resume = null, int epochsDone = 0, int? epochs = null)
+    /// <param name="stopped">A stopped cluster run's checkpoint-STEP to go on from (plan 23, C8b: Trainer.ResumeFrom), or null.</param>
+    public static int Run(CommandContext context, RunSettings settings, string folder, string? resume = null, int epochsDone = 0, int? epochs = null, string? stopped = null)
     {
         // A rank of a cluster (cluster sim, or --cluster) trains on its device with its collectives; rank 0 writes the run.
         var rank = Cluster.ClusterSession.Current;
@@ -215,6 +216,8 @@ internal static class TrainSession
             ClusterOptions = rank?.Context.Options,
             Metrics = { metric },
             EarlyStoppingPatience = patience is > 0 ? patience : null,
+            StopFolder = rank is null ? null : folder,                     // a dashboard's stop writes checkpoint-STEP here (plan 23, C8b)
+            ResumeFrom = stopped,
             OnEpoch = e =>
             {
                 if (e.Epoch % every == 0 || e.Epoch == 1 || e.Epoch == total)
@@ -245,7 +248,21 @@ internal static class TrainSession
         TrainingHistory history;
         using (var interrupt = new Interrupt(context))
         {
-            history = trainer.Fit(trainLoader, total, validationLoader, interrupt.Token);
+            try
+            {
+                history = trainer.Fit(trainLoader, total, validationLoader, interrupt.Token);
+            }
+            catch (Idrak.Abstraction.Cluster.ClusterRunStoppedException stop)
+            {
+                progress.Erase();
+                if (writes)
+                {
+                    context.Write($"Stopped   as asked before step {stop.Step}: checkpoint-{stop.Step} in the run; 'idrak resume {Path.GetFileName(folder)}' continues the run");
+                }
+
+                return ExitCodes.Ok;
+            }
+
             if (interrupt.Requested)
             {
                 context.Write(interrupt.TimedOut ? $"Stopped   --timeout ran out; 'idrak resume {Path.GetFileName(folder)}' continues the run" : $"Stopped   'idrak resume {Path.GetFileName(folder)}' continues the run");

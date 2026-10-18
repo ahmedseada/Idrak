@@ -52,6 +52,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
     private readonly Dictionary<string, SafeTensorInfo> _tensors = [];
     private readonly Dictionary<string, FileStream> _files = [];
     private long _readTicks;                                            // Stopwatch ticks spent reading tensor bytes
+    private long _bytesRead;                                            // bytes of tensor values read
 
     private SafeTensorsReader()
     {
@@ -330,7 +331,13 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         long start = Stopwatch.GetTimestamp();
         ReadAt(handle, destination, offset);
         Interlocked.Add(ref _readTicks, Stopwatch.GetTimestamp() - start);
+        Interlocked.Add(ref _bytesRead, destination.Length);
     }
+
+    /// <summary>The bytes of tensor values read from the files so far (each tensor's own byte range only).</summary>
+    public long BytesRead => Interlocked.Read(ref _bytesRead);
+
+    long? ITensorStore.BytesRead => BytesRead;
 
     private static void ReadAt(Microsoft.Win32.SafeHandles.SafeFileHandle handle, Span<byte> destination, long offset)
     {

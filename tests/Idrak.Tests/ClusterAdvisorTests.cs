@@ -25,7 +25,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterAdvisorGroup =
     [
-        ("cluster: advisor on a slow link (ethernet-1g, a model whose all-reduce is most of the step) suggests --wire bf16 once within a tolerance of two bf16 roundings, with the network's share and the measured bf16 error in its reason, and accumulation, local SGD and top-k where bf16 alone leaves the share above the threshold", ClusterAdvisorSlowLink),
+        ("cluster: advisor on a slow link (ethernet-1g, a model whose all-reduce is most of the step) suggests --wire bf16 once within the default tolerance (bf16's rounding step), with the network's share and the measured bf16 error in its reason, and accumulation, local SGD and top-k where bf16 alone leaves the share above the threshold", ClusterAdvisorSlowLink),
         ("cluster: advisor on a fast link (same-device) suggests nothing: the network's share is under IDRAK_CLUSTER_SUGGEST_SHARE", ClusterAdvisorFastLink),
         ("cluster: advisor a bf16 error above the tolerance stops the bf16 suggestion; the others are made on the whole network time", ClusterAdvisorBf16Refused),
         ("cluster: advisor ring over two nodes of two ranks suggests the hierarchical collective; one bucket pinned for every gradient gets a bucket size that lets the network go during the backward pass", ClusterAdvisorHierarchicalAndBuckets),
@@ -102,7 +102,7 @@ internal static partial class Tests
         }
     }
 
-    private static double ClusterSettingAdvisorTolerance => Idrak.Networking.Training.ClusterSettingAdvisor.ReferenceBFloat16Tolerance;
+    private static double ClusterSettingAdvisorTolerance => Idrak.Networking.Training.ClusterSettingAdvisor.DefaultBFloat16Tolerance;
 
     private static string AdvicePct(double share) => (share * 100).ToString("F0", CultureInfo.InvariantCulture) + "%";
 
@@ -111,13 +111,9 @@ internal static partial class Tests
         + $"{m.GradientBytes / 1024.0:F0} KiB in {m.Buckets} bucket(s) of {m.BucketBytes / 1024.0:F0} KiB, {m.Steps} warm steps, {m.WorldSize} ranks on {m.Nodes} node(s), "
         + $"bf16 error {(m.BFloat16Error is { } e ? e.ToString("G3", CultureInfo.InvariantCulture) : "-")} on {m.SliceValues} values");
 
-    // A tolerance a bf16 wire meets: two roundings of half a bfloat16 unit in the last place (Idrak's ring rounds each
-    // contribution it sends and the reduced sum it gathers), 2^-7 of the largest value.
-    private const double TwoRoundings = 1.0 / 128;
-
     private static void ClusterAdvisorSlowLink(Device device)
     {
-        var options = AdvisorOptions() with { SuggestBFloat16Tolerance = TwoRoundings };
+        var options = AdvisorOptions();                                   // the default tolerance: bfloat16's rounding step, 2^-7
         var (seen, _) = AdvisorRun(NodesOf([1, 1], device.ToString(), "ethernet-1g"), options);
         Check(seen.Measures.Count == 1, $"rank 0 asked the advisors once: {seen.Measures.Count} measurement(s)");
         var m = seen.Measures[0];
@@ -171,7 +167,7 @@ internal static partial class Tests
         var (seen, _) = AdvisorRun(NodesOf([1, 1], device.ToString(), "ethernet-1g"), options);
         var m = seen.Measures.Single();
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"    the default tolerance (the fixture's {ClusterSettingAdvisorTolerance:G3}) {(m.BFloat16Error <= ClusterSettingAdvisorTolerance ? "accepts" : "refuses")} the measured {m.BFloat16Error:G3}"));
+            $"    the default tolerance ({ClusterSettingAdvisorTolerance:G3}) {(m.BFloat16Error <= ClusterSettingAdvisorTolerance ? "accepts" : "refuses")} the measured {m.BFloat16Error:G3}"));
         Console.WriteLine($"    bf16 tolerance 1e-9: {Describe(m)}; suggested {string.Join(", ", seen.Cluster.Select(s => $"{s.Setting}={s.Value}"))}");
         double exposed = m.Exposed.TotalSeconds, compute = m.Compute.TotalSeconds, threshold = options.SuggestShare;
         int factor = Math.Max(2, (int)Math.Ceiling(exposed * (1 - threshold) / (threshold * compute)));

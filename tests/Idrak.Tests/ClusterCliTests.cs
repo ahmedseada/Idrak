@@ -33,7 +33,7 @@ internal static partial class Tests
         ("cluster: cli the measured chunk size is kept once per transport (a second group reads it), a forced ChunkBytes skips it, and tuning show lists it", ClusterCliChunkKept),
         ("cluster: cli the event log is readable while a run goes and the finished file is the in-memory log's bytes", ClusterCliEventLogLive),
         ("cluster: cli replay --seed S --step N reproduces the fault schedule and the clock of a cluster sim run bit for bit; runs show charts the run's network share", ClusterCliReplay),
-        ("cluster: cli cluster sim runs train and tune on two ranks (rank 0 writing the run) and --profile prints the probes' rows with the predicted step beside the measured", ClusterCliSimTrainTune),
+        ("cluster: cli cluster sim runs train and tune on two ranks (rank 0 writing the run) and --profile prints the probes' rows with the predicted step beside the measured, also over a link cheaper than the clock's tick", ClusterCliSimTrainTune),
         ("cluster: cli cluster sim --placement pipeline runs pretrain as a pipeline; another command with it is a usage error", ClusterCliSimPipeline),
         ("cluster: cli profile --cluster shows a token's hops through a simulated pipeline", ClusterCliProfileHops),
         ("cluster: cli --cluster on the training commands: a one-worker node needs no rank, a two-worker node names the missing --rank (IDRAK_RANK on tune, whose --rank stays the adapter's), a contradicting world size names both, --world-size without --coordinator names it", ClusterCliHandStarted),
@@ -516,6 +516,21 @@ internal static partial class Tests
                   && ptext.Contains("gradient buckets", StringComparison.Ordinal) && ptext.Contains("step: measured", StringComparison.Ordinal) && ptext.Contains("predicted", StringComparison.Ordinal)
                   && ptext.Contains("cpu", StringComparison.Ordinal), $"--profile prints the probes' rows and the predicted step beside the measured: {pcode} {perror}\n{ptext}");
             Check(Directory.Exists(profiled) && !Directory.EnumerateDirectories(folder, "profiled.profile-*").Any(), "the warm run's folder is removed after");
+
+            // A link cheaper than the clock's smallest tick (a fast same-device copy on a fast CPU measures that way): every
+            // simulated transfer reports 0, and the run is still a simulated one with its predicted step.
+            LinkProfiles.Register(new LinkProfile(ClusterTopology.SameDevice, 1e18, TimeSpan.Zero));
+            try
+            {
+                string free = Path.Combine(folder, "free");
+                var (fcode, ftext, ferror) = ClusterCli(["cluster", "sim", "--topology", topology, "--profile", "--", .. Train(free)]);
+                Check(fcode == 0 && ftext.Contains("step: measured", StringComparison.Ordinal) && ftext.Contains("predicted", StringComparison.Ordinal),
+                    $"--profile over a link that costs nothing on the clock still prints the predicted step: {fcode} {ferror}\n{ftext}");
+            }
+            finally
+            {
+                LinkProfiles.Unregister(ClusterTopology.SameDevice);
+            }
             var localhost = ClusterCli(["cluster", "sim", "--topology", topology, "--mode", "localhost", "--profile", "--", .. Train(Path.Combine(folder, "x"))]);
             Check(localhost.Code == ExitCodes.Usage && localhost.Error.Contains("in-process", StringComparison.Ordinal), $"--profile with --mode localhost names why: {localhost.Error}");
 

@@ -149,6 +149,11 @@ internal sealed class ClusterReplayCommand : Command
             }
 
             options = options with { Simulation = options.Simulation with { Seed = seed, Failures = failures, ReplayStep = step, Mode = SimulationMode.InProcess } };
+            if (original is not null)
+            {
+                options = original.AdviceOf(options);                  // the advisor's setting the run had: its slice collectives are on the clock (C8c)
+            }
+
             options = ClusterSimCommand.WithEventLog(context, options, inner);
             context.Write($"rerunning through step {step.ToString(inv)} on {simTopology.WorldSize} rank(s): idrak {string.Join(' ', inner)}");
             var (codes, result) = ClusterSimCommand.Simulate(context, simTopology, options, inner, live.Count > 0 ? new ClusterRunControl(live) : null);

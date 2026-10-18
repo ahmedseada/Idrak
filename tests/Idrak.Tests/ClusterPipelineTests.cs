@@ -288,22 +288,54 @@ internal static partial class Tests
             whole = PipelineStage.PlanFor(model.Network, new PipelineLayout(1, 1), PipeOptions()).TotalBytes;
         }
 
+        // Earlier tests' tensors dropped without a release go back to their devices when the finalizers run: before the measure
+        // (plan 23, C8b: CUDA's stage 0 once showed 252 B less than its own tensors, a release inside the measured window, or a
+        // tensor of the stage not on its device; the message below names which). Storages are tracked from here on.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        using var tracking = StorageTracking.Track();
         var ranks = DpRun(DpTopology(device, 2), PipeOptions(), rank =>
         {
+            var held = rank.Device.Backend.LiveStorages().Select(l => l.Storage).ToHashSet(ReferenceEqualityComparer.Instance);
             long before = rank.Device.Backend.GetMemoryUsage().InUse;
             using var model = HostTiny();
             var all = model.Network.Parameters().Distinct().ToList();
             using var pipe = PipelineStage.Place(model.Network, rank.Collectives, PipeOptions());
             long inUse = rank.Device.Backend.GetMemoryUsage().InUse - before;
             var others = model.Network.Parameters().Distinct().Where(p => !pipe.Parameters.Contains(p)).ToList();
+
+            // Each of the stage's tensors (parameters, buffers, a tied head's table) where it is: on this rank's device and
+            // in memory, or not (named with its bytes and where it is instead).
+            var tensors = pipe.Modules.SelectMany(m => m.Parameters().Concat(m.Buffers())
+                    .Concat(m.Descendants().OfType<Linear>().Select(l => l.TiedTo).OfType<Module>().SelectMany(t => t.Parameters().Concat(t.Buffers()))))
+                .Distinct(ReferenceEqualityComparer.Instance).Cast<Tensor>().ToList();
+            var names = new Dictionary<Tensor, string>(ReferenceEqualityComparer.Instance);
+            foreach (var (path, module) in model.NamedModules())
+            {
+                foreach (var t in module.Parameters().Concat(module.Buffers()))
+                {
+                    names[t] = path;                                        // the innermost module holding it, walked last
+                }
+            }
+
+            string Where(Tensor t) => t.IsDisposed ? "released" : t.Device != rank.Device ? $"on {t.Device}" : t.Storage.Evicted ? "evicted" : !t.Storage.Alive ? "returned" : "resident";
+            var away = tensors.Where(t => Where(t) != "resident")
+                .Select(t => $"{names.GetValueOrDefault(t, "?")} {Tensor.FormatShape(t.Shape)} {(long)t.Size * sizeof(float):N0} B {Where(t)}").ToList();
+            long resident = tensors.Where(t => Where(t) == "resident").Select(t => t.Storage).Distinct(ReferenceEqualityComparer.Instance).Cast<Storage>().Sum(st => (long)st.Length * sizeof(float));
+            var now = rank.Device.Backend.LiveStorages();
+            string changed = $"made while placing: {StorageTracking.Describe([.. now.Where(l => !held.Contains(l.Storage))])}; "
+                + $"tracked before and released meanwhile: {held.Count(h => !now.Any(l => ReferenceEquals(l.Storage, h)))}";
             return (pipe.Stage, pipe.Bytes, InUse: inUse, OnDevice: pipe.Parameters.All(p => p.Device == rank.Device),
-                Released: others.All(p => p.IsDisposed), Modules: pipe.Modules.Select(m => m.Name).ToArray());
+                Released: others.All(p => p.IsDisposed), Modules: pipe.Modules.Select(m => m.Name).ToArray(), Away: away, Resident: resident, Changed: changed);
         });
 
         foreach (var r in ranks)
         {
             Check(r.OnDevice && r.Released, $"stage {r.Stage} ({string.Join(", ", r.Modules)}): its parameters on its device, every other stage's released");
-            Check(r.InUse >= r.Bytes && r.InUse < whole, $"stage {r.Stage}: {r.InUse:N0} B in use on its device, at least its {r.Bytes:N0} B and under the whole model's {whole:N0} B");
+            Check(r.Away.Count == 0 && r.Resident >= r.Bytes, $"stage {r.Stage}: its tensors in memory on its device ({r.Resident:N0} B of its {r.Bytes:N0} B); not: [{string.Join("; ", r.Away)}]");
+            Check(r.InUse >= r.Bytes && r.InUse < whole, $"stage {r.Stage}: {r.InUse:N0} B in use on its device, at least its {r.Bytes:N0} B and under the whole model's {whole:N0} B; "
+                + $"tensors not in memory there: [{string.Join("; ", r.Away)}]; {r.Changed} (IDRAK_TRACK_STORAGES=1 names what earlier tests left too)");
         }
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,

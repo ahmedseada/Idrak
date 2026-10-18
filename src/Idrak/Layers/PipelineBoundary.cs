@@ -18,7 +18,9 @@ namespace Idrak.Layers;
 /// operation, and the micro-batch (<see cref="MicroBatch"/>) keeps the messages of micro-batches in flight apart. Without
 /// autograd, the first stage's boundary runs generation: its cached forward sends the hidden state and the decoding
 /// context's position down the stages (each keeping its own key/value cache) and returns the last stage's logits. Values
-/// travel as float32 through host memory over any <see cref="ITransport"/>, tags 0 and up (the collectives use negative ones).
+/// travel as float32 through host memory over any <see cref="ITransport"/>, tags 0 and up (the collectives use negative ones),
+/// or device to device over a transport that hands device memory over (<see cref="IDeviceTransport"/>, plan 23 C8b: the
+/// shape still travels as bytes, the values are copied by the receiver straight from the sender's storage).
 /// </summary>
 public sealed class PipelineBoundary : Module, ICachedModule
 {
@@ -28,6 +30,8 @@ public sealed class PipelineBoundary : Module, ICachedModule
     private const int HeaderBytes = 32, MaxRank = 8;
 
     private readonly Tensor _token;
+    private readonly IDeviceTransport? _device;
+    private readonly List<(Task Posted, int To, int Tag, Storage Source)> _posted = [];
     private long _blockedTicks;
 
     /// <summary>A boundary between this rank's stage and <paramref name="peer"/>'s.</summary>
@@ -36,7 +40,11 @@ public sealed class PipelineBoundary : Module, ICachedModule
     /// <param name="sends">True at the end of a stage (its output goes on), false at its start (its input arrives).</param>
     /// <param name="device">This stage's device.</param>
     /// <param name="answerer">The rank of the pipeline's last stage, whose logits a generation's forward waits for (the sending side of the first stage); null elsewhere.</param>
-    public PipelineBoundary(ITransport transport, int peer, bool sends, Device device, int? answerer = null)
+    /// <param name="deviceActivations">
+    /// Whether values cross device to device when <paramref name="transport"/> hands device memory over
+    /// (<see cref="ClusterOptions.DeviceActivations"/>); both sides of a boundary must say the same.
+    /// </param>
+    public PipelineBoundary(ITransport transport, int peer, bool sends, Device device, int? answerer = null, bool deviceActivations = true)
     {
         ArgumentNullException.ThrowIfNull(transport);
         ArgumentNullException.ThrowIfNull(device);
@@ -50,6 +58,7 @@ public sealed class PipelineBoundary : Module, ICachedModule
         Sends = sends;
         Answerer = answerer;
         Device = device;
+        _device = deviceActivations ? transport as IDeviceTransport : null;
         _token = Tensor.Persistent([0f], [1], device, requiresGrad: true);       // what makes autograd record the receive
         Name = sends ? $"send to rank {peer}" : $"receive from rank {peer}";
     }
@@ -80,6 +89,9 @@ public sealed class PipelineBoundary : Module, ICachedModule
 
     /// <summary>Time spent waiting for the neighbour's messages since <see cref="ResetCounters"/>.</summary>
     public TimeSpan Blocked => Stopwatch.GetElapsedTime(0, _blockedTicks);
+
+    /// <summary>How values cross this boundary: "device" (handed device to device) or "host" (through host memory).</summary>
+    public string Staging => _device is null ? "host" : "device";
 
     /// <summary>Whether this boundary ran a generation's forward (its stages then serve until told to stop).</summary>
     public bool Generated { get; private set; }
@@ -238,6 +250,27 @@ public sealed class PipelineBoundary : Module, ICachedModule
         int headerLength = sizeof(int) * (shape.Length + 1);
         Transport.Send(to, header[..headerLength], tag);
         int count = tensor.Size;
+        if (_device is { } handoff)
+        {
+            // Device to device: the receiver copies straight from this storage; it is held (a reference) until taken, so the
+            // step's scope may end meanwhile. Waited for at the step's end (Flush), or before the next send once taken.
+            TakeFinished();
+            var storage = tensor.Storage;
+            storage.AddRef();
+            try
+            {
+                _posted.Add((handoff.PostDevice(to, storage, count, tag + 1), to, tag + 1, storage));
+            }
+            catch
+            {
+                storage.Release();
+                throw;
+            }
+
+            BytesSent += headerLength + ((long)count * sizeof(float));
+            return;
+        }
+
         var values = ArrayPool<float>.Shared.Rent(Math.Max(1, count));
         try
         {
@@ -279,6 +312,16 @@ public sealed class PipelineBoundary : Module, ICachedModule
         }
 
         int bytes = checked((int)count * sizeof(float));
+        if (_device is { } handoff)
+        {
+            var received = Tensor.Empty(shape, device);
+            start = Stopwatch.GetTimestamp();
+            handoff.ReceiveDevice(from, received.Storage, (int)count, tag + 1);
+            _blockedTicks += Stopwatch.GetTimestamp() - start;
+            BytesReceived += length + bytes;
+            return received;
+        }
+
         var buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, bytes));
         try
         {
@@ -299,9 +342,70 @@ public sealed class PipelineBoundary : Module, ICachedModule
         }
     }
 
+    /// <summary>
+    /// Waits until every value this boundary handed over device to device was taken by its receiver (the end of a step, of
+    /// an evaluation, of a served generation step); nothing to wait for through host memory.
+    /// </summary>
+    public void Flush()
+    {
+        if (_device is not { } handoff)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var (posted, to, tag, _) in _posted)
+            {
+                long start = Stopwatch.GetTimestamp();
+                handoff.WaitTaken(posted, to, tag);
+                _blockedTicks += Stopwatch.GetTimestamp() - start;
+            }
+        }
+        finally
+        {
+            foreach (var (_, _, _, storage) in _posted)
+            {
+                storage.Release();
+            }
+
+            _posted.Clear();
+        }
+    }
+
+    // The handed-over values already taken: their storages let go.
+    private void TakeFinished()
+    {
+        for (int i = _posted.Count - 1; i >= 0; i--)
+        {
+            if (_posted[i].Posted.IsCompleted)
+            {
+                var (posted, to, tag, storage) = _posted[i];
+                _posted.RemoveAt(i);
+                try
+                {
+                    _device!.WaitTaken(posted, to, tag);               // completed: raises what failed
+                }
+                finally
+                {
+                    storage.Release();
+                }
+            }
+        }
+    }
+
     /// <inheritdoc />
     public override void Dispose()
     {
+        try
+        {
+            Flush();
+        }
+        catch (Exception e) when (e is TimeoutException or InvalidOperationException)
+        {
+            // A peer gone or never taking: nothing to wait for on the way out.
+        }
+
         _token.Dispose();
         base.Dispose();
     }

@@ -13,8 +13,8 @@ namespace Idrak.Networking.Training;
 /// <list type="bullet">
 /// <item>The hierarchical collective, when ring is set over more than one node and a node holds several ranks.</item>
 /// <item>A bfloat16 wire, when the buckets travel uncompressed and a sample slice of the gradients reduced over both
-/// wires lost at most <see cref="ClusterOptions.SuggestBFloat16Tolerance"/> of its largest value (unset: the reference's
-/// measured <see cref="ReferenceBFloat16Tolerance"/>).</item>
+/// wires lost at most <see cref="ClusterOptions.SuggestBFloat16Tolerance"/> of its largest value (unset:
+/// <see cref="DefaultBFloat16Tolerance"/>, bfloat16's rounding step).</item>
 /// <item>When the network's share is still above it (with bf16's half the bytes where suggested): gradient accumulation
 /// and local SGD by the factor that brings it down (the step's compute that many times per synchronisation), and top-k
 /// with the share of values that does (all-reduce runs that send every value).</item>
@@ -28,12 +28,13 @@ internal sealed class ClusterSettingAdvisor : ISettingAdvisor
     public const string AdvisorName = "cluster";
 
     /// <summary>
-    /// The PyTorch DDP fixture's measured precision of a bfloat16 wire (tests/Idrak.Tests/data/cluster, <c>bf16/</c> against
-    /// <c>ddp/</c>, the step 1 gradients) in the advisor's own measure, each tensor a slice: the largest difference over the
-    /// tensor's largest value, at worst 2.71e-3 (<c>model.embed_tokens.weight</c>; over the whole model's largest gradient,
-    /// 0.443, the README's 1.33e-3).
+    /// The default bf16 tolerance, bfloat16's own rounding step, 2^-7 (the owner's choice, decision 4): Idrak's bf16 ring
+    /// rounds both the contributions it sends and the reduced sum it gathers, so a slice loses up to about two half-steps
+    /// of its largest value (measured 1.47e-3, 2.17e-3 and 4.58e-3 on the tests' slices). The PyTorch DDP fixture's hook,
+    /// which sums in float32, lost 2.71e-3 in the same measure (each tensor a slice; 1.33e-3 of the whole model's largest
+    /// gradient), which would refuse bf16 on some of those slices.
     /// </summary>
-    public const double ReferenceBFloat16Tolerance = 0.0027143248156319805;
+    public const double DefaultBFloat16Tolerance = 1.0 / 128;
 
     public string Name => AdvisorName;
 
@@ -70,7 +71,7 @@ internal sealed class ClusterSettingAdvisor : ISettingAdvisor
         bool half = false;
         if (m.Compression == "none" && m.BFloat16Error is { } error)
         {
-            double tolerance = o.SuggestBFloat16Tolerance ?? ReferenceBFloat16Tolerance;
+            double tolerance = o.SuggestBFloat16Tolerance ?? DefaultBFloat16Tolerance;
             if (error <= tolerance)
             {
                 half = true;

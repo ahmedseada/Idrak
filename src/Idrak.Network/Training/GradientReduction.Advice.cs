@@ -20,12 +20,13 @@ namespace Idrak.Networking.Training;
 /// measurement ends for the run. Nothing a run computes changes: the slice is a copy, reduced after the step's own
 /// reduction. Off, the cost is one field read a step. A group that changes (a fault) ends the measurement on every member.
 /// <para>
-/// Every rank must decide alike (the slice's collectives are taken by all or none): ranks of one process take one decision
-/// for the run, made by whichever rank starts first (keyed by the run's options, the instance every rank's context holds),
-/// so a listener subscribed while the ranks start cannot split them; ranks in processes of their own agree in one
-/// collective as they start. Each suggestion is published once a run (the published set is the run's too). The slice's two
-/// collectives are network traffic, on a simulated transport's clock like any other: a replay matches a run made with the
-/// same setting (idrak cluster sim, cluster replay and the dashboard all listen).
+/// Every rank must decide alike (the slice's collectives are taken by all or none): an in-process run resolves the setting
+/// once as it starts (<c>InProcessCluster.Run</c>: set, or whether someone listens then) and every rank takes it, with its
+/// warm steps and slice, from its context; collectives without that context decide once per run whichever rank comes
+/// first (keyed by the run's options instance); ranks in processes of their own agree in one collective as they start.
+/// Each suggestion is published once a run (the published set is the run's too). The slice's two collectives are network
+/// traffic, on a simulated transport's clock like any other: the event log's header keeps the setting and a replay from
+/// the log (<c>ClusterReplay.Run</c> with it, <c>idrak cluster replay --from</c>) measures alike.
 /// </para>
 /// </summary>
 internal sealed partial class GradientReduction
@@ -45,6 +46,8 @@ internal sealed partial class GradientReduction
 
     private sealed class AdviceMeter
     {
+        public int Warm;                                                      // the warm steps measured (the run's setting)
+        public int SliceLimit;                                                // the slice's values at most
         public int Steps;
         public double Step, Exposed, Network, Backward;                     // seconds, summed over the measured steps
         public bool Simulated;
@@ -58,13 +61,22 @@ internal sealed partial class GradientReduction
     private bool AdviceWanted => World > 1 && (Options.Suggest ?? Telemetry.IsEnabled(TelemetryLevel.Suggestions));
 
     // This step is one the advisor measures.
-    private bool AdviceStep => _meter is not null && StepsInGroup >= 2 && StepsInGroup <= 1L + Options.SuggestSteps;
+    private bool AdviceStep => _meter is { } meter && StepsInGroup >= 2 && StepsInGroup <= 1L + meter.Warm;
+
+    // The run's setting where the run resolved it (an in-process run does as it starts, and a replay takes its log's): the
+    // decision, its warm steps and its slice; else the synchronisation's own options.
+    private ClusterOptions? RunSetting => Collectives.Context?.Options is { Suggest: not null } run ? run : null;
 
     private RunAdvice Run => Collectives.Context?.Options is { } run ? Runs.GetValue(run, static _ => new RunAdvice()) : _own ??= new RunAdvice();
 
     // The run's decision for ranks of one process: the first rank's, every other's the same.
     private bool DecideInProcess()
     {
+        if (RunSetting is { } setting)
+        {
+            return World > 1 && setting.Suggest == true;
+        }
+
         var run = Run;
         lock (run)
         {
@@ -73,7 +85,11 @@ internal sealed partial class GradientReduction
         }
     }
 
-    private void StartAdvice(bool on) => _meter = on && World > 1 ? new AdviceMeter() : null;
+    private void StartAdvice(bool on)
+    {
+        var setting = RunSetting ?? Options;
+        _meter = on && World > 1 ? new AdviceMeter { Warm = setting.SuggestSteps, SliceLimit = setting.SuggestSliceValues } : null;
+    }
 
     private void StopAdvice() => _meter = null;
 
@@ -89,7 +105,7 @@ internal sealed partial class GradientReduction
     // when the bucket goes then).
     private void ArmAdvice(bool present)
     {
-        if (present && _meter is { } meter && StepsInGroup == Options.SuggestSteps)
+        if (present && _meter is { } meter && StepsInGroup == meter.Warm)
         {
             meter.Capture = true;
         }
@@ -98,7 +114,7 @@ internal sealed partial class GradientReduction
     private void CaptureSlice(AdviceMeter meter, ReadOnlySpan<float> values, float weight)
     {
         meter.Capture = false;
-        int n = Math.Min(values.Length, Options.SuggestSliceValues);
+        int n = Math.Min(values.Length, meter.SliceLimit);
         meter.Slice ??= ArrayPool<float>.Shared.Rent(Math.Max(1, n));
         values[..n].CopyTo(meter.Slice);
         DenseCompressor.Scale(meter.Slice.AsSpan(0, n), weight);
@@ -119,7 +135,7 @@ internal sealed partial class GradientReduction
         meter.Network += step.Network.TotalSeconds;
         meter.Backward += step.Backward.TotalSeconds;
         meter.Simulated |= step.OnClock;
-        if (StepsInGroup >= 1L + Options.SuggestSteps)
+        if (StepsInGroup >= 1L + meter.Warm)
         {
             try
             {
@@ -140,7 +156,7 @@ internal sealed partial class GradientReduction
     // The slice over both wires (the figures ride with the float32 one), then rank 0 asks the advisors.
     private void Advise(AdviceMeter meter)
     {
-        int n = Math.Min(_layout.Size(0), Options.SuggestSliceValues);   // the same on every rank: the layout is
+        int n = Math.Min(_layout.Size(0), meter.SliceLimit);   // the same on every rank: the layout and the setting are
         bool dense = _layout.Sharded ? _wire == WireType.Float32 : _compressor.Name == "none";
         var exact = ArrayPool<float>.Shared.Rent(n + 4);
         var halves = dense && n > 0 ? ArrayPool<float>.Shared.Rent(n) : null;

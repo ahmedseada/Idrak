@@ -194,21 +194,16 @@ internal sealed class ClusterSimCommand : Command
 
         if (steered && !Steerable(inner))
         {
-            // A stop asked from the dashboard ends every rank as it begins the next step; pretrain answers it with that step's
-            // checkpoint, train and tune would end with an error and nothing written (plan 23: C9 steers pretrain's runs).
-            throw new UsageException($"The dashboard steers pretrain's runs (and resume of one): a stop ends with that step's checkpoint there; {inner[0]} does not "
-                                     + "write one on a stop yet. Run it with idrak cluster sim without --dashboard.");
+            // A stop asked from the dashboard ends every rank as it begins the next step; the command answers it with that step's
+            // checkpoint (pretrain since C9; train and tune since C8b).
+            throw new UsageException($"The dashboard steers pretrain, tune and train runs (and resume of one): a stop ends with that step's checkpoint; {inner[0]} does not "
+                                     + "write one on a stop. Run it with idrak cluster sim without --dashboard.");
         }
     }
 
-    // Whether a run can be steered (paused, resumed, stopped with a checkpoint): pretrain, or resume of a pretrain run.
-    private static bool Steerable(IReadOnlyList<string> inner) => inner[0] switch
-    {
-        "pretrain" => true,
-        "resume" => RunFolder(inner) is { } run && File.Exists(Path.Combine(run, "run.json"))
-                    && File.ReadAllText(Path.Combine(run, "run.json")).Contains(Train.PretrainCommand.RunFormat, StringComparison.Ordinal),
-        _ => false,
-    };
+    // Whether a run can be steered (paused, resumed, stopped with a checkpoint): pretrain, tune and train (plan 23, C8b:
+    // the Trainer and the fine-tuner write the last finished step's checkpoint on a stop), and resume of a run of them.
+    private static bool Steerable(IReadOnlyList<string> inner) => inner[0] is "pretrain" or "tune" or "train" or "resume";
 
     public override int Run(CommandContext context)
     {

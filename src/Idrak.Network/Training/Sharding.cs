@@ -375,6 +375,53 @@ internal sealed partial class GradientReduction
         return merged;
     }
 
+    // The rank owning `parameter` (C8b: a checkpoint streamed to rank 0 takes it from there), or null: every rank holds it.
+    public override int? Owner(Tensor parameter)
+    {
+        ArgumentNullException.ThrowIfNull(parameter);
+        if (_mode == ShardMode.None || _owners is not { } owners || !Present)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < Parameters.Count; i++)
+        {
+            if (ReferenceEquals(Parameters[i], parameter))
+            {
+                return owners[i];
+            }
+        }
+
+        return null;
+    }
+
+    public override IDisposable? Local() => _weights is { } weights && Present ? weights.Local() : null;
+
+    // This rank's own entries (C8b): its parameters' and, on rank 0, the optimizer's own; no collective.
+    public override IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState()
+    {
+        if (_mode == ShardMode.None)
+        {
+            return null;
+        }
+
+        int rank = Collectives.Rank;
+        if (_owners is null || !Present)
+        {
+            // Nothing trained since it was loaded: the loaded state, rank 0's to give.
+            return rank == 0 ? _pendingState ?? TrySaveState() : new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
+        }
+
+        if (TrySaveState() is not { } mine)
+        {
+            return null;
+        }
+
+        // In name order, as the joined state takes each rank's (OptimizerState), so a streamed checkpoint is the joined one.
+        return mine.Where(e => Optimizer.StateParameter(e.Key) is { } i ? _owners[i] == rank : rank == 0).OrderBy(e => e.Key, StringComparer.Ordinal)
+            .ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
+    }
+
     public override bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -578,6 +625,13 @@ internal sealed partial class GradientReduction
                 var p = parameters[i];
                 if (owners[i] == _rank)
                 {
+                    // A deferred load (plan 23, C8b) left every parameter unread on the device: this rank reads its own now;
+                    // the others' stay unread, and from now on come from their owners.
+                    if (p.Storage.Evicted)
+                    {
+                        p.Backend.Restore(p.Storage);
+                    }
+
                     var master = Tensor.PersistentZeros([Math.Max(1, p.Size)], p.Device);
                     p.Backend.Copy(p.Storage, master.Storage, p.Size);
                     _masters[i] = master;
@@ -693,7 +747,7 @@ internal sealed partial class GradientReduction
             }
 
             var p = Parameters[i];
-            p.Backend.Evict(p.Storage, storage => Recompute(i, storage));
+            p.Backend.SetRecompute(p.Storage, storage => Recompute(i, storage));   // evicts it, or replaces a deferred load's read
         }
 
         // The owner's values into its master (what a step or a gathered scope wrote).
