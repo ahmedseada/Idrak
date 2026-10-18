@@ -432,7 +432,9 @@ internal static partial class Tests
             // The replay of the steered run through the step after the fault: the same faults and clocks, bit for bit.
             long through = at + 1;
             Check(through <= last, $"the run passed step {through}");
-            var options = ClusterOptions.FromEnvironment();
+            // The steered run's ranks measured for the cluster advisor (the dashboard shows suggestions): its two slice
+            // collectives are on the clock, so the replay measures alike (cluster replay does, through the command line).
+            var options = ClusterOptions.FromEnvironment() with { Suggest = true };
             ClusterRunResult Replay(string name, EventLog? steering)
             {
                 void Work(ClusterRank rank)

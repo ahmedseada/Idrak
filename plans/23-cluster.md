@@ -1393,6 +1393,85 @@ gathered unit's weight, or a backend scratch sized to the largest operand, stays
 CPU gives it back. C8b first makes the test name what is held (the device's live storages by size and owner on
 failure), so the owner's next GPU run says which, then fixes it in the library; the test's bound stays as it is.
 
+**C8c as built (2026-10-18): the "cluster" setting advisor (decision 4).** Through the existing contract and registry:
+`ClusterSettingAdvisor` (`src/Idrak.Network/Training/ClusterSettingAdvisor.cs`, name "cluster") is registered in
+`SettingAdvisors` by Idrak.Network's `LibraryRegistrations`; its subject is a new record in Idrak.Abstraction,
+`ClusterStepMeasure` (`src/Idrak.Abstraction/Cluster/ClusterAdvice.cs`: the run's `ClusterOptions`, synchronisation,
+collective, compression, ranks, nodes, warm steps measured, a step's time, the exposed and the whole network time, the
+backward pass, gradient bytes, bucket bytes and count, whether the times are the virtual clock's, bf16's measured error and
+the slice's values; `Share` and `Compute` derived), so an app's own "cluster" advisor gets the same figures; the contract
+itself is unchanged. The measurement (`GradientReduction.Advice.cs`, all-reduce and sharded; local SGD measures nothing)
+runs while `ClusterOptions.Suggest` (`IDRAK_CLUSTER_SUGGEST`; unset: while someone listens at `TelemetryLevel.Suggestions`)
+and only on the first warm steps (`SuggestSteps`, `IDRAK_CLUSTER_SUGGEST_STEPS`, 3; the first, cold step left out, rule 76):
+each step's time from one step's end to the next (`SyncCore.StepTimed`, a new hook at the start of `Stepped`) with the wall
+time of its reduction replaced by the network time the step waited for (on a simulated transport the virtual clock's
+predicted exposure, so a simulated step is the cluster's; on a real one the two are the same wall time), the network time
+and the backward pass; on the last of those steps the first bucket's own values (at most `SuggestSliceValues`,
+`IDRAK_CLUSTER_SUGGEST_SLICE`, 65,536), weighted as the step weights them, are copied as the bucket is reduced (during the
+backward pass when it goes then); as that step ends the slice is reduced twice, over a float32 wire (with every rank's four
+sums beside it, so the figures are means over the ranks) and over a bfloat16 wire, the error is the largest difference over
+the largest float32 value, rank 0 asks the advisors (`SettingAdvisors.Publish`) and the measurement ends. Off, a step costs
+one field read; nothing a run computes changes (the slice is a copy, reduced after the step's own reduction). The ranks
+decide alike: ranks of one process take one decision for the run (the first rank's, kept per run options instance, the one
+every rank's context holds), so a listener subscribed while ranks start cannot split them; ranks in processes of their own
+agree in the bucket size's agreement collective (a fifth float) or, where there is none, in one float of their own over the
+real transport. A group that changes (a fault) ends the measurement on every member; each suggestion is published once a
+run (the published set is the run's, shared by a pretraining run's stages).
+
+The suggestions (each a `SettingSuggestion` with the setting, the value, a reason with the numbers and how to set it, the
+device and "cluster"; none applied). Nothing at or under `IDRAK_CLUSTER_SUGGEST_SHARE` (the share: exposed network time over
+the step). Above it: **`ClusterOptions.Collective` = hierarchical** where ring runs over more than one node and a node holds
+several ranks; **`ClusterOptions.Wire` = bf16** where the buckets travel uncompressed and the slice's error is within
+`IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE`; then, where the share with bf16's half the bytes (where suggested) is still above
+the threshold T, **`GradientAccumulation`** and **`ClusterOptions.LocalSgdEvery`** (all-reduce runs not on local SGD) by
+A = ceil(E'(1-T)/(T·C)) (E' the exposed time, halved with bf16; C the step's compute), and **`ClusterOptions.TopK`** with the
+share T·C/((1-T)·E·W) (top-k all-gathers (index, value) pairs: about share x ranks the bytes of a ring; all-reduce runs
+without compression); **`ClusterOptions.BucketBytes`** where a set bucket size makes one bucket of every gradient while
+overlap is on: B = ceil(N / max(N - K, N/256)) buckets (N the network time, K the backward pass, 2 to 256). The default bf16
+tolerance is **the fixture's measured precision in the advisor's own measure, 2.71e-3** (`bf16/` against `ddp/`, each tensor a
+slice, the largest difference over the tensor's largest value; worst `model.embed_tokens.weight`; over the whole model's
+largest gradient, 0.443, the README's 1.33e-3, a measure a slice cannot take). Found: **Idrak's bf16 wire loses more than the
+fixture's DDP hook**, which sums in float32; Idrak's ring rounds each contribution it sends and the reduced sum it gathers. On
+the Spirals model the slice lost 1.47e-3 (4,755 values, batches of 32), 2.17e-3 (6,966 values, the CLI's regression model)
+and 4.58e-3 (33,281 values, batches of 128) of its largest value; so the default accepts bf16 on some slices and refuses it
+on others. The owner may raise the default (2^-7, two roundings of half a bf16 unit, accepts all three) or keep it.
+
+Command line. `SuggestionLine` (`src/Idrak.Cli/Commands/Cluster/ClusterSuggestions.cs`) shows each suggestion once a
+command (per output, so a profile's cold and warm runs show it once) as `suggested: SETTING = VALUE (cluster on DEVICE):
+REASON`, taking the progress lines drawn on the error output off the screen first (`ProgressLine.EraseOn`, new); it is
+subscribed by `cluster sim`'s `RunRanks` (so `cluster sim`, `cluster replay` and the dashboard's runs always measure) and by
+`ClusterJoin` for every rank of `--cluster` and `cluster start` processes. The run's log keeps them (`setting_suggestion`
+records): pretrain's `TelemetryAppender` now listens at `Suggestions`, `train` under a cluster appends them (`SuggestionLog`);
+tune writes no run log, so its suggestions are shown only. `idrak suggest RUN` (a run folder with run.json and log.jsonl, its
+log.jsonl, or a name from `idrak runs list`; DATA otherwise as before) lists them, `-j` as JSON. `cluster sim` gained
+`--local-sgd K`, `--bucket-bytes SIZE` and `--topk F` (each suggestion's command-line form; passed to localhost processes
+as their variables). The dashboard's telemetry hook passes `setting_suggestion` records and the page draws them on the event
+timeline as "suggestion" events (blue, with the advisor's name), a followed run's from its log. New settings, in
+`ClusterOptions.Variables` and the CLI's table: `Suggest` (`IDRAK_CLUSTER_SUGGEST`), `SuggestSteps`
+(`IDRAK_CLUSTER_SUGGEST_STEPS`), `SuggestSliceValues` (`IDRAK_CLUSTER_SUGGEST_SLICE`); `IDRAK_CLUSTER_SUGGEST_SHARE` and
+`IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE` (read since C0) are now used.
+
+Changes from the plan, kept: **the share is the sync's own per-step timing, not `CollectiveCompleted.Blocked` and `Wall`**:
+those are timed only while someone listens at `Network` (rule 78), while the sync times its reductions every step anyway;
+the share is the exposed time (what the step waited for after its backward pass), the time `--wire bf16` and the rest can
+save. **The slice's two collectives are on the virtual clock** (they are traffic): a replay matches a run made with the same
+setting; `cluster sim`, `cluster replay` and the dashboard all measure, and the dashboard test's library replay of a steered
+run sets `Suggest = true` as the steered run had it. **The suggestions name `ClusterOptions` and `GradientAccumulation`**, with
+the command-line flag and variable in the reason.
+
+Tests: 6 in `tests/Idrak.Tests/ClusterAdvisorTests.cs` (`ClusterAdvisorGroup`, after `ClusterDashboardGroup`); the options test
+has values for the three new variables. Measured on the CPU (4 cores), the Spirals classifier (three layers of 256, 520 KiB of
+gradients, batches of 32 a rank), two ranks: ethernet-1g between two nodes, the network 72% of a 5.36 ms step (3.88 ms exposed,
+4.26 ms network, backward 0.82 ms): bf16 (error 1.47e-3 within the test's 2^-7 and the default 2.71e-3), accumulation 6,
+local SGD 6, top-k 0.048; same-device 0.7%: nothing; a tolerance of 1e-9: no bf16, accumulation 12, local SGD 12, top-k
+0.042; ring over two nodes of two ranks, 77%: hierarchical; one pinned 64 MiB bucket, 83% (backward 0.54 ms): 261 KiB
+(2 buckets); rank 0's collectives 566 unset without a listener, 566 off, 568 on; the weights and losses bit for bit on and
+off. `cluster sim -- train` of a regression network (2-512-512-1) on ethernet-1g: 78%, bf16 (2.17e-3), accumulation 8,
+local SGD 8, top-k 0.035, each shown once and listed by `idrak suggest RUN`. One build, the API dump (Abstraction) and the
+inventory regenerated, then on the CPU the filter `cluster:|public API|abstraction inventory|cli health|cli polish|cli
+arabic: every message|profiler:|pretrain:|fine-tuning:|training:|cli design: suggest|image reader: suggested`: 184 passed,
+0 failed, no process left. Not run here: the GPU runs (the owner's).
+
 ### C9: the dashboard (set up, control and monitor in a browser)
 
 Beside C8, once C6 and C7 have landed (two agents). Decided by the owner (decision 8): simulated runs are set up,
@@ -1597,7 +1676,8 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
    same measurements it suggests `--local-sgd K`, gradient accumulation, `--bucket-bytes`, `--topk` or the
    hierarchical collective when the topology has more than one node and `ring` is set. Each suggestion is a
    `SettingSuggestion` (setting, value, reason with the numbers, device, source) through `Telemetry.Suggestion`, shown
-   once on the progress line, listed by `idrak suggest`, and never applied on its own.
+   once on the progress line, listed by `idrak suggest`, and never applied on its own. **Built in C8c (2026-10-18)**:
+   see "C8c as built" (the default bf16 tolerance taken in the advisor's own measure, 2.71e-3).
 5. **Decided (2026-10-18): `udp` stays out of C5**; the name stays registered with no library default.
 6. **Decided (2026-10-18): no presets.** The topology file is built by `idrak cluster init`, an interactive builder
    with a description for every input and a default found on this machine, with options for every answer so it also
