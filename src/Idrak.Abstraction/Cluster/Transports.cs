@@ -67,6 +67,13 @@ public interface ITransport : IDisposable
     /// spent so far); zero on a real transport. A collective's simulated time is the difference across it.
     /// </summary>
     TimeSpan SimulatedTime => TimeSpan.Zero;
+
+    /// <summary>
+    /// On a simulated transport, the rank (in this group's numbering) whose delay this rank's simulated clock last waited
+    /// for: the origin of the critical path that reached it (a slow worker, say). Null on a real transport, or when the
+    /// rank that held this one back is not in the group.
+    /// </summary>
+    int? SimulatedCriticalRank => null;
 }
 
 /// <summary>Whether a transport can join two ranks here, and why not when it cannot.</summary>

@@ -158,7 +158,8 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
 
     /// <inheritdoc />
     public void OnRankState(in RankStateChanged e) =>
-        _out.WriteLine($"Rank {e.Rank} {e.State.ToString().ToLowerInvariant()}" + (e.Step >= 0 ? string.Create(CultureInfo.InvariantCulture, $" at step {e.Step}") : "") + (e.Detail is { } d ? ": " + d : ""));
+        _out.WriteLine($"Rank {e.Rank} {e.State.ToString().ToLowerInvariant()}" + (e.Step >= 0 ? string.Create(CultureInfo.InvariantCulture, $" at step {e.Step}") : "") + (e.Detail is { } d ? ": " + d : "")
+            + (e.Seed is { } seed ? string.Create(CultureInfo.InvariantCulture, $" (replay with --seed {seed} --step {e.Step})") : ""));
 
     /// <inheritdoc />
     public void OnFault(in FaultInjected e) =>
@@ -720,6 +721,7 @@ public static class TelemetryJson
                 w.WriteString("state", e.State.ToString().ToLowerInvariant());
                 w.WriteNumber("step", e.Step);
                 if (e.Detail is { } detail) w.WriteString("detail", detail);
+                if (e.Seed is { } rankSeed) w.WriteNumber("seed", rankSeed);
                 break;
             case FaultInjected e:
                 w.WriteString("event", "fault");

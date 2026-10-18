@@ -96,6 +96,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public long? SocketBufferBytes { get; init; }
   public static Idrak.Abstraction.Cluster.ClusterOptions FromEnvironment(Idrak.Abstraction.Cluster.ClusterOptions? defaults = null)
   public static System.Collections.Generic.IReadOnlyList<string> Variables { get; }
+  public string CollectiveFor(Idrak.Abstraction.Cluster.IClusterTopology topology)
   public string Placement { get; init; }
   public string Schedule { get; init; }
   public string Selector { get; init; }
@@ -211,6 +212,7 @@ public interface Idrak.Abstraction.Cluster.ILinkProfile
 
 public interface Idrak.Abstraction.Cluster.ITransport : System.IDisposable
   public (default) System.TimeSpan SimulatedTime { get; }
+  public (default) int? SimulatedCriticalRank { get; }
   public Idrak.Abstraction.Cluster.TransportCapabilities Capabilities { get; }
   public System.Threading.Tasks.ValueTask SendAsync(int to, System.ReadOnlyMemory<byte> bytes, int tag, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.ValueTask<int> ReceiveAsync(int from, System.Memory<byte> bytes, int tag, System.Threading.CancellationToken cancellationToken = default)
@@ -276,9 +278,12 @@ public sealed record Idrak.Abstraction.Cluster.SimulationOptions : System.IEquat
   public Idrak.Abstraction.Cluster.SimulationMode Mode { get; init; }
   public Idrak.Abstraction.Cluster.ThroughputClock Clock { get; init; }
   public SimulationOptions()
+  public bool LogTransfers { get; init; }
   public bool Throttle { get; init; }
   public int? Seed { get; init; }
   public long? ReplayStep { get; init; }
+  public string? CarveFrom { get; init; }
+  public string? EventLog { get; init; }
   public string? Failures { get; init; }
 
 public enum Idrak.Abstraction.Cluster.ThroughputClock : int
@@ -300,6 +305,13 @@ public readonly record struct Idrak.Abstraction.Cluster.TransportCapabilities : 
   public bool Reliable { get; init; }
   public bool ZeroCopy { get; init; }
   public double BandwidthBytesPerSecond { get; init; }
+
+public sealed class Idrak.Abstraction.Cluster.TransportPlan
+  public (string, string) this[int rankA, int rankB] { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Used { get; }
+  public int WorldSize { get; }
+  public static Idrak.Abstraction.Cluster.TransportPlan Make(Idrak.Abstraction.Cluster.IClusterTopology topology, Idrak.Abstraction.Cluster.ClusterOptions options)
+  public string? Single { get; }
 
 public static class Idrak.Abstraction.Cluster.TransportSelectors
   public static Idrak.Abstraction.Cluster.ITransportSelector Get(string name)
@@ -1914,8 +1926,9 @@ public enum Idrak.Abstraction.Diagnostics.RankState : int
 
 public readonly record struct Idrak.Abstraction.Diagnostics.RankStateChanged : System.IEquatable<Idrak.Abstraction.Diagnostics.RankStateChanged>
   public Idrak.Abstraction.Diagnostics.RankState State { get; init; }
-  public RankStateChanged(int Rank, Idrak.Abstraction.Diagnostics.RankState State, long Step, string? Detail)
+  public RankStateChanged(int Rank, Idrak.Abstraction.Diagnostics.RankState State, long Step, string? Detail, int? Seed = null)
   public int Rank { get; init; }
+  public int? Seed { get; init; }
   public long Step { get; init; }
   public string? Detail { get; init; }
 

@@ -9,10 +9,39 @@ namespace Idrak.Cluster;
 /// <summary>One rank of a simulated cluster as its work sees it.</summary>
 /// <param name="Rank">Its rank.</param>
 /// <param name="Device">Its device, carved from the physical one its topology entry names, with its cap.</param>
-/// <param name="Transport">Its end of the "sim" transport.</param>
-/// <param name="Collectives">Its collectives over that transport.</param>
+/// <param name="Transport">Its end of the transport joining every rank ("sim" in a simulated run).</param>
+/// <param name="Collectives">Its collectives: over every rank, or over the ranks that take part in the current step.</param>
 /// <param name="Context">The topology, its rank and the options.</param>
-public sealed record ClusterRank(int Rank, Device Device, ITransport Transport, ICollectives Collectives, ClusterContext Context);
+public sealed record ClusterRank(int Rank, Device Device, ITransport Transport, ICollectives Collectives, ClusterContext Context)
+{
+    private long _step = -1;
+
+    internal SimStepper? Stepper { get; init; }
+
+    /// <summary>The step this rank last began (<see cref="BeginStep"/>), or -1 before the first.</summary>
+    public long Step => Stepper?.Step ?? _step;
+
+    /// <summary>
+    /// Begins <paramref name="step"/> on this rank (a training loop calls it at the start of each step; steps go forward).
+    /// In a simulated run the step's faults are drawn and applied here (a dropped worker throws, naming itself, and every
+    /// other rank's step ends naming it), and the clock as the step begins goes to the event log. Returns false when this
+    /// rank sits the step out: a late joiner before it joins, or every rank past the step a replay stops at
+    /// (<see cref="SimulationOptions.ReplayStep"/>). While a rank sits out, <see cref="Collectives"/> of the others runs over
+    /// the ranks that take part.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">A step not after the last one begun.</exception>
+    public bool BeginStep(long step)
+    {
+        if (Stepper is { } stepper)
+        {
+            return stepper.BeginStep(step);
+        }
+
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(step, _step);
+        _step = step;
+        return Context.Options.Simulation.ReplayStep is not { } last || step <= last;
+    }
+}
 
 /// <summary>What a simulated run gave: each rank's failure, if any, and its time on the virtual clock, and the wall time.</summary>
 /// <param name="Errors">Each rank's exception, or null when it finished.</param>
@@ -22,6 +51,9 @@ public sealed record ClusterRunResult(IReadOnlyList<Exception?> Errors, IReadOnl
 {
     /// <summary>Whether every rank finished.</summary>
     public bool Succeeded => Errors.All(e => e is null);
+
+    /// <summary>The run's event log (faults, each rank's clock per step, state changes, transfers), or null when no rank ran on "sim".</summary>
+    public EventLog? Log { get; init; }
 
     /// <summary>Throws when a rank failed, naming every rank that did.</summary>
     /// <exception cref="AggregateException">The ranks' exceptions.</exception>
@@ -37,14 +69,20 @@ public sealed record ClusterRunResult(IReadOnlyList<Exception?> Errors, IReadOnl
 
 /// <summary>
 /// Runs a cluster inside this process (plan 23, the in-process mode): every rank a thread of its own on a device carved
-/// from the physical device its topology entry names (<see cref="SimulatedDevices.Carve"/>, the entry's memory as its cap),
-/// joined by the "sim" transport with the algorithm <see cref="ClusterOptions.Collective"/> names ("ring" when null).
-/// Deterministic for a seed: the virtual clock counts network time only.
+/// from the physical device its topology entry names (<see cref="SimulatedDevices.Carve"/>, the entry's memory as its cap;
+/// <see cref="SimulationOptions.CarveFrom"/> carves every one from one device), joined by the transport the plan chooses
+/// per pair (<see cref="TransportPlan"/>: "sim" here unless one is forced; each choice published once as
+/// <see cref="TransportChosen"/>) with the algorithm <see cref="ClusterOptions.CollectiveFor"/> names (hierarchical across
+/// several nodes, else ring). The failure model's faults are injected step by step (<see cref="ClusterRank.BeginStep"/>)
+/// and every run keeps an <see cref="EventLog"/>. Deterministic for a seed: the virtual clock counts network time only.
 /// </summary>
 public static class InProcessCluster
 {
     /// <summary>Runs <paramref name="work"/> on every rank of <paramref name="topology"/> and waits for them all.</summary>
-    /// <exception cref="NotSupportedException">The collective algorithm or the "sim" transport is not registered.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The collective algorithm, the transport or the failure model is not registered; the plan joins the ranks over
+    /// several transports (an in-process cluster runs one); or faults are asked of a transport that is not "sim".
+    /// </exception>
     public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, Action<ClusterRank> work)
     {
         ArgumentNullException.ThrowIfNull(topology);
@@ -54,19 +92,30 @@ public static class InProcessCluster
             Coordinator = "sim://" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),   // this run's own rendezvous
             Simulation = (options?.Simulation ?? new SimulationOptions()) with { Mode = SimulationMode.InProcess },
         };
-        var transports = Transports.Get("sim");
-        var collectives = Collectives.Get(options.Collective ?? "ring");
+        var plan = TransportPlan.Make(topology, options);
+        string transportName = plan.Single ?? (plan.Used.Count == 0
+            ? (string.Equals(options.Transport, "auto", StringComparison.OrdinalIgnoreCase) ? "sim" : options.Transport)
+            : throw new NotSupportedException($"The selector joins this cluster's ranks over several transports ({string.Join(", ", plan.Used)}); an in-process cluster runs one: force it with ClusterOptions.Transport (IDRAK_CLUSTER_TRANSPORT)."));
+        var transports = Transports.Get(transportName);
+        string failures = options.Simulation.Failures ?? topology.Simulation.Failures;
+        if (!string.Equals(transportName, "sim", StringComparison.OrdinalIgnoreCase) && !string.Equals(failures, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException($"Faults ('{failures}') are injected by the sim transport; this run uses '{transportName}': set IDRAK_CLUSTER_FAILURES=none, or let the selector choose sim.");
+        }
+
+        var collectives = Collectives.Get(options.CollectiveFor(topology));
         int world = topology.WorldSize;
         var devices = new Device[world];
         for (int r = 0; r < world; r++)
         {
             var (node, local) = topology.Place(r);
             var spec = topology.Nodes[node].Devices[local];
-            devices[r] = SimulatedDevices.Carve(Device.Parse(spec.Device), spec.MemoryBytes, r);
+            devices[r] = SimulatedDevices.Carve(Device.Parse(options.Simulation.CarveFrom ?? spec.Device), spec.MemoryBytes, r);
         }
 
         var errors = new Exception?[world];
         var simulated = new TimeSpan[world];
+        var worlds = new SimWorld?[world];
         var threads = new Thread[world];
         long start = Stopwatch.GetTimestamp();
         for (int r = 0; r < world; r++)
@@ -77,20 +126,36 @@ public static class InProcessCluster
                 var context = new ClusterContext(topology, rank, options);
                 ITransport? transport = null;
                 ICollectives? group = null;
+                ClusterRank? me = null;
                 try
                 {
                     transport = transports.Connect(context);
-                    group = collectives.Create(transport, devices[rank], context);
-                    State(rank, RankState.Joined, null);
-                    work(new ClusterRank(rank, devices[rank], transport, group, context));
+                    SimStepper? stepper = null;
+                    if (transport is SimTransport sim)
+                    {
+                        worlds[rank] = sim.Hub.World;
+                        group = stepper = new SimStepper(sim, devices[rank], context, collectives);
+                    }
+                    else
+                    {
+                        group = collectives.Create(transport, devices[rank], context);
+                    }
+
+                    State(rank, RankState.Joined, -1, null, worlds[rank]?.Seed);
+                    me = new ClusterRank(rank, devices[rank], transport, group, context) { Stepper = stepper };
+                    work(me);
                     simulated[rank] = transport.SimulatedTime;
-                    State(rank, RankState.Finished, null);
+                    stepper?.Finish();
+                    State(rank, RankState.Finished, me.Step, null, worlds[rank]?.Seed);
                 }
                 catch (Exception e)
                 {
                     errors[rank] = e;
                     simulated[rank] = transport?.SimulatedTime ?? TimeSpan.Zero;
-                    State(rank, RankState.Dropped, e.Message);
+                    if (worlds[rank]?.Faults.Dropped != rank)               // a dropped worker said so as it dropped
+                    {
+                        State(rank, RankState.Dropped, me?.Step ?? -1, e.Message, worlds[rank]?.Seed);
+                    }
                 }
                 finally
                 {
@@ -111,14 +176,154 @@ public static class InProcessCluster
             thread.Join();
         }
 
-        return new ClusterRunResult(errors, simulated, Stopwatch.GetElapsedTime(start));
+        var wall = Stopwatch.GetElapsedTime(start);
+        EventLog? log = null;
+        if (worlds.FirstOrDefault(w => w is not null) is { } simWorld)
+        {
+            try
+            {
+                log = simWorld.Log.Seal();
+            }
+            finally
+            {
+                simWorld.Log.Dispose();
+            }
+
+            if (options.Simulation.EventLog is { } path)
+            {
+                log.Save(path);
+            }
+        }
+
+        return new ClusterRunResult(errors, simulated, wall) { Log = log };
     }
 
-    private static void State(int rank, RankState state, string? detail)
+    private static void State(int rank, RankState state, long step, string? detail, int? seed)
     {
         if (Telemetry.IsEnabled(TelemetryLevel.Network))
         {
-            Telemetry.RankState(new RankStateChanged(rank, state, -1, detail));
+            Telemetry.RankState(new RankStateChanged(rank, state, step, detail, seed));
         }
+    }
+}
+
+/// <summary>
+/// A rank's steps in a simulated run, and its collectives: over every rank, or, while a late joiner is away, over a group
+/// of the ranks that take part (its own queues over the same clock, numbered from 0, with the topology of those ranks).
+/// When the group changes its ranks meet at a barrier, so a late joiner's clock moves to theirs as it joins.
+/// </summary>
+internal sealed class SimStepper : ICollectives
+{
+    private readonly SimTransport _root;
+    private readonly SimWorld _world;
+    private readonly ICollectivesProvider _provider;
+    private readonly ClusterContext _context;
+    private readonly Dictionary<SimHub, (SimTransport Transport, ICollectives Collectives)> _groups = [];
+    private (SimTransport Transport, ICollectives Collectives) _current;
+    private bool _present = true;
+    private long? _joinsAt;
+
+    public SimStepper(SimTransport root, Device device, ClusterContext context, ICollectivesProvider provider)
+    {
+        _root = root;
+        _world = root.Hub.World;
+        _provider = provider;
+        _context = context;
+        Device = device;
+        _current = (root, provider.Create(root, device, context));
+        _groups[root.Hub] = _current;
+    }
+
+    public long Step { get; private set; } = -1;
+
+    public string Name => _current.Collectives.Name;
+
+    public int Rank => _current.Collectives.Rank;
+
+    public int WorldSize => _current.Collectives.WorldSize;
+
+    public Device Device { get; }
+
+    private int Real => _root.Real;
+
+    private ICollectives Current => _present
+        ? _current.Collectives
+        : throw new InvalidOperationException(_joinsAt is { } at
+            ? $"rank {Real} sits out step {Step}: it joins at step {at} (a late join)"
+            : $"rank {Real} sits out step {Step}: the replay stops at step {_world.Options.Simulation.ReplayStep}");
+
+    public bool BeginStep(long step)
+    {
+        if (step <= Step)
+        {
+            throw new ArgumentOutOfRangeException(nameof(step), step, $"rank {Real} began step {Step}; steps go forward");
+        }
+
+        if (_world.Broken is not null)
+        {
+            throw _world.Failure();
+        }
+
+        Step = step;
+        if (_world.Options.Simulation.ReplayStep is { } last && step > last)
+        {
+            (_present, _joinsAt) = (false, null);
+            return false;
+        }
+
+        _world.Faults.DrawThrough(step);
+        var members = _world.Faults.Members(step);
+        if (Array.BinarySearch(members, Real) < 0)
+        {
+            (_present, _joinsAt) = (false, _world.Faults.JoinsAt(Real, step));
+            return false;
+        }
+
+        _present = true;
+        var hub = _world.GroupOf(members);
+        if (!_groups.TryGetValue(hub, out var group))
+        {
+            int rank = hub.SubOf(Real)!.Value;
+            var transport = new SimTransport(hub, rank);
+            group = (transport, _provider.Create(transport, Device, new ClusterContext(hub.Topology, rank, _context.Options)));
+            _groups[hub] = group;
+        }
+
+        _current = group;
+        if (!members.AsSpan().SequenceEqual(_world.Faults.Members(step - 1)))
+        {
+            group.Transport.Barrier();                         // the group changed: its ranks meet, their clocks at the latest
+        }
+
+        _world.Faults.Begin(Real, step, _world.Clock.Now(Real));
+        _world.Log.Clock(Real, step, _world.Clock.Now(Real));
+        return true;
+    }
+
+    // The rank finished its work: its clock goes to the log.
+    public void Finish() => _world.Log.End(Real, _world.Clock.Now(Real));
+
+    public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32) => Current.AllReduce(buffer, count, op, wire);
+
+    public void AllGather(Storage input, int count, Storage output) => Current.AllGather(input, count, output);
+
+    public void ReduceScatter(Storage input, int count, Storage output, ReduceOp op) => Current.ReduceScatter(input, count, output, op);
+
+    public void Broadcast(Storage buffer, int count, int root) => Current.Broadcast(buffer, count, root);
+
+    public void Barrier() => Current.Barrier();
+
+    public void Dispose()
+    {
+        foreach (var (transport, collectives) in _groups.Values)
+        {
+            collectives.Dispose();
+            if (!ReferenceEquals(transport, _root))
+            {
+                transport.Dispose();
+            }
+        }
+
+        _groups.Clear();
     }
 }
