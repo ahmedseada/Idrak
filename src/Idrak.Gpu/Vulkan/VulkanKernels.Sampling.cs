@@ -392,7 +392,7 @@ internal static partial class VulkanKernels
         parts[lane] = part.V;
         k.If(lane.Eq(0), () =>
         {
-            shared[k.Int(2)] = k.Int(-2).AsFloat();                             // -2: no lane wrote a token (every lane's sums are 0)
+            shared[k.Int(2)] = k.Int(-1).AsFloat();                             // nothing sampled unless a lane writes a token
             shared[k.Int(3)] = k.Float(0f);
         });
         k.Barrier();

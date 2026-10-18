@@ -66,10 +66,14 @@ internal sealed partial class VulkanBackend
         int slotCount = useSlots ? blocks * topK : 0;
         Span<byte> b = stackalloc byte[44];
         var push = new Push(b).I(vocabulary).I(rowStride).I(rowOffset).I(rows).F(invT).I(topK).F(topP).F(minP).F(logMinP).U(seed).I(slotCount).Bytes;
+        // The sampler's kernels take the reductions through workgroup memory on every device (the variant devices without
+        // subgroup arithmetic run): their lanes exchange chunk sums and candidates after loops of varying length, and a
+        // driver was seen to lose one subgroup's stores across the barrier in the subgroup variant, with the drawn token
+        // wrong or none while every reduced value was right. Sampling runs once a token: the extra barriers cost nothing.
         if (!useSlots)
         {
             bool narrow = vocabulary <= VulkanKernels.NarrowVocabulary;
-            Run(narrow ? "sample_rows_narrow" : "sample_rows", narrow ? GridGroups(rows) : RowGroups(rows), 1, 1, [logits, ids, stats, step], push);
+            RunAt(narrow ? "sample_rows_narrow" : "sample_rows", Width, narrow ? GridGroups(rows) : RowGroups(rows), 1, 1, [logits, ids, stats, step], push, subgroups: false);
             return;
         }
 
@@ -78,9 +82,9 @@ internal sealed partial class VulkanBackend
         try
         {
             Span<byte> s = stackalloc byte[28];
-            Run("topk_slots", RowGroups((long)rows * blocks), 1, 1, [logits, slots, counts],
-                new Push(s).I(vocabulary).I(rowStride).I(rowOffset).F(invT).I(topK).I(blocks).I(rows).Bytes);   // a workgroup per (row, slice)
-            Run("sample_rows_slots", RowGroups(rows), 1, 1, [logits, ids, stats, step, slots, counts], push);
+            RunAt("topk_slots", Width, RowGroups((long)rows * blocks), 1, 1, [logits, slots, counts],
+                new Push(s).I(vocabulary).I(rowStride).I(rowOffset).F(invT).I(topK).I(blocks).I(rows).Bytes, subgroups: false);   // a workgroup per (row, slice)
+            RunAt("sample_rows_slots", Width, RowGroups(rows), 1, 1, [logits, ids, stats, step, slots, counts], push, subgroups: false);
         }
         finally
         {
