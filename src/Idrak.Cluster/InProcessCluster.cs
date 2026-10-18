@@ -256,6 +256,11 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IHostValueCollectiv
 
     public Device Device { get; }
 
+    // The current group's transport and context, for messages of one's own (a pipeline's activations, plan 23 C7).
+    public ITransport? Transport => _current.Transport;
+
+    public ClusterContext? Context => ReferenceEquals(_current.Transport, _root) ? _context : null;
+
     private int Real => _root.Real;
 
     private ICollectives Current => _present
