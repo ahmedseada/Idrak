@@ -204,14 +204,40 @@ value and what was expected):
 | `SimulationOptions.ClockForThroughput` (`wall`, `simulated`) | `IDRAK_CLUSTER_CLOCK` | `wall` |
 | The calibration cache: one text file per link under `{cache}/cluster/`, header `idrak-cluster-profiles 1`, then `link bandwidth latency jitter residual samples` lines, ignored and rewritten on a header mismatch (the CUDA `TuningCache` format, `src/Idrak.Gpu/Cuda/TuningCache.cs`, with pure `Serialize`/`Parse` so tests run without a link); `idrak tuning show` lists it | `IDRAK_CACHE`, `IDRAK_TUNING_CACHE` (existing); `IDRAK_CLUSTER_PROFILES_FILE` overrides the file | `~/.cache/idrak/cluster/` |
 
-**Telemetry.** `TelemetryLevel.Network` (the next free flag), two events at that level, published only when `IsEnabled`:
-`TransferCompleted(string Transport, int From, int To, long Bytes, TimeSpan Wall, TimeSpan Simulated)` and
-`CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived,
-TimeSpan Wall, TimeSpan Simulated, TimeSpan Blocked, int SlowestRank)`. `Telemetry.Transfer(in …)` and
-`Telemetry.Collective(in …)`; `TelemetryJson` writes them into the run's `log.jsonl`, so `idrak trace` and `idrak profile`
-show network time next to kernel time and `runs show` charts the network share of each step. `BatchCompleted` is not
-reused for it. The progress record gains `SimulatedSeconds` beside the wall time; the trainer's throughput uses the clock
-`ClockForThroughput` names.
+**Telemetry (the owner's note: integrated wherever it helps, in both packages).** The layers already exist
+(`TelemetryLevel` flags, `ITelemetryHook` with default no-op `On…` methods, `Telemetry.IsEnabled` as one static read and
+an AND, `ConsoleLogger`, `MetricsRecorder`, `ChannelTelemetry`, `JsonLinesLogger`, `TelemetryJson`,
+`Telemetry.Configure()`; `src/Idrak.Abstraction/Diagnostics/`). This plan adds one level and six events, and every
+layer carries them:
+
+- `TelemetryLevel.Network = 1 << 11` (the next free flag; `All` includes it; `trace --levels network`).
+- Events (`Events.cs`, readonly record structs, all at `Network`), published only when `IsEnabled` (rule 78: free when
+  nobody listens; the simulator's counters are kept regardless, they are the virtual clock's own state):
+  `TransferCompleted(Transport, From, To, Tag, Bytes, Wall, Simulated)`;
+  `CollectiveCompleted(Collective, Operation, Rank, WorldSize, BytesSent, BytesReceived, Wall, Simulated, Blocked, SlowestRank)`;
+  `TransportChosen(RankA, RankB, Transport, Reason)` once per pair at start;
+  `RankStateChanged(Rank, State, Step, Detail)` (joined, slow, dropped, partitioned, rejoined, finished);
+  `FaultInjected(Seed, Step, Kind, Ranks, Duration)` (the replay key, so a crash's log names what to replay);
+  `ProfileCalibrated(Link, BandwidthBefore, BandwidthAfter, LatencyBefore, LatencyAfter, Residual, Samples)`.
+  `Telemetry.Transfer`, `.Collective`, `.TransportChosen`, `.RankState`, `.Fault`, `.Calibrated` publish them;
+  `ITelemetryHook` gains the six `On…` defaults.
+- **`Idrak.Cluster` emits without Idrak types:** its core raises its own small `IClusterListener` (transfer, fault, rank
+  state, clock tick) and keeps `ClusterCounters`; the bridge in `Idrak.Network` forwards each to `Telemetry` behind
+  `IsEnabled(Network)`, so a listener costs nothing when none is subscribed and the simulator stays extractable.
+- **Where it shows up:** `ConsoleLogger` prints one line per collective at `Network` (bytes, wall, simulated, blocked,
+  the slowest rank) and one per fault and rank-state change; `MetricsRecorder` keeps per-step network time, bytes and
+  blocked time beside the losses; `ChannelTelemetry` streams them to an app's UI; `JsonLinesLogger` and
+  `TelemetryJson.Write` put them in the run's `log.jsonl`, so `runs show` charts the network share of each step and
+  `runs compare` lines up a simulated run against a real one; `idrak trace --levels network` prints them live;
+  `idrak profile`'s probes above read the same events; the training progress line shows the network share of the step,
+  the slowest rank, and the predicted time beside the wall time; `TrainingStarted.Device` names the rank's device.
+- **Localhost and real clusters:** every rank keeps its own telemetry; rank 0's `log.jsonl` also receives each rank's
+  per-step summary (bytes, blocked, slowest) as a small message in the barrier that follows the step, so one file
+  describes the cluster; `idrak cluster calibrate --from RUN` reads the `TransferCompleted` records of that file (or a
+  bench's JSON) and `ProfileCalibrated` records what it wrote.
+- **Timing on devices:** a transfer's wall time is taken after `SynchronizeForTiming` as the kernel events are, so a
+  queued device copy is not counted as free; `BatchCompleted` keeps its meaning (data and compute time) and is not
+  reused for network time.
 
 **Profiling (the owner's note: the profiler is integrated wherever it helps).** The profiler already exists
 (`Profiler.Run(name, device, work, ProfileOptions)` → `ProfileReport`, probes in the `ProfileProbes` registry, writers
@@ -401,7 +427,9 @@ latency and is deterministic for a seed" (two runs, equal logs); "cluster: a bou
 past the cap offloads, `GetMemoryUsage().Offloaded` grows, `InUse` does not pass the cap); "cluster: two fake devices
 on one physical device report one UUID"; "cluster: chunk size measured once and kept" (the cache file appears; a forced
 `ChunkBytes` skips it); `TransportSuite` on `sim`; `CollectivesSuite` on `naive` and `ring` over `sim`; "cluster: sim
-telemetry reports bytes, wall and simulated time per collective"; `Stress.Run` on `ring`: device memory does not grow
+telemetry reports bytes, wall and simulated time per collective, and nothing is published when no hook listens"
+(the counters checked against `Telemetry.IsEnabled` false); "cluster: TransportChosen is published once per pair";
+"cluster: ConsoleLogger, MetricsRecorder, ChannelTelemetry and JsonLinesLogger carry the network events"; `Stress.Run` on `ring`: device memory does not grow
 across 100 steps (rule 77); "cluster: the network and cluster probes report bytes, blocked time and the predicted step
 through Profiler.Run" (the probes registered, `ProfileReport` rows named per pair, the `cluster` probe skipped and
 listed when `sim` is not active).
@@ -442,7 +470,9 @@ simulated time on a two-level topology" (the preset `2x8-infiniband` with `inter
 printed and must be above 1); "cluster: the selector picks per pair in the fastest-first order and logs it; a forced
 transport wins"; "cluster: a slow worker shows as Blocked on every other rank and SlowestRank names it"; "cluster: a
 dropped worker ends the step on every rank naming it"; "cluster: link loss is resent and the step completes"; "cluster:
-a partition times out naming both sides"; "cluster: a late join connects at step N"; "cluster: replay --seed S --step N
+a partition times out naming both sides"; "cluster: a late join connects at step N"; "cluster: every fault and rank-state change is a telemetry
+record with its seed and step, and runs show charts the network share"; "cluster: rank 0's log holds every rank's
+per-step summary in localhost mode"; "cluster: replay --seed S --step N
 reproduces the fault schedule and the clock bit for bit" (two replays, equal logs).
 
 **Done when** the simulator shows the hierarchical win and every fault replays.
