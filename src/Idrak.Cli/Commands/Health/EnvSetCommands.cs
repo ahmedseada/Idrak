@@ -233,9 +233,7 @@ internal sealed class EnvSetCommand : EnvSaveCommand
                 continue;
             }
 
-            // A name, or the part after IDRAK_ ("port" is IDRAK_PORT, though IDRAK_CLUSTER_PORT contains it too).
-            if ((EnvironmentVariables.Find(answer.ToUpperInvariant()) ?? EnvironmentVariables.Find(answer)
-                 ?? EnvironmentVariables.Find("IDRAK_" + answer.Replace(' ', '_').ToUpperInvariant())) is { } exact)
+            if ((EnvironmentVariables.Find(answer.ToUpperInvariant()) ?? EnvironmentVariables.Find(answer)) is { } exact)
             {
                 if (SavedEnvironment.WhyNot(exact) is { } why)
                 {
@@ -251,6 +249,12 @@ internal sealed class EnvSetCommand : EnvSaveCommand
             if (matches.Count == 1)
             {
                 return matches[0];
+            }
+
+            // Several match: the one named after the part itself (port is IDRAK_PORT, not IDRAK_CLUSTER_PORT), if any.
+            if (matches.FirstOrDefault(m => m.Name.Equals("IDRAK_" + answer.Replace(' ', '_'), StringComparison.OrdinalIgnoreCase)) is { } named)
+            {
+                return named;
             }
 
             context.Write(matches.Count == 0 ? $"No variable matches '{answer}' (? lists all)."

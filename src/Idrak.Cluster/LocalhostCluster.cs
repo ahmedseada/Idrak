@@ -31,6 +31,12 @@ public sealed record LocalhostLaunch(string FileName, IReadOnlyList<string> Argu
 
     /// <summary>The last lines of each output kept per rank for the result.</summary>
     public int KeepLines { get; init; } = 200;
+
+    /// <summary>
+    /// Steers the processes (pause, resume, stop at a step boundary; phase C9), or null: the launcher gives every rank its
+    /// control file (<c>IDRAK_CLUSTER_CONTROL</c>), which rank 0 reads as each step begins.
+    /// </summary>
+    public LocalhostControl? Control { get; init; }
 }
 
 /// <summary>How one rank's process ended.</summary>
@@ -185,6 +191,10 @@ public static class LocalhostCluster
                 info.Environment["IDRAK_CLUSTER_RUN"] = run;
                 info.Environment["IDRAK_CLUSTER_PARENT"] = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
                 info.Environment["IDRAK_CLUSTER_MODE"] = "localhost";
+                if (launch.Control is { } control)
+                {
+                    info.Environment["IDRAK_CLUSTER_CONTROL"] = control.Path;
+                }
                 if (!simulate)
                 {
                     info.Environment["IDRAK_CLUSTER_THROTTLE"] = "0";   // a real cluster's links are what they are

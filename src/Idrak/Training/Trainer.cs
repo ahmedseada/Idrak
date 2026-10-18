@@ -308,6 +308,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 else
                 {
                     Optimizer.ZeroGrad();
+                    // No rows here this step: the overlap opened all the same, so this rank's buckets and header go in the
+                    // order of the ranks that ran a backward pass (plan 23, C4; found in C9).
+                    sync?.Overlap(0)?.Dispose();
                 }
 
                 double reducedLoss = double.NaN;

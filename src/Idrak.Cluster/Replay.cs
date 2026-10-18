@@ -26,7 +26,7 @@ public static class ClusterReplay
 
     /// <summary>
     /// Reruns <paramref name="work"/> on <paramref name="topology"/> with <paramref name="seed"/> through step
-    /// <paramref name="step"/> (<see cref="InProcessCluster.Run"/> with the seed and <see cref="SimulationOptions.ReplayStep"/>
+    /// <paramref name="step"/> (<see cref="InProcessCluster.Run(IClusterTopology, ClusterOptions, Action{ClusterRank})"/> with the seed and <see cref="SimulationOptions.ReplayStep"/>
     /// set): the result's <see cref="ClusterRunResult.Log"/> holds the faults drawn and each rank's clock at every step up to
     /// it, equal to the original run's.
     /// </summary>
@@ -35,5 +35,20 @@ public static class ClusterReplay
         ArgumentOutOfRangeException.ThrowIfNegative(step);
         options ??= new ClusterOptions();
         return InProcessCluster.Run(topology, options with { Simulation = options.Simulation with { Seed = seed, ReplayStep = step } }, work);
+    }
+
+    /// <summary>
+    /// Replays a run steered while it went (plan 23, phase C9: faults injected from the dashboard): as the run above, with the live faults
+    /// <paramref name="steered"/>'s event log recorded injected again at their steps, so the replay's faults, clocks and
+    /// training equal the steered run's through <paramref name="step"/>, bit for bit. (A pause changes no result, so it needs
+    /// no replaying; a stop ends the run where a replay's step would.)
+    /// </summary>
+    public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, int seed, long step, Action<ClusterRank> work, EventLog steered)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(step);
+        ArgumentNullException.ThrowIfNull(steered);
+        options ??= new ClusterOptions();
+        return InProcessCluster.Run(topology, options with { Simulation = options.Simulation with { Seed = seed, ReplayStep = step } }, work,
+            new ClusterRunControl(steered.LiveFaults.Where(f => f.Step <= step)));
     }
 }

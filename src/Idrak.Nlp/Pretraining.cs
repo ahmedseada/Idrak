@@ -487,7 +487,37 @@ public static partial class Pretrainer
                     {
                         var (drawn, positions) = next.GetAwaiter().GetResult();
                         next = stageStep + 1 < stage.Steps ? Task.Run(() => Draw(readers, options, model)) : Task.FromResult<(List<TrainingSequence>, (long, long, long)[])>(([], []));
-                        if (sync is not null && !sync.BeginStep(step))
+                        bool present;
+                        try
+                        {
+                            present = sync is null || sync.BeginStep(step);
+                        }
+                        catch (ClusterRunStoppedException) when (step > 0 && last != Path.Combine(outputFolder, $"checkpoint-{step}") && (lead || sync is { Updates: true }))
+                        {
+                            // Stopped at this step boundary (a dashboard's stop, plan 23 C9): every rank stops here alike, so the
+                            // checkpoint is the last finished step's, written as a saving step writes it. A sharded run's weights
+                            // and optimizer state are every rank's share: every rank joins them, rank 0 writes, all wait (C6).
+                            partSources.Keep();
+                            if (sync is { Updates: true })
+                            {
+                                using (sync.Gather())
+                                {
+                                    var joined = sync.SaveOptimizerState();
+                                    last = sync.Rank == 0 ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations, joined)
+                                        : Path.Combine(outputFolder, $"checkpoint-{step}");
+                                }
+
+                                sync.Barrier();
+                            }
+                            else
+                            {
+                                last = SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations);
+                            }
+
+                            throw;
+                        }
+
+                        if (!present)
                         {
                             // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's
                             // last step): it drew the step as every rank does, so the sources stay alike, and the ranks that take

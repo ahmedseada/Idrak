@@ -26,7 +26,9 @@ internal sealed class ClusterReplayCommand : Command
 
         A simulated run draws its faults from (seed, step) alone and charges its virtual clock from each message's identity,
         so a run of the same seed through the same step is the same bit for bit. Without a command, prints the faults the
-        failure model draws on the topology from the seed for steps 0 to N, with the replay key a fault's message names.
+        failure model draws on the topology from the seed for steps 0 to N, with the replay key a fault's message names;
+        a run steered from the dashboard also has its live faults, which --from takes from its event log and a rerun
+        injects again at their steps.
         With a training command after -- (as idrak cluster sim takes it, into a run folder of its own), runs it again
         through step N: every rank sits out the steps after it, and each rank's clock as it began step N is printed, read
         from the run's event log. --from LOG (a run's cluster-events.idrklog, which idrak cluster sim writes in its run
@@ -106,6 +108,15 @@ internal sealed class ClusterReplayCommand : Command
             ? "fault schedule: no fault drawn"
             : $"fault schedule ({schedule.Count}): " + string.Join("; ", schedule.Select(f => $"{f.Kind} at step {f.Step.ToString(inv)} on rank(s) {string.Join(",", f.Ranks)}"
                                                                                              + (f.Duration > TimeSpan.Zero ? $" for {f.Duration.TotalMilliseconds.ToString("F1", inv)} ms" : ""))));
+        // A steered run's live faults (asked from the dashboard, plan 23 C9) are not drawn from the seed: the log gives them,
+        // and a rerun injects them again at their steps.
+        var live = original?.LiveFaults.Where(f => f.Step <= step).ToList() ?? [];
+        if (live.Count > 0)
+        {
+            context.Write($"live faults from the log ({live.Count}): " + string.Join("; ", live.Select(f => $"{f.Kind} at step {f.Step.ToString(inv)} on rank(s) {string.Join(",", f.Ranks)}")));
+            schedule = [.. schedule, .. live];
+        }
+
         var problems = new List<string>();
         if (original is not null)
         {
@@ -140,7 +151,7 @@ internal sealed class ClusterReplayCommand : Command
             options = options with { Simulation = options.Simulation with { Seed = seed, Failures = failures, ReplayStep = step, Mode = SimulationMode.InProcess } };
             options = ClusterSimCommand.WithEventLog(context, options, inner);
             context.Write($"rerunning through step {step.ToString(inv)} on {simTopology.WorldSize} rank(s): idrak {string.Join(' ', inner)}");
-            var (codes, result) = ClusterSimCommand.Simulate(context, simTopology, options, inner);
+            var (codes, result) = ClusterSimCommand.Simulate(context, simTopology, options, inner, live.Count > 0 ? new ClusterRunControl(live) : null);
             if (!result.Succeeded || result.Log is null)
             {
                 context.Error(result.Log is null ? "the rerun kept no event log (it ran no simulated transport)" : "the rerun failed");
@@ -180,9 +191,13 @@ internal sealed class ClusterReplayCommand : Command
         return problems.Count == 0 ? ExitCodes.Ok : ExitCodes.Failed;
     }
 
+    // The same faults, whatever order a step's drawn and live faults were written in.
     private static bool Same(IReadOnlyList<Fault> a, IReadOnlyList<Fault> b) =>
-        a.Count == b.Count && a.Zip(b).All(p => p.First.Kind == p.Second.Kind && p.First.Step == p.Second.Step && p.First.Duration == p.Second.Duration
+        a.Count == b.Count && Ordered(a).Zip(Ordered(b)).All(p => p.First.Kind == p.Second.Kind && p.First.Step == p.Second.Step && p.First.Duration == p.Second.Duration
                                                 && p.First.Factor.Equals(p.Second.Factor) && p.First.Ranks.SequenceEqual(p.Second.Ranks));
+
+    private static IEnumerable<Fault> Ordered(IEnumerable<Fault> faults) =>
+        faults.OrderBy(f => f.Step).ThenBy(f => f.Kind).ThenBy(f => string.Join(",", f.Ranks), StringComparer.Ordinal).ThenBy(f => f.Duration).ThenBy(f => f.Factor);
 
     // The first rank and step whose clock differs between two logs through `step`, or null when every one is the same.
     private static string? FirstDifference(EventLog original, EventLog rerun, long step)

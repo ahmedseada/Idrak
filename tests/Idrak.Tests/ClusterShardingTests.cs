@@ -354,7 +354,16 @@ internal static partial class Tests
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"    {staged[0].Buckets} buckets a step, a copy completing {delay.TotalMilliseconds:F0} ms after it is queued: the training thread spent {staged[0].Launch:F2} ms queuing them over 4 steps, "
                 + $"the reducing thread waited {staged[0].Waited:F2} ms for the copies (time a copy on the training thread would have held the backward pass)"));
-            Check(staged[0].Waited > 0 && staged[0].Launch < staged[0].Waited, $"the copies' wait is the reducing thread's, not the training thread's: {staged[0].Launch:F2} ms against {staged[0].Waited:F2} ms");
+            // The training thread must not sit out the copies: its queuing (a backend's submit included: Vulkan flushes
+            // its batched commands to hand a bucket over) stays well under what the copies themselves take.
+            double copies;
+            lock (stagings)
+            {
+                copies = stagings.Sum(s => s.Downloads) / 2.0 * delay.TotalMilliseconds;   // two ranks' stagings: rank 0's share
+            }
+
+            Check(staged[0].Waited > 0 && staged[0].Launch < copies / 2,
+                $"the copies' time is the reducing thread's, not the training thread's: the training thread spent {staged[0].Launch:F2} ms queuing against {copies:F0} ms of copies (the reducing thread waited {staged[0].Waited:F2} ms)");
         }
         finally
         {

@@ -111,6 +111,8 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_REPLAY_STEP"] = "12", ["IDRAK_CLUSTER_CLOCK"] = "simulated",
             // C3: the carving device, the event log's file and whether it records transfers.
             ["IDRAK_CLUSTER_CARVE_FROM"] = "cpu", ["IDRAK_CLUSTER_EVENT_LOG"] = "run.events", ["IDRAK_CLUSTER_LOG_TRANSFERS"] = "0",
+            // C9: the control file a launcher steers its processes through, and how often it is read while paused.
+            ["IDRAK_CLUSTER_CONTROL"] = "run.control", ["IDRAK_CLUSTER_CONTROL_POLL"] = "0.5",
             // C4: overlap of the gradient buckets with the backward pass, and the buckets' compression by name.
             ["IDRAK_CLUSTER_OVERLAP"] = "0", ["IDRAK_CLUSTER_COMPRESSION"] = "top-k", ["IDRAK_CLUSTER_MESSAGE_COST"] = "0.00005",
             // C5: the rank's device, the run's name, the launcher, the rendezvous's retry wait, the shared-memory rings.

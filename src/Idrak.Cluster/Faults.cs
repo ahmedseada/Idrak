@@ -21,15 +21,18 @@ internal sealed class FaultInjector
     private readonly TimeSpan _timeout;
     private readonly EventLogWriter _log;
     private readonly Action<Exception> _breakGroup;
+    private readonly ClusterRunControl? _control;
     private readonly Lock _gate = new();
     private readonly Dictionary<long, Fault[]> _byStep = [];
     private readonly List<Fault> _lateJoins = [];
     private readonly RankFaults[] _ranks;
     private long _drawnThrough = -1;
 
-    public FaultInjector(IFailureModel model, IClusterTopology topology, int seed, TimeSpan timeout, EventLogWriter log, Action<Exception> breakGroup)
+    public FaultInjector(IFailureModel model, IClusterTopology topology, int seed, TimeSpan timeout, EventLogWriter log, Action<Exception> breakGroup,
+        ClusterRunControl? control = null)
     {
         _model = model;
+        _control = control;
         _topology = topology;
         Seed = seed;
         _timeout = timeout;
@@ -64,23 +67,35 @@ internal sealed class FaultInjector
         {
             for (long s = _drawnThrough + 1; s <= step; s++)
             {
-                var faults = DrawStep(_model, _topology, Seed, s);
+                // The run's own model draws from (seed, s) as it would unsteered; the live faults (a steered run's, phase C9)
+                // follow, taking nothing from the generator, so the two compose.
+                var drawn = DrawStep(_model, _topology, Seed, s);
+                bool ownLive = _model is LiveFailures;
+                Fault[] live = _control is null ? [] : Checked(_control.Live, _topology, s, _control.Live.Draw(s, _topology, Random.Shared));
+                Fault[] faults = live.Length == 0 ? drawn : [.. drawn, .. live];
                 if (faults.Length > 0)
                 {
                     _byStep[s] = faults;
                 }
 
-                foreach (var fault in faults)
+                for (int i = 0; i < faults.Length; i++)
                 {
+                    var fault = faults[i];
                     if (fault.Kind == FaultKind.LateJoin)
                     {
                         _lateJoins.Add(fault);
                     }
 
-                    _log.Fault(fault);
+                    bool isLive = ownLive || i >= drawn.Length;
+                    _log.Fault(fault, isLive);
                     if (Telemetry.IsEnabled(TelemetryLevel.Network))
                     {
                         Telemetry.Fault(new FaultInjected(Seed, s, fault.Kind, fault.Ranks, fault.Duration, fault.Factor));
+                    }
+
+                    if (isLive)
+                    {
+                        _control?.Drawn(fault);
                     }
                 }
 
@@ -251,35 +266,37 @@ internal sealed class FaultInjector
     private static Fault[] DrawStep(IFailureModel model, IClusterTopology topology, int seed, long step)
     {
         var random = new Random(unchecked((int)VirtualClock.Mix(VirtualClock.Mix((ulong)(uint)seed) ^ (ulong)step)));
-        var faults = model.Draw(step, topology, random);
+        return Checked(model, topology, step, model.Draw(step, topology, random));
+    }
+
+    private static Fault[] Checked(IFailureModel model, IClusterTopology topology, long step, IReadOnlyList<Fault> faults)
+    {
         foreach (var f in faults)
         {
-            Check(model, topology, step, f);
+            string? problem = f.Step != step ? $"is for step {f.Step}, drawn at step {step}" : Problem(f, topology.WorldSize);
+            if (problem is not null)
+            {
+                throw new InvalidOperationException($"Failure model '{model.Name}' drew a {f.Kind} fault that {problem}.");
+            }
         }
 
         return [.. faults];
     }
 
-    private static void Check(IFailureModel model, IClusterTopology topology, long step, Fault f)
-    {
-        int world = topology.WorldSize;
-        string? problem = f.Step != step ? $"is for step {f.Step}, drawn at step {step}"
-            : f.Ranks is null || f.Ranks.Count == 0 || f.Ranks.Any(r => (uint)r >= (uint)world) || f.Ranks.Distinct().Count() != f.Ranks.Count ? $"names ranks outside 0 to {world - 1}, none, or one twice"
-            : f.Duration < TimeSpan.Zero || !double.IsFinite(f.Factor) ? "has a negative duration or a factor that is not a number"
-            : f.Kind switch
-            {
-                FaultKind.SlowWorker when f.Ranks.Count != 1 || f.Factor < 1 => "is a slow worker that is not one rank with a factor of 1 or more",
-                FaultKind.DroppedWorker when f.Ranks.Count != 1 => "drops more than one rank",
-                FaultKind.LinkLoss when f.Ranks.Count != 2 || f.Factor is < 0 or > 1 => "is a lossy link that is not two ranks with a share from 0 to 1",
-                FaultKind.Partition when f.Ranks.Count >= world => "leaves no rank on the other side",
-                FaultKind.LateJoin when f.Ranks.Count != 1 || f.Factor < 1 || f.Factor != Math.Floor(f.Factor) => "is a late join that is not one rank and a whole number of steps",
-                _ => null,
-            };
-        if (problem is not null)
+    // What makes `f` a fault the simulator cannot apply on `world` ranks (whatever its step), or null.
+    internal static string? Problem(Fault f, int world) =>
+        f.Ranks is null || f.Ranks.Count == 0 || f.Ranks.Any(r => (uint)r >= (uint)world) || f.Ranks.Distinct().Count() != f.Ranks.Count ? $"names ranks outside 0 to {world - 1}, none, or one twice"
+        : f.Duration < TimeSpan.Zero || !double.IsFinite(f.Factor) ? "has a negative duration or a factor that is not a number"
+        : f.Kind switch
         {
-            throw new InvalidOperationException($"Failure model '{model.Name}' drew a {f.Kind} fault that {problem}.");
-        }
-    }
+            FaultKind.SlowWorker when f.Ranks.Count != 1 || f.Factor < 1 => "is a slow worker that is not one rank with a factor of 1 or more",
+            FaultKind.DroppedWorker when f.Ranks.Count != 1 => "drops more than one rank",
+            FaultKind.LinkLoss when f.Ranks.Count != 2 || f.Factor is < 0 or > 1 => "is a lossy link that is not two ranks with a share from 0 to 1",
+            FaultKind.Partition when f.Ranks.Count >= world => "leaves no rank on the other side",
+            FaultKind.LateJoin when f.Ranks.Count != 1 || f.Factor < 1 || f.Factor != Math.Floor(f.Factor) => "is a late join that is not one rank and a whole number of steps",
+            FaultKind.SlowWorker or FaultKind.DroppedWorker or FaultKind.LinkLoss or FaultKind.Partition or FaultKind.LateJoin => null,
+            _ => $"is of a kind the simulator does not know ({(int)f.Kind})",
+        };
 
     // One rank's active faults: written and read by that rank's thread alone.
     private sealed class RankFaults

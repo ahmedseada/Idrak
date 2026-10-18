@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idrak cluster</title>
+<!-- The cluster dashboard (plan 23, phase C9): one self-contained page, no address outside this server, works offline.
+     Every figure comes from the dashboard's API (the topology builder, the inspection, the runs' records); nothing is fixed here. -->
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f6f8fa; --panel: #ffffff; --well: #eef2f6; --line: #d5dce4; --line2: #c4ced9; --row: #e3e8ee;
+  --fg: #18202a; --muted: #4f5f72; --dim: #66768a; --input: #6b4e00;
+  --teal: #1f8f7d; --teal-bg: #dcf3ee; --teal-fg: #0f5f53; --teal-line: #8fd3c6;
+  --amber: #a8730f; --amber-bg: #fbf1dc; --amber-fg: #6b4a07; --amber-line: #e2c58a;
+  --red: #b33a2e; --red-bg: #fde7e4; --red-fg: #9b2c22; --red-line: #eab3ab;
+  --blue: #2f7cc0; --blue-bg: #e1eefa; --violet: #6a4fb8; --violet-bg: #ece6fa; --green: #1e8a46;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Arabic", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "DejaVu Sans Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141b; --panel: #151c25; --well: #0f141b; --line: #263140; --line2: #2f3d50; --row: #222c39;
+    --fg: #e6edf3; --muted: #9fb0c2; --dim: #8b9bb0; --input: #f1d27a;
+    --teal: #3fb8a4; --teal-bg: #173a33; --teal-fg: #8fe6d7; --teal-line: #2c6b60;
+    --amber: #f0c56c; --amber-bg: #2a2212; --amber-fg: #f3dca6; --amber-line: #6a5221;
+    --red: #e0796c; --red-bg: #2a1817; --red-fg: #f3b1a9; --red-line: #6b3a35;
+    --blue: #5aa6e0; --blue-bg: #1d2a3a; --violet: #8b6fd1; --violet-bg: #2a2140; --green: #6fd18a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+.wrap { max-width: 1440px; margin: 0 auto; padding: 20px 24px 40px; display: flex; flex-direction: column; gap: 16px; }
+.mono { font-family: var(--mono); }
+.muted { color: var(--muted); } .dim { color: var(--dim); } .small { font-size: 12px; } .tiny { font-size: 11px; }
+.good { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--amber); }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: baseline; gap: 10px; font-size: 20px; } .brand b { font-weight: 600; } .brand span { color: var(--muted); }
+.chip { font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--well); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; overflow-wrap: anywhere; }
+.pill { font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px; white-space: nowrap; background: var(--well); color: var(--muted); }
+.pill.teal { background: var(--teal-bg); color: var(--teal-fg); } .pill.amber { background: var(--amber-bg); color: var(--amber-fg); }
+.pill.red { background: var(--red-bg); color: var(--red-fg); } .pill.blue { background: var(--blue-bg); color: var(--blue); } .pill.violet { background: var(--violet-bg); color: var(--violet); }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.between { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line2); background: var(--panel); color: var(--fg); cursor: pointer; font-weight: 500; }
+button.primary { border: 0; background: var(--teal); color: #08201c; font-weight: 600; }
+button.danger { border-color: var(--red-line); background: var(--red-bg); color: var(--red-fg); }
+button.fault { border-color: var(--amber-line); background: var(--amber-bg); color: var(--amber); }
+button.small { min-height: 32px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+button[disabled] { opacity: .45; cursor: not-allowed; }
+button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--teal); background: var(--teal-bg); color: var(--teal-fg); }
+input, select, textarea { font: inherit; min-height: 38px; background: var(--well); color: var(--input); border: 1px solid var(--line2); border-radius: 7px; padding: 0 10px; min-width: 0; }
+textarea { padding: 8px 10px; resize: vertical; font-family: var(--mono); font-size: 13px; }
+input.mono, select.mono { font-family: var(--mono); font-size: 13px; }
+label, .label { font-size: 12px; color: var(--muted); }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cols { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.col { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi .v { font-family: var(--mono); font-size: 22px; font-weight: 500; }
+.ranks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; flex: 999 1 640px; min-width: 0; }
+.bar { height: 6px; background: var(--well); border-radius: 3px; overflow: hidden; display: flex; }
+.bar > div { height: 100%; }
+.bar.thick { height: 10px; border-radius: 5px; }
+.strip { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; padding: 14px 16px; background: var(--amber-bg); border: 1px solid var(--amber-line); border-radius: 10px; }
+.strip label { color: var(--amber-fg); }
+.notice { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+.notice.bad { border-color: var(--red-line); background: var(--red-bg); color: var(--red-fg); }
+.notice.warn { border-color: var(--amber-line); background: var(--amber-bg); color: var(--amber-fg); }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: start; color: var(--muted); font-size: 12px; font-weight: 500; padding: 6px 8px; }
+td { padding: 8px; border-top: 1px solid var(--row); }
+.scroll { overflow-x: auto; }
+.bus { height: 3px; background: var(--amber); border-radius: 2px; }
+.nodes { display: grid; column-gap: 12px; }
+.node { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.drop { width: 3px; height: 22px; background: var(--amber); }
+.box { width: 100%; background: var(--well); border: 1px solid var(--line2); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rankchip { font-family: var(--mono); font-size: 12px; background: var(--teal-bg); color: var(--teal-fg); border-radius: 6px; padding: 3px 7px; white-space: nowrap; }
+.inner { display: flex; flex-direction: column; gap: 3px; border-top: 1px dashed var(--line2); padding-top: 7px; }
+.cable { border: 2px solid var(--violet); border-top: 0; height: 14px; border-radius: 0 0 6px 6px; }
+.matrix { display: grid; gap: 4px; }
+.cell { border-radius: 6px; padding: 8px 6px; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; border: 1px solid var(--line); background: var(--well); }
+.cell.same-device, .cell.inside-node { background: var(--teal-bg); color: var(--teal-fg); border-color: var(--teal-line); }
+.cell.between-nodes { background: var(--amber-bg); color: var(--amber-fg); border-color: var(--amber-line); }
+.cell.override { background: var(--violet-bg); color: var(--violet); border-color: var(--violet); }
+.cell.self { color: var(--dim); }
+.phase { display: grid; grid-template-columns: 34px minmax(0, 1fr) 96px; gap: 12px; align-items: center; background: var(--well); border: 1px solid var(--line2); border-radius: 10px; padding: 12px; }
+.badge { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; }
+.seg { position: relative; background: var(--teal-bg); border: 1px solid var(--teal); border-radius: 6px; overflow: hidden; display: flex; align-items: center; min-width: 0; }
+.seg .used { position: absolute; inset: 0 auto 0 0; background: var(--teal); opacity: .85; }
+.seg span { position: relative; font-size: 11px; font-family: var(--mono); padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.event { display: grid; grid-template-columns: 80px 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--row); }
+.log { font-family: var(--mono); font-size: 12px; background: var(--well); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.question { border-inline-start: 3px solid var(--teal); padding-inline-start: 10px; }
+.hidden { display: none !important; }
+[dir="rtl"] .bus-label, [dir="rtl"] .ltr { direction: ltr; unicode-bidi: isolate; }
+@media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid3 { grid-template-columns: minmax(0, 1fr); } .event { grid-template-columns: 70px minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="row" style="gap: 14px">
+      <div class="brand"><b>Idrak</b><span data-t="cluster">cluster</span></div>
+      <span class="chip" id="file-chip"></span>
+      <span class="pill" id="status"></span>
+    </div>
+    <div class="row" id="controls">
+      <button type="button" class="primary" id="b-start" data-t="Start run">Start run</button>
+      <button type="button" id="b-pause" data-t="Pause at next step">Pause at next step</button>
+      <button type="button" class="primary" id="b-resume" data-t="Resume">Resume</button>
+      <button type="button" class="danger" id="b-stop" data-t="Stop and checkpoint">Stop and checkpoint</button>
+      <button type="button" class="fault" id="b-fault" data-t="Inject fault">Inject fault</button>
+    </div>
+  </header>
+  <div id="why" class="notice warn hidden"></div>
+  <div id="message" class="notice hidden"></div>
+  <div id="keybox" class="notice warn hidden row">
+    <span data-t="This dashboard needs an API key from this machine.">This dashboard needs an API key from this machine.</span>
+    <input id="key" type="password" class="mono" autocomplete="off" aria-label="API key">
+    <button type="button" class="small" id="b-key" data-t="Use key">Use key</button>
+  </div>
+
+  <section id="fault-strip" class="strip hidden" aria-label="Inject a fault">
+    <div class="field"><label for="f-kind" data-t="Fault">Fault</label>
+      <select id="f-kind" style="min-width: 200px"></select></div>
+    <div class="field"><label for="f-rank" data-t="On rank">On rank</label>
+      <select id="f-rank" style="min-width: 200px"></select></div>
+    <div class="field"><label for="f-factor" id="f-factor-label">Factor</label>
+      <input id="f-factor" class="mono" style="width: 110px"></div>
+    <div class="field"><label for="f-duration" data-t="Lasts (ms of simulated time, 0: the rest of the run)">Lasts (ms of simulated time, 0: the rest of the run)</label>
+      <input id="f-duration" class="mono" value="0" style="width: 110px"></div>
+    <button type="button" class="fault" id="b-inject" data-t="Inject at next step">Inject at next step</button>
+    <p class="small" style="margin: 0; flex: 1 1 260px" id="f-note"></p>
+  </section>
+
+  <nav aria-label="Dashboard sections">
+    <button type="button" class="tab" role="tab" id="t-setup" data-tab="setup" data-t="Set up">Set up</button>
+    <button type="button" class="tab" role="tab" id="t-run" data-tab="run" data-t="Run">Run</button>
+    <button type="button" class="tab" role="tab" id="t-events" data-tab="events">Events</button>
+  </nav>
+
+  <!-- Set up: the builder's questions or a form; the topology drawn five ways; the predicted all-reduce. -->
+  <div id="p-setup" class="cols">
+    <section class="col" aria-label="Topology form">
+      <div class="card">
+        <div class="between"><b data-t="The builder's questions">The builder's questions</b>
+          <button type="button" class="small" id="b-guide" data-t="Ask them">Ask them</button></div>
+        <div id="guide" class="small muted" data-t="The questions idrak cluster init asks, one at a time, each with what it means and this machine's suggestion; the answers fill the form below.">The questions idrak cluster init asks, one at a time, each with what it means and this machine's suggestion; the answers fill the form below.</div>
+      </div>
+      <div id="form-nodes" class="col" style="flex: none; gap: 12px"></div>
+      <div class="card">
+        <div class="grid3">
+          <div class="field" id="w-intra"><label for="i-intra" data-t="Link inside a machine">Link inside a machine</label>
+            <input id="i-intra" class="mono" list="link-names"><span class="small good" id="s-intra"></span></div>
+          <div class="field" id="w-inter"><label for="i-inter" data-t="Link between machines">Link between machines</label>
+            <input id="i-inter" class="mono" list="link-names"><span class="small good" id="s-inter"></span></div>
+          <div class="field" id="w-overrides"><label for="i-overrides" data-t="Pairs with a link of their own">Pairs with a link of their own</label>
+            <input id="i-overrides" class="mono" placeholder="a,b=direct-link-10g"><span class="small dim" id="s-overrides"></span></div>
+          <div class="field"><label for="i-seed" data-t="Seed">Seed</label>
+            <input id="i-seed" class="mono"><span class="small dim" data-t="fixes jitter and faults">fixes jitter and faults</span></div>
+          <div class="field"><label for="i-failures" data-t="Failure model">Failure model</label>
+            <select id="i-failures" class="mono"></select><span class="small good" id="s-failures"></span></div>
+          <div class="field"><label for="i-address" data-t="Where rank 0 listens (node 1)">Where rank 0 listens (node 1)</label>
+            <input id="i-address" class="mono"><span class="small good" id="s-address"></span></div>
+        </div>
+        <datalist id="link-names"></datalist>
+      </div>
+      <div class="card">
+        <div class="field"><label for="i-path" data-t="Topology file">Topology file</label><input id="i-path" class="mono"></div>
+        <div class="row">
+          <button type="button" class="primary" id="b-save" data-t="Save topology">Save topology</button>
+          <button type="button" id="b-open" data-t="Open file">Open file</button>
+          <button type="button" id="b-add" data-t="Add node">Add node</button>
+          <button type="button" id="b-defaults" data-t="This machine's defaults">This machine's defaults</button>
+        </div>
+        <span class="small" id="save-note"></span>
+        <details><summary class="small muted" data-t="The file as cluster init writes it">The file as cluster init writes it</summary><pre class="log" id="json-preview"></pre></details>
+      </div>
+    </section>
+    <section class="col" style="flex-basis: 480px" aria-label="Topology drawing and prediction">
+      <div class="card" style="gap: 14px">
+        <div class="between"><b data-t="Topology">Topology</b>
+          <div class="row" role="group" aria-label="Topology views" id="views" style="gap: 4px"></div></div>
+        <span class="small dim" id="view-caption" style="margin-top: -6px"></span>
+        <div id="drawing"></div>
+      </div>
+      <div class="card">
+        <div class="between"><b id="predict-title"></b>
+          <span class="row small dim"><label for="i-bytes" data-t="all-reduce of">all-reduce of</label><input id="i-bytes" class="mono" style="width: 100px; min-height: 30px"></span></div>
+        <div id="predictions"></div>
+        <span class="small good" id="predict-note"></span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Run: start or follow a run; its ranks, loss, links and output as they come. -->
+  <div id="p-run" class="hidden" style="display: flex; flex-direction: column; gap: 16px">
+    <div class="card">
+      <div class="between"><b data-t="Runs">Runs</b>
+        <div class="row"><label for="i-run" data-t="Showing">Showing</label><select id="i-run" class="mono" style="min-width: 260px"></select></div></div>
+      <details id="start-card">
+        <summary class="small muted" data-t="Start a simulated run, or follow a run folder">Start a simulated run, or follow a run folder</summary>
+        <div class="col" style="margin-top: 10px">
+          <div class="field"><label for="i-command" data-t="Training command (rank 0 writes the run folder given with -o)">Training command (rank 0 writes the run folder given with -o)</label>
+            <textarea id="i-command" rows="2" placeholder="pretrain MODEL --tokens tokens.bin --steps 200 -o RUN"></textarea></div>
+          <div class="grid3">
+            <div class="field"><label for="i-mode" data-t="Where the ranks run">Where the ranks run</label>
+              <select id="i-mode" class="mono"><option value="in-process">in-process</option><option value="localhost">localhost</option></select></div>
+            <div class="field"><label for="i-collective" data-t="Collective">Collective</label><select id="i-collective" class="mono"></select></div>
+            <div class="field"><label for="i-run-seed" data-t="Seed">Seed</label><input id="i-run-seed" class="mono"></div>
+          </div>
+          <label class="row"><input type="checkbox" id="i-paused" style="min-height: auto"> <span data-t="Start paused (before step 0)">Start paused (before step 0)</span></label>
+          <div class="row"><button type="button" class="primary" id="b-go" data-t="Start run">Start run</button>
+            <span class="small dim" id="go-note"></span></div>
+          <div class="row"><input id="i-follow" class="mono" style="flex: 1 1 260px" placeholder="RUN folder of idrak cluster start">
+            <button type="button" id="b-follow" data-t="Follow read-only">Follow read-only</button></div>
+        </div>
+      </details>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="cols" style="align-items: stretch">
+      <section class="ranks" id="ranks" aria-label="Ranks"></section>
+      <section class="card" style="flex: 1 1 360px" aria-label="Loss">
+        <div class="between"><b data-t="Loss (token-weighted mean)">Loss (token-weighted mean)</b><span class="small dim mono" id="loss-step"></span></div>
+        <div id="loss-chart"></div>
+        <span class="small dim" data-t="every rank's loss is the same token-weighted mean, so every rank makes the same stopping decision">every rank's loss is the same token-weighted mean, so every rank makes the same stopping decision</span>
+      </section>
+    </div>
+    <section class="card" aria-label="Links">
+      <div class="between"><b data-t="Links">Links</b><span class="small dim" id="links-note"></span></div>
+      <div class="scroll" id="links"></div>
+    </section>
+    <section class="card" aria-label="Output">
+      <b data-t="Output">Output</b>
+      <div class="log" id="output"></div>
+    </section>
+  </div>
+
+  <!-- Events: faults, rank states and the run's own changes, newest first, each with its replay key. -->
+  <section id="p-events" class="card hidden" aria-label="Event timeline">
+    <div class="between"><b data-t="Events">Events</b>
+      <span class="small dim" data-t="faults, rank states and runs, newest first · the event log replays them">faults, rank states and runs, newest first · the event log replays them</span></div>
+    <div id="events"></div>
+  </section>
+</div>
+
+<script>
+'use strict';
+// Every call the page makes: the dashboard answers these routes and no other (the tests check both lists agree).
+const API = {
+  machine: 'GET /api/machine',
+  questions: 'POST /api/topology/questions',
+  topology: 'GET /api/topology',
+  save: 'POST /api/topology',
+  inspect: 'GET /api/topology/inspect',
+  draft: 'POST /api/topology/inspect',
+  runs: 'GET /api/runs',
+  start: 'POST /api/runs',
+  pause: 'POST /api/runs/{id}/pause',
+  resume: 'POST /api/runs/{id}/resume',
+  stop: 'POST /api/runs/{id}/stop',
+  faults: 'POST /api/runs/{id}/faults',
+  events: 'GET /api/runs/{id}/events',
+};
+
+const AR = {
+  'cluster': 'العنقود', 'Start run': 'بدء التشغيل', 'Pause at next step': 'إيقاف مؤقت عند الخطوة التالية', 'Resume': 'استئناف',
+  'Stop and checkpoint': 'إيقاف وحفظ نقطة', 'Inject fault': 'حقن عطل', 'Fault': 'العطل', 'On rank': 'على الرتبة',
+  'Inject at next step': 'الحقن عند الخطوة التالية', 'Set up': 'الإعداد', 'Run': 'التشغيل', 'Events': 'الأحداث',
+  "The builder's questions": 'أسئلة منشئ البنية', 'Ask them': 'اطرحها', 'Link inside a machine': 'الرابط داخل الجهاز',
+  'Link between machines': 'الرابط بين الأجهزة', 'Pairs with a link of their own': 'أزواج لها رابط خاص', 'Seed': 'البذرة',
+  'fixes jitter and faults': 'تثبت التذبذب والأعطال', 'Failure model': 'نموذج الأعطال', 'Where rank 0 listens (node 1)': 'حيث تستمع الرتبة 0 (العقدة 1)',
+  'Topology file': 'ملف البنية', 'Save topology': 'حفظ البنية', 'Open file': 'فتح الملف', 'Add node': 'إضافة عقدة',
+  "This machine's defaults": 'افتراضيات هذا الجهاز', 'Topology': 'البنية', 'all-reduce of': 'جمع شامل لـ', 'Runs': 'التشغيلات',
+  'Showing': 'المعروض', 'Where the ranks run': 'أين تعمل الرتب', 'Collective': 'الجمع', 'Follow read-only': 'متابعة للقراءة فقط',
+  'Loss (token-weighted mean)': 'الخسارة (متوسط موزون بالرموز)', 'Links': 'الروابط', 'Output': 'المخرجات', 'Node': 'العقدة',
+  'Name (host name)': 'الاسم (اسم المضيف)', 'Devices (one rank each)': 'الأجهزة (رتبة لكل منها)', 'Memory cap per rank': 'حد الذاكرة لكل رتبة',
+  'Suggestion': 'الاقتراح', 'Remove': 'حذف', 'step': 'الخطوة', 'loss': 'الخسارة', 'network time a step': 'زمن الشبكة لكل خطوة',
+  'steps a second': 'خطوات في الثانية', 'memory': 'الذاكرة', 'network / blocked a step': 'الشبكة / الانتظار لكل خطوة', 'rank': 'الرتبة',
+  'ready': 'جاهز', 'running': 'يعمل', 'pausing': 'يتوقف مؤقتا', 'paused': 'متوقف مؤقتا', 'stopping': 'يتوقف', 'stopped': 'متوقف',
+  'finished': 'انتهى', 'failed': 'فشل', 'following': 'متابعة', 'starting': 'يبدأ', 'Network': 'الشبكة', 'Ring': 'الحلقة',
+  'Link matrix': 'مصفوفة الروابط', 'All-reduce plan': 'خطة الجمع الشامل', 'Memory': 'الذاكرة', 'Use key': 'استخدام المفتاح',
+  'Answer': 'أجب', 'Use the default': 'استخدم الافتراضي', 'Start paused (before step 0)': 'البدء متوقفا (قبل الخطوة 0)',
+};
+const LANG = document.documentElement.lang === 'ar' ? 'ar' : 'en';
+const t = (text) => (LANG === 'ar' && AR[text]) || text;
+const h = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const $ = (id) => document.getElementById(id);
+const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+const S = {
+  machine: null, file: null, form: null, json: '', inspection: null, inspectError: null, bytes: '', view: 'network', tab: 'setup',
+  runs: [], runId: null, faultOpen: false, guide: null, key: (() => { try { return sessionStorage.getItem('idrak-cluster-key') || ''; } catch { return ''; } })(),
+};
+let R = freshRun();
+function freshRun() {
+  return { id: null, state: null, detail: null, step: 0, total: null, losses: [], times: [], ranks: {}, links: {}, events: [], output: [], world: 0,
+           seed: null, collective: null, liveSeen: new Set(), clock: null };
+}
+
+// ---- calls -------------------------------------------------------------------------------------------------------------
+function route(name, params) {
+  const [method, template] = API[name].split(' ');
+  let path = template.replace('{id}', () => encodeURIComponent(params?.id ?? ''));
+  if (method === 'GET' && params?.query) {
+    const q = new URLSearchParams(Object.entries(params.query).filter(([, v]) => v !== null && v !== undefined && v !== ''));
+    if ([...q].length) path += '?' + q;
+  }
+  return { method, path };
+}
+function headers(json) {
+  const h2 = {};
+  if (json) h2['Content-Type'] = 'application/json';
+  if (S.key) h2['Authorization'] = 'Bearer ' + S.key;
+  return h2;
+}
+async function call(name, params, body) {
+  const { method, path } = route(name, params);
+  const res = await fetch(path, { method, headers: headers(body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { error: text }; }
+  if (res.status === 401) { $('keybox').classList.remove('hidden'); }
+  if (!res.ok) { const e = new Error(data?.error || (res.status + ' ' + res.statusText)); e.status = res.status; throw e; }
+  return data;
+}
+function say(text, bad) {
+  const box = $('message');
+  box.textContent = text;
+  box.className = 'notice' + (bad ? ' bad' : '');
+  box.classList.toggle('hidden', !text);
+}
+
+// ---- sizes in powers of 1,024 (decision 7), in the unit picked or the largest each fills ----------------------------------
+function size(bytes) {
+  if (bytes === null || bytes === undefined || !isFinite(bytes)) return '—';
+  let p = S.machine?.unit ? Math.max(0, UNITS.indexOf(S.machine.unit)) : 0;
+  if (!S.machine?.unit) while (p < UNITS.length - 1 && Math.abs(bytes) >= Math.pow(1024, p + 1)) p++;
+  const v = bytes / Math.pow(1024, p);
+  const digits = p === 0 || Number.isInteger(v) ? 0 : v >= 100 ? 1 : v >= 1 ? 2 : 3;
+  return v.toLocaleString('en-US', { maximumFractionDigits: digits }) + ' ' + UNITS[p];
+}
+const rate = (bytesPerSecond) => bytesPerSecond > 0 ? size(bytesPerSecond) + '/s' : t('measured or set by its rate');
+function time(seconds) {
+  if (seconds === null || seconds === undefined || !isFinite(seconds)) return '—';
+  if (seconds >= 3600) return (seconds / 3600).toFixed(1) + ' h';
+  if (seconds >= 60) return (seconds / 60).toFixed(1) + ' min';
+  if (seconds >= 1) return seconds.toFixed(2) + ' s';
+  if (seconds >= 1e-3) return (seconds * 1e3).toFixed(seconds >= 0.1 ? 0 : 1) + ' ms';
+  return (seconds * 1e6).toFixed(1) + ' µs';
+}
+const latency = (us) => time((us ?? 0) / 1e6);
+
+// ---- the form <-> the builder's answers --------------------------------------------------------------------------------
+function formFrom(answers) {
+  const n = parseInt(answers.nodes || '1', 10);
+  const nodes = [];
+  for (let i = 1; i <= n; i++) {
+    const devices = (answers[`node.${i}.devices`] || '').split(',').map(s => s.trim()).filter(Boolean);
+    nodes.push({ name: answers[`node.${i}.name`] || '', devices: devices.join(', '), caps: devices.map((_, j) => answers[`node.${i}.device.${j + 1}.memory`] || '').join(', ') });
+  }
+  return { nodes, address: answers['node.1.address'] || '', intra: answers['intra-node'] || '', inter: answers['inter-node'] || '',
+           overrides: answers.overrides || '', seed: answers.seed || '1', failures: answers.failures || 'none' };
+}
+function answersFrom(form) {
+  const a = { nodes: String(form.nodes.length) };
+  form.nodes.forEach((node, k) => {
+    const i = k + 1;
+    const devices = node.devices.split(',').map(s => s.trim()).filter(Boolean);
+    const caps = node.caps.split(',').map(s => s.trim());
+    a[`node.${i}.name`] = node.name.trim();
+    a[`node.${i}.devices`] = devices.join(',');
+    devices.forEach((_, j) => { a[`node.${i}.device.${j + 1}.memory`] = caps[j] || ''; });
+  });
+  a['node.1.address'] = form.address.trim();
+  if (form.intra.trim()) a['intra-node'] = form.intra.trim();
+  if (form.nodes.length > 1) { a['inter-node'] = form.inter.trim() || 'ethernet-1g'; a.overrides = form.overrides.trim(); }
+  a.seed = String(form.seed).trim() || '1';
+  a.failures = form.failures || 'none';
+  return a;
+}
+async function machineDefaults() {
+  let answers = {};
+  for (let i = 0; i < 500; i++) {
+    const step = await call('questions', null, { answers, answer: '' });
+    if (step.refused) throw new Error(step.refused);
+    answers = step.answers;
+    if (step.done) return answers;
+  }
+  throw new Error('the builder did not finish');
+}
+
+// ---- set up ------------------------------------------------------------------------------------------------------------
+function memoryOf(device) { return S.machine?.devices.find(d => d.device.toLowerCase() === device.toLowerCase()); }
+function nodeSuggestion(node, index) {
+  const devices = node.devices.split(',').map(s => s.trim()).filter(Boolean);
+  const notes = [];
+  const byCard = {};
+  devices.forEach(d => { const f = memoryOf(d); const key = f?.card || d; (byCard[key] ||= { device: d, count: 0, memory: f?.memory }).count++; });
+  for (const c of Object.values(byCard)) {
+    if (c.memory == null) notes.push(`${c.device}: ` + t('give the size of the card on that machine'));
+    else notes.push(c.count > 1 ? `${c.device}'s ${size(c.memory)} ` + t('split between') + ` ${c.count} ` + t('ranks') : `${c.device}: ${size(c.memory)}`);
+  }
+  if (index === 0 && S.machine && node.name.toLowerCase() === S.machine.host.toLowerCase()) notes.unshift(t('this machine'));
+  return notes.join(' · ');
+}
+function renderForm() {
+  const f = S.form;
+  if (!f) return;
+  $('form-nodes').innerHTML = f.nodes.map((node, i) => `
+    <div class="card">
+      <div class="between"><b>${t('Node')} ${i + 1}</b>
+        <span class="row small dim">${i === 0 && f.address ? h(t('rank 0 listens at') + ' ' + f.address) : (S.machine && node.name.toLowerCase() !== S.machine.host.toLowerCase() ? h(t('carved from this machine in a simulation')) : '')}
+        ${f.nodes.length > 1 ? `<button type="button" class="small" data-remove="${i}">${t('Remove')}</button>` : ''}</span></div>
+      <div class="grid2">
+        <div class="field"><label for="n-name-${i}">${t('Name (host name)')}</label><input id="n-name-${i}" class="mono" data-node="${i}" data-key="name" value="${h(node.name)}"></div>
+        <div class="field"><label for="n-dev-${i}">${t('Devices (one rank each)')}</label><input id="n-dev-${i}" class="mono" data-node="${i}" data-key="devices" value="${h(node.devices)}"></div>
+        <div class="field"><label for="n-cap-${i}">${t('Memory cap per rank')}</label><input id="n-cap-${i}" class="mono" data-node="${i}" data-key="caps" value="${h(node.caps)}" placeholder="8GB, 8GB"></div>
+        <div class="field"><span class="label">${t('Suggestion')}</span><span class="small good ltr" style="min-height: 38px; display: flex; align-items: center">${h(nodeSuggestion(node, i))}</span></div>
+      </div>
+    </div>`).join('');
+  $('i-intra').value = f.intra; $('i-inter').value = f.inter; $('i-overrides').value = f.overrides; $('i-seed').value = f.seed; $('i-address').value = f.address;
+  $('i-failures').value = f.failures;
+  const several = f.nodes.length > 1;
+  $('w-inter').classList.toggle('hidden', !several); $('w-overrides').classList.toggle('hidden', !several);
+  $('w-intra').classList.toggle('hidden', !f.nodes.some(n => new Set(n.devices.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)).size > 1));
+  const adapter = S.machine?.adapter_bits_per_second ? `${S.machine.adapter} ${t('reports')} ${(S.machine.adapter_bits_per_second / 1e9).toLocaleString('en-US', { maximumFractionDigits: 3 })} Gb/s` : t('no adapter speed reported here');
+  $('s-inter').textContent = adapter;
+  $('s-intra').textContent = t('ranks sharing one device are joined by same-device by themselves');
+  $('s-failures').textContent = t('none for a first run');
+  $('s-address').textContent = S.machine?.address ? `${S.machine.address}:29500 ${t('is this machine on')} ${S.machine.adapter}` : '';
+}
+function formChanged() {
+  S.form.intra = $('i-intra').value; S.form.inter = $('i-inter').value; S.form.overrides = $('i-overrides').value;
+  S.form.seed = $('i-seed').value; S.form.failures = $('i-failures').value; S.form.address = $('i-address').value;
+  document.querySelectorAll('[data-node]').forEach(input => { S.form.nodes[+input.dataset.node][input.dataset.key] = input.value; });
+  draft();
+}
+let draftTimer = null;
+function draft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(async () => {
+    try {
+      const answers = answersFrom(S.form);
+      const built = await call('save', null, { answers, save: false });
+      S.json = built.json;
+      S.inspection = await call('draft', null, { answers, bytes: S.bytes || undefined });
+      S.inspectError = null;
+    } catch (e) { S.inspectError = e.message; }
+    renderTopology(); renderHeader();
+  }, 350);
+}
+
+// The five drawings of the topology, all from the inspection.
+const VIEWS = [
+  ['network', 'Network', 'which machines, joined by what'],
+  ['ring', 'Ring', "the order the ranks pass data in a ring all-reduce, each hop by its link"],
+  ['matrix', 'Link matrix', 'every pair of ranks: its link, bandwidth and latency'],
+  ['plan', 'All-reduce plan', "the default all-reduce, phase by phase, with each phase's link and time"],
+  ['memory', 'Memory', "each card carved into its ranks' caps, and what is in use"],
+];
+function pairOf(a, b) { const [x, y] = a < b ? [a, b] : [b, a]; return S.inspection?.pairs?.find(p => p.a === x && p.b === y); }
+const kindLabel = (p) => p.kind === 'same-device' ? t('same card') : p.link;
+const fast = (p) => p.kind === 'same-device' || p.kind === 'inside-node';
+function capOf(r) { return r.cap ?? r.physical; }
+function capText(r) { return r.cap != null ? size(r.cap) : r.physical != null ? size(r.physical) + ' ' + t('(the device\'s own)') : t('the device\'s own'); }
+function columns(n) { return `calc((100% - ${(n - 1) * 12}px) / ${2 * n})`; }
+
+function viewNetwork(x) {
+  const nodes = x.nodes, n = nodes.length;
+  const ranks = x.ranks;
+  const cross = (x.pairs || []).filter(p => p.kind === 'between-nodes');
+  const lan = cross[0];
+  let html = '';
+  if (n > 1) {
+    html += `<div class="row bus-label" style="justify-content: center; padding-bottom: 8px">
+      <span class="mono small warn" style="font-weight: 500">LAN · ${h(x.inter_node || lan?.link || '')}</span>
+      ${lan ? `<span class="small muted">${h(rate(lan.bandwidth))} · ${h(latency(lan.latency_us))} ${t('between any two machines')}</span>` : ''}</div>
+      <div class="bus" style="margin-inline: ${columns(n)}"></div>`;
+  }
+  html += `<div class="nodes" style="grid-template-columns: repeat(${n}, minmax(0, 1fr))">` + nodes.map((node, i) => {
+    const mine = node.ranks.map(r => ranks[r]);
+    const cards = [...new Set(node.devices.map(d => d.device))].map(d => {
+      const dev = node.devices.find(e => e.device === d);
+      return `${h(d)}${dev.physical != null ? ' · ' + h(size(dev.physical)) : ''}`;
+    }).join(' · ');
+    const inner = [];
+    for (let a = 0; a < node.ranks.length; a++) for (let b = a + 1; b < node.ranks.length; b++) {
+      const p = pairOf(node.ranks[a], node.ranks[b]);
+      if (p && !inner.some(q => q.kind === p.kind)) inner.push(p);
+    }
+    return `<div class="node">${n > 1 ? '<div class="drop"></div>' : ''}
+      <div class="box">
+        <div style="display: flex; flex-direction: column; gap: 2px"><span class="mono" style="font-weight: 600; font-size: 13px; overflow-wrap: anywhere">${h(node.name)}${node.here ? ' <span class="pill teal tiny">' + t('this machine') + '</span>' : ''}</span>
+          <span class="small dim ltr">${cards}</span></div>
+        <div class="row" style="gap: 6px">${mine.map(r => `<span class="rankchip">rank ${r.rank} · ${h(capText(r))}</span>`).join('')}</div>
+        ${inner.map(p => `<div class="inner"><span class="tiny mono" style="color: var(--teal-fg)">rank ${p.a} ↔ rank ${p.b}</span>
+          <span class="tiny muted">${h(kindLabel(p))} · ${h(rate(p.bandwidth))} · ${h(latency(p.latency_us))}</span></div>`).join('')}
+        ${node.coordinator && node.address ? `<span class="tiny dim">${t('rank 0 listens at')} <span class="mono">${h(node.address)}</span></span>` : ''}
+      </div></div>`;
+  }).join('') + '</div>';
+  // Each pair of machines with a link of its own: its own labelled connection between the two.
+  for (const o of x.overrides || []) {
+    const a = nodes.findIndex(m => m.name.toLowerCase() === o.a.toLowerCase()), b = nodes.findIndex(m => m.name.toLowerCase() === o.b.toLowerCase());
+    if (a < 0 || b < 0) continue;
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    const p = pairOf(nodes[lo].ranks[0], nodes[hi].ranks[0]);
+    html += `<div class="nodes" style="grid-template-columns: repeat(${n}, minmax(0, 1fr)); margin-top: 4px">
+      <div style="grid-column: ${lo + 1} / ${hi + 2}"><div class="cable" style="margin-inline: ${columns(hi - lo + 1)}"></div>
+      <div class="small mono" style="text-align: center; color: var(--violet)">${h(nodes[lo].name)} ↔ ${h(nodes[hi].name)} · ${h(o.link)}${p ? ' · ' + h(rate(p.bandwidth)) + ' · ' + h(latency(p.latency_us)) : ''}</div></div></div>`;
+  }
+  return html;
+}
+
+function viewRing(x) {
+  const w = x.world;
+  if (w < 2) return `<p class="small muted">${t('one rank: a ring needs two')}</p>`;
+  const size2 = 460, cx = size2 / 2, cy = 170, rad = Math.min(130, 40 + w * 14), dot = Math.max(12, Math.min(26, 150 / w));
+  const at = (r) => { const a = -Math.PI / 2 + 2 * Math.PI * r / w; return [cx + rad * Math.cos(a), cy + rad * Math.sin(a), a]; };
+  let svg = `<svg viewBox="0 0 ${size2} 340" role="img" aria-label="${h(t('Ring order of the all-reduce'))}" style="width: 100%; height: auto; display: block">
+    <defs><marker id="m-fast" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--teal)"></path></marker>
+    <marker id="m-slow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--amber)"></path></marker></defs>`;
+  // Each machine's ranks as one dashed arc beyond them, named.
+  for (const node of x.nodes) {
+    if (!node.ranks.length) continue;
+    const step = 2 * Math.PI / w, first = node.ranks[0], last = node.ranks[node.ranks.length - 1];
+    const a0 = -Math.PI / 2 + step * first - step * 0.38, a1 = -Math.PI / 2 + step * last + step * 0.38, rr = rad + dot + 12;
+    const large = a1 - a0 > Math.PI ? 1 : 0;
+    const p0 = [cx + rr * Math.cos(a0), cy + rr * Math.sin(a0)], p1 = [cx + rr * Math.cos(a1), cy + rr * Math.sin(a1)];
+    const mid = (a0 + a1) / 2, lr = rr + 14;
+    svg += node.ranks.length === w
+      ? `<circle cx="${cx}" cy="${cy}" r="${rr}" fill="none" stroke="var(--line2)" stroke-dasharray="5 5"></circle>`
+      : `<path d="M${p0[0].toFixed(1)},${p0[1].toFixed(1)} A${rr},${rr} 0 ${large} 1 ${p1[0].toFixed(1)},${p1[1].toFixed(1)}" fill="none" stroke="var(--line2)" stroke-width="2" stroke-dasharray="5 5"></path>`;
+    svg += `<text x="${(cx + lr * Math.cos(mid)).toFixed(1)}" y="${(cy + lr * Math.sin(mid) + 4).toFixed(1)}" fill="var(--dim)" font-size="11" text-anchor="middle" font-family="var(--mono)">${h(node.name)}</text>`;
+  }
+  const hops = [];
+  for (let r = 0; r < w; r++) {
+    const s = (r + 1) % w, p = pairOf(r, s);
+    const [x0, y0] = at(r), [x1, y1] = at(s);
+    const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+    const quick = p && fast(p);
+    hops.push(p);
+    svg += `<line x1="${(x0 + ux * dot).toFixed(1)}" y1="${(y0 + uy * dot).toFixed(1)}" x2="${(x1 - ux * (dot + 2)).toFixed(1)}" y2="${(y1 - uy * (dot + 2)).toFixed(1)}" stroke="var(--${quick ? 'teal' : 'amber'})" stroke-width="${quick ? 2 : 4}" marker-end="url(#m-${quick ? 'fast' : 'slow'})"></line>`;
+    if (w <= 8 && p) {
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2, nx = -uy, ny = ux;
+      svg += `<text x="${(mx + nx * 12).toFixed(1)}" y="${(my + ny * 12 + 4).toFixed(1)}" fill="var(--${quick ? 'teal-fg' : 'amber'})" font-size="10" text-anchor="middle" font-family="var(--mono)">${h(kindLabel(p))}</text>`;
+    }
+  }
+  for (let r = 0; r < w; r++) {
+    const [px, py] = at(r);
+    svg += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${dot}" fill="var(--teal-bg)" stroke="var(--teal)" stroke-width="2"></circle>
+      <text x="${px.toFixed(1)}" y="${(py + 4).toFixed(1)}" fill="var(--teal-fg)" font-size="${w > 12 ? 9 : 13}" text-anchor="middle" font-family="var(--mono)">r${r}</text>`;
+  }
+  svg += '</svg>';
+  const known = hops.filter(Boolean);
+  const slowest = known.reduce((m, p) => (m && m.bandwidth <= p.bandwidth ? m : p), null);
+  const count = slowest ? known.filter(p => p.link === slowest.link).length : 0;
+  const ring = x.predictions?.find(p => p.algorithm === 'ring');
+  return svg + `<div class="row small muted" style="gap: 16px"><span class="row" style="gap: 6px"><span style="width: 18px; height: 2px; background: var(--teal)"></span>${t('fast hop (inside a machine)')}</span>
+    <span class="row" style="gap: 6px"><span style="width: 18px; height: 4px; background: var(--amber)"></span>${t('hop between machines')}</span></div>
+    ${slowest ? `<span class="small warn">${count} ${t('of')} ${w} ${t('hops cross')} ${h(slowest.link)} (${h(rate(slowest.bandwidth))}), ${t('so a ring all-reduce runs at its speed')}${ring?.seconds != null ? ': ' + h(time(ring.seconds)) + ' ' + t('for') + ' ' + h(size(x.bytes)) : ''}</span>` : ''}`;
+}
+
+function viewMatrix(x) {
+  const w = x.world;
+  let html = `<div class="scroll"><div class="matrix" style="grid-template-columns: 76px repeat(${w}, minmax(96px, 1fr)); min-width: ${76 + w * 100}px"><span></span>`;
+  for (let b = 0; b < w; b++) html += `<span class="mono small" style="text-align: center">rank ${b}<br><span class="dim tiny">${h(x.ranks[b].node)}</span></span>`;
+  for (let a = 0; a < w; a++) {
+    html += `<span class="mono small" style="display: flex; flex-direction: column; justify-content: center">rank ${a}<span class="dim tiny">${h(x.ranks[a].node)}</span></span>`;
+    for (let b = 0; b < w; b++) {
+      if (a === b) { html += '<div class="cell self">—</div>'; continue; }
+      const p = pairOf(a, b);
+      html += p ? `<div class="cell ${p.kind}"><span class="tiny" style="font-weight: 500">${h(kindLabel(p))}</span><span class="mono tiny">${h(rate(p.bandwidth))} · ${h(latency(p.latency_us))}</span></div>` : '<div class="cell">?</div>';
+    }
+  }
+  return html + `</div></div><span class="small muted">${t("every pair's link as this machine resolves it; a pair of machines with a link of its own has its own colour")}</span>`;
+}
+
+function viewPlan(x) {
+  const chosen = x.predictions?.find(p => p.default);
+  if (!chosen || chosen.seconds == null) return `<p class="small bad">${h(chosen?.error || t('no prediction'))}</p>`;
+  const phases = chosen.phases || [];
+  const most = Math.max(1e-12, ...phases.map(p => p.seconds));
+  const slowLinks = new Set((x.pairs || []).filter(p => !fast(p)).map(p => p.link));
+  let html = phases.map((p, i) => {
+    const slow = p.links.some(l => slowLinks.has(l));
+    return `<div class="phase"><span class="badge" style="background: var(--${slow ? 'amber' : 'teal'}-bg); color: var(--${slow ? 'amber' : 'teal-fg'})">${i + 1}</span>
+      <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0"><b>${h(p.name)}</b><span class="small muted">${h(p.where)}</span>
+        <div class="row" style="flex-wrap: nowrap">${p.links.length ? `<span class="pill ${slow ? 'amber' : 'teal'} tiny mono">${h(p.links[0])}</span>` : ''}
+        <div class="bar" style="flex: 1"><div style="width: ${Math.max(1, p.seconds / most * 100).toFixed(1)}%; background: var(--${slow ? 'amber' : 'teal'})"></div></div></div></div>
+      <span class="mono" style="text-align: end">${h(time(p.seconds))}</span></div>`;
+  }).join('');
+  const ring = x.predictions.find(p => p.algorithm === 'ring');
+  const other = chosen.algorithm === 'ring' ? x.predictions.find(p => p.algorithm === 'hierarchical') : ring;
+  if (other?.seconds != null) html += `<span class="small ${chosen.seconds <= other.seconds ? 'good' : 'warn'}">${h(chosen.algorithm)}: ${h(time(chosen.seconds))} ${t('for')} ${h(size(x.bytes))}, ${t('against')} ${h(time(other.seconds))} ${t('with')} ${h(other.algorithm)}</span>`;
+  return `<div style="display: flex; flex-direction: column; gap: 10px">${html}</div>`;
+}
+
+function viewMemory(x) {
+  let html = '';
+  let smallest = null;
+  x.ranks.forEach(r => { const c = capOf(r); if (c != null && (smallest === null || c < capOf(smallest))) smallest = r; });
+  for (const node of x.nodes) {
+    const cards = {};
+    node.ranks.forEach((r, j) => { const d = node.devices[j]; (cards[d.card || d.device] ||= { device: d.device, physical: d.physical, ranks: [] }).ranks.push(x.ranks[r]); });
+    for (const card of Object.values(cards)) {
+      const declared = card.ranks.reduce((s, r) => s + (r.cap ?? 0), 0);
+      const total = card.physical ?? (declared || null);
+      const segs = card.ranks.map(r => {
+        const cap = capOf(r) ?? (total ? total / card.ranks.length : null);
+        const live = R.ranks[r.rank];
+        const used = live?.inUse != null && (live.limit || cap) ? Math.min(100, live.inUse / (live.limit || cap) * 100) : 0;
+        const width = total && cap ? Math.max(4, cap / total * 100) : 100 / card.ranks.length;
+        return `<div class="seg" style="flex: 0 0 calc(${width.toFixed(2)}% - 3px)"><div class="used" style="width: ${used.toFixed(1)}%"></div>
+          <span>rank ${r.rank} · ${h(capText(r))}${live?.inUse != null ? ' · ' + h(size(live.inUse)) + ' ' + t('in use') : ''}</span></div>`;
+      }).join('');
+      const note = !node.here && card.physical == null ? t('carved from this machine in a simulation; on the real machine, its own card')
+        : card.ranks.length > 1 ? `${card.ranks.length} ${t('ranks share the card: each has its own hard cap')}`
+        : smallest && card.ranks.includes(smallest) && x.world > 1 ? t('the smallest cap: the largest batch the cluster can take is sized by it') : '';
+      html += `<div style="display: flex; flex-direction: column; gap: 6px">
+        <div class="between"><span class="mono" style="font-weight: 500">${h(node.name)} · ${h(card.device)}</span>
+          <span class="small dim">${card.physical != null ? h(size(card.physical)) + ' ' + t('on the card') : h(size(declared)) + ' ' + t('declared')}</span></div>
+        <div class="row" style="gap: 3px; height: 34px; flex-wrap: nowrap">${segs}</div>
+        ${note ? `<span class="small muted">${h(note)}</span>` : ''}</div>`;
+    }
+  }
+  return `<div style="display: flex; flex-direction: column; gap: 14px">${html}
+    <div class="row small muted" style="gap: 16px"><span class="row" style="gap: 6px"><span style="width: 14px; height: 14px; border-radius: 3px; background: var(--teal-bg); border: 1px solid var(--teal)"></span>${t("a rank's cap (a hard limit)")}</span>
+    <span class="row" style="gap: 6px"><span style="width: 14px; height: 14px; border-radius: 3px; background: var(--teal)"></span>${t('in use now (while a run goes)')}</span></div></div>`;
+}
+
+function renderTopology() {
+  $('views').innerHTML = VIEWS.map(([id, label]) => `<button type="button" class="small" data-view="${id}" aria-pressed="${S.view === id}">${t(label)}</button>`).join('');
+  $('view-caption').textContent = t(VIEWS.find(v => v[0] === S.view)[2]);
+  const x = S.inspection;
+  if (S.inspectError) { $('drawing').innerHTML = `<p class="small bad">${h(S.inspectError)}</p>`; }
+  else if (!x) { $('drawing').innerHTML = `<p class="small dim">${t('reading this machine and the topology…')}</p>`; }
+  else {
+    const draw = { network: viewNetwork, ring: viewRing, matrix: viewMatrix, plan: viewPlan, memory: viewMemory }[S.view];
+    $('drawing').innerHTML = (x.links_error ? `<p class="small bad">${h(x.links_error)}</p>` : '') + draw(x);
+  }
+  $('json-preview').textContent = S.json || '';
+  if (!x) return;
+  $('predict-title').textContent = `${t('Predicted all-reduce of')} ${size(x.bytes)}`;
+  const known = (x.predictions || []).filter(p => p.seconds != null);
+  const most = Math.max(1e-12, ...known.map(p => p.seconds));
+  const colour = { hierarchical: 'teal', ring: 'blue', naive: 'violet' };
+  $('predictions').innerHTML = (x.predictions || []).map(p => `<div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 90px; align-items: center; gap: 10px; margin: 4px 0">
+      <span class="mono">${h(p.algorithm)}${p.default ? ' *' : ''}</span>
+      <div class="bar thick">${p.seconds != null ? `<div style="width: ${(p.seconds / most * 100).toFixed(1)}%; background: var(--${colour[p.algorithm] || 'teal'})"></div>` : ''}</div>
+      <span class="mono" style="text-align: end" title="${h(p.error || '')}">${p.seconds != null ? h(time(p.seconds)) : '—'}</span></div>`).join('');
+  const chosen = x.predictions?.find(p => p.default);
+  $('predict-note').textContent = chosen ? `* ${chosen.algorithm} ${t('is the default here')} (${t('virtual clock, before any run')})` : '';
+}
+
+// ---- runs ----------------------------------------------------------------------------------------------------------------
+function currentRun() { return S.runs.find(r => r.id === S.runId) || null; }
+async function refreshRuns() {
+  try {
+    const data = await call('runs');
+    S.runs = data.runs;
+    if (!S.runId && S.runs.length) pick(S.runs[S.runs.length - 1].id);
+    renderRunList(); renderHeader();
+  } catch (e) { if (e.status !== 401) say(e.message, true); }
+}
+function renderRunList() {
+  $('i-run').innerHTML = S.runs.map(r => `<option value="${h(r.id)}" ${r.id === S.runId ? 'selected' : ''}>${h(r.id)} · ${h(r.kind)} · ${h(t(r.state))} · ${h(r.command || r.folder)}</option>`).join('')
+    || `<option value="">${t('no run yet')}</option>`;
+}
+let stream = null;
+function pick(id) {
+  if (stream) stream.abort();
+  S.runId = id;
+  R = freshRun();
+  R.id = id;
+  const run = currentRun();
+  if (run) { R.world = run.world; R.seed = run.seed; R.state = run.state; }
+  renderAll();
+  if (id) listen(id);
+}
+async function listen(id) {
+  const ctrl = new AbortController();
+  stream = ctrl;
+  const { path } = route('events', { id });
+  try {
+    const res = await fetch(path, { headers: headers(false), signal: ctrl.signal });
+    if (res.status === 401) { $('keybox').classList.remove('hidden'); return; }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const block = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        for (const line of block.split('\n')) if (line.startsWith('data: ')) { try { ingest(JSON.parse(line.slice(6))); } catch { /* a line that is not JSON */ } }
+      }
+      schedule();
+    }
+  } catch (e) { if (ctrl.signal.aborted) return; }
+  if (!ctrl.signal.aborted && S.runId === id) setTimeout(() => { if (S.runId === id && stream === ctrl) pick(id); }, 2000);
+}
+function rank(r) { return (R.ranks[r] ||= { state: 'training', detail: null, step: -1, wall: null, inUse: null, limit: null, network: null, exposed: null, blocked: null, line: null, exit: null, bubble: null }); }
+function event(step, kind, text, key) { R.events.push({ step, kind, text, key: key || '' }); }
+function ingest(e) {
+  switch (e.event) {
+    case 'run':
+      R.state = e.state; R.detail = e.detail;
+      event(e.step, ['failed'].includes(e.state) ? 'error' : 'run', `${t(e.state)}${e.detail ? ': ' + e.detail : ''}`);
+      break;
+    case 'training_started':
+      R.total = (e.epochs || 1) * (e.batches_per_epoch || 0) || R.total;
+      event(0, 'run', `${t('training started')}: ${e.model} · ${e.optimizer} · ${(e.parameters || 0).toLocaleString('en-US')} ${t('parameters')}`);
+      break;
+    case 'batch':
+      if (e.step > R.step || !R.losses.length) {
+        R.step = Math.max(R.step, e.step);
+        if (e.loss != null) R.losses.push([e.step, e.loss]);
+        R.times.push([Date.parse(e.time), e.step]);
+        if (R.times.length > 40) R.times.shift();
+      }
+      break;
+    case 'training_completed': event(R.step, 'run', `${t('training ended')}: ${t('loss')} ${e.final_loss?.toFixed?.(4) ?? '—'}`); break;
+    case 'gradient_sync': { const k = rank(e.rank); k.network = e.network_ms; k.exposed = e.exposed_ms; R.collective = R.collective || e.sync; R.clock = 'simulated'; break; }
+    case 'collectives': for (const c of e.ranks) { const k = rank(c.rank); k.blocked = c.blocked_ms; if (k.network == null) k.network = c.simulated_ms || c.wall_ms; R.collective = c.collective; } break;
+    case 'collective':
+      if (e.operation === 'step-summary') { const k = rank(e.rank); k.network = e.wall_ms; k.blocked = e.blocked_ms; k.slowest = e.slowest_rank; R.clock = 'wall'; R.world = Math.max(R.world, e.world_size); }
+      break;
+    case 'links': R.links = {}; for (const p of e.pairs) { const key = Math.min(p.from, p.to) + '-' + Math.max(p.from, p.to); const l = (R.links[key] ||= { a: Math.min(p.from, p.to), b: Math.max(p.from, p.to), bytes: 0, simulated: 0, wall: 0 }); l.bytes += p.bytes; l.simulated += p.simulated_ms; l.wall += p.wall_ms; } break;
+    case 'rank_step': { const k = rank(e.rank); k.step = e.step; k.wall = e.wall_ms; k.inUse = e.in_use; k.limit = e.limit; break; }
+    case 'pipeline_step': rank(e.rank).bubble = e.bubble; break;
+    case 'rank_state': {
+      const k = rank(e.rank); k.state = e.state; k.detail = e.detail;
+      event(e.step, 'state', `rank ${e.rank} ${t(e.state)}${e.detail ? ': ' + e.detail : ''}`, e.seed != null ? `--seed ${e.seed} --step ${e.step}` : '');
+      break;
+    }
+    case 'fault': {
+      const seen = `${e.step}:${e.kind}:${(e.ranks || []).join(',')}`;
+      if (!R.liveSeen.has(seen)) event(e.step, 'fault', `${e.kind} ${t('on rank(s)')} ${(e.ranks || []).join(', ')}${e.factor ? ' (' + e.factor + ')' : ''}`, `--seed ${e.seed} --step ${e.step}`);
+      break;
+    }
+    case 'live_fault':
+      if (e.stage === 'injected') R.liveSeen.add(`${e.step}:${e.kind}:${(e.ranks || []).join(',')}`);
+      event(e.step, 'fault', `${t(e.stage === 'injected' ? 'live fault injected' : 'live fault queued')}: ${e.kind} ${t('on rank(s)')} ${(e.ranks || []).join(', ')}`, e.key);
+      break;
+    case 'run_faults':
+      if (e.event_log) event(R.step, 'run', `${t('event log')} ${e.event_log}: ${e.faults.length} ${t('fault(s)')}, ${e.faults.filter(f => f.live).length} ${t('live')}`);
+      break;
+    case 'output': R.output.push((e.error ? '! ' : '') + e.text); break;
+    case 'rank_line': { rank(e.rank).line = e.text; R.output.push(`rank ${e.rank}: ${e.text}`); R.world = Math.max(R.world, e.rank + 1); break; }
+    case 'cluster_start': event(0, 'run', `${t('cluster start on node')} ${e.node}: ${t('ranks')} ${e.ranks.join(', ')} (${e.devices.join(', ')}) · ${e.command}`); R.world = Math.max(R.world, ...e.ranks.map(r => r + 1)); break;
+    case 'rank_end': { const k = rank(e.rank); k.exit = e.exit_code; k.state = e.exit_code === 0 ? 'finished' : 'dropped'; event(R.step, e.exit_code === 0 ? 'run' : 'error', `rank ${e.rank} ${e.exit_code === 0 ? t('done') : t('ended') + ' (' + (e.exit_code ?? t('by the launcher')) + ')'}`); break; }
+    case 'cluster_end': event(R.step, e.failure ? 'error' : 'run', e.failure || t('every rank ended')); break;
+    case 'transport_chosen': break;
+  }
+  if (R.output.length > 400) R.output.splice(0, R.output.length - 400);
+  if (R.events.length > 2000) R.events.splice(0, R.events.length - 2000);
+}
+let pending = false;
+function schedule() { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; renderRunParts(); }); } }
+
+function renderHeader() {
+  const x = S.inspection;
+  const run = currentRun();
+  $('file-chip').textContent = [S.file || t('topology not saved yet'), x ? `${x.nodes.length} ${t('nodes')}` : '', x ? `${x.world} ${t('ranks')}` : ''].filter(Boolean).join(' · ');
+  const state = R.state || run?.state || 'ready';
+  const tone = { running: 'teal', finished: 'teal', following: 'blue', paused: 'amber', pausing: 'amber', stopping: 'red', stopped: 'red', failed: 'red' }[state] || '';
+  $('status').className = 'pill ' + tone;
+  $('status').textContent = t(state) + (R.step > 0 ? ` · ${t('step')} ${R.step}${R.total ? ' / ' + R.total : ''}` : '');
+  const refusal = (action) => !run ? t('start a run first') : run.controls?.[action];
+  const going = run && !['stopped', 'finished', 'failed'].includes(state) && run.kind !== 'followed';
+  const buttons = { 'b-pause': 'pause', 'b-resume': 'resume', 'b-stop': 'stop', 'b-fault': 'faults' };
+  for (const [id, action] of Object.entries(buttons)) {
+    const why = refusal(action);
+    const el = $(id);
+    el.disabled = !!why;
+    el.title = why || '';
+  }
+  $('b-pause').classList.toggle('hidden', ['paused', 'pausing'].includes(state));
+  $('b-resume').classList.toggle('hidden', !['paused', 'pausing'].includes(state));
+  $('b-start').classList.toggle('hidden', !!going);
+  const why = run && run.kind === 'followed' ? run.controls.pause : (run && run.kind === 'localhost' ? run.controls.faults : null);
+  $('why').textContent = why ? t('Controls refused') + ': ' + why : '';
+  $('why').classList.toggle('hidden', !why);
+  if (!run || run.controls?.faults) { S.faultOpen = false; }
+  $('fault-strip').classList.toggle('hidden', !S.faultOpen);
+  $('t-events').textContent = `${t('Events')} (${R.events.length})`;
+  for (const tab of ['setup', 'run', 'events']) { $('t-' + tab).setAttribute('aria-selected', String(S.tab === tab)); $('p-' + tab).classList.toggle('hidden', S.tab !== tab); }
+}
+
+function renderFaultStrip() {
+  const kinds = S.machine?.fault_kinds || [];
+  const label = { SlowWorker: t('Slow worker'), LinkLoss: t('Lossy link'), Partition: t('Partition'), DroppedWorker: t('Dropped worker'), LateJoin: t('Late join') };
+  const keep = $('f-kind').value;
+  $('f-kind').innerHTML = kinds.map(k => `<option value="${k}">${h(label[k] || k)}</option>`).join('');
+  if (keep) $('f-kind').value = keep;
+  const world = R.world || S.inspection?.world || 0;
+  const keepRank = $('f-rank').value;
+  $('f-rank').innerHTML = Array.from({ length: world }, (_, r) => `<option value="${r}">rank ${r}${S.inspection?.ranks?.[r] ? ' · ' + h(S.inspection.ranks[r].node) : ''}</option>`).join('');
+  if (keepRank) $('f-rank').value = keepRank;
+  faultKindChanged();
+}
+function faultKindChanged() {
+  const kind = $('f-kind').value;
+  const factor = { SlowWorker: [t('Slower by (times)'), '8'], LinkLoss: [t('Share lost, 0 to 1 (to the next rank)'), '0.1'], LateJoin: [t('Steps away'), '2'] }[kind];
+  $('f-factor-label').textContent = factor ? factor[0] : t('Factor (not used)');
+  if (factor && document.activeElement !== $('f-factor')) $('f-factor').value = factor[1];
+  $('f-factor').disabled = !factor;
+  $('f-note').textContent = `${t('Written to the event log with its step, so')} --seed ${R.seed ?? '?'} --step N ${t('replays this run as you steered it.')}`;
+}
+
+function renderRunParts() {
+  renderHeader();
+  const run = currentRun();
+  const now = Date.now();
+  // Throughput from the last steps' times: steps a second, and the time left.
+  let stepsPerSecond = null;
+  if (R.times.length > 1) { const [t0, s0] = R.times[0], [t1, s1] = R.times[R.times.length - 1]; if (t1 > t0 && s1 > s0) stepsPerSecond = (s1 - s0) / ((t1 - t0) / 1000); }
+  const left = stepsPerSecond && R.total ? (R.total - R.step) / stepsPerSecond : null;
+  const last = R.losses.length ? R.losses[R.losses.length - 1][1] : null, first = R.losses.length ? R.losses[0] : null;
+  const ranks = Object.entries(R.ranks);
+  const nets = ranks.map(([, k]) => k.network).filter(v => v != null);
+  const meanNet = nets.length ? nets.reduce((a, b) => a + b, 0) / nets.length : null;
+  const anySlow = ranks.some(([, k]) => k.state === 'slow');
+  $('kpis').innerHTML = [
+    [t('step'), `${Math.max(0, R.step)}${R.total ? ' / ' + R.total : ''}`, left != null && ['running'].includes(R.state) ? `${t('about')} ${time(left)} ${t('left')}` : t(R.state || run?.state || 'ready')],
+    [t('loss'), last != null ? last.toFixed(4) : '—', first ? `${t('from')} ${first[1].toFixed(4)} ${t('at step')} ${first[0]}` : t('no step yet')],
+    [t('network time a step'), meanNet != null ? time(meanNet / 1e3) : '—', (R.clock === 'wall' ? t('wall clock') : t('virtual clock')) + (anySlow ? ' · ' + t('waiting on a slow rank') : R.collective ? ' · ' + R.collective : '')],
+    [t('steps a second'), stepsPerSecond != null ? stepsPerSecond.toFixed(stepsPerSecond >= 10 ? 1 : 2) : '—', t('all ranks, wall clock')],
+  ].map(([label, value, note]) => `<div class="card kpi" style="gap: 4px"><span class="small muted">${h(label)}</span><span class="v ltr">${h(value)}</span><span class="small dim">${h(note)}</span></div>`).join('');
+
+  const world = Math.max(R.world, ...Object.keys(R.ranks).map(r => +r + 1), 0);
+  const info = S.inspection && S.inspection.world === world ? S.inspection.ranks : null;
+  const most = Math.max(1e-9, ...ranks.map(([, k]) => (k.network || 0) + (k.blocked || 0)));
+  $('ranks').innerHTML = Array.from({ length: world }, (_, r) => {
+    const k = R.ranks[r] || rank(r);
+    const paused = ['paused'].includes(R.state);
+    const state = k.exit != null ? (k.exit === 0 ? 'finished' : 'dropped') : paused ? 'paused' : k.state === 'joined' || k.state === 'rejoined' ? 'training' : k.state;
+    const tone = { training: 'teal', slow: 'amber', paused: 'amber', dropped: 'red', partitioned: 'violet', finished: 'blue' }[state] || '';
+    const cap = k.limit ?? info?.[r]?.cap ?? info?.[r]?.physical;
+    const used = k.inUse != null && cap ? Math.min(100, k.inUse / cap * 100) : 0;
+    const steps = k.wall ? 1000 / k.wall : null;
+    return `<div class="card">
+      <div class="between"><div style="display: flex; flex-direction: column"><b>rank ${r}</b>
+        <span class="small dim mono">${h(info?.[r] ? info[r].node + ' · ' + info[r].device : '')}</span></div>
+        <span class="pill ${tone}" title="${h(k.detail || '')}">${h(t(state || 'training'))}</span></div>
+      <div class="grid2"><div class="field"><span class="tiny muted">${t('loss')}</span><span class="mono" style="font-size: 16px">${last != null && state !== 'dropped' ? last.toFixed(4) : '—'}</span></div>
+        <div class="field"><span class="tiny muted">${t('steps a second')}</span><span class="mono" style="font-size: 16px">${steps != null ? steps.toFixed(steps >= 10 ? 1 : 2) : '—'}</span></div></div>
+      <div class="field"><div class="between tiny muted"><span>${t('memory')}</span><span class="mono">${k.inUse != null ? h(size(k.inUse)) : '—'}${cap ? ' / ' + h(size(cap)) : ''}</span></div>
+        <div class="bar"><div style="width: ${Math.max(used > 0 ? 2 : 0, used).toFixed(1)}%; background: var(--blue)"></div></div></div>
+      <div class="field"><div class="between tiny muted"><span>${t('network / blocked a step')}</span><span class="mono">${k.network != null ? h(time(k.network / 1e3)) : '—'} / ${k.blocked != null ? h(time(k.blocked / 1e3)) : '—'}</span></div>
+        <div class="bar"><div style="width: ${((k.network || 0) / most * 100).toFixed(1)}%; background: var(--teal)"></div><div style="width: ${((k.blocked || 0) / most * 100).toFixed(1)}%; background: var(--amber)"></div></div></div>
+      ${k.bubble != null ? `<span class="tiny muted">${t('pipeline bubble')} ${(k.bubble * 100).toFixed(0)}%</span>` : ''}
+      ${k.line ? `<span class="tiny dim mono" style="overflow-wrap: anywhere">${h(k.line)}</span>` : ''}
+    </div>`;
+  }).join('') || `<p class="small dim">${t('no run yet: start one, or follow a run folder')}</p>`;
+
+  // The loss chart: drawn here from the run's own records.
+  const pts = R.losses;
+  if (pts.length) {
+    const ys = pts.map(p => p[1]).filter(v => isFinite(v)), lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1;
+    const xs = pts[pts.length - 1][0] || 1, every = Math.max(1, Math.ceil(pts.length / 400));
+    const line = pts.filter((_, i) => i % every === 0 || i === pts.length - 1).map(([s, v]) => `${(s / xs * 392 + 4).toFixed(1)},${(20 + (hi - v) / span * 160).toFixed(1)}`).join(' ');
+    $('loss-chart').innerHTML = `<svg viewBox="0 0 400 200" role="img" aria-label="${h(t('Loss over the steps'))}" style="width: 100%; height: auto; display: block">
+      ${[20, 100, 180].map(y => `<line x1="0" y1="${y}" x2="400" y2="${y}" stroke="var(--row)" stroke-width="1"></line>`).join('')}
+      <polyline points="${line}" fill="none" stroke="var(--teal)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>
+      <text x="4" y="16" fill="var(--dim)" font-size="11" font-family="var(--mono)">${hi.toFixed(3)}</text>
+      <text x="4" y="96" fill="var(--dim)" font-size="11" font-family="var(--mono)">${((hi + lo) / 2).toFixed(3)}</text>
+      <text x="4" y="176" fill="var(--dim)" font-size="11" font-family="var(--mono)">${lo.toFixed(3)}</text></svg>`;
+  } else $('loss-chart').innerHTML = `<p class="small dim">${t('no step yet')}</p>`;
+  $('loss-step').textContent = R.step > 0 ? `${t('step')} ${R.step}` : '';
+
+  const links = Object.values(R.links);
+  const busiest = Math.max(1e-9, ...links.map(l => l.simulated || l.wall));
+  $('links-note').textContent = links.length ? `${t('collective')}: ${R.collective || '—'} · ${t('times on the virtual clock, since the run started')}` : '';
+  $('links').innerHTML = links.length ? `<table style="min-width: 640px"><thead><tr><th>${t('between')}</th><th>${t('link')}</th><th>${t('bandwidth')}</th><th>${t('moved')}</th><th>${t('time on the link')}</th><th>${t('busy (of the busiest)')}</th></tr></thead><tbody>
+    ${links.sort((a, b) => a.a - b.a || a.b - b.b).map(l => { const p = pairOf(l.a, l.b); const share = (l.simulated || l.wall) / busiest;
+      return `<tr><td class="mono">rank ${l.a} ↔ rank ${l.b}</td><td>${h(p ? kindLabel(p) : '')}</td><td class="mono">${h(p ? rate(p.bandwidth) : '')}</td><td class="mono">${h(size(l.bytes))}</td>
+      <td class="mono">${h(time((l.simulated || l.wall) / 1e3))}</td><td style="width: 160px"><div class="bar"><div style="width: ${(share * 100).toFixed(0)}%; background: var(--${p && !fast(p) ? 'amber' : 'teal'})"></div></div></td></tr>`; }).join('')}
+    </tbody></table>` : `<p class="small dim">${run && run.kind !== 'in-process' ? t("per-link figures come from an in-process run's virtual clock; this run's ranks report their step totals (above)") : t('the links fill in as the run moves data (while this page listens)')}</p>`;
+  $('output').textContent = R.output.slice(-200).join('\n');
+  $('output').scrollTop = $('output').scrollHeight;
+
+  const tone = { fault: 'amber', state: '', run: 'teal', error: 'red' };
+  $('events').innerHTML = R.events.slice().reverse().slice(0, 500).map(e => `<div class="event"><span class="mono small muted">${t('step')} ${e.step ?? '—'}</span>
+    <span><span class="pill ${tone[e.kind] || ''}">${h(t(e.kind))}</span></span><span>${h(e.text)}</span><span class="mono small dim ltr">${h(e.key)}</span></div>`).join('')
+    || `<p class="small dim">${t('no event yet')}</p>`;
+  if (S.tab === 'setup' && S.view === 'memory' && S.inspection) renderTopology();
+}
+function renderAll() { renderHeader(); renderTopology(); renderRunList(); renderFaultStrip(); renderRunParts(); }
+
+// ---- the builder's questions, one at a time ------------------------------------------------------------------------------
+function renderGuide() {
+  const g = S.guide;
+  if (!g) return;
+  if (g.done) { $('guide').innerHTML = `<span class="good">${t('Every question is answered: the form shows the topology.')}</span>`; return; }
+  const q = g.question;
+  $('guide').innerHTML = `<div class="question" style="display: flex; flex-direction: column; gap: 6px">
+    <b style="color: var(--fg)">${h(q.prompt)}</b>
+    <span class="small muted" style="white-space: pre-line">${h(q.description)}</span>
+    ${q.suggestion ? `<span class="small good">${t('suggestion')}: ${h(q.suggestion)}</span>` : ''}
+    ${g.refused ? `<span class="small bad">${h(g.refused)}</span>` : ''}
+    <div class="row"><input id="g-answer" class="mono" style="flex: 1 1 200px" placeholder="${h(q.default ?? '')}" aria-label="${h(q.prompt)}">
+      <button type="button" class="small primary" id="g-next">${t('Answer')}</button><button type="button" class="small" id="g-default">${t('Use the default')}</button></div>
+    <span class="tiny dim mono">${h(q.key)}</span></div>`;
+  $('g-answer').focus();
+  $('g-answer').onkeydown = (ev) => { if (ev.key === 'Enter') answer($('g-answer').value); };
+  $('g-next').onclick = () => answer($('g-answer').value);
+  $('g-default').onclick = () => answer('');
+}
+async function answer(text) {
+  try {
+    const step = await call('questions', null, { answers: S.guide.answers, answer: text });
+    S.guide = step;
+    if (step.done) { S.form = formFrom(step.answers); S.json = step.json; renderForm(); draft(); }
+    renderGuide();
+  } catch (e) { say(e.message, true); }
+}
+
+// ---- wiring ----------------------------------------------------------------------------------------------------------------
+function wire() {
+  document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; renderAll(); });
+  $('views').onclick = (ev) => { const b = ev.target.closest('[data-view]'); if (b) { S.view = b.dataset.view; renderTopology(); } };
+  $('form-nodes').oninput = (ev) => { if (ev.target.dataset.node !== undefined) formChanged(); };
+  $('form-nodes').onclick = (ev) => { const b = ev.target.closest('[data-remove]'); if (b) { S.form.nodes.splice(+b.dataset.remove, 1); renderForm(); draft(); } };
+  for (const id of ['i-intra', 'i-inter', 'i-overrides', 'i-seed', 'i-failures', 'i-address']) $(id).oninput = formChanged;
+  $('i-bytes').onchange = () => { S.bytes = $('i-bytes').value; draft(); };
+  $('b-add').onclick = () => { const last = S.form.nodes[S.form.nodes.length - 1]; S.form.nodes.push({ name: 'node' + (S.form.nodes.length + 1), devices: last.devices.split(',')[0].trim(), caps: last.caps.split(',')[0].trim() }); renderForm(); draft(); };
+  $('b-defaults').onclick = async () => { try { S.form = formFrom(await machineDefaults()); renderForm(); draft(); } catch (e) { say(e.message, true); } };
+  $('b-guide').onclick = async () => { try { S.guide = await call('questions', null, { answers: {} }); renderGuide(); } catch (e) { say(e.message, true); } };
+  $('b-save').onclick = async () => {
+    try {
+      const path = $('i-path').value.trim();
+      const saved = await call('save', null, { answers: answersFrom(S.form), save: true, path: path || undefined });
+      S.file = saved.path; S.json = saved.json;
+      $('save-note').innerHTML = `<span class="good">${t('saved')} ${h(saved.path)}: ${saved.nodes} ${t('nodes')}, ${saved.ranks} ${t('ranks')}</span>`;
+      S.inspection = await call('inspect', { query: { path: saved.path, bytes: S.bytes } });
+      renderAll();
+    } catch (e) { $('save-note').innerHTML = `<span class="bad">${h(e.message)}</span>`; }
+  };
+  $('b-open').onclick = () => loadFile($('i-path').value.trim());
+  $('b-start').onclick = () => { S.tab = 'run'; $('start-card').open = true; renderAll(); $('i-command').focus(); };
+  $('b-go').onclick = async () => {
+    try {
+      if (!S.file) throw new Error(t('Save the topology first: a run starts from its file.'));
+      const body = { topology: S.file, command: $('i-command').value.trim(), mode: $('i-mode').value, paused: $('i-paused').checked };
+      if ($('i-collective').value) body.collective = $('i-collective').value;
+      if ($('i-run-seed').value.trim()) body.seed = $('i-run-seed').value.trim();
+      const run = await call('start', null, body);
+      $('go-note').textContent = `${t('started')} ${run.id}`;
+      await refreshRuns(); pick(run.id);
+    } catch (e) { $('go-note').innerHTML = `<span class="bad">${h(e.message)}</span>`; }
+  };
+  $('b-follow').onclick = async () => { try { const run = await call('start', null, { follow: $('i-follow').value.trim() }); await refreshRuns(); pick(run.id); } catch (e) { say(e.message, true); } };
+  $('i-run').onchange = () => pick($('i-run').value);
+  const steer = (action) => async () => { try { await call(action, { id: S.runId }, {}); await refreshRuns(); } catch (e) { say(e.message, true); } };
+  $('b-pause').onclick = steer('pause'); $('b-resume').onclick = steer('resume'); $('b-stop').onclick = steer('stop');
+  $('b-fault').onclick = () => { S.faultOpen = !S.faultOpen; renderFaultStrip(); renderHeader(); };
+  $('f-kind').onchange = faultKindChanged;
+  $('b-inject').onclick = async () => {
+    try {
+      const kind = $('f-kind').value, r = +$('f-rank').value, world = R.world || S.inspection?.world || 1;
+      const ranks = kind === 'LinkLoss' ? [r, (r + 1) % world] : [r];
+      const body = { kind, ranks, duration_ms: parseFloat($('f-duration').value) || 0 };
+      if (!$('f-factor').disabled) body.factor = parseFloat($('f-factor').value);
+      const queued = await call('faults', { id: S.runId }, body);
+      say(`${t('queued')}: ${queued.kind} ${t('on rank(s)')} ${queued.ranks.join(', ')} · ${queued.detail}`);
+      S.faultOpen = false; renderHeader();
+    } catch (e) { say(e.message, true); }
+  };
+  $('b-key').onclick = () => { S.key = $('key').value; try { sessionStorage.setItem('idrak-cluster-key', S.key); } catch { /* private window */ } $('keybox').classList.add('hidden'); start(); };
+}
+async function loadFile(path) {
+  try {
+    const saved = await call('topology', { query: { path } });
+    if (saved.answers) { S.form = formFrom(saved.answers); S.file = saved.path; S.json = saved.json; $('i-path').value = saved.path; }
+    else { S.form = formFrom(await machineDefaults()); if (saved.path) { $('i-path').value = saved.path; S.file = null; } }
+    renderForm(); draft();
+  } catch (e) { say(e.message, true); }
+}
+async function start() {
+  try {
+    S.machine = await call('machine');
+    $('link-names').innerHTML = S.machine.links.map(l => `<option value="${h(l.name)}">${h(l.bandwidth > 0 ? rate(l.bandwidth) : t('measured here, or give a rate'))}</option>`).join('');
+    $('i-failures').innerHTML = S.machine.failure_models.map(m => `<option>${h(m)}</option>`).join('');
+    $('i-collective').innerHTML = `<option value="">${t('the default')}</option>` + S.machine.collectives.map(c => `<option>${h(c)}</option>`).join('');
+    const b = S.machine.predict_bytes;
+    $('i-bytes').value = b % 1048576 === 0 ? (b / 1048576) + 'MB' : b + 'B';
+    S.bytes = $('i-bytes').value;
+    if (S.machine.follow) S.tab = 'run';
+    await loadFile(S.machine.topology || '');
+    await refreshRuns();
+    renderAll();
+    setInterval(refreshRuns, 2000);
+  } catch (e) { if (e.status !== 401) say(e.message, true); }
+}
+wire();
+start();
+</script>
+</body>
+</html>

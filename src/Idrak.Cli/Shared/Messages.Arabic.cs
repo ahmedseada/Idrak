@@ -344,6 +344,8 @@ internal static partial class Messages
         ["Shows a topology file: its ranks, its links and the time an all-reduce would take on it"] = "عرض ملف بنية العنقود: رتبه وروابطه والوقت الذي يستغرقه الجمع الشامل عليه",
         ["Runs training on a simulated cluster: every rank of a topology file in this process"] = "تشغيل التدريب على عنقود محاكى: كل رتب ملف البنية داخل هذه العملية",
         ["Starts this machine's ranks of a cluster: the command once per rank of its node"] = "تشغيل رتب هذا الجهاز من العنقود: الأمر مرة لكل رتبة في عقدته",
+        ["Opens the cluster dashboard: set up a topology, start and steer simulated runs, follow real ones"] =
+            "فتح لوحة العنقود: إعداد البنية وتشغيل التشغيلات المحاكاة والتحكم بها ومتابعة التشغيلات الحقيقية",
         ["Measures the bandwidth and latency of every pair of ranks of a cluster, cold and warm apart"] =
             "قياس عرض النطاق وزمن الاستجابة لكل زوج من رتب العنقود، الجولة الأولى منفصلة عن الجولات اللاحقة",
         ["Replays a simulated run's fault schedule and clock through a step, and reruns the step"] =
