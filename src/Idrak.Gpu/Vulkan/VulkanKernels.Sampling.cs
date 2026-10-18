@@ -184,8 +184,9 @@ internal static partial class VulkanKernels
     // 2. top-k: the k-th largest distinct score, by k passes each taking the largest score below the last one; 3. min-p: at
     // least max + ln(minP); 4. top-p: the highest cut-off keeping topP of the mass, by 24 bisection steps; 5. the draw at
     // u · Σ e^(s - max) over the kept scores (u from the counter-based stream); 6. entropy and the five most likely tokens
-    // in one pass. A workgroup per row: the draw sums contiguous chunks (one per invocation), invocation 0 finds the chunk
-    // where the running total passes the target and that chunk's invocation finds the token; each invocation keeps its own
+    // in one pass. A workgroup per row: the draw sums contiguous chunks (one per invocation), every invocation adds them up
+    // in order to the chunk where the running total passes the target (the same answer in every lane, nothing handed
+    // between them) and that chunk's invocation finds the token; each invocation keeps its own
     // five most likely tokens, merged by five arg-max reductions. Narrow: one invocation per row does every pass in token
     // order, as the CPU. With slots (topk_slots), steps 1 to 4 read the slots instead of the row: every score the cut-offs
     // keep is there with its count.
@@ -375,9 +376,10 @@ internal static partial class VulkanKernels
         return (chosen.V, chosenWeight.V, sum.V);
     }
 
-    // The draw by a workgroup: each invocation sums a contiguous chunk of the weights; invocation 0 adds the chunks up and
-    // finds the one where the running total passes u · sum; that chunk's invocation walks it. Returns, to every
-    // invocation, the token, its weight and the sum.
+    // The draw by a workgroup: each invocation sums a contiguous chunk of the weights; then every invocation adds the
+    // chunks up in order (the same sum and the same chunk in every lane, with no values handed between lanes) and the
+    // invocation whose chunk takes the running total past u · sum walks it. Returns, to every invocation, the token, its
+    // weight and the sum.
     private static (Val Token, Val Weight, Val Total) DrawByChunks(KernelBuilder k, Val vocabulary, Val u, Func<Val, Val> weight,
         SharedArray parts, SharedArray shared)
     {
@@ -389,53 +391,41 @@ internal static partial class VulkanKernels
         k.For(start, end, 1, j => part.V = part.V + weight(j));
         parts[lane] = part.V;
         k.Barrier();
-        k.If(lane.Eq(0), () =>
+        var total = k.Local(0f);
+        k.For(k.Int(0), k.Int(Block), 1, c => total.V = total.V + parts[c]);
+        var goal = u * total.V;
+        var chosenChunk = k.Local(-1);
+        var preceding = k.Local(0f);
+        var running = k.Local(0f);
+        var done = k.Local(k.Bool(false));
+        k.For(k.Int(0), k.Int(Block), 1, c =>
         {
-            var sum = k.Local(0f);
-            k.For(k.Int(0), k.Int(Block), 1, c => sum.V = sum.V + parts[c]);
-            var target = u * sum.V;
-            var at = k.Local(-1);
-            var before = k.Local(0f);
-            var running = k.Local(0f);
-            var done = k.Local(k.Bool(false));
-            k.For(k.Int(0), k.Int(Block), 1, c =>
+            var p = parts[c];
+            k.If(!done.V & (p > 0f), () =>
             {
-                var p = parts[c];
-                k.If(!done.V & (p > 0f), () =>
-                {
-                    at.V = c;
-                    before.V = running.V;
-                    running.V = running.V + p;
-                    done.V = running.V > target;
-                });
+                chosenChunk.V = c;
+                preceding.V = running.V;
+                running.V = running.V + p;
+                done.V = running.V > goal;
             });
-            shared[k.Int(0)] = sum.V;
-            shared[k.Int(1)] = target;
-            shared[k.Int(2)] = at.V.AsFloat();
-            shared[k.Int(3)] = before.V;
         });
-        k.Barrier();
-        var total = shared[k.Int(0)];
-        var goal = shared[k.Int(1)];
-        var chosenChunk = shared[k.Int(2)].AsInt();
-        var preceding = shared[k.Int(3)];
-        k.Barrier();
-        k.If(lane.Eq(chosenChunk), () =>
+        k.Barrier();                                                         // every lane has read the parts
+        k.If(lane.Eq(chosenChunk.V), () =>
         {
             var chosen = k.Local(-1);
             var chosenWeight = k.Local(0f);
-            var running = k.Local(preceding);
+            var walked = k.Local(preceding.V);
             var walk = k.Local(start);
-            var done = k.Local(k.Bool(false));
-            k.While(() => (walk.V < end) & !done.V, () =>
+            var found = k.Local(k.Bool(false));
+            k.While(() => (walk.V < end) & !found.V, () =>
             {
                 var e = weight(walk.V);
                 k.If(e > 0f, () =>
                 {
                     chosen.V = walk.V;
                     chosenWeight.V = e;
-                    running.V = running.V + e;
-                    done.V = running.V > goal;
+                    walked.V = walked.V + e;
+                    found.V = walked.V > goal;
                 });
                 walk.V = walk.V + 1;
             });
@@ -446,7 +436,7 @@ internal static partial class VulkanKernels
         var token = shared[k.Int(2)].AsInt();
         var tokenWeight = shared[k.Int(3)];
         k.Barrier();
-        return (token, tokenWeight, total);
+        return (token, tokenWeight, total.V);
     }
 
     // The largest (value, id) over the workgroup (the lower id on equal values), returned to every invocation.
