@@ -1066,6 +1066,14 @@ Activations cross through host memory (as the collectives' buffers do since C5);
 `IDeviceTransport` move to C8 with the profile of a token's hops. Deferred: `idrak profile MODEL --cluster FILE` (C8, as
 planned), `--placement pipeline` on `cluster sim` and `pretrain --cluster` (C8's command line), the GPU runs (the owner's).
 
+**After merging C7 (2026-10-18), open for C8: a stage's load.** Under pipeline placement each rank loads the whole
+model on the host and keeps only its stage, and rank 0 keeps every stage on the host to write whole checkpoints.
+Pipeline exists for models that do not fit one device, so this is a memory-heavy path the library fixes (CLAUDE.md):
+a rank reads only its stage's tensors from the checkpoint (the safetensors header names each tensor's offset; the
+model contracts map tensor names to blocks, generically, no family named), and each rank writes its own stage's
+shard of a checkpoint that a reader joins, so no rank ever holds the whole model. Activations between stages also
+move device to device where the transport can (C6's device-side chunks) instead of through host memory.
+
 ### C8: the command line and calibration
 
 - `idrak cluster init [-o topology.json] [--yes with the options above] [--dry-run]` (the interactive builder)
