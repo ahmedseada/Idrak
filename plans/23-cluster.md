@@ -16,9 +16,9 @@ the profiles**. Same topology file, same launcher, same training code on every t
 
 - **Card-agnostic.** Nothing in code, comments, tests or docs names a card, a vendor path, a link speed or a memory size
   as a fact of the library. Every number of that kind is **declared by the user in a topology file** (a fake GPU's cap,
-  a link's bandwidth) or **measured at run time** (the physical device's memory, a link's real throughput). Preset
-  topologies are named by their shape (`8-gpu-nvlink`, `2x8-infiniband`, `home-3-node-1g`, `4-gpu-pcie`, `cpu-only`),
-  not by a product, and their declared sizes are placeholders the owner edits.
+  a link's bandwidth) or **measured at run time** (the physical device's memory, a link's real throughput). There are
+  no preset topologies: `idrak cluster init` builds the file interactively from the devices it finds and the answers
+  the user gives, so no card, link or size is ever a library resource.
 - **Abstraction (decision 10 of plan 10).** Every new behaviour is a contract plus a `SlotTable` registry. A contract two
   packages use lives in `Idrak.Abstraction` (`Idrak.Abstraction.Cluster`); one only `Idrak.Network` uses lives in
   `Idrak.Network.Abstractions`; one only `Idrak.Cluster` uses lives in `Idrak.Cluster.Abstractions`. `Idrak.Cluster`
@@ -85,7 +85,7 @@ Idrak.Nlp, Idrak (core Training)             (take an ICollectives through their
 
 - **`src/Idrak.Cluster`** references `Idrak.Abstraction` only, as `Idrak.Gpu` does, and implements its contracts
   directly: `SimTransport : ITransport`, `SimulatedDeviceProvider : DeviceProvider` (kind `"sim"`), the built-in
-  `ILinkProfile`s, `IFailureModel`s and `TopologyPresets`, the `"cluster"` `IProfileProbe`, and it publishes `Telemetry`
+  `ILinkProfile`s and `IFailureModel`s, the topology builder, the `"cluster"` `IProfileProbe`, and it publishes `Telemetry`
   events itself. It holds the virtual clock, the link models, the fault injector, the replayable event log, the
   in-process cluster, the localhost process launcher with its throttle, and the calibration arithmetic. **It is native
   to Idrak and uses everything the library already has** (the owner's call, 2026-10-18): `Device` and `DeviceProvider`
@@ -193,7 +193,6 @@ public static class Collectives { }         // unguarded; "naive", "ring", "hier
 public static class LinkProfiles { }        // guarded (a profile is data; two may answer the same name: the calibrated one wins)
 public static class TransportSelectors { }  // unguarded
 public static class FailureModels { }       // unguarded
-public static class TopologyPresets { }     // guarded; "8-gpu-nvlink", "2x8-infiniband", "home-3-node-1g", "4-gpu-pcie", "cpu-only"
 ```
 
 **`ClusterOptions`** (a `sealed record` with `init` defaults; `FromEnvironment()` over an internal
@@ -205,7 +204,7 @@ value and what was expected):
 |---|---|---|
 | `Rank`, `WorldSize` | `IDRAK_RANK`, `IDRAK_WORLD_SIZE` | 0, 1 |
 | `Coordinator` (`host:port` rank 0 listens on; absent with `direct-link`) | `IDRAK_COORDINATOR` | none |
-| `Topology` (file or preset name) | `IDRAK_CLUSTER_TOPOLOGY` | none: one node, the devices given |
+| `Topology` (the file) | `IDRAK_CLUSTER_TOPOLOGY` | none: one node, the devices given |
 | `Transport` (a `Transports` name, or `auto` for the selector) | `IDRAK_CLUSTER_TRANSPORT` | `auto` |
 | `Selector` | `IDRAK_CLUSTER_SELECTOR` | `fastest` |
 | `Collective` | `IDRAK_CLUSTER_COLLECTIVE` | `hierarchical` when the topology has more than one node, else `ring` |
@@ -273,7 +272,7 @@ distributed step shows network time next to kernel time without a new tool:
 
 Where the profiler is used, in order of value: `idrak cluster sim … --profile` (a profile of the simulated step, cold
 and warm apart, kernel rows from the existing probes beside the two new ones); `idrak profile MODEL --cluster
-FILE|PRESET` (the inference profile across a simulated pipeline: a token's hops as rows); `idrak cluster bench` writes its
+FILE` (the inference profile across a simulated pipeline: a token's hops as rows); `idrak cluster bench` writes its
 rows through `ProfileWriters` (table, markdown, csv, json) so `calibrate --from` reads a bench's JSON as readily as a
 run's `log.jsonl`; the collectives' `ChunkBytes` and `BucketBytes` measurement at first use runs under
 `Profiler.Run` so `idrak tuning show` lists what was chosen and why; the "hierarchical beats ring" and "overlap shortens
@@ -304,9 +303,23 @@ and no dependencies, so the same keys in JSON; a YAML subset reader is decision 
   paths run for real on one card.
 - `device` names the physical device the fake one is carved from on **this** machine (`cuda:0`, `vulkan:0`, `cpu`), so
   one file runs mixed CUDA, Vulkan and CPU workers in one simulated cluster.
-- Link names are `LinkProfiles` entries; a suffix (`-10g`) overrides the bandwidth. Presets are the same JSON embedded
-  as resources and listed by `idrak cluster presets`; `idrak cluster inspect FILE` prints the parsed topology, every
-  pair's link, and the transport the selector would pick on this machine.
+- Link names are `LinkProfiles` entries; a suffix (`-10g`) overrides the bandwidth. `idrak cluster inspect FILE`
+  prints the parsed topology, every pair's link, and the transport the selector would pick on this machine.
+- **No presets** (the owner, 2026-10-18). The file is written by the **topology builder**, `idrak cluster init`: an
+  interactive command in the style of `tune init` and `pretrain init`, through the CLI's `Terminal.Ask`, that asks one
+  question per input with a one-line description of what the input means and why it matters, offers a default found
+  on this machine where one exists, and writes the JSON with a comment per key (comments and trailing commas are
+  allowed when the file is read). The questions, in order: how many machines and a name for each; for each machine,
+  which physical device each fake GPU is carved from (default: the devices `Device.Available` lists here, with their
+  measured memory shown) and its memory cap (default: the physical device's own; a cap above it is allowed and the
+  description says it will spill to host memory); the link inside a machine (the `LinkProfiles` names with each one's
+  bandwidth and latency printed beside it); the link between machines (the same list; the description says which the
+  home LAN and a rental usually have); any pair with a different link (an override); the seed and the failure model
+  for simulated runs. Every answer has a matching option (`--nodes 3`, `--devices cuda:0,cpu`, `--intra pcie`,
+  `--inter ethernet-1g`, `--override a,b=direct-link-10g`, `--memory a:0=8GB`) so `--yes` writes the file without a
+  terminal, as the house rule for prompts requires; `--dry-run` prints the file instead of writing it; `-j` prints it
+  as JSON. The builder lives in `Idrak.Cluster` (`TopologyBuilder`: the questions as data, each with its name,
+  description, default and validation, so an app can present them in its own UI) and the CLI only asks them.
 - Workers learn rank, world size and coordinator from the file or from `IDRAK_RANK`, `IDRAK_WORLD_SIZE`,
   `IDRAK_COORDINATOR`, exactly as real launchers set them.
 
@@ -318,7 +331,8 @@ and no dependencies, so the same keys in JSON; a YAML subset reader is decision 
 | `LinkModel.cs` | The arithmetic of `ILinkProfile.Predict` and the throttle: a token bucket that paces a real pipe (localhost mode) to the profile's bandwidth and adds its latency, so a localhost socket imitates any slower link. |
 | `SimTransport.cs` | `ITransport` named `sim`: bytes by rank and tag over `Channel<ReadOnlyMemory<byte>>` per directed edge, bounded to the in-flight count so a rank that races ahead waits as it would on a socket; every transfer is charged on the virtual clock and published as `TransferCompleted` with its simulated time. Buffers are rented from `ArrayPool<byte>` and returned by the receiver. |
 | `SimulatedDeviceProvider.cs` | `DeviceProvider` of kind `sim` (below, "Fake devices"). |
-| `Profiles.cs`, `Failures.cs`, `Presets.cs` | the built-in `ILinkProfile`s, `IFailureModel`s and `TopologyPresets`, registered as library defaults. |
+| `Profiles.cs`, `Failures.cs` | the built-in `ILinkProfile`s and `IFailureModel`s, registered as library defaults. |
+| `TopologyBuilder.cs` | the builder's questions as data (name, description, default found on this machine, validation) and the writer of the commented JSON; the CLI's `cluster init` asks them, an app can show them in its own UI. |
 | `InProcessCluster.cs` | N ranks as tasks on their own threads (`Parallel.For` with `MaxDegreeOfParallelism = worldSize`), one `SimTransport` per rank over one edge set, one clock; `Run(rank => work)`. The deterministic unit-test mode. |
 | `LocalhostCluster.cs` | One process per fake node: starts `dotnet … --cluster-rank R` children with the rank variables set, a port the OS picks reported back on stdout as bytes, waits with the timeout, kills the children in `finally`. The **real** transport code runs; the throttle (optional) applies the profile. |
 | `Faults.cs` | The seeded fault injector: every fault (slow worker: its clock and its sends are stretched by a factor; dropped worker: its pipe closes; link loss: messages dropped at `LossRate`; partition: a set of links closed for a span; late join: a rank that connects N steps late) is drawn from `Random(seed)` at a step and written to the event log with `(seed, step, kind, ranks, duration)`. |
@@ -409,12 +423,15 @@ Reruns write the same bytes.
 both directions at once; a receive from a rank that never sends times out naming it), `CollectivesSuite` (every
 operation against the CPU reference on 2, 3, 4 and 8 ranks, sizes that are not multiples of the world size, bit-exact
 for `Sum`), `LinkProfileSuite` (`Predict` is monotonic in bytes, jitter is reproducible for a seed, `With` keeps the
-other fields), `TopologySuite` (every rank placed once, every pair has a link, overrides win, presets parse).
+other fields), `TopologySuite` (every rank placed once, every pair has a link, overrides win, a file the builder
+wrote reads back to the same topology).
 
 **Tests** (`"cluster: "`): "cluster: ddp fixture agrees with single"; "cluster: wire header round trip, refuses a wrong
 magic and a newer version"; "cluster: options from environment, the key never in ToString"; "cluster: every registry
-describes its defaults and refuses an unregistered name with the Register hint"; "cluster: topology file parses, presets
-list, inspect prints every pair"; inventory and API dumps regenerated (Abstraction +1 namespace).
+describes its defaults and refuses an unregistered name with the Register hint"; "cluster: topology file parses and inspect
+prints every pair"; "cluster: the builder's questions each carry a description, a default from this machine and a
+validation, and the answers write a file that reads back"; inventory and API dumps regenerated (Abstraction +1
+namespace).
 
 **Done when** the fixture exists with its README, two script runs write the same bytes, and the filter passes on the CPU.
 
@@ -423,7 +440,7 @@ list, inspect prints every pair"; inventory and API dumps regenerated (Abstracti
 **Files.** `src/Idrak.Cluster/` (the table above, except `LocalhostCluster` and `Calibration`),
 `src/Idrak.Cluster/Idrak.Cluster.csproj` and `src/Idrak.Network/Idrak.Network.csproj` (each references Abstraction
 only; `IsAotCompatible`), a `LibraryRegistrations.cs` in each, `Idrak.Cluster`: `SimTransport.cs`,
-`SimulatedDeviceProvider.cs`, `Profiles.cs`, `Failures.cs`, `Presets.cs`; `Idrak.Network`:
+`SimulatedDeviceProvider.cs`, `Profiles.cs`, `Failures.cs`, `TopologyBuilder.cs`; `Idrak.Network`:
 `Collectives/NaiveCollectives.cs`, `RingCollectives.cs`, `Collectives/ChunkPlanner.cs`, `Selection/FastestSelector.cs`;
 the `Create(ordinal, limit)` overload in `DeviceProvider` and the four providers.
 
@@ -488,7 +505,8 @@ batches split by measured speed give the one-process losses"; "cluster: HostOpti
 `EventLog.cs`, `Replay.cs`.
 
 **Tests** (`"cluster: "`): "cluster: hierarchical equals ring bit for bit"; "cluster: hierarchical beats ring in
-simulated time on a two-level topology" (the preset `2x8-infiniband` with `inter-node` set to `ethernet-1g`; the ratio is
+simulated time on a two-level topology" (a file the test builds: two machines of four fake devices, `nvlink` inside,
+`ethernet-1g` between; the ratio is
 printed and must be above 1); "cluster: the selector picks per pair in the fastest-first order and logs it; a forced
 transport wins"; "cluster: a slow worker shows as Blocked on every other rank and SlowestRank names it"; "cluster: a
 dropped worker ends the step on every rank naming it"; "cluster: link loss is resent and the step completes"; "cluster:
@@ -553,23 +571,25 @@ device does".
 
 ### C8: the command line and calibration
 
-- `idrak cluster sim --topology FILE|PRESET [--mode in-process|localhost] [--failures MODEL] [--seed S] -- <train args>`
-- `idrak cluster presets`, `idrak cluster inspect FILE|PRESET` (the parsed topology, the links, the transport per pair)
+- `idrak cluster init [-o topology.json] [--yes with the options above] [--dry-run]` (the interactive builder)
+- `idrak cluster sim --topology FILE [--mode in-process|localhost] [--failures MODEL] [--seed S] -- <train args>`
+- `idrak cluster inspect FILE` (the parsed topology, the links, the transport per pair on this machine)
 - `idrak cluster replay --seed S --step N --topology …` (reproduces the fault schedule and the clock; reruns the step)
 - `idrak cluster bench --topology … [--bytes N] [--rounds N]` (bandwidth and latency per pair, cold and warm; the input
   calibration needs)
 - `idrak cluster calibrate --from RUN` (reads the run's `log.jsonl` transfers, fits each link's bandwidth and latency,
   writes `cluster/profiles.tsv` under `IDRAK_CACHE` with the residual; `--dry-run` prints the deltas)
 - `idrak transports` (every registered transport, available or not on this machine, with its capabilities)
-- `--profile` on `cluster sim` and `--cluster FILE|PRESET` on `profile` (the two probes above; `-j` for the JSON the
+- `--profile` on `cluster sim` and `--cluster FILE` on `profile` (the two probes above; `-j` for the JSON the
   calibration reads); `idrak tuning show` lists the calibrated profiles and the measured chunk and bucket sizes
-- `--cluster FILE|PRESET` on `train`, `pretrain`, `tune`, `resume`, `distill`; `--worker N` for this process's rank and
+- `--cluster FILE` on `train`, `pretrain`, `tune`, `resume`, `distill`; `--worker N` for this process's rank and
   `--workers N` for the world size (`--rank` is already the LoRA rank in `tune` and `distill`; decision 3); the key only
   from `IDRAK_CLUSTER_KEY`.
 
 **Tests** (`"cluster: cli …"`): one per command through `CommandLine.Run`; "cluster: cli pretrain --cluster
 home-3-node-1g --mode localhost writes one run folder from rank 0"; "cluster: cli calibrate corrects a profile from a
-run whose log it reads" and from a bench's JSON; "cluster: cli cluster sim --profile prints kernel rows beside the network
+run whose log it reads" and from a bench's JSON; "cluster: cli cluster init answers through the test input write the file, --yes with options writes the same, and
+without a terminal the usage error names the option to add"; "cluster: cli cluster sim --profile prints kernel rows beside the network
 and cluster probes' rows, the predicted step beside the measured"; "cluster: cli profile --cluster shows a token's hops
 through a simulated pipeline"; "cluster: cli --workers without --coordinator is a usage error naming it"; help within 120
 columns; the four `cli` health filters and `cli arabic` still pass.
@@ -594,7 +614,7 @@ calibration keeps the prediction honest against every measured run.
 
 C0 → C1 → C2 and C3 in parallel (two agents: C2 is `Idrak.Nlp` and core over `sim`; C3 is `Idrak.Network` and
 `Idrak.Cluster` only) → C4 → C5 (localhost tests here; the LAN and rental runs are the owner's) → C6 → C7 → C8 (the
-training options can land with C2; `cluster sim|presets|inspect` with C1; `calibrate` after C5's bench). Each phase is one
+training options can land with C2; `cluster init|sim|inspect` with C1; `calibrate` after C5's bench). Each phase is one
 commit series on `abstraction` with its "as built" note appended here. Every step: the filter green on the simulator
 with mixed CPU, CUDA and Vulkan fake workers before the next starts.
 
@@ -617,9 +637,9 @@ with mixed CPU, CUDA and Vulkan fake workers before the next starts.
    `SettingSuggestion` (setting, value, reason with the numbers, device, source) through `Telemetry.Suggestion`, shown
    once on the progress line, listed by `idrak suggest`, and never applied on its own.
 5. **Decided (2026-10-18): `udp` stays out of C5**; the name stays registered with no library default.
-6. **Preset names.** Proposed to the owner: a grammar `{nodes}x{gpus-per-node}-{intra-node link}[-{inter-node link}]`,
-   so the name is the topology: `1x8-nvlink`, `2x8-nvlink-infiniband`, `3x1-pcie-ethernet-1g`, `1x4-pcie`, `1x4-cpu`;
-   with readable aliases `home-lan`, `rental-4-gpu`, `cpu-only` resolved by `TopologyPresets`. Pending the owner's pick.
+6. **Decided (2026-10-18): no presets.** The topology file is built by `idrak cluster init`, an interactive builder
+   with a description for every input and a default found on this machine, with options for every answer so it also
+   runs without a terminal.
 
 ## Runs
 
