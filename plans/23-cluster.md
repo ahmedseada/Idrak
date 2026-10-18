@@ -1770,6 +1770,6 @@ warm median.
 
 The same loss, 4.5942 at step 100, in the simulator, in processes over shared memory and under `cluster start`: the
 three ways of running a cluster train alike. Calibration from the bench moved the prediction from 34% to 24% under the
-measured step; the gap left is the compute side of the step (rank 2 on the CPU sends 3% of its buckets during its
-backward pass, the GPU ranks all of theirs), which the virtual clock does not model. The three-machine LAN run is still
-to come.
+measured step. The 12 ms a step left is not explained yet: one candidate is the CPU rank (rank 2 sends 3% of its
+buckets during its backward pass and has 2.48 ms of exposed network a step, the GPU ranks 0.09-0.11 ms), but that
+accounts for only part of it; finding the rest is open. The three-machine LAN run is still to come.
