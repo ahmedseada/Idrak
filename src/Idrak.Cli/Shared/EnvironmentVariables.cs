@@ -75,7 +75,7 @@ internal static class EnvironmentVariables
 
     // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
     // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
-    private static readonly string[] ClusterRun = ["cluster sim", "test"];
+    private static readonly string[] ClusterRun = ["cluster sim", "cluster start", "cluster bench", "pretrain", "test"];
 
     /// <summary>The table, in listing order.</summary>
     public static IReadOnlyList<Variable> All { get; } =
@@ -244,6 +244,12 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_FAULT_DURATION", Cluster, "0 (the rest of the run)", "Seconds of simulated time a slow worker, a lossy link or a partition lasts; a partition for the rest of the run, or the timeout or longer, times out", ClusterRun),
         new("IDRAK_CLUSTER_LOSS_SHARE", Cluster, "0.2", "The share of messages a lossy link loses on top of its profile's, from 0 to 1", ClusterRun),
         new("IDRAK_CLUSTER_LATE_STEPS", Cluster, "2", "How many steps late a late joiner connects", ClusterRun),
+        new("IDRAK_CLUSTER_DEVICE", Cluster, "the rank's topology entry", "The device this rank runs on (cluster start sets it for each rank it starts)", ClusterRun),
+        new("IDRAK_CLUSTER_RUN", Cluster, "derived from the coordinator", "A name the ranks of one run share, so two runs on one machine never meet (the launchers set a new one per run)", ClusterRun),
+        new("IDRAK_CLUSTER_PARENT", Cluster, "not set", "The launcher's process id: a rank ends when its launcher is gone (the launchers set it)", ClusterRun),
+        new("IDRAK_CLUSTER_RETRY_DELAY", Cluster, "1", "Seconds before the first retry at the rendezvous, doubled at each later one", ClusterRun),
+        new("IDRAK_CLUSTER_SHM_BYTES", Cluster, "4 MiB", "The size of each shared-memory ring (one per pair of ranks and direction on a machine; B, KB, MB, GB)", ClusterRun),
+        new("IDRAK_CLUSTER_SHM_FOLDER", Cluster, "the system's temporary folder", "The folder the shared-memory rings are mapped from", ClusterRun),
         new("IDRAK_CLUSTER_PROBE_BYTES", Cluster, "32 MiB (at most an eighth of the free memory)", "The bytes a link measurement copies (same-device, shared-memory, pcie)", ["cluster init", "cluster inspect", "test"]),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),

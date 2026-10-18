@@ -5,7 +5,7 @@ real link is used, and a run predicts the network time of a cluster you do not o
 
 ```bash
 dotnet add package Idrak.Cluster   # the simulator, on Idrak.Abstraction
-dotnet add package Idrak.Network   # the collective algorithms (and, later, the real transports)
+dotnet add package Idrak.Network   # the collective algorithms and the real transports
 ```
 
 ## What is in the package
@@ -23,6 +23,8 @@ dotnet add package Idrak.Network   # the collective algorithms (and, later, the 
 | `ClusterRank.BeginStep` | A step of a simulated run: its faults drawn and applied (a dropped worker ends the step on every rank naming it, a partition that never heals times out naming both sides), a late joiner sitting out while the others run as a group |
 | `EventLog` | A compact binary log of the faults, each rank's clock at every step, its state changes and its transfers, the same bytes on every run of a seed |
 | `ClusterReplay` | Reruns a run through a step with its seed: the same fault schedule and the same clock, bit for bit |
+| `LocalhostCluster` | One process per rank: `Run` starts every rank of a topology on this machine (a localhost simulation over the real transports) or one node's ranks (`idrak cluster start`), each told its rank, world size, node, device, coordinator and run in its environment; streams their lines, ends them all when one fails, and kills any left. `Join` makes a process one rank: its device, its transport routed per pair, its collectives |
+| The throttle (`IDRAK_CLUSTER_THROTTLE`) | In a localhost simulation, each pair whose link declares a rate is paced by a token bucket to that bandwidth and held for its latency, so loopback imitates the cluster's links |
 | `TopologyInspection.PredictAllReduce` | Plays `ring`, `naive` or `hierarchical` on the virtual clock, message for message, without moving data |
 
 Nothing names a card, a link speed or a memory size: every such figure is declared in the topology file or measured at

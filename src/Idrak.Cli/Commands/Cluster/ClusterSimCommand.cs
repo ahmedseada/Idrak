@@ -23,6 +23,33 @@ internal static class ClusterSession
         get => Rank.Value;
         set => Rank.Value = value;
     }
+
+    /// <summary>
+    /// Joins this process to the cluster it was started for (phase C5: a rank process of <c>idrak cluster start</c> or of
+    /// <c>cluster sim --mode localhost</c>, which set <c>IDRAK_RANK</c> and <c>IDRAK_CLUSTER_TOPOLOGY</c>) and makes it the
+    /// current rank until disposed; null when this process is not such a rank, or already is one.
+    /// </summary>
+    public static IDisposable? JoinStarted()
+    {
+        if (Current is not null || Environment.GetEnvironmentVariable("IDRAK_RANK") is not { Length: > 0 }
+            || Environment.GetEnvironmentVariable("IDRAK_CLUSTER_TOPOLOGY") is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        var joined = LocalhostCluster.Join();
+        Current = joined.Rank;
+        return new Leave(joined);
+    }
+
+    private sealed class Leave(LocalhostRank joined) : IDisposable
+    {
+        public void Dispose()
+        {
+            Current = null;
+            joined.Dispose();
+        }
+    }
 }
 
 /// <summary>
@@ -41,18 +68,21 @@ internal sealed class ClusterSimCommand : Command
     public override string Summary => "Runs training on a simulated cluster: every rank of a topology file in this process";
 
     public override string Usage => """
-        --topology FILE [--collective NAME] [--wire f32|bf16] -- pretrain MODEL [options] -o RUN
+        --topology FILE [--mode M] [--collective NAME] [--wire W] -- pretrain MODEL [options] -o RUN
 
         Runs the training command after -- once per rank of the topology file: every rank a thread of this process on
         a device carved from the physical device its entry names (the entry's memory as a hard cap), the ranks joined
         by the simulated transport. Each step's rows are shared across the ranks and the gradients summed after the
         backward pass, so the run trains as one process would; rank 0 writes the run folder and its output is shown.
         At the end each rank's network time on the virtual clock (what the cluster the file describes would spend on
-        its links) is printed beside the wall time. The other cluster settings come from the IDRAK_CLUSTER_ variables
-        (idrak env lists them).
+        its links) is printed beside the wall time. With --mode localhost every rank is a process of its own, joined by
+        the real transports (shared memory inside a node, TCP between nodes) paced to the links' profiles
+        (IDRAK_CLUSTER_THROTTLE=0 lets them run free); one line per rank shows its progress. The other cluster settings
+        come from the IDRAK_CLUSTER_ variables (idrak env lists them).
 
         Options:
               --topology FILE    the topology file (idrak cluster init writes one)
+              --mode M           in-process (threads, the virtual clock) or localhost (processes) (IDRAK_CLUSTER_MODE)
               --collective NAME  the collective algorithm: ring or naive (ring)
               --wire W           how gradients travel: f32 or bf16 (f32)
               --seed N           the seed of the simulation's jitter and faults (the file's)
@@ -60,9 +90,10 @@ internal sealed class ClusterSimCommand : Command
         Examples:
           idrak cluster init -y --nodes 1 --devices cpu,cpu -o two.json
           idrak cluster sim --topology two.json -- pretrain my-model --tokens tokens.bin --steps 100 -o run
+          idrak cluster sim --topology two.json --mode localhost -- pretrain my-model --tokens tokens.bin -o run
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--topology", "--collective", "--wire"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--topology", "--collective", "--wire", "--mode"];
 
     public override int Run(CommandContext context)
     {
@@ -114,6 +145,27 @@ internal sealed class ClusterSimCommand : Command
             return ExitCodes.Failed;
         }
 
+        if (context.Option("--mode") is { } mode)
+        {
+            options = options with
+            {
+                Simulation = options.Simulation with
+                {
+                    Mode = mode.ToLowerInvariant() switch
+                    {
+                        "in-process" or "inprocess" => SimulationMode.InProcess,
+                        "localhost" => SimulationMode.Localhost,
+                        _ => throw new UsageException($"--mode is in-process or localhost, not '{mode}'."),
+                    },
+                },
+            };
+        }
+
+        if (options.Simulation.Mode == SimulationMode.Localhost)
+        {
+            return Localhost(context, path, topology, options, inner);
+        }
+
         var inv = CultureInfo.InvariantCulture;
         context.Write($"simulating {topology.WorldSize} rank(s) of {path} in this process ({options.Collective ?? "ring"}, {(options.Wire == WireType.BFloat16 ? "bf16" : "f32")} wire): "
                       + $"idrak {string.Join(' ', inner)}");
@@ -162,5 +214,63 @@ internal sealed class ClusterSimCommand : Command
         }
 
         return codes[0] != ExitCodes.Ok ? codes[0] : ExitCodes.Failed;
+    }
+
+    // --mode localhost: every rank a process of its own (this tool again), joined by the real transports.
+    private static int Localhost(CommandContext context, string path, ClusterTopology topology, ClusterOptions options, IReadOnlyList<string> inner)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var environment = new Dictionary<string, string>(StringComparer.Ordinal) { ["IDRAK_CLUSTER_WIRE"] = options.Wire == WireType.BFloat16 ? "bf16" : "f32" };
+        if (options.Collective is { } collective)
+        {
+            environment["IDRAK_CLUSTER_COLLECTIVE"] = collective;
+        }
+
+        if (options.Simulation.Seed is { } seed)
+        {
+            environment["IDRAK_CLUSTER_SEED"] = seed.ToString(inv);
+        }
+
+        int world = topology.WorldSize;
+        var ranks = Enumerable.Range(0, world).ToList();
+        var devices = ranks.Select(r => options.Simulation.CarveFrom ?? topology.Nodes[topology.Place(r).Node].Devices[topology.Place(r).Local].Device).ToList();
+        context.Write($"simulating {world} rank(s) of {path} as processes on this machine (real transports{(options.Simulation.Throttle ? ", paced to the links" : "")}): "
+                      + $"idrak {string.Join(' ', inner)}");
+        using var board = new RankBoard(context, $"{inner[0]} on {world} rank(s)", ranks, devices, line => line.Rank == 0);
+        LocalhostRunResult result;
+        try
+        {
+            result = LocalhostCluster.Run(path, options, ClusterLaunch.Program(["idrak", .. inner], environment), null, board.Line, context.TimeoutToken);
+        }
+        catch (Exception e) when (e is NotSupportedException or InvalidOperationException or ArgumentException)
+        {
+            context.Error(e.Message);
+            return ExitCodes.Failed;
+        }
+
+        board.Finish(result.Ranks);
+        context.Write($"localhost: {world} process(es), wall {result.Wall.TotalSeconds.ToString("F1", inv)} s; "
+                      + string.Join(", ", result.Ranks.Select(r => $"rank {r.Rank} {(r.ExitCode switch { 0 => "done", null => "ended", { } code => $"exit {code}" })}")));
+        context.WriteJson(new JsonObject
+        {
+            ["topology"] = Path.GetFullPath(path),
+            ["ranks"] = world,
+            ["mode"] = "localhost",
+            ["command"] = string.Join(' ', inner),
+            ["wall_seconds"] = result.Wall.TotalSeconds,
+            ["exit_codes"] = new JsonArray([.. result.Ranks.Select(r => (JsonNode?)r.ExitCode)]),
+        });
+        if (result.Succeeded)
+        {
+            return ExitCodes.Ok;
+        }
+
+        context.Error(result.Failure ?? "a rank failed");
+        foreach (var rank in result.Ranks.Where(r => r.ExitCode != 0 && r.Rank > 0))
+        {
+            context.Error($"rank {rank.Rank}: " + (rank.Errors.LastOrDefault(l => l.Length > 0) ?? "ended"));
+        }
+
+        return ClusterLaunch.ExitCode(result);
     }
 }

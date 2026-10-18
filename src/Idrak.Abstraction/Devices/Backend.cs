@@ -600,6 +600,76 @@ public abstract partial class Backend
     public virtual IHostStaging? CreateHostStaging(int slots, int slotFloats) => null;
 
     /// <summary>
+    /// Copies the first <paramref name="count"/> values of <paramref name="source"/> (on this backend) into
+    /// <paramref name="destination"/>, on this backend or any other (plan 23: a copy between the devices of two ranks). The
+    /// default copies inside the device when both are this backend, else through host memory (a download, then an upload
+    /// to the destination's device: the path every machine has); a backend that reaches another device's memory
+    /// directly (peer copies) overrides it. The copy has finished when the call returns.
+    /// </summary>
+    /// <exception cref="ArgumentException">The source is not on this backend, or a storage holds fewer than <paramref name="count"/> values.</exception>
+    public virtual void CopyTo(Storage source, Storage destination, int count)
+    {
+        CheckCopy(source, destination, count);
+        if (count == 0)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(destination.Backend, this))
+        {
+            Copy(source, destination, count);
+            Synchronize();
+            return;
+        }
+
+        CopyThroughHost(source, destination, count);
+    }
+
+    /// <summary>
+    /// Whether <see cref="CopyTo"/> reaches <paramref name="destination"/>'s memory without a trip through host memory: true
+    /// for this backend itself, and where a backend says so (another backend of the same device, a peer device).
+    /// </summary>
+    public virtual bool CopiesDirectlyTo(Backend destination) => ReferenceEquals(destination, this);
+
+    /// <summary>The copy of <see cref="CopyTo"/> through host memory: one pooled host buffer (returned in finally), down, then up.</summary>
+    protected void CopyThroughHost(Storage source, Storage destination, int count)
+    {
+        CheckCopy(source, destination, count);
+        if (count == 0)
+        {
+            return;
+        }
+
+        var host = System.Buffers.ArrayPool<float>.Shared.Rent(count);
+        try
+        {
+            DownloadRange(source, 0, host.AsSpan(0, count));
+            destination.Backend.Upload(host.AsSpan(0, count), destination);
+            destination.Backend.Synchronize();
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(host);
+        }
+    }
+
+    private void CheckCopy(Storage source, Storage destination, int count)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (!ReferenceEquals(source.Backend, this))
+        {
+            throw new ArgumentException($"The source is on {source.Backend.Name}, not on this backend ({Name}).", nameof(source));
+        }
+
+        if (count > source.Length || count > destination.Length)
+        {
+            throw new ArgumentException($"A copy of {count} values from a storage of {source.Length} into one of {destination.Length}.", nameof(count));
+        }
+    }
+
+    /// <summary>
     /// Takes back the memory of a storage whose last reference was released (<see cref="Storage.Release"/>), or that
     /// <see cref="Evict"/> empties, to its pool or to the driver.
     /// </summary>

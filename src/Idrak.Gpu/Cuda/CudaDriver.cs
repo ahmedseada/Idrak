@@ -189,6 +189,20 @@ internal static unsafe partial class CudaDriver
     [LibraryImport(Library, EntryPoint = "cuMemcpyDtoD_v2")]
     public static partial int cuMemcpyDtoD(ulong destination, ulong source, nuint bytes);
 
+    /// <summary>Whether <paramref name="device"/> can reach <paramref name="peer"/>'s memory directly (1) or not (0).</summary>
+    [LibraryImport(Library)]
+    public static partial int cuDeviceCanAccessPeer(out int canAccess, int device, int peer);
+
+    /// <summary>Lets the current context reach <paramref name="peerContext"/>'s memory (once per pair; again: <see cref="ErrorPeerAccessAlreadyEnabled"/>).</summary>
+    [LibraryImport(Library)]
+    public static partial int cuCtxEnablePeerAccess(IntPtr peerContext, uint flags);
+
+    public const int ErrorPeerAccessAlreadyEnabled = 704;
+
+    /// <summary>A copy between the memory of two contexts' devices, queued on a stream.</summary>
+    [LibraryImport(Library)]
+    public static partial int cuMemcpyPeerAsync(ulong destination, IntPtr destinationContext, ulong source, IntPtr sourceContext, nuint bytes, IntPtr stream);
+
     [LibraryImport(Library, EntryPoint = "cuMemsetD32_v2")]
     public static partial int cuMemsetD32(ulong destination, uint value, nuint count);
 
