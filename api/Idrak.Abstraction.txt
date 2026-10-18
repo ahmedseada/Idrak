@@ -50,6 +50,18 @@ public sealed record Idrak.Abstraction.Cluster.ClusterContext : System.IEquatabl
   public Idrak.Abstraction.Cluster.IClusterTopology Topology { get; init; }
   public int Rank { get; init; }
 
+public enum Idrak.Abstraction.Cluster.ClusterControlCommand : int
+  Pause = 1
+  Run = 0
+  Stop = 2
+
+public static class Idrak.Abstraction.Cluster.ClusterControlFile
+  public static (string, long)? ReadState(string path)
+  public static Idrak.Abstraction.Cluster.ClusterControlCommand Read(string path)
+  public static string StatePath(string path)
+  public static void Report(string path, string state, long step)
+  public static void Write(string path, Idrak.Abstraction.Cluster.ClusterControlCommand command)
+
 public sealed record Idrak.Abstraction.Cluster.ClusterDeviceSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterDeviceSpec>
   public ClusterDeviceSpec(string Device, long? MemoryBytes)
   public long? MemoryBytes { get; init; }
@@ -130,6 +142,13 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public string? RunId { get; init; }
   public string? SharedMemoryFolder { get; init; }
   public string? Topology { get; init; }
+
+public sealed class Idrak.Abstraction.Cluster.ClusterRunStoppedException : System.OperationCanceledException
+  public ClusterRunStoppedException()
+  public ClusterRunStoppedException(long step, string message)
+  public ClusterRunStoppedException(string message)
+  public ClusterRunStoppedException(string message, System.Exception inner)
+  public long Step { get; }
 
 public sealed record Idrak.Abstraction.Cluster.ClusterSimulationSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterSimulationSpec>
   public ClusterSimulationSpec(int Seed, string Failures)
@@ -437,11 +456,13 @@ public sealed record Idrak.Abstraction.Cluster.SimulationOptions : System.IEquat
   public Idrak.Abstraction.Cluster.SimulationMode Mode { get; init; }
   public Idrak.Abstraction.Cluster.ThroughputClock Clock { get; init; }
   public SimulationOptions()
+  public System.TimeSpan ControlPoll { get; init; }
   public bool LogTransfers { get; init; }
   public bool Throttle { get; init; }
   public int? Seed { get; init; }
   public long? ReplayStep { get; init; }
   public string? CarveFrom { get; init; }
+  public string? Control { get; init; }
   public string? EventLog { get; init; }
   public string? Failures { get; init; }
 

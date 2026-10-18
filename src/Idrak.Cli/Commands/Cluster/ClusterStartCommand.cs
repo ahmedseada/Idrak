@@ -118,10 +118,16 @@ internal sealed class ClusterStartCommand : Command
         context.Write($"starting {ranks.Count} rank(s) of node {node} ({string.Join(", ", ranks.Select((r, i) => $"rank {r} on {devices[i]}"))}) of {topology.WorldSize}: "
                       + string.Join(' ', context.Positional));
         using var board = new RankBoard(context, $"{context.Positional[0]} on node {node}", ranks, devices, line => line.Rank == ranks[0] && !line.IsError);
+        // The ranks' lines also go to the run folder (when the command names one), so the dashboard follows the run (phase C9).
+        using var lines = ClusterSimCommand.RunFolder(context.Positional) is { } folder ? new RankLines(folder, node, ranks, devices, context.Positional) : null;
         LocalhostRunResult result;
         try
         {
-            result = LocalhostCluster.Run(path, options, launch, node, board.Line, context.TimeoutToken);
+            result = LocalhostCluster.Run(path, options, launch, node, line =>
+            {
+                board.Line(line);
+                lines?.Line(line);
+            }, context.TimeoutToken);
         }
         catch (Exception e) when (e is NotSupportedException or InvalidOperationException or ArgumentException)
         {
@@ -129,6 +135,7 @@ internal sealed class ClusterStartCommand : Command
             return ExitCodes.Failed;
         }
 
+        lines?.End(result);
         board.Finish(result.Ranks);
         foreach (var rank in result.Ranks)
         {
@@ -151,5 +158,60 @@ internal sealed class ClusterStartCommand : Command
             ["ranks"] = ClusterLaunch.Ranks(result),
         });
         return ClusterLaunch.ExitCode(result);
+    }
+}
+
+/// <summary>
+/// The lines of a node's ranks as JSON lines in the run folder (<c>ranks.jsonl</c>, plan 23 phase C9): the start (node,
+/// ranks, devices, command), each line a rank wrote, and how each rank ended, so <c>idrak cluster ui --follow RUN</c>
+/// shows a real run as it goes.
+/// </summary>
+internal sealed class RankLines : IDisposable
+{
+    private readonly object _gate = new();
+    private readonly StreamWriter _writer;
+
+    public RankLines(string folder, string node, IReadOnlyList<int> ranks, IReadOnlyList<string> devices, IReadOnlyList<string> command)
+    {
+        Directory.CreateDirectory(folder);
+        _writer = new StreamWriter(new FileStream(Path.Combine(folder, DashboardTail.RanksFile), FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+        {
+            AutoFlush = true,
+        };
+        Write(new JsonObject
+        {
+            ["event"] = "cluster_start", ["node"] = node, ["ranks"] = new JsonArray([.. ranks.Select(r => (JsonNode)r)]),
+            ["devices"] = new JsonArray([.. devices.Select(d => (JsonNode)d)]), ["command"] = string.Join(' ', command),
+        });
+    }
+
+    public void Line(LocalhostLine line) => Write(new JsonObject { ["event"] = "rank_line", ["rank"] = line.Rank, ["error"] = line.IsError, ["text"] = line.Text });
+
+    public void End(LocalhostRunResult result)
+    {
+        foreach (var rank in result.Ranks)
+        {
+            Write(new JsonObject { ["event"] = "rank_end", ["rank"] = rank.Rank, ["device"] = rank.Device, ["exit_code"] = rank.ExitCode });
+        }
+
+        Write(new JsonObject { ["event"] = "cluster_end", ["failure"] = result.Failure, ["wall_seconds"] = result.Wall.TotalSeconds });
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _writer.Dispose();
+        }
+    }
+
+    private void Write(JsonObject record)
+    {
+        record["time"] = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        lock (_gate)
+        {
+            _writer.Write(record.ToJsonString());
+            _writer.Write('\n');
+        }
     }
 }

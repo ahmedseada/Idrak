@@ -83,15 +83,43 @@ public static class InProcessCluster
     /// The collective algorithm, the transport or the failure model is not registered, or faults are asked of a transport
     /// that is not "sim". A plan that joins pairs over several transports runs them routed per pair (phase C5).
     /// </exception>
-    public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, Action<ClusterRank> work)
+    public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, Action<ClusterRank> work) => Run(topology, options, work, null);
+
+    /// <summary>
+    /// Runs <paramref name="work"/> on every rank of <paramref name="topology"/>, steered by <paramref name="control"/> (plan
+    /// 23, phase C9): paused and resumed at step boundaries, stopped after a step, faults injected live. Steering needs the
+    /// "sim" transport (its steps are where the ranks wait and its faults are the ones injected).
+    /// </summary>
+    /// <exception cref="NotSupportedException">A control given while the plan joins the ranks by another transport, or as above.</exception>
+    public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, Action<ClusterRank> work, ClusterRunControl? control)
     {
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentNullException.ThrowIfNull(work);
+        string run = "sim://" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);   // this run's own rendezvous
         options = (options ?? new ClusterOptions()) with
         {
-            Coordinator = "sim://" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),   // this run's own rendezvous
+            Coordinator = run,
             Simulation = (options?.Simulation ?? new SimulationOptions()) with { Mode = SimulationMode.InProcess },
         };
+        if (control is null)
+        {
+            return Start(topology, options, work);
+        }
+
+        control.Attach(topology.WorldSize);
+        RunControls.Add(run, control);
+        try
+        {
+            return Start(topology, options, work, steered: true);
+        }
+        finally
+        {
+            RunControls.Remove(run);
+        }
+    }
+
+    private static ClusterRunResult Start(IClusterTopology topology, ClusterOptions options, Action<ClusterRank> work, bool steered = false)
+    {
         var plan = TransportPlan.Make(topology, options);
         // One transport for every pair, or (phase C5) several routed per pair, each carrier connected once.
         string? transportName = plan.Single ?? (plan.Used.Count == 0
@@ -99,6 +127,12 @@ public static class InProcessCluster
             : null);
         var transports = transportName is null ? null : Transports.Get(transportName);
         string failures = options.Simulation.Failures ?? topology.Simulation.Failures;
+        if (steered && !string.Equals(transportName, "sim", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException($"A run steered live (paused, stopped, faults injected) needs the sim transport; this run uses '{transportName ?? string.Join("+", plan.Used)}': "
+                                            + "set IDRAK_CLUSTER_TRANSPORT=auto (or sim).");
+        }
+
         if (!string.Equals(transportName, "sim", StringComparison.OrdinalIgnoreCase) && !string.Equals(failures, "none", StringComparison.OrdinalIgnoreCase))
         {
             throw new NotSupportedException($"Faults ('{failures}') are injected by the sim transport; this run uses '{transportName ?? string.Join("+", plan.Used)}': set IDRAK_CLUSTER_FAILURES=none, or let the selector choose sim.");
@@ -276,6 +310,7 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IHostValueCollectiv
             throw new ArgumentOutOfRangeException(nameof(step), step, $"rank {Real} began step {Step}; steps go forward");
         }
 
+        _world.Control?.Gate(Real, step, Device);           // a steered run waits here while paused, and stops here (phase C9)
         if (_world.Broken is not null)
         {
             throw _world.Failure();

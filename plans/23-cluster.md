@@ -1160,6 +1160,98 @@ events in order, and nothing is measured while no page listens; the dashboard bi
 refuses an off-loopback request without a key; the page names no external URL and every endpoint it calls exists; a
 run folder written by `cluster start` is followed read-only and its controls are refused naming why.
 
+**C9 as built (2026-10-18).** Control through the library. `src/Idrak.Abstraction/Cluster/RunControl.cs`:
+`ClusterRunStoppedException` (an `OperationCanceledException` naming the step no rank began), `ClusterControlCommand` and
+`ClusterControlFile` (the control channel of a run of processes: one word, run, pause or stop, replaced whole; rank 0's
+report in the `.state` file beside it); `SimulationOptions.Control` (`IDRAK_CLUSTER_CONTROL`) and `.ControlPoll`
+(`IDRAK_CLUSTER_CONTROL_POLL`, 0.2 s). `src/Idrak.Cluster/RunControl.cs`: `ClusterRunControl` (`Pause` returns the step
+boundary every rank waits at, the highest step begun plus one; `Resume`; `Stop` lets the highest step begun finish and
+stops every rank as it begins the next; `Inject` checks a fault as the injector does and queues it; `State`, `LastStep`,
+`PauseAt`, `StopAfter`; `Changed` and, only while `Observed`, `RankStepped` with each rank's wall time between steps and
+its device's memory), `ClusterRunState`, `ClusterRunChange`, `ClusterRankStep`; `LiveFailures`, registered in
+`FailureModels` as `"live"` (queued faults stamped with the next step drawn, or faults scheduled at their own steps);
+`LocalhostControl` (pause, resume and stop through the control file; `LocalhostLaunch.Control` gives every rank its path).
+`InProcessCluster.Run(topology, options, work, control)` finds the control from the simulated transport's world (by the
+run's rendezvous name); every rank's `SimStepper.BeginStep` passes the control's gate first, so pauses and stops happen
+at one step boundary on every rank. The injector draws the run's own model from (seed, step) as before and then the live
+model's faults, which take nothing from the generator, so the two compose; each live fault is logged with the high bit of
+its kind byte set (`EventLog.LiveFaults`; the format's version is unchanged and older logs read as before) and published
+as `FaultInjected`. `ClusterReplay.Run(…, EventLog steered)` injects the steered run's live faults again at their steps.
+`TopologyInspection.Pairs` (`TopologyPair`, `TopologyPairKind`: same device, inside a node, between nodes, an override)
+and `PredictPhases` (`AllReducePhase`: each phase of ring, naive and hierarchical played on the same clock as
+`PredictAllReduce`, its links slowest first and what it adds to the slowest rank's clock, so the phases add up to the
+prediction). Idrak.Network: `SyncCore.BeginStep` of a fixed group (processes) with a control file has rank 0 read it and
+broadcast one float, so every rank runs, waits (rank 0 broadcasting again every `ControlPoll`, so no wait reaches the
+timeout) or stops at the same boundary. Idrak.Nlp: the pretrainer answers a cancellation thrown as a step begins with
+the last finished step's checkpoint (rank 0), as it answers a cancelled step. CLI: `idrak cluster ui [--topology FILE]
+[--port N] [--host H] [--no-browser] [--follow RUN] [--unit UNIT]` (`ClusterUiCommand`, Arabic summary) and
+`cluster sim --dashboard [--port N] [--no-browser]` (in-process: steered by a `ClusterRunControl`; localhost: by a
+`LocalhostControl`); `pretrain` answers `ClusterRunStoppedException` with "stopped as asked", the checkpoint and exit 0;
+`cluster start` writes `RUN/ranks.jsonl` (the start, every rank line, each rank's end) when its command names a run
+folder. `src/Idrak.Cli/Commands/Cluster/Dashboard/`: `DashboardServer.cs` (Kestrel through `WebApplication.CreateSlimBuilder`
+as `ServeHost`; the thirteen routes of the plan's endpoint list in `DashboardServer.Routes`; `DashboardSettings` with
+`IDRAK_CLUSTER_UI_PORT` (0: the system picks, printed), `IDRAK_CLUSTER_UI_HOST` (127.0.0.1), `IDRAK_CLUSTER_UI_HISTORY`
+(20,000 records kept per run for a page that connects late) and `IDRAK_CLUSTER_UI_POLL` (0.5 s between reads of a run
+folder while a page listens)), `DashboardRuns.cs` (a run's records, the telemetry hook, the folder tail),
+`DashboardTopology.cs` (machine facts, the builder's step, answers to and from a topology, the inspection as JSON) and
+`dashboard.html` (the page). Every record is a JSON object with an `"event"` key, the telemetry ones as `TelemetryJson`
+writes a run's log.jsonl, so the page reads a live in-process run, a localhost run and a followed folder alike. The page:
+the header (the topology file, the run's state, Start, Pause at next step, Resume, Stop and checkpoint, Inject fault, each
+disabled with the server's reason as its title and a strip naming it), the fault strip (kind, rank, factor, duration,
+"inject at next step", the replay key), Set up (the builder's questions one at a time, or the node cards and links form,
+each node's suggestion from the machine's devices; the topology drawn as the network bus, the ring, the link matrix,
+the default all-reduce's phases and each card's memory split into its ranks' caps, all from the inspection; the
+predicted all-reduce per algorithm of a size the page sets), Run (start a run in-process or as processes, or follow a
+folder; KPI tiles with the time left; a card per rank with its state, loss, steps a second, memory against its cap, and
+network against blocked time; the loss drawn by the page; the links table; rank 0's output or the ranks' lines) and
+Events (newest first, each fault with its replay key); light and dark by `prefers-color-scheme`, IBM Plex when installed
+and system fonts otherwise, no address outside the server; right to left with its labels in Arabic when the tool's
+language is. Tests: 6 in `tests/Idrak.Tests/ClusterDashboardTests.cs` (`ClusterDashboardGroup`, after
+`ClusterPipelineGroup`), each through the real server on 127.0.0.1 and a port the system picks. Measured on the CPU (two
+ranks carved from it, the tiny model): a run started paused from the API, resumed, paused at a step boundary (every rank
+waiting before the same step), resumed and stopped after 19 steps wrote checkpoint-19 with the losses and weights of an
+uninterrupted 19-step `cluster sim` run, bit for bit; a slow worker (x8) injected live on three ranks at step 7 was replayed
+from the run's event log through step 8 with every rank's clock equal (rank 1 at 0.000270511 s against 0.000195342 s
+unsteered). One build of the test project, the API dumps (Idrak.Abstraction, Idrak.Cluster) and the inventory regenerated,
+then on the CPU the filter `cluster:|public API|abstraction inventory|cli health: …|cli polish: …|cli arabic: every
+message|cli dev: trace|cli serve|profiler:|pretrain:|cli pretrain:|training:`: 126 passed, 0 failed, no process left.
+
+Changes from the plan, kept: **the page is an embedded resource** (`dashboard.html`, `LogicalName` `Dashboard/dashboard.html`),
+not a C# raw string like `ChatPage`: a page this size is edited as HTML, and it is still one file served from memory
+with no external address. **Stop is a step boundary, not the cancellation token**: a token is seen by each rank at its own
+point in a step, and a rank that cancels mid-step leaves the others waiting in a collective; the gate throws
+`ClusterRunStoppedException` on every rank as it begins the next step, rank 0's pretrainer writes that step's checkpoint,
+and `pretrain` ends with exit 0 ("stopped as asked"). **A steered in-process run needs the "sim" transport** (its steps
+are where ranks wait); a forced other transport is refused naming why. **A replay of a steered run takes its event log**:
+live faults are not drawn from the seed, so `--seed S --step N` alone cannot know them; the dashboard writes each run's
+event log to `RUN/cluster-events.bin` (unless `IDRAK_CLUSTER_EVENT_LOG` names another file), and C8's `cluster replay`
+takes it. **One in-process run at a time** (409 otherwise): the library's telemetry is the process's, so two in-process
+runs' records could not be told apart. **The telemetry is summed before it is sent**: a transfer per message would flood
+the page, so transfers are added up per pair and the collectives per rank, and sent as a `links` and a `collectives`
+record together with each step's batch record. **Per-rank tokens a second are steps a second**: rank 0 alone publishes the
+training telemetry (C2), so no rank's token count is published; a rank's card shows its steps a second from the control
+gate's wall time, and the run's loss (the same token-weighted mean on every rank). **Access is decided per request**:
+this machine's requests need no key whatever the address listened on, another machine's need a valid key (and none is
+taken when no key is set, the refusal naming `idrak server keys add`); beyond the plan, a request from another site's page
+(its `Origin`) and, on a loopback dashboard, one naming another host (DNS rebinding) are refused, since CORS off alone
+does not stop a page from posting to 127.0.0.1. The test checks the per-request rule as a function (a test cannot make a
+request from another machine) and the `Origin` and host refusals over HTTP. **The tests use a loopback Kestrel server**,
+not an in-memory test server: the test project does not reference the test host, and the real listener is what the
+owner runs. **The inspection gained the per-phase breakdown** (`PredictPhases`) and the pair matrix (`Pairs`) the owner's
+five views need, played on the same virtual clock as the totals.
+
+Open, found while testing (C4's code, not changed here): with `IDRAK_CLUSTER_BUCKET_BYTES` set, a step that leaves a
+rank without rows (three ranks, two rows a step) fails at once: the ranks with rows reduce their buckets during the
+backward pass while the rank without rows goes to the header, and the collectives meet mismatched ("a 21848-byte
+message from rank 1 (tag -11) does not fit rank 2's 36-byte buffer"); the measured bucket size (the variable unset) runs.
+Reproduced with `cluster sim` alone, no dashboard; the C9 tests leave the variable unset.
+
+Deferred, with the phase: a stop under pipeline placement writes no checkpoint (its checkpoint gathers every stage in a
+collective the stopping ranks no longer run; C8, with the stage-own checkpoint); the fine-tuner and the `Trainer` do not
+yet answer a stop with a checkpoint (`cluster sim` runs `pretrain` only; C8 brings `tune` and `train`); `idrak cluster
+replay --events FILE` (C8, with the replay command); messages from the server (errors, run details) stay English on the
+Arabic page; the owner's GPU run of the filter and a browser check of the page.
+
 ## Memory and speed, where every byte goes
 
 | Where | What is held | Bound by | Measured with |
