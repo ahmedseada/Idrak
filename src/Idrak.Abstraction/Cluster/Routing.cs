@@ -41,6 +41,8 @@ internal sealed class RoutedTransport : ITransport
 
     public TimeSpan SimulatedTime => _carriers.Length == 0 ? TimeSpan.Zero : _carriers.Max(c => c.SimulatedTime);
 
+    public bool Simulated => _carriers.Any(c => c.Simulated);
+
     public static RoutedTransport Connect(TransportPlan plan, ClusterContext context, CancellationToken cancellationToken)
     {
         int world = plan.WorldSize, me = context.Rank;

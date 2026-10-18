@@ -309,7 +309,7 @@ internal sealed partial class GradientReduction : SyncCore
         AfterShardedReduce();
         var reduceWall = Stopwatch.GetElapsedTime(started);
         var network = TimeSpan.Zero;
-        bool onClock = Values.SimulatedTime > TimeSpan.Zero;
+        bool onClock = Values.Simulated;
         double end = 0;
         foreach (var (readyAt, simulated, wall) in _sent)
         {
@@ -677,7 +677,7 @@ internal sealed partial class GradientReduction : SyncCore
         // Ranks in processes of their own decide the advisor's measurement together (any rank's listener turns it on for
         // every rank): in the bucket size's agreement when there is one, else in one float of its own (real transports only).
         bool crossProcess = Collectives.Transport?.Capabilities.CrossProcess == true;
-        if (_sized || Values.SimulatedTime > TimeSpan.Zero || Collectives.Transport?.SimulatedCriticalRank is not null)
+        if (_sized || Values.Simulated || Collectives.Transport?.SimulatedCriticalRank is not null)
         {
             if (crossProcess)
             {
@@ -710,7 +710,7 @@ internal sealed partial class GradientReduction : SyncCore
     // links) and a bucket's time (the slowest, the first collective after the backward pass aside unless it is the only one).
     private void Measure(double backward)
     {
-        bool onClock = Values.SimulatedTime > TimeSpan.Zero;
+        bool onClock = Values.Simulated;
         double Seconds(TimeSpan simulated, TimeSpan wall) => (onClock ? simulated : wall).TotalSeconds;
         var buckets = Enumerable.Range(0, _sent.Count).Where(i => i != _header).ToList();
         double bucketSeconds = buckets.Skip(buckets.Count > 1 ? 1 : 0).Select(i => Seconds(_sent[i].Simulated, _sent[i].Wall)).DefaultIfEmpty(0).Max();

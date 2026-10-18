@@ -373,6 +373,8 @@ internal sealed class SimTransport(SimHub hub, int rank) : ITransport
 
     public TimeSpan SimulatedTime => TimeSpan.FromSeconds(hub.Clock.Now(Real));
 
+    public bool Simulated => true;
+
     public int? SimulatedCriticalRank => hub.SubOf(hub.Clock.CriticalRank(Real));
 
     // This rank in the run's numbering.

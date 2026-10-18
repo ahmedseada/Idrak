@@ -26,7 +26,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] ClusterAdvisorGroup =
     [
         ("cluster: advisor on a slow link (ethernet-1g, a model whose all-reduce is most of the step) suggests --wire bf16 once within the default tolerance (bf16's rounding step), with the network's share and the measured bf16 error in its reason, and accumulation, local SGD and top-k where bf16 alone leaves the share above the threshold", ClusterAdvisorSlowLink),
-        ("cluster: advisor on a fast link (same-device) suggests nothing: the network's share is under IDRAK_CLUSTER_SUGGEST_SHARE", ClusterAdvisorFastLink),
+        ("cluster: advisor on a fast link (a same-device link declared at 1 PB/s) suggests nothing: the network's share is under IDRAK_CLUSTER_SUGGEST_SHARE", ClusterAdvisorFastLink),
         ("cluster: advisor a bf16 error above the tolerance stops the bf16 suggestion; the others are made on the whole network time", ClusterAdvisorBf16Refused),
         ("cluster: advisor ring over two nodes of two ranks suggests the hierarchical collective; one bucket pinned for every gradient gets a bucket size that lets the network go during the backward pass", ClusterAdvisorHierarchicalAndBuckets),
         ("cluster: advisor the run's losses and weights are the same bit for bit with the advisor on and off; nothing is measured without a listener when it is unset or off, and on it adds its two slice collectives once", ClusterAdvisorChangesNothing),
@@ -152,13 +152,24 @@ internal static partial class Tests
 
     private static void ClusterAdvisorFastLink(Device device)
     {
+        // A link fast by declaration, not by measurement: same-device is measured on the device under test, and two
+        // devices carved from one card on some backends (Vulkan: one VkDevice each) copy through the host, which is
+        // slow beside a tiny model's step there. Card-agnostic: the test fixes the link, the advisor measures the rest.
         var options = AdvisorOptions();
-        var (seen, _) = AdvisorRun(DpTopology(device, 2), options);
-        Check(seen.Measures.Count == 1, $"the fast link was measured too: {seen.Measures.Count}");
-        var m = seen.Measures[0];
-        Console.WriteLine($"    same-device: {Describe(m)}");
-        Check(m.Share <= options.SuggestShare && seen.Cluster.Count == 0,
-            $"the network's share {AdvicePct(m.Share)} is under {AdvicePct(options.SuggestShare)}: nothing suggested ({string.Join(", ", seen.Cluster.Select(s => s.Setting))})");
+        LinkProfiles.Register(new LinkProfile(ClusterTopology.SameDevice, 1e15, TimeSpan.Zero));
+        try
+        {
+            var (seen, _) = AdvisorRun(DpTopology(device, 2), options);
+            Check(seen.Measures.Count == 1, $"the fast link was measured too: {seen.Measures.Count}");
+            var m = seen.Measures[0];
+            Console.WriteLine($"    a 1 PB/s link: {Describe(m)}");
+            Check(m.Share <= options.SuggestShare && seen.Cluster.Count == 0,
+                $"the network's share {AdvicePct(m.Share)} is under {AdvicePct(options.SuggestShare)}: nothing suggested ({string.Join(", ", seen.Cluster.Select(s => s.Setting))})");
+        }
+        finally
+        {
+            LinkProfiles.Unregister(ClusterTopology.SameDevice);
+        }
     }
 
     private static void ClusterAdvisorBf16Refused(Device device)

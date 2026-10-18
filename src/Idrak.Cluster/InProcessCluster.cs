@@ -283,6 +283,8 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IHostValueCollectiv
 
     public TimeSpan SimulatedTime => _current.Transport.SimulatedTime;
 
+    public bool Simulated => _current.Transport.Simulated;
+
     // Every group's collectives come from one provider: they all take host values, or none does.
     public bool SupportsHostValues => _current.Collectives is IHostValueCollectives { SupportsHostValues: true };
 

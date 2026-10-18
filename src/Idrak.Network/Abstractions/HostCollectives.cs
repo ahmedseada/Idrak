@@ -331,6 +331,8 @@ internal abstract partial class HostCollectives : ICollectives, IHostValueCollec
 
     public TimeSpan SimulatedTime => Transport.SimulatedTime;
 
+    public bool Simulated => Transport.Simulated;
+
     public bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire)
     {
         AllReduceHostValues(values, op, wire);
@@ -864,7 +866,7 @@ internal abstract partial class HostCollectives : ICollectives, IHostValueCollec
 
         var wall = Stopwatch.GetElapsedTime(start);
         var simulatedTime = Transport.SimulatedTime - simulated;
-        bool onClock = Transport.SimulatedTime > TimeSpan.Zero;       // a simulated transport (its clock has moved): the cluster's time, even for a call that took none
+        bool onClock = Transport.Simulated;                           // a simulated transport: the cluster's time, even for a call that took none
         Telemetry.Collective(new CollectiveCompleted(Name, operation, Rank, WorldSize, _sent, _received, wall, simulatedTime,
             onClock ? _simulatedBlocked : TimeSpan.FromSeconds(_blockedTicks / (double)Stopwatch.Frequency),
             onClock && Transport.SimulatedCriticalRank is { } critical ? critical : _slowest, operation == "barrier" ? null : _staging));
