@@ -8,7 +8,7 @@ namespace Idrak.Models;
 /// <summary>
 /// The model-loading built-ins Idrak registers (from <c>LibraryRegistrations</c>, each when its registry is first used): the checkpoint formats (safetensors,
 /// PyTorch zip checkpoints read without running them, GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF families and
-/// pre-tokenizer patterns, the pretrained model families, and the tokenizer models (BPE) and tokenizer file readers (tokenizer.json). Idrak.Data adds the Hugging Face model source.
+/// pre-tokenizer patterns, the pretrained model families, and the tokenizer models (BPE) and tokenizer file readers (tokenizer.json, sentencepiece). Idrak.Data adds the Hugging Face model source.
 /// </summary>
 internal static class LibraryModelFormats
 {
@@ -48,7 +48,11 @@ internal static class LibraryModelFormats
 
     public static void RegisterTokenizerModels() => TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
 
-    public static void RegisterTokenizerFiles() => TokenizerFiles.Register(new TokenizerJsonReader());
+    public static void RegisterTokenizerFiles()
+    {
+        TokenizerFiles.Register(new TokenizerJsonReader());
+        TokenizerFiles.Register(new SentencePieceReader());      // after tokenizer.json: a folder with both reads that
+    }
 
     public static void RegisterGgufPreTokenizers()
     {

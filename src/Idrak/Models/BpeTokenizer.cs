@@ -1383,9 +1383,10 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             "NFKC" => s => s.Normalize(NormalizationForm.FormKC),
             "NFD" => s => s.Normalize(NormalizationForm.FormD),
             "NFKD" => s => s.Normalize(NormalizationForm.FormKD),
-            "Prepend" => s => (string)n["prepend"]! + s,
+            "Prepend" => s => s.Length == 0 ? s : (string)n["prepend"]! + s,   // empty text stays empty, as in Hugging Face's
             "Replace" => Replacer(n),
             "Lowercase" => s => s.ToLowerInvariant(),
+            "Precompiled" => PrecompiledCharsMap.Step(n),                         // the charsmap read once, here
             _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
         };
 

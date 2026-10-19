@@ -179,14 +179,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.GgufTypes` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | TokenizerComponents.GuardedPreTokenizer, TokenizerComponents.PreTokenizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.ITokenizerFileReader` | interface | public | — | TokenizerJsonReader |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITokenizerFileReader` | interface | public | — | SentencePieceReader, TokenizerJsonReader |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | — |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | Device | CheckpointWeights |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
-| `Idrak.Models.Abstractions.TokenizerFiles` | registry | public | — |  | tokenizer.json | Idrak | Idrak |
+| `Idrak.Models.Abstractions.TokenizerFiles` | registry | public | — |  | sentencepiece, tokenizer.json | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerModels` | registry | public | — |  | BPE | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe | — | Idrak |
 | `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak | Idrak |
