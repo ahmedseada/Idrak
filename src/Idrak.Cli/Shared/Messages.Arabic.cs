@@ -291,7 +291,7 @@ internal static partial class Messages
         ["Assemble a training set from several sources with weights (a dataset recipe)"] = "تجميع مجموعة تدريب من عدة مصادر بأوزان (وصفة مجموعة بيانات)",
         ["Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz"] = "فحص الخطوط لرسم الصفحات: المحارف وميزات التخطيط والتشكيل مقارنة مع HarfBuzz",
         ["Random text in a language (pages, lines or words) to draw training pages from"] = "نص عشوائي بلغة ما (صفحات أو أسطر أو كلمات) لرسم صفحات تدريب منه",
-        ["Learn a tokenizer (byte-pair encoding) from text files, for a model made from scratch"] = "تعلم مقسم رموز (ترميز أزواج البايتات) من ملفات نصية لنموذج يبنى من الصفر",
+        ["Learn a tokenizer from text files, for a model made from scratch"] = "تعلم مقسم رموز من ملفات نصية لنموذج يبنى من الصفر",
         ["Encode text files into a token file for pretraining (each document's ids, then a separator)"] = "ترميز ملفات نصية إلى ملف رموز للتدريب المسبق (رموز كل مستند ثم فاصل)",
         ["Make a new model from a spec, its weights drawn from a seed, as a checkpoint to pretrain"] = "إنشاء نموذج جديد من مواصفة بأوزان مسحوبة من بذرة، كنقطة حفظ للتدريب المسبق",
         ["Write a spec file to make a new model from (idrak create), every setting explained"] = "كتابة ملف مواصفة لإنشاء نموذج جديد منه (idrak create) مع شرح كل إعداد",

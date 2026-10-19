@@ -36,7 +36,7 @@ namespace Idrak.Models;
 /// samples a segmentation instead, bypassing the cache.
 /// </para>
 /// </summary>
-internal sealed class UnigramTokenizer : IPretrainedTokenizer
+internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompanionFiles
 {
     /// <summary>The model type tokenizer.json names.</summary>
     public const string Type = TokenizerModels.Unigram;
@@ -62,6 +62,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer
     private static Scratch? t_scratch;
 
     private readonly JsonObject _source;                     // the tokenizer.json without the model's vocab, for Save
+    private byte[]? _modelProto;                             // the tokenizer.model it was made from, when a trainer made it
     private readonly IReadOnlyList<(string Piece, double Score)> _pieces;
     private string[] _tokens;                                // id → token (pieces, added tokens over them), padded by PadVocabulary
     private readonly Dictionary<string, int> _ids;
@@ -866,6 +867,30 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer
         }
 
         return _decoder is null ? string.Join(' ', tokens) : string.Concat(_decoder(tokens));
+    }
+
+    /// <summary>The SentencePiece model (tokenizer.model) this tokenizer was read from, kept so it can be written beside tokenizer.json.</summary>
+    internal void KeepModelProto(byte[] proto) => _modelProto = proto;
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> CompanionFiles => _modelProto is null ? [] : ["tokenizer.model"];
+
+    /// <inheritdoc />
+    public void SaveCompanion(string name, string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        if (_modelProto is null || name != "tokenizer.model")
+        {
+            throw new ArgumentException($"This tokenizer writes no companion file '{name}' (it writes: {string.Join(", ", CompanionFiles.DefaultIfEmpty("none"))}).", nameof(name));
+        }
+
+        string? folder = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (folder is not null)
+        {
+            Directory.CreateDirectory(folder);
+        }
+
+        File.WriteAllBytes(path, _modelProto);
     }
 
     /// <inheritdoc />

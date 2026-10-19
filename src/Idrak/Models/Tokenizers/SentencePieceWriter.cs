@@ -28,6 +28,23 @@ internal static class SentencePieceWriter
         public bool AddDummyPrefix { get; init; } = true;
         public bool RemoveExtraWhitespaces { get; init; } = true;
         public bool EscapeWhitespaces { get; init; } = true;
+
+        /// <summary>How the model was trained, when a trainer made it (written to the TrainerSpec; null: not written).</summary>
+        public TrainingFields? Training { get; init; }
+    }
+
+    // The TrainerSpec fields that record how a trainer made the model (sentencepiece reads them back as it wrote them).
+    public sealed record TrainingFields
+    {
+        public int VocabularySize { get; init; }
+        public float CharacterCoverage { get; init; }
+        public int SeedSize { get; init; }
+        public float ShrinkingFactor { get; init; }
+        public int EmIterations { get; init; }
+        public int MaxPieceLength { get; init; }
+        public bool SplitDigits { get; init; }
+        public IReadOnlyList<string> ControlSymbols { get; init; } = [];
+        public IReadOnlyList<string> UserDefinedSymbols { get; init; } = [];
     }
 
     public static byte[] Write(IReadOnlyList<string> pieces, IReadOnlyList<float> scores, IReadOnlyList<SentencePieceType> types, Settings settings)
@@ -54,6 +71,26 @@ internal static class SentencePieceWriter
 
         using var trainer = new MemoryStream();
         Varint(trainer, 3, (ulong)settings.Algorithm);
+        if (settings.Training is { } training)
+        {
+            Varint(trainer, 4, (ulong)training.VocabularySize);
+            Float(trainer, 10, training.CharacterCoverage);
+            Varint(trainer, 14, (ulong)training.SeedSize);
+            Float(trainer, 15, training.ShrinkingFactor);
+            Varint(trainer, 17, (ulong)training.EmIterations);
+            Varint(trainer, 20, (ulong)training.MaxPieceLength);
+            Varint(trainer, 25, training.SplitDigits ? 1UL : 0UL);
+            foreach (string symbol in training.ControlSymbols)
+            {
+                Bytes(trainer, 30, Encoding.UTF8.GetBytes(symbol));
+            }
+
+            foreach (string symbol in training.UserDefinedSymbols)
+            {
+                Bytes(trainer, 31, Encoding.UTF8.GetBytes(symbol));
+            }
+        }
+
         Varint(trainer, 24, settings.TreatWhitespaceAsSuffix ? 1UL : 0UL);
         Varint(trainer, 35, settings.ByteFallback ? 1UL : 0UL);
         Varint(trainer, 40, (ulong)(long)settings.UnkId);                   // negative ids as ten-byte varints, as protobuf writes int32
