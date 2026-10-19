@@ -8,7 +8,7 @@ namespace Idrak.Models.Abstractions;
 /// <summary>
 /// The tokenizer models, by the type a tokenizer.json names (<c>model.type</c>): each builds a tokenizer from what a reader
 /// (<see cref="TokenizerFiles"/>) found. Built in: "BPE" (<see cref="BpeTokenizer"/>: byte-level BPE, and SentencePiece-style
-/// BPE with byte fallback). Register a factory for another type with <see cref="Register"/>; an unregistered type fails
+/// BPE with byte fallback) and "WordPiece" (BERT). Register a factory for another type with <see cref="Register"/>; an unregistered type fails
 /// naming the registered ones.
 /// <para>
 /// Registering a built-in name overrides the built-in, which stays behind it as the library default (<see cref="Default"/>)
@@ -22,6 +22,9 @@ public static class TokenizerModels
 {
     /// <summary>The library's byte-pair-encoding model.</summary>
     public const string Bpe = "BPE";
+
+    /// <summary>The library's WordPiece model (BERT).</summary>
+    public const string WordPiece = "WordPiece";
 
     private static readonly SlotTable<string, Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer>> Table = new(nameof(TokenizerModels),
         (slot, app, library) => (definition, options) =>

@@ -1559,6 +1559,7 @@ public sealed class Idrak.Models.Abstractions.TokenizerDefinition
 
 public static class Idrak.Models.Abstractions.TokenizerFiles
   public const string TokenizerJson = "tokenizer.json"
+  public const string VocabTxt = "vocab.txt"
   public static Idrak.Models.Abstractions.ITokenizerFileReader Get(string name)
   public static Idrak.Models.Abstractions.ITokenizerFileReader? Default(string name)
   public static Idrak.Models.Abstractions.ITokenizerFileReader? Find(string name)
@@ -1571,6 +1572,7 @@ public static class Idrak.Models.Abstractions.TokenizerFiles
 
 public static class Idrak.Models.Abstractions.TokenizerModels
   public const string Bpe = "BPE"
+  public const string WordPiece = "WordPiece"
   public static Idrak.Abstraction.Generation.IPretrainedTokenizer Create(Idrak.Models.Abstractions.TokenizerDefinition definition, Idrak.Models.Abstractions.TokenizerOptions? options = null)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer> Get(string type)
@@ -1586,8 +1588,11 @@ public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquata
   public TokenizerOptions()
   public const int DefaultPieceCacheLimit = 100000
   public const string FormatVariable = "IDRAK_TOKENIZER_FORMAT"
+  public const string MaxWordCharsVariable = "IDRAK_TOKENIZER_MAX_WORD_CHARS"
   public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE"
+  public int ResolvedMaxInputCharsPerWord(int file)
   public int ResolvedPieceCacheLimit()
+  public int? MaxInputCharsPerWord { get; init; }
   public int? PieceCacheLimit { get; init; }
   public string? Format { get; init; }
   public string? ResolvedFormat()

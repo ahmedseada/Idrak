@@ -68,7 +68,7 @@ internal static partial class Tests
         Check(ModelSources.For(folder)?.Name == "folder" && ModelSources.For(gguf)?.Name == "gguf" && ModelSources.For("store:x")?.Name == "store"
               && ModelSources.For("Qwen/Qwen3-0.6B")?.Name == "huggingface" && ModelSources.For("no such thing") is null, "sources claim their names");
         Check(TokenizerComponents.NormalizerTypes.Contains("NFC") && TokenizerComponents.PreTokenizerTypes.Contains("ByteLevel")
-              && TokenizerComponents.DecoderTypes.Contains("ByteFallback") && TokenizerComponents.DecoderTypes.Count == 7, "tokenizer component types");
+              && TokenizerComponents.DecoderTypes.Contains("ByteFallback") && TokenizerComponents.DecoderTypes.Count == 8, "tokenizer component types");
     }
 
     // Weights as base64 float32 in weights.json, next to the Hugging Face config and tokenizer files.
