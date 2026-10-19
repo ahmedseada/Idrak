@@ -48,7 +48,7 @@ tokenizer contract so nothing requires `BpeTokenizer`, a span pipeline with alig
 C#, `tokenizer.json`, `tokenizer.model`, `vocab.txt` and GGUF `llama` / `bert` / `t5` detected, offsets, pairs and batch
 encoding, Unigram and WordPiece trainers in `idrak data tokenizer --model`; closes plug-in gap 11; L0, L1, T0-T4,
 library-owned Unicode normalization, the T3 callers, the T4 leftovers and two speed rounds built and pushed
-2026-10-19; left: the owner's runs, T5 on hold; see its "What is left"): [24-tokenizers.md](24-tokenizers.md).
+2026-10-19; left: the owner's runs (T5 measured, not taken); see its "What is left"): [24-tokenizers.md](24-tokenizers.md).
 
 ## Not supported yet
 
