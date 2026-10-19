@@ -124,6 +124,12 @@ public sealed record TokenizerEncodeOptions
     public string? Truncation { get; init; }
 
     /// <summary>
+    /// Which end a truncated text loses its tokens from: "right" (its last tokens go) or "left" (its first tokens go);
+    /// null: the tokenizer.json's <c>truncation.direction</c>, else "right".
+    /// </summary>
+    public string? TruncationDirection { get; init; }
+
+    /// <summary>
     /// "none", "longest" (a batch to its longest encoding) or "max_length" (to <see cref="MaxLength"/>); null: the
     /// tokenizer.json's padding, else none.
     /// </summary>

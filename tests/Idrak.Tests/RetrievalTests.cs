@@ -23,6 +23,7 @@ internal static partial class Tests
         ("retrieval: chunks, BM25 scores and word tokens equal the string-splitting reference (casing, Unicode white space, punctuation)", d => { if (d == Device.Cpu) TextPathsMatchReference(); }),
         ("retrieval: BM25 scores match the formula; vector index search and save/load", KeywordAndVectorSearch),
         ("retrieval: text encoder pools real tokens and normalizes; contrastive training retrieves the pairs", TextEncoderPoolingAndTraining),
+        ("retrieval: text encoder with a pretrained tokenizer (BPE, WordPiece, Unigram) encodes each batch in one EncodeBatch and gives the plain Encode path's vectors (empty, longer than MaxLength, Arabic, emoji; a tokenizer.json that truncates from the left and pads)", TextEncoderPretrainedBatch),
         ("retrieval: index with keywords, vectors, reciprocal rank fusion; save/load; builder rules", HybridIndex),
         ("retrieval: cross-encoder re-ranking, RAG prompt and citations, search tool", RerankAndRag),
         ("retrieval: in-memory vector store (replace, delete, filter, order); an index over any embedder and store; RAG with any retriever and re-ranker", d => { if (d == Device.Cpu) PluggableRetrieval(); }),
@@ -208,6 +209,110 @@ internal static partial class Tests
         index.AddRange(trainable.Encode([.. pairs.Select(p => p.Item2)]));
         int correct = pairs.Select((p, i) => index.Search(trainable.Encode(p.Item1), 1)[0].Id == i ? 1 : 0).Sum();
         Check(correct == pairs.Count, $"{correct}/{pairs.Count} queries find their passage");
+    }
+
+    // TextEncoder over a pretrained tokenizer (one EncodeBatch per batch, plan 24 T3) against the same tokenizer seen as a plain
+    // ITokenizer (Encode per text, cut to MaxLength): the same ids and weights, so bit-for-bit the same vectors.
+    private static void TextEncoderPretrainedBatch(Device device)
+    {
+        const int maxLength = 12;
+        string[] corpus = File.ReadAllText(TestData("tokenizers/corpus.txt")).Split('\n');
+        string longText = string.Join(' ', corpus.Take(6));
+        string[] texts = ["", "Hello, world!", longText, "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645", "I like \U0001F600 and \U0001F30D!", "", .. corpus];
+        foreach (var (name, workers) in new[] { ("bpe", 1), ("wordpiece-uncased", 3), ("wordpiece-cased", 0), ("unigram", 2), ("unigram-bytes", 1) })
+        {
+            var tokenizer = Idrak.Models.PretrainedTokenizers.Load(TestData($"tokenizers/{name}/tokenizer.json"), new Idrak.Models.Abstractions.TokenizerOptions { Workers = workers });
+            Check(tokenizer.Encode(longText).Count > maxLength, $"{name}: the long text has more than {maxLength} tokens");
+            CheckSameVectors(device, name, tokenizer, texts, maxLength);
+        }
+
+        // A tokenizer.json that truncates from the left to 5 tokens and pads to 30: the encoder still keeps the first
+        // MaxLength tokens and pads them itself, as with Encode.
+        var json = JsonNode.Parse(File.ReadAllText(TestData("tokenizers/wordpiece-uncased/tokenizer.json")))!.AsObject();
+        json["truncation"] = new JsonObject { ["direction"] = "Left", ["max_length"] = 5, ["strategy"] = "OnlySecond", ["stride"] = 0 };
+        json["padding"] = new JsonObject
+        {
+            ["strategy"] = new JsonObject { ["Fixed"] = 30 }, ["direction"] = "Left", ["pad_to_multiple_of"] = null, ["pad_id"] = 0, ["pad_type_id"] = 0, ["pad_token"] = "[PAD]",
+        };
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-encoder-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "tokenizer.json"), json.ToJsonString());
+            CheckSameVectors(device, "left-truncating tokenizer.json", Idrak.Models.PretrainedTokenizers.Load(Path.Combine(folder, "tokenizer.json")), texts, maxLength);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void CheckSameVectors(Device device, string name, IPretrainedTokenizer tokenizer, string[] texts, int maxLength)
+    {
+        int pad = tokenizer.IdOf("[PAD]") ?? tokenizer.IdOf("<pad>") ?? 0;
+        using var model = new Embedding(tokenizer.VocabularySize, 8, device, new Random(5));
+        var counting = new CountingTokenizer(tokenizer);
+        var batched = new TextEncoder(model, counting, maxLength, pad).Encode(texts, batchSize: 16);
+        var plain = new TextEncoder(model, new PlainTokenizer(tokenizer), maxLength, pad).Encode(texts, batchSize: 16);
+        int batches = (texts.Length + 15) / 16;
+        Check(counting.Batches == batches && counting.Texts == 0, $"{name}: {counting.Batches} batch encodes for {batches} batches, {counting.Texts} single encodes");
+        int differ = Enumerable.Range(0, texts.Length).FirstOrDefault(i => !batched[i].AsSpan().SequenceEqual(plain[i]), -1);
+        Check(differ < 0, $"{name}: text {differ} ('{(differ >= 0 ? texts[differ] : "")}') has another vector through EncodeBatch than through Encode");
+        Check(!batched[2].AsSpan().SequenceEqual(batched[0]) && !batched[3].AsSpan().SequenceEqual(batched[4]), $"{name}: the vectors do not tell texts apart");
+    }
+
+    // A pretrained tokenizer seen only as an ITokenizer (TextEncoder's per-text path).
+    private sealed class PlainTokenizer(ITokenizer inner) : ITokenizer
+    {
+        public int VocabularySize => inner.VocabularySize;
+
+        public IReadOnlyList<int> Encode(string text) => inner.Encode(text);
+
+        public string Decode(IEnumerable<int> ids) => inner.Decode(ids);
+    }
+
+    // A pretrained tokenizer that counts its encodes.
+    private sealed class CountingTokenizer(IPretrainedTokenizer inner) : IPretrainedTokenizer
+    {
+        public int Batches, Texts;
+
+        public string Model => inner.Model;
+
+        public int VocabularySize => inner.VocabularySize;
+
+        public IReadOnlyList<int> Encode(string text)
+        {
+            Texts++;
+            return inner.Encode(text);
+        }
+
+        public string Decode(IEnumerable<int> ids) => inner.Decode(ids);
+
+        public int? IdOf(string token) => inner.IdOf(token);
+
+        public bool IsSpecial(int id) => inner.IsSpecial(id);
+
+        public void PadVocabulary(int size) => inner.PadVocabulary(size);
+
+        public void EncodeRange(string text, int start, int length, List<int> ids) => inner.EncodeRange(text, start, length, ids);
+
+        public JsonObject ToJson() => inner.ToJson();
+
+        public void WriteTo(Stream stream) => inner.WriteTo(stream);
+
+        public void Save(string path) => inner.Save(path);
+
+        public TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options)
+        {
+            Texts++;
+            return inner.Encode(text, pair, options);
+        }
+
+        public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options)
+        {
+            Batches++;
+            return inner.EncodeBatch(texts, pairs, options);
+        }
     }
 
     private static void HybridIndex(Device device)

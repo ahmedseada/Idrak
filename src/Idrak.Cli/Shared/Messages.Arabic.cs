@@ -404,7 +404,8 @@ internal static partial class Messages
         ["The same prompt on two models (or two settings of one), answers side by side with speed"] = "الموجه نفسه على نموذجين (أو إعدادين لنموذج)، والإجابات جنبا إلى جنب مع السرعة",
         ["Embeddings of lines or files to JSON or .npy"] = "تضمينات السطور أو الملفات إلى JSON أو .npy",
         ["One answer to a prompt (argument, --input file or piped), then exit"] = "إجابة واحدة عن موجه (وسيط أو ملف --input أو مدخل منقول)، ثم الخروج",
-        ["Tokens and ids of a text (--chat renders the chat template first, --count only counts)"] = "رموز نص وأرقامها (الخيار --chat يطبق قالب المحادثة أولا، و --count يعد فقط)",
+        ["Tokens, ids, offsets and type ids of text (--chat renders the chat template first, --count only counts)"] =
+            "رموز نص وأرقامها ومواضعها وأنواعها (الخيار --chat يطبق قالب المحادثة أولا، و --count يعد فقط)",
         ["The chat template, its tool-call format and a rendered sample conversation with a tool call"] = "قالب المحادثة وصيغة استدعاء الأدوات فيه ومحادثة مثال مع استدعاء أداة",
         ["Raw completion of a text, without the chat template"] = "إكمال خام لنص، دون قالب المحادثة",
         ["The tools an assembly registers: names, descriptions and parameters"] = "الأدوات التي تسجلها مكتبة: الأسماء والأوصاف والمعاملات",
