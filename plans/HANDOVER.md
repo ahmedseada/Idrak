@@ -85,8 +85,9 @@ standing rules; they win over anything here), then the plan you are asked to wor
   those lengths (not by `truncate_encodings` alone). Plan 24's T3 note has this and the other alignment rules
   (positional normalization, `Replace` standing for the match's last character, Precompiled's cursor including its
   start-of-text shift, Unigram fusing unknown runs before byte fallback).
-- **.NET normalization on Linux allocates per call (ICU), and does nothing under `InvariantGlobalization`**: the
-  open bug above.
+- **.NET normalization on Linux allocates per call (ICU), and does nothing under `InvariantGlobalization`**: fixed
+  by `Idrak.Abstraction.Text.UnicodeNormalization` (Plan 24, "Finished after the handover", 1); never call
+  `string.Normalize` or its span forms in `src/` (a test scans for them).
 - C# 14: `array.Reverse()` binds to the in-place span `Reverse`; use `Enumerable.Reverse(array)`.
 - Writing special characters (U+2028, a BOM, combining marks) into source through tools can put the literal
   character in the file; write `\uXXXX` escapes. An `old_string` with a precomposed "é" will not match a file holding
