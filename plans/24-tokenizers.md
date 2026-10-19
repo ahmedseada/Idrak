@@ -1,0 +1,569 @@
+# Plan 24: Unigram (SentencePiece) and WordPiece tokenizers, built in
+
+**Status (2026-10-19, `abstraction`):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against e53acb8.
+Nothing is built. Closes plug-in gap 11 ([plug-in.md](plug-in.md), "Only BPE tokenizer models").
+
+| Phase | What | State |
+|---|---|---|
+| L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Planned |
+| L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Planned |
+| T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Planned |
+| T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
+| T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Planned |
+| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Planned |
+| T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
+| T5 | BPE onto the shared span pipeline (only if measured equal or faster) | Planned, optional |
+
+## Goal
+
+Load and run, out of the box, every tokenizer the common model families ship, not just BPE: Unigram (the model inside
+SentencePiece: T5, mT5, ALBERT, XLNet, XLM-R, many multilingual models) and WordPiece (BERT, most embedding and
+classification models). BPE, Unigram and WordPiece are **library defaults in one registry**, registered through the same
+`Register` call an app uses, so they work with no setup and stay overridable like every registered implementation (the
+owner, 2026-10-19: built into the library, not a separate package). Then train both, as the BPE trainer does.
+
+Scope: tokenizers only. The library has no BERT or T5 architecture; those model families are plug-ins (CLAUDE.md:
+families live in plug-ins or apps), not part of this plan. What this plan makes run end to end is every model whose
+architecture already exists and whose tokenizer was refused (a Llama-2-style GGUF with `tokenizer.ggml.model = llama`),
+and `idrak tokenize` on any T5, ALBERT, XLM-R or BERT folder.
+
+## Decisions (taken by the owner, 2026-10-19)
+
+1. **Inside the library**, not a separate package: the three models and their components are registered defaults in
+   Idrak, so `PretrainedModel.Load` and GGUF loading read T5 and BERT tokenizers with nothing added.
+2. **The public API may break in L0**: `ModelFiles.Tokenizer`, `ITokenizerTrainer.Train`, `BaseModelInfo` and the
+   `is BpeTokenizer` checks move to the new contract. `BpeTokenizer` keeps every public member. No version bump, no
+   CHANGELOG line (CLAUDE.md), whatever the API test's message says.
+3. **Fixtures**: small tokenizers trained with the reference libraries, plus their reference outputs, are committed. The
+   real models' tokenizer files are not committed (4-16 MB each): the fixture script downloads them into the cache and
+   writes only their reference outputs, and their tests are a separate group the owner runs (`tokenizers real:`).
+
+## Rules that hold for every phase
+
+CLAUDE.md and [docs/optimization.md](../docs/optimization.md) apply in full. The ones that shape this plan:
+
+- **Contract plus registry (decision 10).** Every model, file reader, component and post-processor is a registered
+  slot; nothing dispatches on a type name in a `switch`. A contract any package can use lives in `Idrak.Abstraction`;
+  one only Idrak's tokenizer loading uses lives in `Idrak.Models.Abstractions`, beside `TokenizerComponents`.
+- **No native libraries.** No `sentencepiece` or `tokenizers` binaries, no protobuf package: the formats are read in C#
+  (rule 0, rule 70). The Python libraries are used only by the fixture script, as references.
+- **Bytes and spans on the hot path** (rules 1, 11, 74): files are parsed from bytes, encoding runs on spans over
+  pooled buffers returned in `finally`, vocabularies are looked up through alternate lookups or a trie, never by
+  building a string per piece. After warm-up, encoding into a caller's list allocates nothing (measured, rule 63).
+- **The same result, proven** (rule 71): every id and offset equals the reference's; BPE's ids do not change by one on
+  any existing fixture; batch encoding equals single encoding.
+- **Nothing fixed** (CLAUDE.md): every size, limit and choice is a `TokenizerOptions` setting with an `IDRAK_TOKENIZER_*`
+  variable, carried through `PretrainedOptions`, the CLI and the benches (see "Settings").
+- **Use every core** unless the user sets a limit: batch encoding and training spread work over `Workers` (0: every
+  core), in a fixed combination order so the result does not depend on the worker count (rule 79, rule 86's idea).
+- **Tests only through filters**, CPU here: `IDRAK_DEVICES=cpu IDRAK_FILTER="tokenizers:"` (and the group named in each
+  phase). The owner's runs are listed per phase, as exact PowerShell commands.
+- **Dated runs** go in the Runs table at the end; each phase gets an "as built" note when merged.
+
+## What exists (2026-10-19, e53acb8)
+
+- `ITokenizer` (`src/Idrak.Abstraction/Generation/Tokenizer.cs:10`): `VocabularySize`, `Encode`, `Decode`, `TokenOf`.
+  Too thin for model loading, so callers use `BpeTokenizer` directly for `PadVocabulary`, `IdOf`, `IsSpecial`,
+  `ToJson` / `Save` / `WriteTo` and `EncodeRange`.
+- `BpeTokenizer` (`src/Idrak/Models/BpeTokenizer.cs`, 1,890 lines) holds the BPE model and the whole pipeline with its
+  fast paths; it refuses any model type but `"BPE"` (`:94`, no Register hint). About 40 files name it
+  (`PretrainedModel.cs:47` `required BpeTokenizer`, `:381` `BpeTokenizer.Load`; FineTuning, SpeechModels, ServeHost,
+  ModelFacts, BaseModelInfo, the Create, Text, Data and Check commands, samples, tests).
+- `TokenizerComponents` (`src/Idrak/Models/Abstractions/TokenizerComponents.cs`): three `SlotTable` registries, built-in
+  names: normalizers Sequence, NFC, NFKC, NFD, NFKD, Prepend, Replace, Lowercase; pre-tokenizers Sequence, Split,
+  ByteLevel, Metaspace, Digits, Whitespace; decoders Sequence, ByteLevel, Replace, ByteFallback, Fuse, Strip,
+  Metaspace. The contracts are string in, string out (`Normalize(string)`, `PreTokenize(IReadOnlyList<string>, bool)`):
+  no alignments, so no offsets. There is no model table and no post-processor table.
+- Encoding returns ids only: no offsets, type ids, masks, pairs, truncation, padding or batch.
+- GGUF (`GgufModel.WriteTokenizer`, `GgufModel.cs:268`) writes a tokenizer.json for `gpt2` only and refuses every other
+  `tokenizer.ggml.model`; integer metadata arrays come back as `long[]` (`Gguf.cs:651`), so a uint8 charsmap would take
+  8 bytes a byte.
+- `TokenizerTrainers` has `"bpe"` (`BpeTrainer`, exact against Hugging Face's `BpeTrainer`); `ITokenizerTrainer.Train`
+  returns `BpeTokenizer`; `idrak data tokenizer` picks a trainer with `--trainer`.
+- Downloads already fetch `tokenizer.model` and `vocab.txt` (`HuggingFaceModels.cs:22`); nothing reads them.
+- The only protobuf code is the ONNX reader (`src/Idrak/Onnx/OnnxModel.cs`).
+- Tests: `tokenizer training:`, `pretrained:` (BPE fixtures), `plugins:` (registered components;
+  `ModelPluginTests.cs:71` asserts 7 decoder types), `gguf:`, `TokenizerSuite` in `Idrak.Abstraction.Testing`.
+
+## Where it lives
+
+| What | Where |
+|---|---|
+| `IPretrainedTokenizer`, `TokenizerEncoding`, `TokenizerEncodeOptions` | `src/Idrak.Abstraction/Generation/Tokenizer.cs` (namespace `Idrak.Abstraction.Generation`, beside `ITokenizer`): Idrak, Idrak.Nlp, Idrak.Audio, the CLI and samples hold tokenizers |
+| `TokenizerModels`, `TokenizerFiles`, `TokenizerDefinition`, `TokenizerOptions`, `NormalizedText`, `PreTokenizedText`, post-processor contract and table | `src/Idrak/Models/Abstractions/` (namespace `Idrak.Models.Abstractions`, beside `TokenizerComponents` and `TokenizerTrainers`) |
+| The built-in models, readers, components, trainers | `src/Idrak/Models/Tokenizers/` (namespace `Idrak.Models`); `BpeTokenizer.cs` and `BpeTrainer.cs` stay where they are |
+| Library defaults | `src/Idrak/Models/LibraryModelFormats.cs` (`RegisterTokenizerModels`, `RegisterTokenizerFiles`), called from each registry's static constructor through `Overrides.AsLibraryDefaults`, as `GgufPreTokenizers` does |
+| Contract suites | `src/Idrak.Abstraction.Testing/Contracts/TokenizerSuite.cs` (extended), `TokenizerModelSuite.cs` (new) |
+| Tests | `tests/Idrak.Tests/TokenizerTests.cs` (`tokenizers:`), `TokenizerRealTests.cs` (`tokenizers real:`), `TokenizerTrainingTests.cs` (extended) |
+| Fixtures | `tests/Idrak.Tests/data/tokenizers/` from `tools/tokenizers/make_fixtures.py` |
+
+New files under `src/Idrak/Models/Tokenizers/`: `PretrainedTokenizers.cs` (the loader), `TokenizerPipeline.cs` (the
+span pipeline), `SpanComponents.cs` (built-in components on spans), `DoubleArrayTrie.cs`, `ProtoReader.cs`,
+`SentencePieceModel.cs`, `PrecompiledNormalizer.cs`, `UnigramTokenizer.cs`, `WordPieceTokenizer.cs`,
+`BertComponents.cs`, `PostProcessors.cs`, `UnigramTrainer.cs`, `WordPieceTrainer.cs`, `SentencePieceWriter.cs`.
+
+## Conventions every phase follows
+
+The conventions of [plan 19](19-vision-language-from-scratch.md#conventions-every-phase-follows-read-before-coding)
+hold: registries as `RandomTextSources` (`SlotTable` named after the class, `RegisterDefault` inside
+`Overrides.AsLibraryDefaults`, `[MethodImpl(NoInlining)] Register` with the calling assembly, `Unregister`, `Names`,
+`Find`, `Get`, `Default`, `Origin`, `Describe`), `Get`'s message `"{Kind} '{name}' is not registered (registered:
+{list}); add it with {Registry}.Register."` (the CLI appends the `-P` hint), a contract suite per registry, test groups
+as `(string Name, Action<Device> Run)[]` added to `Tests.All`, registries left as found (`Unregister` in `finally`),
+commands with `Usage`, an Arabic summary and `EnvironmentVariables.cs` entries, regeneration of the inventory and the API
+dump after a public change (no CHANGELOG line).
+
+Fixtures follow plan 19's rule: reruns write the same bytes (fixed seeds, one thread, sorted JSON, the output folder
+removed first), a `manifest.json` with the library versions and each file's size and SHA-256, and a hand-written
+README. Ids and offsets are compared exactly.
+
+**Offsets are UTF-16 indexes** into the C# string. Python's are code-point indexes; the fixture script converts them
+(a character outside the BMP counts two), so an emoji's offsets compare exactly.
+
+## Settings
+
+`TokenizerOptions` (a record in `Idrak.Models.Abstractions`), given to `PretrainedTokenizers.Load(path, options)` and
+through `PretrainedOptions.Tokenizer`; a null field takes its variable, then the default. The CLI lists the variables in
+`EnvironmentVariables.cs`; `--bench-text` reads the same ones.
+
+| Setting | Variable | Default | Phase |
+|---|---|---|---|
+| `Format`: which file to read when a folder has several (`tokenizer.json`, `sentencepiece`, `vocab.txt`, or a registered reader) | `IDRAK_TOKENIZER_FORMAT` | the first that exists, in that order | L0 |
+| `PieceCacheLimit`: cached encoded pieces (BPE's fixed 100,000 today, Unigram's and WordPiece's word caches) | `IDRAK_TOKENIZER_CACHE` | 100,000 | L0 |
+| `Workers`: threads for batch encoding (0: every core) | `IDRAK_TOKENIZER_WORKERS` | 0 | T3 |
+| `SamplingAlpha`, `SamplingBest`, `SamplingSeed`: Unigram subword regularization (off when alpha is null) | `IDRAK_TOKENIZER_ALPHA`, `IDRAK_TOKENIZER_NBEST`, `IDRAK_TOKENIZER_SEED` | off | T1 |
+| `MaxInputCharsPerWord`: WordPiece's limit, over the file's | `IDRAK_TOKENIZER_MAX_WORD_CHARS` | the file's (100) | T2 |
+
+The trainers' settings are `TokenizerTrainingOptions` fields with CLI options (T4).
+
+---
+
+## Phase L0: the model registry, one contract, one loader
+
+**Why first.** Nothing else can load while every caller requires `BpeTokenizer` and the constructor refuses any other
+model type.
+
+**Contract** (`src/Idrak.Abstraction/Generation/Tokenizer.cs`):
+
+```csharp
+public interface IPretrainedTokenizer : ITokenizer
+{
+    string Model { get; }                                   // "BPE", "Unigram", "WordPiece", or a registered type
+    int? IdOf(string token);
+    bool IsSpecial(int id);
+    void PadVocabulary(int size);
+    void EncodeRange(string text, int start, int length, List<int> ids);   // appends; allocates nothing once warm
+    JsonObject ToJson();                                    // tokenizer.json
+    void WriteTo(Stream stream);
+    void Save(string path);
+}
+```
+
+`BpeTokenizer` implements it with the members it already has; its encode and decode code does not change.
+
+**Registry** (`src/Idrak/Models/Abstractions/TokenizerModels.cs`):
+
+```csharp
+public sealed class TokenizerDefinition                    // what a reader gives a model
+{
+    public required string Source { get; init; }           // the file, for messages
+    public required JsonObject Pipeline { get; init; }     // tokenizer.json without model.vocab / model.merges
+    public required JsonObject Model { get; init; }        // model.* without the big tables
+    public required TokenTable Vocabulary { get; init; }   // pieces, scores (double), types, read straight from bytes
+    public (string Left, string Right)[]? Merges { get; init; }
+}
+
+public static class TokenizerModels
+{
+    public static void Register(string type, Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer> create);
+    public static IPretrainedTokenizer Create(TokenizerDefinition definition, TokenizerOptions? options = null);
+    // Unregister, Names, Find, Get, Default, Origin, SetPolicy, Describe as the convention
+}
+```
+
+- `TokenTable` keeps the pieces as one `string[]` and the scores as one `double[]` (Hugging Face's Unigram scores are
+  64-bit), so a 250,000-piece vocabulary is two arrays, not a `JsonObject` of a quarter million nodes (rule 74).
+- Guarded (Throw / FallBack / Shadow, compared by ids): an app's "Unigram" and the built-in can answer the same call.
+- The built-in `"BPE"` builds a `BpeTokenizer` through its existing internal constructor path (`FromParts`).
+- An unknown type: `Tokenizer model 'X' is not registered (registered: BPE, Unigram, WordPiece); add it with
+  TokenizerModels.Register.` `BpeTokenizer`'s own message at `:94` gets the same hint.
+
+**Files** (`src/Idrak/Models/Abstractions/TokenizerFiles.cs`): a registry of readers by name.
+
+```csharp
+public static class TokenizerFiles
+{
+    public static void Register(string name, Func<string folder, string? file> find,
+        Func<string file, TokenizerOptions, TokenizerDefinition> read);
+    // Unregister, Names, Find, Get, Default, Origin, Describe; unguarded: a reader's definition is its file's
+}
+```
+
+L0 registers `"tokenizer.json"` (streams `model.vocab` and `model.merges` into the `TokenTable`, as `BpeTokenizer.Load`
+streams them today). `"sentencepiece"` comes in T0, and `"vocab.txt"` in T2.
+
+**Loader** (`src/Idrak/Models/Tokenizers/PretrainedTokenizers.cs`): `PretrainedTokenizers.Load(string folderOrFile,
+TokenizerOptions? options = null)` finds the file (`Format`, or the first reader whose `find` answers), reads it and
+creates its model. A folder with no reader's file: `No tokenizer file in X (tokenizer.json, tokenizer.model, vocab.txt,
+or a registered reader's); add a reader with TokenizerFiles.Register.`
+
+**Callers move** to `IPretrainedTokenizer` and `PretrainedTokenizers.Load`:
+- `ModelFiles.Tokenizer`, `PretrainedModel.cs:381`
+- `ITokenizerTrainer.Train`'s return type
+- `BaseModelInfo`
+- FineTuning, SpeechModels, SpeechSynthesis
+- ServeHost, ModelFacts, the Create, Text, Data and Check commands
+- the samples: Chat, IdrakAudio, WhisperSpeech
+- the tests
+- `PieceCacheLimit` replaces BPE's `CacheLimit` constant.
+
+**Tests** (`tokenizers:`):
+- the registry names BPE, refuses an unknown type with the hint, and an app's model registered and unregistered leaves
+  it as found;
+- every BPE fixture (`data/pretrain/*`, `data/gguf/*-hf`) loads through `PretrainedTokenizers.Load` to the ids
+  `BpeTokenizer.Load` gave before (hash of all ids on `TokenizerSuite`'s texts, recorded before the change);
+- `TokenizerModelSuite` passes for the built-in BPE.
+
+Existing groups run unchanged: `pretrained:`, `tokenizer training:`, `plugins:`, `gguf:`.
+
+**Done when:**
+- no library file names `BpeTokenizer` outside its own and the registry's;
+- the API dump and the inventory are regenerated;
+- the BPE ids hash is unchanged.
+
+## Phase L1: the span pipeline with alignments
+
+**Why.** Unigram and WordPiece need a normalizer and a pre-tokenizer that run without allocating, and offsets need every
+character's origin. Both are missing from the string contracts.
+
+**Types** (`src/Idrak/Models/Abstractions/`):
+- `NormalizedText`: a pooled `char[]` plus an `int[]` origin per character (start and end in the original string), with
+  `Replace`, `Prepend`, `Append`, `Remove`, `Transform` that keep the alignments as Hugging Face's `NormalizedString`
+  does; it returns its buffers to the pool in `Dispose`.
+- `PreTokenizedText`: the pieces as ranges of one `NormalizedText`, never substrings.
+
+**Contracts gain a span form** (default interface methods, so registered plug-ins keep working):
+- `ITokenizerNormalizer.Normalize(NormalizedText text)`: the default runs the string form and aligns the whole output to
+  the whole input (offsets through such a component are coarse, and say so in its doc).
+- `IPreTokenizer.PreTokenize(PreTokenizedText text, bool atStart)`: the default runs the string form and finds each
+  piece in order in the normalized text.
+
+**Pipeline** (`TokenizerPipeline.cs`): normalizer, then pre-tokenizer, then model, then post-processor, then decoder,
+built once from the definition's `Pipeline`. Built-in components run on spans (`SpanComponents.cs`):
+- normalizers: Sequence, NFC/NFKC/NFD/NFKD, Prepend, Replace, Lowercase, Strip;
+- pre-tokenizers: Sequence, Split, Metaspace, Whitespace, WhitespaceSplit, Punctuation, Digits, ByteLevel;
+- an app's component goes through its string form, as in BPE today.
+
+Unicode normalization keeps its alignments by normalizing segment by segment between starters (combining class 0). It
+uses .NET 10's span normalization APIs where the SDK has them, checked when building, else one string per segment.
+
+**Post-processors**: a fourth `TokenizerComponents` table (`RegisterPostProcessor`, `PostProcessorTypes`, …), with
+`IPostProcessor.Process(TokenizerEncoding single, TokenizerEncoding? pair, bool addSpecialTokens)`. The table is empty
+in L1; T2 fills it.
+
+**Tests** (`tokenizers: pipeline`):
+- every built-in span component gives the string form's output on `TokenizerSuite`'s texts;
+- alignments map every character back inside its origin;
+- an app's string-only component still runs.
+
+**Done when** the span pipeline gives the string pipeline's pieces for every BPE fixture's normalizer and pre-tokenizer.
+BPE itself keeps its own paths (T5 decides whether it moves).
+
+## Phase T0: fixtures, the SentencePiece reader, the Precompiled normalizer
+
+**Fixtures** (`tools/tokenizers/make_fixtures.py`, run with `python -I`; `tokenizers`, `sentencepiece` and `transformers`
+pinned in `tools/tokenizers/requirements.txt`, versions in the manifest):
+- **Corpus** (`data/tokenizers/corpus.txt`): Arabic with diacritics, tatweel and mixed RTL/LTR with numbers, emoji with
+  skin tones and flags, CJK, accents, combining marks, whitespace runs, tabs and CRLF, empty lines, very long words,
+  control characters.
+- **Trained small tokenizers**, about 50-200 KB each, from the corpus plus a public-domain text:
+  - SentencePiece Unigram, with and without byte fallback;
+  - SentencePiece BPE;
+  - Hugging Face WordPiece, uncased and cased;
+  - each as `tokenizer.model` (SentencePiece's own) and as `tokenizer.json` (converted with `transformers`'
+    `convert_slow_tokenizer`, the way Hub files are made).
+- **References**: per tokenizer and text, the ids, offsets (UTF-16), type ids, special-tokens mask and decoded text. For
+  `.model` files they come from `sentencepiece`, for `.json` from `tokenizers`. Where the two libraries disagree on the
+  same model, the cases are listed in `known-differences.json`, not hidden.
+- **`--real`** (the owner): downloads with `huggingface_hub` into the cache (`IDRAK_CACHE`) and writes only the
+  references to `data/tokenizers/real/<name>.json`. The models:
+  - `google-t5/t5-small` and `google/mt5-small` (Unigram)
+  - `albert/albert-base-v2` (Unigram)
+  - `FacebookAI/xlm-roberta-base` (Unigram, Arabic)
+  - `hf-internal-testing/llama-tokenizer` (SentencePiece BPE)
+  - `google-bert/bert-base-uncased` and `google-bert/bert-base-multilingual-cased` (WordPiece)
+  - `aubmindlab/bert-base-arabertv02` (WordPiece, Arabic)
+
+  The list is the owner's to change.
+
+**Protobuf reader** (`ProtoReader.cs`): a `ref struct` over `ReadOnlySpan<byte>` (varint, fixed32, fixed64,
+length-delimited; unknown fields skipped), shared with the ONNX reader if it fits without changing ONNX results.
+
+**SentencePiece model** (`SentencePieceModel.cs`): reads `ModelProto`, with the field numbers from
+`sentencepiece_model.proto` at the pinned version:
+- the pieces, with score and type (normal, unknown, control, user-defined, byte, unused);
+- the trainer spec: model type, byte fallback, split digits, treat whitespace as suffix, unk/bos/eos/pad ids and pieces;
+- the normalizer spec: rule name, precompiled charsmap, add dummy prefix, remove extra whitespaces, escape whitespaces.
+
+The `"sentencepiece"` reader (`tokenizer.model`, `spiece.model`, `sentencepiece.bpe.model`) turns it into a
+`TokenizerDefinition`:
+- a Unigram model → `"Unigram"`;
+- a BPE model → `"BPE"`, with merges derived from the scores as Hugging Face's `SentencePieceExtractor` does (so there is
+  one BPE implementation);
+- the normalizer spec → Precompiled (plus Replace for extra whitespace) and Metaspace with the dummy-prefix scheme, as
+  `convert_slow_tokenizer` writes them.
+
+**Double-array trie** (`DoubleArrayTrie.cs`): reads darts-clone's unit array (common-prefix search over UTF-8 bytes) and
+builds one from sorted keys. The same type serves the charsmap (T0) and the piece tries (T1, T2): one implementation.
+
+**Precompiled normalizer** (`PrecompiledNormalizer.cs`, registered as `"Precompiled"`): the charsmap blob (trie size,
+trie units, then the normalized strings, NUL-terminated) is read once into the trie plus one byte array. It replaces as
+`tokenizers`' `Precompiled` does (by grapheme cluster, falling back to characters), keeping alignments.
+
+**Tests** (`tokenizers: sentencepiece`):
+- each fixture's `ModelProto` reads to `sentencepiece`'s piece table (pieces, scores, types) and flags;
+- a truncated or corrupt file fails naming the offset;
+- Precompiled normalizes the corpus exactly as `tokenizers` does.
+
+## Phase T1: Unigram
+
+**Model** (`UnigramTokenizer.cs`, registered as `"Unigram"`), from `model.vocab` (pieces and scores), `unk_id` and
+`byte_fallback`:
+
+- **Viterbi** over a byte lattice of the normalized, pre-tokenized piece in UTF-8 (converted once into a pooled buffer).
+  Nodes start only at character boundaries. The piece trie gives every match from a position in one walk. Best scores
+  are summed in a fixed left-to-right order in `double`, and ties break as the reference does.
+- **Unknown handling**: unknown characters take the unknown piece's score with Hugging Face's penalty, and runs of
+  unknowns fuse as `fuse_unk`. With byte fallback, an unknown character becomes its `<0xNN>` pieces.
+- User-defined and control pieces are added tokens, matched first, as BPE matches them.
+- Word results are cached by span (`PieceCacheLimit`), as BPE caches its pieces.
+- **Sampling** (off by default): `SamplingAlpha` and `SamplingBest`. N-best sampling as SentencePiece's `SampleEncode`,
+  or forward-filtering backward-sampling when the n-best size is 0 or negative, seeded by `SamplingSeed`. A sampled
+  encode bypasses the cache.
+- **Decode**: the pipeline's decoders (Metaspace, ByteFallback, Fuse, Strip, Replace) as BPE runs them; byte pieces are
+  reassembled to UTF-8 (invalid sequences become U+FFFD, as the reference does).
+
+**Tests** (`tokenizers: unigram`):
+- the ids equal the reference for every Unigram fixture and corpus line, from `tokenizer.json` and from
+  `tokenizer.model`;
+- decode(encode(x)) equals the reference's decode;
+- byte fallback round-trips arbitrary bytes;
+- sampling with a seed is repeatable, and alpha null gives the Viterbi ids;
+- `EncodeRange` into a reused list allocates 0 bytes once warm;
+- `TokenizerSuite` and `TokenizerModelSuite` pass.
+
+## Phase T2: WordPiece
+
+**Components** (`BertComponents.cs`), as `tokenizers` defines them, each keeping alignments:
+- `BertNormalizer`: `clean_text`, `handle_chinese_chars`, `strip_accents` (null follows `lowercase`), `lowercase`;
+- `BertPreTokenizer`: whitespace and punctuation splits;
+- the `WordPiece` decoder (`prefix`, `cleanup`);
+- registered in `TokenizerComponents`, so `ModelPluginTests.cs:71` moves from 7 decoder types to 8.
+
+`Punctuation`, `WhitespaceSplit` and `Strip` were added in L1, and the `Prepend` decoder is added here.
+
+**Model** (`WordPieceTokenizer.cs`, registered as `"WordPiece"`), from `vocab`, `unk_token`,
+`continuing_subword_prefix` and `max_input_chars_per_word`:
+- greedy longest match first, using two tries: word-initial pieces, and continuation pieces stored without their
+  prefix. Each step is one walk, with no `"##" + piece` string built.
+- A word longer than `MaxInputCharsPerWord` becomes `[UNK]`.
+
+**Post-processors** (`PostProcessors.cs`): `TemplateProcessing` (single and pair templates, special token ids, type
+ids), `BertProcessing`, `RobertaProcessing` (with `trim_offsets` and `add_prefix_space`) and `Sequence`.
+
+**`vocab.txt` reader** (registered as `"vocab.txt"`): one token a line, with `tokenizer_config.json` (`do_lower_case`,
+`strip_accents`, `tokenize_chinese_chars`, the special tokens), turned into the definition `BertTokenizerFast` would
+write.
+
+**Tests** (`tokenizers: wordpiece`):
+- the ids equal the reference for every WordPiece fixture, from `tokenizer.json` and from `vocab.txt`;
+- the decode equals the reference's;
+- a long word becomes `[UNK]`, and `MaxInputCharsPerWord` changes the limit;
+- `[CLS] … [SEP]` and pair type ids equal the reference;
+- `plugins:` passes with the new count.
+
+## Phase T3: encodings, detection, GGUF
+
+**Encoding** (`src/Idrak.Abstraction/Generation/Tokenizer.cs`):
+
+```csharp
+public sealed record TokenizerEncodeOptions
+{
+    public bool AddSpecialTokens { get; init; }             // false: as Encode today (chat templates write them)
+    public int? MaxLength { get; init; }
+    public string Truncation { get; init; } = "longest_first";   // also "only_first", "only_second"
+    public string Padding { get; init; } = "none";          // also "longest", "max_length"
+}
+
+public sealed class TokenizerEncoding
+{
+    public int[] Ids, TypeIds, AttentionMask, SpecialTokensMask;
+    public (int Start, int End)[] Offsets;                  // UTF-16 indexes into the text (or the pair's text)
+    public int[] SequenceIds;                               // 0, 1, or -1 for special tokens
+}
+
+// on IPretrainedTokenizer:
+TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options);
+IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs,
+    TokenizerEncodeOptions options);
+string Decode(ReadOnlySpan<int> ids, bool skipSpecialTokens);
+```
+
+- Unigram and WordPiece take offsets from the span pipeline.
+- BPE gets an offsets path that runs only when offsets are asked for; its `Encode` fast path does not change.
+- Batch encoding uses `Workers` threads, one text per item, and returns results in input order.
+- `tokenizer.json`'s `truncation` and `padding` are read as the encode options' defaults.
+
+**Detection**: `PretrainedTokenizers.Load` covers `tokenizer.json`, `tokenizer.model`, and `vocab.txt` with
+`tokenizer_config.json`. A file whose model type nobody registered fails with `TokenizerModels`' hint.
+
+**GGUF** (`GgufModel.WriteTokenizer`):
+- `llama` → `"BPE"` with merges from the scores and byte fallback, as the SentencePiece reader does;
+- `bert` → `"WordPiece"` with `BertNormalizer`, `BertPreTokenizer` and `BertProcessing`;
+- `t5` → `"Unigram"` with Precompiled from `tokenizer.ggml.precompiled_charsmap`;
+- `gpt2` stays as it is;
+- any other model fails naming it, with a `TokenizerModels.Register` hint.
+
+The reader also changes: `Gguf.cs` returns uint8 and int8 arrays as `byte[]` and `sbyte[]`, and float32 arrays as
+`float[]`, with `Get<long[]>` and `Get<double[]>` converting for callers that ask for the old types. `FormatVersion`
+(`GgufModel.cs:52`) goes from 1 to 2, so prepared folders are made again.
+
+`tools/gguf/make_fixtures.py` gains tiny `llama`-, `bert`- and `t5`-tokenizer GGUFs made from T0's trained tokenizers.
+
+**Callers**: `TextEncoder` (Idrak.Nlp) pads and masks through `EncodeBatch` when its tokenizer is an
+`IPretrainedTokenizer` (the same vectors, one tokenize pass); `idrak tokenize` gains `--offsets`, `--pair TEXT` and
+`--special`.
+
+**Tests** (`tokenizers: encoding`, `tokenizers: gguf`):
+- offsets, type ids and masks equal the reference for every fixture (BPE included);
+- truncation and padding equal the reference;
+- batch encoding equals single encoding for 1 and many workers;
+- each GGUF fixture gives the ids of the Hugging Face files it was made from;
+- `gguf:` passes with `FormatVersion` 2.
+
+## Phase T4: trainers
+
+**Contract**: `TokenizerTrainingOptions` gains:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `CharacterCoverage` | 0.9995 | share of characters kept in the alphabet |
+| `ByteFallback` | false | add `<0xNN>` pieces |
+| `MaxPieceLength` | 16 | longest piece |
+| `SeedSize` | 1,000,000 | seed vocabulary before pruning |
+| `ShrinkingFactor` | 0.75 | share kept per pruning round |
+| `EmIterations` | 2 | EM steps per round |
+| `SplitDigits` | false | split numbers into digits |
+| `Lowercase`, `StripAccents` | false | WordPiece |
+| `Scoring` | `"frequency"` | WordPiece: `"frequency"` or `"likelihood"` |
+| `Arabic` | none | `"tatweel"`, `"diacritics"`, or both |
+
+The Arabic choices are written into the tokenizer as standard `Replace` normalizers, so Hugging Face can read the file
+too. `TokenizerTrainingProgress` gains the stages `"seeds"`, `"em"` and `"prune"`.
+
+**Unigram trainer** (`UnigramTrainer.cs`, registered as `"unigram"`), SentencePiece's procedure:
+- Seed pieces are frequent substrings, found through a suffix array (SA-IS, in C#) of the corpus.
+- Then EM rounds: an E step of forward-backward over each sentence's lattice, an M step on the expected counts (with
+  SentencePiece's digamma correction), then pruning by loss to `ShrinkingFactor`, until `VocabularySize`.
+- Required characters are added by `CharacterCoverage`.
+- The E step is spread over `Workers`, with per-chunk sums combined in chunk order, so one worker and many give the same
+  vocabulary.
+- It writes `tokenizer.json`, and `tokenizer.model` through `SentencePieceWriter.cs` (the T0 fields, written back).
+
+**WordPiece trainer** (`WordPieceTrainer.cs`, registered as `"wordpiece"`):
+- `"frequency"` follows Hugging Face's `WordPieceTrainer` (BPE merges with the `##` prefix), so its vocabulary is
+  checked exactly, as the BPE trainer's is.
+- `"likelihood"` is the original WordPiece scoring (pair count over the product of the part counts).
+
+**CLI** (`DataTokenizerCommand.cs`):
+- `--model unigram|wordpiece|bpe` picks the built-in trainer; `--trainer NAME` stays for plug-ins, and giving both is
+  refused.
+- New options: `--character-coverage`, `--byte-fallback`, `--max-piece`, `--seed-size`, `--shrinking`, `--em-steps`,
+  `--split-digits`, `--lowercase`, `--strip-accents`, `--scoring`, `--arabic tatweel,diacritics`.
+- The summary loses "(byte-pair encoding)", in English and Arabic.
+- Progress shows each stage, how far it is, the speed and the time left (`ProgressLine`).
+
+**Tests** (`tokenizer training:`, `cli pretrain:`):
+- each trained tokenizer loads back and round-trips the corpus;
+- `wordpiece` with `"frequency"` learns Hugging Face's vocabulary exactly;
+- Unigram's vocabulary overlaps SentencePiece's (trained on the same corpus with the same options) above a threshold
+  measured and recorded here;
+- one worker equals many;
+- the Arabic options strip tatweel and diacritics and Hugging Face reads the file;
+- the CLI refuses `--model` with `--trainer` and bad values, and the `cli polish`, `cli health` and `cli arabic` checks
+  pass.
+
+## Phase T5 (optional): BPE onto the shared pipeline
+
+BPE keeps its own normalizer and pre-tokenizer fast paths until the span pipeline is measured against them: the same ids
+on every fixture (rule 71), and equal or more tokens a second, with no more bytes allocated, on `--bench-text` (cold and
+warm apart, rule 76). If both hold, BPE runs on the pipeline and its duplicate paths are removed (rule 75). If not, the
+numbers go in the Runs table and BPE stays as it is.
+
+---
+
+## Speed and memory
+
+- `--bench-text` (`tests/Idrak.Tests/BenchText.cs`) gains rows for Unigram, WordPiece and SentencePiece-BPE on the
+  corpus: tokens a second (cold and warm apart), bytes allocated per encode once warm (the target is 0 into a reused
+  list), and load time and memory for the largest real vocabulary.
+- The reference speed (`tokenizers`, one thread and all threads) is measured by `make_fixtures.py --bench` on the same
+  corpus and machine. Both go in the Runs table.
+- Load: vocabularies are read from bytes into flat arrays; tries are built once a load. The load time joins the
+  existing tokenizer timing in `PretrainedModel` (`tokenizing`).
+
+## Order and parallelism
+
+L0, L1 and T0 come first, in that order. T0's fixture script and protobuf reader can be written beside L1, at most two
+agents at a time (CLAUDE.md). T1 and T2 can then run in parallel, then T3, then T4. T5 comes last, and only on
+measurement. Each phase follows the owner's fix workflow: fix everything, update the tests it touches, build the changed
+projects once, run its filter once with `--no-build` (CPU here), merge and push to `abstraction`, and hand over the
+owner's commands.
+
+## The owner's runs
+
+Tokenizers run on the CPU, so a phase's GPU list is the end-to-end load only. From `D:\Projects\Idrak`:
+
+```powershell
+# once, after a phase is merged
+dotnet build -c Release tests\Idrak.Tests
+
+# T0 and later: the real models' references (downloads into the cache; writes tests\Idrak.Tests\data\tokenizers\real)
+python -m pip install -r tools\tokenizers\requirements.txt
+python -I tools\tokenizers\make_fixtures.py --real
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "tokenizers real:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+
+# T3: GGUF tokenizers on CUDA, and a T5 and a BERT folder through the CLI
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "gguf:|tokenizers: gguf"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+dotnet run -c Release --project src\Idrak.Cli -- tokenize google-t5/t5-small "Hello, مرحبا 😀" --offsets
+dotnet run -c Release --project src\Idrak.Cli -- tokenize google-bert/bert-base-uncased "Hello, World!" --pair "Second" --special
+# a GGUF whose tokenizer.ggml.model is llama (Llama-2-style), end to end
+dotnet run -c Release --project src\Idrak.Cli -- chat PATH\TO\MODEL.gguf
+
+# speed (T1 and later)
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-text
+python -I tools\tokenizers\make_fixtures.py --bench
+```
+
+## Risks
+
+- **Two references disagree.** `sentencepiece` and `tokenizers` differ on a few inputs for the same model (whitespace
+  runs, some graphemes). Each path is held to its own reference, and the differences are listed, not hidden.
+- **Grapheme rules.** Precompiled works by grapheme cluster; .NET's text elements and Rust's `unicode-segmentation` may
+  disagree on the newest emoji sequences. The corpus has them; a difference is fixed in our segmentation or listed.
+- **Unicode versions.** NFKC data in .NET and in the references can differ for new characters; the fixture manifest
+  records the Unicode versions.
+- **Unigram training equal to SentencePiece** is not a goal (its seeding and pruning have tie orders of their own): the
+  check is overlap above a measured threshold, as the spec says.
+- **The API break** in L0 reaches the samples and plug-ins that name `BpeTokenizer` in a type. `BpeTokenizer` keeps its
+  members, so a cast or the interface fixes each.
+
+## Runs
+
+| Date | Phase | Machine | What | Result |
+|---|---|---|---|---|
+| | | | | |
