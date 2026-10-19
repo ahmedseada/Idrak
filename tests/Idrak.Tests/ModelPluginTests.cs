@@ -160,7 +160,7 @@ internal static partial class Tests
         }
     }
 
-    // A GGUF (version 3) file: metadata (long, double, string, bool and arrays of them) and tensors of raw bytes.
+    // A GGUF (version 3) file: metadata (long, double, string, bool and arrays of them, and float, byte and sbyte arrays) and tensors of raw bytes.
     private static void WriteGguf(string path, IEnumerable<KeyValuePair<string, object>> metadata, IReadOnlyList<(string Name, int Type, long[] Dimensions, byte[] Data)> tensors)
     {
         const int Alignment = 32;
@@ -186,10 +186,13 @@ internal static partial class Tests
                 case long l: w.Write(l); break;
                 case ulong u: w.Write(u); break;
                 case double d: w.Write(d); break;
+                case float f: w.Write(f); break;
+                case byte b: w.Write(b); break;
+                case sbyte b: w.Write(b); break;
                 case string s: Str(s); break;
                 case bool b: w.Write(b); break;
                 case Array a:
-                    w.Write(a switch { string[] => 8u, long[] => 11u, double[] => 12u, bool[] => 7u, _ => throw new NotSupportedException(a.GetType().Name) });
+                    w.Write(a switch { string[] => 8u, long[] => 11u, double[] => 12u, bool[] => 7u, float[] => 6u, byte[] => 0u, sbyte[] => 1u, _ => throw new NotSupportedException(a.GetType().Name) });
                     w.Write((ulong)a.Length);
                     foreach (var item in a)
                     {

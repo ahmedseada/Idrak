@@ -6,9 +6,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 
-// Plan 24, phase T0 (wave 1): the SentencePiece model reader, the protobuf reader under it, and the double-array trie,
-// against the fixtures tools/tokenizers/make_fixtures.py writes (data/tokenizers/README.md).
+// Plan 24, phase T0: the SentencePiece model reader, the protobuf reader under it, the double-array trie (wave 1); the
+// "sentencepiece" tokenizer file reader, the Precompiled normalizer and GGUF's typed arrays (wave 2), against the fixtures
+// tools/tokenizers/make_fixtures.py writes (data/tokenizers/README.md).
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] TokenizerReaderGroup =
@@ -19,6 +21,12 @@ internal static partial class Tests
         ("tokenizers: trie: each fixture's precompiled charsmap reads to the entries an independent Python reader decodes (count, SHA-256) and common-prefix search at every byte of every corpus line equals a brute-force scan", TrieReadsCharsmaps),
         ("tokenizers: trie: a trie built from seeded random keys (one past 2^21 units, so offsets take the far form) and from each fixture's pieces answers exact and common-prefix searches as a brute-force scan; bad keys are refused", TrieBuiltFromKeys),
         ("tokenizers: trie: common-prefix and exact search allocate nothing once warm, on a read and on a built trie", TrieSearchAllocatesNothing),
+        ("tokenizers: sentencepiece: the reader is registered after tokenizer.json; a folder with both reads tokenizer.json unless Format or IDRAK_TOKENIZER_FORMAT names sentencepiece; it finds tokenizer.model, spiece.model, sentencepiece.bpe.model in that order, and a .model file itself", SentencePieceReaderFinds),
+        ("tokenizers: sentencepiece: each fixture's tokenizer.model reads to its tokenizer.json's model: pieces and scores bit for bit, ids, added tokens, unknown and byte fallback, and (bpe) the vocabulary and every merge in order", SentencePieceDefinitionsMatchJson),
+        ("tokenizers: sentencepiece: the bpe fixture from tokenizer.model encodes every corpus line to sentencepiece's ids and decodes to its text, and from tokenizer.json to tokenizers' (the known differences named); saved and loaded again it gives the same ids", SentencePieceBpeEncodes),
+        ("tokenizers: precompiled: every charsmap normalizes every corpus line as tokenizers' Precompiled does (grapheme mode) and, with the reader's whitespace normalizers, as sentencepiece's normalizer does; a tokenizer.json with Precompiled encodes through the BPE pipeline", PrecompiledMatchesReferences),
+        ("tokenizers: precompiled: normalizing allocates nothing but the result once warm, in both modes, and unchanged text comes back as the same string", PrecompiledAllocatesOnlyTheResult),
+        ("tokenizers: gguf arrays: uint8, int8, float32 and float64 arrays read as byte[], sbyte[], float[] and double[], the other integers as long[], strings and bools as before; Get converts to long[] and double[]; an array past the end of the file is refused", GgufTypedArrays),
     ];
 
     private static readonly string[] SentencePieceFixtures = ["unigram", "unigram-bytes", "bpe"];
@@ -532,5 +540,419 @@ internal static partial class Tests
         long result = Pass(matches);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Check(allocated == 0, $"one warm pass of searches over the corpus allocated {allocated} bytes (result {result})");
+    }
+
+    // A fixture's tokenizer.model through the registered "sentencepiece" reader.
+    private static TokenizerDefinition SentencePieceDefinition(string name) =>
+        TokenizerFiles.Get(TokenizerFiles.SentencePiece).Read(TokenizerData($"{name}/tokenizer.model"), new TokenizerOptions());
+
+    // Text with its controls and invisible characters written as \uXXXX, for messages.
+    private static string Escaped(string text) => string.Concat(text.Select(c => c < ' ' || c is >= '\u007F' and <= ' ' or >= ' ' and <= '‏' or '▁'
+        ? $"\\u{(int)c:X4}" : c.ToString()));
+
+    private static void SentencePieceReaderFinds(Device device)
+    {
+        _ = device;
+        var names = TokenizerFiles.Names.ToList();
+        int json = names.IndexOf(TokenizerFiles.TokenizerJson), spm = names.IndexOf(TokenizerFiles.SentencePiece);
+        Check(json >= 0 && spm > json, $"sentencepiece is registered after tokenizer.json (readers: {string.Join(", ", names)})");
+        var reader = TokenizerFiles.Get(TokenizerFiles.SentencePiece);
+        Check(reader.Name == "sentencepiece" && reader.Summary.Contains("tokenizer.model", StringComparison.Ordinal)
+              && TokenizerFiles.Origin(TokenizerFiles.SentencePiece) == TokenizerFiles.Origin(TokenizerFiles.TokenizerJson),
+            $"the reader's name, summary and origin (the library's): {reader.Name}, {reader.Summary}, {TokenizerFiles.Origin(TokenizerFiles.SentencePiece)}");
+
+        static string? Picked(string path, TokenizerOptions? options = null) =>
+            PretrainedTokenizers.Find(path, options) is { } hit ? $"{hit.Reader.Name}:{Path.GetFileName(hit.File)}" : null;
+
+        string folder = TokenizerData("bpe");
+        string? saved = Environment.GetEnvironmentVariable(TokenizerOptions.FormatVariable);
+        string temp = Path.Combine(Path.GetTempPath(), "idrak-spm-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, null);
+            Check(Picked(folder) == "tokenizer.json:tokenizer.json", $"a folder with both files reads tokenizer.json, not {Picked(folder)}");
+            Check(Picked(folder, new TokenizerOptions { Format = TokenizerFiles.SentencePiece }) == "sentencepiece:tokenizer.model",
+                $"Format sentencepiece reads tokenizer.model, not {Picked(folder, new TokenizerOptions { Format = TokenizerFiles.SentencePiece })}");
+            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, "sentencepiece");
+            Check(Picked(folder) == "sentencepiece:tokenizer.model", $"IDRAK_TOKENIZER_FORMAT=sentencepiece reads tokenizer.model, not {Picked(folder)}");
+            Check(Picked(folder, new TokenizerOptions { Format = TokenizerFiles.TokenizerJson }) == "tokenizer.json:tokenizer.json", "the option wins over the variable");
+            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, null);
+
+            Directory.CreateDirectory(temp);
+            Check(Picked(temp) is null, "an empty folder has no tokenizer");
+            File.Copy(TokenizerData("unigram/tokenizer.model"), Path.Combine(temp, "sentencepiece.bpe.model"));
+            Check(Picked(temp) == "sentencepiece:sentencepiece.bpe.model", $"sentencepiece.bpe.model (XLM-R's name), not {Picked(temp)}");
+            File.Copy(TokenizerData("unigram/tokenizer.model"), Path.Combine(temp, "spiece.model"));
+            Check(Picked(temp) == "sentencepiece:spiece.model", $"spiece.model before sentencepiece.bpe.model, not {Picked(temp)}");
+            File.Copy(TokenizerData("unigram/tokenizer.model"), Path.Combine(temp, "tokenizer.model"));
+            Check(Picked(temp) == "sentencepiece:tokenizer.model", $"tokenizer.model first, not {Picked(temp)}");
+            string single = Path.Combine(temp, "custom.model");
+            File.Copy(TokenizerData("bpe/tokenizer.model"), single);
+            Check(Picked(single) == "sentencepiece:custom.model", $"a .model file is read as itself, not {Picked(single)}");
+            Check(Picked(TokenizerData("bpe/tokenizer.json"), new TokenizerOptions { Format = TokenizerFiles.SentencePiece }) is null, "a .json file is no SentencePiece model");
+            Check(PretrainedTokenizers.Read(temp).ModelType == "Unigram" && PretrainedTokenizers.Read(single).ModelType == "BPE"
+                  && PretrainedTokenizers.Load(single).Model == "BPE", "a folder's model and a file's read, and the BPE one loads");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, saved);
+            if (Directory.Exists(temp))
+            {
+                Directory.Delete(temp, recursive: true);
+            }
+        }
+    }
+
+    private static void SentencePieceDefinitionsMatchJson(Device device)
+    {
+        _ = device;
+        static string Added(JsonObject t) => $"{(int)t["id"]!} '{(string)t["content"]!}' special={(bool)t["special"]!} normalized={(bool)t["normalized"]!}";
+        foreach (var name in SentencePieceFixtures)
+        {
+            var model = SentencePieceModel.Load(TokenizerData($"{name}/tokenizer.model"));
+            var ours = SentencePieceDefinition(name);
+            var theirs = TokenizerJsonReader.ReadFile(TokenizerData($"{name}/tokenizer.json"));
+            Check(ours.ModelType == theirs.ModelType && ours.Source.EndsWith("tokenizer.model", StringComparison.Ordinal),
+                $"{name}: model type {ours.ModelType}, the tokenizer.json's {theirs.ModelType}");
+            Check(JsonNode.DeepEquals(ours.Json["model"], theirs.Json["model"]),
+                $"{name}: model {ours.Json["model"]!.ToJsonString()}, the tokenizer.json's {theirs.Json["model"]!.ToJsonString()}");
+
+            // The converters add tokens the .model does not hold (T5's sentinels); every other added token is the model's.
+            var theirAdded = theirs.Json["added_tokens"]!.AsArray().Select(t => t!.AsObject()).ToList();
+            var beyond = theirAdded.Where(t => (int)t["id"]! >= model.Count).Select(t => (string)t["content"]!).ToHashSet(StringComparer.Ordinal);
+            var expected = theirAdded.Where(t => (int)t["id"]! < model.Count).Select(Added).ToList();
+            var actual = ours.Json["added_tokens"]!.AsArray().Select(t => Added(t!.AsObject())).ToList();
+            Check(actual.SequenceEqual(expected), $"{name}: added tokens\n  ours   {string.Join("; ", actual)}\n  theirs {string.Join("; ", expected)}");
+
+            if (ours.ModelType == "Unigram")
+            {
+                var a = ours.Pieces!;
+                var b = theirs.Pieces!;
+                Check(a.Count == model.Count && b.Count == model.Count + beyond.Count, $"{name}: {a.Count} pieces, the tokenizer.json {b.Count} ({beyond.Count} added past the model)");
+                for (int id = 0; id < a.Count; id++)
+                {
+                    Check(a[id].Piece == b[id].Piece && BitConverter.DoubleToInt64Bits(a[id].Score) == BitConverter.DoubleToInt64Bits(b[id].Score),
+                        $"{name}: piece {id} is '{a[id].Piece}' {a[id].Score:R}, the tokenizer.json's '{b[id].Piece}' {b[id].Score:R}");
+                }
+
+                for (int id = a.Count; id < b.Count; id++)
+                {
+                    Check(beyond.Contains(b[id].Piece), $"{name}: the tokenizer.json's piece {id} '{b[id].Piece}' is past the model and no added token");
+                }
+            }
+            else
+            {
+                var a = ours.Vocabulary!;
+                var b = theirs.Vocabulary!;
+                Check(a.Count == model.Count && b.Count == a.Count && a.All(p => b.TryGetValue(p.Key, out int id) && id == p.Value),
+                    $"{name}: {a.Count} vocabulary entries, the tokenizer.json {b.Count}; first different: {a.FirstOrDefault(p => !b.TryGetValue(p.Key, out int id) || id != p.Value)}");
+                var ma = ours.Merges!;
+                var mb = theirs.Merges!;
+                int first = Enumerable.Range(0, Math.Min(ma.Length, mb.Length)).FirstOrDefault(i => ma[i] != mb[i], -1);
+                Check(ma.Length > 0 && ma.Length == mb.Length && first < 0,
+                    $"{name}: {ma.Length} merges, the tokenizer.json {mb.Length}; first different at {first}: {(first >= 0 ? $"{ma[first]} vs {mb[first]}" : "")}");
+            }
+        }
+    }
+
+    private static void SentencePieceBpeEncodes(Device device)
+    {
+        _ = device;
+        string folder = TokenizerData("bpe");
+        var lines = TokenizerCorpusLines();
+        var spm = TokenizerJson("bpe/expected-spm.json")["lines"]!.AsArray();
+        var hf = TokenizerJson("bpe/expected-hf.json")["lines"]!.AsArray();
+        Check(spm.Count == lines.Length && hf.Count == lines.Length, $"{lines.Length} corpus lines, {spm.Count} sentencepiece and {hf.Count} tokenizers references");
+        var known = TokenizerJson("known-differences.json")["differences"]!.AsArray().Select(d => d!.AsObject())
+            .Where(d => (string)d["tokenizer"]! == "bpe").ToDictionary(d => (int)d["line"]!, d => (string)d["text"]!);
+        foreach (var (line, text) in known)
+        {
+            Check(lines[line] == text, $"known-differences.json's bpe line {line} is not corpus line {line}");
+        }
+
+        var fromModel = PretrainedTokenizers.Load(folder, new TokenizerOptions { Format = TokenizerFiles.SentencePiece });
+        var fromJson = PretrainedTokenizers.Load(folder);
+        Check(fromModel.Model == "BPE" && fromJson.Model == "BPE", $"models {fromModel.Model} and {fromJson.Model}");
+
+        string temp = Path.Combine(Path.GetTempPath(), "idrak-spm-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            fromModel.Save(temp);
+            var reloaded = PretrainedTokenizers.Load(temp);
+            var failures = new List<string>();
+            var notes = new List<string>();
+            int matched = 0;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string Line(string who, IReadOnlyList<int> ids, int[] want, string decoded, string wanted) =>
+                    $"line {i} '{Escaped(lines[i])}' from {who}: ids [{string.Join(",", ids)}] decoded '{Escaped(decoded)}'; reference [{string.Join(",", want)}] '{Escaped(wanted)}'";
+
+                // tokenizer.model against sentencepiece.
+                var ids = fromModel.Encode(lines[i]);
+                int[] want = [.. spm[i]!["ids"]!.AsArray().Select(x => (int)x!)];
+                string decoded = fromModel.Decode(ids), wanted = (string)spm[i]!["decoded"]!;
+                bool same = ids.SequenceEqual(want) && decoded == wanted;
+                if (!same)
+                {
+                    (known.ContainsKey(i) ? notes : failures).Add(Line("tokenizer.model", ids, want, decoded, wanted));
+                }
+                else
+                {
+                    matched++;
+                }
+
+                Check(reloaded.Encode(lines[i]).SequenceEqual(ids), $"line {i}: the saved tokenizer.json gives other ids than the tokenizer.model it was saved from");
+
+                // tokenizer.json against tokenizers (the ids without the post-processor's <s>: Encode adds no special tokens).
+                var row = hf[i]!.AsObject();
+                var sequence = row["sequence_ids"]!.AsArray().Select(x => (int)x!).ToArray();
+                int[] wantJson = [.. row["ids"]!.AsArray().Select(x => (int)x!).Where((_, k) => sequence[k] != -1)];
+                var idsJson = fromJson.Encode(lines[i]);
+                string decodedJson = fromJson.Decode(idsJson), wantedJson = (string)row["decoded"]!;
+                if (!idsJson.SequenceEqual(wantJson) || decodedJson != wantedJson)
+                {
+                    (known.ContainsKey(i) ? notes : failures).Add(Line("tokenizer.json", idsJson, wantJson, decodedJson, wantedJson));
+                }
+            }
+
+            Check(failures.Count == 0, $"{failures.Count} lines differ from their reference:\n  {string.Join("\n  ", failures.Take(8))}");
+            Check(matched >= lines.Length - known.Count, $"{matched} of {lines.Length} lines match sentencepiece");
+            foreach (var note in notes)
+            {
+                Console.WriteLine($"    known difference: {note}");
+            }
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+    }
+
+    private static void PrecompiledMatchesReferences(Device device)
+    {
+        _ = device;
+        Check(TokenizerComponents.NormalizerTypes.Contains("Precompiled") && TokenizerComponents.DefaultNormalizer("Precompiled") is not null,
+            $"Precompiled is a built-in normalizer type ({string.Join(", ", TokenizerComponents.NormalizerTypes)})");
+        var lines = TokenizerCorpusLines();
+        int maps = 0;
+        foreach (var name in SentencePieceFixtures)
+        {
+            var model = SentencePieceModel.Load(TokenizerData($"{name}/tokenizer.model"));
+            var reference = TokenizerJson($"{name}/normalized.json")["lines"]!.AsArray();
+            Check(reference.Count == lines.Length, $"{name}: {reference.Count} normalized lines for {lines.Length} corpus lines");
+            var map = model.NormalizerSpec.PrecompiledCharsmap.Length > 0 ? PrecompiledCharsMap.Read(model.NormalizerSpec.PrecompiledCharsmap) : null;
+
+            // The reader's whole normalizer: the charsmap in sentencepiece's mode, then the whitespace normalizers.
+            var normalizer = SentencePieceDefinition(name).Json["normalizer"]!.AsObject();
+            var whole = BpeTokenizer.NormalizerStep(normalizer);
+            var differences = new List<string>();
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var row = reference[i]!.AsObject();
+                Check((string)row["text"]! == lines[i], $"{name}: normalized.json line {i} is not corpus line {i}");
+                if (map is not null && map.NormalizeHuggingFace(lines[i]) is var ours && ours != (string)row["precompiled"]!)
+                {
+                    differences.Add($"line {i}, grapheme mode: '{Escaped(ours)}', tokenizers '{Escaped((string)row["precompiled"]!)}'");
+                }
+
+                if (whole(lines[i]) is var full && full != (string)row["spm"]!)
+                {
+                    differences.Add($"line {i}, sentencepiece's normalizer: '{Escaped(full)}', sentencepiece '{Escaped((string)row["spm"]!)}'");
+                }
+            }
+
+            Check(differences.Count == 0, $"{name}: {differences.Count} differences:\n  {string.Join("\n  ", differences.Take(8))}");
+            maps += map is null ? 0 : 1;
+        }
+
+        Check(maps == 2, $"{maps} fixtures have a charsmap; unigram (nmt_nfkc) and unigram-bytes (a user rule) must");
+
+        // Where the modes part: a mapped letter with a mark after it (أ + fatha; the user rule maps أ to ا).
+        var rule = PrecompiledCharsMap.Read(SentencePieceModel.Load(TokenizerData("unigram-bytes/tokenizer.model")).NormalizerSpec.PrecompiledCharsmap);
+        Check(rule.NormalizeHuggingFace("أَ") == "ا" && rule.NormalizeSentencePiece("أَ") == "اَ"
+              && rule.Normalize("أَ", PrecompiledMode.SentencePiece) == "اَ",
+            $"the grapheme mode drops the mark ('{Escaped(rule.NormalizeHuggingFace("أَ"))}'), sentencepiece's keeps it ('{Escaped(rule.NormalizeSentencePiece("أَ"))}')");
+
+        // A tokenizer.json with Precompiled first, through the BPE pipeline: each line encodes as the same tokenizer without
+        // it encodes the line normalized first (lines with special-token text aside: added tokens are split out before
+        // normalizing). The mode field selects sentencepiece's, and a saved file keeps it.
+        string charsmap = Convert.ToBase64String(SentencePieceModel.Load(TokenizerData("unigram-bytes/tokenizer.model")).NormalizerSpec.PrecompiledCharsmap);
+        BpeTokenizer With(string? mode)
+        {
+            var json = TokenizerJson("bpe/tokenizer.json");
+            var step = new JsonObject { ["type"] = "Precompiled", ["precompiled_charsmap"] = charsmap };
+            if (mode is not null)
+            {
+                step["mode"] = mode;
+            }
+
+            json["normalizer"]!["normalizers"]!.AsArray().Insert(0, step);
+            return BpeTokenizer.FromJson(json);
+        }
+
+        var plain = BpeTokenizer.FromJson(TokenizerJson("bpe/tokenizer.json"));
+        var grapheme = With(null);
+        var sentencePiece = With("sentencepiece");
+        string temp = Path.Combine(Path.GetTempPath(), "idrak-precompiled-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            sentencePiece.Save(temp);
+            var reloaded = PretrainedTokenizers.Load(temp);
+            Check(reloaded.ToJson()["normalizer"]!["normalizers"]![0]!["mode"]?.GetValue<string>() == "sentencepiece", "a saved tokenizer.json keeps the mode");
+            int encoded = 0, differs = 0;
+            foreach (var line in lines)
+            {
+                if (line.Contains("<s>", StringComparison.Ordinal) || line.Contains("</s>", StringComparison.Ordinal) || line.Contains("<unk>", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var a = grapheme.Encode(line);
+                var b = sentencePiece.Encode(line);
+                Check(a.SequenceEqual(plain.Encode(rule.NormalizeHuggingFace(line))), $"grapheme mode through BPE: line '{Escaped(line)}'");
+                Check(b.SequenceEqual(plain.Encode(rule.NormalizeSentencePiece(line))) && reloaded.Encode(line).SequenceEqual(b), $"sentencepiece mode through BPE: line '{Escaped(line)}'");
+                encoded++;
+                differs += a.SequenceEqual(b) ? 0 : 1;
+            }
+
+            Check(encoded > 90 && differs > 0, $"{encoded} lines encoded, {differs} where the modes give other ids (some must)");
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+
+        Expect<InvalidDataException>(() => PrecompiledCharsMap.Step(new JsonObject { ["type"] = "Precompiled", ["precompiled_charsmap"] = charsmap, ["mode"] = "nfkc" }),
+            "\"sentencepiece\" or \"huggingface\"", "an unknown mode");
+        Expect<InvalidDataException>(() => PrecompiledCharsMap.Step(new JsonObject { ["type"] = "Precompiled" }), "no precompiled_charsmap", "a missing charsmap");
+        Check(PrecompiledCharsMap.Step(new JsonObject { ["type"] = "Precompiled", ["precompiled_charsmap"] = "" })("x y") == "x y", "an empty charsmap changes nothing");
+    }
+
+    private static void PrecompiledAllocatesOnlyTheResult(Device device)
+    {
+        _ = device;
+        var lines = TokenizerCorpusLines();
+        foreach (var name in new[] { "unigram", "unigram-bytes" })
+        {
+            var map = PrecompiledCharsMap.Read(SentencePieceModel.Load(TokenizerData($"{name}/tokenizer.model")).NormalizerSpec.PrecompiledCharsmap);
+            foreach (var mode in new[] { PrecompiledMode.HuggingFace, PrecompiledMode.SentencePiece })
+            {
+                var results = new string[lines.Length];
+                for (int warm = 0; warm < 30; warm++)
+                {
+                    for (int i = 0; i < lines.Length; i++)
+                    {
+                        results[i] = map.Normalize(lines[i], mode);
+                    }
+                }
+
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    results[i] = map.Normalize(lines[i], mode);
+                }
+
+                long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                long allowed = 0;
+                int unchanged = 0;
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (ReferenceEquals(results[i], lines[i]))
+                    {
+                        unchanged++;
+                    }
+                    else
+                    {
+                        allowed += 32 + 2L * results[i].Length;           // one string: its header and characters
+                    }
+                }
+
+                Check(allocated <= allowed, $"{name}, {mode}: a warm pass allocated {allocated} bytes; its {lines.Length - unchanged} new strings take at most {allowed}");
+                Check(unchanged > 0, $"{name}, {mode}: no line came back as the same string");
+            }
+        }
+    }
+
+    private static void GgufTypedArrays(Device device)
+    {
+        _ = device;
+        string path = Path.Combine(Path.GetTempPath(), $"idrak-gguf-arrays-{Guid.NewGuid():N}.gguf");
+        string cut = Path.ChangeExtension(path, ".cut.gguf");
+        try
+        {
+            using (var stream = File.Create(path))
+            using (var w = new BinaryWriter(stream, Encoding.UTF8))
+            {
+                void Str(string s)
+                {
+                    var bytes = Encoding.UTF8.GetBytes(s);
+                    w.Write((ulong)bytes.Length);
+                    w.Write(bytes);
+                }
+
+                void Items(string key, uint type, int count, Action write)
+                {
+                    Str(key);
+                    w.Write(9u);
+                    w.Write(type);
+                    w.Write((ulong)count);
+                    write();
+                }
+
+                w.Write("GGUF"u8);
+                w.Write(3u);
+                w.Write(0UL);                                   // tensors
+                w.Write(13UL);                                  // metadata entries
+                Items("t.u8", 0, 4, () => { foreach (byte b in new byte[] { 0, 1, 128, 255 }) { w.Write(b); } });
+                Items("t.i8", 1, 3, () => { foreach (sbyte b in new sbyte[] { -128, -1, 127 }) { w.Write(b); } });
+                Items("t.f32", 6, 3, () => { foreach (float f in new[] { 1.5f, -0.25f, float.MaxValue }) { w.Write(f); } });
+                Items("t.f64", 12, 2, () => { w.Write(0.1); w.Write(-2.5); });
+                Items("t.i32", 5, 3, () => { w.Write(-7); w.Write(0); w.Write(int.MaxValue); });
+                Items("t.u16", 2, 2, () => { w.Write((ushort)1); w.Write(ushort.MaxValue); });
+                Items("t.i16", 3, 2, () => { w.Write(short.MinValue); w.Write((short)5); });
+                Items("t.u32", 4, 1, () => w.Write(uint.MaxValue));
+                Items("t.i64", 11, 1, () => w.Write(long.MinValue));
+                Items("t.u64", 10, 1, () => w.Write(ulong.MaxValue));
+                Items("t.bool", 7, 3, () => { w.Write((byte)1); w.Write((byte)0); w.Write((byte)2); });
+                Items("t.str", 8, 2, () => { Str("a"); Str("héllo"); });
+                Items("t.empty", 0, 0, () => { });
+            }
+
+            using (var file = GgufFile.Open(path))
+            {
+                var m = file.Metadata;
+                // Exact types: the CLR lets a byte[] pass an "is sbyte[]" test and back.
+                Check(m["t.u8"].GetType() == typeof(byte[]) && ((byte[])m["t.u8"]).SequenceEqual(new byte[] { 0, 1, 128, 255 }), $"uint8 → byte[] ({m["t.u8"].GetType().Name})");
+                Check(m["t.i8"].GetType() == typeof(sbyte[]) && ((sbyte[])m["t.i8"]).SequenceEqual(new sbyte[] { -128, -1, 127 }), $"int8 → sbyte[] ({m["t.i8"].GetType().Name})");
+                Check(m["t.f32"] is float[] f32 && f32.SequenceEqual([1.5f, -0.25f, float.MaxValue]), $"float32 → float[] ({m["t.f32"].GetType().Name})");
+                Check(m["t.f64"] is double[] f64 && f64.SequenceEqual([0.1, -2.5]), $"float64 → double[] ({m["t.f64"].GetType().Name})");
+                Check(m["t.i32"] is long[] i32 && i32.SequenceEqual([-7L, 0, int.MaxValue]), "int32 → long[]");
+                Check(m["t.u16"] is long[] u16 && u16.SequenceEqual([1L, ushort.MaxValue]) && m["t.i16"] is long[] i16 && i16.SequenceEqual([(long)short.MinValue, 5]), "16-bit → long[]");
+                Check(m["t.u32"] is long[] u32 && u32[0] == uint.MaxValue && m["t.i64"] is long[] i64 && i64[0] == long.MinValue && m["t.u64"] is long[] u64 && u64[0] == -1, "32- and 64-bit → long[]");
+                Check(m["t.bool"] is bool[] flags && flags.SequenceEqual([true, false, true]), "bool → bool[]");
+                Check(m["t.str"] is string[] strings && strings.SequenceEqual(["a", "héllo"]), "string → string[]");
+                Check(m["t.empty"].GetType() == typeof(byte[]) && ((byte[])m["t.empty"]).Length == 0, "an empty uint8 array");
+                Check(file.Get<long[]>("t.u8", []).SequenceEqual([0L, 1, 128, 255]) && file.Get<long[]>("t.i8", []).SequenceEqual([-128L, -1, 127])
+                      && file.Get<long[]>("t.i32", []).SequenceEqual([-7L, 0, int.MaxValue]), "Get<long[]> converts byte[] and sbyte[]");
+                Check(file.Get<double[]>("t.f32", []).SequenceEqual([1.5, -0.25, (double)float.MaxValue]) && file.Get<double[]>("t.f64", []).SequenceEqual([0.1, -2.5]),
+                    "Get<double[]> converts float[]");
+                Check(ReferenceEquals(file.Get<float[]>("t.f32", []), m["t.f32"]) && ReferenceEquals(file.Get<byte[]>("t.u8", []), m["t.u8"])
+                      && ReferenceEquals(file.Get<sbyte[]>("t.i8", []), m["t.i8"]), "the typed arrays as they are");
+                Check(file.Get<sbyte[]>("t.u8", []).Length == 0 && file.Get<byte[]>("t.i8", []).Length == 0, "a uint8 array is no sbyte[] and an int8 array no byte[]");
+                Check(file.Get("t.u8", -1) == 0 && file.Get("t.i8", 0) == -128 && file.Get("t.i32", 0) == -7, "a per-layer int from an array: the first");
+            }
+
+            // An array whose count runs past the end of the file.
+            var bytes = File.ReadAllBytes(path);
+            int at = bytes.AsSpan().IndexOf("t.u8"u8) + 4 + 4 + 4;                 // the key, then the array's type and item type
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(at), 1UL << 40);
+            File.WriteAllBytes(cut, bytes);
+            Expect<InvalidDataException>(() => GgufFile.Open(cut).Dispose(), "does not fit", "an array past the end of the file");
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(cut);
+        }
     }
 }
