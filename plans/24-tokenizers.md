@@ -9,9 +9,9 @@ L0, L1, T0 and T2 are built and CPU-checked; T1 is in progress. Closes plug-in g
 | L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Done; CPU pass (155 tests) |
 | L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Done; CPU pass |
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
-| T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
+| T1 | Unigram: encode, decode, byte fallback, sampling | In progress (agent B) |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
-| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Planned |
+| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection done (T0, T2); GGUF `llama` / `bert` in progress; encodings and `t5` after T1 |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
 | T5 | BPE onto the shared span pipeline (only if measured equal or faster) | Planned, optional |
 
