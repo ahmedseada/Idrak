@@ -3394,6 +3394,17 @@ public static class Idrak.Abstraction.Generation.TokenSamplers
   public static void Register(string name, System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> create)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed class Idrak.Abstraction.Generation.TokenizerEncoding
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public TokenizerEncoding()
+  public int Count { get; }
+  public required (int, int)[] Offsets { get; init; }
+  public required int[] AttentionMask { get; init; }
+  public required int[] Ids { get; init; }
+  public required int[] SequenceIds { get; init; }
+  public required int[] SpecialTokensMask { get; init; }
+  public required int[] TypeIds { get; init; }
+  public static Idrak.Abstraction.Generation.TokenizerEncoding Of(int[] ids, (int, int)[] offsets, int sequence = 0, int typeId = 0)
+
 public static class Idrak.Abstraction.Generation.Tokenizers
   public static Idrak.Abstraction.Generation.ITokenizer Load(System.IO.Stream stream)
   public static Idrak.Abstraction.Generation.ITokenizer Load(string path)
