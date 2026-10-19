@@ -97,24 +97,22 @@ public static class TokenizerComponents
     // The types the BPE tokenizer runs itself, with their library defaults as components: what an app's component of
     // the same type falls back to or is compared with.
     private static readonly SlotTable<string, Func<JsonObject, ITokenizerNormalizer>> Normalizers = BuiltIn<ITokenizerNormalizer>(
-        "TokenizerComponents.Normalizers", ["Sequence", "NFC", "NFKC", "NFD", "NFKD", "Prepend", "Replace", "Lowercase", "Strip", "Precompiled"],
+        "TokenizerComponents.Normalizers", ["Sequence", "NFC", "NFKC", "NFD", "NFKD", "Prepend", "Replace", "Lowercase", "Strip", "BertNormalizer", "Precompiled"],
         spec => new Normalizer(BpeTokenizer.NormalizerStep(spec), SpanComponents.BuiltInNormalizer(spec)),
         (slot, app, library) => new GuardedNormalizer(slot, app, library));
 
     private static readonly SlotTable<string, Func<JsonObject, IPreTokenizer>> PreTokenizers = BuiltIn<IPreTokenizer>(
-        "TokenizerComponents.PreTokenizers", ["Sequence", "Split", "ByteLevel", "Metaspace", "Digits", "Whitespace", "WhitespaceSplit", "Punctuation"],
+        "TokenizerComponents.PreTokenizers", ["Sequence", "Split", "ByteLevel", "Metaspace", "Digits", "Whitespace", "WhitespaceSplit", "Punctuation", "BertPreTokenizer"],
         spec => new PreTokenizer(BpeTokenizer.PreTokenizerStage(spec), SpanComponents.BuiltInPreTokenizer(spec)),
         (slot, app, library) => new GuardedPreTokenizer(slot, app, library));
 
     private static readonly SlotTable<string, Func<JsonObject, ITokenizerDecoder>> Decoders = BuiltIn<ITokenizerDecoder>(
-        "TokenizerComponents.Decoders", ["Sequence", "ByteLevel", "Replace", "ByteFallback", "Fuse", "Strip", "Metaspace"],
+        "TokenizerComponents.Decoders", ["Sequence", "ByteLevel", "Replace", "ByteFallback", "Fuse", "Strip", "Metaspace", "WordPiece"],
         spec => new Decoder(BpeTokenizer.DecoderStage(spec)),
         (slot, app, library) => new GuardedDecoder(slot, app, library));
 
-    // No post-processor is built in yet (plan 24, T2 adds TemplateProcessing, BertProcessing, RobertaProcessing).
     private static readonly SlotTable<string, Func<JsonObject, ITokenizerPostProcessor>> PostProcessors = BuiltIn<ITokenizerPostProcessor>(
-        "TokenizerComponents.PostProcessors", [],
-        spec => throw new NotSupportedException($"Tokenizer post-processor '{spec["type"]}' is not built in."),
+        "TokenizerComponents.PostProcessors", Idrak.Models.PostProcessors.Types, Idrak.Models.PostProcessors.BuiltIn,
         (slot, app, library) => new GuardedPostProcessor(slot, app, library));
 
     // A table of the built-in types ("TokenizerComponents.Normalizers": its policy is set by SetNormalizerPolicy). An app's

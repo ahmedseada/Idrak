@@ -1,19 +1,19 @@
 # Plan 24: Unigram (SentencePiece) and WordPiece tokenizers, built in
 
 **Status (2026-10-19, `abstraction`):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against e53acb8.
-Wave 1 is built and CPU-checked: L0, and T0's standalone part (fixtures, protobuf and SentencePiece readers, trie). Closes plug-in gap 11
+L0, L1, T0 and T2 are built and CPU-checked; T1 is in progress. Closes plug-in gap 11
 ([plug-in.md](plug-in.md), "Only BPE tokenizer models").
 
 | Phase | What | State |
 |---|---|---|
 | L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Done; CPU pass (155 tests) |
 | L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Done; CPU pass |
-| T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Wave 1 part done (fixtures, readers, trie); CPU pass. Left: the reader registered, Precompiled |
-| T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
-| T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Planned |
-| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Planned |
+| T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
+| T1 | Unigram: encode, decode, byte fallback, sampling | In progress (agent B) |
+| T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
+| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection and GGUF done, CPU pass (`t5` encodes once T1 lands); encodings in progress |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
-| T5 | BPE onto the shared span pipeline (only if measured equal or faster) | Planned, optional |
+| T5 | BPE onto the shared span pipeline (only if measured equal or faster) | On hold: not started until the owner decides (2026-10-19) |
 
 ## Goal
 
@@ -442,6 +442,37 @@ lists every file. What the plan did not know:
   It downloads into `IDRAK_CACHE\tokenizers\<org>--<name>\`, or `~/.cache/idrak` when `IDRAK_CACHE` is unset, and
   writes only `tests\Idrak.Tests\data\tokenizers\real\<name>.json`.
 
+**T0, the rest, as built (2026-10-19)** (agent B, merged with L1, then with T2):
+- **The "sentencepiece" reader** (`TokenizerFiles.SentencePiece`, asked after tokenizer.json and before vocab.txt):
+  - Unigram and BPE models are read; WORD and CHAR models fail naming the type.
+  - BPE merges come by the `generate_merges` rule.
+  - The definition writes sentencepiece's normalizer as standard steps: Precompiled in sentencepiece's mode, Replace
+    `\A +`→"", Replace `" {2,}"`→" ", Prepend ▁, Replace " "→▁, Replace `(?:▁)+\z`→"", and a suffix rule for
+    `treat_whitespace_as_suffix` (implemented, but no fixture covers it).
+  - The pre-tokenizer is `Metaspace` (prepend never, split) only when no piece holds ▁ past its first character.
+  - A leading `Replace <unk>→" ⁇ "` in the decoder gives sentencepiece's unknown text.
+  - No post-processor, since sentencepiece adds no BOS or EOS.
+- **Evidence:** the C#-made definitions, saved as tokenizer.json and run through Python `tokenizers`, give
+  sentencepiece's ids and text on every line not in `known-differences.json`: unigram 99/102, unigram-bytes 97/102,
+  bpe 100/102.
+- **Precompiled** (`PrecompiledCharsMap`, string and span forms):
+  - Two modes: Hugging Face's (by grapheme) and sentencepiece's, chosen by `"mode": "sentencepiece"` on the normalizer.
+    `tokenizers.Tokenizer.from_str` accepts the extra field and drops it when it saves, so files stay loadable.
+  - Both modes equal `normalized.json` on every line.
+  - There were no .NET-vs-Rust grapheme differences on the corpus.
+  - Text that does not change comes back as the same string.
+- **Other changes:**
+  - `Prepend` leaves an empty text empty, as `tokenizers` does (string and span).
+  - `DoubleArrayTrie` gained `ShortestPrefix` and `LongestPrefix`.
+- **GGUF:**
+  - uint8 and int8 arrays are read as `byte[]` and `sbyte[]`, float32 as `float[]`, with `Get<long[]>` and
+    `Get<double[]>` converting.
+  - A real bug was found and fixed: the runtime treats `byte[]` and `sbyte[]` alike, so int8 arrays were read as
+    unsigned.
+  - Numeric arrays are read in one block. `FormatVersion` is unchanged: prepared files did not change.
+- **After both merges:** one build, `tokenizers:`, `gguf:`, `plugins:`, `pretrained:`, `tokenizer training:`,
+  `override loop:`, `public API` and `inventory`: 76 passed, 0 failed.
+
 ## Phase T1: Unigram
 
 **Model** (`UnigramTokenizer.cs`, registered as `"Unigram"`), from `model.vocab` (pieces and scores), `unk_id` and
@@ -563,6 +594,44 @@ write.
 - `[CLS] … [SEP]` and pair type ids equal the reference;
 - `plugins:` passes with the new count.
 
+**T2 as built (2026-10-19).** As planned, with these differences and findings:
+- **BERT components** (`BertComponents`), each with one span implementation that the string form runs:
+  - `BertNormalizer`, matching `tokenizers`, which the probe in the reference venv showed:
+    - `clean_text` drops U+0000, U+FFFD and categories Cc, Cf and Co, but not Cn: an unassigned U+0378 is kept;
+    - whitespace becomes a space;
+    - CJK ideographs get a space on each side, both spaces standing for the ideograph;
+    - `strip_accents` is NFD without the Mn marks, and when null it follows `lowercase`.
+  - `BertPreTokenizer`: WhitespaceSplit, then Punctuation (Isolated).
+  - The `WordPiece` decoder: the `##` prefix is stripped from tokens after the first, others get a space, and
+    `tokenizers`' cleanup runs on each token.
+- **No `Prepend` decoder:** the plan named one, but `tokenizers` has no such decoder type, so none was added.
+- **Lowercase bug fixed:** `tokenizers` lowercases with Rust's `char::to_lowercase`, which turns İ (U+0130) into i
+  plus U+0307. .NET's invariant mapping leaves İ unchanged, so `Lowercase` (string and span) and `BertNormalizer` now
+  map İ as Rust does. The L0 BPE baseline is unchanged.
+- **The `WordPiece` model** (`WordPieceTokenizer`, registered as `TokenizerModels.WordPiece`):
+  - Two `DoubleArrayTrie`s: word-initial entries, and continuation entries without their prefix. The longest match is
+    the last entry of one common-prefix walk, so there is no `"##" + piece` string and no allocation.
+  - Word ids are cached by span (`PieceCacheLimit`).
+  - `MaxInputCharsPerWord` / `IDRAK_TOKENIZER_MAX_WORD_CHARS`.
+  - Added tokens are matched first, as BPE matches them. `normalized`, `lstrip`, `rstrip` and `single_word` are not
+    honoured yet, as in BPE; T3 adds them where the references need it.
+- **Post-processors** (`PostProcessors`, the table's built-ins): `TemplateProcessing`, `BertProcessing`,
+  `RobertaProcessing` (pair type ids 1, as `tokenizers` sets them), `ByteLevel` (no tokens; T3 trims its offsets) and
+  `Sequence` (offset-only processors, then at most one that adds tokens).
+- **The `vocab.txt` reader** (`TokenizerFiles.VocabTxt`): it reads `vocab.txt` and `tokenizer_config.json` into the
+  definition `BertConverter` writes. A byte-order mark stays in the first token, as transformers reads it, and a token
+  that repeats takes its later id.
+- **Results (CPU):** both fixtures' `tokenizer.json` match `tokenizers` on all 102 corpus lines and on the pairs:
+  - ids with the post-processor's special tokens, type ids, special-tokens mask and sequence ids;
+  - decoded text with special tokens, and without them (special ids left out, as `skip_special_tokens` does);
+  - `vocab.txt` gives the same ids and special tokens on every line;
+  - the pretrained tokenizer suite passes, a saved tokenizer loads back to the same ids, and a warm encode allocates 0
+    bytes on Latin, Arabic, CJK and upper-case text.
+  - Text with accents to strip goes through NFD, and so through the platform's normalization (L1's candidate).
+- **Run:** `tokenizers:`, `plugins:`, `pretrained:`, `tokenizer training:`, `override loop:`, `public API`, `inventory`
+  gave 66 passed and 1 failed. The failure was a test comparing with the reference's `decoded`, which skips special
+  tokens (`[UNK]` among them); the test was fixed and its filter reran: 5 passed.
+
 ## Phase T3: encodings, detection, GGUF
 
 **Encoding** (`src/Idrak.Abstraction/Generation/Tokenizer.cs`):
@@ -610,6 +679,29 @@ The reader also changes: `Gguf.cs` returns uint8 and int8 arrays as `byte[]` and
 (`GgufModel.cs:52`) goes from 1 to 2, so prepared folders are made again.
 
 `tools/gguf/make_fixtures.py` gains tiny `llama`-, `bert`- and `t5`-tokenizer GGUFs made from T0's trained tokenizers.
+
+**T3, GGUF, as built (2026-10-19).**
+- **A registry, `GgufTokenizers`** (decision 10), by `tokenizer.ggml.model`. It replaces the fixed `gpt2` check, and an
+  unknown model fails with "not registered … GgufTokenizers.Register". Built-ins (`GgufTokenizerFormats`):
+  - **`gpt2`:** the old code moved as it was.
+  - **`llama` and `t5`:** the GGUF's pieces, scores, token types, special ids, `add_space_prefix`,
+    `remove_extra_whitespaces` (default false for llama, true for t5) and `precompiled_charsmap` are written back as the
+    SentencePiece `ModelProto` they came from (`SentencePieceWriter`, which T4 extends). That is read as a
+    tokenizer.model is, so a GGUF and its tokenizer.model give one tokenizer.
+  - **`bert`:** llama.cpp's "phantom space" pieces are turned back (▁x → x, x → ##x, [X] kept), with the special tokens
+    by their ids, through the definition the vocab.txt reader writes (`VocabTxtReader.BertDefinition`, shared).
+    GGUF does not record lowercasing; it lowercases and strips accents, as llama.cpp's tokenizer does, and says so in
+    a note.
+- **Prepared tokenizer.json:** written from the definition (`TokenizerJsonReader.Write`). `FormatVersion` 2, so cached
+  prepared folders are made again.
+- **Tests** (`tokenizers: gguf`, GGUF files written by the test):
+  - a llama GGUF made from the bpe fixture writes the tokenizer.json its tokenizer.model reads to, byte for byte, and
+    encodes and decodes every corpus line as it;
+  - t5 GGUFs made from unigram and unigram-bytes write identical tokenizer.json files;
+  - a bert GGUF in llama.cpp's form gives tokenizer.json's ids on every line;
+  - an unknown tokenizer fails, and an app's converter is used, then unregistered.
+- **Run (CPU):** `tokenizers:`, `gguf:`, `plugins:`, `pretrained:`, `public API`, `inventory`: 66 passed, 0 failed.
+- **Owner:** a real Llama-2-style GGUF (`tokenizer.ggml.model` llama) end to end, see "The owner's runs".
 
 **Callers**: `TextEncoder` (Idrak.Nlp) pads and masks through `EncodeBatch` when its tokenizer is an
 `IPretrainedTokenizer` (the same vectors, one tokenize pass); `idrak tokenize` gains `--offsets`, `--pair TEXT` and
@@ -676,6 +768,9 @@ too. `TokenizerTrainingProgress` gains the stages `"seeds"`, `"em"` and `"prune"
 
 ## Phase T5 (optional): BPE onto the shared pipeline
 
+**On hold (the owner, 2026-10-19):** not started, measured or scheduled until the owner settles on it. No agent takes it as
+ready work.
+
 BPE keeps its own normalizer and pre-tokenizer fast paths until the span pipeline is measured against them: the same ids
 on every fixture (rule 71), and equal or more tokens a second, with no more bytes allocated, on `--bench-text` (cold and
 warm apart, rule 76). If both hold, BPE runs on the pipeline and its duplicate paths are removed (rule 75). If not, the
@@ -704,7 +799,7 @@ At most two agents at a time (CLAUDE.md), each in its own worktree, building onl
 | 3 | T1 (Unigram; Precompiled's alignments on L1) | T2 (WordPiece, BERT components, post-processors, `vocab.txt`) |
 | 4 | T3a: encodings, offsets, pairs, batch | T3b: detection, GGUF `llama` / `bert` / `t5`, GGUF fixtures |
 | 5 | T4: the Unigram trainer, `SentencePieceWriter` | T4: the WordPiece trainer, then the CLI |
-| 6 | T5 (optional, measured) | none |
+| 6 | T5: on hold until the owner decides | none |
 
 The table is a dependency order, not a barrier (the owner, 2026-10-19): the moment an agent finishes, its slot takes
 the next work whose inputs are merged, without waiting for the other slot. Work that needs only wave 1 and can start

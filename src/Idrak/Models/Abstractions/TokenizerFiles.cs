@@ -31,9 +31,9 @@ public interface ITokenizerFileReader
 /// <summary>
 /// The tokenizer file readers, by name; <see cref="PretrainedTokenizers"/> asks them in registration order (the built-in
 /// ones first) for the file of a model folder. Built in: "tokenizer.json" (Hugging Face's, any model type), then
-/// "sentencepiece" (a SentencePiece model: tokenizer.model, spiece.model or sentencepiece.bpe.model), so a folder with
-/// both reads its tokenizer.json unless <see cref="TokenizerOptions.Format"/> names the other. Others plug in with
-/// <see cref="Register"/>.
+/// "sentencepiece" (a SentencePiece model: tokenizer.model, spiece.model or sentencepiece.bpe.model), then "vocab.txt"
+/// (BERT's, with tokenizer_config.json), so a folder with several reads its tokenizer.json unless
+/// <see cref="TokenizerOptions.Format"/> names another. Others plug in with <see cref="Register"/>.
 /// </summary>
 public static class TokenizerFiles
 {
@@ -45,6 +45,9 @@ public static class TokenizerFiles
     /// whose tokenizer encodes as the sentencepiece library does.
     /// </summary>
     public const string SentencePiece = "sentencepiece";
+
+    /// <summary>The BERT-style vocab.txt reader (with tokenizer_config.json).</summary>
+    public const string VocabTxt = "vocab.txt";
 
     private static readonly SlotTable<string, ITokenizerFileReader> Table = new(nameof(TokenizerFiles), comparer: StringComparer.OrdinalIgnoreCase,
         unguarded: "a reader's definition is its own file's, so another reader cannot give the same one");

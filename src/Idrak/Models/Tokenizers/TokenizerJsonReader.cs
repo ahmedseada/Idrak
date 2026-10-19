@@ -101,6 +101,90 @@ internal sealed class TokenizerJsonReader : ITokenizerFileReader
         return new TokenizerDefinition { Source = path, Json = rest, Vocabulary = vocabulary, Pieces = pieces, Merges = merges };
     }
 
+    // Writes a definition as a tokenizer.json (UTF-8, indented): its JSON, with the model's vocabulary (an object of token to
+    // id in id order, or a list of [piece, score]) and merges ([left, right] pairs in rank order) written back in.
+    internal static void Write(TokenizerDefinition definition, string path)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
+        var options = new JsonWriterOptions { Indented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        using var writer = new Utf8JsonWriter(stream, options);
+        writer.WriteStartObject();
+        foreach (var (name, value) in definition.Json)
+        {
+            writer.WritePropertyName(name);
+            if (name != "model" || value is not JsonObject model)
+            {
+                if (value is null)
+                {
+                    writer.WriteNullValue();
+                }
+                else
+                {
+                    value.WriteTo(writer);
+                }
+
+                continue;
+            }
+
+            writer.WriteStartObject();
+            foreach (var (field, fieldValue) in model)
+            {
+                writer.WritePropertyName(field);
+                if (fieldValue is null)
+                {
+                    writer.WriteNullValue();
+                }
+                else
+                {
+                    fieldValue.WriteTo(writer);
+                }
+            }
+
+            if (definition.Vocabulary is { } vocabulary)
+            {
+                writer.WriteStartObject("vocab");
+                foreach (var (token, id) in vocabulary.OrderBy(p => p.Value))
+                {
+                    writer.WriteNumber(token, id);
+                }
+
+                writer.WriteEndObject();
+            }
+            else if (definition.Pieces is { } pieces)
+            {
+                writer.WriteStartArray("vocab");
+                foreach (var (piece, score) in pieces)
+                {
+                    writer.WriteStartArray();
+                    writer.WriteStringValue(piece);
+                    writer.WriteNumberValue(score);
+                    writer.WriteEndArray();
+                }
+
+                writer.WriteEndArray();
+            }
+
+            if (definition.Merges is { } merges)
+            {
+                writer.WriteStartArray("merges");
+                foreach (var (left, right) in merges)
+                {
+                    writer.WriteStartArray();
+                    writer.WriteStringValue(left);
+                    writer.WriteStringValue(right);
+                    writer.WriteEndArray();
+                }
+
+                writer.WriteEndArray();
+            }
+
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndObject();
+    }
+
     private static int CountProperties(JsonElement element)
     {
         int count = 0;
