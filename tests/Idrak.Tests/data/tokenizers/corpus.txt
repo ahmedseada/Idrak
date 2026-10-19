@@ -1,0 +1,102 @@
+اَلْعِلْمُ نُورٌ وَالْجَهْلُ ظَلَامٌ.
+كَتَبَ الطَّالِبُ الدَّرْسَ فِي الدَّفْتَرِ، ثُمَّ قَرَأَهُ عَلَى مُعَلِّمِهِ.
+ذَهَبَ الْوَلَدُ إِلَى الْمَدْرَسَةِ صَبَاحًا وَعَادَ مَسَاءً.
+هٰذَا كِتَابٌ جَدِيدٌ، وَذٰلِكَ قَلَمٌ قَدِيمٌ.
+العلم نور والجهل ظلام. كتب الطالب الدرس في الدفتر.
+مـــرحـــبـــا بـكـم في الـمـكـتـبـة الـعـامـة
+الســـــــلام عليكم ورحمة الله ـ وبركاته ـــ
+ـــــــــــــــــــــــــــــــــــــــــــــــــ
+سعر الكتاب 25.50 ريال، ورقم الطلب ORD-2024-0917 بتاريخ 2024/09/17.
+اتصل على +966 50 123 4567 أو راسلنا عبر support@example.com قبل الساعة 10:30 صباحًا.
+العدد ١٢٣٤٥ بالأرقام العربية الهندية، و۱۲۳۴۵ بالأرقام الفارسية، و12345 بالأرقام الغربية.
+يعمل Windows 11 على معالج Intel Core i7-12700H بذاكرة 16GB و SSD سعته 512GB.
+‏نص من اليمين‏ then English ‎left to right‎ ثم عربي مرة أخرى.
+‫تضمين من اليمين‬ and ⁧عزل من اليمين⁩ with ⁦isolated LTR⁩.
+النسبة 45% من 1,250,000 ريال = 562,500 ريال (تقريبًا).
+👍🏽 👋🏿 🙏🏻 👌🏼 ✊🏾 thumbs up with skin tones
+🇸🇦 🇪🇬 🇯🇵 🇺🇸 🇫🇷 🏴󠁧󠁢󠁳󠁣󠁴󠁿 🏴‍☠️ flags
+👨‍👩‍👧‍👦 👩🏽‍💻 🧑🏿‍🚀 🏳️‍🌈 ❤️‍🔥 🐦‍🔥 🍋‍🟩 family, coder, astronaut, rainbow, fire
+1️⃣ 2️⃣ #️⃣ *️⃣ ☺️ ✌️ ☀︎ keycaps and variation selectors
+مرحبا 😀 بالعالم 🌍! Hello 😀 world 🌍! 你好😀世界🌍
+🫠🫨🥹🫶🏽😶‍🌫️😮‍💨🤌🏻
+今天天气很好，我们去公园散步吧。
+机器学习是人工智能的一个分支，它让计算机从数据中学习。
+東京は日本の首都です。ひらがなとカタカナと漢字を使います。
+안녕하세요, 만나서 반갑습니다. 한국어는 한글로 씁니다.
+ＡＢＣ１２３！ｶﾀｶﾅ ﾃｽﾄ　全角スペース　と半角
+𠜎𠜱𠝹𠱓 are characters outside the Basic Multilingual Plane, 𝐀𝐁𝐂 𝔘𝔫𝔦𝔠𝔬𝔡𝔢 too.
+Café, naïve, façade, coöperate, résumé, Ångström, Øresund, Straße, Ærø, señor, São Paulo.
+Café, naïve, façade, résumé, Ångström (decomposed).
+Tiếng Việt có dấu thanh: à á ả ã ạ, ầ ấ ẩ ẫ ậ, ừ ứ ử ữ ự.
+Z͑ͫ̓a̐̂l͒g̈́o̧ t͡e̕x̢t stacks combining marks.
+नमस्ते दुनिया, यह हिंदी में एक वाक्य है।
+สวัสดีครับ ภาษาไทยไม่มีช่องว่างระหว่างคำ
+שָׁלוֹם עוֹלָם, עברית עם ניקוד ובלי ניקוד.
+ﬁ ﬂ ﬃ ligatures, ① ② ③ circled, ㎏ ㎞ ㎡ squared, ½ ¼ fractions, Ⅻ roman, ™ © ®.
+­ soft­hyphen and ﬁ and Ⓐⓑ and Ａ.
+many     spaces   between    words
+   leading and trailing spaces   
+col1	col2		col4	
+		tabs first
+100 km and 50 kg, en space em space thin space hair space.
+日本　語 ideographic space, zero​width space, joiner‍and non‌joiner.
+a line that ends with CRLF
+سطر عربي ينتهي بـ CRLF
+
+
+
+   	  
+﻿starts with a byte order mark
+Donaudampfschifffahrtselektrizitätenhauptbetriebswerkbauunterbeamtengesellschaft
+pneumonoultramicroscopicsilicovolcanoconiosis supercalifragilisticexpialidocious
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+أفأستسقيكموها وفسيكفيكهم وأنلزمكموها
+https://example.com/a/very/long/path/with-many-segments-and-words/index.html?query=tokenizers&lang=ar&page=12345
+012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+ابتثجحخدذرزسشصضطظعغفقكلمنهويابتثجحخدذرزسشصضطظعغفقكلمنهويابتثجحخدذرزسشصضطظعغفقكلمنهويابتثجحخدذرزسشصضطظعغفقكلمنهويابتثجحخدذرزسشصضطظعغفقكلمنهويابتثجحخدذرزسشصضطظعغفقكلمنهوي
+ bell escape[31mred[0m delete
+verticaltab formfeed nextline line separator paragraph separator
+replacement � private use  󰀀 and a noncharacter-free end
+<s> </s> <unk> <pad> [CLS] [SEP] [MASK] [UNK] [PAD] <mask> <cls> <sep> <extra_id_0>
+text<mask>with<cls>markers</s>inside
+The quick brown fox jumps over the lazy dog.
+Tokenizers split text into pieces that a language model can read, one id for each piece.
+A tokenizer trained on a small corpus learns the words it sees most often and spells the rest from smaller parts.
+The library reads the file once, keeps the vocabulary in flat arrays, and looks pieces up without building strings.
+It was a bright cold day in April, and the clocks were striking thirteen.
+Numbers like 3.14159, 2,718 and -42 appear in text as often as words do.
+She sells sea shells by the sea shore; the shells she sells are surely sea shells.
+Unicode gives every character a number, and UTF-8 writes that number in one to four bytes.
+تقسم أدوات التجزئة النص إلى قطع يقرؤها النموذج اللغوي، لكل قطعة رقم.
+تعلم المجزئ المدرب على نص صغير الكلمات الأكثر تكرارا، ويكتب الباقي من أجزاء أصغر.
+قرأت المكتبة الملف مرة واحدة، وحفظت المفردات في مصفوفات مسطحة.
+اللغة العربية من أكثر اللغات انتشارا في العالم، ويتحدث بها أكثر من أربعمائة مليون إنسان.
+في الصباح الباكر خرج المزارعون إلى الحقول، وكانت الشمس تشرق فوق التلال الخضراء.
+أرسل الوزير خطابا إلى المحكمة يطلب فيه نسخة من الحكم الصادر في الدعوى رقم 512.
+Le petit prince regardait les étoiles et se demandait où était sa rose.
+Ça m'a coûté très cher, mais l'été dernier était inoubliable à la mer.
+Die Bibliothek liest die Datei einmal und behält den Wortschatz in flachen Feldern.
+Grüße aus München! Über die Brücke gehen wir zur Straße am Fluss.
+El niño comió una manzana y después corrió por el jardín con su perro.
+¿Dónde está la biblioteca? ¡Está al lado de la estación!
+A tokenização divide o texto em pedaços que o modelo consegue ler.
+La lingua italiana è bella, e la pizza napoletana è più buona.
+Türkçe öğrenmek güzeldir; ılık bir rüzgâr esiyor ve çiçekler açıyor.
+Zażółć gęślą jaźń: polskie znaki są trudne dla wielu programów.
+Токенизатор делит текст на части, которые модель может прочитать.
+Съешь же ещё этих мягких французских булок, да выпей чаю.
+Їжак ґречно усміхнувся: це український текст з літерами є, і, ї та ґ.
+Η γρήγορη καφέ αλεπού πηδάει πάνω από τον τεμπέλη σκύλο.
+زبان فارسی با الفبای عربی نوشته می‌شود و حروف پ، چ، ژ و گ را دارد.
+اردو زبان میں بھی عربی رسم الخط استعمال ہوتا ہے، جیسے یہ جملہ۔
+הספרייה קוראת את הקובץ פעם אחת ושומרת את אוצר המילים במערכים.
+पुस्तकालय फ़ाइल को एक बार पढ़ता है और शब्दावली को सरणियों में रखता है।
+আমি বাংলায় গান গাই, আমি বাংলার গান গাই।
+图书馆只读取一次文件，并把词表保存在平坦的数组中。
+自然语言处理需要把文本切分成词元，每个词元对应一个编号。
+吾輩は猫である。名前はまだ無い。どこで生れたかとんと見当がつかぬ。
+トークナイザーは文章を小さな単位に分けて、それぞれに番号を付けます。
+도서관은 파일을 한 번 읽고 어휘를 평평한 배열에 보관합니다.
+The word كتاب means book, 本 in Japanese, книга in Russian and βιβλίο in Greek.
+Version 2.0 من المكتبة يدعم UTF-8 و UTF-16 و Unicode 15.1 بالكامل.
+在2024年，Idrak 支持 العربية، English 和 中文。

@@ -1,14 +1,14 @@
 # Plan 24: Unigram (SentencePiece) and WordPiece tokenizers, built in
 
 **Status (2026-10-19, `abstraction`):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against e53acb8.
-L0 is built and CPU-checked; T0's standalone part is in progress (wave 1). Closes plug-in gap 11
+Wave 1 is built and CPU-checked: L0, and T0's standalone part (fixtures, protobuf and SentencePiece readers, trie). Closes plug-in gap 11
 ([plug-in.md](plug-in.md), "Only BPE tokenizer models").
 
 | Phase | What | State |
 |---|---|---|
 | L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Done; CPU pass (155 tests) |
 | L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Planned |
-| T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Planned |
+| T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Wave 1 part done (fixtures, readers, trie); CPU pass. Left: the reader registered, Precompiled |
 | T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Planned |
 | T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Planned |
@@ -346,6 +346,55 @@ trie units, then the normalized strings, NUL-terminated) is read once into the t
 - each fixture's `ModelProto` reads to `sentencepiece`'s piece table (pieces, scores, types) and flags;
 - a truncated or corrupt file fails naming the offset;
 - Precompiled normalizes the corpus exactly as `tokenizers` does.
+
+**T0, wave 1, as built (2026-10-19).** Fixtures, `ProtoReader`, `SentencePieceModel` and `DoubleArrayTrie` (all
+internal), and the groups `tokenizers: sentencepiece` and `tokenizers: trie`: 6 tests, 17 with L0's, `public API` and
+`inventory` after the merge, all passing on the CPU. The fixtures' README (`tests/Idrak.Tests/data/tokenizers/README.md`)
+lists every file. What the plan did not know:
+
+- **Versions:** tokenizers 0.23.2, sentencepiece 0.2.2, transformers 5.18.0, protobuf 7.36.2, huggingface_hub 1.33.0;
+  Python's Unicode data 15.1.0. Three runs of the script wrote the same bytes. The fixtures take 2.6 MB in all.
+- **Field numbers** (sentencepiece 0.2.2):
+  - `ModelProto`: pieces 1, trainer_spec 2, normalizer_spec 3.
+  - `SentencePiece`: piece 1, score 2 (a float), type 3. The types are normal 1, unknown 2, control 3, user-defined 4,
+    unused 5, byte 6.
+  - `TrainerSpec`: byte_fallback 35, split_digits 25, treat_whitespace_as_suffix 24, unk/bos/eos/pad ids 40-43
+    (defaults 0, 1, 2, -1).
+  - `NormalizerSpec`: name 1, precompiled_charsmap 2, add_dummy_prefix 3, remove_extra_whitespaces 4,
+    escape_whitespaces 5.
+- **The charsmap** is laid out as planned. Its trie is a DAWG with shared suffixes: `nmt_nfkc` holds 225,275 keys in
+  44,800 units, and the C# enumeration equals an independent Python reader's.
+- **Merges from a SentencePiece BPE model:** transformers 5's converter for this is broken. T0 (the reader) and T3
+  (GGUF `llama`) derive the merges as transformers 4's `generate_merges` does: sorted by score, then the left piece's
+  length, then the right one's, all descending, with a stable sort.
+- **The two references disagree on 21 corpus lines** (`known-differences.json`):
+  - `<unk>` decodes as " ⁇ " in sentencepiece, and Hugging Face skips it.
+  - Viterbi breaks ties differently in a run of 300 `a`s.
+  - Hugging Face matches special-token text written in the input; sentencepiece does not.
+  - Converted files strip trailing tabs and CRs.
+  - Hugging Face's `Precompiled` replaces a whole grapheme by its first prefix key, which drops the following mark (أَ
+    becomes ا); sentencepiece keeps the mark.
+
+  Each path is held to its own reference, as the Risks section says. T1's Precompiled follows `tokenizers` for
+  tokenizer.json and sentencepiece for tokenizer.model.
+- **Byte fallback offsets:** sentencepiece gives every byte piece of one character that character's offsets, and every
+  piece but the last is empty (begin equals end).
+- **WordPiece training is not repeatable in `tokenizers`:** its `WordPieceTrainer` numbers the `##` alphabet in hash
+  order, and two processes learned 39 different pieces. The fixtures' WordPiece vocabularies come from a deterministic
+  SentencePiece BPE run over BERT-normalized words; the tokenizers and their references are still `tokenizers`' own.
+  **T4 changes accordingly:** the `"frequency"` WordPiece trainer cannot be checked against Hugging Face's vocabulary
+  exactly. It is checked against the same algorithm with ties broken in a fixed order (written into the script), and
+  against Hugging Face's by overlap above a measured threshold.
+- **Post-processors:** `BertConverter` writes `TemplateProcessing`, so `wordpiece-uncased` uses `TemplateProcessing` and
+  `wordpiece-cased` uses `BertProcessing`; T2 covers both.
+- **The owner's `--real` run** (from `D:\Projects\Idrak`):
+  ```powershell
+  python -m venv $env:USERPROFILE\tok
+  & $env:USERPROFILE\tok\Scripts\python.exe -m pip install -r tools\tokenizers\requirements.txt
+  & $env:USERPROFILE\tok\Scripts\python.exe -I tools\tokenizers\make_fixtures.py --real
+  ```
+  It downloads into `IDRAK_CACHE\tokenizers\<org>--<name>\`, or `~/.cache/idrak` when `IDRAK_CACHE` is unset, and
+  writes only `tests\Idrak.Tests\data\tokenizers\real\<name>.json`.
 
 ## Phase T1: Unigram
 
