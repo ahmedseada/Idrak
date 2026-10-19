@@ -614,7 +614,12 @@ internal static partial class Tests
             var theirs = TokenizerJsonReader.ReadFile(TokenizerData($"{name}/tokenizer.json"));
             Check(ours.ModelType == theirs.ModelType && ours.Source.EndsWith("tokenizer.model", StringComparison.Ordinal),
                 $"{name}: model type {ours.ModelType}, the tokenizer.json's {theirs.ModelType}");
-            Check(JsonNode.DeepEquals(ours.Json["model"], theirs.Json["model"]),
+            // A Unigram model read from a .model file is marked to follow sentencepiece's lattice; otherwise the same model.
+            var ourModel = ours.Json["model"]!.DeepClone().AsObject();
+            Check(ours.ModelType != "Unigram" || (string?)ourModel[UnigramTokenizer.ModeField] == UnigramTokenizer.SentencePieceMode,
+                $"{name}: the Unigram model read from tokenizer.json is not marked mode {UnigramTokenizer.SentencePieceMode}: {ourModel.ToJsonString()}");
+            ourModel.Remove(UnigramTokenizer.ModeField);
+            Check(JsonNode.DeepEquals(ourModel, theirs.Json["model"]),
                 $"{name}: model {ours.Json["model"]!.ToJsonString()}, the tokenizer.json's {theirs.Json["model"]!.ToJsonString()}");
 
             // The converters add tokens the .model does not hold (T5's sentinels); every other added token is the model's.

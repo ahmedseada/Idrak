@@ -1572,6 +1572,7 @@ public static class Idrak.Models.Abstractions.TokenizerFiles
 
 public static class Idrak.Models.Abstractions.TokenizerModels
   public const string Bpe = "BPE"
+  public const string Unigram = "Unigram"
   public static Idrak.Abstraction.Generation.IPretrainedTokenizer Create(Idrak.Models.Abstractions.TokenizerDefinition definition, Idrak.Models.Abstractions.TokenizerOptions? options = null)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer> Get(string type)
@@ -1586,10 +1587,20 @@ public static class Idrak.Models.Abstractions.TokenizerModels
 public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquatable<Idrak.Models.Abstractions.TokenizerOptions>
   public TokenizerOptions()
   public const int DefaultPieceCacheLimit = 100000
+  public const int DefaultSamplingBest = -1
   public const string FormatVariable = "IDRAK_TOKENIZER_FORMAT"
   public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE"
+  public const string SamplingAlphaVariable = "IDRAK_TOKENIZER_ALPHA"
+  public const string SamplingBestVariable = "IDRAK_TOKENIZER_NBEST"
+  public const string SamplingSeedVariable = "IDRAK_TOKENIZER_SEED"
+  public double? ResolvedSamplingAlpha()
+  public double? SamplingAlpha { get; init; }
   public int ResolvedPieceCacheLimit()
+  public int ResolvedSamplingBest()
   public int? PieceCacheLimit { get; init; }
+  public int? ResolvedSamplingSeed()
+  public int? SamplingBest { get; init; }
+  public int? SamplingSeed { get; init; }
   public string? Format { get; init; }
   public string? ResolvedFormat()
 

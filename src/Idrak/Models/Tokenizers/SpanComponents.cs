@@ -488,9 +488,9 @@ internal static class SpanComponents
                 var piece = span.Slice(start, length);
                 bool begins = (piece.Length > 0 && piece[0] == ' ') || piece.StartsWith(replacement, StringComparison.Ordinal);
                 int from = writer.Position;
-                if ((scheme == "always" || (scheme == "first" && i == 0 && atStart)) && !begins)
+                if ((scheme == "always" || (scheme == "first" && i == 0 && atStart)) && !begins && length > 0)
                 {
-                    writer.Append(replacement, start, Math.Min(1, length));
+                    writer.Append(replacement, start, 1);                     // not before empty text, as Hugging Face's
                 }
 
                 int run = start;

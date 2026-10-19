@@ -46,7 +46,11 @@ internal static class LibraryModelFormats
         }
     }
 
-    public static void RegisterTokenizerModels() => TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
+    public static void RegisterTokenizerModels()
+    {
+        TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
+        TokenizerModels.Register(UnigramTokenizer.Type, UnigramTokenizer.FromDefinition);
+    }
 
     public static void RegisterTokenizerFiles()
     {
