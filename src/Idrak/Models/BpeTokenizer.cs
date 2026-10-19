@@ -415,7 +415,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
 
     // Half of a surrogate pair is not a character (it has no UTF-8 bytes, and Unicode normalization rejects it): it
     // becomes U+FFFD, as it does when such text is written as UTF-8.
-    private static string WithoutLoneSurrogates(string text)
+    internal static string WithoutLoneSurrogates(string text)
     {
         int at = text.AsSpan().IndexOfAnyInRange('\uD800', '\uDFFF');
         if (at < 0)
@@ -1385,8 +1385,9 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             "NFKD" => s => s.Normalize(NormalizationForm.FormKD),
             "Prepend" => s => (string)n["prepend"]! + s,
             "Replace" => Replacer(n),
-            "Lowercase" => s => s.ToLowerInvariant(),
+            "Lowercase" => BertComponents.Lowercase,
             "Strip" => Stripper((bool?)n["strip_left"] ?? true, (bool?)n["strip_right"] ?? true),
+            "BertNormalizer" => BertComponents.StringNormalizer(n),
             _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
         };
 
@@ -1494,6 +1495,13 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, punctuation, punctuationBehavior, false));
                 _splits?.Add((punctuation, punctuationBehavior, false));
                 return false;
+            case "BertPreTokenizer":
+                var whitespaceRuns = new Regex(NonWhitespacePattern, Fast);
+                var (bertPunctuation, _) = PunctuationSettings(p);
+                _preTokenizers.Add(BertComponents.StringPreTokenizer());
+                _splits?.Add((whitespaceRuns, "Removed", true));
+                _splits?.Add((bertPunctuation, "Isolated", false));
+                return false;
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
@@ -1541,6 +1549,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             case "Punctuation":
                 var (punctuation, behavior2) = PunctuationSettings(p);
                 return (pieces, atStart) => SplitPieces(pieces, punctuation, behavior2, false);
+            case "BertPreTokenizer":
+                return BertComponents.StringPreTokenizer();
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
@@ -1756,6 +1766,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 string content = (string)d["content"]!;
                 int start = (int?)d["start"] ?? 0, stop = (int?)d["stop"] ?? 0;
                 return tokens => Strip(tokens, content, start, stop);
+            case "WordPiece":
+                return BertComponents.WordPieceDecoder(d);
             case "Metaspace":
                 string replacement = (string?)d["replacement"] ?? "▁";
                 return tokens =>

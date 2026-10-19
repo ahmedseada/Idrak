@@ -10,7 +10,7 @@ Wave 1 is built and CPU-checked: L0, and T0's standalone part (fixtures, protobu
 | L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Done; CPU pass |
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Wave 1 part done (fixtures, readers, trie); CPU pass. Left: the reader registered, Precompiled |
 | T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
-| T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Planned |
+| T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
 | T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Planned |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
 | T5 | BPE onto the shared span pipeline (only if measured equal or faster) | Planned, optional |
@@ -498,6 +498,44 @@ write.
 - a long word becomes `[UNK]`, and `MaxInputCharsPerWord` changes the limit;
 - `[CLS] … [SEP]` and pair type ids equal the reference;
 - `plugins:` passes with the new count.
+
+**T2 as built (2026-10-19).** As planned, with these differences and findings:
+- **BERT components** (`BertComponents`), each with one span implementation that the string form runs:
+  - `BertNormalizer`, matching `tokenizers`, which the probe in the reference venv showed:
+    - `clean_text` drops U+0000, U+FFFD and categories Cc, Cf and Co, but not Cn: an unassigned U+0378 is kept;
+    - whitespace becomes a space;
+    - CJK ideographs get a space on each side, both spaces standing for the ideograph;
+    - `strip_accents` is NFD without the Mn marks, and when null it follows `lowercase`.
+  - `BertPreTokenizer`: WhitespaceSplit, then Punctuation (Isolated).
+  - The `WordPiece` decoder: the `##` prefix is stripped from tokens after the first, others get a space, and
+    `tokenizers`' cleanup runs on each token.
+- **No `Prepend` decoder:** the plan named one, but `tokenizers` has no such decoder type, so none was added.
+- **Lowercase bug fixed:** `tokenizers` lowercases with Rust's `char::to_lowercase`, which turns İ (U+0130) into i
+  plus U+0307. .NET's invariant mapping leaves İ unchanged, so `Lowercase` (string and span) and `BertNormalizer` now
+  map İ as Rust does. The L0 BPE baseline is unchanged.
+- **The `WordPiece` model** (`WordPieceTokenizer`, registered as `TokenizerModels.WordPiece`):
+  - Two `DoubleArrayTrie`s: word-initial entries, and continuation entries without their prefix. The longest match is
+    the last entry of one common-prefix walk, so there is no `"##" + piece` string and no allocation.
+  - Word ids are cached by span (`PieceCacheLimit`).
+  - `MaxInputCharsPerWord` / `IDRAK_TOKENIZER_MAX_WORD_CHARS`.
+  - Added tokens are matched first, as BPE matches them. `normalized`, `lstrip`, `rstrip` and `single_word` are not
+    honoured yet, as in BPE; T3 adds them where the references need it.
+- **Post-processors** (`PostProcessors`, the table's built-ins): `TemplateProcessing`, `BertProcessing`,
+  `RobertaProcessing` (pair type ids 1, as `tokenizers` sets them), `ByteLevel` (no tokens; T3 trims its offsets) and
+  `Sequence` (offset-only processors, then at most one that adds tokens).
+- **The `vocab.txt` reader** (`TokenizerFiles.VocabTxt`): it reads `vocab.txt` and `tokenizer_config.json` into the
+  definition `BertConverter` writes. A byte-order mark stays in the first token, as transformers reads it, and a token
+  that repeats takes its later id.
+- **Results (CPU):** both fixtures' `tokenizer.json` match `tokenizers` on all 102 corpus lines and on the pairs:
+  - ids with the post-processor's special tokens, type ids, special-tokens mask and sequence ids;
+  - decoded text with special tokens, and without them (special ids left out, as `skip_special_tokens` does);
+  - `vocab.txt` gives the same ids and special tokens on every line;
+  - the pretrained tokenizer suite passes, a saved tokenizer loads back to the same ids, and a warm encode allocates 0
+    bytes on Latin, Arabic, CJK and upper-case text.
+  - Text with accents to strip goes through NFD, and so through the platform's normalization (L1's candidate).
+- **Run:** `tokenizers:`, `plugins:`, `pretrained:`, `tokenizer training:`, `override loop:`, `public API`, `inventory`
+  gave 66 passed and 1 failed. The failure was a test comparing with the reference's `decoded`, which skips special
+  tokens (`[UNK]` among them); the test was fixed and its filter reran: 5 passed.
 
 ## Phase T3: encodings, detection, GGUF
 

@@ -46,9 +46,18 @@ internal static class LibraryModelFormats
         }
     }
 
-    public static void RegisterTokenizerModels() => TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
+    public static void RegisterTokenizerModels()
+    {
+        TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
+        TokenizerModels.Register(TokenizerModels.WordPiece, WordPieceTokenizer.FromDefinition);
+    }
 
-    public static void RegisterTokenizerFiles() => TokenizerFiles.Register(new TokenizerJsonReader());
+    // Asked in this order: a folder with several files reads tokenizer.json first.
+    public static void RegisterTokenizerFiles()
+    {
+        TokenizerFiles.Register(new TokenizerJsonReader());
+        TokenizerFiles.Register(new VocabTxtReader());
+    }
 
     public static void RegisterGgufPreTokenizers()
     {

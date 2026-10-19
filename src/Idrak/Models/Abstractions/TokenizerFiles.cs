@@ -30,13 +30,17 @@ public interface ITokenizerFileReader
 
 /// <summary>
 /// The tokenizer file readers, by name; <see cref="PretrainedTokenizers"/> asks them in registration order (the built-in
-/// ones first) for the file of a model folder. Built in: "tokenizer.json" (Hugging Face's, any model type). Others plug in
+/// ones first) for the file of a model folder. Built in: "tokenizer.json" (Hugging Face's, any model type) and "vocab.txt" (BERT's,
+/// with tokenizer_config.json). Others plug in
 /// with <see cref="Register"/>.
 /// </summary>
 public static class TokenizerFiles
 {
     /// <summary>The Hugging Face tokenizer.json reader.</summary>
     public const string TokenizerJson = "tokenizer.json";
+
+    /// <summary>The BERT-style vocab.txt reader (with tokenizer_config.json).</summary>
+    public const string VocabTxt = "vocab.txt";
 
     private static readonly SlotTable<string, ITokenizerFileReader> Table = new(nameof(TokenizerFiles), comparer: StringComparer.OrdinalIgnoreCase,
         unguarded: "a reader's definition is its own file's, so another reader cannot give the same one");

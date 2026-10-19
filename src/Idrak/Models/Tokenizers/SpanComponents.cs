@@ -42,6 +42,7 @@ internal static class SpanComponents
                 : new RegexReplaceNormalizer(new Regex((string)spec["pattern"]!["Regex"]!, BpeTokenizer.Fast), (string)spec["content"]!).Run,
             "Lowercase" => new LowercaseNormalizer().Run,
             "Strip" => new StripNormalizer((bool?)spec["strip_left"] ?? true, (bool?)spec["strip_right"] ?? true).Run,
+            "BertNormalizer" => BertComponents.Normalizer(spec),
             _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
         };
     }
@@ -71,6 +72,8 @@ internal static class SpanComponents
             case "Punctuation":
                 var (punctuation, punctuationBehavior) = BpeTokenizer.PunctuationSettings(spec);
                 return new SplitPreTokenizer(punctuation, punctuationBehavior, false).Run;
+            case "BertPreTokenizer":
+                return BertComponents.PreTokenizer();
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
@@ -385,7 +388,8 @@ internal static class SpanComponents
         }
     }
 
-    // Lowercase: invariant, character by character (the length does not change), each standing for itself.
+    // Lowercase as Rust's char::to_lowercase: the invariant mapping character by character, each standing for itself,
+    // except U+0130 (İ), which becomes i and a combining dot above, both standing for it.
     private sealed class LowercaseNormalizer
     {
         public void Run(NormalizedText text)
@@ -395,7 +399,7 @@ internal static class SpanComponents
             try
             {
                 int count = span.ToLowerInvariant(lower);
-                if (span.SequenceEqual(lower.AsSpan(0, count)))
+                if (span.SequenceEqual(lower.AsSpan(0, count)) && !span.Contains('\u0130'))
                 {
                     return;
                 }
@@ -403,6 +407,13 @@ internal static class SpanComponents
                 var writer = text.Rewrite();
                 for (int i = 0; i < count; i++)
                 {
+                    if (lower[i] == '\u0130')
+                    {
+                        writer.Append('i', i);
+                        writer.Append('\u0307', i);
+                        continue;
+                    }
+
                     writer.Append(lower[i], i);
                 }
 
