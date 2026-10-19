@@ -131,10 +131,10 @@ internal sealed class WordPieceTrainer : ITokenizerTrainer
         };
     }
 
-    // The words the tokenizer's pipeline makes of every line, counted on every worker (each with a pipeline of its own, as a
-    // Regex keeps one matcher and workers sharing one would each make a new matcher per match; its own counts for the whole
-    // run; its blocks decoded into one buffer of its own), then added up and sorted in code-point order (the order the
-    // merges take them in, so the result does not depend on the workers).
+    // The words the tokenizer's pipeline makes of every line, counted on every worker (the pipeline shared, its patterns
+    // matched through each thread's own copy, TokenizerRegex; its own counts for the whole run; its blocks decoded into one
+    // buffer of its own), then added up and sorted in code-point order (the order the merges take them in, so the result
+    // does not depend on the workers).
     private static Dictionary<string, long> CountWords(IReadOnlyList<string> files, TokenizerTrainingOptions options, JsonObject tokenizer,
         IProgress<TokenizerTrainingProgress>? progress, CancellationToken cancellationToken)
     {
@@ -142,11 +142,11 @@ internal sealed class WordPieceTrainer : ITokenizerTrainer
         int workers = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads;
         bool crlfAsLf = options.LineEnds == "lf";
         var counted = new Dictionary<string, long>?[workers];
+        var pipeline = new TokenizerPipeline(tokenizer);
         using (var blocks = new BpeTrainer.BlockQueue(files, cancellationToken))
         {
             Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, worker =>
             {
-                var pipeline = new TokenizerPipeline(tokenizer);
                 var counts = new Dictionary<string, long>(StringComparer.Ordinal);
                 var words = counts.GetAlternateLookup<ReadOnlySpan<char>>();
                 var pieces = new PreTokenizedText();

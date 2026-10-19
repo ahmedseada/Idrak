@@ -21,8 +21,7 @@ namespace Idrak.Models;
 internal sealed class BpeTrainer : ITokenizerTrainer
 {
     private const string Gpt2Pattern = @"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+";
-    private const RegexOptions WordRuleOptions = RegexOptions.Compiled | RegexOptions.CultureInvariant;
-    private static readonly Regex WordRule = new(Gpt2Pattern, WordRuleOptions);
+    private static readonly TokenizerRegex WordRule = new(Gpt2Pattern);
     private const char MetaspaceMark = '▁';
     private const int BlockBytes = 1 << 20;
 
@@ -46,8 +45,8 @@ internal sealed class BpeTrainer : ITokenizerTrainer
 
     // The words of every file and how often each appears, keyed by the word as the merges see it (byte level: its UTF-8
     // bytes as the byte map's characters). Each worker counts the blocks it takes into one counter of its own for the whole
-    // run, with a word rule of its own (a Regex keeps one matcher: workers sharing one would each make a new matcher per
-    // match); the counts are then added into the largest worker's.
+    // run, with its own copy of the word rule (TokenizerRegex.Local: a Regex keeps one matcher, and workers sharing one would
+    // each make a new matcher per match); the counts are then added into the largest worker's.
     private static Dictionary<string, long> CountWords(IReadOnlyList<string> files, bool byteLevel, TokenizerTrainingOptions options,
         IProgress<TokenizerTrainingProgress>? progress, CancellationToken cancellationToken)
     {
@@ -59,7 +58,7 @@ internal sealed class BpeTrainer : ITokenizerTrainer
         {
             Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, worker =>
             {
-                using var counter = new WordCounter(worker == 0 ? WordRule : new Regex(Gpt2Pattern, WordRuleOptions), byteLevel, options.AddPrefixSpace,
+                using var counter = new WordCounter(WordRule.Local, byteLevel, options.AddPrefixSpace,
                     options.LineEnds == "lf");
                 while (blocks.Next(out var block))
                 {

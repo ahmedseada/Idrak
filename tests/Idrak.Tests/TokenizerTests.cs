@@ -20,7 +20,126 @@ internal static partial class Tests
         ("tokenizers: the piece cache is a setting (PieceCacheLimit, IDRAK_TOKENIZER_CACHE; 0 caches nothing and gives the same ids), a bad value is refused naming it, and PretrainedOptions carries the settings", TokenizersPieceCache),
         ("tokenizers: the built-in BPE passes the pretrained tokenizer suite (ranges, tokens by name, tokenizer.json naming the model) and a saved tokenizer loads back to the same ids", TokenizersPretrainedSuite),
         ("tokenizers: bpe: EncodeRange into a reused list allocates 0 bytes once warm on every corpus line (SentencePiece-style from tokenizer.json and tokenizer.model, byte level, with the piece cache and without it)", TokenizersBpeAllocatesNothing),
+        ("tokenizers: a batch on 4 workers allocates per text what 1 worker allocates, detailed and ids only (each thread matches a tokenizer's patterns through its own copy): BPE with a Split pre-tokenizer and added tokens, WordPiece uncased and cased, Unigram", TokenizersBatchAllocatesAsOneWorker),
+        ("tokenizers: bpe: a byte-level tokenizer's two piece caches (raw text for ids, alphabet pieces with their ranges for the detailed encode) share one PieceCacheLimit, and give the uncached ids and offsets", TokenizersByteLevelCacheBudget),
     ];
+
+    // A Regex keeps one matcher, and a thread that finds it taken by another makes a new one per match: a tokenizer shared by
+    // a batch's workers allocated 70-2,100 bytes a text more on 4 workers than on 1 (measured) until each thread matched
+    // through its own copy (TokenizerRegex). The tolerance, 32 bytes a text, covers what a batch on 4 workers allocates
+    // itself (Parallel.For's loop state and tasks, a few KB over the batch's texts) and a pool thread that joins a later
+    // batch making its scratch once; the cost it guards against is ten to sixty times that.
+    private static void TokenizersBatchAllocatesAsOneWorker(Device device)
+    {
+        _ = device;
+        var lines = TokenizerCorpusLines().Where(line => line.Length > 0).ToArray();
+        string[] texts = [.. Enumerable.Repeat(lines, 8).SelectMany(l => l)];
+        const double Tolerance = 32;
+
+        // byte-level-roberta's vocabulary cut by a Split stage (GPT-2's rule) before ByteLevel, as most byte-level
+        // tokenizer.json files cut text today.
+        var json = JsonNode.Parse(File.ReadAllText(Path.Combine(TokenizerData("byte-level-roberta"), "tokenizer.json")))!.AsObject();
+        json["pre_tokenizer"] = new JsonObject
+        {
+            ["type"] = "Sequence",
+            ["pretokenizers"] = new JsonArray(
+                new JsonObject { ["type"] = "Split", ["pattern"] = new JsonObject { ["Regex"] = BpeTokenizer.Gpt2Pattern }, ["behavior"] = "Isolated", ["invert"] = false },
+                new JsonObject { ["type"] = "ByteLevel", ["add_prefix_space"] = false, ["trim_offsets"] = true, ["use_regex"] = false }),
+        };
+        string folder = TempFolder();
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "tokenizer.json"), json.ToJsonString());
+            var sources = new (string Name, string Path, TokenizerOptions Options)[]
+            {
+                ("bpe with a Split pre-tokenizer", folder, new() { Format = TokenizerFiles.TokenizerJson }),
+                ("wordpiece-uncased", TokenizerData("wordpiece-uncased"), new() { Format = TokenizerFiles.TokenizerJson }),
+                ("wordpiece-cased", TokenizerData("wordpiece-cased"), new() { Format = TokenizerFiles.TokenizerJson }),
+                ("unigram", TokenizerData("unigram"), new() { Format = TokenizerFiles.TokenizerJson }),
+            };
+            foreach (var (name, path, options) in sources)
+            {
+                foreach (var (label, encode) in new[] { ("detailed", new TokenizerEncodeOptions()), ("ids only", new TokenizerEncodeOptions { Offsets = false }) })
+                {
+                    double one = BatchBytesPerText(PretrainedTokenizers.Load(path, options with { Workers = 1 }), texts, encode);
+                    double four = BatchBytesPerText(PretrainedTokenizers.Load(path, options with { Workers = 4 }), texts, encode);
+                    Console.WriteLine($"    {name}, {label}: {one:F1} bytes a text on 1 worker, {four:F1} on 4");
+                    Check(four - one <= Tolerance, $"{name}, {label}: a batch on 4 workers allocated {four:F1} bytes a text, on 1 worker {one:F1}: "
+                        + $"{four - one:F1} more (at most {Tolerance} is the batch's own); threads share a matcher (a Regex not matched through TokenizerRegex.Local?)");
+                }
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // The fewest bytes a warm batch allocated (on every thread, rule 63), per text.
+    private static double BatchBytesPerText(IPretrainedTokenizer tokenizer, string[] texts, TokenizerEncodeOptions options)
+    {
+        for (int warm = 0; warm < 3; warm++)
+        {
+            tokenizer.EncodeBatch(texts, null, options);
+        }
+
+        double fewest = double.MaxValue;
+        for (int run = 0; run < 5; run++)
+        {
+            long before = GC.GetTotalAllocatedBytes(precise: true);
+            tokenizer.EncodeBatch(texts, null, options);
+            fewest = Math.Min(fewest, (GC.GetTotalAllocatedBytes(precise: true) - before) / (double)texts.Length);
+        }
+
+        return fewest;
+    }
+
+    // A byte-level tokenizer keys its ids cache by raw text and the detailed encode's by alphabet pieces (the keys would
+    // clash in one): both count against one budget, so together they hold at most PieceCacheLimit pieces.
+    private static void TokenizersByteLevelCacheBudget(Device device)
+    {
+        _ = device;
+        string path = TokenizerData("byte-level-roberta");
+        var lines = TokenizerCorpusLines();
+        var detailed = new TokenizerEncodeOptions();
+        var reference = PretrainedTokenizers.Load(path, new TokenizerOptions { PieceCacheLimit = 0 });
+        var expected = lines.Select(line => (Ids: reference.Encode(line), Detailed: reference.Encode(line, null, detailed))).ToArray();
+
+        void Pass(BpeTokenizer tokenizer, string what)
+        {
+            var ids = new List<int>();
+            for (int i = 0; i < lines.Length; i++)
+            {
+                ids.Clear();
+                tokenizer.EncodeRange(lines[i], 0, lines[i].Length, ids);
+                var encoding = tokenizer.Encode(lines[i], null, detailed);
+                Check(ids.SequenceEqual(expected[i].Ids) && encoding.Ids.SequenceEqual(expected[i].Detailed.Ids)
+                    && encoding.Offsets.SequenceEqual(expected[i].Detailed.Offsets) && encoding.Tokens.SequenceEqual(expected[i].Detailed.Tokens),
+                    $"{what}: line {i} '{Escaped(lines[i][..Math.Min(40, lines[i].Length)])}' encodes otherwise than without a cache");
+            }
+        }
+
+        // The ids pass alone, then both: the detailed encode adds its own pieces to the same count.
+        var whole = (BpeTokenizer)PretrainedTokenizers.Load(path);
+        var idsOnly = new List<int>();
+        foreach (string line in lines)
+        {
+            idsOnly.Clear();
+            whole.EncodeRange(line, 0, line.Length, idsOnly);
+        }
+
+        int fast = whole.CachedPieces;
+        Pass(whole, "the default cache");
+        Check(fast > 0 && whole.CachedPieces > fast, $"the ids cache held {fast} pieces, both {whole.CachedPieces}: the detailed encode's pieces count too");
+
+        // A limit the ids pass fills: the detailed encode adds nothing more, and both still give the uncached results.
+        var limited = (BpeTokenizer)PretrainedTokenizers.Load(path, new TokenizerOptions { PieceCacheLimit = fast });
+        Pass(limited, $"a cache of {fast} pieces");
+        Check(limited.CachedPieces == fast, $"two caches under a limit of {fast} pieces hold {limited.CachedPieces}");
+        var small = (BpeTokenizer)PretrainedTokenizers.Load(path, new TokenizerOptions { PieceCacheLimit = 10 });
+        Pass(small, "a cache of 10 pieces");
+        Check(small.CachedPieces == 10, $"two caches under a limit of 10 pieces hold {small.CachedPieces}");
+    }
 
     // Plan 24's rule: after warm-up, encoding into a caller's list allocates nothing, cache hit or miss (a miss merges in the
     // caller's list; long pieces, which are never cached, merge in the thread's scratch).

@@ -40,7 +40,7 @@ internal static class SpanComponents
             "Prepend" => new PrependNormalizer((string)spec["prepend"]!).Run,
             "Replace" => spec["pattern"]?["String"] is { } literal
                 ? new LiteralReplaceNormalizer((string)literal!, (string)spec["content"]!).Run
-                : new RegexReplaceNormalizer(new Regex((string)spec["pattern"]!["Regex"]!, BpeTokenizer.Fast), (string)spec["content"]!).Run,
+                : new RegexReplaceNormalizer(new TokenizerRegex((string)spec["pattern"]!["Regex"]!), (string)spec["content"]!).Run,
             "Lowercase" => new LowercaseNormalizer().Run,
             "Strip" => new StripNormalizer((bool?)spec["strip_left"] ?? true, (bool?)spec["strip_right"] ?? true).Run,
             "BertNormalizer" => BertComponents.Normalizer(spec),
@@ -68,9 +68,9 @@ internal static class SpanComponents
             case "Digits":
                 return new SplitPreTokenizer(BpeTokenizer.DigitsPattern(spec), "Isolated", false).Run;
             case "Whitespace":
-                return new SplitPreTokenizer(new Regex(BpeTokenizer.WordsPattern, BpeTokenizer.Fast), "Removed", true).Run;
+                return new SplitPreTokenizer(new TokenizerRegex(BpeTokenizer.WordsPattern), "Removed", true).Run;
             case "WhitespaceSplit":
-                return new SplitPreTokenizer(new Regex(BpeTokenizer.NonWhitespacePattern, BpeTokenizer.Fast), "Removed", true).Run;
+                return new SplitPreTokenizer(new TokenizerRegex(BpeTokenizer.NonWhitespacePattern), "Removed", true).Run;
             case "Punctuation":
                 var (punctuation, punctuationBehavior) = BpeTokenizer.PunctuationSettings(spec);
                 return new SplitPreTokenizer(punctuation, punctuationBehavior, false).Run;
@@ -392,13 +392,22 @@ internal static class SpanComponents
     }
 
     // Replace of a literal: every occurrence, left to right, as string.Replace (ordinal); the content stands for the
-    // occurrence's last character (AppendReplacement).
+    // occurrence's last character (AppendReplacement). One character for one (SentencePiece's space to "▁") is written in
+    // place: the new character stands for the one it replaces, as AppendReplacement would align it.
     private sealed class LiteralReplaceNormalizer(string pattern, string content)
     {
+        private readonly bool _inPlace = pattern is [var from] && content is [var to] && !char.IsSurrogate(from) && !char.IsSurrogate(to);
+
         public void Run(NormalizedText text)
         {
             ArgumentException.ThrowIfNullOrEmpty(pattern);                          // as string.Replace refuses one
             var span = text.Span;
+            if (_inPlace)
+            {
+                text.DirectChars[..span.Length].Replace(pattern[0], content[0]);
+                return;
+            }
+
             int at = span.IndexOf(pattern, StringComparison.Ordinal);
             if (at < 0)
             {
@@ -422,13 +431,14 @@ internal static class SpanComponents
     }
 
     // Replace of a regular expression: every match (empty ones too, as Regex.Replace), aligned as a literal's; a content
-    // with substitutions ($1) runs through Regex.Replace itself.
-    private sealed class RegexReplaceNormalizer(Regex pattern, string content)
+    // with substitutions ($1) runs through Regex.Replace itself. Matched through this thread's copy of the pattern.
+    private sealed class RegexReplaceNormalizer(TokenizerRegex shared, string content)
     {
         private readonly bool _substitutes = content.Contains('$', StringComparison.Ordinal);
 
         public void Run(NormalizedText text)
         {
+            var pattern = shared.Local;
             if (_substitutes)
             {
                 string before = text.ToString(), after = pattern.Replace(before, content);
@@ -463,8 +473,8 @@ internal static class SpanComponents
         }
     }
 
-    // Lowercase as Rust's char::to_lowercase: the invariant mapping character by character, each standing for itself,
-    // except U+0130 (İ), which becomes i and a combining dot above, both standing for it.
+    // Lowercase as Rust's char::to_lowercase: the invariant mapping character by character, each standing for itself
+    // (written in place), except U+0130 (İ), which becomes i and a combining dot above, both standing for it.
     private sealed class LowercaseNormalizer
     {
         public void Run(NormalizedText text)
@@ -474,8 +484,9 @@ internal static class SpanComponents
             try
             {
                 int count = span.ToLowerInvariant(lower);
-                if (span.SequenceEqual(lower.AsSpan(0, count)) && !span.Contains('\u0130'))
+                if (!span.Contains('\u0130'))
                 {
+                    lower.AsSpan(0, count).CopyTo(text.DirectChars);
                     return;
                 }
 
@@ -529,8 +540,9 @@ internal static class SpanComponents
         }
     }
 
-    // A split of every piece by a pattern (Split, Digits, Whitespace, WhitespaceSplit, Punctuation): ranges of the same text.
-    private sealed class SplitPreTokenizer(Regex pattern, string behavior, bool invert)
+    // A split of every piece by a pattern (Split, Digits, Whitespace, WhitespaceSplit, Punctuation): ranges of the same text,
+    // matched through this thread's copy of the pattern.
+    private sealed class SplitPreTokenizer(TokenizerRegex shared, string behavior, bool invert)
     {
         public void Run(PreTokenizedText text, bool atStart)
         {
@@ -541,6 +553,7 @@ internal static class SpanComponents
 
             var output = text.Scratch();
             var span = text.Text.Span;
+            var pattern = shared.Local;
             foreach (var piece in text.Pieces)
             {
                 BpeTokenizer.SplitRange(span, piece, pattern, behavior, invert, output);
@@ -613,7 +626,7 @@ internal static class SpanComponents
     // is a byte of, the added space for the piece's first character.
     private sealed class ByteLevelPreTokenizer(bool prefix, bool useRegex)
     {
-        private readonly Regex _gpt2 = new(BpeTokenizer.Gpt2Pattern, BpeTokenizer.Fast);
+        private readonly TokenizerRegex _gpt2 = new(BpeTokenizer.Gpt2Pattern);
 
         public void Run(PreTokenizedText text, bool atStart)
         {
@@ -623,6 +636,7 @@ internal static class SpanComponents
             var ends = normalized.Ends;
             var output = text.Scratch();
             int longest = 1;
+            var gpt2 = _gpt2.Local;
             foreach (var (_, length) in text.Pieces)
             {
                 longest = Math.Max(longest, length + 1);
@@ -656,7 +670,7 @@ internal static class SpanComponents
                         continue;
                     }
 
-                    foreach (var match in _gpt2.EnumerateMatches(piece))
+                    foreach (var match in gpt2.EnumerateMatches(piece))
                     {
                         output.Add(Bytes(writer, piece, from, to, match.Index, match.Length));
                     }
