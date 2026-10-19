@@ -9,7 +9,7 @@
 //   … -- --bench-cpu                                                             time the CPU decoding kernels (bfloat16 products, cached attention, sampling)
 //   … -- --bench-gemm / --bench-gemv / --bench-fp8                               time large products / decoding-sized packed products
 //   … -- --bench-vulkan [sections]                                               time every Vulkan device (or those IDRAK_DEVICES names): dispatches, copies, products, attention, decoders
-//   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
+//   … -- --bench-text [text] [tokenizers] [trainers]                             time the text paths (default all): text: tokenizer, chat template, parsing, chunking, BM25 on the README; tokenizers: each fixture tokenizer's load, encodes and batches on the fixture corpus (IDRAK_BENCH_TEXT_CHARACTERS, _SECONDS, _LOADS, _WORKERS, _TOKENIZERS, _REFERENCE); trainers: bpe, unigram, wordpiece (IDRAK_BENCH_TEXT_TRAIN_FILES, _TRAIN_MB, _TRAIN_VOCAB, _TRAINERS, _WORKERS); see BenchText.cs
 //   … -- --bench-window                                                          time windowed and soft-capped attention, kernels against the composed path (IDRAK_DEVICES, default every GPU)
 //   … -- --bench-spans [spans|composed|fastest] [train]                          time a 4,096-token bidirectional attention pass: tiled, composed, the measured choice (default all); train: forward and backward (IDRAK_DEVICES, default the CPU)
 //   … -- --bench-conv                                                            time convolutions (forward, both gradients) per path: host fallback, composed, implicit tiles, depthwise, the measured choice (IDRAK_DEVICES, default every GPU)
@@ -69,9 +69,9 @@ if (args is ["--bench-vulkan", .. var benchSections])
     return Tests.BenchVulkan(benchSections);
 }
 
-if (args is ["--bench-text"])
+if (args is ["--bench-text", .. var textSections])
 {
-    return Tests.BenchText();
+    return Tests.BenchText(textSections);
 }
 
 if (args is ["--bench-window"])
