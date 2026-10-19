@@ -125,6 +125,7 @@ aside { flex: 0 1 380px; min-width: 0; width: 100%; background: var(--panel); bo
 aside h3 { margin: 0; font-size: 15px; font-weight: 600; }
 aside h4 { margin: 0; font-size: 13px; font-weight: 600; }
 .part { display: contents; }
+textarea[aria-invalid="true"] { border-color: #a8443c; }
 /* Arabic: the diagram is drawn by position, so it stays left to right; numbers with units and paths keep their own direction. */
 [dir=rtl] .stage, [dir=rtl] .key { direction: ltr; }
 [dir=rtl] .mono, [dir=rtl] .chip, [dir=rtl] .key, [dir=rtl] .wchip, [dir=rtl] .log, [dir=rtl] .kpi b, [dir=rtl] input, [dir=rtl] textarea { unicode-bidi: plaintext; }
@@ -407,7 +408,7 @@ const S = {
   machine: null, key: (() => { try { return sessionStorage.getItem('idrak-cluster-key') || ''; } catch { return ''; } })(),
   model: null, file: null, path: '', dirty: false, inspection: null, problem: null,
   mode: 'build', panel: true, sel: { kind: 'none' }, modal: null, zoom: 1, pos: {}, bends: {}, dragging: null, tx: true,
-  runs: [], runId: null, faultOpen: false, activity: [], form: { command: '', mode: 'in-process', collective: '', seed: '', paused: false, follow: '' },
+  runs: [], runId: null, faultOpen: false, activity: [], form: { command: '', mode: 'in-process', collective: '', seed: '', paused: false, follow: '', error: '' },
 };
 let R = freshRun();
 function freshRun() {
@@ -979,13 +980,13 @@ function runPanel() {
   if (!run) {
     const f = S.form;
     out += `<div class="sec" style="border: 0; padding: 0"><h3>${t('Start a simulated run')}</h3>
-      <label class="field">${t('Training command (rank 0 writes the run folder given with -o)')}<textarea id="i-command" rows="3" placeholder="pretrain MODEL --tokens tokens.bin --steps 200 -o RUN">${h(f.command)}</textarea></label>
+      <label class="field">${t('Training command (rank 0 writes the run folder given with -o)')}<textarea id="i-command" rows="3" placeholder="e.g. pretrain MODEL --tokens tokens.bin --steps 200 -o RUN" aria-invalid="${!!f.error}">${h(f.command)}</textarea></label>
       <div class="row" role="group" aria-label="${t('Where the ranks run')}" style="gap: 4px"><button type="button" class="seg" data-act="where" data-where="in-process" aria-pressed="${f.mode === 'in-process'}">${t('Simulate here')}</button><button type="button" class="seg" data-act="where" data-where="localhost" aria-pressed="${f.mode === 'localhost'}">${t('Processes here')}</button></div>
       <span class="small muted">${f.mode === 'in-process' ? t('every rank a thread of this process on the simulated links: pause, stop and faults') : t('every rank a process of this machine over the real transports: pause and stop')}</span>
       <div class="row" style="align-items: flex-end"><label class="field" style="flex: 1 1 0">${t('Collective')}<select id="i-collective"><option value="">${t('the default')}</option>${(S.machine?.collectives || []).map(c => `<option ${c === f.collective ? 'selected' : ''}>${h(c)}</option>`).join('')}</select></label>
         <label class="field" style="flex: 0 0 100px">${t('Seed')}<input id="i-run-seed" class="mono" value="${h(f.seed)}" placeholder="${t("the file's")}"></label></div>
       <label class="row small muted"><input type="checkbox" id="i-paused" ${f.paused ? 'checked' : ''} style="min-height: 0; width: 16px; height: 16px"> ${t('Start paused (before step 0)')}</label>
-      <button type="button" class="btn primary big" data-act="start">${t('Start run')}</button></div>
+      <button type="button" class="btn primary big" data-act="start">${t('Start run')}</button>${f.error ? `<span class="small bad" role="alert">${h(f.error)}</span>` : ''}</div>
       <div class="sec"><h4>${t('Follow a run folder')}</h4><span class="small muted">${t('a run idrak cluster start writes across the machines: shown read-only as it goes')}</span>
       <div class="row" style="flex-wrap: nowrap"><input id="i-follow" class="mono" value="${h(f.follow)}" placeholder="RUN" style="flex: 1 1 auto"><button type="button" class="btn" data-act="follow">${t('Follow')}</button></div></div>`;
     return [...parts, ['p-start', out]];
@@ -1399,7 +1400,7 @@ document.addEventListener('input', (ev) => {
   const el = ev.target;
   switch (el.id) {
     case 'i-path': S.path = el.value; break;
-    case 'i-command': S.form.command = el.value; break;
+    case 'i-command': S.form.command = el.value; if (S.form.error) { S.form.error = ''; render(); } break;
     case 'i-run-seed': S.form.seed = el.value; break;
     case 'i-follow': S.form.follow = el.value; break;
     case 'f-factor': S.faultFactor = el.value; break;
@@ -1415,6 +1416,12 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && /-rate$/.test(ev.target.id || '')) document.querySelector(`[data-act="rate"][data-for="${ev.target.id.slice(0, -5)}"]`)?.click();
 });
 async function startRun() {
+  if (!S.form.command.trim()) {
+    S.form.error = t('Write the training command first (pretrain, tune, train or resume, with -o RUN for the run folder); the grey text is only an example.');
+    render(); $('i-command')?.focus();
+    return;
+  }
+  S.form.error = '';
   try {
     if ((S.dirty || !S.file) && !(await save())) return;
     const body = { topology: S.file, command: S.form.command.trim(), mode: S.form.mode, paused: S.form.paused };
