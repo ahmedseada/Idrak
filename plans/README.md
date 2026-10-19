@@ -50,6 +50,11 @@ encoding, Unigram and WordPiece trainers in `idrak data tokenizer --model`; clos
 library-owned Unicode normalization, the T3 callers, the T4 leftovers and two speed rounds built and pushed
 2026-10-19; left: the owner's runs (T5 measured, not taken); see its "What is left"): [24-tokenizers.md](24-tokenizers.md).
 
+Model families as plug-in packages: every family leaves the library for its parent's plug-in package, one namespace per
+family (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`; for example `Idrak.Vision.Plugins.Qwen`),
+the library keeping only defaults and fallbacks; `Idrak.Nlp` renamed `Idrak.Text`; the engine for encoders and
+encoder-decoders, then BERT and T5 (planned 2026-10-19, nothing built): [26-plugin-packages.md](26-plugin-packages.md).
+
 ## Not supported yet
 
 What the `architecture` branch cannot do today, with an example of each. "High" marks what comes next.
