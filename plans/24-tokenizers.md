@@ -11,7 +11,7 @@ L0, L1, T0 and T2 are built and CPU-checked; T1 is in progress. Closes plug-in g
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
 | T1 | Unigram: encode, decode, byte fallback, sampling | In progress (agent B) |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
-| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection done (T0, T2); GGUF `llama` / `bert` in progress; encodings and `t5` after T1 |
+| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection and GGUF done, CPU pass (`t5` encodes once T1 lands); encodings in progress |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
 | T5 | BPE onto the shared span pipeline (only if measured equal or faster) | On hold: not started until the owner decides (2026-10-19) |
 
@@ -615,6 +615,29 @@ The reader also changes: `Gguf.cs` returns uint8 and int8 arrays as `byte[]` and
 (`GgufModel.cs:52`) goes from 1 to 2, so prepared folders are made again.
 
 `tools/gguf/make_fixtures.py` gains tiny `llama`-, `bert`- and `t5`-tokenizer GGUFs made from T0's trained tokenizers.
+
+**T3, GGUF, as built (2026-10-19).**
+- **A registry, `GgufTokenizers`** (decision 10), by `tokenizer.ggml.model`. It replaces the fixed `gpt2` check, and an
+  unknown model fails with "not registered … GgufTokenizers.Register". Built-ins (`GgufTokenizerFormats`):
+  - **`gpt2`:** the old code moved as it was.
+  - **`llama` and `t5`:** the GGUF's pieces, scores, token types, special ids, `add_space_prefix`,
+    `remove_extra_whitespaces` (default false for llama, true for t5) and `precompiled_charsmap` are written back as the
+    SentencePiece `ModelProto` they came from (`SentencePieceWriter`, which T4 extends). That is read as a
+    tokenizer.model is, so a GGUF and its tokenizer.model give one tokenizer.
+  - **`bert`:** llama.cpp's "phantom space" pieces are turned back (▁x → x, x → ##x, [X] kept), with the special tokens
+    by their ids, through the definition the vocab.txt reader writes (`VocabTxtReader.BertDefinition`, shared).
+    GGUF does not record lowercasing; it lowercases and strips accents, as llama.cpp's tokenizer does, and says so in
+    a note.
+- **Prepared tokenizer.json:** written from the definition (`TokenizerJsonReader.Write`). `FormatVersion` 2, so cached
+  prepared folders are made again.
+- **Tests** (`tokenizers: gguf`, GGUF files written by the test):
+  - a llama GGUF made from the bpe fixture writes the tokenizer.json its tokenizer.model reads to, byte for byte, and
+    encodes and decodes every corpus line as it;
+  - t5 GGUFs made from unigram and unigram-bytes write identical tokenizer.json files;
+  - a bert GGUF in llama.cpp's form gives tokenizer.json's ids on every line;
+  - an unknown tokenizer fails, and an app's converter is used, then unregistered.
+- **Run (CPU):** `tokenizers:`, `gguf:`, `plugins:`, `pretrained:`, `public API`, `inventory`: 66 passed, 0 failed.
+- **Owner:** a real Llama-2-style GGUF (`tokenizer.ggml.model` llama) end to end, see "The owner's runs".
 
 **Callers**: `TextEncoder` (Idrak.Nlp) pads and masks through `EncodeBatch` when its tokenizer is an
 `IPretrainedTokenizer` (the same vectors, one tokenize pass); `idrak tokenize` gains `--offsets`, `--pair TEXT` and

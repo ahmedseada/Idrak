@@ -1403,6 +1403,16 @@ public static class Idrak.Models.Abstractions.GgufPreTokenizers
   public static string? Origin(string name)
   public static void Register(string name, string? pattern)
 
+public static class Idrak.Models.Abstractions.GgufTokenizers
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition> Get(string name)
+  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition>? Default(string name)
+  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition>? Find(string name)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition> convert)
+
 public sealed class Idrak.Models.Abstractions.GgufType
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufType()
   public override string ToString()

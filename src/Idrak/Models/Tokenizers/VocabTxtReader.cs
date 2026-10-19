@@ -58,14 +58,23 @@ internal sealed class VocabTxtReader : ITokenizerFileReader
             _ => fallback,
         };
 
-        bool lowercase = (bool?)config["do_lower_case"] ?? true;
-        string unknown = Token("unk_token", "[UNK]"), sep = Token("sep_token", "[SEP]"), cls = Token("cls_token", "[CLS]");
-        string pad = Token("pad_token", "[PAD]"), mask = Token("mask_token", "[MASK]");
+        return BertDefinition(file, vocabulary, (bool?)config["do_lower_case"] ?? true, config["strip_accents"]?.DeepClone(),
+            (bool?)config["tokenize_chinese_chars"] ?? true, Token("unk_token", "[UNK]"), Token("sep_token", "[SEP]"),
+            Token("cls_token", "[CLS]"), Token("pad_token", "[PAD]"), Token("mask_token", "[MASK]"));
+    }
+
+    // A BERT tokenizer as transformers' BertConverter writes it, for a vocabulary of token to id (vocab.txt here, a GGUF
+    // "bert" tokenizer too): BertNormalizer, BertPreTokenizer, [CLS] A [SEP] (B [SEP]), the WordPiece decoder and model,
+    // and the special tokens the vocabulary holds as added tokens.
+    internal static TokenizerDefinition BertDefinition(string source, Dictionary<string, int> vocabulary, bool lowercase, JsonNode? stripAccents,
+        bool chinese, string unknown, string sep, string cls, string pad, string mask)
+    {
         int IdOf(string token) => vocabulary.TryGetValue(token, out int found) ? found
-            : throw new InvalidDataException($"{file}: the special token '{token}' is not in the vocabulary.");
+            : throw new InvalidDataException($"{source}: the special token '{token}' is not in the vocabulary.");
 
         var added = new JsonArray();
-        foreach (var (token, tokenId) in new[] { pad, unknown, cls, sep, mask }.Where(vocabulary.ContainsKey).Select(t => (t, vocabulary[t])).OrderBy(t => t.Item2))
+        foreach (var (token, tokenId) in new[] { pad, unknown, cls, sep, mask }.Distinct(StringComparer.Ordinal).Where(vocabulary.ContainsKey)
+                     .Select(t => (t, vocabulary[t])).OrderBy(t => t.Item2))
         {
             added.Add((JsonNode)new JsonObject
             {
@@ -74,22 +83,22 @@ internal sealed class VocabTxtReader : ITokenizerFileReader
             });
         }
 
-        JsonObject Special(string name) => new() { ["SpecialToken"] = new JsonObject { ["id"] = name, ["type_id"] = 0 } };
+        JsonObject Special(string name, int type = 0) => new() { ["SpecialToken"] = new JsonObject { ["id"] = name, ["type_id"] = type } };
         JsonObject Sequence(string name, int type) => new() { ["Sequence"] = new JsonObject { ["id"] = name, ["type_id"] = type } };
         var json = new JsonObject
         {
             ["added_tokens"] = added,
             ["normalizer"] = new JsonObject
             {
-                ["type"] = "BertNormalizer", ["clean_text"] = true, ["handle_chinese_chars"] = (bool?)config["tokenize_chinese_chars"] ?? true,
-                ["strip_accents"] = config["strip_accents"]?.DeepClone(), ["lowercase"] = lowercase,
+                ["type"] = "BertNormalizer", ["clean_text"] = true, ["handle_chinese_chars"] = chinese, ["strip_accents"] = stripAccents,
+                ["lowercase"] = lowercase,
             },
             ["pre_tokenizer"] = new JsonObject { ["type"] = "BertPreTokenizer" },
             ["post_processor"] = new JsonObject
             {
                 ["type"] = "TemplateProcessing",
                 ["single"] = new JsonArray(Special(cls), Sequence("A", 0), Special(sep)),
-                ["pair"] = new JsonArray(Special(cls), Sequence("A", 0), Special(sep), Sequence("B", 1), Last(Special(sep))),
+                ["pair"] = new JsonArray(Special(cls), Sequence("A", 0), Special(sep), Sequence("B", 1), Special(sep, 1)),
                 ["special_tokens"] = new JsonObject
                 {
                     [cls] = new JsonObject { ["id"] = cls, ["ids"] = new JsonArray(IdOf(cls)), ["tokens"] = new JsonArray(cls) },
@@ -102,13 +111,6 @@ internal sealed class VocabTxtReader : ITokenizerFileReader
                 ["type"] = "WordPiece", ["unk_token"] = unknown, ["continuing_subword_prefix"] = "##", ["max_input_chars_per_word"] = 100,
             },
         };
-        return new TokenizerDefinition { Source = file, Json = json, Vocabulary = vocabulary };
-
-        // The pair template's last [SEP] has type id 1.
-        static JsonObject Last(JsonObject special)
-        {
-            special["SpecialToken"]!["type_id"] = 1;
-            return special;
-        }
+        return new TokenizerDefinition { Source = source, Json = json, Vocabulary = vocabulary };
     }
 }
