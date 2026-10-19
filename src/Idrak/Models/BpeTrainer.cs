@@ -35,39 +35,9 @@ internal sealed class BpeTrainer : ITokenizerTrainer
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(options);
+        options.Validate(Name);
         bool byteLevel = options.PreTokenizer.Equals(TokenizerTrainers.ByteLevel, StringComparison.OrdinalIgnoreCase);
-        if (!byteLevel && !options.PreTokenizer.Equals(TokenizerTrainers.Metaspace, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException($"Pre-tokenizer '{options.PreTokenizer}' is not one the bpe trainer writes ({TokenizerTrainers.ByteLevel}, {TokenizerTrainers.Metaspace}).", nameof(options));
-        }
-
-        if (options.VocabularySize < 1)
-        {
-            throw new ArgumentException($"The vocabulary size must be at least 1, not {options.VocabularySize}.", nameof(options));
-        }
-
-        if (options.MinFrequency < 0)
-        {
-            throw new ArgumentException($"The minimum frequency cannot be negative ({options.MinFrequency}).", nameof(options));
-        }
-
-        if (options.LineEnds is not ("lf" or "keep"))
-        {
-            throw new ArgumentException($"LineEnds is \"lf\" (\\r\\n read as \\n) or \"keep\" (the bytes as they are), not '{options.LineEnds}'.", nameof(options));
-        }
-
-        if (files.Count == 0)
-        {
-            throw new ArgumentException("Give at least one text file to learn from.", nameof(files));
-        }
-
-        foreach (string file in files)
-        {
-            if (!File.Exists(file))
-            {
-                throw new FileNotFoundException($"{file} not found.", file);
-            }
-        }
+        TrainingFiles.Check(files);
 
         var counts = CountWords(files, byteLevel, options, progress, cancellationToken);
         var (vocabulary, merges) = Merge(counts, byteLevel, options, progress, cancellationToken);
@@ -131,11 +101,11 @@ internal sealed class BpeTrainer : ITokenizerTrainer
         return mapped;
     }
 
-    private readonly record struct Block(byte[] Bytes, int Length);
+    internal readonly record struct Block(byte[] Bytes, int Length);
 
     // The files' bytes in blocks that end on a line end (a line is never cut), rented from the shared pool; the reader
     // of a block returns it.
-    private static IEnumerable<Block> Blocks(IReadOnlyList<string> files, CancellationToken cancellationToken)
+    internal static IEnumerable<Block> Blocks(IReadOnlyList<string> files, CancellationToken cancellationToken)
     {
         foreach (string file in files)
         {
@@ -329,82 +299,16 @@ internal sealed class BpeTrainer : ITokenizerTrainer
             => x.Count != y.Count ? y.Count.CompareTo(x.Count) : x.Pair.CompareTo(y.Pair);
     }
 
-    private static (Dictionary<string, int> Vocabulary, (string Left, string Right)[] Merges) Merge(Dictionary<string, long> wordCounts, bool byteLevel,
-        TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress, CancellationToken cancellationToken)
+    // The merges and the vocabulary they make, as Hugging Face's BpeTrainer (do_train) makes them from the words and their
+    // counts (taken in the dictionary's order). With a continuing-subword prefix (WordPiece's "##"), a character after a
+    // word's first is its prefixed token, and a merge drops the right part's prefix; the prefixed characters take their
+    // ids after the alphabet in code-point order (Hugging Face numbers them in hash order, which changes from run to run).
+    internal static (Dictionary<string, int> Vocabulary, (string Left, string Right)[] Merges) Merge(Dictionary<string, long> wordCounts, bool byteLevel,
+        TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress, CancellationToken cancellationToken, string? prefix = null)
     {
-        var ids = new Dictionary<string, int>(Math.Min(options.VocabularySize, 1 << 20), StringComparer.Ordinal);
-        var tokens = new List<string>(ids.Capacity);
-        void AddToken(string token)
-        {
-            if (ids.TryAdd(token, tokens.Count))
-            {
-                tokens.Add(token);
-            }
-        }
-
-        foreach (string special in options.SpecialTokens)
-        {
-            AddToken(special);
-        }
-
-        // The alphabet: each character's count over the words (the byte map's 256 count as always seen), the rarest
-        // dropped past the limit, the rest in code-point order.
-        var alphabet = new Dictionary<int, ulong>();
-        foreach (var (word, count) in wordCounts)
-        {
-            foreach (var rune in word.EnumerateRunes())
-            {
-                System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(alphabet, rune.Value, out _) += (ulong)count;
-            }
-        }
-
-        if (byteLevel)
-        {
-            foreach (char c in BpeTokenizer.ByteLevelAlphabet)
-            {
-                alphabet[c] = ulong.MaxValue;
-            }
-        }
-
-        var kept = alphabet.ToList();
-        int remove = options.LimitAlphabet is int limit ? Math.Max(0, alphabet.Count - limit) : 0;
-        if (remove > 0)
-        {
-            kept.Sort((a, b) => a.Value != b.Value ? a.Value.CompareTo(b.Value) : a.Key.CompareTo(b.Key));
-            kept.RemoveRange(0, remove);
-        }
-
-        kept.Sort((a, b) => a.Key.CompareTo(b.Key));
-        foreach (var (code, _) in kept)
-        {
-            AddToken(char.ConvertFromUtf32(code));
-        }
-
-        // Every word as symbol ids (characters outside the alphabet are left out, as the original does).
-        var words = new int[wordCounts.Count][];
-        var lengths = new int[wordCounts.Count];
-        var counts = new long[wordCounts.Count];
-        int w = 0;
-        var symbols = new List<int>();
-        var lookup = ids.GetAlternateLookup<ReadOnlySpan<char>>();
-        Span<char> runeText = stackalloc char[2];
-        foreach (var (word, count) in wordCounts)
-        {
-            symbols.Clear();
-            foreach (var rune in word.EnumerateRunes())
-            {
-                int n = rune.EncodeToUtf16(runeText);
-                if (lookup.TryGetValue(runeText[..n], out int id))
-                {
-                    symbols.Add(id);
-                }
-            }
-
-            words[w] = [.. symbols];
-            lengths[w] = symbols.Count;
-            counts[w] = count;
-            w++;
-        }
+        var table = Symbols(wordCounts, byteLevel, options, prefix);
+        var (ids, tokens, words, lengths, counts) = (table.Ids, table.Tokens, table.Words, table.Lengths, table.Counts);
+        void AddToken(string token) => table.Add(token);
 
         // Pair counts over every word, and the words each pair is in.
         var pairCounts = new Dictionary<long, long>();
@@ -464,7 +368,13 @@ internal sealed class BpeTrainer : ITokenizerTrainer
             }
 
             int left = (int)(top.Pair >> 32), right = (int)(uint)top.Pair;
-            string merged = tokens[left] + tokens[right];
+            string rightPart = tokens[right];
+            if (prefix is not null && rightPart.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                rightPart = rightPart[prefix.Length..];
+            }
+
+            string merged = tokens[left] + rightPart;
             if (!ids.TryGetValue(merged, out int mergedId))
             {
                 mergedId = tokens.Count;
@@ -512,11 +422,140 @@ internal sealed class BpeTrainer : ITokenizerTrainer
         return (ids, ordered);
     }
 
-    private static long Pack(int left, int right) => ((long)left << 32) | (uint)right;
+    // The symbols merging starts from: the special tokens, the alphabet (each character's count over the words, the rarest
+    // dropped past LimitAlphabet, the rest in code-point order), the prefixed characters, and every word as symbol ids.
+    internal static SymbolTable Symbols(Dictionary<string, long> wordCounts, bool byteLevel, TokenizerTrainingOptions options, string? prefix)
+    {
+        var table = new SymbolTable(Math.Min(options.VocabularySize, 1 << 20), wordCounts.Count);
+        var ids = table.Ids;
+        void AddToken(string token) => table.Add(token);
+
+        foreach (string special in options.SpecialTokens)
+        {
+            AddToken(special);
+        }
+
+        // The alphabet: each character's count over the words (the byte map's 256 count as always seen), the rarest
+        // dropped past the limit, the rest in code-point order.
+        var alphabet = new Dictionary<int, ulong>();
+        foreach (var (word, count) in wordCounts)
+        {
+            foreach (var rune in word.EnumerateRunes())
+            {
+                System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(alphabet, rune.Value, out _) += (ulong)count;
+            }
+        }
+
+        if (byteLevel)
+        {
+            foreach (char c in BpeTokenizer.ByteLevelAlphabet)
+            {
+                alphabet[c] = ulong.MaxValue;
+            }
+        }
+
+        var kept = alphabet.ToList();
+        int remove = options.LimitAlphabet is int limit ? Math.Max(0, alphabet.Count - limit) : 0;
+        if (remove > 0)
+        {
+            kept.Sort((a, b) => a.Value != b.Value ? a.Value.CompareTo(b.Value) : a.Key.CompareTo(b.Key));
+            kept.RemoveRange(0, remove);
+        }
+
+        kept.Sort((a, b) => a.Key.CompareTo(b.Key));
+        foreach (var (code, _) in kept)
+        {
+            AddToken(char.ConvertFromUtf32(code));
+        }
+
+        // Every word as symbol ids (characters outside the alphabet are left out, as the original does).
+        var (words, lengths, counts) = (table.Words, table.Lengths, table.Counts);
+        int w = 0;
+        var symbols = new List<int>();
+        var lookup = ids.GetAlternateLookup<ReadOnlySpan<char>>();
+        int prefixLength = prefix?.Length ?? 0;
+        Span<char> runeText = new char[prefixLength + 2];
+        prefix.AsSpan().CopyTo(runeText);
+        if (prefix is not null)
+        {
+            var continuing = new SortedSet<int>();
+            foreach (var (word, _) in wordCounts)
+            {
+                bool first = true;
+                foreach (var rune in word.EnumerateRunes())
+                {
+                    int n = rune.EncodeToUtf16(runeText[prefixLength..]);
+                    if (!first && lookup.ContainsKey(runeText.Slice(prefixLength, n)))
+                    {
+                        continuing.Add(rune.Value);
+                    }
+
+                    first = false;
+                }
+            }
+
+            foreach (int code in continuing)
+            {
+                AddToken(prefix + char.ConvertFromUtf32(code));
+            }
+        }
+
+        foreach (var (word, count) in wordCounts)
+        {
+            symbols.Clear();
+            bool first = true;
+            foreach (var rune in word.EnumerateRunes())
+            {
+                int n = rune.EncodeToUtf16(runeText[prefixLength..]);
+                if (lookup.TryGetValue(runeText.Slice(prefixLength, n), out int id))
+                {
+                    if (prefix is not null && !first)
+                    {
+                        id = lookup[runeText[..(prefixLength + n)]];
+                    }
+
+                    symbols.Add(id);
+                }
+
+                first = false;
+            }
+
+            words[w] = [.. symbols];
+            lengths[w] = symbols.Count;
+            counts[w] = count;
+            w++;
+        }
+
+        return table;
+    }
+
+    // The tokens by id and the words as symbols, for the merge loops.
+    internal sealed class SymbolTable(int capacity, int words)
+    {
+        public Dictionary<string, int> Ids { get; } = new(capacity, StringComparer.Ordinal);
+
+        public List<string> Tokens { get; } = new(capacity);
+
+        public int[][] Words { get; } = new int[words][];
+
+        public int[] Lengths { get; } = new int[words];
+
+        public long[] Counts { get; } = new long[words];
+
+        public void Add(string token)
+        {
+            if (Ids.TryAdd(token, Tokens.Count))
+            {
+                Tokens.Add(token);
+            }
+        }
+    }
+
+    internal static long Pack(int left, int right) => ((long)left << 32) | (uint)right;
 
     // Merges every (left, right) of a word in place, left to right, recording the pairs that went (-1) and came (+1);
     // returns the new length.
-    private static int MergeWord(int[] symbols, int length, int left, int right, int merged, List<(long Pair, int Change)> changes)
+    internal static int MergeWord(int[] symbols, int length, int left, int right, int merged, List<(long Pair, int Change)> changes)
     {
         int write = 0, read = 0;
         while (read < length)

@@ -1436,6 +1436,10 @@ public interface Idrak.Models.Abstractions.IPreTokenizer
   public (default) void PreTokenize(Idrak.Models.Abstractions.PreTokenizedText text, bool atStart)
   public System.Collections.Generic.IReadOnlyList<string> PreTokenize(System.Collections.Generic.IReadOnlyList<string> pieces, bool atStart)
 
+public interface Idrak.Models.Abstractions.ITokenizerCompanionFiles
+  public System.Collections.Generic.IReadOnlyList<string> CompanionFiles { get; }
+  public void SaveCompanion(string name, string path)
+
 public interface Idrak.Models.Abstractions.ITokenizerDecoder
   public System.Collections.Generic.IReadOnlyList<string> Decode(System.Collections.Generic.IReadOnlyList<string> tokens)
 
@@ -1622,7 +1626,13 @@ public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquata
 public static class Idrak.Models.Abstractions.TokenizerTrainers
   public const string Bpe = "bpe"
   public const string ByteLevel = "bytelevel"
+  public const string Diacritics = "diacritics"
+  public const string Frequency = "frequency"
+  public const string Likelihood = "likelihood"
   public const string Metaspace = "metaspace"
+  public const string Tatweel = "tatweel"
+  public const string Unigram = "unigram"
+  public const string WordPiece = "wordpiece"
   public static Idrak.Models.Abstractions.ITokenizerTrainer Get(string name)
   public static Idrak.Models.Abstractions.ITokenizerTrainer? Default(string name)
   public static Idrak.Models.Abstractions.ITokenizerTrainer? Find(string name)
@@ -1633,15 +1643,29 @@ public static class Idrak.Models.Abstractions.TokenizerTrainers
   public static void Register(Idrak.Models.Abstractions.ITokenizerTrainer trainer)
 
 public sealed record Idrak.Models.Abstractions.TokenizerTrainingOptions : System.IEquatable<Idrak.Models.Abstractions.TokenizerTrainingOptions>
+  public System.Collections.Generic.IReadOnlyList<string> Arabic { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> SpecialTokens { get; init; }
   public TokenizerTrainingOptions()
   public bool AddPrefixSpace { get; init; }
+  public bool ByteFallback { get; init; }
+  public bool Lowercase { get; init; }
+  public bool RemovesArabic(string choice)
+  public bool SplitDigits { get; init; }
+  public bool? StripAccents { get; init; }
+  public double CharacterCoverage { get; init; }
+  public double ShrinkingFactor { get; init; }
+  public int EmIterations { get; init; }
+  public int MaxPieceLength { get; init; }
   public int MinFrequency { get; init; }
+  public int SeedSize { get; init; }
   public int VocabularySize { get; init; }
   public int Workers { get; init; }
   public int? LimitAlphabet { get; init; }
   public string LineEnds { get; init; }
   public string PreTokenizer { get; init; }
+  public string Scoring { get; init; }
+  public string? UnknownToken { get; init; }
+  public void Validate(string trainer)
 
 public readonly record struct Idrak.Models.Abstractions.TokenizerTrainingProgress : System.IEquatable<Idrak.Models.Abstractions.TokenizerTrainingProgress>
   public TokenizerTrainingProgress(string Stage, long Done, long Total)

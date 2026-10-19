@@ -38,10 +38,166 @@ public sealed record TokenizerTrainingOptions
     /// system wrote it; "keep" keeps the bytes as they are, "\r" included, as Hugging Face's <c>train_from_files</c> does.
     /// </summary>
     public string LineEnds { get; init; } = "lf";
+
+    /// <summary>
+    /// Unigram: the share of the text's characters the alphabet covers (SentencePiece's <c>character_coverage</c>): the
+    /// most frequent characters are kept until they cover this share, and the rest are unknown (or bytes, with
+    /// <see cref="ByteFallback"/>). In (0, 1]; 1 keeps every character.
+    /// </summary>
+    public double CharacterCoverage { get; init; } = 0.9995;
+
+    /// <summary>Unigram: the 256 pieces &lt;0x00&gt; to &lt;0xFF&gt;, so a character outside the alphabet encodes as its UTF-8 bytes instead of the unknown piece.</summary>
+    public bool ByteFallback { get; init; }
+
+    /// <summary>Unigram: the longest piece, in characters (SentencePiece's <c>max_sentencepiece_length</c>), 1 or more.</summary>
+    public int MaxPieceLength { get; init; } = 16;
+
+    /// <summary>Unigram: how many frequent substrings seed the vocabulary before pruning (SentencePiece's <c>seed_sentencepiece_size</c>), besides every character.</summary>
+    public int SeedSize { get; init; } = 1_000_000;
+
+    /// <summary>Unigram: the share of the pieces each pruning round keeps, in (0, 1) (SentencePiece's <c>shrinking_factor</c>).</summary>
+    public double ShrinkingFactor { get; init; } = 0.75;
+
+    /// <summary>Unigram: the EM steps (expected counts, then new scores) before each pruning round, 1 or more (SentencePiece's <c>num_sub_iterations</c>).</summary>
+    public int EmIterations { get; init; } = 2;
+
+    /// <summary>
+    /// Every digit (0-9) is a piece of its own: Unigram learns no piece of two digits (SentencePiece's <c>split_digits</c>);
+    /// WordPiece cuts numbers into digits before learning and encoding (a <c>Digits</c> pre-tokenizer).
+    /// </summary>
+    public bool SplitDigits { get; init; }
+
+    /// <summary>WordPiece: text is lowercased before learning and encoding (BERT's uncased models).</summary>
+    public bool Lowercase { get; init; }
+
+    /// <summary>WordPiece: accents are removed (NFD, then the nonspacing marks dropped); null follows <see cref="Lowercase"/>, as BERT's normalizer does.</summary>
+    public bool? StripAccents { get; init; }
+
+    /// <summary>
+    /// WordPiece: how the next merge is chosen. <see cref="TokenizerTrainers.Frequency"/> (the default): the most frequent
+    /// pair, as Hugging Face's <c>WordPieceTrainer</c> does (BPE merges with the ## prefix). <see cref="TokenizerTrainers.Likelihood"/>:
+    /// the pair whose count over the product of its parts' counts is largest, the original WordPiece scoring.
+    /// </summary>
+    public string Scoring { get; init; } = TokenizerTrainers.Frequency;
+
+    /// <summary>
+    /// Unigram and WordPiece: Arabic marks removed before learning and encoding, written into the tokenizer so every reader
+    /// of the file removes them too: <see cref="TokenizerTrainers.Tatweel"/> (U+0640), <see cref="TokenizerTrainers.Diacritics"/>
+    /// (the harakat, tanween, shadda, sukun, superscript alef and Quranic marks), or both. Empty: none.
+    /// </summary>
+    public IReadOnlyList<string> Arabic { get; init; } = [];
+
+    /// <summary>
+    /// Unigram and WordPiece: the unknown token; null takes the model's usual one ("&lt;unk&gt;" for Unigram, "[UNK]" for
+    /// WordPiece). When <see cref="SpecialTokens"/> does not list it, it takes the first id after them.
+    /// </summary>
+    public string? UnknownToken { get; init; }
+
+    /// <summary>
+    /// Checks the settings every built-in trainer shares and the ones <paramref name="trainer"/> reads (bpe, unigram,
+    /// wordpiece), so a bad value is refused before any file is read, with the setting named.
+    /// </summary>
+    /// <exception cref="ArgumentException">A setting is out of range or unknown; the message names it.</exception>
+    public void Validate(string trainer)
+    {
+        static void Refuse(string message) => throw new ArgumentException(message, "options");
+        if (VocabularySize < 1)
+        {
+            Refuse($"VocabularySize must be at least 1, not {VocabularySize}.");
+        }
+
+        if (MinFrequency < 0)
+        {
+            Refuse($"MinFrequency cannot be negative ({MinFrequency}).");
+        }
+
+        if (Workers < 0)
+        {
+            Refuse($"Workers cannot be negative ({Workers}); 0 takes one per processor.");
+        }
+
+        if (LimitAlphabet is < 0)
+        {
+            Refuse($"LimitAlphabet cannot be negative ({LimitAlphabet}).");
+        }
+
+        if (LineEnds is not ("lf" or "keep"))
+        {
+            Refuse($"LineEnds is \"lf\" (\\r\\n read as \\n) or \"keep\" (the bytes as they are), not '{LineEnds}'.");
+        }
+
+        if (SpecialTokens.Any(string.IsNullOrEmpty))
+        {
+            Refuse("SpecialTokens holds an empty token.");
+        }
+
+        if (UnknownToken is { Length: 0 })
+        {
+            Refuse("UnknownToken is empty: give a token, or null for the model's usual one.");
+        }
+
+        if (!(CharacterCoverage > 0 && CharacterCoverage <= 1))
+        {
+            Refuse($"CharacterCoverage is a share of the characters in (0, 1], not {CharacterCoverage.ToString(System.Globalization.CultureInfo.InvariantCulture)}.");
+        }
+
+        if (MaxPieceLength < 1)
+        {
+            Refuse($"MaxPieceLength must be at least 1 character, not {MaxPieceLength}.");
+        }
+
+        if (SeedSize < 1)
+        {
+            Refuse($"SeedSize must be at least 1, not {SeedSize}.");
+        }
+
+        if (!(ShrinkingFactor > 0 && ShrinkingFactor < 1))
+        {
+            Refuse($"ShrinkingFactor is the share kept per pruning round, in (0, 1), not {ShrinkingFactor.ToString(System.Globalization.CultureInfo.InvariantCulture)}.");
+        }
+
+        if (EmIterations < 1)
+        {
+            Refuse($"EmIterations must be at least 1, not {EmIterations}.");
+        }
+
+        if (!Scoring.Equals(TokenizerTrainers.Frequency, StringComparison.OrdinalIgnoreCase) && !Scoring.Equals(TokenizerTrainers.Likelihood, StringComparison.OrdinalIgnoreCase))
+        {
+            Refuse($"Scoring is \"{TokenizerTrainers.Frequency}\" or \"{TokenizerTrainers.Likelihood}\", not '{Scoring}'.");
+        }
+
+        foreach (string name in Arabic)
+        {
+            if (!name.Equals(TokenizerTrainers.Tatweel, StringComparison.OrdinalIgnoreCase) && !name.Equals(TokenizerTrainers.Diacritics, StringComparison.OrdinalIgnoreCase))
+            {
+                Refuse($"Arabic names \"{TokenizerTrainers.Tatweel}\" and \"{TokenizerTrainers.Diacritics}\", not '{name}'.");
+            }
+        }
+
+        bool bpe = trainer.Equals(TokenizerTrainers.Bpe, StringComparison.OrdinalIgnoreCase);
+        if (bpe && !PreTokenizer.Equals(TokenizerTrainers.ByteLevel, StringComparison.OrdinalIgnoreCase)
+            && !PreTokenizer.Equals(TokenizerTrainers.Metaspace, StringComparison.OrdinalIgnoreCase))
+        {
+            Refuse($"PreTokenizer '{PreTokenizer}' is not one the bpe trainer writes ({TokenizerTrainers.ByteLevel}, {TokenizerTrainers.Metaspace}).");
+        }
+
+        if (bpe && Arabic.Count > 0)
+        {
+            Refuse("Arabic is read by the unigram and wordpiece trainers; the bpe trainer writes no normalizer.");
+        }
+    }
+
+    /// <summary>Whether <see cref="Arabic"/> names <paramref name="choice"/> (<see cref="TokenizerTrainers.Tatweel"/> or <see cref="TokenizerTrainers.Diacritics"/>).</summary>
+    public bool RemovesArabic(string choice) => Arabic.Any(a => a.Equals(choice, StringComparison.OrdinalIgnoreCase));
 }
 
-/// <summary>Where a <see cref="ITokenizerTrainer"/> is: counting words in the files, then merging.</summary>
-/// <param name="Stage">"words" (reading and counting; Done and Total in bytes) or "merges" (Done and Total in tokens of the vocabulary).</param>
+/// <summary>Where a <see cref="ITokenizerTrainer"/> is: reading the files, then learning.</summary>
+/// <param name="Stage">
+/// "words" (reading and counting; Done and Total in bytes); then BPE and WordPiece: "merges" (Done and Total in tokens of
+/// the vocabulary); Unigram: "seeds" (the frequent substrings; Done and Total in suffix-tree nodes), "em" (Done and Total in
+/// EM steps, the total estimated from the seeds, the vocabulary and the shrinking factor) and "prune" (Done and Total in
+/// pruning rounds, estimated likewise).
+/// </param>
 /// <param name="Done">How far the stage is.</param>
 /// <param name="Total">The stage's end.</param>
 public readonly record struct TokenizerTrainingProgress(string Stage, long Done, long Total);
@@ -70,14 +226,48 @@ public interface ITokenizerTrainer
 }
 
 /// <summary>
+/// A tokenizer that can also be written as files of other kinds than tokenizer.json, each read back by its reader
+/// (<see cref="TokenizerFiles"/>) to the same tokenizer: a trained Unigram tokenizer as SentencePiece's tokenizer.model.
+/// </summary>
+public interface ITokenizerCompanionFiles
+{
+    /// <summary>The file names it writes ("tokenizer.model"); empty when it writes none.</summary>
+    IReadOnlyList<string> CompanionFiles { get; }
+
+    /// <summary>Writes the companion file <paramref name="name"/> (one of <see cref="CompanionFiles"/>) to <paramref name="path"/>.</summary>
+    /// <exception cref="ArgumentException">It writes no file of that name.</exception>
+    void SaveCompanion(string name, string path);
+}
+
+/// <summary>
 /// The tokenizer trainers, by name. Built in: "bpe", byte-pair encoding learned as Hugging Face's <c>BpeTrainer</c>
-/// learns it (the same vocabulary and merges, in the same order, from the same files). Others plug in with
-/// <see cref="Register"/>.
+/// learns it (the same vocabulary and merges, in the same order, from the same files); "unigram", SentencePiece's unigram
+/// language model learned by its procedure (suffix-array seeds, EM with the digamma correction, pruning by loss), written
+/// as tokenizer.json and tokenizer.model; "wordpiece", BERT's model, by frequency (Hugging Face's <c>WordPieceTrainer</c>
+/// with its ties in a fixed order) or by likelihood. Others plug in with <see cref="Register"/>.
 /// </summary>
 public static class TokenizerTrainers
 {
     /// <summary>The library's byte-pair-encoding trainer.</summary>
     public const string Bpe = "bpe";
+
+    /// <summary>The library's unigram-language-model trainer (SentencePiece's procedure).</summary>
+    public const string Unigram = "unigram";
+
+    /// <summary>The library's WordPiece trainer.</summary>
+    public const string WordPiece = "wordpiece";
+
+    /// <summary>WordPiece scoring (<see cref="TokenizerTrainingOptions.Scoring"/>): the most frequent pair, as Hugging Face's trainer.</summary>
+    public const string Frequency = "frequency";
+
+    /// <summary>WordPiece scoring (<see cref="TokenizerTrainingOptions.Scoring"/>): the pair's count over its parts' counts.</summary>
+    public const string Likelihood = "likelihood";
+
+    /// <summary>An <see cref="TokenizerTrainingOptions.Arabic"/> choice: tatweel (U+0640) removed.</summary>
+    public const string Tatweel = "tatweel";
+
+    /// <summary>An <see cref="TokenizerTrainingOptions.Arabic"/> choice: the diacritics removed.</summary>
+    public const string Diacritics = "diacritics";
 
     /// <summary>The byte-level pre-tokenizer (<see cref="TokenizerTrainingOptions.PreTokenizer"/>).</summary>
     public const string ByteLevel = "bytelevel";
@@ -92,6 +282,8 @@ public static class TokenizerTrainers
         var table = new SlotTable<string, ITokenizerTrainer>(nameof(TokenizerTrainers), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a trainer's vocabulary and merges are its own, so another trainer cannot give the same tokenizer");
         table.RegisterDefault(Bpe, new BpeTrainer());
+        table.RegisterDefault(Unigram, new UnigramTrainer());
+        table.RegisterDefault(WordPiece, new WordPieceTrainer());
         return table;
     }
 

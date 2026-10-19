@@ -61,6 +61,9 @@ internal static class EnvironmentVariables
     // Commands that reach the network: model and data downloads, the package feed, the network checks, server calls.
     private static readonly string[] Network = [.. Models, .. Data, .. Clients, "update", "doctor"];
 
+    // Commands that read a model's tokenizer (TokenizerOptions' variables).
+    private static readonly string[] Tokenizing = ["tokenize", "data tokens", "chat", "run", "serve", "create", "pretrain", "train"];
+
     // Commands whose child processes get the variables the coding tools set.
     private static readonly string[] ChildCommands = ["agent", "tools test"];
 
@@ -162,6 +165,12 @@ internal static class EnvironmentVariables
         new("IDRAK_MP3_QUALITY", Audio, "standard", "The MP3 encoder's effort a granule: fast, standard or high", ["speak"]),
         new("IDRAK_MP3_LOWPASS", Audio, "by the bit rate", "The MP3 encoder's low-pass in Hz; 0: none", ["speak"]),
         new("IDRAK_MP3_FRAMES_PER_TASK", Audio, "by the length", "Frames an MP3 encoding task takes at once (the frames are encoded in parallel)", ["speak"]),
+        new("IDRAK_TOKENIZER_FORMAT", Sources, "the first file found: tokenizer.json, then a SentencePiece model, then vocab.txt", "Which tokenizer file a model folder is read from when it holds several: tokenizer.json, sentencepiece, vocab.txt or a plug-in's reader (TokenizerOptions.Format)", Tokenizing),
+        new("IDRAK_TOKENIZER_CACHE", Sources, "100000", "Encoded words a tokenizer keeps, so a repeated word is looked up instead of encoded again; 0: none (TokenizerOptions.PieceCacheLimit)", Tokenizing),
+        new("IDRAK_TOKENIZER_MAX_WORD_CHARS", Sources, "the tokenizer's own (100)", "WordPiece: a longer word (in characters) is one unknown token (TokenizerOptions.MaxInputCharsPerWord)", Tokenizing),
+        new("IDRAK_TOKENIZER_ALPHA", Sources, "not set (sampling off)", "Unigram: subword regularization, each encode samples a segmentation with probability by exp(alpha x its score) (TokenizerOptions.SamplingAlpha)", Tokenizing),
+        new("IDRAK_TOKENIZER_NBEST", Sources, "-1 (the whole lattice)", "Unigram sampling: draw from this many best segmentations; 1: the best; 0 or less: the whole lattice (TokenizerOptions.SamplingBest)", Tokenizing),
+        new("IDRAK_TOKENIZER_SEED", Sources, "not set (unseeded)", "Unigram sampling: the seed of the tokenizer's draws, so the same encodes sample the same segmentations (TokenizerOptions.SamplingSeed)", Tokenizing),
         new("HF_TOKEN", Sources, "the saved login", "The Hugging Face access token for gated and private models and datasets", [.. Models, .. Data, .. Logins], Secret: true),
         new("HUGGING_FACE_HUB_TOKEN", Sources, "not set", "The older name of HF_TOKEN", [.. Models, .. Data, "doctor"], Secret: true),
         new("HF_TOKEN_PATH", Sources, "<HF_HOME>/token", "The file holding the saved Hugging Face token", [.. Models, .. Data, .. Logins]),
