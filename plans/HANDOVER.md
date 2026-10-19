@@ -13,7 +13,12 @@ standing rules; they win over anything here), then the plan you are asked to wor
   What is left is its section **"What is left (2026-10-19, after 7b8c85f)"**: the owner's runs (the exact list is in
   "The owner's runs"), T5 measured and not taken (same ids, about half the speed), and measured candidates nobody
   may start without the owner.
-- **Scope: Plan 24 only.** No other plan is to be started (the owner dropped Plan 25, Idrak.Extensions.AI).
+- **Plan 26 (model families as plug-in packages)** — [26-plugin-packages.md](26-plugin-packages.md): written 2026-10-19
+  from the owner's decisions (one plug-in package per parent, one namespace per family, every family out of the library
+  including the text language models, `Idrak.Nlp` renamed `Idrak.Text`, BERT and T5 first in the list). Nothing is
+  built; one decision is open before P1 (where the plug-in tests live).
+- **Scope:** Plan 24's owner runs, and Plan 26 only when the owner names a phase (the owner dropped Plan 25,
+  Idrak.Extensions.AI).
 - **No new work until the owner says so.** Report status and wait for the owner to name the next item.
 
 ## How to work with the owner
