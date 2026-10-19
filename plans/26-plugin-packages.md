@@ -35,6 +35,7 @@ the first new families, once the engine can run encoders and encoder-decoders.
    `Idrak.Imaging`, `Idrak.Vision` and `Idrak.Network`.
 4. **BERT and T5 head the candidate list.** They are built last (P7, P8) because they need the engine of P6.
 5. **Plan first:** this file is written before any code.
+6. **The plug-in tests live in `tests/Idrak.Tests`,** one filter group per family.
 
 ## Rules that hold for every phase
 
@@ -183,9 +184,9 @@ the rename reaches every package.
 - The "not registered" messages of `PretrainedArchitectures`, `VisionFamilies`, `SpeechFamilies`,
   `SpeechSynthesisFamilies`, `VoiceConverters`, `GgufArchitectures` and the tool-call formats name the plug-in package to
   reference.
-- **Where the plug-in tests live (open, the owner decides before P1):** (a) in `tests/Idrak.Tests`, one filter group per
-  family (`plugins: qwen vl`, …), as the samples' tests are today; or (b) one test project per plug-in package. Proposed:
-  (a), one runner and the owner's usual filters.
+- **The plug-in tests live in `tests/Idrak.Tests`** (the owner, 2026-10-19): one filter group per family
+  (`plugins: qwen vl`, `plugins: whisper`, …), in the one runner, as the samples' tests are today; `Idrak.PluginTests`
+  keeps only its test families that prove the contracts from outside.
 
 **Done when:** the three packages build empty, the registration contract suite (`Register` twice, `Unregister`,
 `RegisterAll`, `-P` on the package) passes, and the inventory and API dump list them.
