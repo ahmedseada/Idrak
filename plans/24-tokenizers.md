@@ -53,6 +53,9 @@ CLAUDE.md and [docs/optimization.md](../docs/optimization.md) apply in full. The
   building a string per piece. After warm-up, encoding into a caller's list allocates nothing (measured, rule 63).
 - **The same result, proven** (rule 71): every id and offset equals the reference's; BPE's ids do not change by one on
   any existing fixture; batch encoding equals single encoding.
+- **The reference is not the ceiling** (CLAUDE.md): `tokenizers` and `sentencepiece` fix the ids, offsets and texts,
+  never the speed or memory. Where `--bench-text` or a profile shows a candidate that beats them (a faster trie walk,
+  fewer passes, less memory per vocabulary), it is taken, with the ids proven unchanged.
 - **Nothing fixed** (CLAUDE.md): every size, limit and choice is a `TokenizerOptions` setting with an `IDRAK_TOKENIZER_*`
   variable, carried through `PretrainedOptions`, the CLI and the benches (see "Settings").
 - **Use every core** unless the user sets a limit: batch encoding and training spread work over `Workers` (0: every

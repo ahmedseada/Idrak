@@ -11,6 +11,11 @@ These are the owner's standing rules. They hold in every session, after every co
   limits, per-call work once, a fixed summation order, the declared block) apply to every GPU kernel.
 - **Speed and memory first.** They are the library's main goal. A slow or memory-heavy path found in the library is
   fixed in the library, without asking whether to; an app or sample never works around it.
+- **The reference is not the ceiling.** A reference implementation or the model in hand (Hugging Face, sentencepiece,
+  PyTorch, llama.cpp, the current real model and its measured speed) fixes what the output must be, never how fast or
+  how lean Idrak may be. When the library's own benches and profiles show a candidate that would make it faster or use
+  less memory, it is taken (its results proven unchanged, rule 71), even where the reference or the current model does
+  not do it or does not need it. Candidates come from what is measured at run time, card-agnostic: never from one card.
 - **Use all available resources unless the user sets a limit.** The library may take every core, the whole device
   memory and the room it measures; using most of a card is not a fault in itself. Only a limit the user sets
   (`ComputeResources`, an option, an environment variable) bounds it. A "memory-heavy path" is one that wastes memory
