@@ -13,7 +13,7 @@ L0, L1, T0 and T2 are built and CPU-checked; T1 is in progress. Closes plug-in g
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
 | T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection done (T0, T2); GGUF `llama` / `bert` in progress; encodings and `t5` after T1 |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
-| T5 | BPE onto the shared span pipeline (only if measured equal or faster) | Planned, optional |
+| T5 | BPE onto the shared span pipeline (only if measured equal or faster) | On hold: not started until the owner decides (2026-10-19) |
 
 ## Goal
 
@@ -681,6 +681,9 @@ too. `TokenizerTrainingProgress` gains the stages `"seeds"`, `"em"` and `"prune"
 
 ## Phase T5 (optional): BPE onto the shared pipeline
 
+**On hold (the owner, 2026-10-19):** not started, measured or scheduled until the owner settles on it. No agent takes it as
+ready work.
+
 BPE keeps its own normalizer and pre-tokenizer fast paths until the span pipeline is measured against them: the same ids
 on every fixture (rule 71), and equal or more tokens a second, with no more bytes allocated, on `--bench-text` (cold and
 warm apart, rule 76). If both hold, BPE runs on the pipeline and its duplicate paths are removed (rule 75). If not, the
@@ -709,7 +712,7 @@ At most two agents at a time (CLAUDE.md), each in its own worktree, building onl
 | 3 | T1 (Unigram; Precompiled's alignments on L1) | T2 (WordPiece, BERT components, post-processors, `vocab.txt`) |
 | 4 | T3a: encodings, offsets, pairs, batch | T3b: detection, GGUF `llama` / `bert` / `t5`, GGUF fixtures |
 | 5 | T4: the Unigram trainer, `SentencePieceWriter` | T4: the WordPiece trainer, then the CLI |
-| 6 | T5 (optional, measured) | none |
+| 6 | T5: on hold until the owner decides | none |
 
 The table is a dependency order, not a barrier (the owner, 2026-10-19): the moment an agent finishes, its slot takes
 the next work whose inputs are merged, without waiting for the other slot. Work that needs only wave 1 and can start
