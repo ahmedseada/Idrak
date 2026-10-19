@@ -1423,6 +1423,7 @@ public static class Idrak.Models.Abstractions.GgufTypes
   public static void SetPolicy(int id, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public interface Idrak.Models.Abstractions.IPreTokenizer
+  public (default) void PreTokenize(Idrak.Models.Abstractions.PreTokenizedText text, bool atStart)
   public System.Collections.Generic.IReadOnlyList<string> PreTokenize(System.Collections.Generic.IReadOnlyList<string> pieces, bool atStart)
 
 public interface Idrak.Models.Abstractions.ITokenizerDecoder
@@ -1435,7 +1436,12 @@ public interface Idrak.Models.Abstractions.ITokenizerFileReader
   public string? Find(string path)
 
 public interface Idrak.Models.Abstractions.ITokenizerNormalizer
+  public (default) void Normalize(Idrak.Models.Abstractions.NormalizedText text)
   public string Normalize(string text)
+
+public interface Idrak.Models.Abstractions.ITokenizerPostProcessor
+  public Idrak.Abstraction.Generation.TokenizerEncoding Process(Idrak.Abstraction.Generation.TokenizerEncoding encoding, Idrak.Abstraction.Generation.TokenizerEncoding? pair, bool addSpecialTokens)
+  public int AddedTokens(bool pair)
 
 public interface Idrak.Models.Abstractions.ITokenizerTrainer
   public Idrak.Abstraction.Generation.IPretrainedTokenizer Train(System.Collections.Generic.IReadOnlyList<string> files, Idrak.Models.Abstractions.TokenizerTrainingOptions options, System.IProgress<Idrak.Models.Abstractions.TokenizerTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
@@ -1450,6 +1456,41 @@ public interface Idrak.Models.Abstractions.IVisionFamily
 public interface Idrak.Models.Abstractions.IWeightSource
   public (default) Idrak.Abstraction.Generation.BFloat16Weight? ReadBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool transposed = false)
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
+
+public sealed class Idrak.Models.Abstractions.NormalizedText : System.IDisposable
+  nested Idrak.Models.Abstractions.NormalizedText.Rewriter (below)
+  public (int, int) OriginOf(int index)
+  public (int, int) OriginOf(int start, int length)
+  public Idrak.Models.Abstractions.NormalizedText.Rewriter Rewrite()
+  public NormalizedText()
+  public System.ReadOnlySpan<char> Span { get; }
+  public int Length { get; }
+  public int OriginalEnd { get; }
+  public int OriginalStart { get; }
+  public override string ToString()
+  public string Original { get; }
+  public void Dispose()
+  public void Reset(string original)
+  public void Reset(string original, int start, int length)
+  public void Set(System.ReadOnlySpan<char> text)
+
+public readonly struct Idrak.Models.Abstractions.NormalizedText.Rewriter
+  public int Position { get; }
+  public void Append(System.ReadOnlySpan<char> chars, int from, int count)
+  public void Append(char c, int from, int count = 1)
+  public void AppendOrigin(char c, int start, int end)
+  public void Commit()
+  public void Copy(int from, int count)
+
+public sealed class Idrak.Models.Abstractions.PreTokenizedText : System.IDisposable
+  public (int, int) OriginOf(int index)
+  public Idrak.Models.Abstractions.NormalizedText Text { get; }
+  public PreTokenizedText()
+  public System.Collections.Generic.List<(int, int)> Pieces { get; }
+  public System.Collections.Generic.List<string> PieceStrings()
+  public System.ReadOnlySpan<char> Piece(int index)
+  public void Dispose()
+  public void OnePiece()
 
 public sealed class Idrak.Models.Abstractions.PretrainedArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PretrainedArchitecture()
@@ -1480,6 +1521,7 @@ public sealed record Idrak.Models.Abstractions.PretrainedBuildContext : System.I
 public static class Idrak.Models.Abstractions.TokenizerComponents
   public static System.Collections.Generic.IReadOnlyCollection<string> DecoderTypes { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> NormalizerTypes { get; }
+  public static System.Collections.Generic.IReadOnlyCollection<string> PostProcessorTypes { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> PreTokenizerTypes { get; }
   public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.IPreTokenizer>? DefaultPreTokenizer(string type)
   public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.IPreTokenizer>? FindPreTokenizer(string? type)
@@ -1487,17 +1529,23 @@ public static class Idrak.Models.Abstractions.TokenizerComponents
   public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerDecoder>? FindDecoder(string? type)
   public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerNormalizer>? DefaultNormalizer(string type)
   public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerNormalizer>? FindNormalizer(string? type)
+  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerPostProcessor>? DefaultPostProcessor(string type)
+  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerPostProcessor>? FindPostProcessor(string? type)
   public static bool UnregisterDecoder(string type)
   public static bool UnregisterNormalizer(string type)
+  public static bool UnregisterPostProcessor(string type)
   public static bool UnregisterPreTokenizer(string type)
   public static string? DecoderOrigin(string type)
   public static string? NormalizerOrigin(string type)
+  public static string? PostProcessorOrigin(string type)
   public static string? PreTokenizerOrigin(string type)
   public static void RegisterDecoder(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerDecoder> create)
   public static void RegisterNormalizer(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerNormalizer> create)
+  public static void RegisterPostProcessor(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerPostProcessor> create)
   public static void RegisterPreTokenizer(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.IPreTokenizer> create)
   public static void SetDecoderPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetNormalizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+  public static void SetPostProcessorPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetPreTokenizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed class Idrak.Models.Abstractions.TokenizerDefinition

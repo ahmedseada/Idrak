@@ -418,3 +418,59 @@ public static class Tokenizers
         json.WriteTo(writer);
     }
 }
+
+/// <summary>
+/// A text as a model takes it: its token ids with, for each token, its type id (which text of a pair it belongs to),
+/// whether it is a special token, where it comes from in the text, and whether the model attends to it. Every array has
+/// one entry per token.
+/// </summary>
+public sealed class TokenizerEncoding
+{
+    /// <summary>The token ids.</summary>
+    public required int[] Ids { get; init; }
+
+    /// <summary>Each token's type id (0 for the first text of a pair, 1 for the second; as the post-processor sets them).</summary>
+    public required int[] TypeIds { get; init; }
+
+    /// <summary>
+    /// Each token's range in its text, as UTF-16 indexes [Start, End); a token added by the tokenizer (a special token)
+    /// has (0, 0).
+    /// </summary>
+    public required (int Start, int End)[] Offsets { get; init; }
+
+    /// <summary>1 for a token the model attends to, 0 for padding.</summary>
+    public required int[] AttentionMask { get; init; }
+
+    /// <summary>1 for a special token the tokenizer added, else 0.</summary>
+    public required int[] SpecialTokensMask { get; init; }
+
+    /// <summary>Which text each token comes from: 0 or 1 for the texts of a pair, -1 for a token the tokenizer added.</summary>
+    public required int[] SequenceIds { get; init; }
+
+    /// <summary>The number of tokens.</summary>
+    public int Count => Ids.Length;
+
+    /// <summary>The encoding of ids from one text (sequence <paramref name="sequence"/>), all attended, none special.</summary>
+    public static TokenizerEncoding Of(int[] ids, (int Start, int End)[] offsets, int sequence = 0, int typeId = 0)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(offsets);
+        if (offsets.Length != ids.Length)
+        {
+            throw new ArgumentException($"{offsets.Length} offsets for {ids.Length} ids.", nameof(offsets));
+        }
+
+        return new TokenizerEncoding
+        {
+            Ids = ids, Offsets = offsets, TypeIds = Filled(ids.Length, typeId), AttentionMask = Filled(ids.Length, 1),
+            SpecialTokensMask = new int[ids.Length], SequenceIds = Filled(ids.Length, sequence),
+        };
+
+        static int[] Filled(int length, int value)
+        {
+            var values = new int[length];
+            Array.Fill(values, value);
+            return values;
+        }
+    }
+}

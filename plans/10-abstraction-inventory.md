@@ -12,7 +12,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 71 | 13 | 38 | 121 | 0 |
-| `Idrak` | 12 | 4 | 14 | 30 | 0 |
+| `Idrak` | 13 | 4 | 14 | 31 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
@@ -181,6 +181,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerFileReader` | interface | public | — | SentencePieceReader, TokenizerJsonReader |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITokenizerPostProcessor` | interface | public | — | TokenizerComponents.GuardedPostProcessor |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | — |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | Device | CheckpointWeights |  | Idrak | Idrak |
