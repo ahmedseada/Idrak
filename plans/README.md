@@ -46,8 +46,9 @@ Sound in and out of the library (`Idrak.Audio` as general building blocks: WAV a
 Unigram (SentencePiece) and WordPiece tokenizers built into the library beside BPE (a tokenizer model registry and one
 tokenizer contract so nothing requires `BpeTokenizer`, a span pipeline with alignments, the `tokenizer.model` reader in
 C#, `tokenizer.json`, `tokenizer.model`, `vocab.txt` and GGUF `llama` / `bert` / `t5` detected, offsets, pairs and batch
-encoding, Unigram and WordPiece trainers in `idrak data tokenizer --model`; closes plug-in gap 11; planned 2026-10-19,
-nothing built): [24-tokenizers.md](24-tokenizers.md).
+encoding, Unigram and WordPiece trainers in `idrak data tokenizer --model`; closes plug-in gap 11; L0, L1 and T0-T4
+built and pushed 2026-10-19, left: library-owned Unicode normalization, the T3 callers, T5 on hold; see its "What is
+left"): [24-tokenizers.md](24-tokenizers.md).
 
 ## Not supported yet
 

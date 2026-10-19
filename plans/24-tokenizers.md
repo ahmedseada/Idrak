@@ -11,7 +11,7 @@ L0, L1, T0, T1, T2 and T4 are built and CPU-checked; T3's encodings are in progr
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
 | T1 | Unigram: encode, decode, byte fallback, sampling | Done; CPU pass |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
-| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection, GGUF and encodings done, CPU pass (`t5` encodes once T1 lands); callers (`TextEncoder`, `idrak tokenize`) in progress |
+| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Encodings, detection and GGUF done, CPU pass (BPE, WordPiece, Unigram); callers (`TextEncoder`, `idrak tokenize` options) not started, see "What is left" |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Done; CPU pass (unigram: SentencePiece's pieces, 100% on the fixtures; wordpiece: exact against the fixed-tie reference) |
 | T5 | BPE onto the shared span pipeline (only if measured equal or faster) | On hold: not started until the owner decides (2026-10-19) |
 
@@ -925,6 +925,43 @@ warm apart, rule 76). If both hold, BPE runs on the pipeline and its duplicate p
 numbers go in the Runs table and BPE stays as it is.
 
 ---
+
+## What is left (handover, 2026-10-19)
+
+Everything above "Done" is merged and pushed to `abstraction` (48d058d); the last targeted CPU run passed 103 of 103.
+Nothing is in progress: two agents were started for items 1 and 2 and stopped before they changed anything, on the
+owner's instruction (no new work until the owner says so). Take these in order, one at a time, only when the owner asks.
+
+1. **Unicode normalization owned by the library (a bug, rule 70).** `src/Idrak.Cli` builds with
+   `InvariantGlobalization=true`, and the library's NFC / NFD / NFKC / NFKD (`SpanComponents.UnicodeNormalizer`,
+   `UnicodeStability`: span `TryNormalize`, `IsNormalized`, `GetNormalizedLength`, `string.Normalize`) go through the
+   platform's ICU. In the real CLI they silently do nothing: BERT's accent stripping keeps accents (Hugging Face
+   disagrees on 35 of 98 corpus lines for a WordPiece tokenizer trained with `--lowercase`), NFKC normalizers do
+   nothing, Korean syllables become `[UNK]`. The test process has ICU, so every test passes. The fix:
+   - a generator under `tools/` (Unicode Character Database, or Python's `unicodedata` in the pinned venv; record the
+     version) writing compact C# tables: combining classes, canonical and compatibility decompositions, composition
+     pairs and exclusions, quick-check; Hangul by its algorithm;
+   - a span normalizer in C# (quick-check fast path, pooled buffers, nothing allocated warm, UAX #15 ordering and
+     composition) that also gives the `(char, change)` stream T3's positional alignment needs, so
+     `UnicodeNormalizer.AppendAligned` stops calling the platform per character;
+   - every platform normalization call in `src/` replaced (grep `Normalize(`, `NormalizationForm`, `IsNormalized`);
+   - proof (rule 71): equal to the platform on every code point in the four forms (in the test process), the existing
+     offset tests unchanged, a check that the CLI path strips accents, and a test that nothing in `src/` calls the
+     platform's normalization; speed equal or better (the pipeline speed test, `--bench-text`).
+2. **T3 callers.**
+   - `TextEncoder` (Idrak.Nlp) pads and masks through `EncodeBatch` when its tokenizer is an `IPretrainedTokenizer`:
+     the same vectors as today (a test compares them), one tokenize pass, the batch on the tokenizer's `Workers`.
+   - `idrak tokenize` gains `--offsets`, `--pair TEXT`, `--special` (and `--max-length`, `--truncation` if cheap), with
+     English and Arabic help (`Messages.Arabic.cs`; the help-layout and `cli arabic:` checks stay green). The owner's
+     run list below already shows these options: they fail until this is done.
+3. **T4 leftovers** (from "T4 as built"): Unigram training switches SentencePiece has and Idrak keeps at its defaults
+   (split by whitespace / script / number, NFKC, the longest sentence) become settings with CLI options when someone
+   needs them; `--bench-text` rows for the trainers.
+4. **T5** (BPE onto the shared span pipeline): on hold until the owner decides. Do not start it.
+5. **The owner's runs** (below): the T3 and T4 lists on Windows, CUDA `pretrained:|gguf:`, and
+   `make_fixtures.py --real` for the real models' references (`tokenizers real:`).
+6. **Plan 25 (Idrak.Extensions.AI):** a draft the owner uploaded in the first session; not in the repo and not
+   started. Ask the owner for it before any work.
 
 ## Speed and memory
 
