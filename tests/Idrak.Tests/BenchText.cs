@@ -2,19 +2,85 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Idrak.Cli.Commands.Data;
 using Idrak.Generation;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 using Idrak.Nlp;
 using Idrak.Nlp.Retrieval;
 
-// --bench-text: the library's text paths (tokenizer, chat template, streamed output parsing, chunking, keyword search),
-// timed on the README as input. CPU only; no model or download needed.
+// --bench-text [text] [tokenizers] [trainers]: the library's text paths, CPU only, no model or download needed (default:
+// every section).
+//   text        the tokenizer, chat template, streamed output parsing, chunking and keyword search, timed on the README.
+//   tokenizers  each fixture tokenizer (data/tokenizers: Unigram from tokenizer.json and tokenizer.model, WordPiece from
+//               tokenizer.json and vocab.txt, SentencePiece-style BPE from tokenizer.model and tokenizer.json) on the fixture
+//               corpus, repeated as tools/tokenizers/make_fixtures.py --bench repeats it: the load's time (cold and warm),
+//               bytes allocated and heap held (after the load, and after the corpus has filled the piece cache); then
+//               tokens a second, cold (the first pass of a freshly loaded tokenizer) and warm (the best later pass) apart,
+//               and the bytes allocated per text once warm, for the ids into a reused list (EncodeRange; the target is 0),
+//               the detailed encode (Encode(text, null, options)) and EncodeBatch, detailed and ids-only (Offsets = false),
+//               on one worker and on all (TokenizerOptions.Workers).
+//   trainers    TokenizerTrainers "bpe", "unigram" and "wordpiece" on the training text: time, text a second, bytes
+//               allocated, the managed heap's peak above the start (sampled every millisecond), full collections, the
+//               process's peak working set so far, and the vocabulary learned, on one worker and on all
+//               (TokenizerTrainingOptions.Workers); each trainer's first run, on the fixture text alone, is reported apart
+//               as its cold run.
+// Settings (environment variables; IDRAK_TOKENIZER_CACHE and the library's other tokenizer variables apply as usual):
+//   IDRAK_BENCH_TEXT_CHARACTERS   the corpus' non-blank lines are repeated whole until they hold this many code points
+//                                 (default 200000, as --bench)
+//   IDRAK_BENCH_TEXT_SECONDS      the least time each row's warm passes take (default 1, as --bench's --seconds)
+//   IDRAK_BENCH_TEXT_LOADS        the loads timed for a tokenizer's warm load time (default 5)
+//   IDRAK_BENCH_TEXT_WORKERS      the workers of the "all workers" rows, encoding and training (default 0: every core)
+//   IDRAK_BENCH_TEXT_TOKENIZERS   more tokenizers to time after the fixtures (folders or files, separated by the path
+//                                 separator), read as PretrainedTokenizers.Load reads them (IDRAK_TOKENIZER_FORMAT picks the
+//                                 reader of a folder with several), for example a real model's folder
+//   IDRAK_BENCH_TEXT_REFERENCE    a file holding the JSON make_fixtures.py --bench prints: its rows are printed under each
+//                                 fixture's, so the references stand beside Idrak's
+//   IDRAK_BENCH_TEXT_TRAIN_FILES  the trainers' text files (separated by the path separator); default the fixture corpus
+//                                 and data/pretrain/corpus.txt repeated to IDRAK_BENCH_TEXT_TRAIN_MB in a temporary file
+//   IDRAK_BENCH_TEXT_TRAIN_MB     the default training text's size in MB (default 16: a few seconds a run)
+//   IDRAK_BENCH_TEXT_TRAIN_VOCAB  the vocabulary size each trainer learns (default 3000)
+//   IDRAK_BENCH_TEXT_TRAINERS     the trainers timed, comma-separated (default bpe,unigram,wordpiece; a plug-in's name works)
 internal static partial class Tests
 {
-    internal static int BenchText()
+    private static readonly string[] BenchTextSections = ["text", "tokenizers", "trainers"];
+
+    internal static int BenchText(string[] sections)
+    {
+        foreach (string section in sections)
+        {
+            if (!BenchTextSections.Contains(section, StringComparer.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine($"--bench-text: unknown section '{section}' (sections: {string.Join(", ", BenchTextSections)})");
+                return 2;
+            }
+        }
+
+        bool Runs(string section) => sections.Length == 0 || sections.Contains(section, StringComparer.OrdinalIgnoreCase);
+        if (Runs("text"))
+        {
+            BenchTextPaths();
+        }
+
+        if (Runs("tokenizers"))
+        {
+            BenchTokenizers();
+        }
+
+        if (Runs("trainers"))
+        {
+            BenchTrainers();
+        }
+
+        return 0;
+    }
+
+    // The text paths, on the README.
+    private static void BenchTextPaths()
     {
         string root = AppContext.BaseDirectory;
         while (!File.Exists(Path.Combine(root, "README.md")) && Directory.GetParent(root) is { } parent)
@@ -112,7 +178,306 @@ internal static partial class Tests
                 index.Search("offload weights to system memory while training on the GPU", 5);
             }
         }));
-        return 0;
+    }
+
+    // A bench setting: the variable's text, or the fallback when it is unset or empty.
+    private static string BenchTextSetting(string name, string fallback) =>
+        Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
+
+    // A bench setting that is a number of at least `least`; anything else is refused naming the variable.
+    private static double BenchTextNumber(string name, double fallback, double least)
+    {
+        if (Environment.GetEnvironmentVariable(name) is not { Length: > 0 } text)
+        {
+            return fallback;
+        }
+
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && double.IsFinite(value) && value >= least
+            ? value
+            : throw new InvalidOperationException($"{name} is '{text}': give a number, {least.ToString(CultureInfo.InvariantCulture)} or more.");
+    }
+
+    // A list setting (paths separated by the path separator), empty when unset.
+    private static string[] BenchTextFiles(string name) =>
+        BenchTextSetting(name, "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    // A full collection, so a heap reading after it counts what is alive.
+    private static void BenchTextSettle()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+    }
+
+    private static string BenchTextMegabytes(long bytes) => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1048576.0:F2} MB");
+
+    // The fixture corpus as tools/tokenizers/make_fixtures.py --bench takes it: the lines that are not blank (blank as
+    // Python's str.strip sees it, so the \x1c-\x1f separators count as blank too), repeated whole until they hold
+    // `codePoints` code points (Python's len), so both sides encode the same texts. Shared with "tokenizers: unigram: speed".
+    private static List<string> TokenizerBenchTexts(int codePoints)
+    {
+        static bool Blank(string line) => line.All(c => char.IsWhiteSpace(c) || c is >= '\u001c' and <= '\u001f');
+        static int CodePoints(string text) => text.Length - text.Count(char.IsLowSurrogate);
+        var lines = TokenizerCorpusLines().Where(line => !Blank(line)).ToArray();
+        long perCopy = lines.Sum(CodePoints);
+        var texts = new List<string>();
+        for (long total = 0; total < codePoints; total += perCopy)
+        {
+            texts.AddRange(lines);
+        }
+
+        return texts;
+    }
+
+    // One encoding row: `pass` encodes every text and returns the tokens it made. Cold is the first pass, warm the best of
+    // the passes that follow for at least `seconds`; bytes are the fewest a warm pass allocated, per text (the calling
+    // thread's, or every thread's when the pass spreads over threads, rule 63).
+    private static (long Tokens, double Cold, double Warm, double Bytes) BenchTextRate(Func<long> pass, int texts, double seconds, bool threads)
+    {
+        long Allocated() => threads ? GC.GetTotalAllocatedBytes(precise: true) : GC.GetAllocatedBytesForCurrentThread();
+        long start = Stopwatch.GetTimestamp();
+        long tokens = pass();
+        double cold = tokens / Stopwatch.GetElapsedTime(start).TotalSeconds, warm = 0, bytes = double.MaxValue;
+        long spent = Stopwatch.GetTimestamp();
+        do
+        {
+            long allocated = Allocated();
+            start = Stopwatch.GetTimestamp();
+            tokens = pass();
+            double elapsed = Stopwatch.GetElapsedTime(start).TotalSeconds;
+            bytes = Math.Min(bytes, (double)(Allocated() - allocated) / texts);
+            warm = Math.Max(warm, tokens / elapsed);
+        }
+        while (Stopwatch.GetElapsedTime(spent).TotalSeconds < seconds);
+        return (tokens, cold, warm, bytes);
+    }
+
+    private static void BenchTextRateRow(string name, long tokens, double cold, double warm, double? bytes) =>
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"    {name,-50} {tokens,9:N0} tokens {cold / 1e6,7:F2}M cold {warm / 1e6,7:F2}M warm{(bytes is { } b ? $" {b,10:N0} B a text" : "")}"));
+
+    // Every fixture tokenizer (and the ones IDRAK_BENCH_TEXT_TOKENIZERS names) on the fixture corpus.
+    private static void BenchTokenizers()
+    {
+        int codePoints = (int)BenchTextNumber("IDRAK_BENCH_TEXT_CHARACTERS", 200_000, 1);
+        double seconds = BenchTextNumber("IDRAK_BENCH_TEXT_SECONDS", 1, 0);
+        int loads = (int)BenchTextNumber("IDRAK_BENCH_TEXT_LOADS", 5, 1);
+        int workers = (int)BenchTextNumber("IDRAK_BENCH_TEXT_WORKERS", 0, 0);
+        string allWorkers = workers == 0 ? $"all {Environment.ProcessorCount} workers" : $"{workers} workers";
+        var reference = BenchTextSetting("IDRAK_BENCH_TEXT_REFERENCE", "") is { Length: > 0 } file ? JsonNode.Parse(File.ReadAllText(file))!.AsObject() : null;
+
+        var texts = TokenizerBenchTexts(codePoints);
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"tokenizers on the fixture corpus: {texts.Count:N0} texts, {texts.Sum(t => t.Length - t.Count(char.IsLowSurrogate)):N0} code points ({texts.Sum(t => t.Length):N0} UTF-16 characters), "
+            + $"{Environment.ProcessorCount} threads; tokens a second (M: million), cold: the first pass of a freshly loaded tokenizer, warm: the best pass in {seconds} s"));
+        if (reference is not null)
+        {
+            Console.WriteLine($"  references: {reference["texts"]} texts, {reference["characters"]} code points, {reference["threads"]} threads; "
+                + string.Join(", ", (reference["versions"] as JsonObject ?? new JsonObject()).Where(v => v.Key is "tokenizers" or "sentencepiece").Select(v => $"{v.Key} {v.Value}")));
+        }
+
+        var fixtures = new List<(string Fixture, string Source, string Path, TokenizerOptions Options)>
+        {
+            ("unigram", "tokenizer.json", TokenizerData("unigram"), new() { Format = TokenizerFiles.TokenizerJson }),
+            ("unigram", "tokenizer.model", TokenizerData("unigram"), new() { Format = TokenizerFiles.SentencePiece }),
+            ("unigram-bytes", "tokenizer.json", TokenizerData("unigram-bytes"), new() { Format = TokenizerFiles.TokenizerJson }),
+            ("unigram-bytes", "tokenizer.model", TokenizerData("unigram-bytes"), new() { Format = TokenizerFiles.SentencePiece }),
+            ("wordpiece-uncased", "tokenizer.json", TokenizerData("wordpiece-uncased"), new() { Format = TokenizerFiles.TokenizerJson }),
+            ("wordpiece-uncased", "vocab.txt", TokenizerData("wordpiece-uncased"), new() { Format = TokenizerFiles.VocabTxt }),
+            ("wordpiece-cased", "tokenizer.json", TokenizerData("wordpiece-cased"), new() { Format = TokenizerFiles.TokenizerJson }),
+            ("bpe", "tokenizer.model", TokenizerData("bpe"), new() { Format = TokenizerFiles.SentencePiece }),
+            ("bpe", "tokenizer.json", TokenizerData("bpe"), new() { Format = TokenizerFiles.TokenizerJson }),
+        };
+        foreach (string path in BenchTextFiles("IDRAK_BENCH_TEXT_TOKENIZERS"))
+        {
+            fixtures.Add((Path.GetFileName(Path.TrimEndingDirectorySeparator(path)), "as found", path, new()));
+        }
+
+        var detailed = new TokenizerEncodeOptions();
+        var idsOnly = new TokenizerEncodeOptions { Offsets = false };
+        for (int f = 0; f < fixtures.Count; f++)
+        {
+            var (fixture, source, path, options) = fixtures[f];
+            IPretrainedTokenizer Load(int threads) => PretrainedTokenizers.Load(path, options with { Workers = threads });
+
+            // The load: the first (cold), the best of `loads` more (warm), then one more between full collections for the
+            // bytes it allocates and the heap it holds.
+            long start = Stopwatch.GetTimestamp();
+            var first = Load(1);
+            double coldLoad = Stopwatch.GetElapsedTime(start).TotalMilliseconds, warmLoad = double.MaxValue;
+            for (int i = 0; i < loads; i++)
+            {
+                start = Stopwatch.GetTimestamp();
+                Load(1);
+                warmLoad = Math.Min(warmLoad, Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+            }
+
+            BenchTextSettle();
+            long heap = GC.GetTotalMemory(forceFullCollection: true), allocated = GC.GetTotalAllocatedBytes(precise: true);
+            var tokenizer = Load(1);
+            long loadBytes = GC.GetTotalAllocatedBytes(precise: true) - allocated;
+            long held = GC.GetTotalMemory(forceFullCollection: true) - heap;
+
+            // The ids into a reused list, on the tokenizer just loaded (its piece cache empty, so the first pass is cold).
+            var ids = new List<int>(4096);
+            var plain = BenchTextRate(() =>
+            {
+                long tokens = 0;
+                foreach (var text in texts)
+                {
+                    ids.Clear();
+                    tokenizer.EncodeRange(text, 0, text.Length, ids);
+                    tokens += ids.Count;
+                }
+
+                return tokens;
+            }, texts.Count, seconds, threads: false);
+            long heldAfter = GC.GetTotalMemory(forceFullCollection: true) - heap;
+            GC.KeepAlive(tokenizer);
+            GC.KeepAlive(first);
+
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"  {fixture} from {source}: {tokenizer.Model}, {tokenizer.VocabularySize:N0} tokens; loads in {coldLoad:F1} ms cold, {warmLoad:F1} ms warm, "
+                + $"allocating {BenchTextMegabytes(loadBytes)}; holds {BenchTextMegabytes(held)} loaded, {BenchTextMegabytes(heldAfter)} after the corpus (piece cache filled)"));
+            BenchTextRateRow("ids, one thread (EncodeRange into a reused list)", plain.Tokens, plain.Cold, plain.Warm, plain.Bytes);
+
+            var single = Load(1);
+            var one = BenchTextRate(() =>
+            {
+                long tokens = 0;
+                foreach (var text in texts)
+                {
+                    tokens += single.Encode(text, null, detailed).Count;
+                }
+
+                return tokens;
+            }, texts.Count, seconds, threads: false);
+            BenchTextRateRow("detailed, one thread (Encode(text, null, options))", one.Tokens, one.Cold, one.Warm, one.Bytes);
+
+            foreach (var (label, encodeOptions) in new[] { ("detailed", detailed), ("ids only", idsOnly) })
+            {
+                foreach (int threads in new[] { 1, workers })
+                {
+                    var batched = Load(threads);
+                    var batch = BenchTextRate(() => batched.EncodeBatch(texts, null, encodeOptions).Sum(e => (long)e.Count), texts.Count, seconds, threads: true);
+                    BenchTextRateRow($"EncodeBatch {label}, {(threads == 1 ? "1 worker" : allWorkers)}", batch.Tokens, batch.Cold, batch.Warm, batch.Bytes);
+                }
+            }
+
+            // The references' rows for this fixture, under its last tokenizer.
+            if ((f + 1 == fixtures.Count || fixtures[f + 1].Fixture != fixture) && reference?["tokenizers"]?[fixture] is JsonObject rows)
+            {
+                Console.WriteLine($"  {fixture}: the references (make_fixtures.py --bench)");
+                foreach (var (name, row) in rows.OrderBy(r => r.Key, StringComparer.Ordinal))
+                {
+                    BenchTextRateRow(name, (long)row!["tokens"]!, (double)row["cold"]!, (double)row["warm"]!, null);
+                }
+            }
+        }
+    }
+
+    // TokenizerTrainers "bpe", "unigram" and "wordpiece" (or IDRAK_BENCH_TEXT_TRAINERS) on the training text.
+    private static void BenchTrainers()
+    {
+        double megabytes = BenchTextNumber("IDRAK_BENCH_TEXT_TRAIN_MB", 16, 0);
+        int vocabulary = (int)BenchTextNumber("IDRAK_BENCH_TEXT_TRAIN_VOCAB", 3000, 1);
+        int workers = (int)BenchTextNumber("IDRAK_BENCH_TEXT_WORKERS", 0, 0);
+        string[] names = BenchTextSetting("IDRAK_BENCH_TEXT_TRAINERS", $"{TokenizerTrainers.Bpe},{TokenizerTrainers.Unigram},{TokenizerTrainers.WordPiece}")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // The text: the files named, or the fixture texts repeated whole into a temporary file to the size asked.
+        string[] files = BenchTextFiles("IDRAK_BENCH_TEXT_TRAIN_FILES");
+        string? temporary = null;
+        string described;
+        if (files.Length == 0)
+        {
+            temporary = Path.Combine(Path.GetTempPath(), $"idrak-bench-text-{Environment.ProcessId}");
+            Directory.CreateDirectory(temporary);
+            string corpus = Path.Combine(temporary, "corpus.txt");
+            byte[][] parts = [.. TrainingCorpus.Select(File.ReadAllBytes)];
+            using (var stream = File.Create(corpus))
+            {
+                for (long written = 0; written < megabytes * 1048576;)
+                {
+                    foreach (var part in parts)
+                    {
+                        stream.Write(part);
+                        written += part.Length;
+                        if (part.Length > 0 && part[^1] != (byte)'\n')
+                        {
+                            stream.WriteByte((byte)'\n');
+                            written++;
+                        }
+                    }
+                }
+            }
+
+            files = [corpus];
+            described = "the fixture corpus and data/pretrain/corpus.txt, repeated";
+        }
+        else
+        {
+            described = string.Join(", ", files.Select(Path.GetFileName));
+        }
+
+        try
+        {
+            long textBytes = files.Sum(file => new FileInfo(file).Length);
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"trainers on {BenchTextMegabytes(textBytes)} of text ({described}), vocabulary {vocabulary:N0}, {Environment.ProcessorCount} threads; "
+                + $"heap peak: the managed heap's largest size above the start, sampled every millisecond; process peak: the working set's peak so far in this process"));
+            foreach (string name in names)
+            {
+                var trainer = TokenizerTrainers.Get(name);
+                var options = new TokenizerTrainingOptions
+                {
+                    VocabularySize = vocabulary,
+                    SpecialTokens = name.Equals(TokenizerTrainers.WordPiece, StringComparison.OrdinalIgnoreCase) ? DataTokenizerCommand.WordPieceSpecials : DataTokenizerCommand.DefaultSpecials,
+                };
+
+                // The cold run: the first in this process, on the fixture text alone (its methods compiled as it goes).
+                long start = Stopwatch.GetTimestamp();
+                var cold = trainer.Train(TrainingCorpus, options with { Workers = workers });
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"  {name,-10} cold, the fixture text ({BenchTextMegabytes(TrainingCorpus.Sum(file => new FileInfo(file).Length))}), {(workers == 0 ? "all" : workers.ToString(CultureInfo.InvariantCulture))} workers: "
+                    + $"{Stopwatch.GetElapsedTime(start).TotalSeconds:F2} s, vocabulary {cold.VocabularySize:N0}"));
+                foreach (int threads in new[] { 1, workers })
+                {
+                    BenchTextSettle();
+                    long heap = GC.GetTotalMemory(forceFullCollection: true), allocated = GC.GetTotalAllocatedBytes(precise: true);
+                    int fullCollections = GC.CollectionCount(2);
+                    long peak = heap;
+                    using var done = new ManualResetEventSlim();
+                    var sampler = new Thread(() =>
+                    {
+                        do
+                        {
+                            peak = Math.Max(peak, GC.GetTotalMemory(forceFullCollection: false));
+                        }
+                        while (!done.Wait(1));
+                    }) { IsBackground = true, Name = "bench heap sampler" };
+                    sampler.Start();
+                    start = Stopwatch.GetTimestamp();
+                    var trained = trainer.Train(files, options with { Workers = threads });
+                    double elapsed = Stopwatch.GetElapsedTime(start).TotalSeconds;
+                    done.Set();
+                    sampler.Join();
+                    long bytes = GC.GetTotalAllocatedBytes(precise: true) - allocated;
+                    using var process = Process.GetCurrentProcess();
+                    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                        $"  {name,-10} {(threads == 1 ? "1 worker" : workers == 0 ? $"all {Environment.ProcessorCount} workers" : $"{threads} workers"),-15} {elapsed,7:F2} s {textBytes / 1048576.0 / elapsed,7:F2} MB/s"
+                        + $"  allocated {BenchTextMegabytes(bytes),10}  heap peak {BenchTextMegabytes(peak - heap),10}  gen2 {GC.CollectionCount(2) - fullCollections,3}"
+                        + $"  process peak {BenchTextMegabytes(process.PeakWorkingSet64),10}  vocabulary {trained.VocabularySize:N0}"));
+                }
+            }
+        }
+        finally
+        {
+            if (temporary is not null)
+            {
+                Directory.Delete(temporary, recursive: true);
+            }
+        }
     }
 
     // A GPT-2-style byte-level BPE trained on `text` (word counts, most frequent pair merged first), so the timings use a

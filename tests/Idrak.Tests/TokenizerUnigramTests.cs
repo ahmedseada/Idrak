@@ -370,13 +370,8 @@ internal static partial class Tests
     {
         _ = device;
 
-        // As the fixture script's --bench: the corpus' non-blank lines, repeated to 200,000 characters.
-        var lines = TokenizerCorpusLines().Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
-        var texts = new List<string>();
-        while (texts.Sum(t => t.Length) < 200_000)
-        {
-            texts.AddRange(lines);
-        }
+        // As the fixture script's --bench (and --bench-text): the corpus' non-blank lines, repeated to 200,000 code points.
+        var texts = TokenizerBenchTexts(200_000);
 
         foreach (var name in UnigramFixtures)
         {
