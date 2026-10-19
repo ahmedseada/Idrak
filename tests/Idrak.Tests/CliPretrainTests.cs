@@ -9,7 +9,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliPretrainGroup =
     [
-        ("cli pretrain: data tokenizer learns the reference's tokenizer from the corpus, and data tokens writes the reference's token file; --model unigram writes tokenizer.json and tokenizer.model, --model wordpiece BERT's tokenizer, and bad options and --model with --trainer are refused naming them", CliPretrainData),
+        ("cli pretrain: data tokenizer learns the reference's tokenizer from the corpus, and data tokens writes the reference's token file; --model unigram writes tokenizer.json and tokenizer.model (with SentencePiece's switches and normalization rules carried into it), --model wordpiece BERT's tokenizer, and bad options and --model with --trainer are refused naming them", CliPretrainData),
         ("cli pretrain: create makes a model from a spec file (and create init's), pretrain trains it, Ctrl+C-like stops checkpoint, resume finishes, runs show reads the steps, run answers", CliPretrainRun),
         ("cli pretrain: an unknown architecture, a missing spec key, a missing tokenizer, no sources and a run folder in use are refused", CliPretrainRefusals),
         ("cli pretrain vision: create init --vision, create and pretrain an IdrakVision model with its plug-in (-P), resume, run with an image; without the plug-in the family is refused naming -P", CliPretrainVision),
@@ -97,6 +97,24 @@ internal static partial class Tests
                 Check(fromJson.Encode(line).SequenceEqual(fromModel.Encode(line)), $"the CLI's tokenizer.json and tokenizer.model encode '{line}' alike");
             }
 
+            // SentencePiece's switches, the normalization rule and the algorithm's constants from the command line, into
+            // tokenizer.model.
+            string switchedJson = Path.Combine(folder, "switched", "tokenizer.json");
+            var switched = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--model", "unigram", "--vocab", "400", "--no-special", "--normalization", "nmt_nfkc",
+                "--max-sentence", "4192", "--no-whitespace-split", "--no-script-split", "--no-number-split", "--whitespace-suffix", "--whitespace-pieces",
+                "--desired-size", "1.2", "--expected-floor", "0.4", "--unknown-penalty", "12", "-o", switchedJson);
+            string switchedModel = Path.Combine(folder, "switched", "tokenizer.model");
+            var spec = Idrak.Models.SentencePieceModel.Load(switchedModel);
+            Check((string?)switched["model"] == "Unigram" && spec.NormalizerSpec.Name == "nmt_nfkc" && spec.NormalizerSpec.PrecompiledCharsmap.Length > 0
+                && spec.TrainerSpec.MaxSentenceLength == 4192 && !spec.TrainerSpec.SplitByWhitespace && !spec.TrainerSpec.SplitByUnicodeScript && !spec.TrainerSpec.SplitByNumber
+                && spec.TrainerSpec.TreatWhitespaceAsSuffix && spec.TrainerSpec.AllowWhitespaceOnlyPieces, $"data tokenizer --model unigram with the switches: {switched}");
+            var switchedFromJson = PretrainedTokenizers.Load(switchedJson);
+            var switchedFromModel = PretrainedTokenizers.Load(switchedModel);
+            foreach (string line in File.ReadLines(PretrainData("corpus.txt")).Take(50))
+            {
+                Check(switchedFromJson.Encode(line).SequenceEqual(switchedFromModel.Encode(line)), $"with the switches, tokenizer.json and tokenizer.model encode '{line}' alike");
+            }
+
             string wordpieceJson = Path.Combine(folder, "wordpiece.json");
             var wordpiece = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--model", "wordpiece", "--vocab", "600", "--lowercase", "--scoring", "likelihood",
                 "--arabic", "tatweel,diacritics", "-o", wordpieceJson);
@@ -111,6 +129,10 @@ internal static partial class Tests
                          (["--model", "unigram", "--character-coverage", "2"], "--character-coverage"), (["--model", "unigram", "--shrinking", "x"], "--shrinking"),
                          (["--model", "unigram", "--em-steps", "0"], "--em-steps"), (["--model", "wordpiece", "--scoring", "best"], "--scoring"),
                          (["--model", "wordpiece", "--arabic", "kashida"], "--arabic"), (["--model", "wordpiece", "--strip-accents", "--keep-accents"], "not both"),
+                         (["--model", "unigram", "--normalization", "nfd"], "--normalization"), (["--model", "wordpiece", "--normalization", "nfkc"], "--normalization"),
+                         (["--model", "unigram", "--max-sentence", "-1"], "--max-sentence"), (["--model", "unigram", "--max-sentence", "long"], "--max-sentence"),
+                         (["--model", "unigram", "--desired-size", "0.5"], "--desired-size"), (["--model", "unigram", "--expected-floor", "-1"], "--expected-floor"),
+                         (["--model", "unigram", "--unknown-penalty", "x"], "--unknown-penalty"), (["--model", "unigram", "--unknown-penalty", "-2"], "--unknown-penalty"),
                      })
             {
                 (code, _, error) = TrainCli(["data", "tokenizer", PretrainData("corpus.txt"), .. args, "-o", tokenizer]);

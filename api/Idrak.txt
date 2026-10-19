@@ -1631,8 +1631,11 @@ public static class Idrak.Models.Abstractions.TokenizerTrainers
   public const string ByteLevel = "bytelevel"
   public const string Diacritics = "diacritics"
   public const string Frequency = "frequency"
+  public const string Identity = "identity"
   public const string Likelihood = "likelihood"
   public const string Metaspace = "metaspace"
+  public const string Nfkc = "nfkc"
+  public const string NmtNfkc = "nmt_nfkc"
   public const string Tatweel = "tatweel"
   public const string Unigram = "unigram"
   public const string WordPiece = "wordpiece"
@@ -1640,6 +1643,7 @@ public static class Idrak.Models.Abstractions.TokenizerTrainers
   public static Idrak.Models.Abstractions.ITokenizerTrainer? Default(string name)
   public static Idrak.Models.Abstractions.ITokenizerTrainer? Find(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> NormalizationRules { get; }
   public static bool Unregister(string name)
   public static string Describe()
   public static string? Origin(string name)
@@ -1650,21 +1654,31 @@ public sealed record Idrak.Models.Abstractions.TokenizerTrainingOptions : System
   public System.Collections.Generic.IReadOnlyList<string> SpecialTokens { get; init; }
   public TokenizerTrainingOptions()
   public bool AddPrefixSpace { get; init; }
+  public bool AllowWhitespaceOnlyPieces { get; init; }
   public bool ByteFallback { get; init; }
   public bool Lowercase { get; init; }
   public bool RemovesArabic(string choice)
+  public bool SplitByNumber { get; init; }
+  public bool SplitByUnicodeScript { get; init; }
+  public bool SplitByWhitespace { get; init; }
   public bool SplitDigits { get; init; }
+  public bool TreatWhitespaceAsSuffix { get; init; }
   public bool? StripAccents { get; init; }
   public double CharacterCoverage { get; init; }
+  public double DesiredSizeFactor { get; init; }
+  public double ExpectedCountFloor { get; init; }
   public double ShrinkingFactor { get; init; }
+  public double UnknownPenalty { get; init; }
   public int EmIterations { get; init; }
   public int MaxPieceLength { get; init; }
+  public int MaxSentenceLength { get; init; }
   public int MinFrequency { get; init; }
   public int SeedSize { get; init; }
   public int VocabularySize { get; init; }
   public int Workers { get; init; }
   public int? LimitAlphabet { get; init; }
   public string LineEnds { get; init; }
+  public string Normalization { get; init; }
   public string PreTokenizer { get; init; }
   public string Scoring { get; init; }
   public string? UnknownToken { get; init; }

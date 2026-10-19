@@ -413,6 +413,23 @@ internal sealed class PrecompiledCharsMap
         }
     }
 
+    /// <summary>
+    /// SentencePiece's <c>NormalizePrefix</c> on UTF-8: the length in bytes of the longest key at the start of
+    /// <paramref name="utf8"/>, with its <paramref name="replacement"/>; 0 (and no replacement) when no key starts there.
+    /// </summary>
+    public int Prefix(ReadOnlySpan<byte> utf8, out ReadOnlySpan<byte> replacement)
+    {
+        int value = _trie.LongestPrefix(utf8, out int length);
+        if (value < 0)
+        {
+            replacement = default;
+            return 0;
+        }
+
+        replacement = ValueBytes(value);
+        return length;
+    }
+
     // The replacement string a trie value points at: its bytes up to the next NUL.
     private ReadOnlySpan<byte> ValueBytes(int offset)
     {

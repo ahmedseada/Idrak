@@ -14,16 +14,22 @@ namespace Idrak.Models;
 /// The library's "unigram" tokenizer trainer: SentencePiece's unigram language model learned by SentencePiece's own
 /// procedure (sentencepiece 0.2.2, <c>unigram_model_trainer.cc</c> and <c>trainer_interface.cc</c>), in C#:
 /// <list type="number">
-/// <item>Each line is normalized as SentencePiece normalizes it (the Arabic removals, extra spaces dropped, a ▁ before the
-/// text, spaces as ▁), special tokens in it are cut out, and the characters that cover
-/// <see cref="TokenizerTrainingOptions.CharacterCoverage"/> of the text are the alphabet (the rest are unknown).</item>
+/// <item>Each line is normalized as SentencePiece normalizes it (its rule, <see cref="TokenizerTrainingOptions.Normalization"/>,
+/// with the Arabic removals; extra spaces dropped, a ▁ before the text, or after it with
+/// <see cref="TokenizerTrainingOptions.TreatWhitespaceAsSuffix"/>, spaces as ▁), special tokens in it are cut out, and the
+/// characters that cover <see cref="TokenizerTrainingOptions.CharacterCoverage"/> of the text are the alphabet (the rest
+/// are unknown). Lines over <see cref="TokenizerTrainingOptions.MaxSentenceLength"/> bytes are skipped, when it is set.</item>
 /// <item>Seeds: every character, and the substrings found more than once through a suffix array of the whole text
 /// (SA-IS), scored by frequency × length, the best <see cref="TokenizerTrainingOptions.SeedSize"/> kept.</item>
 /// <item>Rounds of <see cref="TokenizerTrainingOptions.EmIterations"/> EM steps over the distinct words (forward-backward
 /// over each word's lattice for the expected counts, then new scores with SentencePiece's digamma correction), then
 /// pruning by the loss of likelihood each piece's removal costs, keeping <see cref="TokenizerTrainingOptions.ShrinkingFactor"/>
-/// of them, until the vocabulary is within a tenth of its size; then the best pieces and the alphabet fill it.</item>
+/// of them, until the vocabulary is within <see cref="TokenizerTrainingOptions.DesiredSizeFactor"/> of its size; then the
+/// best pieces and the alphabet fill it.</item>
 /// </list>
+/// Which substrings may be pieces follows SentencePiece's switches (<see cref="TokenizerTrainingOptions.SplitByWhitespace"/>,
+/// <see cref="TokenizerTrainingOptions.SplitByUnicodeScript"/>, <see cref="TokenizerTrainingOptions.SplitByNumber"/>,
+/// <see cref="TokenizerTrainingOptions.AllowWhitespaceOnlyPieces"/>, <see cref="TokenizerTrainingOptions.SplitDigits"/>).
 /// Scores and sums are in <c>float</c> where SentencePiece keeps them in <c>float</c>. The E step and the pruning's counts
 /// are spread over <see cref="TokenizerTrainingOptions.Workers"/> in chunks of words whose sums are added in chunk order, so
 /// one worker and many learn the same vocabulary. The tokenizer is the one the sentencepiece reader makes of the
@@ -34,8 +40,6 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
     private const char Space = '▁';                 // ▁, SentencePiece's whitespace mark
     private const char UnknownChar = '▅';           // ▅, SentencePiece's mark for a character outside the alphabet
     private const char Boundary = '\t';                  // what special tokens in the text become (never inside a piece)
-    private const float UnknownPenalty = 10f;            // the unknown node's score: the lowest score minus this
-    private const float ExpectedFloor = 0.5f;            // the M step drops pieces expected fewer times than this
     private const float RequiredPenaltyStep = 0.0001f;   // keeps the required characters' added scores apart
     private const int ChunkWords = 1024;                 // words per chunk of the E step and the pruning counts
     private const int UnknownNodeId = 0;                 // SentencePiece's trainer gives the unknown node id 0
@@ -59,7 +63,14 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 $"VocabularySize {options.VocabularySize} leaves no room past the {meta.Pieces.Count} special pieces (special tokens, the unknown token{(options.ByteFallback ? " and the 256 byte pieces" : "")}).", nameof(options));
         }
 
-        var corpus = Corpus.Read(files, options, meta, workers, progress, cancellationToken);
+        // The normalization rule (with the Arabic removals) as the charsmap the tokenizer is written with; the identity rule
+        // is applied as it always was (the removals, character by character), any other through its charsmap.
+        string rule = options.Normalization.ToLowerInvariant();
+        var removal = ArabicMarks.Of(options);
+        byte[] charsmap = SentencePieceRules.Charsmap(rule, removal);
+        var text = new TextRules(removal, rule == TokenizerTrainers.Identity ? null : PrecompiledCharsMap.Read(charsmap), options.TreatWhitespaceAsSuffix,
+            options.MaxSentenceLength);
+        var corpus = Corpus.Read(files, options, meta, text, workers, progress, cancellationToken);
         if (corpus.Sentences == 0)
         {
             throw new ArgumentException($"The files hold no text to learn from ({string.Join(", ", files)}).", nameof(files));
@@ -74,12 +85,13 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
         }
 
         corpus.MarkUnknown(required);
-        var rules = new PieceRules(options.MaxPieceLength, options.SplitDigits);
-        var model = new Model(Seeds(corpus, required, rules, options.SeedSize, progress, cancellationToken));
-        var words = corpus.Words();
+        var rules = new PieceRules(options);
+        float unknownPenalty = (float)options.UnknownPenalty, expectedFloor = (float)options.ExpectedCountFloor;
+        var model = new Model(Seeds(corpus, required, rules, options.SeedSize, progress, cancellationToken), unknownPenalty);
+        var words = corpus.Words(rules);
         corpus = null!;                                                          // the text is not needed past the words
 
-        int desired = (int)(options.VocabularySize * 1.1);
+        int desired = (int)(options.VocabularySize * options.DesiredSizeFactor);
         int rounds = EstimateRounds(model.Count, desired, (float)options.ShrinkingFactor);
         int stepsDone = 0, stepsTotal = (rounds + 1) * options.EmIterations;
         int round = 0;
@@ -89,7 +101,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var expected = ExpectedCounts(model, words, workers, cancellationToken);
-                model = new Model(MStep(model, expected));
+                model = new Model(MStep(model, expected, expectedFloor), unknownPenalty);
                 stepsTotal = Math.Max(stepsTotal, ++stepsDone);
                 progress?.Report(new TokenizerTrainingProgress("em", stepsDone, stepsTotal));
             }
@@ -99,14 +111,14 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 break;
             }
 
-            model = new Model(Prune(model, words, desired, (float)options.ShrinkingFactor, workers, cancellationToken));
+            model = new Model(Prune(model, words, desired, (float)options.ShrinkingFactor, workers, cancellationToken), unknownPenalty);
             progress?.Report(new TokenizerTrainingProgress("prune", ++round, Math.Max(rounds, round)));
         }
 
         progress?.Report(new TokenizerTrainingProgress("em", stepsDone, stepsDone));
         progress?.Report(new TokenizerTrainingProgress("prune", round, round));
         var final = Finalize(model, required, options.VocabularySize - meta.Pieces.Count);
-        return Build(files, options, meta, final);
+        return Build(files, options, meta, final, rule, removal, charsmap);
     }
 
     // How many pruning rounds a vocabulary of seeds takes to reach the desired size (the M step's floor can drop more).
@@ -187,6 +199,20 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
         }
     }
 
+    // How a line becomes a sentence: the Arabic removals, the rule's charsmap (null: the identity rule, applied by hand),
+    // the whitespace as a suffix, and the longest line read (in UTF-8 bytes; 0: no limit).
+    private sealed class TextRules(ArabicMarks removal, PrecompiledCharsMap? map, bool suffix, int maxBytes)
+    {
+        public ArabicMarks Removal => removal;
+
+        public PrecompiledCharsMap? Map => map;
+
+        public bool Suffix => suffix;
+
+        // A UTF-16 unit is at most 3 bytes, so only lines over a third of the limit are measured.
+        public bool TooLong(ReadOnlySpan<char> raw) => maxBytes > 0 && raw.Length * 3L > maxBytes && Encoding.UTF8.GetByteCount(raw) > maxBytes;
+    }
+
     // ---------------------------------------------------------------------------------------------------------------------
     // The text: every line normalized, one string of sentences.
     // ---------------------------------------------------------------------------------------------------------------------
@@ -200,11 +226,10 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
 
         public ReadOnlySpan<char> Sentence(int i) => _text.AsSpan(_starts[i], _starts[i + 1] - _starts[i]);
 
-        public static Corpus Read(IReadOnlyList<string> files, TokenizerTrainingOptions options, MetaPieces meta, int workers,
+        public static Corpus Read(IReadOnlyList<string> files, TokenizerTrainingOptions options, MetaPieces meta, TextRules rules, int workers,
             IProgress<TokenizerTrainingProgress>? progress, CancellationToken cancellationToken)
         {
             long total = files.Sum(f => new FileInfo(f).Length), read = 0;
-            var removal = ArabicMarks.Of(options);
             bool crlfAsLf = options.LineEnds == "lf";
             var parts = new ConcurrentDictionary<int, Part>();
             var blocks = BpeTrainer.Blocks(files, cancellationToken).Select((block, index) => (block, index));
@@ -215,7 +240,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 {
                     try
                     {
-                        parts[item.index] = Part.Read(item.block.Bytes.AsSpan(0, item.block.Length), removal, crlfAsLf, meta);
+                        parts[item.index] = Part.Read(item.block.Bytes.AsSpan(0, item.block.Length), rules, crlfAsLf, meta);
                     }
                     finally
                     {
@@ -261,11 +286,12 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
 
             public Dictionary<int, long> Counts { get; } = [];
 
-            public static Part Read(ReadOnlySpan<byte> bytes, ArabicMarks removal, bool crlfAsLf, MetaPieces meta)
+            public static Part Read(ReadOnlySpan<byte> bytes, TextRules rules, bool crlfAsLf, MetaPieces meta)
             {
                 var part = new Part();
                 char[] chars = ArrayPool<char>.Shared.Rent(Encoding.UTF8.GetMaxCharCount(bytes.Length));
                 char[] line = ArrayPool<char>.Shared.Rent(64);
+                byte[]? input = null, output = null;                            // a charsmap's UTF-8, in and out
                 try
                 {
                     int count = Encoding.UTF8.GetChars(bytes, chars);
@@ -280,18 +306,28 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                             raw = raw[..^1];
                         }
 
-                        if (raw.IsEmpty || raw.Contains(UnknownChar))
+                        if (raw.IsEmpty || raw.Contains(UnknownChar) || rules.TooLong(raw))
                         {
-                            continue;                                            // SentencePiece skips empty lines and lines holding its unknown mark
+                            continue;                                            // SentencePiece skips empty lines, lines holding its unknown mark and long lines
                         }
 
-                        if (line.Length < (raw.Length * 2) + 2)
+                        int length;
+                        if (rules.Map is null)
                         {
-                            ArrayPool<char>.Shared.Return(line);
-                            line = ArrayPool<char>.Shared.Rent((raw.Length * 2) + 2);
+                            if (line.Length < (raw.Length * 2) + 2)
+                            {
+                                ArrayPool<char>.Shared.Return(line);
+                                line = ArrayPool<char>.Shared.Rent((raw.Length * 2) + 2);
+                            }
+
+                            length = Normalize(raw, rules, line);
+                        }
+                        else
+                        {
+                            length = NormalizeMapped(raw, rules, ref line, ref input, ref output);
                         }
 
-                        int length = Normalize(raw, removal, meta, line);
+                        length = CutMeta(line, length, meta);
                         if (length > 0)
                         {
                             part.Starts.Add(part.Text.Count);
@@ -313,6 +349,15 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 {
                     ArrayPool<char>.Shared.Return(chars);
                     ArrayPool<char>.Shared.Return(line);
+                    if (input is not null)
+                    {
+                        ArrayPool<byte>.Shared.Return(input);
+                    }
+
+                    if (output is not null)
+                    {
+                        ArrayPool<byte>.Shared.Return(output);
+                    }
                 }
 
                 return part;
@@ -320,15 +365,18 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
         }
 
         // SentencePiece's normalization with the identity map (normalizer.cc): the Arabic removals, then leading spaces
-        // dropped, runs of spaces made one, a ▁ before the text, spaces as ▁, trailing ▁ dropped; then each meta piece in
-        // the text replaced by a tab (trainer_interface.cc). Returns the length written to output.
-        private static int Normalize(ReadOnlySpan<char> raw, ArabicMarks removal, MetaPieces meta, Span<char> output)
+        // dropped, runs of spaces made one, a ▁ before the text, spaces as ▁, trailing ▁ dropped, and a ▁ after the text
+        // instead of before it when the whitespace is a suffix (unless the line is only spaces). Output has room for twice
+        // the line and two. Returns the length written to output.
+        private static int Normalize(ReadOnlySpan<char> raw, TextRules rules, Span<char> output)
         {
-            int written = 1;
+            var removal = rules.Removal;
+            int written = rules.Suffix ? 0 : 1;
             output[0] = Space;
-            bool previousSpace = true;
+            bool previousSpace = true, any = false;
             foreach (char c in raw)
             {
+                any |= c != ' ';
                 if (removal.Removes(c))
                 {
                     continue;
@@ -354,6 +402,139 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 written--;
             }
 
+            if (rules.Suffix && any)
+            {
+                output[written++] = Space;
+            }
+
+            return written;
+        }
+
+        // SentencePiece's Normalizer::Normalize with a charsmap (normalizer.cc), on UTF-8: at each place the longest key's
+        // replacement (or one character as it is); replacements that are one space are dropped at the start; a
+        // replacement's leading spaces are dropped after a space; spaces become ▁; then trailing ▁ dropped; the dummy ▁
+        // before the text (or after it, as a suffix). The result goes to line (grown from the pool); returns its length.
+        private static int NormalizeMapped(ReadOnlySpan<char> raw, TextRules rules, ref char[] line, ref byte[]? input, ref byte[]? output)
+        {
+            var map = rules.Map!;
+            int count = Encoding.UTF8.GetByteCount(raw);
+            Grow(ref input, count, 0);
+            Encoding.UTF8.GetBytes(raw, input);
+            var text = input.AsSpan(0, count);
+            int at = 0;
+            while (at < count)
+            {
+                int used = Chunk(map, text[at..], out var chunk);
+                if (chunk.Length != 1 || chunk[0] != (byte)' ')
+                {
+                    break;
+                }
+
+                at += used;
+            }
+
+            if (at == count)
+            {
+                return 0;                                                        // only spaces
+            }
+
+            ReadOnlySpan<byte> space = "\u2581"u8;
+            int written = 0;
+            Grow(ref output, count + space.Length, 0);
+            if (!rules.Suffix)
+            {
+                space.CopyTo(output);
+                written = space.Length;
+            }
+
+            bool previousSpace = true;
+            while (at < count)
+            {
+                at += Chunk(map, text[at..], out var chunk);
+                while (previousSpace && !chunk.IsEmpty && chunk[0] == (byte)' ')
+                {
+                    chunk = chunk[1..];
+                }
+
+                if (chunk.IsEmpty)
+                {
+                    continue;
+                }
+
+                Grow(ref output, written + (chunk.Length * space.Length) + space.Length, written);
+                foreach (byte b in chunk)
+                {
+                    if (b == (byte)' ')
+                    {
+                        space.CopyTo(output.AsSpan(written));
+                        written += space.Length;
+                    }
+                    else
+                    {
+                        output[written++] = b;
+                    }
+                }
+
+                previousSpace = chunk[^1] == (byte)' ';
+            }
+
+            while (written >= space.Length && output.AsSpan(written - space.Length, space.Length).SequenceEqual(space))
+            {
+                written -= space.Length;
+            }
+
+            if (rules.Suffix)
+            {
+                space.CopyTo(output.AsSpan(written));
+                written += space.Length;
+            }
+
+            int chars = Encoding.UTF8.GetCharCount(output.AsSpan(0, written));
+            if (line.Length < chars)
+            {
+                ArrayPool<char>.Shared.Return(line);
+                line = ArrayPool<char>.Shared.Rent(chars);
+            }
+
+            return Encoding.UTF8.GetChars(output.AsSpan(0, written), line);
+
+            // The longest key at the start of rest and its replacement, or one character as it is.
+            static int Chunk(PrecompiledCharsMap map, ReadOnlySpan<byte> rest, out ReadOnlySpan<byte> chunk)
+            {
+                int length = map.Prefix(rest, out chunk);
+                if (length > 0)
+                {
+                    return length;
+                }
+
+                byte lead = rest[0];
+                length = Math.Min(rest.Length, lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4);
+                chunk = rest[..length];
+                return length;
+            }
+
+            // A pooled buffer of at least size bytes, its first keep bytes kept.
+            static void Grow([System.Diagnostics.CodeAnalysis.NotNull] ref byte[]? buffer, int size, int keep)
+            {
+                if (buffer is not null && buffer.Length >= size)
+                {
+                    return;
+                }
+
+                var larger = ArrayPool<byte>.Shared.Rent(Math.Max(size, (buffer?.Length ?? 0) * 2));
+                if (buffer is not null)
+                {
+                    buffer.AsSpan(0, keep).CopyTo(larger);
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+
+                buffer = larger;
+            }
+        }
+
+        // Each meta piece in the normalized text replaced by a tab, in place (trainer_interface.cc). Returns the new length.
+        private static int CutMeta(Span<char> output, int written, MetaPieces meta)
+        {
             if (written == 0 || meta.ByFirst.Count == 0)
             {
                 return written;
@@ -501,8 +682,9 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             return (ranked, codes);
         }
 
-        // The words SentencePiece learns from: each sentence cut before every ▁, counted, sorted by count (then text).
-        public Words Words()
+        // The words SentencePiece learns from: each sentence cut into words (SplitIntoWords), or whole without
+        // SplitByWhitespace, counted, sorted by count (then text).
+        public Words Words(PieceRules rules)
         {
             var counts = new Dictionary<string, long>(StringComparer.Ordinal);
             var lookup = counts.GetAlternateLookup<ReadOnlySpan<char>>();
@@ -512,7 +694,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 int start = 0;
                 for (int i = 1; i <= sentence.Length; i++)
                 {
-                    if (i == sentence.Length || sentence[i] == Space)
+                    if (i == sentence.Length || (rules.SplitByWhitespace && rules.WordStarts(sentence, i, Space)))
                     {
                         var word = sentence[start..i];
                         lookup[word] = lookup.TryGetValue(word, out long seen) ? seen + 1 : 1;
@@ -566,16 +748,35 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
     // ---------------------------------------------------------------------------------------------------------------------
     // The pieces: what SentencePiece's IsValidSentencePiece allows.
     // ---------------------------------------------------------------------------------------------------------------------
-    private sealed class PieceRules(int maxLength, bool splitDigits)
+    private sealed class PieceRules(TokenizerTrainingOptions options)
     {
         private const byte Any = byte.MaxValue;
+        private readonly int _maxLength = options.MaxPieceLength;
+        private readonly bool _splitDigits = options.SplitDigits, _splitByScript = options.SplitByUnicodeScript, _splitByNumber = options.SplitByNumber;
+        private readonly bool _suffix = options.TreatWhitespaceAsSuffix, _spaceOnly = options.AllowWhitespaceOnlyPieces;
 
-        // piece: ranks into codes (the code point of each rank).
+        public bool SplitByWhitespace { get; } = options.SplitByWhitespace;
+
+        // SentencePiece's SplitIntoWords: whether a word starts at i (0 < i < text.Length). Before each ▁, or after it as a
+        // suffix; with whitespace-only pieces a run of ▁ stays whole (it starts the next word, or ends the last).
+        public bool WordStarts<T>(ReadOnlySpan<T> text, int i, T space)
+            where T : IEquatable<T> =>
+            _suffix
+                ? text[i - 1].Equals(space) && (!_spaceOnly || !text[i].Equals(space))
+                : text[i].Equals(space) && (!_spaceOnly || !text[i - 1].Equals(space));
+
+        // SentencePiece's IsValidSentencePiece; piece: ranks into codes (the code point of each rank).
         public bool Valid(ReadOnlySpan<int> piece, int[] codes)
         {
-            if (piece.IsEmpty || piece.Length > maxLength)
+            if (piece.IsEmpty || piece.Length > _maxLength)
             {
                 return false;
+            }
+
+            bool allSpace = true;
+            foreach (int rank in piece)
+            {
+                allSpace &= codes[rank] == Space;
             }
 
             byte previous = Any;
@@ -589,10 +790,18 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
 
                 if (c == Space)
                 {
-                    // Split by whitespace, not as a suffix, no pieces of ▁ alone: a ▁ only starts a piece.
-                    if (pos > 0)
+                    // A ▁ starts a piece (ends it, as a suffix), or sits inside it without the whitespace split; a piece
+                    // of ▁ alone is any length with whitespace-only pieces.
+                    if (!_spaceOnly || !allSpace)
                     {
-                        return false;
+                        int last = piece.Length - 1;
+                        bool refused = _suffix
+                            ? (SplitByWhitespace && pos < last) || (!SplitByWhitespace && pos < last && pos == 0)
+                            : (SplitByWhitespace && pos > 0) || (!SplitByWhitespace && pos > 0 && pos == last);
+                        if (refused)
+                        {
+                            return false;
+                        }
                     }
 
                     continue;
@@ -608,12 +817,17 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                     script = previous;
                 }
 
-                if (splitDigits && IsDigit(c) && piece.Length > 1)
+                if (!_splitByNumber && IsDigit(c))
+                {
+                    script = Any;
+                }
+
+                if (_splitDigits && IsDigit(c) && piece.Length > 1)
                 {
                     return false;
                 }
 
-                if (script != Any && previous != Any && previous != script)
+                if (_splitByScript && script != Any && previous != Any && previous != script)
                 {
                     return false;
                 }
@@ -683,11 +897,12 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                     continue;
                 }
 
-                // Split before every ▁ (SplitIntoWords), then each piece checked.
+                // Cut into words (SplitIntoWords), or whole without SplitByWhitespace, then each piece checked.
                 int start = from;
+                ReadOnlySpan<int> segment = text.AsSpan(from, delimiter - from);
                 for (int i = from + 1; i <= delimiter; i++)
                 {
-                    if (i == delimiter || text[i] == spaceRank)
+                    if (i == delimiter || (rules.SplitByWhitespace && rules.WordStarts(segment, i - from, spaceRank)))
                     {
                         int pieceLength = i - start;
                         if (pieceLength > 1 && rules.Valid(text.AsSpan(start, pieceLength), codes))
@@ -811,7 +1026,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
     // ---------------------------------------------------------------------------------------------------------------------
     private sealed class Model
     {
-        public Model(List<(string Piece, float Score)> pieces)
+        public Model(List<(string Piece, float Score)> pieces, float unknownPenalty)
         {
             Pieces = [.. pieces.Select(p => p.Piece)];
             Scores = [.. pieces.Select(p => p.Score)];
@@ -821,6 +1036,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 MinScore = Math.Min(MinScore, score);
             }
 
+            UnknownScore = MinScore - unknownPenalty;
             Trie = DoubleArrayTrie.Build(Pieces, [.. Enumerable.Range(0, Pieces.Length)]);
         }
 
@@ -829,6 +1045,9 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
         public float[] Scores { get; }
 
         public float MinScore { get; }
+
+        // The unknown node's score: the lowest score minus the unknown penalty.
+        public float UnknownScore { get; }
 
         public DoubleArrayTrie Trie { get; }
 
@@ -877,7 +1096,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             Chars = chars;
             Count = 0;
             Grow(ref BeginFirst, chars + 2);
-            float unknownScore = model.MinScore - UnknownPenalty;
+            float unknownScore = model.UnknownScore;
             for (int c = 0; c < chars; c++)
             {
                 BeginFirst[c] = Count;
@@ -1254,15 +1473,15 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             }
         }, cancellationToken);
 
-    // The M step (SentencePiece's RunMStep): pieces expected fewer than half a time go; the rest score
+    // The M step (SentencePiece's RunMStep): pieces expected fewer than floor times (half a time) go; the rest score
     // digamma(count) - digamma(total), the Bayesian EM that acts as a sparse prior.
-    private static List<(string Piece, float Score)> MStep(Model model, float[] expected)
+    private static List<(string Piece, float Score)> MStep(Model model, float[] expected, float floor)
     {
         var kept = new List<(string, float)>(model.Count);
         float sum = 0;
         for (int i = 0; i < expected.Length; i++)
         {
-            if (expected[i] < ExpectedFloor)
+            if (expected[i] < floor)
             {
                 continue;
             }
@@ -1448,7 +1667,8 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
     // ---------------------------------------------------------------------------------------------------------------------
     // The tokenizer: the ModelProto written, then read back as the sentencepiece reader reads a tokenizer.model.
     // ---------------------------------------------------------------------------------------------------------------------
-    private static IPretrainedTokenizer Build(IReadOnlyList<string> files, TokenizerTrainingOptions options, MetaPieces meta, List<(string Piece, float Score)> final)
+    private static IPretrainedTokenizer Build(IReadOnlyList<string> files, TokenizerTrainingOptions options, MetaPieces meta, List<(string Piece, float Score)> final,
+        string rule, ArabicMarks removal, byte[] charsmap)
     {
         var pieces = new List<string>(meta.Pieces.Count + final.Count);
         var scores = new List<float>(pieces.Capacity);
@@ -1463,7 +1683,6 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             types.Add(SentencePieceType.Normal);
         }
 
-        var removal = ArabicMarks.Of(options);
         var settings = new SentencePieceWriter.Settings
         {
             Algorithm = SentencePieceAlgorithm.Unigram,
@@ -1472,8 +1691,9 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             BosId = meta.Bos,
             EosId = meta.Eos,
             PadId = meta.Pad,
-            NormalizerName = removal.Any ? "idrak_arabic" : "identity",
-            PrecompiledCharsmap = removal.Any ? PrecompiledCharsMap.Build([.. removal.CodePoints.Select(c => (char.ConvertFromUtf32(c), ""))]) : [],
+            TreatWhitespaceAsSuffix = options.TreatWhitespaceAsSuffix,
+            NormalizerName = !removal.Any ? rule : rule == TokenizerTrainers.Identity ? "idrak_arabic" : $"{rule}_idrak_arabic",
+            PrecompiledCharsmap = charsmap,
             Training = new SentencePieceWriter.TrainingFields
             {
                 VocabularySize = pieces.Count,
@@ -1483,6 +1703,11 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 EmIterations = options.EmIterations,
                 MaxPieceLength = options.MaxPieceLength,
                 SplitDigits = options.SplitDigits,
+                SplitByWhitespace = options.SplitByWhitespace,
+                SplitByUnicodeScript = options.SplitByUnicodeScript,
+                SplitByNumber = options.SplitByNumber,
+                AllowWhitespaceOnlyPieces = options.AllowWhitespaceOnlyPieces,
+                MaxSentenceLength = options.MaxSentenceLength,
                 ControlSymbols = [.. meta.Pieces.Where((p, i) => meta.Types[i] == SentencePieceType.Control && i != meta.Bos && i != meta.Eos && i != meta.Pad)],
             },
         };
@@ -1567,6 +1792,7 @@ internal sealed class ArabicMarks
         [(0x0610, 0x061A), (0x064B, 0x065F), (0x0670, 0x0670), (0x06D6, 0x06DC), (0x06DF, 0x06E4), (0x06E7, 0x06E8), (0x06EA, 0x06ED)];
 
     private readonly bool _tatweel, _diacritics;
+    private SearchValues<char>? _characters;
 
     private ArabicMarks(bool tatweel, bool diacritics) => (_tatweel, _diacritics) = (tatweel, diacritics);
 
@@ -1575,10 +1801,36 @@ internal sealed class ArabicMarks
 
     public bool Any => _tatweel || _diacritics;
 
+    /// <summary>Which removals these are, as a key (for a cache of what is built from them).</summary>
+    public string Key => (_tatweel ? "tatweel" : "") + (_diacritics ? "+diacritics" : "");
+
     public bool Removes(char c) => (_tatweel && c == Tatweel) || (_diacritics && IsDiacritic(c));
 
     public IEnumerable<int> CodePoints =>
         (_tatweel ? [Tatweel] : Array.Empty<int>()).Concat(_diacritics ? DiacriticRanges.SelectMany(r => Enumerable.Range(r.First, r.Last - r.First + 1)) : []);
+
+    /// <summary>The removed characters, to search for.</summary>
+    public SearchValues<char> Characters => _characters ??= SearchValues.Create([.. CodePoints.Select(c => (char)c)]);
+
+    /// <summary><paramref name="text"/> without the removed characters (the same instance when it holds none).</summary>
+    public string Remove(string text)
+    {
+        if (!Any || !text.AsSpan().ContainsAny(Characters))
+        {
+            return text;
+        }
+
+        var kept = new StringBuilder(text.Length);
+        foreach (char c in text)
+        {
+            if (!Removes(c))
+            {
+                kept.Append(c);
+            }
+        }
+
+        return kept.ToString();
+    }
 
     /// <summary>The standard normalizers that remove the same marks (tokenizer.json <c>Replace</c> steps), or none.</summary>
     public IEnumerable<System.Text.Json.Nodes.JsonObject> ReplaceSteps()
