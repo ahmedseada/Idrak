@@ -59,15 +59,61 @@ internal static class TokenizerEncodings
     }
 
     /// <summary>
-    /// A model's raw encode of one sequence: its ids, offsets and tokens, as sequence <c>sequence</c>. With a limit, the
-    /// text is encoded a pre-token at a time until it has <c>limit</c> tokens (from its end when <c>left</c>), and the rest
-    /// is not encoded.
+    /// A model's raw encode of one sequence: its ids and their offsets, appended to the scratch's lists (whose ranges and
+    /// starts it may use as it likes). With a limit, the text is encoded a pre-token at a time until it has <c>limit</c>
+    /// tokens (from its end when <c>left</c>), and the rest is not encoded. Returns how many of the ids a left limit drops
+    /// (they come first).
     /// </summary>
-    public delegate TokenizerEncoding RawEncoder(string text, int sequence, int limit, bool left);
+    public delegate int RawEncoder(string text, int limit, bool left, RawScratch scratch);
+
+    /// <summary>The lists a raw encode fills (ids, offsets) and works in (ranges, starts): one set per thread, kept between calls.</summary>
+    public sealed class RawScratch
+    {
+        public List<int> Ids { get; } = [];
+
+        public List<(int Start, int End)> Offsets { get; } = [];
+
+        public List<(int Start, int Length)> Ranges { get; } = [];
+
+        public List<(int Start, bool Added)> Starts { get; } = [];
+
+        // Kept for the thread's next encode unless a very long text grew it.
+        internal bool Keep => Ids.Capacity <= 1 << 16 && Offsets.Capacity <= 1 << 16 && Ranges.Capacity <= 1 << 16 && Starts.Capacity <= 1 << 16;
+
+        internal void Clear()
+        {
+            Ids.Clear();
+            Offsets.Clear();
+            Ranges.Clear();
+            Starts.Clear();
+        }
+    }
+
+    [ThreadStatic]
+    private static RawScratch? t_scratch;
+
+    // This thread's scratch, cleared (taken: a nested encode makes its own).
+    private static RawScratch TakeScratch()
+    {
+        var scratch = t_scratch ?? new RawScratch();
+        t_scratch = null;
+        scratch.Clear();
+        return scratch;
+    }
+
+    private static void ReturnScratch(RawScratch scratch)
+    {
+        if (scratch.Keep)
+        {
+            t_scratch = scratch;
+        }
+    }
 
     // One text (and its pair) encoded raw by the model, finished: truncated, post-processed, padded to a fixed length. As
     // tokenizers (0.23) does, a truncated sequence is encoded only up to the pre-token that reaches the maximum length
-    // (all of the first text under only_second), and longest_first compares those lengths.
+    // (all of the first text under only_second), and longest_first compares those lengths. A single text whose
+    // post-processor is the library's (or none) is finished straight from the model's lists into the result's arrays,
+    // written once (Single); a pair, or an app's post-processor, goes through an encoding per text first.
     public static TokenizerEncoding Finish(string text, string? pair, RawEncoder raw, ITokenizerPostProcessor? post, TokenizerEncodeOptions options,
         JsonObject source, IPretrainedTokenizer tokenizer)
     {
@@ -75,8 +121,13 @@ internal static class TokenizerEncodings
         ArgumentNullException.ThrowIfNull(options);
         var settings = Resolve(options, source);
         int Limit(int sequence) => settings.MaxLength is int m && (settings.Truncation != "only_second" || sequence != 0) ? m : int.MaxValue;
-        var first = !options.Offsets && pair is null ? Plain(text, tokenizer) : raw(text, 0, Limit(0), settings.TruncateLeft);
-        var second = pair is null ? null : raw(pair, 1, Limit(1), settings.TruncateLeft);
+        if (pair is null && PostProcessors.SingleLayout(post, options.AddSpecialTokens) is { } layout)
+        {
+            return Single(text, raw, post, layout, options, settings, Limit(0), tokenizer);
+        }
+
+        var first = !options.Offsets && pair is null ? Plain(text, tokenizer) : Encoded(text, 0, Limit(0), settings.TruncateLeft, raw, tokenizer);
+        var second = pair is null ? null : Encoded(pair, 1, Limit(1), settings.TruncateLeft, raw, tokenizer);
         if (settings.MaxLength is int max)
         {
             int added = options.AddSpecialTokens ? post?.AddedTokens(second is not null) ?? 0 : 0;
@@ -84,20 +135,177 @@ internal static class TokenizerEncodings
         }
 
         var result = post is null ? PostProcessors.Plain(first, second) : post.Process(first, second, options.AddSpecialTokens);
-        return settings.Padding == "max_length"
-            ? Pad(result, settings.FixedLength ?? throw new ArgumentException("Padding to max_length needs MaxLength.", nameof(options)), settings, tokenizer)
-            : result;
+        return settings.Padding == "max_length" ? Pad(result, FixedLength(settings, options), settings, tokenizer) : result;
+    }
+
+    private static int FixedLength(Settings settings, TokenizerEncodeOptions options) =>
+        settings.FixedLength ?? throw new ArgumentException("Padding to max_length needs MaxLength.", nameof(options));
+
+    // A sequence encoded raw by the model, as an encoding of its own (sequence: its number, also its type id).
+    private static TokenizerEncoding Encoded(string text, int sequence, int limit, bool left, RawEncoder raw, IPretrainedTokenizer tokenizer)
+    {
+        var scratch = TakeScratch();
+        try
+        {
+            int from = raw(text, limit, left, scratch);
+            return Raw(scratch.Ids, scratch.Offsets, tokenizer, sequence, from);
+        }
+        finally
+        {
+            ReturnScratch(scratch);
+        }
+    }
+
+    // A single text through a post-processor laid out in advance (the library's, or none): the model's ids (and offsets,
+    // for the detailed encode; for ids only, the plain encode's ids, with offsets (0, 0) and no tokens) into this thread's
+    // lists, truncated as Truncate truncates one text, then the result's arrays written once, as the post-processor's Join
+    // and Pad would write them. The same encoding as the general path, without its intermediate arrays.
+    private static TokenizerEncoding Single(string text, RawEncoder raw, ITokenizerPostProcessor? post, PostProcessors.Layout layout,
+        TokenizerEncodeOptions options, Settings settings, int limit, IPretrainedTokenizer tokenizer)
+    {
+        var scratch = TakeScratch();
+        try
+        {
+            bool detailed = options.Offsets;
+            int from = 0;
+            if (detailed)
+            {
+                from = raw(text, limit, settings.TruncateLeft, scratch);
+            }
+            else
+            {
+                tokenizer.EncodeRange(text, 0, text.Length, scratch.Ids);
+            }
+
+            ReadOnlySpan<int> ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(scratch.Ids)[from..];
+            ReadOnlySpan<(int Start, int End)> offsets = detailed ? System.Runtime.InteropServices.CollectionsMarshal.AsSpan(scratch.Offsets)[from..] : default;
+            if (settings.MaxLength is int max)
+            {
+                int added = options.AddSpecialTokens ? post?.AddedTokens(false) ?? 0 : 0;
+                int room = Math.Max(0, max - added);
+                if (ids.Length > room)
+                {
+                    int remove = ids.Length - room;
+                    if (settings.Truncation != "longest_first" && ids.Length <= remove)
+                    {
+                        throw CannotFit(settings, ids.Length, room, onSecond: false, ids.Length, remove);
+                    }
+
+                    int cut = settings.TruncateLeft ? remove : 0;
+                    ids = ids.Slice(cut, room);
+                    offsets = detailed ? offsets.Slice(cut, room) : default;
+                }
+            }
+
+            return Build(ids, offsets, detailed, layout, settings, settings.Padding == "max_length" ? FixedLength(settings, options) : null, tokenizer);
+        }
+        finally
+        {
+            ReturnScratch(scratch);
+        }
+    }
+
+    // A single text's encoding, written once: the layout's parts in order (the text's tokens with the part's type id, their
+    // offsets trimmed by the layout's ByteLevel trims; special tokens with offsets (0, 0), special, sequence -1), then
+    // padding to padTo (pad id and token, the pad type id, not attended, special) on the side the settings say. Tokens are
+    // kept as the post-processor's Join and Pad keep them: when every part has them (the text when detailed or empty, the
+    // special tokens when the post-processor names theirs), or when there is no token before padding.
+    private static TokenizerEncoding Build(ReadOnlySpan<int> ids, ReadOnlySpan<(int Start, int End)> offsets, bool detailed, PostProcessors.Layout layout,
+        Settings settings, int? padTo, IPretrainedTokenizer tokenizer)
+    {
+        int total = 0;
+        bool named = true;
+        foreach (var part in layout.Parts)
+        {
+            total += part.Text ? ids.Length : part.SpecialIds.Length;
+            named &= part.Text ? detailed || ids.Length == 0 : part.SpecialTokens?.Length == part.SpecialIds.Length;
+        }
+
+        int add = padTo is int length && length > total ? length - total : 0;
+        int padId = 0;
+        string padToken = "";
+        if (add > 0)
+        {
+            padId = settings.PadId ?? PadIdOf(tokenizer) ?? throw NoPadId();
+            padToken = settings.PadToken ?? tokenizer.TokenOf(padId);
+        }
+
+        int count = total + add;
+        var outIds = new int[count];
+        var types = new int[count];
+        var outOffsets = new (int Start, int End)[count];
+        var attention = new int[count];
+        var special = new int[count];
+        var sequences = new int[count];
+        var tokens = named || total == 0 ? new string[count] : [];
+        int at = settings.PadLeft ? add : 0;
+        foreach (var part in layout.Parts)
+        {
+            if (part.Text)
+            {
+                ids.CopyTo(outIds.AsSpan(at));
+                Array.Fill(types, part.TypeId, at, ids.Length);
+                Array.Fill(attention, 1, at, ids.Length);
+                if (detailed)
+                {
+                    var written = outOffsets.AsSpan(at, ids.Length);
+                    offsets.CopyTo(written);
+                    foreach (bool addPrefixSpace in layout.Trims)
+                    {
+                        for (int i = 0; i < written.Length; i++)
+                        {
+                            written[i] = PostProcessors.Trimmed(tokenizer.TokenOf(ids[i]), written[i], i, addPrefixSpace);
+                        }
+                    }
+
+                    if (tokens.Length > 0)
+                    {
+                        for (int i = 0; i < ids.Length; i++)
+                        {
+                            tokens[at + i] = tokenizer.TokenOf(ids[i]);
+                        }
+                    }
+                }
+
+                at += ids.Length;
+                continue;
+            }
+
+            for (int k = 0; k < part.SpecialIds.Length; k++, at++)
+            {
+                (outIds[at], types[at], attention[at], special[at], sequences[at]) = (part.SpecialIds[k], part.TypeId, 1, 1, -1);
+                if (tokens.Length > 0)
+                {
+                    tokens[at] = part.SpecialTokens![k];
+                }
+            }
+        }
+
+        for (int i = 0; i < add; i++)
+        {
+            int p = settings.PadLeft ? i : total + i;
+            (outIds[p], types[p], special[p], sequences[p]) = (padId, settings.PadTypeId, 1, -1);
+            if (tokens.Length > 0)
+            {
+                tokens[p] = padToken;
+            }
+        }
+
+        return new TokenizerEncoding
+        {
+            Ids = outIds, TypeIds = types, Offsets = outOffsets, AttentionMask = attention, SpecialTokensMask = special, SequenceIds = sequences, Tokens = tokens,
+        };
     }
 
     // A single text's ids through the tokenizer's plain encode (into this thread's list), without offsets or tokens: a single
-    // sequence truncated afterwards keeps the tokens the early exit of the detailed encode would keep.
+    // sequence truncated afterwards keeps the tokens the early exit of the detailed encode would keep. (For an app's
+    // post-processor; the library's go through Single.)
     private static TokenizerEncoding Plain(string text, IPretrainedTokenizer tokenizer)
     {
-        var ids = t_ids ?? new List<int>();
-        t_ids = null;
+        var scratch = TakeScratch();
         try
         {
-            ids.Clear();
+            var ids = scratch.Ids;
             tokenizer.EncodeRange(text, 0, text.Length, ids);
             int count = ids.Count;
             return new()
@@ -108,12 +316,9 @@ internal static class TokenizerEncodings
         }
         finally
         {
-            t_ids = ids.Capacity <= 1 << 16 ? ids : null;
+            ReturnScratch(scratch);
         }
     }
-
-    [ThreadStatic]
-    private static List<int>? t_ids;
 
     // A batch: each text finished on the tokenizer's workers, in input order; "longest" pads all to the longest.
     public static IReadOnlyList<TokenizerEncoding> Batch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options,
@@ -187,14 +392,17 @@ internal static class TokenizerEncodings
         var target = onSecond ? second! : first;
         if (target.Count <= remove)
         {
-            throw new InvalidOperationException($"Truncation {settings.Truncation} cannot fit {total} tokens into {max}: the "
-                + $"{(onSecond ? "second" : "first")} text has {target.Count} tokens, {remove} must go.");
+            throw CannotFit(settings, total, max, onSecond, target.Count, remove);
         }
 
         return onSecond
             ? (first, Slice(second!, second!.Count - remove, settings.TruncateLeft))
             : (Slice(first, first.Count - remove, settings.TruncateLeft), second);
     }
+
+    private static InvalidOperationException CannotFit(Settings settings, int total, int max, bool onSecond, int targetCount, int remove) =>
+        new($"Truncation {settings.Truncation} cannot fit {total} tokens into {max}: the "
+            + $"{(onSecond ? "second" : "first")} text has {targetCount} tokens, {remove} must go.");
 
     private static TokenizerEncoding Slice(TokenizerEncoding e, int keep, bool left)
     {
@@ -221,8 +429,7 @@ internal static class TokenizerEncodings
             return e;
         }
 
-        int padId = settings.PadId ?? PadIdOf(tokenizer)
-            ?? throw new InvalidOperationException("Padding needs a pad id: set TokenizerEncodeOptions.PadId (the tokenizer.json names none and the tokenizer has no padding token).");
+        int padId = settings.PadId ?? PadIdOf(tokenizer) ?? throw NoPadId();
         string padToken = settings.PadToken ?? tokenizer.TokenOf(padId);
         T[] Padded<T>(T[] values, T value)
         {
@@ -245,19 +452,22 @@ internal static class TokenizerEncodings
         };
     }
 
+    private static InvalidOperationException NoPadId() =>
+        new("Padding needs a pad id: set TokenizerEncodeOptions.PadId (the tokenizer.json names none and the tokenizer has no padding token).");
+
     // The tokenizer's padding token, by the names tokenizers use.
     private static int? PadIdOf(IPretrainedTokenizer tokenizer) =>
         tokenizer.IdOf("[PAD]") ?? tokenizer.IdOf("<pad>") ?? tokenizer.IdOf("<|endoftext|>");
 
     // A raw encoding: the ids from `from` on (what a left limit keeps), their offsets and tokens, one sequence whose number
     // is also its type id (as tokenizers encodes a pair's second text with type id 1), all attended, none special.
-    public static TokenizerEncoding Raw(List<int> ids, List<(int Start, int End)> offsets, Func<int, string> tokenOf, int sequence, int from = 0)
+    private static TokenizerEncoding Raw(List<int> ids, List<(int Start, int End)> offsets, IPretrainedTokenizer tokenizer, int sequence, int from)
     {
         var kept = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[from..];
         var tokens = new string[kept.Length];
         for (int i = 0; i < kept.Length; i++)
         {
-            tokens[i] = tokenOf(kept[i]);
+            tokens[i] = tokenizer.TokenOf(kept[i]);
         }
 
         return new()

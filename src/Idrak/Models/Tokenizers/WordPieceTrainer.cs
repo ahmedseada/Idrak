@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
-using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -50,7 +49,7 @@ internal sealed class WordPieceTrainer : ITokenizerTrainer
         }
 
         var json = Describe(options, specials, unknown);
-        var counts = CountWords(files, options, new TokenizerPipeline(json), progress, cancellationToken);
+        var counts = CountWords(files, options, json, progress, cancellationToken);
         var settings = options with { SpecialTokens = specials };
         var vocabulary = options.Scoring.Equals(TokenizerTrainers.Likelihood, StringComparison.OrdinalIgnoreCase)
             ? Likelihood(counts, settings, progress, cancellationToken)
@@ -132,76 +131,70 @@ internal sealed class WordPieceTrainer : ITokenizerTrainer
         };
     }
 
-    // The words the pipeline makes of every line, counted on every worker, then sorted in code-point order (the order the
+    // The words the tokenizer's pipeline makes of every line, counted on every worker (each with a pipeline of its own, as a
+    // Regex keeps one matcher and workers sharing one would each make a new matcher per match; its own counts for the whole
+    // run; its blocks decoded into one buffer of its own), then added up and sorted in code-point order (the order the
     // merges take them in, so the result does not depend on the workers).
-    private static Dictionary<string, long> CountWords(IReadOnlyList<string> files, TokenizerTrainingOptions options, TokenizerPipeline pipeline,
+    private static Dictionary<string, long> CountWords(IReadOnlyList<string> files, TokenizerTrainingOptions options, JsonObject tokenizer,
         IProgress<TokenizerTrainingProgress>? progress, CancellationToken cancellationToken)
     {
         long total = files.Sum(f => new FileInfo(f).Length), read = 0;
         int workers = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads;
         bool crlfAsLf = options.LineEnds == "lf";
-        var parts = new ConcurrentBag<Dictionary<string, long>>();
-        Parallel.ForEach(
-            Partitioner.Create(BpeTrainer.Blocks(files, cancellationToken), EnumerablePartitionerOptions.NoBuffering),
-            new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken },
-            () => (Words: new Dictionary<string, long>(StringComparer.Ordinal), Text: new PreTokenizedText()),
-            (block, _, local) =>
+        var counted = new Dictionary<string, long>?[workers];
+        using (var blocks = new BpeTrainer.BlockQueue(files, cancellationToken))
+        {
+            Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, worker =>
             {
-                string text;
+                var pipeline = new TokenizerPipeline(tokenizer);
+                var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+                var words = counts.GetAlternateLookup<ReadOnlySpan<char>>();
+                var pieces = new PreTokenizedText();
+                char[] chars = [];
                 try
                 {
-                    text = Encoding.UTF8.GetString(block.Bytes, 0, block.Length);
+                    while (blocks.Next(out var block))
+                    {
+                        int length;
+                        try
+                        {
+                            int most = Encoding.UTF8.GetMaxCharCount(block.Length);
+                            if (chars.Length < most)
+                            {
+                                if (chars.Length > 0)
+                                {
+                                    ArrayPool<char>.Shared.Return(chars);
+                                }
+
+                                chars = [];
+                                chars = ArrayPool<char>.Shared.Rent(most);
+                            }
+
+                            length = Encoding.UTF8.GetChars(block.Bytes, 0, block.Length, chars, 0);
+                        }
+                        finally
+                        {
+                            ArrayPool<byte>.Shared.Return(block.Bytes);
+                        }
+
+                        CountLines(chars, length, crlfAsLf, pipeline, pieces, words);
+                        progress?.Report(new TokenizerTrainingProgress("words", Interlocked.Add(ref read, block.Length), total));
+                    }
                 }
                 finally
                 {
-                    ArrayPool<byte>.Shared.Return(block.Bytes);
+                    pieces.Dispose();
+                    if (chars.Length > 0)
+                    {
+                        ArrayPool<char>.Shared.Return(chars);
+                    }
                 }
 
-                var words = local.Words.GetAlternateLookup<ReadOnlySpan<char>>();
-                int start = 0;
-                while (start < text.Length)
-                {
-                    int end = text.IndexOf('\n', start);
-                    int length = (end < 0 ? text.Length : end) - start;
-                    if (crlfAsLf && end >= 0 && length > 0 && text[end - 1] == '\r')
-                    {
-                        length--;
-                    }
-
-                    if (length > 0)
-                    {
-                        pipeline.Run(text, start, length, atStart: true, local.Text);
-                        for (int p = 0; p < local.Text.Pieces.Count; p++)
-                        {
-                            var word = local.Text.Piece(p);
-                            if (!word.IsEmpty)
-                            {
-                                words[word] = words.TryGetValue(word, out long seen) ? seen + 1 : 1;
-                            }
-                        }
-                    }
-
-                    start = end < 0 ? text.Length : end + 1;
-                }
-
-                progress?.Report(new TokenizerTrainingProgress("words", Interlocked.Add(ref read, block.Length), total));
-                return local;
-            },
-            local =>
-            {
-                parts.Add(local.Words);
-                local.Text.Dispose();
+                counted[worker] = counts;
             });
-
-        var merged = new Dictionary<string, long>(StringComparer.Ordinal);
-        foreach (var part in parts)
-        {
-            foreach (var (word, count) in part)
-            {
-                CollectionsMarshal.GetValueRefOrAddDefault(merged, word, out _) += count;
-            }
         }
 
+        var merged = BpeTrainer.AddUp(counted);
         var sorted = merged.Keys.ToArray();
         Array.Sort(sorted, CodePointOrder.Compare);
         var ordered = new Dictionary<string, long>(sorted.Length, StringComparer.Ordinal);
@@ -211,6 +204,39 @@ internal sealed class WordPieceTrainer : ITokenizerTrainer
         }
 
         return ordered;
+    }
+
+    // Counts the words of a block's lines (text[..length], decoded): each line (without its line end; "\r\n" as "\n" when
+    // crlfAsLf) through the pipeline, each piece that is not empty one word.
+    private static void CountLines(char[] text, int length, bool crlfAsLf, TokenizerPipeline pipeline, PreTokenizedText pieces,
+        Dictionary<string, long>.AlternateLookup<ReadOnlySpan<char>> words)
+    {
+        int start = 0;
+        while (start < length)
+        {
+            int newline = text.AsSpan(start, length - start).IndexOf('\n');
+            int end = newline < 0 ? -1 : start + newline;
+            int count = (end < 0 ? length : end) - start;
+            if (crlfAsLf && end >= 0 && count > 0 && text[end - 1] == '\r')
+            {
+                count--;
+            }
+
+            if (count > 0)
+            {
+                pipeline.Run(text, length, start, count, atStart: true, pieces);
+                for (int p = 0; p < pieces.Pieces.Count; p++)
+                {
+                    var word = pieces.Piece(p);
+                    if (!word.IsEmpty)
+                    {
+                        words[word] = words.TryGetValue(word, out long seen) ? seen + 1 : 1;
+                    }
+                }
+            }
+
+            start = end < 0 ? length : end + 1;
+        }
     }
 
     // The original WordPiece scoring: merge the pair with the largest count(pair) / (count(left) × count(right)) until the

@@ -47,6 +47,58 @@ internal static class PostProcessors
     private static (string Token, int Id) Special(JsonNode? pair) =>
         pair is JsonArray { Count: 2 } a ? ((string)a[0]!, (int)a[1]!) : throw new InvalidDataException($"A post-processor's special token is not [token, id]: {pair?.ToJsonString()}.");
 
+    // What a post-processor does to a single text, laid out once: the offset trims it applies to the text's tokens (ByteLevel's,
+    // each with its add_prefix_space, in order), then the parts it joins (the text, sequence 0, with a type id; special
+    // tokens with theirs). TokenizerEncodings writes a single text's encoding from it in one pass.
+    internal sealed record Layout(bool[] Trims, LayoutPart[] Parts)
+    {
+        // No post-processor: the text as it is (type id 0).
+        public static readonly Layout TextOnly = new([], [LayoutPart.Of(0)]);
+    }
+
+    internal readonly record struct LayoutPart(bool Text, int[] SpecialIds, string[]? SpecialTokens, int TypeId)
+    {
+        public static LayoutPart Of(int typeId) => new(true, [], null, typeId);
+
+        public static LayoutPart Special(int[] ids, string[]? tokens, int typeId) => new(false, ids, tokens, typeId);
+    }
+
+    // A library post-processor that can say what it does to a single text (null when its Process would refuse it, so the
+    // refusal comes from Process).
+    private interface ISingleLayout
+    {
+        Layout? Single(bool addSpecialTokens);
+    }
+
+    // The layout of a single text through post (null: none), or null for a post-processor that cannot give one (an app's).
+    internal static Layout? SingleLayout(ITokenizerPostProcessor? post, bool addSpecialTokens) => post switch
+    {
+        null => Layout.TextOnly,
+        ISingleLayout known => known.Single(addSpecialTokens),
+        _ => null,
+    };
+
+    // The two layouts of a post-processor (with special tokens, without), made when first asked for (null stays a valid
+    // answer: Unmade marks one not made yet).
+    private sealed class Layouts(Func<bool, Layout?> make)
+    {
+        private static readonly Layout Unmade = new([], []);
+        private Layout? _with = Unmade, _without = Unmade;
+
+        public Layout? Get(bool addSpecialTokens)
+        {
+            ref Layout? slot = ref addSpecialTokens ? ref _with : ref _without;
+            var layout = Volatile.Read(ref slot);
+            if (ReferenceEquals(layout, Unmade))
+            {
+                layout = make(addSpecialTokens);
+                Volatile.Write(ref slot, layout);
+            }
+
+            return layout;
+        }
+    }
+
     // A run of tokens to join: from an encoding (with its type id and sequence id) or special ones (with their tokens).
     private readonly record struct Part(TokenizerEncoding? Encoding, int[] SpecialIds, int TypeId, int Sequence, string[]? SpecialTokens = null);
 
@@ -114,8 +166,41 @@ internal static class PostProcessors
     // TemplateProcessing: the single or pair template's pieces in order; special tokens only when asked for, but the
     // sequences' type ids always as the template sets them.
     private sealed class Template(List<(string? Special, int Sequence, int TypeId)> single, List<(string? Special, int Sequence, int TypeId)> pair,
-        Dictionary<string, (int[] Ids, string[] Tokens)> specials) : ITokenizerPostProcessor
+        Dictionary<string, (int[] Ids, string[] Tokens)> specials) : ITokenizerPostProcessor, ISingleLayout
     {
+        private Layouts? _layouts;
+
+        public Layout? Single(bool addSpecialTokens) => (_layouts ??= new Layouts(add =>
+        {
+            var parts = new List<LayoutPart>();
+            foreach (var (name, sequence, typeId) in single)
+            {
+                if (name is not null)
+                {
+                    if (add)
+                    {
+                        if (!specials.TryGetValue(name, out var special))
+                        {
+                            return null;                                      // Process names the missing token
+                        }
+
+                        parts.Add(LayoutPart.Special(special.Ids, special.Tokens, typeId));
+                    }
+
+                    continue;
+                }
+
+                if (sequence != 0)
+                {
+                    return null;                                              // Process refuses sequence B in the single template
+                }
+
+                parts.Add(LayoutPart.Of(typeId));
+            }
+
+            return new Layout([], [.. parts]);
+        })).Get(addSpecialTokens);
+
         public static Template Read(JsonObject spec)
         {
             var specials = new Dictionary<string, (int[] Ids, string[] Tokens)>(StringComparer.Ordinal);
@@ -132,7 +217,23 @@ internal static class PostProcessors
                 ? ((string?)(string)s["id"]!, -1, (int?)s["type_id"] ?? 0)
                 : ((string?)null, (string)p["Sequence"]!["id"]! == "A" ? 0 : 1, (int?)p["Sequence"]!["type_id"] ?? 0))];
 
-        public int AddedTokens(bool isPair) => (isPair ? pair : single).Where(p => p.Special is not null).Sum(p => specials[p.Special!].Ids.Length);
+        public int AddedTokens(bool isPair)
+        {
+            if (!isPair && _added >= 0)
+            {
+                return _added;
+            }
+
+            int added = (isPair ? pair : single).Where(p => p.Special is not null).Sum(p => specials[p.Special!].Ids.Length);
+            if (!isPair)
+            {
+                _added = added;
+            }
+
+            return added;
+        }
+
+        private int _added = -1;                                              // a single text's, counted once (-1: not yet)
 
         public TokenizerEncoding Process(TokenizerEncoding encoding, TokenizerEncoding? second, bool addSpecialTokens)
         {
@@ -160,9 +261,13 @@ internal static class PostProcessors
     }
 
     // BertProcessing: [CLS] A [SEP] (type 0), then B [SEP] (type 1).
-    private sealed class Bert((string Token, int Id) cls, (string Token, int Id) sep) : ITokenizerPostProcessor
+    private sealed class Bert((string Token, int Id) cls, (string Token, int Id) sep) : ITokenizerPostProcessor, ISingleLayout
     {
+        private readonly Layout _with = new([], [LayoutPart.Special([cls.Id], [cls.Token], 0), LayoutPart.Of(0), LayoutPart.Special([sep.Id], [sep.Token], 0)]);
+
         public int AddedTokens(bool isPair) => isPair ? 3 : 2;
+
+        public Layout? Single(bool addSpecialTokens) => addSpecialTokens ? _with : Layout.TextOnly;
 
         public TokenizerEncoding Process(TokenizerEncoding encoding, TokenizerEncoding? pair, bool addSpecialTokens) => !addSpecialTokens
             ? Plain(encoding, pair)
@@ -174,9 +279,16 @@ internal static class PostProcessors
 
     // RobertaProcessing: offsets trimmed as ByteLevel trims them (trim_offsets), then <s> A </s> (type 0), then </s> B </s>
     // (type 1, as tokenizers sets it).
-    private sealed class Roberta((string Token, int Id) cls, (string Token, int Id) sep, bool trimOffsets, bool addPrefixSpace) : ITokenizerPostProcessor
+    private sealed class Roberta((string Token, int Id) cls, (string Token, int Id) sep, bool trimOffsets, bool addPrefixSpace) : ITokenizerPostProcessor, ISingleLayout
     {
+        private readonly Layout _with = new(trimOffsets ? [addPrefixSpace] : [],
+            [LayoutPart.Special([cls.Id], [cls.Token], 0), LayoutPart.Of(0), LayoutPart.Special([sep.Id], [sep.Token], 0)]);
+
+        private readonly Layout _without = new(trimOffsets ? [addPrefixSpace] : [], [LayoutPart.Of(0)]);
+
         public int AddedTokens(bool isPair) => isPair ? 4 : 2;
+
+        public Layout? Single(bool addSpecialTokens) => addSpecialTokens ? _with : _without;
 
         public TokenizerEncoding Process(TokenizerEncoding encoding, TokenizerEncoding? pair, bool addSpecialTokens)
         {
@@ -198,9 +310,16 @@ internal static class PostProcessors
     // ByteLevel as a post-processor adds no tokens; with trim_offsets, a token's leading and trailing spaces (Ġ, or
     // whitespace) are cut from its offsets, as tokenizers' process_offsets does (one leading space of a first token stays
     // when add_prefix_space put it there).
-    private sealed class ByteLevel(bool trimOffsets, bool addPrefixSpace) : ITokenizerPostProcessor
+    private sealed class ByteLevel(bool trimOffsets, bool addPrefixSpace) : ITokenizerPostProcessor, ISingleLayout
     {
+        private readonly Layout _layout = new(trimOffsets ? [addPrefixSpace] : [], [LayoutPart.Of(0)]);
+
         public int AddedTokens(bool isPair) => 0;
+
+        public Layout? Single(bool addSpecialTokens) => _layout;
+
+        // Its trims (none without trim_offsets), as a Sequence applies them first.
+        public bool[] Trims => _layout.Trims;
 
         public TokenizerEncoding Process(TokenizerEncoding encoding, TokenizerEncoding? pair, bool addSpecialTokens) => trimOffsets
             ? Plain(Trim(encoding, addPrefixSpace), pair is null ? null : Trim(pair, addPrefixSpace))
@@ -213,40 +332,10 @@ internal static class PostProcessors
                 return encoding;                                              // no tokens to trim by
             }
 
-            char space = BpeTokenizer.ByteToChar[' '];
             var offsets = ((int Start, int End)[])encoding.Offsets.Clone();
             for (int i = 0; i < offsets.Length; i++)
             {
-                string token = encoding.Tokens[i];
-                int leading = 0, trailing = 0;
-                while (leading < token.Length && (token[leading] == space || char.IsWhiteSpace(token[leading])))
-                {
-                    leading++;
-                }
-
-                while (trailing < token.Length && (token[^(trailing + 1)] == space || char.IsWhiteSpace(token[^(trailing + 1)])))
-                {
-                    trailing++;
-                }
-
-                var (start, end) = offsets[i];
-                if (leading > 0)
-                {
-                    bool first = i == 0 || start == 0;
-                    if (first && addPrefixSpace && leading == 1)
-                    {
-                        leading = 0;
-                    }
-
-                    start = Math.Min(start + leading, end);
-                }
-
-                if (trailing > 0 && end >= trailing)
-                {
-                    end = Math.Max(end - trailing, start);
-                }
-
-                offsets[i] = (start, end);
+                offsets[i] = Trimmed(encoding.Tokens[i], offsets[i], i, addPrefixSpace);
             }
 
             return new TokenizerEncoding
@@ -257,10 +346,62 @@ internal static class PostProcessors
         }
     }
 
-    // Sequence: the processors that add no tokens first (ByteLevel), then the one that does; tokenizers' files put them so.
-    private sealed class Chain(ITokenizerPostProcessor[] processors) : ITokenizerPostProcessor
+    // One token's offsets trimmed as ByteLevel's trim_offsets trims them (index: the token's place in its text): its leading
+    // and trailing spaces (Ġ, or whitespace) cut, but one leading space of a first token when add_prefix_space put it there.
+    internal static (int Start, int End) Trimmed(string token, (int Start, int End) offsets, int index, bool addPrefixSpace)
     {
+        char space = BpeTokenizer.ByteToChar[' '];
+        int leading = 0, trailing = 0;
+        while (leading < token.Length && (token[leading] == space || char.IsWhiteSpace(token[leading])))
+        {
+            leading++;
+        }
+
+        while (trailing < token.Length && (token[^(trailing + 1)] == space || char.IsWhiteSpace(token[^(trailing + 1)])))
+        {
+            trailing++;
+        }
+
+        var (start, end) = offsets;
+        if (leading > 0)
+        {
+            bool first = index == 0 || start == 0;
+            if (first && addPrefixSpace && leading == 1)
+            {
+                leading = 0;
+            }
+
+            start = Math.Min(start + leading, end);
+        }
+
+        if (trailing > 0 && end >= trailing)
+        {
+            end = Math.Max(end - trailing, start);
+        }
+
+        return (start, end);
+    }
+
+    // Sequence: the processors that add no tokens first (ByteLevel), then the one that does; tokenizers' files put them so.
+    private sealed class Chain(ITokenizerPostProcessor[] processors) : ITokenizerPostProcessor, ISingleLayout
+    {
+        private Layouts? _layouts;
+
         public int AddedTokens(bool isPair) => processors.Sum(p => p.AddedTokens(isPair));
+
+        // The ByteLevel trims in order, then the adding processor's layout (its own trims after them).
+        public Layout? Single(bool addSpecialTokens) => (_layouts ??= new Layouts(add =>
+        {
+            var trims = processors.OfType<ByteLevel>().SelectMany(b => b.Trims).ToList();
+            var adding = processors.Where(p => p is not ByteLevel).ToArray();
+            if (adding.Length > 1)
+            {
+                return null;                                                  // Process refuses it
+            }
+
+            var inner = adding.Length == 0 ? Layout.TextOnly : SingleLayout(adding[0], add);
+            return inner is null ? null : new Layout([.. trims, .. inner.Trims], inner.Parts);
+        })).Get(addSpecialTokens);
 
         public TokenizerEncoding Process(TokenizerEncoding encoding, TokenizerEncoding? pair, bool addSpecialTokens)
         {

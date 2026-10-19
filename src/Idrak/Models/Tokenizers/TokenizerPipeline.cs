@@ -34,6 +34,23 @@ internal sealed class TokenizerPipeline
     {
         ArgumentNullException.ThrowIfNull(output);
         output.Text.Reset(text, start, length);
+        Run(atStart, output);
+    }
+
+    /// <summary>
+    /// <see cref="Run(string, int, int, bool, PreTokenizedText)"/> on <paramref name="text"/>[<paramref name="start"/>..<paramref name="start"/> + <paramref name="length"/>]
+    /// of a caller's buffer whose first <paramref name="textLength"/> characters are the text (left unchanged until the
+    /// next run on <paramref name="output"/>): no string is made of it.
+    /// </summary>
+    public void Run(char[] text, int textLength, int start, int length, bool atStart, PreTokenizedText output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        output.Text.Reset(text, textLength, start, length);
+        Run(atStart, output);
+    }
+
+    private void Run(bool atStart, PreTokenizedText output)
+    {
         _normalizer?.Invoke(output.Text);
         output.OnePiece();
         _preTokenizer?.Invoke(output, atStart);

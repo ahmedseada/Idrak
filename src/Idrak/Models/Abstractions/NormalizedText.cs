@@ -28,8 +28,13 @@ public sealed class NormalizedText : IDisposable
     {
     }
 
+    // The text the caller passed: a string, or (Reset from a buffer) the buffer's characters, made a string only when asked for.
+    private string? _original = "";
+    private char[]? _originalChars;
+    private int _originalLength;
+
     /// <summary>The text the caller passed (offsets index into it).</summary>
-    public string Original { get; private set; } = "";
+    public string Original => _original ??= new string(_originalChars!, 0, _originalLength);
 
     /// <summary>Where the normalized range begins in <see cref="Original"/>.</summary>
     public int OriginalStart { get; private set; }
@@ -52,19 +57,40 @@ public sealed class NormalizedText : IDisposable
         ArgumentNullException.ThrowIfNull(original);
         ArgumentOutOfRangeException.ThrowIfNegative(start);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(length, original.Length - start);
+        _original = original;
+        _originalChars = null;
+        Start(original.AsSpan(start, length), start);
+    }
+
+    // Starts over with original[start..start + length] of a caller's buffer, whose first originalLength characters are the
+    // original text (Original makes them a string only when asked for; the caller leaves them unchanged until the next
+    // Reset). For callers that decode text into a buffer of their own, so no string is made per block.
+    internal void Reset(char[] original, int originalLength, int start, int length)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentOutOfRangeException.ThrowIfNegative(start);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(originalLength, original.Length);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, originalLength - start);
+        _original = null;
+        (_originalChars, _originalLength) = (original, originalLength);
+        Start(original.AsSpan(start, length), start);
+    }
+
+    // The text's characters, each standing for itself at start + its index.
+    private void Start(ReadOnlySpan<char> text, int start)
+    {
         _rewriting = false;
-        Original = original;
         OriginalStart = start;
-        OriginalEnd = start + length;
-        Ensure(ref _chars, ref _starts, ref _ends, length);
-        original.AsSpan(start, length).CopyTo(_chars);
-        for (int i = 0; i < length; i++)
+        OriginalEnd = start + text.Length;
+        Ensure(ref _chars, ref _starts, ref _ends, text.Length);
+        text.CopyTo(_chars);
+        for (int i = 0; i < text.Length; i++)
         {
             _starts[i] = start + i;
             _ends[i] = start + i + 1;
         }
 
-        _length = length;
+        _length = text.Length;
     }
 
     /// <summary>Starts over with all of <paramref name="original"/>.</summary>

@@ -29,7 +29,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     // Tokenizer patterns run on every encode: compiled to IL where the runtime allows it (interpreted under native AOT).
     internal const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
     private readonly int _cacheLimit;                                         // cached pieces (TokenizerOptions.PieceCacheLimit)
-    private int _cached;                                                      // pieces in the cache (counted on add)
     private readonly int _workers;                                            // batch threads (TokenizerOptions.Workers)
     private TokenizerEncodings.RawEncoder? _raw;                             // Raw, as Finish takes it (made once)
 
@@ -39,6 +38,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     private bool _postProcessorRead;
 
     [ThreadStatic] private static PreTokenizedText? t_pieces;
+    [ThreadStatic] private static List<(int Start, int Length)>? t_ranges, t_nextRanges;    // the split stages' ranges (EncodeRanges)
+    [ThreadStatic] private static MergeScratch? t_merge;                                    // MergeLong's linked list and heap
     private const int StackChars = 256;                                        // pieces up to this long stay on the stack
 
     private string[] _tokens;
@@ -73,9 +74,12 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     // some stage rewrites text (then the string pipeline above runs).
     private List<(Regex Pattern, string Behavior, bool Invert)>? _splits = [];
 
-    // Encoded pieces (shared by concurrent encodes); looked up by span, so a hit allocates nothing.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]> _cache = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]>.AlternateLookup<ReadOnlySpan<char>> _cacheSpans;
+    // Encoded pieces (shared by concurrent encodes); looked up by span, so a hit allocates nothing. The detailed encode's
+    // pieces are in the vocabulary's alphabet: they share this cache unless a fast path keys it by raw text whose bytes it
+    // maps first (byte level), and then have their own (_alphabetCache, made when first used).
+    private readonly PieceCache _cache;
+    private PieceCache? _alphabetCache;
+    private Func<int, string>? _tokenOf;                                      // TokenOf as a delegate, made once (Align takes it)
 
     // Byte-level decoding: the bytes of every token in one array (token id's bytes at [_byteStart[id], _byteStart[id + 1])).
     private byte[]? _tokenBytes;
@@ -112,7 +116,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         _workers = workers;
         _vocabulary = vocabulary;
         _vocabularySpans = _vocabulary.GetAlternateLookup<ReadOnlySpan<char>>();
-        _cacheSpans = _cache.GetAlternateLookup<ReadOnlySpan<char>>();
+        _cache = new PieceCache(cacheLimit);
         _merges = merges;
         _byteFallback = (bool?)model["byte_fallback"] ?? false;
         _ignoreMerges = (bool?)model["ignore_merges"] ?? false;
@@ -476,18 +480,19 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
     }
 
-    // A text's ids with their offsets in it: the span pipeline (equal to this tokenizer's own, plan 24 L1), each piece
-    // merged without the piece cache (keyed by raw text, while these pieces are already in the vocabulary's alphabet), and
-    // its tokens aligned to the characters they came from. The ids are the ones Encode gives.
-    private TokenizerEncoding Raw(string text, int sequence, int limit, bool left)
+    // A text's ids with their offsets in it, into the scratch's lists: the span pipeline (equal to this tokenizer's own,
+    // plan 24 L1), each piece's ids through the piece cache of pieces in the vocabulary's alphabet (Bpe of the piece, as
+    // the merges give them), and its tokens aligned to the characters they came from. The ids are the ones Encode gives.
+    // Returns how many tokens a left limit drops.
+    private int Raw(string text, int limit, bool left, TokenizerEncodings.RawScratch scratch)
     {
         ArgumentNullException.ThrowIfNull(text);
         text = WithoutLoneSurrogates(text);                                  // one character for one: offsets still index the text
         var pipeline = _offsetPipeline ??= new TokenizerPipeline(_source);
-        var ids = new List<int>(text.Length / 3 + 4);
-        var offsets = new List<(int Start, int End)>(ids.Capacity);
-        var ranges = new List<(int Start, int Length)>();
-        var starts = left && limit < int.MaxValue ? new List<(int Start, bool Added)>() : null;  // each pre-token's first token
+        var cache = AlphabetCache;
+        var tokenOf = _tokenOf ??= TokenOf;
+        var (ids, offsets, ranges) = (scratch.Ids, scratch.Offsets, scratch.Ranges);
+        var starts = left && limit < int.MaxValue ? scratch.Starts : null;  // each pre-token's first token
         bool full = false;                                                    // a right limit reached: the rest is not encoded
         var pieces = t_pieces ?? new PreTokenizedText();
         t_pieces = null;
@@ -512,10 +517,19 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                     starts?.Add((ids.Count, false));
 
                     var piece = pieces.Piece(i);
-                    int[] encoded = Bpe(piece);
+                    int before = ids.Count;
+                    if (cache.TryGet(piece, out var cached))
+                    {
+                        ids.AddRange(cached);
+                    }
+                    else
+                    {
+                        Bpe(piece, ids);
+                        cache.Add(piece, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..]);
+                    }
+
                     ranges.Clear();
-                    TokenizerEncodings.Align(piece, encoded, TokenOf, _byteFallback, ranges);
-                    ids.AddRange(encoded);
+                    TokenizerEncodings.Align(piece, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..], tokenOf, _byteFallback, ranges);
                     foreach (var (from, count) in ranges)
                     {
                         offsets.Add(pieces.Text.OriginOf(pieceStart + from, count));
@@ -554,7 +568,23 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             t_pieces = pieces;
         }
 
-        return TokenizerEncodings.Raw(ids, offsets, TokenOf, sequence, starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit));
+        return starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit);
+    }
+
+    // The cache of the detailed encode's pieces: the fast paths' own when every entry there is Bpe of its key (no fast path
+    // maps a raw piece's bytes first), else one of its own, so a raw text and an alphabet text never meet under one key.
+    private PieceCache AlphabetCache
+    {
+        get
+        {
+            if (_alphabetCache is { } cache)
+            {
+                return cache;
+            }
+
+            var made = !_byteLevel && _prefixByteLevel is null ? _cache : new PieceCache(_cacheLimit);
+            return Interlocked.CompareExchange(ref _alphabetCache, made, null) ?? made;
+        }
     }
 
     /// <inheritdoc />
@@ -1017,30 +1047,48 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
     }
 
-    // Splits text with the split stages (as ranges: nothing is copied) and encodes each piece.
+    // Splits text with the split stages (as ranges: nothing is copied, into this thread's lists) and encodes each piece.
     private void EncodeRanges(ReadOnlySpan<char> text, List<int> ids)
     {
-        var current = new List<(int Start, int Length)> { (0, text.Length) };
-        var next = new List<(int Start, int Length)>();
-        foreach (var (pattern, behavior, invert) in _splits!)
+        var splits = _splits!;
+        if (splits.Count == 0)
         {
-            next.Clear();
-            foreach (var range in current)
-            {
-                SplitRange(text, range, pattern, behavior, invert, next);
-            }
-
-            (current, next) = (next, current);
+            EncodePiece(text, ids, mapBytes: _byteLevel);                     // no split stage: the text is the piece
+            return;
         }
 
-        foreach (var (from, count) in current)
+        var current = t_ranges ?? [];
+        var next = t_nextRanges ?? [];
+        (t_ranges, t_nextRanges) = (null, null);                               // taken (a nested call makes its own)
+        try
         {
-            EncodePiece(text.Slice(from, count), ids, mapBytes: _byteLevel);
+            current.Clear();
+            current.Add((0, text.Length));
+            foreach (var (pattern, behavior, invert) in splits)
+            {
+                next.Clear();
+                foreach (var range in current)
+                {
+                    SplitRange(text, range, pattern, behavior, invert, next);
+                }
+
+                (current, next) = (next, current);
+            }
+
+            foreach (var (from, count) in current)
+            {
+                EncodePiece(text.Slice(from, count), ids, mapBytes: _byteLevel);
+            }
+        }
+        finally
+        {
+            (t_ranges, t_nextRanges) = (current.Capacity <= 1 << 16 ? current : null, next.Capacity <= 1 << 16 ? next : null);
         }
     }
 
     // A pre-token piece: its cached ids, or the merges (mapBytes: the piece is raw text of a byte-level tokenizer, so its
-    // UTF-8 bytes are written as the byte map's characters first).
+    // UTF-8 bytes are written as the byte map's characters first). The merges run in the caller's list, after its ids, so
+    // a miss allocates nothing but the cache's own entry.
     private void EncodePiece(ReadOnlySpan<char> piece, List<int> ids, bool mapBytes)
     {
         if (piece.IsEmpty)
@@ -1048,13 +1096,13 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             return;
         }
 
-        if (_cacheSpans.TryGetValue(piece, out var cached))
+        if (_cache.TryGet(piece, out var cached))
         {
             ids.AddRange(cached);
             return;
         }
 
-        int[] encoded;
+        int before = ids.Count;
         if (mapBytes)
         {
             int most = Encoding.UTF8.GetMaxByteCount(piece.Length);
@@ -1063,7 +1111,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             try
             {
                 int count = Encoding.UTF8.GetBytes(piece, bytes);
-                encoded = BpeBytes(bytes[..count]);
+                BpeBytes(bytes[..count], ids);
             }
             finally
             {
@@ -1075,132 +1123,102 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
         else
         {
-            encoded = Bpe(piece);
+            Bpe(piece, ids);
         }
 
-        // Long pieces (unsplit SentencePiece text) rarely repeat. The size is counted on add: ConcurrentDictionary.Count
-        // takes every lock, which each miss would pay.
-        if (piece.Length <= StackChars && Volatile.Read(ref _cached) < _cacheLimit && _cacheSpans.TryAdd(piece, encoded))
-        {
-            Interlocked.Increment(ref _cached);
-        }
-
-        ids.AddRange(encoded);
+        _cache.Add(piece, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..]);
     }
 
-    // Byte-level merges straight from the bytes: each byte starts as its character's token.
-    private int[] BpeBytes(ReadOnlySpan<byte> bytes)
+    // Byte-level merges straight from the bytes: each byte starts as its character's token. Appends the ids to output.
+    private void BpeBytes(ReadOnlySpan<byte> bytes, List<int> output)
     {
-        int[]? rented = null;
-        Span<int> symbols = bytes.Length <= StackChars ? stackalloc int[StackChars] : (rented = System.Buffers.ArrayPool<int>.Shared.Rent(bytes.Length));
+        if (_pairs is not null && !_ignoreMerges)
+        {
+            int before = output.Count;
+            int i = 0;
+            for (; i < bytes.Length && _byteIds[bytes[i]] >= 0; i++)
+            {
+                output.Add(_byteIds[bytes[i]]);
+            }
+
+            if (i == bytes.Length)
+            {
+                MergeFrom(output, before);
+                return;
+            }
+
+            System.Runtime.InteropServices.CollectionsMarshal.SetCount(output, before);   // a byte without a token: the general path
+        }
+
+        // The general path, on the mapped characters.
+        char[]? rentedChars = null;
+        Span<char> chars = bytes.Length <= StackChars ? stackalloc char[StackChars] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(bytes.Length));
         try
         {
-            symbols = symbols[..bytes.Length];
-            bool known = _pairs is not null;
-            for (int i = 0; i < bytes.Length && known; i++)
+            for (int i = 0; i < bytes.Length; i++)
             {
-                symbols[i] = _byteIds[bytes[i]];
-                known = symbols[i] >= 0;
+                chars[i] = ByteToChar[bytes[i]];
             }
 
-            if (known && !_ignoreMerges)
-            {
-                return Merge(symbols);
-            }
-
-            // The general path, on the mapped characters.
-            char[]? rentedChars = null;
-            Span<char> chars = bytes.Length <= StackChars ? stackalloc char[StackChars] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(bytes.Length));
-            try
-            {
-                for (int i = 0; i < bytes.Length; i++)
-                {
-                    chars[i] = ByteToChar[bytes[i]];
-                }
-
-                return Bpe(chars[..bytes.Length]);
-            }
-            finally
-            {
-                if (rentedChars is not null)
-                {
-                    System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
-                }
-            }
+            Bpe(chars[..bytes.Length], output);
         }
         finally
         {
-            if (rented is not null)
+            if (rentedChars is not null)
             {
-                System.Buffers.ArrayPool<int>.Shared.Return(rented);
+                System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
             }
         }
     }
 
-    // Byte-pair merges over one piece (characters of the token alphabet), best (lowest-rank) pair first, leftmost among equals.
-    private int[] Bpe(ReadOnlySpan<char> piece)
+    // Byte-pair merges over one piece (characters of the token alphabet), best (lowest-rank) pair first, leftmost among
+    // equals; appends the ids to output. Every merge joins two tokens into a token, so a character that is not one never
+    // merges: the runs of known characters between such characters merge on their own, and each unknown character becomes
+    // what the string merges give it (its byte fallback tokens, or the unknown token).
+    private void Bpe(ReadOnlySpan<char> piece, List<int> output)
     {
         if (_ignoreMerges && _vocabularySpans.TryGetValue(piece, out int whole))
         {
-            return [whole];
+            output.Add(whole);
+            return;
         }
 
-        if (_pairs is not null)
+        if (_pairs is null)
         {
-            int[]? rented = null;
-            Span<int> symbols = piece.Length <= StackChars ? stackalloc int[StackChars] : (rented = System.Buffers.ArrayPool<int>.Shared.Rent(piece.Length));
-            try
-            {
-                int n = 0;
-                bool known = true;
-                for (int i = 0; i < piece.Length && known;)
-                {
-                    int width = i + 1 < piece.Length && char.IsSurrogatePair(piece[i], piece[i + 1]) ? 2 : 1;
-                    known = _vocabularySpans.TryGetValue(piece.Slice(i, width), out symbols[n++]);
-                    i += width;
-                }
-
-                // Every merge joins two tokens into a token, so a character that is not one never merges: the runs of known
-                // characters between such characters merge on their own.
-                return known ? Merge(symbols[..n]) : MergeAround(piece, symbols);
-            }
-            finally
-            {
-                if (rented is not null)
-                {
-                    System.Buffers.ArrayPool<int>.Shared.Return(rented);
-                }
-            }
+            BpeStrings(piece.ToString(), output);
+            return;
         }
 
-        return BpeStrings(piece.ToString());
-    }
-
-    // Merges the runs of known characters of piece (symbols: room for one id per character), each unknown character as
-    // the string merges give it (its byte fallback tokens, or the unknown token).
-    private int[] MergeAround(ReadOnlySpan<char> piece, Span<int> symbols)
-    {
-        var result = new List<int>(piece.Length);
-        int n = 0;
+        int run = output.Count;                                               // where the current run of known characters starts
         for (int i = 0; i < piece.Length;)
         {
             int width = i + 1 < piece.Length && char.IsSurrogatePair(piece[i], piece[i + 1]) ? 2 : 1;
-            if (_vocabularySpans.TryGetValue(piece.Slice(i, width), out symbols[n]))
+            if (_vocabularySpans.TryGetValue(piece.Slice(i, width), out int id))
             {
-                n++;
+                output.Add(id);
             }
             else
             {
-                result.AddRange(n > 0 ? Merge(symbols[..n]) : []);
-                n = 0;
-                AddUnknown(piece.Slice(i, width), result);
+                MergeFrom(output, run);
+                AddUnknown(piece.Slice(i, width), output);
+                run = output.Count;
             }
 
             i += width;
         }
 
-        result.AddRange(n > 0 ? Merge(symbols[..n]) : []);
-        return [.. result];
+        MergeFrom(output, run);
+    }
+
+    // Merges output[from..] in place and drops what the merges freed.
+    private void MergeFrom(List<int> output, int from)
+    {
+        int n = output.Count - from;
+        if (n > 1)
+        {
+            int merged = Merge(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(output).Slice(from, n));
+            System.Runtime.InteropServices.CollectionsMarshal.SetCount(output, from + merged);
+        }
     }
 
     // A symbol that is not a token: its UTF-8 bytes' fallback tokens, or the unknown token.
@@ -1222,9 +1240,9 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
     }
 
-    // The merges on token ids: short pieces merge in place (lowest-rank pair, leftmost among equals, repeatedly); long
-    // ones use a heap (same order, O(n log n)).
-    private int[] Merge(Span<int> ids)
+    // The merges on token ids, in place; returns how many ids are left. Short pieces merge in place (lowest-rank pair,
+    // leftmost among equals, repeatedly); long ones use a heap (same order, O(n log n)).
+    private int Merge(Span<int> ids)
     {
         if (ids.Length > 32)
         {
@@ -1253,73 +1271,94 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             count--;
         }
 
-        return ids[..count].ToArray();
+        return count;
     }
+
+    // MergeLong's working memory, one per thread, kept between pieces (a piece longer than it holds gets a larger one).
+    private sealed class MergeScratch(int capacity)
+    {
+        public readonly int[] Symbol = new int[capacity], Next = new int[capacity], Previous = new int[capacity];
+        public readonly bool[] Alive = new bool[capacity];
+        public readonly PriorityQueue<(int Left, int LeftId, int RightId, int Merged), (int Rank, int Position)> Queue = new(capacity);
+    }
+
+    // The largest piece whose MergeScratch a thread keeps (longer ones are rare: their scratch is dropped after use).
+    private const int KeptMergeScratch = 1 << 14;
 
     // Long pieces (SentencePiece-style tokenizers do not split text first): the symbols in a linked list and candidate
     // pairs in a heap ordered by (rank, position); a popped pair whose symbols changed since it was queued is skipped.
-    private int[] MergeLong(Span<int> ids)
+    // The result is written back to the front of ids; returns how many ids are left.
+    private int MergeLong(Span<int> ids)
     {
         int n = ids.Length;
-        var symbol = ids.ToArray();
-        var next = new int[n];
-        var previous = new int[n];
-        var alive = new bool[n];
-        for (int i = 0; i < n; i++)
+        var scratch = t_merge is { } kept && kept.Symbol.Length >= n ? kept : new MergeScratch(Math.Max(n, 256));
+        t_merge = null;                                                       // taken (a nested call makes its own)
+        try
         {
-            next[i] = i + 1 < n ? i + 1 : -1;
-            previous[i] = i - 1;
-            alive[i] = true;
-        }
-
-        var queue = new PriorityQueue<(int Left, int LeftId, int RightId, int Merged), (int Rank, int Position)>(n);
-        void Offer(int left)
-        {
-            int right = left < 0 ? -1 : next[left];
-            if (right >= 0 && _pairs!.TryGetValue(((long)symbol[left] << 32) | (uint)symbol[right], out var pair))
+            var (symbol, next, previous, alive, queue) = (scratch.Symbol, scratch.Next, scratch.Previous, scratch.Alive, scratch.Queue);
+            queue.Clear();
+            ids.CopyTo(symbol);
+            for (int i = 0; i < n; i++)
             {
-                queue.Enqueue((left, symbol[left], symbol[right], pair.Merged), (pair.Rank, left));
-            }
-        }
-
-        for (int i = 0; i < n - 1; i++)
-        {
-            Offer(i);
-        }
-
-        int remaining = n;
-        while (queue.TryDequeue(out var candidate, out _))
-        {
-            int left = candidate.Left, right = next[left];
-            if (!alive[left] || right < 0 || symbol[left] != candidate.LeftId || symbol[right] != candidate.RightId)
-            {
-                continue;
+                next[i] = i + 1 < n ? i + 1 : -1;
+                previous[i] = i - 1;
+                alive[i] = true;
             }
 
-            symbol[left] = candidate.Merged;
-            alive[right] = false;
-            remaining--;
-            next[left] = next[right];
-            if (next[right] >= 0)
+            void Offer(int left)
             {
-                previous[next[right]] = left;
+                int right = left < 0 ? -1 : next[left];
+                if (right >= 0 && _pairs!.TryGetValue(((long)symbol[left] << 32) | (uint)symbol[right], out var pair))
+                {
+                    queue.Enqueue((left, symbol[left], symbol[right], pair.Merged), (pair.Rank, left));
+                }
             }
 
-            Offer(previous[left]);
-            Offer(left);
-        }
+            for (int i = 0; i < n - 1; i++)
+            {
+                Offer(i);
+            }
 
-        var result = new int[remaining];
-        for (int i = 0, j = 0; i >= 0; i = next[i])
+            int remaining = n;
+            while (queue.TryDequeue(out var candidate, out _))
+            {
+                int left = candidate.Left, right = next[left];
+                if (!alive[left] || right < 0 || symbol[left] != candidate.LeftId || symbol[right] != candidate.RightId)
+                {
+                    continue;
+                }
+
+                symbol[left] = candidate.Merged;
+                alive[right] = false;
+                remaining--;
+                next[left] = next[right];
+                if (next[right] >= 0)
+                {
+                    previous[next[right]] = left;
+                }
+
+                Offer(previous[left]);
+                Offer(left);
+            }
+
+            for (int i = 0, j = 0; i >= 0; i = next[i])
+            {
+                ids[j++] = symbol[i];
+            }
+
+            return remaining;
+        }
+        finally
         {
-            result[j++] = symbol[i];
+            if (scratch.Symbol.Length <= KeptMergeScratch && (t_merge is null || t_merge.Symbol.Length < scratch.Symbol.Length))
+            {
+                t_merge = scratch;
+            }
         }
-
-        return result;
     }
 
-    // Merges on strings: for tokenizers whose merges name pieces that are not tokens.
-    private int[] BpeStrings(string piece)
+    // Merges on strings: for tokenizers whose merges name pieces that are not tokens; appends the ids to result.
+    private void BpeStrings(string piece, List<int> result)
     {
         if (_ranks is null)
         {
@@ -1358,7 +1397,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             symbols.RemoveAt(best + 1);
         }
 
-        var result = new List<int>();
         foreach (var symbol in symbols)
         {
             if (_vocabulary.TryGetValue(symbol, out int id))
@@ -1370,8 +1408,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 AddUnknown(symbol, result);
             }
         }
-
-        return [.. result];
     }
 
     // One split stage on a range: the matches and the text between them, combined as the behavior says (all adjacent,
@@ -1994,6 +2030,34 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     {
         int space = merge.IndexOf(' ', 1);
         return (merge[..space], merge[(space + 1)..]);
+    }
+
+    // A piece cache: a piece's ids by its text, up to TokenizerOptions.PieceCacheLimit pieces, shared by concurrent encodes
+    // and looked up by span (a hit allocates nothing). Pieces longer than StackChars are not kept: long pieces (unsplit
+    // SentencePiece text) rarely repeat. The size is counted on add: ConcurrentDictionary.Count takes every lock, which each
+    // miss would pay.
+    private sealed class PieceCache
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]> _entries = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]>.AlternateLookup<ReadOnlySpan<char>> _spans;
+        private readonly int _limit;
+        private int _count;
+
+        public PieceCache(int limit)
+        {
+            _limit = limit;
+            _spans = _entries.GetAlternateLookup<ReadOnlySpan<char>>();
+        }
+
+        public bool TryGet(ReadOnlySpan<char> piece, out int[] ids) => _spans.TryGetValue(piece, out ids!);
+
+        public void Add(ReadOnlySpan<char> piece, ReadOnlySpan<int> ids)
+        {
+            if (piece.Length <= StackChars && Volatile.Read(ref _count) < _limit && _spans.TryAdd(piece, ids.ToArray()))
+            {
+                Interlocked.Increment(ref _count);
+            }
+        }
     }
 
     // GPT-2's byte → printable character table: printable bytes map to themselves, the rest to 256 + n.

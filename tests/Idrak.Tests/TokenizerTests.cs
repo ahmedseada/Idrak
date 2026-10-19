@@ -19,7 +19,86 @@ internal static partial class Tests
         ("tokenizers: an app's model overriding BPE is guarded: under FallBack one that fails to build or to encode (a text, a range, a batch, padded as the built-in pads it) is answered by the built-in, under Throw its failure reaches the caller", TokenizersGuardedModel),
         ("tokenizers: the piece cache is a setting (PieceCacheLimit, IDRAK_TOKENIZER_CACHE; 0 caches nothing and gives the same ids), a bad value is refused naming it, and PretrainedOptions carries the settings", TokenizersPieceCache),
         ("tokenizers: the built-in BPE passes the pretrained tokenizer suite (ranges, tokens by name, tokenizer.json naming the model) and a saved tokenizer loads back to the same ids", TokenizersPretrainedSuite),
+        ("tokenizers: bpe: EncodeRange into a reused list allocates 0 bytes once warm on every corpus line (SentencePiece-style from tokenizer.json and tokenizer.model, byte level, with the piece cache and without it)", TokenizersBpeAllocatesNothing),
     ];
+
+    // Plan 24's rule: after warm-up, encoding into a caller's list allocates nothing, cache hit or miss (a miss merges in the
+    // caller's list; long pieces, which are never cached, merge in the thread's scratch).
+    private static void TokenizersBpeAllocatesNothing(Device device)
+    {
+        _ = device;
+        var lines = TokenizerCorpusLines();
+        var ids = new List<int>(4096);
+        var sources = new (string Name, string Path, TokenizerOptions Options)[]
+        {
+            ("bpe from tokenizer.json", TokenizerData("bpe"), new() { Format = TokenizerFiles.TokenizerJson }),
+            ("bpe from tokenizer.model", TokenizerData("bpe"), new() { Format = TokenizerFiles.SentencePiece }),
+            ("byte-level-roberta", TokenizerData("byte-level-roberta"), new()),
+            ("byte-level-trim", TokenizerData("byte-level-trim"), new()),
+            ("pretrain/tokenizer", PretrainData("tokenizer"), new()),
+        };
+        foreach (var (name, path, options) in sources)
+        {
+            foreach (int cache in new[] { TokenizerOptions.DefaultPieceCacheLimit, 0 })
+            {
+                var tokenizer = PretrainedTokenizers.Load(path, options with { PieceCacheLimit = cache });
+                Check(tokenizer.Model == TokenizerModels.Bpe, $"{name}: model {tokenizer.Model}");
+
+                // The lines the vocabulary takes (a tokenizer without an unknown token refuses a character it lacks).
+                var taken = lines.Where(line =>
+                {
+                    try
+                    {
+                        ids.Clear();
+                        tokenizer.EncodeRange(line, 0, line.Length, ids);
+                        return true;
+                    }
+                    catch (InvalidDataException)
+                    {
+                        return false;
+                    }
+                }).ToArray();
+                Check(taken.Length > lines.Length / 2, $"{name}: only {taken.Length} of {lines.Length} corpus lines encode");
+                for (int warm = 0; warm < 3; warm++)
+                {
+                    foreach (var line in taken)
+                    {
+                        ids.Clear();
+                        tokenizer.EncodeRange(line, 0, line.Length, ids);
+                    }
+                }
+
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int run = 0; run < 3; run++)
+                {
+                    foreach (var line in taken)
+                    {
+                        ids.Clear();
+                        tokenizer.EncodeRange(line, 0, line.Length, ids);
+                    }
+                }
+
+                long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                if (allocated != 0)
+                {
+                    // Name the lines that allocate.
+                    var culprits = new List<string>();
+                    foreach (var (line, i) in taken.Select((l, i) => (l, i)))
+                    {
+                        long start = GC.GetAllocatedBytesForCurrentThread();
+                        ids.Clear();
+                        tokenizer.EncodeRange(line, 0, line.Length, ids);
+                        if (GC.GetAllocatedBytesForCurrentThread() - start is var bytes and > 0)
+                        {
+                            culprits.Add($"line {i} ({bytes} bytes, {line.Length} characters) '{Escaped(line[..Math.Min(40, line.Length)])}'");
+                        }
+                    }
+
+                    Check(false, $"{name}, cache {cache}: a warm pass allocated {allocated} bytes over {taken.Length * 3} lines:\n  {string.Join("\n  ", culprits.Take(8))}");
+                }
+            }
+        }
+    }
 
     private static void TokenizersBpeBaseline(Device device)
     {
