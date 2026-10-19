@@ -7,7 +7,7 @@ Wave 1 is built and CPU-checked: L0, and T0's standalone part (fixtures, protobu
 | Phase | What | State |
 |---|---|---|
 | L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Done; CPU pass (155 tests) |
-| L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Planned |
+| L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Done; CPU pass |
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Wave 1 part done (fixtures, readers, trie); CPU pass. Left: the reader registered, Precompiled |
 | T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Planned |
@@ -53,6 +53,9 @@ CLAUDE.md and [docs/optimization.md](../docs/optimization.md) apply in full. The
   building a string per piece. After warm-up, encoding into a caller's list allocates nothing (measured, rule 63).
 - **The same result, proven** (rule 71): every id and offset equals the reference's; BPE's ids do not change by one on
   any existing fixture; batch encoding equals single encoding.
+- **The reference is not the ceiling** (CLAUDE.md): `tokenizers` and `sentencepiece` fix the ids, offsets and texts,
+  never the speed or memory. Where `--bench-text` or a profile shows a candidate that beats them (a faster trie walk,
+  fewer passes, less memory per vocabulary), it is taken, with the ids proven unchanged.
 - **Nothing fixed** (CLAUDE.md): every size, limit and choice is a `TokenizerOptions` setting with an `IDRAK_TOKENIZER_*`
   variable, carried through `PretrainedOptions`, the CLI and the benches (see "Settings").
 - **Use every core** unless the user sets a limit: batch encoding and training spread work over `Workers` (0: every
@@ -290,6 +293,49 @@ in L1; T2 fills it.
 
 **Done when** the span pipeline gives the string pipeline's pieces for every BPE fixture's normalizer and pre-tokenizer.
 BPE itself keeps its own paths (T5 decides whether it moves).
+
+**L1 as built (2026-10-19).** As planned, with these differences and measurements:
+- **Public types:**
+  - `NormalizedText`: pooled characters, each with the range of the original text it stands for. A change is written
+    through `Rewrite()` (`Append`, `AppendOrigin`, `Copy`, `Commit`), and `Set` takes a component's string result.
+  - `PreTokenizedText`: the pieces as ranges of one `NormalizedText`.
+  - `ITokenizerPostProcessor` and the fourth `TokenizerComponents` table, with no built-ins yet.
+  - `TokenizerEncoding`, in `Idrak.Abstraction`, which T3 builds on.
+- **Span forms:** `ITokenizerNormalizer.Normalize(NormalizedText)` and `IPreTokenizer.PreTokenize(PreTokenizedText, bool)`
+  are default methods, so string-only plug-ins keep working.
+  - A string-only normalizer's change stands for the changed middle as a whole.
+  - A string-only pre-tokenizer's pieces keep their ranges where they are found in order; a rewritten piece stands for
+    the piece it came from.
+- **The built-ins on spans** (`SpanComponents`, internal; plain delegates, so there are no new abstract types):
+  - normalizers: Sequence, NFC/NFKC/NFD/NFKD, Prepend, Replace (literal, regex, `$` substitutions), Lowercase, and the
+    new **Strip**;
+  - pre-tokenizers: Sequence, Split, ByteLevel, Metaspace, Digits, Whitespace, and the new **WhitespaceSplit** and
+    **Punctuation**. The three new types also have string forms in `BpeTokenizer`, so BPE files that use them load.
+  - `TokenizerPipeline` (internal) runs a tokenizer.json's normalizer and pre-tokenizer on a range of a text.
+- **Character ranges:** a replaced space stands for the space; a prefix for the piece's first character; a byte
+  character for the character it is a byte of; an NFKC cluster for its characters. T3 checks these against the
+  references' offsets and adjusts them where Hugging Face differs.
+- **Unicode normalization without the platform where possible:** .NET's span normalization (`IsNormalized`,
+  `GetNormalizedLength`, `TryNormalize`) allocates 72 bytes on every call on Linux (ICU), measured.
+  - A per-form table of the characters no context can change (their own normalization is themselves, not a mark, not a
+    Hangul vowel or final jamo) is computed once per block of 256 code points.
+  - Text made only of such characters is left as it is with no platform call: ASCII, Arabic without diacritics, CJK,
+    most emoji.
+  - Text normalization does change costs 624 bytes a text on the test's samples (Arabic with harakat, a ligature,
+    fullwidth letters).
+  - **Candidate (CLAUDE.md, the reference is not the ceiling):** normalization in C# from tables built once, with no
+    platform calls, would remove those bytes too.
+- **Proven equal:** every built-in span component gives the pieces its string form gives. This was checked over every
+  `tokenizer.json` in the test data and 31 hand-made specs, on the suite's texts and both corpora, at the start and
+  not. Specs whose types later phases build (Precompiled, Bert*) are skipped and counted.
+- **Allocation:** a warm run allocates 0 bytes on Latin, Arabic, CJK and emoji text through NFKC + Replace + Lowercase
+  + Strip + Metaspace, through Split + ByteLevel, and through Replace + WhitespaceSplit + Punctuation + Digits.
+- **Run (CPU):** `tokenizers:`, `plugins:`, `pretrained:`, `tokenizer training:`, `override loop:`, `gguf:`,
+  `public API`, `inventory`.
+  - First run: 2 failures. One was the inventory: the two abstract classes became delegates. The other was the
+    allocation test: the stability table was added.
+  - After one rebuild, the failing filters and the pipeline group pass, and so do `plugins:`, `override loop:` and
+    `inventory`.
 
 ## Phase T0: fixtures, the SentencePiece reader, the Precompiled normalizer
 
@@ -596,7 +642,11 @@ At most two agents at a time (CLAUDE.md), each in its own worktree, building onl
 | 5 | T4: the Unigram trainer, `SentencePieceWriter` | T4: the WordPiece trainer, then the CLI |
 | 6 | T5 (optional, measured) | none |
 
-The critical path is L0, L1, T1 or T2, T3, T4. The owner's `make_fixtures.py --real` can run as soon as wave 1 is
+The table is a dependency order, not a barrier (the owner, 2026-10-19): the moment an agent finishes, its slot takes
+the next work whose inputs are merged, without waiting for the other slot. Work that needs only wave 1 and can start
+early: the Unigram and WordPiece model cores (piece matching over `DoubleArrayTrie`, before L1's pipeline is merged),
+the GGUF fixture tokenizers (`tools/gguf/make_fixtures.py`), the trainers' suffix array. The critical path is L0, L1,
+T1 or T2, T3, T4. The owner's `make_fixtures.py --real` can run as soon as wave 1 is
 merged. Files both agents of a wave touch (`api/*.txt`, the inventory, `TokenizerComponents.cs`, `Tests.All`,
 `EnvironmentVariables.cs`, the decoder count in `ModelPluginTests.cs`) are merged one agent at a time; the generated
 dumps are regenerated after a conflicting merge, never merged by hand, and that merge gets one build and the

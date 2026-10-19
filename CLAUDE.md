@@ -11,6 +11,11 @@ These are the owner's standing rules. They hold in every session, after every co
   limits, per-call work once, a fixed summation order, the declared block) apply to every GPU kernel.
 - **Speed and memory first.** They are the library's main goal. A slow or memory-heavy path found in the library is
   fixed in the library, without asking whether to; an app or sample never works around it.
+- **The reference is not the ceiling.** A reference implementation or the model in hand (Hugging Face, sentencepiece,
+  PyTorch, llama.cpp, the current real model and its measured speed) fixes what the output must be, never how fast or
+  how lean Idrak may be. When the library's own benches and profiles show a candidate that would make it faster or use
+  less memory, it is taken (its results proven unchanged, rule 71), even where the reference or the current model does
+  not do it or does not need it. Candidates come from what is measured at run time, card-agnostic: never from one card.
 - **Use all available resources unless the user sets a limit.** The library may take every core, the whole device
   memory and the room it measures; using most of a card is not a fault in itself. Only a limit the user sets
   (`ComputeResources`, an option, an environment variable) bounds it. A "memory-heavy path" is one that wastes memory
@@ -44,7 +49,9 @@ These are the owner's standing rules. They hold in every session, after every co
   once with `--no-build` (CPU here). 5. Merge and push; a merge without conflicts gets no build and no tests (its
   branch was built and tested already). 6. Hand the owner one targeted command list for only what changed: one
   `dotnet build -c Release tests\Idrak.Tests`, then the CUDA filters with `--no-build`. At most two agents at a time,
-  so builds do not compete for the machine.
+  so builds do not compete for the machine. A slot never idles while work is ready: the moment an agent finishes, the
+  slot takes the next piece of work whose inputs are already merged, without waiting for the current wave to end
+  (waves are a dependency order, not a barrier).
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`.

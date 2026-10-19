@@ -18,15 +18,15 @@ namespace Idrak.Models;
 /// </summary>
 public sealed class BpeTokenizer : IPretrainedTokenizer
 {
-    private static readonly string Gpt2Pattern = @"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+";
-    private static readonly char[] ByteToChar = BuildByteMap();
+    internal static readonly string Gpt2Pattern = @"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+";
+    internal static readonly char[] ByteToChar = BuildByteMap();
     private static readonly Dictionary<char, byte> CharToByte = ByteToChar.Select((c, b) => (c, b)).ToDictionary(p => p.c, p => (byte)p.b);
 
     private readonly Dictionary<string, int> _vocabulary;
     private readonly Dictionary<string, int>.AlternateLookup<ReadOnlySpan<char>> _vocabularySpans;
     private static readonly UTF8Encoding StrictUtf8 = new(false, throwOnInvalidBytes: true);
     // Tokenizer patterns run on every encode: compiled to IL where the runtime allows it (interpreted under native AOT).
-    private const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
+    internal const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
     private readonly int _cacheLimit;                                         // cached pieces (TokenizerOptions.PieceCacheLimit)
     private const int StackChars = 256;                                        // pieces up to this long stay on the stack
 
@@ -1257,7 +1257,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
 
     // One split stage on a range: the matches and the text between them, combined as the behavior says (all adjacent,
     // so every result is again a range of the same string).
-    private static void SplitRange(ReadOnlySpan<char> text, (int Start, int Length) range, Regex pattern, string behavior, bool invert, List<(int Start, int Length)> output)
+    internal static void SplitRange(ReadOnlySpan<char> text, (int Start, int Length) range, Regex pattern, string behavior, bool invert, List<(int Start, int Length)> output)
     {
         int last = range.Start, end = range.Start + range.Length;
         int pending = -1;                                                       // MergedWithNext: start of matched text waiting
@@ -1386,6 +1386,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             "Prepend" => s => s.Length == 0 ? s : (string)n["prepend"]! + s,   // empty text stays empty, as in Hugging Face's
             "Replace" => Replacer(n),
             "Lowercase" => s => s.ToLowerInvariant(),
+            "Strip" => Stripper((bool?)n["strip_left"] ?? true, (bool?)n["strip_right"] ?? true),
             "Precompiled" => PrecompiledCharsMap.Step(n),                         // the charsmap read once, here
             _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
         };
@@ -1400,6 +1401,14 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             return s;
         };
     }
+
+    private static Func<string, string> Stripper(bool left, bool right) => s => (left, right) switch
+    {
+        (true, true) => s.Trim(),
+        (true, false) => s.TrimStart(),
+        (false, true) => s.TrimEnd(),
+        _ => s,
+    };
 
     private static Func<string, string> Replacer(JsonObject n)
     {
@@ -1476,6 +1485,16 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 _preTokenizers.Add(WhitespaceStage(words));
                 _splits?.Add((words, "Removed", true));                           // keeps the matches only
                 return false;
+            case "WhitespaceSplit":
+                var runs = new Regex(NonWhitespacePattern, Fast);
+                _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, runs, "Removed", true));
+                _splits?.Add((runs, "Removed", true));
+                return false;
+            case "Punctuation":
+                var (punctuation, punctuationBehavior) = PunctuationSettings(p);
+                _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, punctuation, punctuationBehavior, false));
+                _splits?.Add((punctuation, punctuationBehavior, false));
+                return false;
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
@@ -1517,22 +1536,36 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 return (pieces, atStart) => SplitPieces(pieces, digits, "Isolated", false);
             case "Whitespace":
                 return WhitespaceStage(new Regex(WordsPattern, Fast));
+            case "WhitespaceSplit":
+                var runs = new Regex(NonWhitespacePattern, Fast);
+                return (pieces, atStart) => SplitPieces(pieces, runs, "Removed", true);
+            case "Punctuation":
+                var (punctuation, behavior2) = PunctuationSettings(p);
+                return (pieces, atStart) => SplitPieces(pieces, punctuation, behavior2, false);
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
     }
 
-    private const string WordsPattern = @"\w+|[^\w\s]+";
+    internal const string WordsPattern = @"\w+|[^\w\s]+";
 
-    private static (Regex Pattern, string Behavior, bool Invert) SplitSettings(JsonObject p) =>
+    // WhitespaceSplit keeps the runs between whitespace; Punctuation splits at each punctuation character (Unicode's P
+    // categories and the ASCII punctuation Unicode files as symbols, as Rust's is_ascii_punctuation counts them).
+    internal const string NonWhitespacePattern = @"\S+";
+    internal const string PunctuationPattern = @"[\p{P}$+<=>^`|~]";
+
+    internal static (Regex Pattern, string Behavior, bool Invert) SplitSettings(JsonObject p) =>
         (p["pattern"]!["Regex"] is { } r ? new Regex((string)r!, Fast) : new Regex(Regex.Escape((string)p["pattern"]!["String"]!), Fast),
          (string?)p["behavior"] ?? "Isolated", (bool?)p["invert"] ?? false);
 
-    private static (string Replacement, string Scheme, bool Split) MetaspaceSettings(JsonObject p) =>
+    internal static (string Replacement, string Scheme, bool Split) MetaspaceSettings(JsonObject p) =>
         ((string?)p["replacement"] ?? "▁", (string?)p["prepend_scheme"] ?? (((bool?)p["add_prefix_space"] ?? true) ? "always" : "never"),
          (bool?)p["split"] ?? true);
 
-    private static Regex DigitsPattern(JsonObject p) => new(((bool?)p["individual_digits"] ?? false) ? @"\p{Nd}" : @"\p{Nd}+", Fast);
+    internal static (Regex Pattern, string Behavior) PunctuationSettings(JsonObject p) =>
+        (new Regex(PunctuationPattern, Fast), (string?)p["behavior"] ?? "Isolated");
+
+    internal static Regex DigitsPattern(JsonObject p) => new(((bool?)p["individual_digits"] ?? false) ? @"\p{Nd}" : @"\p{Nd}+", Fast);
 
     private static Func<List<string>, bool, List<string>> ByteLevelStage(bool prefix, bool useRegex, Regex gpt2) => (pieces, atStart) =>
     {
