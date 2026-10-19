@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
+using Idrak.Abstraction.Text;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 
@@ -18,13 +19,16 @@ internal static partial class Tests
         ("tokenizer training: a trained tokenizer saved as tokenizer.json loads back to the same ids, passes the tokenizer contract, and a loaded file saves to the same vocabulary and merges", TokenizerTrainingSave),
         ("tokenizer training: a file with Windows line ends (CRLF) trains the tokenizer its LF copy trains (byte level and metaspace), LineEnds \"keep\" learns the \\r as Hugging Face does, and another value is refused", TokenizerTrainingLineEnds),
         ("tokenizer training: the registry names bpe, unigram and wordpiece, refuses an unregistered trainer, bad options and missing files, and one worker counts the same words as many", TokenizerTrainingRegistry),
-        ("tokenizer training: unigram learns SentencePiece's vocabulary from the same text and options (the special and byte pieces at the same ids, the learned pieces overlapping above the measured threshold), with and without byte fallback, split digits and the Arabic removals", TokenizerTrainingUnigramReference),
+        ("tokenizer training: unigram learns SentencePiece's vocabulary from the same text and options (the special and byte pieces at the same ids, the learned pieces overlapping above the measured threshold), with and without byte fallback, split digits, the Arabic removals and each of SentencePiece's switches (whitespace, script and number splits, whitespace as a suffix, whitespace-only pieces, the longest line, the nfkc and nmt_nfkc rules), each switch changing the pieces as it should", TokenizerTrainingUnigramReference),
         ("tokenizer training: unigram's tokenizer saved as tokenizer.json and tokenizer.model loads back from both to its ids on every line, and with byte fallback decodes every line back to its text", TokenizerTrainingUnigramFiles),
         ("tokenizer training: wordpiece by frequency learns the vocabulary of Hugging Face's WordPieceTrainer algorithm with its ties fixed, exactly, and overlaps Hugging Face's own run above the measured threshold", TokenizerTrainingWordPieceReference),
         ("tokenizer training: wordpiece (frequency and likelihood) loads back from its tokenizer.json to its ids and spells every word of every line with its pieces (no unknown token)", TokenizerTrainingWordPieceFiles),
         ("tokenizer training: one worker learns the same unigram and wordpiece (both scorings) as many, bit for bit", TokenizerTrainingWorkers),
         ("tokenizer training: the Arabic removals (tatweel, diacritics) are written into the unigram and wordpiece tokenizers as standard normalizers, so text with and without them encodes alike, also from tokenizer.model", TokenizerTrainingArabic),
         ("tokenizer training: unigram and wordpiece refuse bad options naming them, and unigram reports words, seeds, EM and pruning", TokenizerTrainingNewOptions),
+        ("tokenizer training: the nfkc and nmt_nfkc rules built from the library's Unicode tables normalize as sentencepiece's built-in rules on every code point, on combining sequences and on the corpus, but for the code points Unicode 18 maps and sentencepiece's older tables lack (listed)", TokenizerTrainingNormalizationRules),
+        ("tokenizer training: unigram's switches are SentencePiece's defaults unless set, split by number and the longest line change what they should, the algorithm's constants are settings, and the written tokenizer.model carries the switches and reads back to the trained ids", TokenizerTrainingUnigramSwitches),
+        ("tokenizer training: sentencepiece's own models with the nmt_nfkc rule and with whitespace as a suffix, rebuilt from their pieces with the library's charsmap, encode the corpus to sentencepiece's ids", TokenizerTrainingSentencePieceEncodings),
     ];
 
     // Measured 2026-10-19 (plans/24-tokenizers.md, T4 as built): the share of SentencePiece's learned pieces the unigram
@@ -54,7 +58,59 @@ internal static partial class Tests
         EmIterations = (int?)o["num_sub_iterations"] ?? 2,
         CharacterCoverage = (double)o["character_coverage"]!,
         Arabic = [.. o["arabic"]!.AsArray().Select(a => (string)a!)],
+        Normalization = (string?)o["normalization"] ?? TokenizerTrainers.Identity,
+        MaxSentenceLength = (int?)o["max_sentence_length"] ?? 0,
+        SplitByWhitespace = (bool?)o["split_by_whitespace"] ?? true,
+        SplitByUnicodeScript = (bool?)o["split_by_unicode_script"] ?? true,
+        SplitByNumber = (bool?)o["split_by_number"] ?? true,
+        TreatWhitespaceAsSuffix = (bool?)o["treat_whitespace_as_suffix"] ?? false,
+        AllowWhitespaceOnlyPieces = (bool?)o["allow_whitespace_only_pieces"] ?? false,
     };
+
+    // The text a unigram reference was learned from: the training corpus, or the reference's own (runs of ▁).
+    private static string[] UnigramCorpus(JsonNode o) =>
+        (string?)o["corpus"] == "whitespace" ? [TestData("tokenizer-training/whitespace-corpus.txt")] : TrainingCorpus;
+
+    // What each switch's reference must show in its pieces (sentencepiece's and the trainer's): a piece the default rules
+    // refuse. Split by number changes no piece of this corpus (TokenizerTrainingUnigramSwitches checks it on its own text).
+    private static readonly Dictionary<string, (string What, Func<IReadOnlyList<string>, bool> Shows)> SwitchEffects = new()
+    {
+        ["unigram-no-whitespace-split"] = ("a piece with ▁ inside", p => p.Any(x => x.IndexOf('\u2581', 1) > 0)),
+        ["unigram-no-script-split"] = ("a piece of two scripts", p => p.Any(MixesScripts)),
+        ["unigram-suffix"] = ("pieces ending with ▁ and none longer than ▁ starting with it",
+            p => p.Any(x => x.Length > 1 && x[^1] == '\u2581') && !p.Any(x => x.Length > 1 && x[0] == '\u2581')),
+        ["unigram-whitespace-pieces"] = ("a piece of two or more ▁", p => p.Any(x => x.Length > 1 && x.All(c => c == '\u2581'))),
+        // nmt_nfkc keeps the full-width tilde as it is, maps the ASCII control characters (and U+007F) away, and keeps the
+        // other C1 controls (U+0085 is a piece of this corpus).
+        ["unigram-nmt-nfkc"] = ("no piece NFKC changes (the full-width tilde aside), no ASCII control character",
+            p => p.All(x => UnicodeNormalization.IsNormalized(x.Replace("\uFF5E", "", StringComparison.Ordinal), System.Text.NormalizationForm.FormKC) && !x.Any(c => c < ' ' || c == '\u007F'))),
+        ["unigram-nfkc"] = ("no piece NFKC changes", p => p.All(x => UnicodeNormalization.IsNormalized(x, System.Text.NormalizationForm.FormKC))),
+    };
+
+    // Whether a piece holds characters of two scripts, as SentencePiece tells scripts (▁ and inherited marks aside, kana
+    // as Han).
+    private static bool MixesScripts(string piece)
+    {
+        int first = -1;
+        foreach (var rune in piece.EnumerateRunes())
+        {
+            byte script = UnicodeScripts.Of(rune.Value);
+            if (rune.Value == 0x2581 || script == UnicodeScripts.Inherited)
+            {
+                continue;
+            }
+
+            script = script is UnicodeScripts.Hiragana or UnicodeScripts.Katakana || rune.Value == 0x30FC ? UnicodeScripts.Han : script;
+            if (first >= 0 && first != script)
+            {
+                return true;
+            }
+
+            first = script;
+        }
+
+        return false;
+    }
 
     private static TokenizerTrainingOptions WordPieceOptions(JsonNode o) => new()
     {
@@ -270,7 +326,7 @@ internal static partial class Tests
         {
             var options = UnigramOptions(entry!["options"]!);
             var watch = Stopwatch.StartNew();
-            var trained = TokenizerTrainers.Get(TokenizerTrainers.Unigram).Train(TrainingCorpus, options);
+            var trained = TokenizerTrainers.Get(TokenizerTrainers.Unigram).Train(UnigramCorpus(entry["options"]!), options);
             double seconds = watch.Elapsed.TotalSeconds;
             var pieces = Vocabulary(trained);
             var expected = entry["pieces"]!.AsArray().Select(p => (Piece: (string)p![0]!, Type: (int)p[2]!)).ToList();
@@ -287,6 +343,11 @@ internal static partial class Tests
             Console.WriteLine($"    {name}: {pieces.Length} pieces (sentencepiece {expected.Count}), {overlap:P2} of sentencepiece's learned pieces, {sameId} at the same id (scores apart by {scoreDifference:G3} at most), {seconds:F2} s");
             Check(pieces.Length == expected.Count, $"{name}: {pieces.Length} pieces, sentencepiece learned {expected.Count}");
             Check(overlap >= UnigramOverlapFloor, $"{name}: {overlap:P2} of sentencepiece's learned pieces, below the measured floor {UnigramOverlapFloor:P0}; missing: {string.Join(" ", reference.Where(p => !learned.Contains(p)).Take(30))}");
+            if (SwitchEffects.TryGetValue(name, out var effect))
+            {
+                Check(effect.Shows(reference), $"{name}: sentencepiece's pieces show {effect.What} (the check itself is wrong otherwise)");
+                Check(effect.Shows([.. learned]), $"{name}: the trained pieces show {effect.What}");
+            }
         }
     }
 
@@ -433,14 +494,16 @@ internal static partial class Tests
         var wordpiece = WordPieceOptions(TrainingReference("wordpiece.json")["options"]!);
         foreach (var (name, options) in new[]
                  {
-                     (TokenizerTrainers.Unigram, unigram), (TokenizerTrainers.WordPiece, wordpiece),
+                     (TokenizerTrainers.Unigram, unigram),
+                     (TokenizerTrainers.Unigram, unigram with { Normalization = TokenizerTrainers.NmtNfkc, TreatWhitespaceAsSuffix = true, SplitByWhitespace = false }),
+                     (TokenizerTrainers.WordPiece, wordpiece),
                      (TokenizerTrainers.WordPiece, wordpiece with { Scoring = TokenizerTrainers.Likelihood }),
                  })
         {
             var trainer = TokenizerTrainers.Get(name);
             var one = trainer.Train(TrainingCorpus, options with { Workers = 1 }).ToJson()["model"]!;
             var many = trainer.Train(TrainingCorpus, options with { Workers = 4 }).ToJson()["model"]!;
-            Check(JsonNode.DeepEquals(one, many), $"{name} ({options.Scoring}): one worker and four learn the same model");
+            Check(JsonNode.DeepEquals(one, many), $"{name} ({options.Scoring}, {options.Normalization}): one worker and four learn the same model");
         }
 
         var frequency = Vocabulary(TokenizerTrainers.Get(TokenizerTrainers.WordPiece).Train(TrainingCorpus, wordpiece));
@@ -508,6 +571,10 @@ internal static partial class Tests
                      (good with { MaxPieceLength = 0 }, "MaxPieceLength"), (good with { SeedSize = 0 }, "SeedSize"),
                      (good with { Scoring = "best" }, "Scoring"), (good with { Arabic = ["kashida"] }, "Arabic"), (good with { UnknownToken = "" }, "UnknownToken"),
                      (good with { VocabularySize = 0 }, "VocabularySize"), (good with { LineEnds = "cr" }, "LineEnds"),
+                     (good with { Normalization = "nfd" }, "Normalization"), (good with { MaxSentenceLength = -1 }, "MaxSentenceLength"),
+                     (good with { DesiredSizeFactor = 0.9 }, "DesiredSizeFactor"), (good with { DesiredSizeFactor = double.PositiveInfinity }, "DesiredSizeFactor"),
+                     (good with { ExpectedCountFloor = -0.5 }, "ExpectedCountFloor"), (good with { UnknownPenalty = double.NaN }, "UnknownPenalty"),
+                     (good with { UnknownPenalty = -1 }, "UnknownPenalty"),
                  })
         {
             ThrowsNaming<ArgumentException>(() => unigram.Train([corpus], options), $"unigram, {setting}", setting);
@@ -516,6 +583,9 @@ internal static partial class Tests
 
         ThrowsNaming<ArgumentException>(() => unigram.Train([corpus], good with { VocabularySize = 40 }), "unigram, a vocabulary smaller than the alphabet", "VocabularySize", "CharacterCoverage");
         ThrowsNaming<ArgumentException>(() => TokenizerTrainers.Get(TokenizerTrainers.Bpe).Train([corpus], good with { Arabic = ["tatweel"] }), "bpe, Arabic", "Arabic");
+        ThrowsNaming<ArgumentException>(() => wordpiece.Train([corpus], good with { Normalization = TokenizerTrainers.Nfkc }), "wordpiece, Normalization", "Normalization", "unigram");
+        ThrowsNaming<ArgumentException>(() => TokenizerTrainers.Get(TokenizerTrainers.Bpe).Train([corpus], good with { Normalization = TokenizerTrainers.NmtNfkc }), "bpe, Normalization", "Normalization");
+        _ = unigram.Train([corpus], good with { Normalization = "NFKC" });                       // a rule's name in any case
         Throws<FileNotFoundException>(() => unigram.Train([corpus + ".missing"], good), "unigram, a missing file");
         Throws<ArgumentException>(() => wordpiece.Train([], good), "wordpiece, no files");
 
@@ -527,5 +597,253 @@ internal static partial class Tests
         }
 
         Check(stages.Any(p => p.Stage == "em" && p.Done == p.Total && p.Total > 0), "the EM stage ends at its total");
+    }
+
+    private static void TokenizerTrainingNormalizationRules(Device device)
+    {
+        if (!FirstRun(nameof(TokenizerTrainingNormalizationRules)))
+        {
+            return;
+        }
+
+        var reference = TrainingReference("normalization.json");
+        var nfkc = reference["nfkc"]!.AsObject().ToDictionary(p => p.Key, p => (string)p.Value!, StringComparer.Ordinal);
+        var nmt = reference["nmt_nfkc"]!.AsObject().ToDictionary(p => p.Key, p => (string)p.Value!, StringComparer.Ordinal);
+        var lacking = reference["unicode_lacking"]!.AsObject().ToDictionary(p => p.Key, p => (Unicode: (string)p.Value!["unicode"]!, SentencePiece: (string)p.Value!["sentencepiece"]!), StringComparer.Ordinal);
+        Console.WriteLine($"    sentencepiece's tables lack {lacking.Count} code points Unicode {UnicodeNormalization.UnicodeVersion} maps: {string.Join(" ", lacking.Keys)}");
+        var lines = TrainingLines();
+        var none = ArabicMarks.Of(new TokenizerTrainingOptions());
+        foreach (string rule in new[] { TokenizerTrainers.Nfkc, TokenizerTrainers.NmtNfkc })
+        {
+            // Built anew to time it (the trainer keeps the first build): the map, then its trie.
+            var watch = Stopwatch.StartNew();
+            var rules = SentencePieceRules.BuildMap(rule);
+            double mapSeconds = watch.Elapsed.TotalSeconds;
+            watch.Restart();
+            byte[] fresh = PrecompiledCharsMap.Build([.. rules.Select(p => (p.Key, p.Value)).OrderBy(p => p.Key, StringComparer.Ordinal)]);
+            double trieSeconds = watch.Elapsed.TotalSeconds;
+            byte[] charsmap = SentencePieceRules.Charsmap(rule, none);
+            Check(fresh.AsSpan().SequenceEqual(charsmap), $"{rule}: a second build gives the same charsmap");
+            var map = PrecompiledCharsMap.Read(charsmap);
+            var failures = new List<string>();
+            int points = 0, versions = 0;
+            for (int cp = 1; cp <= 0x10FFFF; cp++)
+            {
+                if (cp is >= 0xD800 and <= 0xDFFF)
+                {
+                    continue;
+                }
+
+                points++;
+                string text = char.ConvertFromUtf32(cp), hex = cp.ToString("X4", System.Globalization.CultureInfo.InvariantCulture);
+                string ours = map.NormalizeSentencePiece(text);
+                if (lacking.TryGetValue(hex, out var newer))
+                {
+                    // A difference that comes from the Unicode version: ours is Unicode's NFKC, sentencepiece's is older.
+                    versions++;
+                    if (ours != newer.Unicode || newer.SentencePiece == newer.Unicode)
+                    {
+                        failures.Add($"U+{hex}: '{ours}', Unicode {UnicodeNormalization.UnicodeVersion} '{newer.Unicode}', sentencepiece '{newer.SentencePiece}'");
+                    }
+
+                    continue;
+                }
+
+                string expected = rule == TokenizerTrainers.NmtNfkc && nmt.TryGetValue(hex, out string? merged) ? merged : nfkc.TryGetValue(hex, out string? changed) ? changed : text;
+                if (ours != expected)
+                {
+                    failures.Add($"U+{hex}: '{Escape(ours)}', sentencepiece '{Escape(expected)}'");
+                }
+            }
+
+            int sequences = 0;
+            foreach (var sequence in reference["sequences"]!.AsArray())
+            {
+                string input = (string)sequence![0]!, expected = (string)sequence[rule == TokenizerTrainers.Nfkc ? 1 : 2]!;
+                sequences++;
+                if (map.NormalizeSentencePiece(input) is var ours && ours != expected)
+                {
+                    failures.Add($"'{Escape(input)}': '{Escape(ours)}', sentencepiece '{Escape(expected)}'");
+                }
+            }
+
+            var corpus = reference["corpus"]![rule]!.AsObject();
+            for (int i = 0; i < lines.Count; i++)
+            {
+                string expected = corpus[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] is { } changed ? (string)changed! : lines[i];
+                if (map.NormalizeSentencePiece(lines[i]) is var ours && ours != expected)
+                {
+                    failures.Add($"line {i}: '{Escape(ours)}', sentencepiece '{Escape(expected)}'");
+                }
+            }
+
+            Console.WriteLine($"    {rule}: {rules.Count:N0} keys, a {charsmap.Length:N0}-byte charsmap, the map built in {mapSeconds:F2} s and its trie in {trieSeconds:F2} s; {points:N0} code points ({versions} by the Unicode version), {sequences:N0} sequences and {lines.Count} corpus lines compared, {failures.Count} differ");
+            Check(versions == lacking.Count && failures.Count == 0, $"{rule}: {failures.Count} differ from sentencepiece's built-in rule: {string.Join("; ", failures.Take(12))}");
+        }
+
+        static string Escape(string text) => string.Concat(text.EnumerateRunes().Select(r => r.Value is < 0x20 or (>= 0x7F and < 0xA0) or 0x2028 or 0x2029 or 0xFEFF or (>= 0x200B and <= 0x200F)
+            ? $"\\u{r.Value:X4}" : r.ToString()));
+    }
+
+    private static void TokenizerTrainingUnigramSwitches(Device device)
+    {
+        if (!FirstRun(nameof(TokenizerTrainingUnigramSwitches)))
+        {
+            return;
+        }
+
+        // SentencePiece's defaults, so nothing learned before changes unless a setting is given.
+        var defaults = new TokenizerTrainingOptions();
+        Check(defaults.SplitByWhitespace && defaults.SplitByUnicodeScript && defaults.SplitByNumber && !defaults.TreatWhitespaceAsSuffix && !defaults.AllowWhitespaceOnlyPieces
+            && defaults.Normalization == TokenizerTrainers.Identity && defaults.MaxSentenceLength == 0 && defaults.DesiredSizeFactor == 1.1 && defaults.ExpectedCountFloor == 0.5
+            && defaults.UnknownPenalty == 10, "the switches' defaults are SentencePiece's (and no line skipped for length)");
+
+        var unigram = TokenizerTrainers.Get(TokenizerTrainers.Unigram);
+        string folder = TempFolder("unigram-switches");
+        try
+        {
+            // Split by number: digits join letters only when it is off.
+            string numbers = Path.Combine(folder, "numbers.txt");
+            string[] words = ["mp3", "h2o", "x86", "4k", "b12", "a4", "3d", "s3", "k8s", "ipv6"];
+            File.WriteAllLines(numbers, Enumerable.Range(0, 400).Select(i => $"{words[i % words.Length]} files {words[(i * 7) % words.Length]} and {words[(i * 3) % words.Length]} work"));
+            var small = new TokenizerTrainingOptions { VocabularySize = 120, SpecialTokens = ["<unk>"], Workers = 1 };
+            static bool DigitWithLetter(string piece) => piece.Any(char.IsAsciiDigit) && piece.Any(char.IsAsciiLetter);
+            var split = Vocabulary(unigram.Train([numbers], small));
+            var joined = Vocabulary(unigram.Train([numbers], small with { SplitByNumber = false }));
+            Check(!split.Any(DigitWithLetter) && joined.Any(DigitWithLetter),
+                $"split by number: no piece joins a digit to a letter by default ({string.Join(" ", split.Where(DigitWithLetter))}), some does when off ({string.Join(" ", joined.Where(DigitWithLetter).Take(8))})");
+
+            // The longest line: lines over it are skipped, and a text of only such lines has nothing to learn.
+            string lengths = Path.Combine(folder, "lengths.txt"), longOnly = Path.Combine(folder, "long.txt");
+            string longLine = string.Join(' ', Enumerable.Repeat("quiz", 60));
+            File.WriteAllLines(lengths, [.. File.ReadLines(PretrainData("corpus.txt")).Take(200).Where(l => System.Text.Encoding.UTF8.GetByteCount(l) < 150), longLine, longLine, longLine]);
+            File.WriteAllLines(longOnly, [longLine, longLine]);
+            var everything = Vocabulary(unigram.Train([lengths], small with { VocabularySize = 400 }));
+            var limited = Vocabulary(unigram.Train([lengths], small with { VocabularySize = 400, MaxSentenceLength = 200 }));
+            Check(everything.Any(p => p.Contains('z')) && !limited.Any(p => p.Contains('z')), "a line over MaxSentenceLength bytes is not learned from (its 'z' is not even a character)");
+            Check(Vocabulary(unigram.Train([lengths], small with { VocabularySize = 400, MaxSentenceLength = longLine.Length })).SequenceEqual(everything), "a line of exactly MaxSentenceLength bytes is kept");
+            ThrowsNaming<ArgumentException>(() => unigram.Train([longOnly], small with { MaxSentenceLength = 100 }), "only lines over the limit", "no text");
+
+            // The algorithm's constants: SentencePiece's values by default, each one changing what is learned.
+            var corpus = new[] { PretrainData("corpus.txt") };
+            var options = new TokenizerTrainingOptions { VocabularySize = 400, SpecialTokens = ["<unk>", "<s>", "</s>"] };
+            var baseline = unigram.Train(corpus, options).ToJson()["model"]!;
+            Check(JsonNode.DeepEquals(baseline, unigram.Train(corpus, options with { DesiredSizeFactor = 1.1, ExpectedCountFloor = 0.5, UnknownPenalty = 10 }).ToJson()["model"]),
+                "the constants given at their defaults learn the same model");
+            // The unknown penalty matters only where the unknown node competes with longer pieces: where a character's own
+            // piece fell under the expected-count floor; so it is compared with the floor raised.
+            var floor = options with { ExpectedCountFloor = 4 };
+            var floorModel = unigram.Train(corpus, floor).ToJson()["model"]!;
+            Check(!JsonNode.DeepEquals(baseline, floorModel), "ExpectedCountFloor: another value learns another model");
+            Check(!JsonNode.DeepEquals(baseline, unigram.Train(corpus, options with { DesiredSizeFactor = 1.6 }).ToJson()["model"]), "DesiredSizeFactor: another value learns another model");
+            var high = options with { ExpectedCountFloor = 20 };
+            Check(!JsonNode.DeepEquals(unigram.Train(corpus, high).ToJson()["model"], unigram.Train(corpus, high with { UnknownPenalty = 0.5 }).ToJson()["model"]),
+                "UnknownPenalty: another value learns another model (with the floor at 20)");
+
+            // Every switch at once, written to tokenizer.model: the TrainerSpec carries them, and both files read back to
+            // the trained ids.
+            var switched = options with
+            {
+                Normalization = TokenizerTrainers.NmtNfkc, MaxSentenceLength = 4192, SplitByWhitespace = false, SplitByUnicodeScript = false,
+                SplitByNumber = false, TreatWhitespaceAsSuffix = true, AllowWhitespaceOnlyPieces = true,
+            };
+            var trained = unigram.Train(corpus, switched);
+            string saved = Path.Combine(folder, "switched");
+            Directory.CreateDirectory(saved);
+            trained.Save(saved);
+            ((ITokenizerCompanionFiles)trained).SaveCompanion("tokenizer.model", Path.Combine(saved, "tokenizer.model"));
+            var model = SentencePieceModel.Load(Path.Combine(saved, "tokenizer.model"));
+            var spec = model.TrainerSpec;
+            Check(model.NormalizerSpec.Name == TokenizerTrainers.NmtNfkc && model.NormalizerSpec.PrecompiledCharsmap.AsSpan().SequenceEqual(SentencePieceRules.Charsmap(TokenizerTrainers.NmtNfkc, ArabicMarks.Of(switched)))
+                && spec.TreatWhitespaceAsSuffix && !spec.SplitByWhitespace && !spec.SplitByUnicodeScript && !spec.SplitByNumber && spec.AllowWhitespaceOnlyPieces && spec.MaxSentenceLength == 4192,
+                $"tokenizer.model carries the switches: normalizer {model.NormalizerSpec.Name}, suffix {spec.TreatWhitespaceAsSuffix}, whitespace {spec.SplitByWhitespace}, script {spec.SplitByUnicodeScript}, number {spec.SplitByNumber}, whitespace-only {spec.AllowWhitespaceOnlyPieces}, longest {spec.MaxSentenceLength}");
+            string defaultsModel = Path.Combine(folder, "defaults.model");
+            ((ITokenizerCompanionFiles)unigram.Train(corpus, options)).SaveCompanion("tokenizer.model", defaultsModel);
+            var plain = SentencePieceModel.Load(defaultsModel).TrainerSpec;
+            Check(plain.SplitByWhitespace && plain.SplitByUnicodeScript && plain.SplitByNumber && !plain.TreatWhitespaceAsSuffix && !plain.AllowWhitespaceOnlyPieces && plain.MaxSentenceLength == 1 << 30,
+                $"the defaults are written as SentencePiece's, no limit as its largest line ({plain.MaxSentenceLength})");
+            var json = PretrainedTokenizers.Load(saved);
+            var fromModel = PretrainedTokenizers.Load(saved, new TokenizerOptions { Format = TokenizerFiles.SentencePiece });
+            var failures = new List<string>();
+            foreach (string line in TrainingLines().Append("ＡＢＣ\tﬁne​ words  "))
+            {
+                var ids = trained.Encode(line).ToArray();
+                if (!json.Encode(line).SequenceEqual(ids) || !fromModel.Encode(line).SequenceEqual(ids))
+                {
+                    failures.Add($"'{line}': trained [{string.Join(", ", ids)}], tokenizer.json [{string.Join(", ", json.Encode(line))}], tokenizer.model [{string.Join(", ", fromModel.Encode(line))}]");
+                }
+            }
+
+            Check(failures.Count == 0, $"{failures.Count} lines encode otherwise from the files: {string.Join("\n", failures.Take(5))}");
+            Check(trained.Encode("ＡＢＣ ﬁne").SequenceEqual(trained.Encode("ABC fine")), "nmt_nfkc: full-width letters and the fi ligature encode as plain ones");
+            Check(Vocabulary(trained).Where(p => !trained.IsSpecial(trained.IdOf(p)!.Value)).Any(p => p.Length > 1 && p[^1] == '▁'), "whitespace as a suffix: pieces end with ▁");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void TokenizerTrainingSentencePieceEncodings(Device device)
+    {
+        if (!FirstRun(nameof(TokenizerTrainingSentencePieceEncodings)))
+        {
+            return;
+        }
+
+        var lines = File.ReadAllText(TestData("tokenizers/corpus.txt")).Split('\n').SkipLast(1).Select(l => l.EndsWith('\r') ? l[..^1] : l).ToList();
+        foreach (var (name, entry) in TrainingReference("unigram.json"))
+        {
+            if (entry!["encodings"] is not JsonArray encodings)
+            {
+                continue;
+            }
+
+            var options = UnigramOptions(entry["options"]!);
+            var pieces = entry["pieces"]!.AsArray();
+            var settings = new SentencePieceWriter.Settings
+            {
+                UnkId = 0, BosId = 1, EosId = 2, TreatWhitespaceAsSuffix = options.TreatWhitespaceAsSuffix, NormalizerName = options.Normalization,
+                PrecompiledCharsmap = SentencePieceRules.Charsmap(options.Normalization, ArabicMarks.Of(options)),
+            };
+            byte[] proto = SentencePieceWriter.Write([.. pieces.Select(p => (string)p![0]!)], [.. pieces.Select(p => (float)(double)p![1]!)],
+                [.. pieces.Select(p => (SentencePieceType)(int)p![2]!)], settings);
+            var tokenizer = TokenizerModels.Create(SentencePieceReader.FromModel(SentencePieceModel.Read(proto, name)), new TokenizerOptions());
+            var scores = pieces.Select(p => (float)(double)p![1]!).ToArray();
+            var failures = new List<string>();
+            var ties = new List<string>();
+            int compared = 0;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                // Control pieces written in the text are special tokens here and text for sentencepiece (T1's known difference).
+                if (lines[i].Contains("<s>", StringComparison.Ordinal) || lines[i].Contains("</s>", StringComparison.Ordinal) || lines[i].Contains("<unk>", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                compared++;
+                var expected = encodings[i]!.AsArray().Select(id => (int)id!).ToArray();
+                var ids = tokenizer.Encode(lines[i]).ToArray();
+                if (ids.SequenceEqual(expected))
+                {
+                    continue;
+                }
+
+                // A tie: both segmentations score the same (to float rounding), and sentencepiece sums from the
+                // line's start while the tokenizer sums from each word's, so float rounding may pick the other (T1's known
+                // difference). Anything else is a failure.
+                float Total(int[] path) => path.Aggregate(0f, (sum, id) => sum + scores[id]);
+                string line = $"line {i} '{lines[i]}': [{string.Join(", ", ids)}], sentencepiece [{string.Join(", ", expected)}]";
+                (Math.Abs(Total(ids) - Total(expected)) <= 1e-5f * Math.Abs(Total(expected)) ? ties : failures).Add(line);
+            }
+
+            foreach (string tie in ties)
+            {
+                Console.WriteLine($"    {name}, a tie sentencepiece breaks otherwise: {tie}");
+            }
+
+            Console.WriteLine($"    {name}: {compared} of {lines.Count} lines compared, {failures.Count} differ, {ties.Count} by a tie");
+            Check(failures.Count == 0, $"{name}: {failures.Count} lines encode otherwise than sentencepiece: {string.Join("\n", failures.Take(5))}");
+        }
     }
 }

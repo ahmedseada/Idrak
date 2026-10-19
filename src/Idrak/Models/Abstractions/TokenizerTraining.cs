@@ -88,6 +88,63 @@ public sealed record TokenizerTrainingOptions
     public IReadOnlyList<string> Arabic { get; init; } = [];
 
     /// <summary>
+    /// Unigram: the normalization rule applied before learning and written into the tokenizer, as SentencePiece names its
+    /// built-in rules (<c>normalization_rule_name</c>): <see cref="TokenizerTrainers.Identity"/> (the default: the text as
+    /// it is), <see cref="TokenizerTrainers.Nfkc"/> (Unicode NFKC) or <see cref="TokenizerTrainers.NmtNfkc"/> (NFKC, with
+    /// control characters removed and the other whitespace characters made spaces, SentencePiece's default). The rules are
+    /// built as SentencePiece builds them, from the library's own Unicode normalization (its Unicode version).
+    /// </summary>
+    public string Normalization { get; init; } = TokenizerTrainers.Identity;
+
+    /// <summary>
+    /// Unigram: lines longer than this many UTF-8 bytes (without the line end) are skipped, as SentencePiece's
+    /// <c>max_sentence_length</c> skips them (its default is 4192); 0, the default, skips none.
+    /// </summary>
+    public int MaxSentenceLength { get; init; }
+
+    /// <summary>
+    /// Unigram: pieces stay within words, each word starting at a ▁ (SentencePiece's <c>split_by_whitespace</c>, true);
+    /// false lets a piece span words (▁ inside it, never at its end).
+    /// </summary>
+    public bool SplitByWhitespace { get; init; } = true;
+
+    /// <summary>Unigram: a piece holds characters of one script (SentencePiece's <c>split_by_unicode_script</c>, true); false lets a piece mix scripts.</summary>
+    public bool SplitByUnicodeScript { get; init; } = true;
+
+    /// <summary>
+    /// Unigram: digits (0-9 and their full-width forms) are a script of their own, so a piece does not join them to
+    /// letters (SentencePiece's <c>split_by_number</c>, true); false lets digits join letters of any script.
+    /// </summary>
+    public bool SplitByNumber { get; init; } = true;
+
+    /// <summary>
+    /// Unigram: the ▁ ends a word instead of starting it (SentencePiece's <c>treat_whitespace_as_suffix</c>, false): the
+    /// text gets a ▁ after it, not before, and pieces end with ▁. Written into the tokenizer, whose readers honour it.
+    /// </summary>
+    public bool TreatWhitespaceAsSuffix { get; init; }
+
+    /// <summary>
+    /// Unigram: runs of ▁ may be pieces of their own (SentencePiece's <c>allow_whitespace_only_pieces</c>, false), so a run
+    /// of whitespace in the text (indentation written as ▁) stays one word instead of one word a ▁.
+    /// </summary>
+    public bool AllowWhitespaceOnlyPieces { get; init; }
+
+    /// <summary>
+    /// Unigram: pruning stops once the pieces are at most this many times the vocabulary, then the best of them fill it
+    /// (SentencePiece's 1.1); 1 or more.
+    /// </summary>
+    public double DesiredSizeFactor { get; init; } = 1.1;
+
+    /// <summary>Unigram: an EM step drops the pieces expected fewer times than this (SentencePiece's 0.5); 0 or more.</summary>
+    public double ExpectedCountFloor { get; init; } = 0.5;
+
+    /// <summary>
+    /// Unigram: while learning, a character no piece covers scores this much below the lowest piece (SentencePiece's
+    /// 10); 0 or more. Encoding with the learned tokenizer is SentencePiece's, which keeps 10.
+    /// </summary>
+    public double UnknownPenalty { get; init; } = 10;
+
+    /// <summary>
     /// Unigram and WordPiece: the unknown token; null takes the model's usual one ("&lt;unk&gt;" for Unigram, "[UNK]" for
     /// WordPiece). When <see cref="SpecialTokens"/> does not list it, it takes the first id after them.
     /// </summary>
@@ -161,6 +218,31 @@ public sealed record TokenizerTrainingOptions
             Refuse($"EmIterations must be at least 1, not {EmIterations}.");
         }
 
+        if (TokenizerTrainers.NormalizationRules.All(r => !r.Equals(Normalization, StringComparison.OrdinalIgnoreCase)))
+        {
+            Refuse($"Normalization is {string.Join(", ", TokenizerTrainers.NormalizationRules.Select(r => $"\"{r}\""))}, not '{Normalization}'.");
+        }
+
+        if (MaxSentenceLength < 0)
+        {
+            Refuse($"MaxSentenceLength is a length in bytes, or 0 for no limit, not {MaxSentenceLength}.");
+        }
+
+        if (!(DesiredSizeFactor >= 1 && double.IsFinite(DesiredSizeFactor)))
+        {
+            Refuse($"DesiredSizeFactor must be at least 1 (pruning stops at that many times the vocabulary), not {DesiredSizeFactor.ToString(System.Globalization.CultureInfo.InvariantCulture)}.");
+        }
+
+        if (!(ExpectedCountFloor >= 0 && double.IsFinite(ExpectedCountFloor)))
+        {
+            Refuse($"ExpectedCountFloor must be 0 or more, not {ExpectedCountFloor.ToString(System.Globalization.CultureInfo.InvariantCulture)}.");
+        }
+
+        if (!(UnknownPenalty >= 0 && double.IsFinite(UnknownPenalty)))
+        {
+            Refuse($"UnknownPenalty must be 0 or more, not {UnknownPenalty.ToString(System.Globalization.CultureInfo.InvariantCulture)}.");
+        }
+
         if (!Scoring.Equals(TokenizerTrainers.Frequency, StringComparison.OrdinalIgnoreCase) && !Scoring.Equals(TokenizerTrainers.Likelihood, StringComparison.OrdinalIgnoreCase))
         {
             Refuse($"Scoring is \"{TokenizerTrainers.Frequency}\" or \"{TokenizerTrainers.Likelihood}\", not '{Scoring}'.");
@@ -184,6 +266,11 @@ public sealed record TokenizerTrainingOptions
         if (bpe && Arabic.Count > 0)
         {
             Refuse("Arabic is read by the unigram and wordpiece trainers; the bpe trainer writes no normalizer.");
+        }
+
+        if (!trainer.Equals(TokenizerTrainers.Unigram, StringComparison.OrdinalIgnoreCase) && !Normalization.Equals(TokenizerTrainers.Identity, StringComparison.OrdinalIgnoreCase))
+        {
+            Refuse($"Normalization is read by the unigram trainer; the {trainer} trainer writes its own normalizer (or none).");
         }
     }
 
@@ -268,6 +355,21 @@ public static class TokenizerTrainers
 
     /// <summary>An <see cref="TokenizerTrainingOptions.Arabic"/> choice: the diacritics removed.</summary>
     public const string Diacritics = "diacritics";
+
+    /// <summary>A <see cref="TokenizerTrainingOptions.Normalization"/> rule: the text as it is (SentencePiece's "identity").</summary>
+    public const string Identity = "identity";
+
+    /// <summary>A <see cref="TokenizerTrainingOptions.Normalization"/> rule: Unicode NFKC, as SentencePiece's "nfkc" map applies it.</summary>
+    public const string Nfkc = "nfkc";
+
+    /// <summary>
+    /// A <see cref="TokenizerTrainingOptions.Normalization"/> rule: SentencePiece's "nmt_nfkc", NFKC with ASCII control
+    /// characters removed and the other whitespace characters (tab, line ends, zero-width spaces, U+2581) made spaces.
+    /// </summary>
+    public const string NmtNfkc = "nmt_nfkc";
+
+    /// <summary>The <see cref="TokenizerTrainingOptions.Normalization"/> rules the unigram trainer knows.</summary>
+    public static IReadOnlyList<string> NormalizationRules { get; } = [Identity, Nfkc, NmtNfkc];
 
     /// <summary>The byte-level pre-tokenizer (<see cref="TokenizerTrainingOptions.PreTokenizer"/>).</summary>
     public const string ByteLevel = "bytelevel";
