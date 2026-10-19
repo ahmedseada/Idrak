@@ -18,9 +18,13 @@ namespace Idrak.Nlp.Retrieval;
 /// </summary>
 public sealed class TextEncoder : IEmbedder
 {
+    private readonly TokenizerEncodeOptions _batchOptions;   // an IPretrainedTokenizer's batch encode (made once)
+
     /// <summary>Creates the encoder.</summary>
     /// <param name="model">Token ids [N, T] → hidden states [N, T, D].</param>
-    /// <param name="tokenizer">Turns text into ids.</param>
+    /// <param name="tokenizer">
+    /// Turns text into ids; an <see cref="IPretrainedTokenizer"/> encodes each batch in one call, on its workers.
+    /// </param>
     /// <param name="maxLength">Texts are cut to this many tokens (the model's T).</param>
     /// <param name="padId">The id used to fill short texts; padded positions are left out of the average.</param>
     public TextEncoder(Module model, ITokenizer tokenizer, int maxLength, int padId)
@@ -30,6 +34,12 @@ public sealed class TextEncoder : IEmbedder
         Tokenizer = tokenizer;
         MaxLength = maxLength;
         PadId = padId;
+        // A pretrained tokenizer's batch encode, giving Encode's ids cut to the first MaxLength: no special tokens, cut from
+        // the right (a long text is encoded only until it has MaxLength tokens), not padded (the pad ids are written below).
+        _batchOptions = new TokenizerEncodeOptions
+        {
+            AddSpecialTokens = false, MaxLength = maxLength, Truncation = "longest_first", TruncationDirection = "right", Padding = "none",
+        };
     }
 
     /// <summary>Token ids → hidden states.</summary>
@@ -158,19 +168,21 @@ public sealed class TextEncoder : IEmbedder
         var device = Device;
         try
         {
-            for (int i = 0; i < n; i++)
+            if (Tokenizer is IPretrainedTokenizer pretrained)
             {
-                var tokens = Tokenizer.Encode(texts[i]);
-                int length = Math.Min(tokens.Count, t);
-                for (int j = 0; j < t; j++)
+                // One tokenize pass for the batch, on the tokenizer's workers (the same ids as Encode, cut to MaxLength).
+                var encodings = pretrained.EncodeBatch(texts, null, _batchOptions);
+                for (int i = 0; i < n; i++)
                 {
-                    ids[i * t + j] = j < length ? tokens[j] : PadId;
-                    weights[i * t + j] = j < length ? 1f / Math.Max(length, 1) : 0f;
+                    Fill(ids, weights, i, encodings[i].Ids);
                 }
-
-                if (length == 0)
+            }
+            else
+            {
+                for (int i = 0; i < n; i++)
                 {
-                    weights[i * t] = 1f;                      // an empty text averages the first (padding) position
+                    var tokens = Tokenizer.Encode(texts[i]);
+                    Fill(ids, weights, i, tokens);
                 }
             }
 
@@ -188,5 +200,21 @@ public sealed class TextEncoder : IEmbedder
         var pooled = mean.MatMul(hidden).Reshape(n, d);                                      // weighted mean over real tokens
         var inverseNorm = ((pooled.Square().Sum(1) + 1e-12f).Log() * -0.5f).Exp();           // 1 / ‖x‖
         return inverseNorm.Reshape(n, 1, 1).MatMul(pooled.Reshape(n, 1, d)).Reshape(n, d);
+    }
+
+    // Row i of the ids and weights: the first MaxLength tokens, then the pad id; each real token weighs 1 / length.
+    private void Fill(float[] ids, float[] weights, int i, IReadOnlyList<int> tokens)
+    {
+        int t = MaxLength, length = Math.Min(tokens.Count, t);
+        for (int j = 0; j < t; j++)
+        {
+            ids[i * t + j] = j < length ? tokens[j] : PadId;
+            weights[i * t + j] = j < length ? 1f / Math.Max(length, 1) : 0f;
+        }
+
+        if (length == 0)
+        {
+            weights[i * t] = 1f;                      // an empty text averages the first (padding) position
+        }
     }
 }

@@ -150,7 +150,7 @@ Chat, one-off answers, batches and the tools a model may call. Generation uses a
 | `idrak embed` | Embeddings of lines or files to JSON or .npy |
 | `idrak transcribe` | Speech to text with a speech recognition model, as text, JSON or subtitles (SRT, WebVTT) |
 | `idrak speak` | Text to speech with a text-to-speech model, in its own voice, a speaker or an installed voice |
-| `idrak tokenize` | Tokens and ids of a text (--chat renders the chat template first, --count only counts) |
+| `idrak tokenize` | Tokens, ids, offsets and type ids of text (--chat renders the chat template first, --count only counts) |
 | `idrak template` | The chat template, its tool-call format and a rendered sample conversation with a tool call |
 | `idrak agent` | The coding agent: reads, searches, edits files and runs commands in a folder |
 | `idrak tools list` | The tools an assembly registers: names, descriptions and parameters |
@@ -164,6 +164,7 @@ idrak run ocr --image scan.jpg --grayscale "Extract the text." -j -o page.json  
 idrak batch qwen -i prompts.jsonl -o answers.jsonl                   # resumable after an interruption
 idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
 idrak tokenize qwen --chat "Hello" --count
+idrak tokenize ./bert-base-uncased "Hello, World!" --pair "Second" --special --offsets   # type ids, offsets
 idrak agent qwen "Add a test for Parse" --workspace ./src
 idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav -o talk.srt   # -j: segments and stage times
 idrak speak -P Idrak.VitsSpeech.dll ./mms-tts-eng "Hello." -o hello.wav            # -o hello.mp3 writes MP3

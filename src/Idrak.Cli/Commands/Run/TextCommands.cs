@@ -31,36 +31,50 @@ internal sealed class TokenizeCommand : Command
 {
     public override string Name => "tokenize";
 
-    public override string Summary => "Tokens and ids of a text (--chat renders the chat template first, --count only counts)";
+    public override string Summary => "Tokens, ids, offsets and type ids of text (--chat renders the chat template first, --count only counts)";
 
     public override string Usage => """
         MODEL ["text"] [options]
 
         The text is the arguments after MODEL, then --input files and piped standard input. Only the tokenizer is read,
-        not the weights.
+        not the weights. Without --offsets, --pair, --special, --max-length and --truncation, the tokens are the
+        tokenizer's plain encoding (no special tokens, not cut).
 
         Options:
-          -i, --input FILE   read (more of) the text from FILE (repeatable)
-              --chat         render the text as a user message in the model's chat template (with the assistant's
-                             turn opened) and tokenize that
-          -s, --system TEXT  with --chat: a system message first
-              --count        print only the number of tokens
+          -i, --input FILE      read (more of) the text from FILE (repeatable)
+              --chat            render the text as a user message in the model's chat template (with the assistant's
+                                turn opened) and tokenize that
+          -s, --system TEXT     with --chat: a system message first
+              --count           print only the number of tokens
+              --offsets         show where each token comes from: its UTF-16 start and end in its text, and the text it
+                                covers (a special token covers none)
+              --pair TEXT       encode TEXT as the second text of a pair; shows each token's type id and sequence (0 for
+                                the text, 1 for the pair, -1 for a special token)
+              --special         add the tokenizer's special tokens where its post-processor puts them ([CLS] ... [SEP],
+                                <s> ... </s>); by default none are added, as a chat template writes its own
+              --max-length N    cut the encoding to N tokens, special tokens included (default: not cut); the
+                                tokenizer.json's own truncation and padding are not applied
+              --truncation S    with --max-length, which text loses tokens: longest_first (default), only_first or
+                                only_second
 
         Examples:
           idrak tokenize Qwen/Qwen3-0.6B "Hello, world"
           idrak tokenize qwen --chat -s "Be brief." "Hi"
           cat essay.txt | idrak tokenize ./model.gguf --count
+          idrak tokenize ./bert-base-uncased "Hello, World!" --pair "Second" --special
+          idrak tokenize ./t5-small "Hello, world" --offsets --max-length 8
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--input", "--system"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--input", "--system", "--pair", "--max-length", "--truncation"];
 
-    public override IReadOnlyCollection<string> Flags => ["--chat", "--count"];
+    public override IReadOnlyCollection<string> Flags => ["--chat", "--count", "--offsets", "--special"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-i"] = "--input", ["-s"] = "--system" };
 
     public override int Run(CommandContext context)
     {
         string name = context.Argument(0, "MODEL (a Hugging Face id, a folder, a .gguf file or an alias)");
+        var detailed = DetailedOptions(context);                     // checked before the text is read and the model loaded
         string text = PromptInput.Read(context, 1, "the text");
         var model = ModelText.Load(context, name);
         if (context.Flag("--chat"))
@@ -74,6 +88,11 @@ internal sealed class TokenizeCommand : Command
 
             messages.Add(new ChatMessage("user", text));
             text = template.Render(messages, [], null, addGenerationPrompt: true);
+        }
+
+        if (detailed is { } options)
+        {
+            return RunDetailed(context, model, text, context.Option("--pair"), options);
         }
 
         var ids = model.Tokenizer.Encode(text);
@@ -98,6 +117,110 @@ internal sealed class TokenizeCommand : Command
             ["ids"] = new JsonArray([.. ids.Select(i => (JsonNode)i)]),
             ["tokens"] = new JsonArray([.. ids.Select(i => (JsonNode)model.Tokenizer.TokenOf(i))]),
         });
+        return ExitCodes.Ok;
+    }
+
+    // The encode options of --offsets, --pair, --special, --max-length and --truncation, or null when none is given (then
+    // the output is the plain encoding's, as before these options). Nothing is padded, and without --max-length nothing is
+    // cut: the tokenizer.json's own truncation and padding are left out, so the tokens are the text's.
+    private static TokenizerEncodeOptions? DetailedOptions(CommandContext context)
+    {
+        string? maxLength = context.Option("--max-length"), truncation = context.Option("--truncation");
+        if (!context.Flag("--offsets") && !context.Flag("--special") && context.Option("--pair") is null && maxLength is null && truncation is null)
+        {
+            return null;
+        }
+
+        int? max = null;
+        if (maxLength is not null)
+        {
+            int value = context.IntOption("--max-length", 0);
+            max = value >= 1 ? value : throw new UsageException($"--max-length needs a whole number of 1 or more, not '{maxLength}'.");
+        }
+
+        if (truncation is not (null or "longest_first" or "only_first" or "only_second"))
+        {
+            throw new UsageException($"--truncation takes longest_first, only_first or only_second, not '{truncation}'.");
+        }
+
+        if (truncation is not null && max is null)
+        {
+            throw new UsageException("--truncation needs --max-length.");
+        }
+
+        return new TokenizerEncodeOptions
+        {
+            AddSpecialTokens = context.Flag("--special"), MaxLength = max ?? int.MaxValue, Truncation = truncation ?? "longest_first", Padding = "none",
+        };
+    }
+
+    // The tokenizer's detailed encoding: ids and tokens, with type ids and sequences (--pair, --special) and offsets with
+    // the text each token covers (--offsets).
+    private static int RunDetailed(CommandContext context, ModelText model, string text, string? pair, TokenizerEncodeOptions options)
+    {
+        var encoding = model.Tokenizer.Encode(text, pair, options);
+        if (context.Flag("--count"))
+        {
+            if (!context.Json)
+            {
+                context.Output.WriteLine(encoding.Count);
+            }
+
+            context.WriteJson(new JsonObject { ["model"] = model.Model, ["count"] = encoding.Count });
+            return ExitCodes.Ok;
+        }
+
+        bool sequences = pair is not null || options.AddSpecialTokens, offsets = context.Flag("--offsets");
+        string Covered(int i)
+        {
+            var (start, end) = encoding.Offsets[i];
+            string? source = encoding.SequenceIds[i] switch { 0 => text, 1 => pair, _ => null };
+            return source is not null && 0 <= start && start < end && end <= source.Length ? Show(source[start..end]) : "";
+        }
+
+        string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
+        List<string> headers = ["#", "ID", "Token"];
+        if (sequences)
+        {
+            headers.AddRange(["Type", "Sequence"]);
+        }
+
+        if (offsets)
+        {
+            headers.AddRange(["Start", "End", "Text"]);
+        }
+
+        context.Table(headers, Enumerable.Range(0, encoding.Count).Select(i =>
+        {
+            List<string> row = [Number(i), Number(encoding.Ids[i]), Show(model.Tokenizer.TokenOf(encoding.Ids[i]))];
+            if (sequences)
+            {
+                row.AddRange([Number(encoding.TypeIds[i]), Number(encoding.SequenceIds[i])]);
+            }
+
+            if (offsets)
+            {
+                row.AddRange([Number(encoding.Offsets[i].Start), Number(encoding.Offsets[i].End), Covered(i)]);
+            }
+
+            return (IReadOnlyList<string>)row;
+        }));
+        context.Write($"{encoding.Count} tokens");
+        static JsonArray Numbers(int[] values) => new([.. values.Select(v => (JsonNode)v)]);
+        var json = new JsonObject { ["model"] = model.Model, ["text"] = text };
+        if (pair is not null)
+        {
+            json["pair"] = pair;
+        }
+
+        json["count"] = encoding.Count;
+        json["ids"] = Numbers(encoding.Ids);
+        json["tokens"] = new JsonArray([.. encoding.Ids.Select(i => (JsonNode)model.Tokenizer.TokenOf(i))]);
+        json["type_ids"] = Numbers(encoding.TypeIds);
+        json["sequence_ids"] = Numbers(encoding.SequenceIds);
+        json["special_tokens_mask"] = Numbers(encoding.SpecialTokensMask);
+        json["offsets"] = new JsonArray([.. encoding.Offsets.Select(o => (JsonNode)new JsonArray(o.Start, o.End))]);
+        context.WriteJson(json);
         return ExitCodes.Ok;
     }
 
