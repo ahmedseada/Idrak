@@ -1,0 +1,146 @@
+{
+ "corpus_lines": 102,
+ "files": {
+  "bpe/expected-hf.json": {
+   "bytes": 201559,
+   "sha256": "3cb5b9fa3393a9e53bfb8e28165736941fbec68bbac0dfecaed345e3f81040a7"
+  },
+  "bpe/expected-spm.json": {
+   "bytes": 137916,
+   "sha256": "e95e73c1e8c273dfe8db821a40e59f24061bc97eaa531e72722b06febad04af3"
+  },
+  "bpe/model.json": {
+   "bytes": 73031,
+   "sha256": "00c903a4c27d1cd5c697e99289771702fdbc59e5cec99c99b7a01cc24d0bd931"
+  },
+  "bpe/normalized.json": {
+   "bytes": 41990,
+   "sha256": "98818e941b6d44c767002bdd2b7af3bbe198c6311c6a394a56ca56bacc041bed"
+  },
+  "bpe/tokenizer.json": {
+   "bytes": 24767,
+   "sha256": "e324355cfe44113bc4eb5d087bad1b937299e9cf8c492aa4d180910d83bbeb8f"
+  },
+  "bpe/tokenizer.model": {
+   "bytes": 13125,
+   "sha256": "4dae01cd548f8cae448f01dd6d1e0d651cb58ce9be62eb213c36ff5d27491905"
+  },
+  "bpe/tokenizer_config.json": {
+   "bytes": 200,
+   "sha256": "c91510e2e7af7d1a40d12d0071914eab62fea41f2e83298563de7ada5841b641"
+  },
+  "corpus.txt": {
+   "bytes": 9129,
+   "sha256": "5755e6415f5bc1c1069ef49ec29317ff3dd3002f370ea63bc3bf2ce05f2da171"
+  },
+  "known-differences.json": {
+   "bytes": 22703,
+   "sha256": "48563d073bd6cc64fee6785d31963253f57c277816ec7c0b5546b574e0b7cfe4"
+  },
+  "unigram-bytes/expected-hf.json": {
+   "bytes": 212619,
+   "sha256": "f0e36de2d956087288087617ebf8e829c07bc086d3faf1e2209d138bf9537308"
+  },
+  "unigram-bytes/expected-spm.json": {
+   "bytes": 151437,
+   "sha256": "5922608442bd64ba9db34d2cf2755245eabd5a09db46e149573686482b9bc635"
+  },
+  "unigram-bytes/model.json": {
+   "bytes": 83312,
+   "sha256": "8a9cafc3b017e20755c555f18f8a4a1879b1f6a4afbc9e43640a34f8ba268039"
+  },
+  "unigram-bytes/normalized.json": {
+   "bytes": 52113,
+   "sha256": "bf2870fb0559f7fefbc4be79ab4504323b3cd49a75e4e70e3422d4377b81ef7f"
+  },
+  "unigram-bytes/tokenizer.json": {
+   "bytes": 59859,
+   "sha256": "1f20dcf91902d4f099cd03bcdc2ed58023a06585f3dfcb03ba284132eb010ab0"
+  },
+  "unigram-bytes/tokenizer.model": {
+   "bytes": 15008,
+   "sha256": "a1aad4c4abbdf3d070a0de0828204e338c7e20c4649a2e487cef70172f3aa2c1"
+  },
+  "unigram-bytes/tokenizer_config.json": {
+   "bytes": 142,
+   "sha256": "f20adb0ad82eff81fa9745bb57338bc5a02e63ec27ceee727cb6576efcf88f9c"
+  },
+  "unigram/expected-hf.json": {
+   "bytes": 167500,
+   "sha256": "20151558b3273249ed18d3df638e09b056dad34f6e806ef5eb6ea28d2263093a"
+  },
+  "unigram/expected-spm.json": {
+   "bytes": 114571,
+   "sha256": "8fde9e10a10d25beba4900cf8460f48ed4326655ade2c5e2305a8383fdfb895b"
+  },
+  "unigram/model.json": {
+   "bytes": 89948,
+   "sha256": "c9b6fb40a293d8db755c8bf9396dbc6b0bdf7ee739608a15b696eb4543f1a3cf"
+  },
+  "unigram/normalized.json": {
+   "bytes": 52349,
+   "sha256": "d961a81e46cf95990d90c2b38b641a3ad8daaae6242813067d64444e6596678d"
+  },
+  "unigram/tokenizer.json": {
+   "bytes": 383821,
+   "sha256": "88cb178b64c682af2e348e14900e27a8a1b446cae909de788834eb3033143c0b"
+  },
+  "unigram/tokenizer.model": {
+   "bytes": 253495,
+   "sha256": "d1042bd2363f40129931609109259ddfee4a036bca072823a82a6c9e1cd19f2a"
+  },
+  "unigram/tokenizer_config.json": {
+   "bytes": 212,
+   "sha256": "9639567c460a75d5bad805dd0ec1c1cf9ec8efad5ccd058f0f019efc181d7bbd"
+  },
+  "wordpiece-cased/expected-hf.json": {
+   "bytes": 135845,
+   "sha256": "9316d60136223b888be9cf2972e2d845b20dffd42afd8d6879b26035afcc4eaf"
+  },
+  "wordpiece-cased/tokenizer.json": {
+   "bytes": 51093,
+   "sha256": "884ed91d2df76a86a0feff363723a533a76d36f39a00e70b214b275a1e3f963b"
+  },
+  "wordpiece-cased/tokenizer_config.json": {
+   "bytes": 304,
+   "sha256": "6e9926a586aa85407863d3e54ddf7439dff44857d3e82b38ca6e7237270c9e90"
+  },
+  "wordpiece-cased/vocab.txt": {
+   "bytes": 13540,
+   "sha256": "7a28a30fb2410796b18301ebd63d435c8231e08ac4d853c2d34a470d30965d9f"
+  },
+  "wordpiece-uncased/expected-hf.json": {
+   "bytes": 137928,
+   "sha256": "1ea7470e4594671ed57bb04056d4c66d1b81241e76a31fbec0014f244f362e16"
+  },
+  "wordpiece-uncased/tokenizer.json": {
+   "bytes": 39736,
+   "sha256": "44c67b6d5a19581e74ba35b99625a5ad032813c1ebd94f9ef332e61f059203b7"
+  },
+  "wordpiece-uncased/tokenizer_config.json": {
+   "bytes": 303,
+   "sha256": "d5b6b0073498321eef76f74785b3b202c375087c118730403fe90bf33049a5ba"
+  },
+  "wordpiece-uncased/vocab.txt": {
+   "bytes": 10301,
+   "sha256": "718ec84ce677e17af6a34d8d2d434bad3e40d174f1ebc38fc2ce556f48fc8821"
+  }
+ },
+ "seed": 2026,
+ "training_input": {
+  "data/pretrain/corpus.txt": {
+   "bytes": 75437,
+   "sha256": "0f146a9262e77504a7c2e59223ccd0511e008ff658e3ef52e1679b20849f3848"
+  }
+ },
+ "training_lines": 870,
+ "versions": {
+  "huggingface_hub": "1.33.0",
+  "protobuf": "7.36.2",
+  "python": "3.13.16",
+  "sentencepiece": "0.2.2",
+  "tokenizers": "0.23.2",
+  "transformers": "5.18.0",
+  "unicodedata (python)": "15.1.0"
+ }
+}
