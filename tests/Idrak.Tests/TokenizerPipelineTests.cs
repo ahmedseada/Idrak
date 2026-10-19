@@ -143,9 +143,34 @@ internal static partial class Tests
         var meta = Run("""{"type": "Lowercase"}""", """{"type": "Metaspace", "replacement": "▁", "prepend_scheme": "always", "split": true}""", "Hello World");
         Check(meta.SequenceEqual([("▁hello", 0, 5), ("▁world", 5, 11)]), $"a prefix stands for the first character, a replaced space for the space: {string.Join(", ", meta)}");
 
-        // "ﬁ" (one character) becomes "fi" under NFKC: both stand for it; "é" decomposed stays one character's range.
-        var nfkc = Run("""{"type": "NFKC"}""", """{"type": "Whitespace"}""", "ﬁne café");
-        Check(nfkc.SequenceEqual([("fine", 0, 3), ("café", 4, 9)]), $"NFKC keeps each cluster's range: {string.Join(", ", nfkc)}");
+        // "ﬁ" (one character) becomes "fi" under NFKC: both stand for it; "e" and a combining acute composed stand for the
+        // "e" alone, as tokenizers aligns them.
+        var nfkc = Run("""{"type": "NFKC"}""", """{"type": "Whitespace"}""", "\uFB01ne cafe\u0301");
+        Check(nfkc.SequenceEqual([("fine", 0, 3), ("caf\u00E9", 4, 8)]), $"NFKC aligns as tokenizers does: {string.Join(", ", nfkc)}");
+
+        // Each normalized character's range, against tokenizers 0.23.2 (its unicode_normalization_alignments): a source
+        // character's first decomposed character stands for the next source character, the others for the one before,
+        // a composition passes over what it absorbed, all by position after canonical reordering.
+        foreach (var (form, text, expected) in new (string, string, (int, int)[])[]
+                 {
+                     ("NFKC", "\uFB01ne cafe\u0301", [(0, 1), (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8)]),
+                     ("NFC", "e\u0301\u0301x", [(0, 1), (2, 3), (3, 4)]),
+                     ("NFC", "\u0344a", [(0, 1), (0, 1), (1, 2)]),
+                     ("NFC", "a\u0301\u0328b", [(0, 1), (2, 3), (3, 4)]),
+                     ("NFKC", "\u1100\u1161\u11A8", [(0, 1)]),
+                     ("NFD", "\uFB01ne cafe\u0301", [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9)]),
+                     ("NFD", "a\u0301\u0328b", [(0, 1), (1, 2), (2, 3), (3, 4)]),
+                     ("NFD", "\uAC01", [(0, 1), (0, 1), (0, 1)]),
+                     ("NFKD", "\uFB01ne", [(0, 1), (0, 1), (1, 2), (2, 3)]),
+                     ("NFKD", "\u0344a", [(0, 1), (0, 1), (1, 2)]),
+                 })
+        {
+            using var normalized = new NormalizedText();
+            normalized.Reset(text);
+            SpanComponents.BuiltInNormalizer(new JsonObject { ["type"] = form })(normalized);
+            var origins = Enumerable.Range(0, normalized.Span.Length).Select(i => normalized.OriginOf(i)).ToArray();
+            Check(origins.SequenceEqual(expected), $"{form} of {string.Join(" ", text.Select(c => $"U+{(int)c:X4}"))}: [{string.Join(", ", origins)}], tokenizers [{string.Join(", ", expected)}]");
+        }
 
         var range = Run("", """{"type": "Whitespace"}""", "xx alpha beta yy", start: 3, length: 10);
         Check(range.SequenceEqual([("alpha", 3, 8), ("beta", 9, 13)]), $"a range inside a longer text gives offsets in the whole text: {string.Join(", ", range)}");

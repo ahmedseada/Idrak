@@ -105,11 +105,17 @@ internal static class SpanComponents
     // Unicode normalization keeping each character's origin. Text made only of characters no context can change under the
     // form (UnicodeStability) is left as it is, with no call into the platform's normalization (which allocates on each
     // call). Otherwise the whole text is normalized once; when that changes it, each cluster (a character with the marks
-    // after it, Hangul jamo together) that changes is normalized on its own and stands for its characters, and the joined
-    // clusters are checked against the whole result. Where they differ (a composition across clusters) the whole result is
+    // after it, Hangul jamo together) that changes is normalized on its own, its characters aligned to the source as
+    // tokenizers aligns them (AppendAligned), and the joined clusters are checked against the whole result. Where they differ (a composition across clusters) the whole result is
     // taken, its changed middle standing for the old middle.
     private sealed class UnicodeNormalizer(NormalizationForm form)
     {
+        // The decomposition a form starts with: canonical for NFC and NFD, compatibility for NFKC and NFKD.
+        private readonly NormalizationForm _decomposition = form is NormalizationForm.FormKC or NormalizationForm.FormKD
+            ? NormalizationForm.FormKD : NormalizationForm.FormD;
+
+        private readonly bool _composes = form is NormalizationForm.FormC or NormalizationForm.FormKC;
+
         public void Run(NormalizedText text)
         {
             var span = text.Span;
@@ -122,7 +128,7 @@ internal static class SpanComponents
             char[] cluster = ArrayPool<char>.Shared.Rent(64);
             try
             {
-                int written = Normalize(span, ref whole);
+                int written = Normalize(span, ref whole, form);
                 if (span.SequenceEqual(whole.AsSpan(0, written)))
                 {
                     return;                                                        // marks already in order and composed
@@ -139,12 +145,12 @@ internal static class SpanComponents
                     }
                     else
                     {
-                        int count = Normalize(characters, ref cluster);
+                        int count = Normalize(characters, ref cluster, form);
                         if (characters.SequenceEqual(cluster.AsSpan(0, count)))
                         {
                             writer.Copy(start, end - start);
                         }
-                        else
+                        else if (!AppendAligned(writer, span, start, end, cluster.AsSpan(0, count)))
                         {
                             writer.Append(cluster.AsSpan(0, count), start, end - start);
                         }
@@ -171,7 +177,7 @@ internal static class SpanComponents
 
         // Normalizes `source` into `buffer` (a pooled array, replaced by a larger one when needed); returns the length. One
         // platform call when the buffer is large enough, which it nearly always is.
-        private int Normalize(ReadOnlySpan<char> source, ref char[] buffer)
+        private static int Normalize(ReadOnlySpan<char> source, ref char[] buffer, NormalizationForm form)
         {
             if (source.TryNormalize(buffer, out int written, form))
             {
@@ -185,17 +191,135 @@ internal static class SpanComponents
                 : throw new InvalidOperationException("Unicode normalization needed more room than it reported.");
         }
 
-        // Where the cluster that starts at `start` ends: the character, then every mark after it (and Hangul jamo after
-        // Hangul, which compose with each other).
+        // Appends a changed cluster's normalization aligned as tokenizers aligns it (unicode_normalization_alignments, then
+        // NormalizedString.transform): each source character decomposes alone, its first character kept and the rest added;
+        // canonical reordering moves them; a character composed of k parts removes k - 1. Walking the output in order, a kept
+        // character stands for the next source character (a composed one also passes over those it removed), an added one
+        // for the source character before it (nothing at the text's start). False, with nothing appended, when the output
+        // cannot be matched to the parts; the cluster then stands for each output character.
+        private bool AppendAligned(NormalizedText.Rewriter writer, ReadOnlySpan<char> span, int start, int end, ReadOnlySpan<char> output)
+        {
+            int length = end - start;
+            int[] parts = ArrayPool<int>.Shared.Rent(length * 18 + 4);       // a character decomposes to at most 18 (U+FDFA)
+            int[] added = ArrayPool<int>.Shared.Rent(length * 18 + 4);
+            int[] sources = ArrayPool<int>.Shared.Rent(length + 1);
+            int[] plan = ArrayPool<int>.Shared.Rent(output.Length + 1);
+            char[] buffer = ArrayPool<char>.Shared.Rent(32);
+            try
+            {
+                int partCount = 0, sourceCount = 0;
+                for (int at = start; at < end;)
+                {
+                    UnicodeStability.CodePoint(span, at, out int width);
+                    sources[sourceCount++] = at;
+                    int written = Normalize(span.Slice(at, width), ref buffer, _decomposition);
+                    for (int i = 0; i < written;)
+                    {
+                        if (partCount == parts.Length)
+                        {
+                            return false;
+                        }
+
+                        parts[partCount] = UnicodeStability.CodePoint(buffer.AsSpan(0, written), i, out int w);
+                        added[partCount++] = i == 0 ? 0 : 1;
+                        i += w;
+                    }
+
+                    at += width;
+                }
+
+                sources[sourceCount] = end;
+                int cursor = 0, planned = 0, used = 0;
+                for (int at = 0; at < output.Length;)
+                {
+                    UnicodeStability.CodePoint(output, at, out int width);
+                    int written = _composes && !(width == 1 && output[at] < 0x80) ? Normalize(output.Slice(at, width), ref buffer, NormalizationForm.FormD) : 0;
+                    ReadOnlySpan<char> pieces = written > 0 ? buffer.AsSpan(0, written) : output.Slice(at, width);
+                    int change = 0, k = 0;
+                    for (int i = 0; i < pieces.Length; k++)
+                    {
+                        int point = UnicodeStability.CodePoint(pieces, i, out int w);
+                        int match = Array.IndexOf(parts, point, 0, partCount);
+                        if (match < 0)
+                        {
+                            return false;
+                        }
+
+                        parts[match] = -1;                                         // used: equal parts are matched in order
+                        change += added[match];
+                        used++;
+                        i += w;
+                    }
+
+                    change -= k - 1;
+                    int source = change > 0 ? cursor - 1 : cursor;
+                    if (change <= 0)
+                    {
+                        cursor += 1 - change;
+                    }
+
+                    if (cursor > sourceCount || source >= sourceCount)
+                    {
+                        return false;
+                    }
+
+                    plan[planned++] = source;
+                    at += width;
+                }
+
+                if (cursor != sourceCount || used != partCount)
+                {
+                    return false;
+                }
+
+                for (int at = 0, j = 0; at < output.Length; j++)
+                {
+                    UnicodeStability.CodePoint(output, at, out int width);
+                    var chars = output.Slice(at, width);
+                    int source = plan[j];
+                    if (source >= 0)
+                    {
+                        writer.Append(chars, sources[source], sources[source + 1] - sources[source]);
+                    }
+                    else if (start > 0)
+                    {
+                        int from = start - (start > 1 && char.IsSurrogatePair(span[start - 2], span[start - 1]) ? 2 : 1);
+                        writer.Append(chars, from, start - from);
+                    }
+                    else
+                    {
+                        foreach (char c in chars)
+                        {
+                            writer.AppendOrigin(c, 0, 0);
+                        }
+                    }
+
+                    at += width;
+                }
+
+                return true;
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(parts);
+                ArrayPool<int>.Shared.Return(added);
+                ArrayPool<int>.Shared.Return(sources);
+                ArrayPool<int>.Shared.Return(plan);
+                ArrayPool<char>.Shared.Return(buffer);
+            }
+        }
+
+        // Where the cluster that starts at `start` ends: the character, then every mark after it and every Hangul vowel or
+        // final jamo (which compose with what precedes them). Each precomposed syllable is its own cluster, so its
+        // decomposed jamo stand for it alone.
         private static int ClusterEnd(ReadOnlySpan<char> text, int start)
         {
-            int first = UnicodeStability.CodePoint(text, start, out int width);
-            bool hangul = IsHangul(first);
+            UnicodeStability.CodePoint(text, start, out int width);
             int end = start + width;
             while (end < text.Length)
             {
                 int next = UnicodeStability.CodePoint(text, end, out int nextWidth);
-                if (!UnicodeStability.IsMark(next) && !(hangul && IsHangul(next)))
+                if (!UnicodeStability.IsMark(next) && next is not ((>= 0x1160 and <= 0x11FF) or (>= 0xD7B0 and <= 0xD7FF)))
                 {
                     break;
                 }
@@ -205,9 +329,6 @@ internal static class SpanComponents
 
             return end;
         }
-
-        private static bool IsHangul(int c) => c is (>= 0x1100 and <= 0x11FF) or (>= 0x3130 and <= 0x318F) or (>= 0xA960 and <= 0xA97F)
-                                                 or (>= 0xAC00 and <= 0xD7AF) or (>= 0xD7B0 and <= 0xD7FF);
     }
 
     // Which characters no context can change under a normalization form: their own normalization is themselves, they are
@@ -307,6 +428,10 @@ internal static class SpanComponents
 
     // Prepend: the string goes before the text, standing for its first character; an empty text stays empty (as the string
     // form and Hugging Face's do).
+    // The UTF-16 width of a text's first character (0 for none): what a prefix stands for, as tokenizers aligns it.
+    internal static int FirstWidth(ReadOnlySpan<char> text) =>
+        text.IsEmpty ? 0 : text.Length > 1 && char.IsSurrogatePair(text[0], text[1]) ? 2 : 1;
+
     private sealed class PrependNormalizer(string prepend)
     {
         public void Run(NormalizedText text)
@@ -318,7 +443,7 @@ internal static class SpanComponents
             }
 
             var writer = text.Rewrite();
-            writer.Append(prepend, 0, Math.Min(1, length));
+            writer.Append(prepend, 0, FirstWidth(text.Span));                  // stands for the first character (a surrogate pair is one)
             writer.Copy(0, length);
             writer.Commit();
         }
@@ -501,7 +626,7 @@ internal static class SpanComponents
                 int from = writer.Position;
                 if ((scheme == "always" || (scheme == "first" && i == 0 && atStart)) && !begins)
                 {
-                    writer.Append(replacement, start, Math.Min(1, length));
+                    writer.Append(replacement, start, FirstWidth(piece));
                 }
 
                 int run = start;
@@ -572,7 +697,7 @@ internal static class SpanComponents
                     int count = 0;
                     if (prefix && (length == 0 || span[start] != ' '))
                     {
-                        var (s, e) = normalized.OriginOf(start, Math.Min(1, length));
+                        var (s, e) = normalized.OriginOf(start, FirstWidth(span.Slice(start, length)));
                         (chars[0], from[0], to[0]) = (' ', s, e);
                         count = 1;
                     }

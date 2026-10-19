@@ -70,7 +70,69 @@ public interface IPretrainedTokenizer : ITokenizer
     /// </summary>
     /// <param name="path">A file, or a folder (then its tokenizer.json).</param>
     void Save(string path);
+
+    /// <summary>
+    /// <paramref name="text"/> (and <paramref name="pair"/>, when given) as the model takes it: ids with their type ids,
+    /// offsets in the text each came from, attention and special-tokens masks and sequence ids, truncated, given the
+    /// post-processor's special tokens and padded as <paramref name="options"/> say (as Hugging Face's <c>encode</c>).
+    /// </summary>
+    TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options);
+
+    /// <summary>
+    /// <see cref="Encode(string, string?, TokenizerEncodeOptions)"/> of each text (and its pair), spread over the tokenizer's
+    /// workers, in input order; padding "longest" pads to the batch's longest.
+    /// </summary>
+    IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options);
+
+    /// <summary>The text of <paramref name="ids"/>, leaving out the special tokens when <paramref name="skipSpecialTokens"/> is true.</summary>
+    string Decode(ReadOnlySpan<int> ids, bool skipSpecialTokens)
+    {
+        if (!skipSpecialTokens)
+        {
+            return Decode(ids);
+        }
+
+        var kept = new List<int>(ids.Length);
+        foreach (int id in ids)
+        {
+            if (!IsSpecial(id))
+            {
+                kept.Add(id);
+            }
+        }
+
+        return Decode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(kept));
+    }
 }
+
+/// <summary>
+/// How <see cref="IPretrainedTokenizer.Encode(string, string?, TokenizerEncodeOptions)"/> shapes an encoding. A setting left
+/// null takes the tokenizer.json's own (its <c>truncation</c> and <c>padding</c>), else none.
+/// </summary>
+public sealed record TokenizerEncodeOptions
+{
+    /// <summary>Whether the post-processor's special tokens are added (<c>[CLS] … [SEP]</c>, <c>&lt;s&gt;</c>): true by default, as Hugging Face's <c>encode</c>.</summary>
+    public bool AddSpecialTokens { get; init; } = true;
+
+    /// <summary>Truncate to this many tokens, special tokens included; null: the tokenizer.json's <c>truncation.max_length</c>, else no truncation.</summary>
+    public int? MaxLength { get; init; }
+
+    /// <summary>
+    /// Which text loses tokens past <see cref="MaxLength"/>: "longest_first" (one token at a time from the longer),
+    /// "only_first" or "only_second"; null: the tokenizer.json's strategy, else "longest_first".
+    /// </summary>
+    public string? Truncation { get; init; }
+
+    /// <summary>
+    /// "none", "longest" (a batch to its longest encoding) or "max_length" (to <see cref="MaxLength"/>); null: the
+    /// tokenizer.json's padding, else none.
+    /// </summary>
+    public string? Padding { get; init; }
+
+    /// <summary>The id padding adds; null: the tokenizer.json's <c>padding.pad_id</c>, else the tokenizer's padding token.</summary>
+    public int? PadId { get; init; }
+}
+
 
 /// <summary>
 /// One token per character of a fixed alphabet (the vocabulary string). Characters outside the alphabet are
@@ -446,6 +508,9 @@ public sealed class TokenizerEncoding
 
     /// <summary>Which text each token comes from: 0 or 1 for the texts of a pair, -1 for a token the tokenizer added.</summary>
     public required int[] SequenceIds { get; init; }
+
+    /// <summary>Each token's vocabulary entry (as <see cref="ITokenizer.TokenOf"/> gives it), or empty when the encoder gives none.</summary>
+    public string[] Tokens { get; init; } = [];
 
     /// <summary>The number of tokens.</summary>
     public int Count => Ids.Length;
