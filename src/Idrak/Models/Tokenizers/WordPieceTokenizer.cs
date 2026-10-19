@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
-using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -35,16 +34,18 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
     private readonly int _maxChars;
     private readonly List<(string Content, int Id)> _added;
     private readonly HashSet<int> _special;
-    private readonly Regex? _addedPattern;
+    private readonly TokenizerRegex? _addedPattern;
     private readonly TokenizerPipeline _pipeline;
     private readonly Func<List<string>, List<string>>? _decoder;
-    private readonly int _cacheLimit;
     private readonly int _workers;
     private TokenizerEncodings.RawEncoder? _raw;                             // Raw, as Finish takes it (made once)
-    private readonly ConcurrentDictionary<string, int[]> _cache = new();
-    private readonly ConcurrentDictionary<string, int[]>.AlternateLookup<ReadOnlySpan<char>> _cacheSpans;
+
+    // Encoded words with each token's characters in the word (shared by concurrent encodes, looked up by span), so the
+    // detailed encode of a cached word splits nothing either; at most TokenizerOptions.PieceCacheLimit words.
+    private readonly PieceCache _cache;
 
     [ThreadStatic] private static PreTokenizedText? t_pieces;                 // one per thread, its buffers kept between calls
+    [ThreadStatic] private static List<(int Start, int Length)>? t_ranges;    // a word's token ranges, for the cache (EncodeWord)
 
     private WordPieceTokenizer(TokenizerDefinition definition, TokenizerOptions options)
     {
@@ -109,15 +110,14 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
 
         if (_added.Count > 0)
         {
-            _addedPattern = new Regex(string.Join('|', _added.Select(a => a.Content).OrderByDescending(c => c.Length).Select(Regex.Escape)), BpeTokenizer.Fast);
+            _addedPattern = new TokenizerRegex(string.Join('|', _added.Select(a => a.Content).OrderByDescending(c => c.Length).Select(Regex.Escape)));
         }
 
         _pipeline = new TokenizerPipeline(definition.Json);
         _decoder = definition.Json["decoder"] is JsonObject decoder ? Decoder(decoder) : null;
         PostProcessor = PostProcessors.Of(definition.Json["post_processor"] as JsonObject);
-        _cacheLimit = options.ResolvedPieceCacheLimit();
+        _cache = new PieceCache(options.ResolvedPieceCacheLimit(), ranges: true);
         _workers = options.ResolvedWorkers();
-        _cacheSpans = _cache.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
     // The decoder a tokenizer.json names, made once: an app's registered type, else the built-in stages.
@@ -188,7 +188,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
             int last = start;
             if (_addedPattern is not null)
             {
-                foreach (var match in _addedPattern.EnumerateMatches(text.AsSpan(start, length)))
+                foreach (var match in _addedPattern.Local.EnumerateMatches(text.AsSpan(start, length)))
                 {
                     int at = start + match.Index;
                     EncodeText(text, last, at - last, last == start, ids, pieces);
@@ -219,7 +219,8 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
         }
     }
 
-    // One word: its cached ids, else the greedy longest-match split (or the unknown token), cached.
+    // One word: its cached ids, else the greedy longest-match split (or the unknown token), cached with its tokens' ranges
+    // when the cache has room (counted on add: ConcurrentDictionary.Count would take every lock on each miss).
     private void EncodeWord(ReadOnlySpan<char> word, List<int> ids)
     {
         if (word.Length == 0)
@@ -227,18 +228,23 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
             return;
         }
 
-        if (_cacheSpans.TryGetValue(word, out var cached))
+        if (_cache.TryGet(word, out ReadOnlySpan<int> cached))
         {
             ids.AddRange(cached);
             return;
         }
 
         int before = ids.Count;
-        Split(word, ids, null);
-        if (_cache.Count < _cacheLimit)
+        if (!_cache.Accepts(word.Length))
         {
-            _cache.TryAdd(new string(word), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..].ToArray());
+            Split(word, ids, null);
+            return;
         }
+
+        var ranges = t_ranges ??= [];
+        ranges.Clear();
+        Split(word, ids, ranges);
+        _cache.Add(word, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..], ranges);
     }
 
     // The greedy split of a word; ranges (when given) gets each token's characters in the word.
@@ -334,8 +340,8 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
     public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
         TokenizerEncodings.Batch(texts, pairs, options, _source, this, _workers);
 
-    // A text's ids with their offsets in it, into the scratch's lists (no cache: a cached word has no token boundaries);
-    // returns how many tokens a left limit drops.
+    // A text's ids with their offsets in it, into the scratch's lists: each word's ids and token ranges through the cache
+    // (split and cached on a miss); returns how many tokens a left limit drops.
     private int Raw(string text, int limit, bool left, TokenizerEncodings.RawScratch scratch)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -365,12 +371,27 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
 
                     starts?.Add((ids.Count, false));
 
-                    ranges.Clear();
-                    Split(pieces.Piece(i), ids, ranges);
-                    foreach (var (from, count) in ranges)
+                    var word = pieces.Piece(i);
+                    var normalized = pieces.Text;
+                    if (_cache.TryGet(word, out var cachedIds, out var cachedRanges))
                     {
-                        var (s, e) = pieces.Text.OriginOf(pieceStart + from, count);
-                        offsets.Add((s, e));
+                        ids.AddRange(cachedIds);
+                        foreach (int packed in cachedRanges)
+                        {
+                            var (from, count) = PieceCache.Range(packed);
+                            offsets.Add(normalized.OriginOf(pieceStart + from, count));
+                        }
+                    }
+                    else
+                    {
+                        int before = ids.Count;
+                        ranges.Clear();
+                        Split(word, ids, ranges);
+                        _cache.Add(word, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..], ranges);
+                        foreach (var (from, count) in ranges)
+                        {
+                            offsets.Add(normalized.OriginOf(pieceStart + from, count));
+                        }
                     }
 
                     if (starts is null && ids.Count >= limit)
@@ -384,7 +405,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
             int last = 0;
             if (_addedPattern is not null)
             {
-                foreach (var match in _addedPattern.EnumerateMatches(text))
+                foreach (var match in _addedPattern.Local.EnumerateMatches(text))
                 {
                     Text(last, match.Index - last, last == 0);
                     if (full)
