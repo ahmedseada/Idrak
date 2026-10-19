@@ -97,7 +97,7 @@ public static class TokenizerComponents
     // The types the BPE tokenizer runs itself, with their library defaults as components: what an app's component of
     // the same type falls back to or is compared with.
     private static readonly SlotTable<string, Func<JsonObject, ITokenizerNormalizer>> Normalizers = BuiltIn<ITokenizerNormalizer>(
-        "TokenizerComponents.Normalizers", ["Sequence", "NFC", "NFKC", "NFD", "NFKD", "Prepend", "Replace", "Lowercase", "Strip", "BertNormalizer"],
+        "TokenizerComponents.Normalizers", ["Sequence", "NFC", "NFKC", "NFD", "NFKD", "Prepend", "Replace", "Lowercase", "Strip", "BertNormalizer", "Precompiled"],
         spec => new Normalizer(BpeTokenizer.NormalizerStep(spec), SpanComponents.BuiltInNormalizer(spec)),
         (slot, app, library) => new GuardedNormalizer(slot, app, library));
 

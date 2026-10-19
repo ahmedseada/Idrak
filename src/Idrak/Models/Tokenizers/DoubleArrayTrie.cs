@@ -202,6 +202,77 @@ internal sealed class DoubleArrayTrie
         return found;
     }
 
+    /// <summary>
+    /// The shortest key that is a prefix of <paramref name="key"/>: its value, and its length in bytes in
+    /// <paramref name="length"/>; -1 (and length 0) when none is. The walk stops at the first key. Allocates nothing.
+    /// </summary>
+    public int ShortestPrefix(ReadOnlySpan<byte> key, out int length)
+    {
+        var units = _units;
+        uint node = Offset(units[0]);
+        for (int i = 0; i < key.Length; i++)
+        {
+            uint label = key[i];
+            node ^= label;
+            if (node >= (uint)units.Length)
+            {
+                break;
+            }
+
+            uint unit = units[node];
+            if ((unit & LabelMask) != label)
+            {
+                break;
+            }
+
+            node ^= Offset(unit);
+            if ((unit & HasLeafBit) != 0 && node < (uint)units.Length)
+            {
+                length = i + 1;
+                return (int)(units[node] & ValueMask);
+            }
+        }
+
+        length = 0;
+        return -1;
+    }
+
+    /// <summary>
+    /// The longest key that is a prefix of <paramref name="key"/>: its value, and its length in bytes in
+    /// <paramref name="length"/>; -1 (and length 0) when none is. One walk. Allocates nothing.
+    /// </summary>
+    public int LongestPrefix(ReadOnlySpan<byte> key, out int length)
+    {
+        var units = _units;
+        uint node = Offset(units[0]);
+        int value = -1;
+        length = 0;
+        for (int i = 0; i < key.Length; i++)
+        {
+            uint label = key[i];
+            node ^= label;
+            if (node >= (uint)units.Length)
+            {
+                break;
+            }
+
+            uint unit = units[node];
+            if ((unit & LabelMask) != label)
+            {
+                break;
+            }
+
+            node ^= Offset(unit);
+            if ((unit & HasLeafBit) != 0 && node < (uint)units.Length)
+            {
+                value = (int)(units[node] & ValueMask);
+                length = i + 1;
+            }
+        }
+
+        return value;
+    }
+
     /// <summary>The value of exactly <paramref name="key"/>, or -1 when it is not a key. Allocates nothing.</summary>
     public int ExactMatch(ReadOnlySpan<byte> key)
     {

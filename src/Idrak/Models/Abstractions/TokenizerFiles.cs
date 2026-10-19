@@ -30,14 +30,21 @@ public interface ITokenizerFileReader
 
 /// <summary>
 /// The tokenizer file readers, by name; <see cref="PretrainedTokenizers"/> asks them in registration order (the built-in
-/// ones first) for the file of a model folder. Built in: "tokenizer.json" (Hugging Face's, any model type) and "vocab.txt" (BERT's,
-/// with tokenizer_config.json). Others plug in
-/// with <see cref="Register"/>.
+/// ones first) for the file of a model folder. Built in: "tokenizer.json" (Hugging Face's, any model type), then
+/// "sentencepiece" (a SentencePiece model: tokenizer.model, spiece.model or sentencepiece.bpe.model), then "vocab.txt"
+/// (BERT's, with tokenizer_config.json), so a folder with several reads its tokenizer.json unless
+/// <see cref="TokenizerOptions.Format"/> names another. Others plug in with <see cref="Register"/>.
 /// </summary>
 public static class TokenizerFiles
 {
     /// <summary>The Hugging Face tokenizer.json reader.</summary>
     public const string TokenizerJson = "tokenizer.json";
+
+    /// <summary>
+    /// The SentencePiece model reader (tokenizer.model, spiece.model, sentencepiece.bpe.model; a Unigram or BPE model),
+    /// whose tokenizer encodes as the sentencepiece library does.
+    /// </summary>
+    public const string SentencePiece = "sentencepiece";
 
     /// <summary>The BERT-style vocab.txt reader (with tokenizer_config.json).</summary>
     public const string VocabTxt = "vocab.txt";
