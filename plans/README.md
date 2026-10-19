@@ -43,6 +43,11 @@ B: a vision tower and projector made by a family plug-in through `IVisionFamily.
 in distillation; detailed per phase with files, signatures and tests; tracks A and B built and CPU-checked, the proof runs the owner's): [19-vision-language-from-scratch.md](19-vision-language-from-scratch.md).
 Image generation by denoising (`Idrak.Diffusion`: noise schedules and samplers as registered slots with one fixed summation order on every device, UNet and VAE building blocks on the existing convolution, group-norm and span-attention kernels, a generation API with one recorded graph per denoising pass, a denoising trainer with EMA and resumable checkpoints through `idrak create` / `pretrain`, `idrak diffuse`; every model family a plug-in sample: an IdrakDiffusion family made from a spec, a Stable Diffusion 1.x/2.x loader; detailed per phase with files, signatures and tests; planned, nothing built): [20-diffusion.md](20-diffusion.md).
 Sound in and out of the library (`Idrak.Audio` as general building blocks: WAV and registered audio codecs, resampling, STFT and log-mel on every device, an "audio" chat part, speech recognition and synthesis contracts, CTC training from scratch; the Whisper-style loader, a VITS-style synthesizer and the from-scratch IdrakAudio family as plug-in samples; `idrak transcribe`, `speak`, `data audio`; S0 and S1 built, the rest planned): [21-audio.md](21-audio.md).
+Unigram (SentencePiece) and WordPiece tokenizers built into the library beside BPE (a tokenizer model registry and one
+tokenizer contract so nothing requires `BpeTokenizer`, a span pipeline with alignments, the `tokenizer.model` reader in
+C#, `tokenizer.json`, `tokenizer.model`, `vocab.txt` and GGUF `llama` / `bert` / `t5` detected, offsets, pairs and batch
+encoding, Unigram and WordPiece trainers in `idrak data tokenizer --model`; closes plug-in gap 11; planned 2026-10-19,
+nothing built): [24-tokenizers.md](24-tokenizers.md).
 
 ## Not supported yet
 
