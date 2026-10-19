@@ -3404,6 +3404,7 @@ public sealed record Idrak.Abstraction.Generation.TokenizerEncodeOptions : Syste
   public int? PadId { get; init; }
   public string? Padding { get; init; }
   public string? Truncation { get; init; }
+  public string? TruncationDirection { get; init; }
 
 public sealed class Idrak.Abstraction.Generation.TokenizerEncoding
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public TokenizerEncoding()
