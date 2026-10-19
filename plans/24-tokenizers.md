@@ -3,7 +3,7 @@
 **Status (2026-10-19, `abstraction` 7b8c85f):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against
 e53acb8. Every phase but T5 is built, merged and pushed, and so are the handover's three leftovers (library-owned
 Unicode normalization, the T3 callers, the T4 leftovers) and two speed rounds the `--bench-text` rows exposed; the last
-merged run passed 147 of 147 targeted CPU tests. T5 is on hold for the owner; the owner's Windows and CUDA runs are
+merged run passed 147 of 147 targeted CPU tests. T5 was measured and not taken (same ids, about half the speed); the owner's Windows and CUDA runs are
 next ("The owner's runs"). Closes plug-in gap 11 ([plug-in.md](plug-in.md), "Only BPE tokenizer models").
 
 | Phase | What | State |
@@ -17,7 +17,7 @@ next ("The owner's runs"). Closes plug-in gap 11 ([plug-in.md](plug-in.md), "Onl
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Done; CPU pass (unigram: SentencePiece's pieces, 100% on the fixtures; wordpiece: exact against the fixed-tie reference); leftovers done after the handover (3) |
 | N | Unicode normalization owned by the library (`UnicodeNormalization`, Unicode 18.0 tables) | Done after the handover (1); CPU pass, a real CLI process checked |
 | S | Speed rounds from the `--bench-text` rows: BPE, the encodings, the trainers, regex contention, WordPiece | Done (4, 5); results proven unchanged by full encoding dumps |
-| T5 | BPE onto the shared span pipeline (only if measured equal or faster) | On hold: not started until the owner decides (2026-10-19) |
+| T5 | BPE onto the shared span pipeline (only if measured equal or faster) | Measured 2026-10-19: same ids, about half the speed; not taken |
 
 ## Goal
 
@@ -928,6 +928,31 @@ on every fixture (rule 71), and equal or more tokens a second, with no more byte
 warm apart, rule 76). If both hold, BPE runs on the pipeline and its duplicate paths are removed (rule 75). If not, the
 numbers go in the Runs table and BPE stays as it is.
 
+**Measured, not taken (2026-10-19, the owner: "measure only").** A scratch program (not committed) ran BPE on the
+span pipeline exactly as its detailed encode does, without offsets: `TokenizerPipeline`, then the same cached merge
+(`AlphabetCache`, `Bpe`), added tokens first. Against BPE's own `EncodeRange` on all 26 BPE `tokenizer.json` files in
+the test data, 967 corpus texts (60,781 characters), one thread, Release, an idle 4-thread container:
+- **Ids:** equal on every text each vocabulary encodes (refused texts skipped alike on both paths).
+- **Bytes:** 0 a text once warm on both paths.
+- **Speed:** the span path is slower on every file: warm 0.19 to 0.85 of BPE's own speed, about 0.5 typically;
+  cold 0.6 to 1.3.
+
+  | tokenizer | own, warm | span, warm | ratio |
+  |---|---|---|---|
+  | tokenizers/bpe (sentencepiece-style, Metaspace) | 93.2M | 50.0M | 0.54 |
+  | tokenizers/byte-level-roberta | 19.1M | 9.5M | 0.50 |
+  | pretrain/tokenizer | 21.1M | 11.0M | 0.52 |
+  | pretrain/metaspace | 10.3M | 3.9M | 0.37 |
+  | gguf/tiny-llama-hf | 22.3M | 17.1M | 0.77 |
+  | audio/tiny-whisper | 18.2M | 15.6M | 0.85 |
+  | audio/ctc/model-conv | 26.9M | 5.0M | 0.19 |
+  | vlm-qwen/tiny-qwen2.5-vl | 38.9M | 17.1M | 0.44 |
+  | vlm/tiny-gemma3 | 386.3M | 157.8M | 0.41 |
+
+- **Outcome:** the condition (equal or more tokens a second) fails, so BPE keeps its own paths and their duplicates.
+  The gap is the span pipeline's per-character origin tracking, which an ids-only encode does not need. A span mode
+  without origins would be the candidate if T5 is ever reopened.
+
 ---
 
 ## Finished after the handover (2026-10-19)
@@ -1067,7 +1092,8 @@ thread.
 1. **The owner's runs** ("The owner's runs"): the targeted Windows CPU list, CUDA `pretrained:|gguf:|tokenizers:
    gguf|retrieval: text encoder`, the CLI on real models, `make_fixtures.py --real` and `tokenizers real:`, and
    `--bench-text tokenizers trainers`. Their results go in the Runs table.
-2. **T5** (BPE onto the shared span pipeline): on hold until the owner decides.
+2. **T5** (BPE onto the shared span pipeline): measured 2026-10-19 (its section): the same ids, about half the speed;
+   not taken. Reopened only by the owner.
 3. **Measured, not taken** (each a candidate for the owner to schedule; none is started without the owner):
    - detailed BPE is still 1.8 times the ids-only encode (a per-token origin lookup; `TokenizerEncodings.Resolve`
      reads the tokenizer.json's settings on every encode);
@@ -1206,3 +1232,4 @@ differences on characters newer than its Unicode are counted and printed, any ot
 | 2026-10-19 | speed 1 (agent) | same | `tokenizers:`, `tokenizer training`, `pretrained:`, `gguf:`, `cli pretrain`, `retrieval: text encoder`, `cli run: tokenize`, `public API`, `abstraction inventory` | 87 passed, 0 failed; after a trainer change `tokenizer training|cli pretrain` 17 of 17 |
 | 2026-10-19 | speed 2 (agent) | same | the speed 1 list with `plugins:`, `override loop:` | 112 passed, 0 failed |
 | 2026-10-19 | all merged (7b8c85f) | same | the owner's CPU list above | 147 passed, 0 failed |
+| 2026-10-19 | T5 (measure only) | CPU (cloud, 4 threads, idle) | BPE on the span pipeline against its own `EncodeRange`, 26 BPE tokenizer.json files, 967 texts | same ids and 0 B a text on both; the span path 0.19-0.85 of the speed warm (about 0.5): not taken |
