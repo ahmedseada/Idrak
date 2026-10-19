@@ -283,18 +283,30 @@ the uncached one.
 ## Order and parallelism
 
 At most two agents at a time (CLAUDE.md), each in its own worktree; a merge is built and its filters run before the push.
+The longest chain is P0 → P6 → P7 / P8, so the engine (lane B) starts right after the rename, and the moves (lane A) run
+beside it (the owner, 2026-10-19):
 
-| Step | Agent A | Agent B |
+| Step | Lane A: moves | Lane B: engine and new families |
 |---|---|---|
-| 1 | P0 (alone: it touches everything) | none |
-| 2 | P1 | none |
-| 3 | P2, audio | P2, vision |
-| 4 | P3 (Gemma) | P6 (engine; touches layers and contracts, not families) |
-| 5 | P4 (text families; after P3, both edit `Architectures.cs`) | P6, continued |
-| 6 | P5 | P7 (after P6) |
-| 7 | P8 (after P6) | none |
+| 1 | P0, the rename (alone: it touches every package) | none |
+| 2 | P1, the three package skeletons | P6, the engine, starts |
+| 3 | P2, audio (Whisper, VITS, OpenVoice, IdrakAudio) | P6, continued |
+| 4 | P2, vision (Qwen-VL, LLaVA, IdrakVision) | P6, continued |
+| 5 | P3, Gemma | P7, BERT (after P6) |
+| 6 | P4, Llama, Mistral, Qwen, DeepSeek, Harmony | P8, T5 |
+| 7 | P5, espeak-ng | none |
 
-A slot takes the next step only when the owner has asked for this plan to go on.
+Why the lanes do not collide:
+- P1 and P2 add packages and move sample code; P6 works in layers, contracts and generation and touches no family.
+- P3 and P4 both edit `src/Idrak/Models/Architectures.cs`, so they share lane A, one after the other.
+- P7 and P8 add to `Idrak.Text.Plugins`; P3 and P4 remove from core and add other namespaces there: separate files.
+- P5 can take any free slot after P1.
+- Files both lanes touch (`api/*.txt`, the abstraction inventory, the test list in `tests/Idrak.Tests/Program.cs`,
+  `src/Idrak.Cli/Shared/EnvironmentVariables.cs`) are merged one lane at a time; the generated dumps are regenerated,
+  never merged by hand.
+
+A step is a dependency order, not a barrier: when a lane finishes, it takes its next step without waiting for the other.
+No step starts until the owner has asked for this plan to go on.
 
 ## The owner's runs
 
