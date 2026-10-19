@@ -91,6 +91,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
 
     private readonly int _workers;                           // batch threads (TokenizerOptions.Workers)
     private TokenizerEncodings.RawEncoder? _raw;             // Raw, as Finish takes it (made once)
+    private Func<int, string>? _tokenOf;                     // TokenOf as a delegate, made once (Align takes it)
     private ITokenizerPostProcessor? _postProcessor;
     private bool _postProcessorRead;
 
@@ -348,16 +349,15 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
         }
     }
 
-    // A text's ids (as Encode gives them, the piece cache included) with their offsets in it: each piece's tokens aligned
-    // to the characters they came from.
-    private TokenizerEncoding Raw(string text, int sequence, int limit, bool left)
+    // A text's ids (as Encode gives them, the piece cache included) with their offsets in it, into the scratch's lists: each
+    // piece's tokens aligned to the characters they came from. Returns how many tokens a left limit drops.
+    private int Raw(string text, int limit, bool left, TokenizerEncodings.RawScratch scratch)
     {
         ArgumentNullException.ThrowIfNull(text);
         text = BpeTokenizer.WithoutLoneSurrogates(text);                      // one character for one: offsets still index the text
-        var ids = new List<int>(text.Length / 3 + 4);
-        var offsets = new List<(int Start, int End)>(ids.Capacity);
-        var ranges = new List<(int Start, int Length)>();
-        var starts = left && limit < int.MaxValue ? new List<(int Start, bool Added)>() : null;  // each pre-token's first token
+        var (ids, offsets, ranges) = (scratch.Ids, scratch.Offsets, scratch.Ranges);
+        var starts = left && limit < int.MaxValue ? scratch.Starts : null;  // each pre-token's first token
+        var tokenOf = _tokenOf ??= TokenOf;
         bool full = false;                                                    // a right limit reached: the rest is not encoded
         var pieces = t_text ?? new PreTokenizedText();
         t_text = null;
@@ -384,10 +384,10 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
                     var piece = pieces.Piece(i);
                     EncodePiece(piece, ids);
                     ranges.Clear();
-                    TokenizerEncodings.Align(piece, CollectionsMarshal.AsSpan(ids)[before..], TokenOf, _byteFallback, ranges);
+                    TokenizerEncodings.Align(piece, CollectionsMarshal.AsSpan(ids)[before..], tokenOf, _byteFallback, ranges);
                     if (_byteFallback && !_sentencePiece)
                     {
-                        TokenizerEncodings.FuseByteRuns(CollectionsMarshal.AsSpan(ids)[before..], TokenOf, ranges);
+                        TokenizerEncodings.FuseByteRuns(CollectionsMarshal.AsSpan(ids)[before..], tokenOf, ranges);
                     }
 
                     foreach (var (from, count) in ranges)
@@ -428,7 +428,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
             t_text = pieces;
         }
 
-        return TokenizerEncodings.Raw(ids, offsets, TokenOf, sequence, starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit));
+        return starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit);
     }
 
     // The text between added tokens: normalized and pre-tokenized on spans, then each piece.

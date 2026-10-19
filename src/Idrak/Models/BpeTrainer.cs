@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
-using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -22,7 +21,8 @@ namespace Idrak.Models;
 internal sealed class BpeTrainer : ITokenizerTrainer
 {
     private const string Gpt2Pattern = @"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+";
-    private static readonly Regex WordRule = new(Gpt2Pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private const RegexOptions WordRuleOptions = RegexOptions.Compiled | RegexOptions.CultureInvariant;
+    private static readonly Regex WordRule = new(Gpt2Pattern, WordRuleOptions);
     private const char MetaspaceMark = '▁';
     private const int BlockBytes = 1 << 20;
 
@@ -45,47 +45,41 @@ internal sealed class BpeTrainer : ITokenizerTrainer
     }
 
     // The words of every file and how often each appears, keyed by the word as the merges see it (byte level: its UTF-8
-    // bytes as the byte map's characters).
+    // bytes as the byte map's characters). Each worker counts the blocks it takes into one counter of its own for the whole
+    // run, with a word rule of its own (a Regex keeps one matcher: workers sharing one would each make a new matcher per
+    // match); the counts are then added into the largest worker's.
     private static Dictionary<string, long> CountWords(IReadOnlyList<string> files, bool byteLevel, TokenizerTrainingOptions options,
         IProgress<TokenizerTrainingProgress>? progress, CancellationToken cancellationToken)
     {
         long total = files.Sum(f => new FileInfo(f).Length);
         long read = 0;
         int workers = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads;
-        var merged = new Dictionary<string, long>(StringComparer.Ordinal);
-        var parts = new ConcurrentBag<Dictionary<string, long>>();
-        Parallel.ForEach(
-            System.Collections.Concurrent.Partitioner.Create(Blocks(files, cancellationToken), EnumerablePartitionerOptions.NoBuffering),
-            new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken },
-            () => new WordCounter(byteLevel, options.AddPrefixSpace, options.LineEnds == "lf"),
-            (block, _, counter) =>
-            {
-                try
-                {
-                    counter.Count(block.Bytes.AsSpan(0, block.Length));
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(block.Bytes);
-                }
-
-                progress?.Report(new TokenizerTrainingProgress("words", Interlocked.Add(ref read, block.Length), total));
-                return counter;
-            },
-            counter =>
-            {
-                parts.Add(counter.Words);
-                counter.Dispose();
-            });
-
-        foreach (var part in parts)
+        var counted = new Dictionary<string, long>?[workers];
+        using (var blocks = new BlockQueue(files, cancellationToken))
         {
-            foreach (var (word, count) in part)
+            Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, worker =>
             {
-                System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(merged, word, out _) += count;
-            }
+                using var counter = new WordCounter(worker == 0 ? WordRule : new Regex(Gpt2Pattern, WordRuleOptions), byteLevel, options.AddPrefixSpace,
+                    options.LineEnds == "lf");
+                while (blocks.Next(out var block))
+                {
+                    try
+                    {
+                        counter.Count(block.Bytes.AsSpan(0, block.Length));
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(block.Bytes);
+                    }
+
+                    progress?.Report(new TokenizerTrainingProgress("words", Interlocked.Add(ref read, block.Length), total));
+                }
+
+                counted[worker] = counter.Words;
+            });
         }
 
+        var merged = AddUp(counted);
         if (!byteLevel)
         {
             return merged;
@@ -102,6 +96,69 @@ internal sealed class BpeTrainer : ITokenizerTrainer
     }
 
     internal readonly record struct Block(byte[] Bytes, int Length);
+
+    // The blocks of Blocks, taken one at a time by any worker (each keeps its own counts for the whole run, rule 79).
+    internal sealed class BlockQueue(IReadOnlyList<string> files, CancellationToken cancellationToken) : IDisposable
+    {
+        private readonly IEnumerator<Block> _blocks = Blocks(files, cancellationToken).GetEnumerator();
+        private readonly Lock _gate = new();
+        private bool _done;
+
+        public bool Next(out Block block)
+        {
+            lock (_gate)
+            {
+                if (!_done && _blocks.MoveNext())
+                {
+                    block = _blocks.Current;
+                    return true;
+                }
+
+                _done = true;
+            }
+
+            block = default;
+            return false;
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                _done = true;
+                _blocks.Dispose();
+            }
+        }
+    }
+
+    // The workers' counts added up, into the largest's (no new dictionary; the words keep the strings their worker made).
+    internal static Dictionary<string, long> AddUp(Dictionary<string, long>?[] counted)
+    {
+        Dictionary<string, long>? merged = null;
+        foreach (var part in counted)
+        {
+            if (part is not null && (merged is null || part.Count > merged.Count))
+            {
+                merged = part;
+            }
+        }
+
+        merged ??= new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var part in counted)
+        {
+            if (part is null || ReferenceEquals(part, merged))
+            {
+                continue;
+            }
+
+            foreach (var (word, count) in part)
+            {
+                System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(merged, word, out _) += count;
+            }
+        }
+
+        return merged;
+    }
 
     // The files' bytes in blocks that end on a line end (a line is never cut), rented from the shared pool; the reader
     // of a block returns it.
@@ -161,7 +218,7 @@ internal sealed class BpeTrainer : ITokenizerTrainer
 
     // Counts one worker's words: a block's bytes become characters once, each line (with its line end) is cut into words
     // by the pre-tokenizer's rule, and each word is counted by its span (no string unless the word is new to this worker).
-    private sealed class WordCounter(bool byteLevel, bool prefixSpace, bool crlfAsLf) : IDisposable
+    private sealed class WordCounter(Regex wordRule, bool byteLevel, bool prefixSpace, bool crlfAsLf) : IDisposable
     {
         private char[] _chars = [];
         private char[] _line = [];
@@ -202,7 +259,7 @@ internal sealed class BpeTrainer : ITokenizerTrainer
                         line = Prefixed(line, ' ');
                     }
 
-                    foreach (var match in WordRule.EnumerateMatches(line))
+                    foreach (var match in wordRule.EnumerateMatches(line))
                     {
                         Add(words, line.Slice(match.Index, match.Length));
                     }

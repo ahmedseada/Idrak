@@ -334,15 +334,14 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
     public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
         TokenizerEncodings.Batch(texts, pairs, options, _source, this, _workers);
 
-    // A text's ids with their offsets in it (no cache: a cached word has no token boundaries).
-    private TokenizerEncoding Raw(string text, int sequence, int limit, bool left)
+    // A text's ids with their offsets in it, into the scratch's lists (no cache: a cached word has no token boundaries);
+    // returns how many tokens a left limit drops.
+    private int Raw(string text, int limit, bool left, TokenizerEncodings.RawScratch scratch)
     {
         ArgumentNullException.ThrowIfNull(text);
         text = BpeTokenizer.WithoutLoneSurrogates(text);                      // one character for one: offsets still index the text
-        var ids = new List<int>(text.Length / 3 + 4);
-        var offsets = new List<(int Start, int End)>(ids.Capacity);
-        var ranges = new List<(int Start, int Length)>();
-        var starts = left && limit < int.MaxValue ? new List<(int Start, bool Added)>() : null;  // each pre-token's first token
+        var (ids, offsets, ranges) = (scratch.Ids, scratch.Offsets, scratch.Ranges);
+        var starts = left && limit < int.MaxValue ? scratch.Starts : null;  // each pre-token's first token
         bool full = false;                                                    // a right limit reached: the rest is not encoded
         var pieces = t_pieces ?? new PreTokenizedText();
         t_pieces = null;
@@ -407,7 +406,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
             t_pieces = pieces;
         }
 
-        return TokenizerEncodings.Raw(ids, offsets, TokenOf, sequence, starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit));
+        return starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit);
     }
 
     public string Decode(IEnumerable<int> ids)
