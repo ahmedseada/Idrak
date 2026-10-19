@@ -13,7 +13,7 @@ internal static partial class Tests
         ("tokenizers: pipeline: every built-in normalizer and pre-tokenizer on spans gives the pieces its string form gives (every fixture's tokenizer.json and hand-made specs, the suite's texts and both corpora, at the start and not)", TokenizerPipelineEqualsStrings),
         ("tokenizers: pipeline: each piece stands for its range of the original text (splits in order, a metaspace's replacement for its space, a prefix for the first character, NFKC and lowercase per character, a range inside a longer text)", TokenizerPipelineOrigins),
         ("tokenizers: pipeline: an app's string-only normalizer and pre-tokenizer run in the span pipeline with their results, Strip, WhitespaceSplit and Punctuation load in a BPE tokenizer.json, and the post-processor table lists the built-ins and registers, guards and unregisters an app's", TokenizerPipelineAppComponents),
-        ("tokenizers: pipeline: a warm run allocates nothing on text normalization leaves as it is (NFKC, Replace, Lowercase, Strip, Metaspace, Split and ByteLevel on Latin, Arabic and CJK text); text NFKC changes costs only the platform's normalization calls", TokenizerPipelineAllocations),
+        ("tokenizers: pipeline: a warm run allocates nothing on text normalization leaves as it is (NFKC, Replace, Lowercase, Strip, Metaspace, Split and ByteLevel on Latin, Arabic and CJK text); text NFKC changes allocates nothing either (the library's own normalization)", TokenizerPipelineAllocations),
     ];
 
     // The texts every pipeline check runs on: the suite's, both corpora.
@@ -327,8 +327,7 @@ internal static partial class Tests
             Check(allocated == 0, $"a warm run allocated {allocated} bytes over 400 texts: {spec}");
         }
 
-        // Text NFKC changes: each changed cluster and the whole text take one call into the platform's normalization, which
-        // allocates (72 bytes a call on Linux with ICU); nothing else does.
+        // Text NFKC changes: the library's own normalization (UnicodeNormalization) allocates nothing either.
         var nfkc = new TokenizerPipeline(JsonNode.Parse(pipelines[0])!.AsObject());
         for (int warm = 0; warm < 50; warm++)
         {
@@ -348,7 +347,7 @@ internal static partial class Tests
         }
 
         double perText = (GC.GetAllocatedBytesForCurrentThread() - start) / 200.0;
-        Console.WriteLine($"    text NFKC changes: {perText:F0} bytes a text (the platform's normalization calls)");
-        Check(perText <= 2048, $"text NFKC changes allocated {perText:F0} bytes a text, more than its normalization calls cost");
+        Console.WriteLine($"    text NFKC changes: {perText:F0} bytes a text");
+        Check(perText == 0, $"text NFKC changes allocated {perText:F0} bytes a text; the library's normalization allocates nothing");
     }
 }

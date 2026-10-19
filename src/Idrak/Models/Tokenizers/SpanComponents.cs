@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Idrak.Abstraction.Text;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
@@ -102,24 +103,23 @@ internal static class SpanComponents
         }
     }
 
-    // Unicode normalization keeping each character's origin. Text made only of characters no context can change under the
-    // form (UnicodeStability) is left as it is, with no call into the platform's normalization (which allocates on each
-    // call). Otherwise the whole text is normalized once; when that changes it, each cluster (a character with the marks
-    // after it, Hangul jamo together) that changes is normalized on its own, its characters aligned to the source as
-    // tokenizers aligns them (AppendAligned), and the joined clusters are checked against the whole result. Where they differ (a composition across clusters) the whole result is
-    // taken, its changed middle standing for the old middle.
+    // Unicode normalization keeping each character's origin, through the library's own normalization
+    // (UnicodeNormalization: the same on every platform, nothing allocated). Text already in the form is left as it is.
+    // Otherwise the whole text is normalized once; each cluster (a character with the marks after it, Hangul jamo
+    // together) that changes is normalized on its own, its characters aligned to the source as tokenizers aligns them
+    // (AppendAligned), and the joined clusters are checked against the whole result. Where they differ (a composition
+    // across clusters) the whole result is taken, its changed middle standing for the old middle.
     private sealed class UnicodeNormalizer(NormalizationForm form)
     {
         // The decomposition a form starts with: canonical for NFC and NFD, compatibility for NFKC and NFKD.
-        private readonly NormalizationForm _decomposition = form is NormalizationForm.FormKC or NormalizationForm.FormKD
-            ? NormalizationForm.FormKD : NormalizationForm.FormD;
+        private readonly bool _compatibility = form is NormalizationForm.FormKC or NormalizationForm.FormKD;
 
         private readonly bool _composes = form is NormalizationForm.FormC or NormalizationForm.FormKC;
 
         public void Run(NormalizedText text)
         {
             var span = text.Span;
-            if (System.Text.Ascii.IsValid(span) || UnicodeStability.AllStable(span, form))
+            if (UnicodeNormalization.IsNormalized(span, form))
             {
                 return;
             }
@@ -139,7 +139,7 @@ internal static class SpanComponents
                 {
                     int end = ClusterEnd(span, start);
                     var characters = span[start..end];
-                    if (UnicodeStability.AllStable(characters, form))
+                    if (UnicodeNormalization.IsNormalized(characters, form))
                     {
                         writer.Copy(start, end - start);
                     }
@@ -175,19 +175,18 @@ internal static class SpanComponents
             }
         }
 
-        // Normalizes `source` into `buffer` (a pooled array, replaced by a larger one when needed); returns the length. One
-        // platform call when the buffer is large enough, which it nearly always is.
+        // Normalizes `source` into `buffer` (a pooled array, replaced by a larger one when needed); returns the length.
         private static int Normalize(ReadOnlySpan<char> source, ref char[] buffer, NormalizationForm form)
         {
-            if (source.TryNormalize(buffer, out int written, form))
+            if (UnicodeNormalization.TryNormalize(source, buffer, out int written, form))
             {
                 return written;
             }
 
-            int needed = source.GetNormalizedLength(form);
+            int needed = UnicodeNormalization.GetNormalizedLength(source, form);
             ArrayPool<char>.Shared.Return(buffer);
             buffer = ArrayPool<char>.Shared.Rent(needed);
-            return source.TryNormalize(buffer, out written, form) ? written
+            return UnicodeNormalization.TryNormalize(source, buffer, out written, form) ? written
                 : throw new InvalidOperationException("Unicode normalization needed more room than it reported.");
         }
 
@@ -200,31 +199,26 @@ internal static class SpanComponents
         private bool AppendAligned(NormalizedText.Rewriter writer, ReadOnlySpan<char> span, int start, int end, ReadOnlySpan<char> output)
         {
             int length = end - start;
-            int[] parts = ArrayPool<int>.Shared.Rent(length * 18 + 4);       // a character decomposes to at most 18 (U+FDFA)
-            int[] added = ArrayPool<int>.Shared.Rent(length * 18 + 4);
+            int most = UnicodeNormalization.MaxDecompositionLength(_compatibility);
+            int[] parts = ArrayPool<int>.Shared.Rent(length * most + 4);
+            int[] added = ArrayPool<int>.Shared.Rent(length * most + 4);
             int[] sources = ArrayPool<int>.Shared.Rent(length + 1);
             int[] plan = ArrayPool<int>.Shared.Rent(output.Length + 1);
-            char[] buffer = ArrayPool<char>.Shared.Rent(32);
+            Span<int> pieces = stackalloc int[Math.Max(UnicodeNormalization.MaxDecompositionLength(false), 4)];
             try
             {
                 int partCount = 0, sourceCount = 0;
                 for (int at = start; at < end;)
                 {
-                    UnicodeStability.CodePoint(span, at, out int width);
+                    int point = UnicodeCharacters.CodePoint(span, at, out int width);
                     sources[sourceCount++] = at;
-                    int written = Normalize(span.Slice(at, width), ref buffer, _decomposition);
-                    for (int i = 0; i < written;)
+                    int written = UnicodeNormalization.Decompose(point, parts.AsSpan(partCount), _compatibility);
+                    for (int i = 0; i < written; i++)
                     {
-                        if (partCount == parts.Length)
-                        {
-                            return false;
-                        }
-
-                        parts[partCount] = UnicodeStability.CodePoint(buffer.AsSpan(0, written), i, out int w);
-                        added[partCount++] = i == 0 ? 0 : 1;
-                        i += w;
+                        added[partCount + i] = i == 0 ? 0 : 1;
                     }
 
+                    partCount += written;
                     at += width;
                 }
 
@@ -232,14 +226,21 @@ internal static class SpanComponents
                 int cursor = 0, planned = 0, used = 0;
                 for (int at = 0; at < output.Length;)
                 {
-                    UnicodeStability.CodePoint(output, at, out int width);
-                    int written = _composes && !(width == 1 && output[at] < 0x80) ? Normalize(output.Slice(at, width), ref buffer, NormalizationForm.FormD) : 0;
-                    ReadOnlySpan<char> pieces = written > 0 ? buffer.AsSpan(0, written) : output.Slice(at, width);
-                    int change = 0, k = 0;
-                    for (int i = 0; i < pieces.Length; k++)
+                    int point = UnicodeCharacters.CodePoint(output, at, out int width);
+                    int count = 1;
+                    if (_composes && point >= 0x80)
                     {
-                        int point = UnicodeStability.CodePoint(pieces, i, out int w);
-                        int match = Array.IndexOf(parts, point, 0, partCount);
+                        count = UnicodeNormalization.Decompose(point, pieces, compatibility: false);
+                    }
+                    else
+                    {
+                        pieces[0] = point;
+                    }
+
+                    int change = 0;
+                    for (int k = 0; k < count; k++)
+                    {
+                        int match = Array.IndexOf(parts, pieces[k], 0, partCount);
                         if (match < 0)
                         {
                             return false;
@@ -248,10 +249,9 @@ internal static class SpanComponents
                         parts[match] = -1;                                         // used: equal parts are matched in order
                         change += added[match];
                         used++;
-                        i += w;
                     }
 
-                    change -= k - 1;
+                    change -= count - 1;
                     int source = change > 0 ? cursor - 1 : cursor;
                     if (change <= 0)
                     {
@@ -274,7 +274,7 @@ internal static class SpanComponents
 
                 for (int at = 0, j = 0; at < output.Length; j++)
                 {
-                    UnicodeStability.CodePoint(output, at, out int width);
+                    UnicodeCharacters.CodePoint(output, at, out int width);
                     var chars = output.Slice(at, width);
                     int source = plan[j];
                     if (source >= 0)
@@ -305,7 +305,6 @@ internal static class SpanComponents
                 ArrayPool<int>.Shared.Return(added);
                 ArrayPool<int>.Shared.Return(sources);
                 ArrayPool<int>.Shared.Return(plan);
-                ArrayPool<char>.Shared.Return(buffer);
             }
         }
 
@@ -314,12 +313,12 @@ internal static class SpanComponents
         // decomposed jamo stand for it alone.
         private static int ClusterEnd(ReadOnlySpan<char> text, int start)
         {
-            UnicodeStability.CodePoint(text, start, out int width);
+            UnicodeCharacters.CodePoint(text, start, out int width);
             int end = start + width;
             while (end < text.Length)
             {
-                int next = UnicodeStability.CodePoint(text, end, out int nextWidth);
-                if (!UnicodeStability.IsMark(next) && next is not ((>= 0x1160 and <= 0x11FF) or (>= 0xD7B0 and <= 0xD7FF)))
+                int next = UnicodeCharacters.CodePoint(text, end, out int nextWidth);
+                if (!UnicodeCharacters.IsMark(next) && next is not ((>= 0x1160 and <= 0x11FF) or (>= 0xD7B0 and <= 0xD7FF)))
                 {
                     break;
                 }
@@ -331,43 +330,9 @@ internal static class SpanComponents
         }
     }
 
-    // Which characters no context can change under a normalization form: their own normalization is themselves, they are
-    // not marks (which reorder and compose with what precedes them), and not Hangul vowel or final jamo (which compose with
-    // the jamo before them). A text of such characters is already normalized. One bit per code point, computed a block of
-    // 256 at a time the first time a block is met (two threads may compute the same block; they compute the same bits).
-    private static class UnicodeStability
+    // Code points and marks for the clusters above.
+    private static class UnicodeCharacters
     {
-        private static readonly ulong[]?[][] Blocks = [new ulong[]?[0x1100], new ulong[]?[0x1100], new ulong[]?[0x1100], new ulong[]?[0x1100]];
-
-        public static bool AllStable(ReadOnlySpan<char> text, NormalizationForm form)
-        {
-            var table = Blocks[Index(form)];
-            for (int i = 0; i < text.Length;)
-            {
-                if (text[i] < 0x80)
-                {
-                    i++;                                                           // ASCII is stable in every form
-                    continue;
-                }
-
-                if (char.IsSurrogate(text[i]) && !(char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])))
-                {
-                    return false;                                                  // a lone surrogate: let normalization refuse it
-                }
-
-                int c = CodePoint(text, i, out int width);
-                var block = Volatile.Read(ref table[c >> 8]) ?? Build(table, c >> 8, form);
-                if ((block[(c & 0xFF) >> 6] & (1UL << (c & 63))) == 0)
-                {
-                    return false;
-                }
-
-                i += width;
-            }
-
-            return true;
-        }
-
         public static int CodePoint(ReadOnlySpan<char> text, int at, out int width)
         {
             if (char.IsHighSurrogate(text[at]) && at + 1 < text.Length && char.IsLowSurrogate(text[at + 1]))
@@ -382,48 +347,6 @@ internal static class SpanComponents
 
         public static bool IsMark(int c) => CharUnicodeInfo.GetUnicodeCategory(c)
             is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark;
-
-        private static int Index(NormalizationForm form) => form switch
-        {
-            NormalizationForm.FormC => 0,
-            NormalizationForm.FormD => 1,
-            NormalizationForm.FormKC => 2,
-            _ => 3,
-        };
-
-        private static ulong[] Build(ulong[]?[] table, int block, NormalizationForm form)
-        {
-            var bits = new ulong[4];
-            for (int k = 0; k < 256; k++)
-            {
-                if (Stable((block << 8) | k, form))
-                {
-                    bits[k >> 6] |= 1UL << (k & 63);
-                }
-            }
-
-            Volatile.Write(ref table[block], bits);
-            return bits;
-        }
-
-        private static bool Stable(int c, NormalizationForm form)
-        {
-            if (c is (>= 0xD800 and <= 0xDFFF) or (>= 0x1160 and <= 0x11FF) or (>= 0xD7B0 and <= 0xD7FF)
-                || IsMark(c) || CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.OtherNotAssigned)
-            {
-                return false;
-            }
-
-            string one = char.ConvertFromUtf32(c);
-            try
-            {
-                return string.Equals(one.Normalize(form), one, StringComparison.Ordinal);
-            }
-            catch (ArgumentException)
-            {
-                return false;
-            }
-        }
     }
 
     // Prepend: the string goes before the text, standing for its first character; an empty text stays empty (as the string
