@@ -449,7 +449,27 @@ internal static class SpanComponents
         }
     }
 
-    // Replace of a literal: every occurrence, left to right, as string.Replace (ordinal); the content stands for the occurrence.
+    // Replace's content stands for the occurrence's last character, as tokenizers' NormalizedString.replace aligns it (each
+    // content character an insertion after the replaced ones); an empty occurrence's for the character before it.
+    private static void AppendReplacement(NormalizedText.Rewriter writer, ReadOnlySpan<char> span, string content, int at, int length)
+    {
+        int end = at + length;
+        if (end == 0)
+        {
+            foreach (char c in content)
+            {
+                writer.AppendOrigin(c, 0, 0);
+            }
+
+            return;
+        }
+
+        int width = end > 1 && char.IsSurrogatePair(span[end - 2], span[end - 1]) ? 2 : 1;
+        writer.Append(content, end - width, width);
+    }
+
+    // Replace of a literal: every occurrence, left to right, as string.Replace (ordinal); the content stands for the
+    // occurrence's last character (AppendReplacement).
     private sealed class LiteralReplaceNormalizer(string pattern, string content)
     {
         public void Run(NormalizedText text)
@@ -467,7 +487,7 @@ internal static class SpanComponents
             while (at >= 0)
             {
                 writer.Copy(last, at - last);
-                writer.Append(content, at, pattern.Length);
+                AppendReplacement(writer, span, content, at, pattern.Length);
                 last = at + pattern.Length;
                 int next = span[last..].IndexOf(pattern, StringComparison.Ordinal);
                 at = next < 0 ? -1 : last + next;
@@ -478,8 +498,8 @@ internal static class SpanComponents
         }
     }
 
-    // Replace of a regular expression: every match (empty ones too, as Regex.Replace); a content with substitutions ($1)
-    // runs through Regex.Replace itself.
+    // Replace of a regular expression: every match (empty ones too, as Regex.Replace), aligned as a literal's; a content
+    // with substitutions ($1) runs through Regex.Replace itself.
     private sealed class RegexReplaceNormalizer(Regex pattern, string content)
     {
         private readonly bool _substitutes = content.Contains('$', StringComparison.Ordinal);
@@ -510,7 +530,7 @@ internal static class SpanComponents
             {
                 var match = matches.Current;
                 writer.Copy(last, match.Index - last);
-                writer.Append(content, match.Index, match.Length);
+                AppendReplacement(writer, span, content, match.Index, match.Length);
                 last = match.Index + match.Length;
             }
             while (matches.MoveNext());
@@ -624,9 +644,9 @@ internal static class SpanComponents
                 var piece = span.Slice(start, length);
                 bool begins = (piece.Length > 0 && piece[0] == ' ') || piece.StartsWith(replacement, StringComparison.Ordinal);
                 int from = writer.Position;
-                if ((scheme == "always" || (scheme == "first" && i == 0 && atStart)) && !begins)
+                if ((scheme == "always" || (scheme == "first" && i == 0 && atStart)) && !begins && length > 0)
                 {
-                    writer.Append(replacement, start, FirstWidth(piece));
+                    writer.Append(replacement, start, FirstWidth(piece));            // not before empty text, as Hugging Face's
                 }
 
                 int run = start;

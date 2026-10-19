@@ -11,7 +11,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] TokenizerEncodingGroup =
     [
         ("tokenizers: encoding: BPE (byte level, Metaspace, Qwen's split, Gemma's byte fallback, Whisper, ByteLevel and RobertaProcessing trimming) gives tokenizers' ids, tokens, offsets, type ids, special-tokens mask and sequence ids on every corpus line", TokenizerEncodingBpe),
-        ("tokenizers: encoding: WordPiece (uncased, cased) and SentencePiece-style BPE give expected-hf.json's offsets, ids, type ids, masks and sequence ids for single texts and pairs, and Decode skips special tokens when asked", TokenizerEncodingReferences),
+        ("tokenizers: encoding: WordPiece (uncased, cased), SentencePiece-style BPE and Unigram (with and without byte fallback) give expected-hf.json's offsets, ids, type ids, masks and sequence ids for single texts and pairs, and Decode skips special tokens when asked", TokenizerEncodingReferences),
         ("tokenizers: encoding: the detailed encode gives Encode's ids for every tokenizer.json in the test data, on the suite's texts and the corpus", TokenizerEncodingSameIds),
         ("tokenizers: encoding: truncation (longest_first, only_first, only_second) and padding (a batch to its longest, to a fixed length) as tokenizers does them", TokenizerEncodingTruncationPadding),
         ("tokenizers: encoding: a batch equals its texts one by one, on one worker and on every core (Workers, IDRAK_TOKENIZER_WORKERS); a bad worker count is refused", TokenizerEncodingBatch),
@@ -84,7 +84,7 @@ internal static partial class Tests
 
     private static void TokenizerEncodingReferences(Device device)
     {
-        foreach (string name in new[] { "wordpiece-uncased", "wordpiece-cased", "bpe" })
+        foreach (string name in new[] { "wordpiece-uncased", "wordpiece-cased", "bpe", "unigram", "unigram-bytes" })
         {
             string folder = TestData($"tokenizers/{name}");
             var tokenizer = PretrainedTokenizers.Load(Path.Combine(folder, "tokenizer.json"));
@@ -125,7 +125,7 @@ internal static partial class Tests
             }
             catch (NotSupportedException)
             {
-                continue;                                                      // a model type a later phase builds (Unigram)
+                continue;                                                      // a model type nobody registered
             }
 
             foreach (string text in texts)

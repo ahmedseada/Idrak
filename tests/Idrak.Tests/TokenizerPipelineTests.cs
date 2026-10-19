@@ -172,6 +172,20 @@ internal static partial class Tests
             Check(origins.SequenceEqual(expected), $"{form} of {string.Join(" ", text.Select(c => $"U+{(int)c:X4}"))}: [{string.Join(", ", origins)}], tokenizers [{string.Join(", ", expected)}]");
         }
 
+        // Replace's content stands for the occurrence's last character, as tokenizers' NormalizedString.replace aligns it.
+        foreach (var (pattern, text, expected) in new (string, string, (int, int)[])[]
+                 {
+                     ("""{"Regex": " {2,}"}""", "a   b", [(0, 1), (3, 4), (4, 5)]),
+                     ("""{"String": "ab"}""", "xaby", [(0, 1), (2, 3), (2, 3), (3, 4)]),
+                 })
+        {
+            using var normalized = new NormalizedText();
+            normalized.Reset(text);
+            SpanComponents.BuiltInNormalizer(JsonNode.Parse($$"""{"type": "Replace", "pattern": {{pattern}}, "content": "{{(pattern.Contains("Regex", StringComparison.Ordinal) ? "▁" : "--")}}"}""")!.AsObject())(normalized);
+            var origins = Enumerable.Range(0, normalized.Span.Length).Select(i => normalized.OriginOf(i)).ToArray();
+            Check(origins.SequenceEqual(expected), $"Replace {pattern} in '{text}': [{string.Join(", ", origins)}], tokenizers [{string.Join(", ", expected)}]");
+        }
+
         var range = Run("", """{"type": "Whitespace"}""", "xx alpha beta yy", start: 3, length: 10);
         Check(range.SequenceEqual([("alpha", 3, 8), ("beta", 9, 13)]), $"a range inside a longer text gives offsets in the whole text: {string.Join(", ", range)}");
 

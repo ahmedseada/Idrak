@@ -13,7 +13,8 @@ namespace Idrak.Models;
 /// control, unknown and user-defined pieces as added tokens. The pipeline is chosen to reproduce SentencePiece itself
 /// (what <c>sentencepiece</c> gives for the file), not a converted tokenizer.json:
 /// <list type="bullet">
-/// <item>the charsmap as a <c>Precompiled</c> normalizer in SentencePiece's mode (<c>"mode": "sentencepiece"</c>);</item>
+/// <item>the charsmap as a <c>Precompiled</c> normalizer in SentencePiece's mode (<c>"mode": "sentencepiece"</c>), and a
+/// Unigram model in SentencePiece's mode too (scores summed in float, reserved pieces not matched in text);</item>
 /// <item>the normalizer spec's whitespace handling as standard normalizers: extra spaces removed (<c>Replace</c> with
 /// <c>\A +</c>, <c> {2,}</c>, and the trailing space symbols), the dummy prefix (<c>Prepend</c>), spaces escaped as ▁
 /// (<c>Replace</c>);</item>
@@ -83,9 +84,10 @@ internal sealed class SentencePieceReader : ITokenizerFileReader
             case SentencePieceAlgorithm.Unigram:
                 json["model"] = new JsonObject
                 {
-                    ["type"] = "Unigram",
+                    ["type"] = UnigramTokenizer.Type,
                     ["unk_id"] = unknown >= 0 ? unknown : null,
                     ["byte_fallback"] = trainer.ByteFallback,
+                    [UnigramTokenizer.ModeField] = UnigramTokenizer.SentencePieceMode,   // the lattice as sentencepiece's
                 };
                 var pieces = new (string, double)[model.Count];
                 for (int id = 0; id < pieces.Length; id++)

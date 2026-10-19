@@ -50,6 +50,7 @@ internal static class LibraryModelFormats
     {
         TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
         TokenizerModels.Register(TokenizerModels.WordPiece, WordPieceTokenizer.FromDefinition);
+        TokenizerModels.Register(UnigramTokenizer.Type, UnigramTokenizer.FromDefinition);
     }
 
     // Asked in this order: a folder with several files reads tokenizer.json first, then a SentencePiece model, then vocab.txt.
