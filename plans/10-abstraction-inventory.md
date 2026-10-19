@@ -12,7 +12,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 71 | 13 | 38 | 121 | 0 |
-| `Idrak` | 13 | 4 | 15 | 32 | 0 |
+| `Idrak` | 14 | 4 | 15 | 33 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
@@ -179,18 +179,19 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.GgufTokenizers` | registry | public | — |  | bert, gpt2, llama, t5 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufTypes` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | TokenizerComponents.GuardedPreTokenizer, TokenizerComponents.PreTokenizer |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITokenizerCompanionFiles` | interface | public | — | UnigramTokenizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerFileReader` | interface | public | — | SentencePieceReader, TokenizerJsonReader, VocabTxtReader |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerPostProcessor` | interface | public | — | PostProcessors.Bert, PostProcessors.ByteLevel, PostProcessors.Chain, PostProcessors.Roberta, PostProcessors.Template, TokenizerComponents.GuardedPostProcessor |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer, UnigramTrainer, WordPieceTrainer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | — |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | Device | CheckpointWeights |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerFiles` | registry | public | — |  | sentencepiece, tokenizer.json, vocab.txt | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerModels` | registry | public | — |  | BPE, Unigram, WordPiece | Idrak | Idrak |
-| `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe | — | Idrak |
+| `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe, unigram, wordpiece | — | Idrak |
 | `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.WeightCodec` | abstract class | public | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxExportOps` | registry | public | Module |  | — | Idrak | Idrak |

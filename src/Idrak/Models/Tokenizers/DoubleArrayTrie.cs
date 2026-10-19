@@ -164,6 +164,24 @@ internal sealed class DoubleArrayTrie
     }
 
     /// <summary>
+    /// SentencePiece's precompiled character map of this trie: a little-endian uint32 with the trie's size in bytes, the
+    /// units, then <paramref name="normalized"/> (the strings the values point into, each ended by a 0 byte); what
+    /// <see cref="ReadCharsmap"/> reads.
+    /// </summary>
+    public byte[] Charsmap(ReadOnlySpan<byte> normalized)
+    {
+        var blob = new byte[4 + (_units.Length * 4) + normalized.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(blob, (uint)(_units.Length * 4));
+        for (int i = 0; i < _units.Length; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(blob.AsSpan(4 + (i * 4)), _units[i]);
+        }
+
+        normalized.CopyTo(blob.AsSpan(4 + (_units.Length * 4)));
+        return blob;
+    }
+
+    /// <summary>
     /// Finds every key that is a prefix of <paramref name="key"/>, shortest first, in one walk. Writes up to
     /// <paramref name="matches"/>' length of them and returns how many there are (which may be more). Allocates nothing.
     /// </summary>
