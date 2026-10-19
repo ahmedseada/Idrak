@@ -3,16 +3,17 @@
 For a Claude Code session (any account) that picks this project up. Read this first, then `CLAUDE.md` (the owner's
 standing rules; they win over anything here), then the plan you are asked to work on.
 
-## Where things stand (2026-10-19)
+## Where things stand (2026-10-19, evening)
 
-- Branch `abstraction`, last commit pushed: the Plan 24 T4 merge (48d058d). Nothing is in progress and no agent runs.
-- **Plan 24 (tokenizers)** — [24-tokenizers.md](24-tokenizers.md): L0, L1, T0, T1, T2, T3 (encodings, detection,
-  GGUF) and T4 are built, merged and pushed; T5 is on hold for the owner. What is left, in order, is its section
-  **"What is left (handover, 2026-10-19)"**: library-owned Unicode normalization (a real bug in the CLI), the T3
-  callers (`TextEncoder`, `idrak tokenize --offsets --pair --special`), T4 leftovers, the owner's Windows/CUDA runs.
-- **Scope: finish Plan 24 only.** No other plan is to be started (the owner dropped Plan 25, Idrak.Extensions.AI).
-- **The owner said: no new work until they say so.** Do not start anything from "What is left" on your own; report
-  status and wait for the owner to name the next item.
+- Branch `abstraction`, last commit pushed: the merge of the second speed round (7b8c85f), then this handover's
+  update. Nothing is in progress, no agent runs, no worktree is left.
+- **Plan 24 (tokenizers)** — [24-tokenizers.md](24-tokenizers.md): every phase but T5 is built, merged and pushed, and
+  so are the old handover's three leftovers (library-owned Unicode normalization, the T3 callers, the T4 leftovers)
+  and two speed rounds; see its "Finished after the handover". The merged tree passed 147 of 147 targeted CPU tests.
+  What is left is its section **"What is left (2026-10-19, after 7b8c85f)"**: the owner's runs (the exact list is in
+  "The owner's runs"), T5 on hold, and measured candidates nobody may start without the owner.
+- **Scope: Plan 24 only.** No other plan is to be started (the owner dropped Plan 25, Idrak.Extensions.AI).
+- **No new work until the owner says so.** Report status and wait for the owner to name the next item.
 
 ## How to work with the owner
 
@@ -28,6 +29,17 @@ standing rules; they win over anything here), then the plan you are asked to wor
   filters with `--no-build`. The owner runs GPU tests, apps, training and the full suite; you never do.
 - **Report results faithfully**: test counts, what failed and why, what you could not do. Write findings and
   decisions into the plan's "as built" notes and the Runs table, not only into chat.
+- **Do not chase what a bench finds** (the owner, 2026-10-19). CLAUDE.md says a slow or memory-heavy path found in
+  the library is fixed without asking; read as "anything a new measurement shows", it never ends: each fix round
+  measures again and finds the next spot. Two speed rounds (agents E and F) were started that way after the asked
+  work, and the owner objected ("you will chase an endless job"). Finish what was asked; list what measurements show
+  in the plan's "What is left" with numbers; ask in one line before starting any agent or fix the owner did not
+  name, and never announce a count of remaining work and then exceed it.
+- **After merging an agent's work, build and run before pushing** (the owner, 2026-10-19): merge into the local
+  `abstraction`, build once, run the targeted CPU filters once, push only when green. Two pieces each tested alone
+  can fail together (a merge of C and E went out untested before this was asked; the joint run later passed).
+- **Status means a table, now**: phase, state, what runs, what is next. The owner asks "plan status" often and wants
+  it short and immediate, not an explanation.
 
 ## The way of working (from CLAUDE.md, in practice)
 
@@ -81,4 +93,20 @@ standing rules; they win over anything here), then the plan you are asked to wor
   "e" + U+0301.
 - A background wait loop (`until grep ... ; do sleep`) on a process that dies waits forever; check the producer's
   exit and stop such loops. Never use `tail -f` for a one-time wait.
-- Tests that pass only because the test process has something the CLI lacks (ICU) prove nothing about the CLI.
+- Tests that pass only because the test process has something the CLI lacks (ICU) prove nothing about the CLI. The
+  library no longer calls the platform's normalization (a test scans `src/`); `tokenizers: unicode normalization:`
+  runs the real idrak tool in its own process.
+- **A build of `tests/Idrak.Tests` takes about 3 minutes in this cloud container even when it is idle** (3m 04s
+  measured), longer while another build runs. Every new worktree starts cold. Do not build in parallel with agents
+  when it can be avoided, batch every fix before a build, and read the code a failing test touches before changing
+  its expectation, so one rebuild covers all failures.
+- **A stuck compiler server** (`VBCSCompiler` at 140% CPU with no build running) skewed timings for an hour; check
+  `ps` before measuring and run `dotnet build-server shutdown` when one lingers. Measure speed in a scratch Release
+  program with `DOTNET_TieredCompilation=0` and medians, not in the shared test run (±50% there).
+- **One `Regex` shared by threads** builds a matcher per match on every other thread (allocations and lost
+  scaling); tokenizer patterns are `TokenizerRegex` with a per-thread copy. Use it for any new pattern.
+- **unicode.org is blocked here**; the UCD files come from raw.githubusercontent.com's
+  `unicode-org/unicodetools/main/unicodetools/data/ucd/<version>/`. PyPI's `unicodedata2` exists, but the earlier
+  Imaging note found the package route unreliable; the generators read the UCD files.
+- `TokenizerEncodeOptions.Offsets = false` (ids only) is the fast batch path; the detailed encode builds offsets and
+  token strings, slower and several times the memory. A caller that needs only ids uses it.
