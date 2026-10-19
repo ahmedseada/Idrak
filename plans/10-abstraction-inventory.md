@@ -191,7 +191,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerFiles` | registry | public | — |  | sentencepiece, tokenizer.json, vocab.txt | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerModels` | registry | public | — |  | BPE, Unigram, WordPiece | Idrak | Idrak |
-| `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe, unigram, wordpiece | — | Idrak |
+| `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe, unigram, wordpiece | Idrak | Idrak |
 | `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.WeightCodec` | abstract class | public | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxExportOps` | registry | public | Module |  | — | Idrak | Idrak |

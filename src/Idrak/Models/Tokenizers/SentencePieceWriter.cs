@@ -43,6 +43,13 @@ internal static class SentencePieceWriter
         public int EmIterations { get; init; }
         public int MaxPieceLength { get; init; }
         public bool SplitDigits { get; init; }
+        public bool SplitByWhitespace { get; init; } = true;
+        public bool SplitByUnicodeScript { get; init; } = true;
+        public bool SplitByNumber { get; init; } = true;
+        public bool AllowWhitespaceOnlyPieces { get; init; }
+
+        /// <summary>The longest line read, in bytes; 0 (no limit) is written as sentencepiece's largest, 1073741824.</summary>
+        public int MaxSentenceLength { get; init; }
         public IReadOnlyList<string> ControlSymbols { get; init; } = [];
         public IReadOnlyList<string> UserDefinedSymbols { get; init; } = [];
     }
@@ -78,8 +85,13 @@ internal static class SentencePieceWriter
             Varint(trainer, 14, (ulong)training.SeedSize);
             Float(trainer, 15, training.ShrinkingFactor);
             Varint(trainer, 17, (ulong)training.EmIterations);
+            Varint(trainer, 18, (ulong)(training.MaxSentenceLength > 0 ? training.MaxSentenceLength : 1 << 30));
             Varint(trainer, 20, (ulong)training.MaxPieceLength);
+            Varint(trainer, 21, training.SplitByUnicodeScript ? 1UL : 0UL);
+            Varint(trainer, 22, training.SplitByWhitespace ? 1UL : 0UL);
+            Varint(trainer, 23, training.SplitByNumber ? 1UL : 0UL);
             Varint(trainer, 25, training.SplitDigits ? 1UL : 0UL);
+            Varint(trainer, 26, training.AllowWhitespaceOnlyPieces ? 1UL : 0UL);
             foreach (string symbol in training.ControlSymbols)
             {
                 Bytes(trainer, 30, Encoding.UTF8.GetBytes(symbol));

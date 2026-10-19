@@ -474,34 +474,70 @@ internal sealed class DoubleArrayTrie
             }
 
             // A far offset must be a multiple of 256: the base's low byte must equal the node's.
-            int first = near ? 0 : node & 0xFF;
-            int last = near ? BlockSize - 1 : node & 0xFF;
-            for (int low = first; low <= last; low++)
+            if (!near)
             {
-                int candidate = start | low;
-                if (_bases[candidate])
-                {
-                    continue;
-                }
+                found = start | (node & 0xFF);
+                return Fits(found, labels);
+            }
 
-                bool fits = true;
-                foreach (int label in labels)
+            // A block with few free units: a base that fits puts its first label on a free unit, so the candidates are the
+            // free units XOR that label; the lowest that fits is the one the scan below finds. (Most open blocks are nearly
+            // full, and scanning their 256 bases for every node cost 3,200 checks a node on a 225,000-key charsmap.)
+            if (_free[block] * 4 <= BlockSize)
+            {
+                var used = MemoryMarshal.Cast<bool, byte>(_used.AsSpan(start, BlockSize));
+                int best = -1;
+                for (int at = 0; at < BlockSize;)
                 {
-                    if (_used[candidate ^ label])
+                    int free = used[at..].IndexOf((byte)0);
+                    if (free < 0)
                     {
-                        fits = false;
                         break;
                     }
+
+                    at += free;
+                    int candidate = (start + at) ^ labels[0];
+                    if ((best < 0 || candidate < best) && Fits(candidate, labels))
+                    {
+                        best = candidate;
+                    }
+
+                    at++;
                 }
 
-                if (fits)
+                found = Math.Max(best, 0);
+                return best >= 0;
+            }
+
+            for (int low = 0; low < BlockSize; low++)
+            {
+                if (Fits(start | low, labels))
                 {
-                    found = candidate;
+                    found = start | low;
                     return true;
                 }
             }
 
             return false;
+        }
+
+        // Whether a node's children fit at this base: the base is not another node's, and every label's unit is free.
+        private bool Fits(int candidate, ReadOnlySpan<int> labels)
+        {
+            if (_bases[candidate])
+            {
+                return false;
+            }
+
+            foreach (int label in labels)
+            {
+                if (_used[candidate ^ label])
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private void AddBlock()

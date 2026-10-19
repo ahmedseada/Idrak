@@ -74,6 +74,18 @@ internal sealed class DataTokenizerCommand : Command
               --seed-size N        frequent substrings that seed the vocabulary before pruning (1000000)
               --shrinking S        the share of the pieces each pruning round keeps (0.75)
               --em-steps N         EM steps before each pruning round (2)
+              --normalization R    identity (the text as it is; the default), nfkc, or nmt_nfkc (NFKC, control
+                                   characters removed, other whitespace made spaces): SentencePiece's rules, built from
+                                   the library's Unicode tables and written into the tokenizer
+              --max-sentence N     skip lines over N bytes (0: none, the default; SentencePiece skips over 4192)
+              --no-whitespace-split  pieces may span words (a ▁ inside a piece)
+              --no-script-split    pieces may mix scripts (letters with punctuation, one alphabet with another)
+              --no-number-split    digits may join letters of any script in a piece
+              --whitespace-suffix  a ▁ ends each word instead of starting it (written into the tokenizer)
+              --whitespace-pieces  runs of ▁ may be pieces of their own (indentation written as ▁)
+              --desired-size F     pruning stops at F times the vocabulary, then the best pieces fill it (1.1)
+              --expected-floor F   each EM step drops the pieces expected fewer than F times (0.5)
+              --unknown-penalty F  while learning, an uncovered character scores F below the lowest piece (10)
           unigram and wordpiece:
               --split-digits       every digit a token of its own
               --arabic LIST        Arabic marks removed before learning and encoding, written into the tokenizer:
@@ -93,6 +105,7 @@ internal sealed class DataTokenizerCommand : Command
           idrak data text -n 20000 -o corpus.txt
           idrak data tokenizer corpus.txt --vocab 32000 -o tokenizer.json
           idrak data tokenizer corpus.txt --model unigram --vocab 8000 --byte-fallback -o out/tokenizer.json
+          idrak data tokenizer corpus.txt --model unigram --vocab 8000 --normalization nmt_nfkc -o out/tokenizer.json
           idrak data tokenizer arabic.txt --model wordpiece --vocab 30000 --arabic tatweel,diacritics -o tokenizer.json
           idrak data tokenizer books/*.txt --vocab 64000 --special "<s>" --special "</s>" -o tokenizer.json
           idrak data tokens corpus.txt --tokenizer tokenizer.json -o tokens.bin
@@ -103,9 +116,14 @@ internal sealed class DataTokenizerCommand : Command
     [
         "--vocab", "--min-frequency", "--special", "--pre-tokenizer", "--limit-alphabet", "--trainer", "--workers", "--line-ends", "--out", "--from", "--source", "--audio",
         "--model", "--unk", "--character-coverage", "--max-piece", "--seed-size", "--shrinking", "--em-steps", "--arabic", "--scoring",
+        "--normalization", "--max-sentence", "--desired-size", "--expected-floor", "--unknown-penalty",
     ];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--no-special", "--prefix-space", "--byte-fallback", "--split-digits", "--lowercase", "--strip-accents", "--keep-accents"];
+    public override IReadOnlyCollection<string> Flags { get; } =
+    [
+        "--no-special", "--prefix-space", "--byte-fallback", "--split-digits", "--lowercase", "--strip-accents", "--keep-accents",
+        "--no-whitespace-split", "--no-script-split", "--no-number-split", "--whitespace-suffix", "--whitespace-pieces",
+    ];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
@@ -230,6 +248,16 @@ internal sealed class DataTokenizerCommand : Command
             StripAccents = context.Flag("--strip-accents") ? true : context.Flag("--keep-accents") ? false : null,
             Scoring = context.Option("--scoring") ?? defaults.Scoring,
             Arabic = context.Option("--arabic") is { } arabic ? [.. arabic.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)] : [],
+            Normalization = context.Option("--normalization") ?? defaults.Normalization,
+            MaxSentenceLength = context.IntOption("--max-sentence", defaults.MaxSentenceLength),
+            SplitByWhitespace = !context.Flag("--no-whitespace-split"),
+            SplitByUnicodeScript = !context.Flag("--no-script-split"),
+            SplitByNumber = !context.Flag("--no-number-split"),
+            TreatWhitespaceAsSuffix = context.Flag("--whitespace-suffix"),
+            AllowWhitespaceOnlyPieces = context.Flag("--whitespace-pieces"),
+            DesiredSizeFactor = Number(context, "--desired-size", defaults.DesiredSizeFactor),
+            ExpectedCountFloor = Number(context, "--expected-floor", defaults.ExpectedCountFloor),
+            UnknownPenalty = Number(context, "--unknown-penalty", defaults.UnknownPenalty),
         };
         ITokenizerTrainer trainer;
         try
@@ -321,6 +349,8 @@ internal sealed class DataTokenizerCommand : Command
                      ("MaxPieceLength", "--max-piece"), ("SeedSize", "--seed-size"), ("ShrinkingFactor", "--shrinking"), ("EmIterations", "--em-steps"),
                      ("Scoring", "--scoring"), ("Arabic", "--arabic"), ("UnknownToken", "--unk"), ("LineEnds", "--line-ends"), ("PreTokenizer", "--pre-tokenizer"),
                      ("LimitAlphabet", "--limit-alphabet"), ("Workers", "--workers"), ("SpecialTokens", "--special"),
+                     ("MaxSentenceLength", "--max-sentence"), ("Normalization", "--normalization"), ("DesiredSizeFactor", "--desired-size"),
+                     ("ExpectedCountFloor", "--expected-floor"), ("UnknownPenalty", "--unknown-penalty"),
                  })
         {
             message = message.Replace(setting, option, StringComparison.Ordinal);
