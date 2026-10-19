@@ -21,6 +21,7 @@ internal static partial class Tests
         ("cli run: chat drives a conversation with slash commands, --file, --history saved and resumed, --json", CliRunChat),
         ("cli run: batch answers JSON Lines and resumes after an interruption", CliRunBatch),
         ("cli run: complete, tokenize (--chat, --count), template, embed (JSON and .npy), compare", CliRunText),
+        ("cli run: tokenize --offsets, --pair, --special, --max-length, --truncation give tokenizers' encodings (WordPiece pairs, Unigram Arabic and emoji); plain output unchanged; bad values refused", d => { if (d == Device.Cpu) CliRunTokenizeDetailed(d); }),
         ("cli run: tools list/test on an assembly, run with --tools, agent in a read-only workspace, run --schema", CliRunToolsAndAgent),
     ];
 
@@ -242,6 +243,111 @@ internal static partial class Tests
         Check(code == 0 && json["results"] is JsonArray { Count: 2 } results && ((string)results[1]!["label"]!).Contains("-k int8"), $"compare: {text}");
         (code, text, _) = RunIdrakOn(device, null, "compare", CliModel, CliModel, "Hello", "--max-tokens", "3", "--width", "60");
         Check(code == 0 && text.Contains(" | ") && text.Contains("tokens/s"), "compare side by side");
+    }
+
+    private static void CliRunTokenizeDetailed(Device device)
+    {
+        // Without the new options: the plain encoding, in the same table and JSON as before them.
+        var bpe = Idrak.Models.BpeTokenizer.Load(CliModel);
+        var plainIds = bpe.Encode("hello world");
+        string[] headers = ["#", "ID", "Token"];
+        var rows = plainIds.Select((id, i) => new[] { i.ToString(System.Globalization.CultureInfo.InvariantCulture), id.ToString(System.Globalization.CultureInfo.InvariantCulture), bpe.TokenOf(id) }).ToList();
+        var widths = Enumerable.Range(0, 3).Select(c => Math.Max(headers[c].Length, rows.Max(r => r[c].Length))).ToArray();
+        string Line(string[] cells) => string.Join("  ", cells.Select((c, i) => i == cells.Length - 1 ? c : c.PadRight(widths[i]))).TrimEnd();
+        string expected = string.Join('\n', [Line(headers), string.Join("  ", widths.Select(w => new string('-', w))), .. rows.Select(Line), $"{plainIds.Count} tokens"]) + "\n";
+        var (code, text, _) = RunIdrakOn(device, null, "tokenize", CliModel, "hello world");
+        Check(code == 0 && text.ReplaceLineEndings("\n") == expected, $"tokenize without the new options changed its output:\n{text}\nexpected:\n{expected}");
+        (code, text, _) = RunIdrakOn(device, null, "tokenize", CliModel, "hello world", "-j");
+        Check(code == 0 && string.Join(',', JsonOf(text, "tokenize -j").Select(p => p.Key)) == "model,text,count,ids,tokens", $"tokenize -j without the new options: {text}");
+
+        // Every field of the command's JSON against a tokenizers reference entry (only the tokens it keeps, when given).
+        void Same(string where, JsonObject actual, JsonNode reference, Func<int, bool>? keep = null)
+        {
+            int[] kept = [.. Enumerable.Range(0, reference["ids"]!.AsArray().Count).Where(i => keep?.Invoke(i) ?? true)];
+            foreach (string field in new[] { "ids", "type_ids", "sequence_ids", "special_tokens_mask" })
+            {
+                var wanted = kept.Select(i => (int)reference[field]![i]!);
+                Check(actual[field]!.AsArray().Select(v => (int)v!).SequenceEqual(wanted), $"{where}: {field} {actual[field]!.ToJsonString()}, tokenizers [{string.Join(", ", wanted)}]");
+            }
+
+            var offsets = kept.Select(i => ((int)reference["offsets"]![i]![0]!, (int)reference["offsets"]![i]![1]!));
+            Check(actual["offsets"]!.AsArray().Select(o => ((int)o![0]!, (int)o[1]!)).SequenceEqual(offsets), $"{where}: offsets {actual["offsets"]!.ToJsonString()}");
+            Check((int)actual["count"]! == kept.Length, $"{where}: count");
+        }
+
+        // WordPiece pairs with special tokens, and truncated by each strategy (tokenizers' references).
+        string wordPiece = TestData("tokenizers/wordpiece-uncased");
+        var hf = JsonNode.Parse(File.ReadAllText(Path.Combine(wordPiece, "expected-hf.json")))!;
+        int pairs = 0;
+        foreach (var entry in hf["pairs"]!.AsArray().Take(4))
+        {
+            (code, text, _) = RunIdrakOn(device, null, "tokenize", wordPiece, (string)entry!["text"]!, "--pair", (string)entry["pair"]!, "--special", "-j");
+            var json = JsonOf(text, "tokenize --pair --special");
+            Check(code == 0 && (string?)json["pair"] == (string)entry["pair"]!, $"tokenize --pair: {text}");
+            Same($"wordpiece pair {pairs++}", json, entry);
+        }
+
+        int truncations = 0;
+        foreach (var entry in JsonNode.Parse(File.ReadAllText(TestData("tokenizers/encodings.json")))!["truncation"]!.AsArray())
+        {
+            (code, text, _) = RunIdrakOn(device, null, "tokenize", wordPiece, (string)entry!["text"]!, "--pair", (string)entry["pair"]!, "--special",
+                "--max-length", ((int)entry["max_length"]!).ToString(System.Globalization.CultureInfo.InvariantCulture), "--truncation", (string)entry["strategy"]!, "-j");
+            Check(code == 0, $"tokenize --truncation {entry["strategy"]}: exit {code}");
+            Same($"wordpiece truncation {entry["strategy"]} ({truncations++})", JsonOf(text, "tokenize --truncation"), entry);
+        }
+
+        Check(pairs == 4 && truncations >= 6, $"{pairs} pairs, {truncations} truncations compared");
+
+        // Unigram on a line of Arabic and emoji: offsets with and without the special tokens.
+        string unigram = TestData("tokenizers/unigram");
+        var line = JsonNode.Parse(File.ReadAllText(Path.Combine(unigram, "expected-hf.json")))!["lines"]!.AsArray()
+            .First(e => ((string)e!["text"]!).Contains("\U0001F600", StringComparison.Ordinal) && ((string)e["text"]!).Contains('\u0645'))!;
+        string arabic = (string)line["text"]!;
+        (code, text, _) = RunIdrakOn(device, null, "tokenize", unigram, arabic, "--offsets", "--special", "-j");
+        Same("unigram --offsets --special", JsonOf(text, "tokenize --offsets --special"), line);
+        (code, text, _) = RunIdrakOn(device, null, "tokenize", unigram, arabic, "--offsets", "-j");
+        var plain = JsonOf(text, "tokenize --offsets");
+        Same("unigram --offsets", plain, line, i => (int)line["sequence_ids"]![i]! >= 0);
+        var unigramTokenizer = Idrak.Models.PretrainedTokenizers.Load(unigram);
+        Check(plain["ids"]!.AsArray().Select(v => (int)v!).SequenceEqual(unigramTokenizer.Encode(arabic)), "unigram --offsets: the plain encoding's ids");
+
+        // The table: type ids, sequences, offsets and the text each token covers.
+        (code, text, _) = RunIdrakOn(device, null, "tokenize", wordPiece, "Hello, World!", "--pair", "Second", "--special", "--offsets", "-j");
+        var detailed = JsonOf(text, "tokenize --pair --special --offsets");
+        (code, text, _) = RunIdrakOn(device, null, "tokenize", wordPiece, "Hello, World!", "--pair", "Second", "--special", "--offsets");
+        string[] lines = text.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n');
+        int count = (int)detailed["count"]!;
+        Check(code == 0 && lines.Length == count + 3 && lines[0].Split(' ', StringSplitOptions.RemoveEmptyEntries).SequenceEqual(["#", "ID", "Token", "Type", "Sequence", "Start", "End", "Text"])
+              && lines[^1] == $"{count} tokens", $"tokenize --pair --special --offsets table:\n{text}");
+        for (int i = 0; i < count; i++)
+        {
+            int sequence = (int)detailed["sequence_ids"]![i]!, start = (int)detailed["offsets"]![i]![0]!, end = (int)detailed["offsets"]![i]![1]!;
+            string covered = sequence switch { 0 => "Hello, World!"[start..end], 1 => "Second"[start..end], _ => "" };
+            string[] cells = lines[i + 2].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            Check(cells[3] == ((int)detailed["type_ids"]![i]!).ToString(System.Globalization.CultureInfo.InvariantCulture) && cells[4] == sequence.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                  && (covered.Length == 0 ? cells.Length == 7 : cells[^1] == covered), $"tokenize table row {i}: {lines[i + 2]}");
+        }
+
+        Check(detailed["sequence_ids"]!.AsArray().Select(v => (int)v!).Distinct().Order().SequenceEqual([-1, 0, 1]), "the pair's sequences");
+        (code, text, _) = RunIdrakOn(device, null, "tokenize", wordPiece, "Hello, World!", "--special", "--count");
+        Check(code == 0 && text.Trim() == ((int)JsonOf(RunIdrakOn(device, null, "tokenize", wordPiece, "Hello, World!", "--special", "-j").Output, "--special")["count"]!).ToString(System.Globalization.CultureInfo.InvariantCulture)
+              && int.Parse(text.Trim(), System.Globalization.CultureInfo.InvariantCulture) == Idrak.Models.PretrainedTokenizers.Load(wordPiece).Encode("Hello, World!").Count + 2,
+            $"tokenize --special --count: {text}");
+
+        // Bad values are refused, naming the option.
+        foreach (var (args, option) in new[]
+                 {
+                     (new[] { "--max-length", "0" }, "--max-length"), (["--max-length", "-3"], "--max-length"), (["--max-length", "many"], "--max-length"),
+                     (["--max-length", "8", "--truncation", "middle"], "--truncation"), (["--truncation", "only_first"], "--max-length"),
+                 })
+        {
+            var (badCode, _, error) = RunIdrakOn(device, null, ["tokenize", wordPiece, "Hello", .. args]);
+            Check(badCode == 2 && error.Contains(option, StringComparison.Ordinal), $"tokenize {string.Join(' ', args)}: exit {badCode}, {error}");
+        }
+
+        // only_first cannot cut a first text shorter than what must go: an error, not a wrong encoding.
+        var (failed, _, failure) = RunIdrakOn(device, null, "tokenize", wordPiece, "a", "--pair", "one two three four five six", "--special", "--max-length", "4", "--truncation", "only_first");
+        Check(failed != 0 && failure.Contains("only_first", StringComparison.Ordinal), $"only_first that cannot fit: exit {failed}, {failure}");
     }
 
     private static void CliRunToolsAndAgent(Device device)

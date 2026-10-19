@@ -34,6 +34,13 @@ internal static class TokenizerEncodings
             throw new ArgumentException($"Truncation '{strategy}' is not one of longest_first, only_first, only_second.", nameof(options));
         }
 
+        bool left = options.TruncationDirection switch
+        {
+            null => (string?)truncation?["direction"] == "Left",
+            "right" => false,
+            "left" => true,
+            var direction => throw new ArgumentException($"Truncation direction '{direction}' is not one of right, left.", nameof(options)),
+        };
         string pad = options.Padding ?? (padding?["strategy"] switch
         {
             JsonValue value when (string?)value == "BatchLongest" => "longest",
@@ -47,7 +54,7 @@ internal static class TokenizerEncodings
         }
 
         int? fixedPad = options.Padding is null && padding?["strategy"] is JsonObject f ? (int?)f["Fixed"] : null;
-        return new Settings(max, strategy, (string?)truncation?["direction"] == "Left", pad, fixedPad ?? max, (string?)padding?["direction"] == "Left",
+        return new Settings(max, strategy, left, pad, fixedPad ?? max, (string?)padding?["direction"] == "Left",
             options.PadId ?? (int?)padding?["pad_id"], (int?)padding?["pad_type_id"] ?? 0, (string?)padding?["pad_token"]);
     }
 
