@@ -10,7 +10,7 @@ standing rules; they win over anything here), then the plan you are asked to wor
   GGUF) and T4 are built, merged and pushed; T5 is on hold for the owner. What is left, in order, is its section
   **"What is left (handover, 2026-10-19)"**: library-owned Unicode normalization (a real bug in the CLI), the T3
   callers (`TextEncoder`, `idrak tokenize --offsets --pair --special`), T4 leftovers, the owner's Windows/CUDA runs.
-- **Plan 25 (Idrak.Extensions.AI)**: only a draft the owner uploaded; not in the repo, not started.
+- **Scope: finish Plan 24 only.** No other plan is to be started (the owner dropped Plan 25, Idrak.Extensions.AI).
 - **The owner said: no new work until they say so.** Do not start anything from "What is left" on your own; report
   status and wait for the owner to name the next item.
 

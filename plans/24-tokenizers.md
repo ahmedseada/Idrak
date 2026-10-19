@@ -960,8 +960,7 @@ owner's instruction (no new work until the owner says so). Take these in order, 
 4. **T5** (BPE onto the shared span pipeline): on hold until the owner decides. Do not start it.
 5. **The owner's runs** (below): the T3 and T4 lists on Windows, CUDA `pretrained:|gguf:`, and
    `make_fixtures.py --real` for the real models' references (`tokenizers real:`).
-6. **Plan 25 (Idrak.Extensions.AI):** a draft the owner uploaded in the first session; not in the repo and not
-   started. Ask the owner for it before any work.
+6. **Scope:** finishing this plan is the only work; no other plan is started (the owner dropped Plan 25).
 
 ## Speed and memory
 
