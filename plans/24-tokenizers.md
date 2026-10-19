@@ -599,7 +599,11 @@ At most two agents at a time (CLAUDE.md), each in its own worktree, building onl
 | 5 | T4: the Unigram trainer, `SentencePieceWriter` | T4: the WordPiece trainer, then the CLI |
 | 6 | T5 (optional, measured) | none |
 
-The critical path is L0, L1, T1 or T2, T3, T4. The owner's `make_fixtures.py --real` can run as soon as wave 1 is
+The table is a dependency order, not a barrier (the owner, 2026-10-19): the moment an agent finishes, its slot takes
+the next work whose inputs are merged, without waiting for the other slot. Work that needs only wave 1 and can start
+early: the Unigram and WordPiece model cores (piece matching over `DoubleArrayTrie`, before L1's pipeline is merged),
+the GGUF fixture tokenizers (`tools/gguf/make_fixtures.py`), the trainers' suffix array. The critical path is L0, L1,
+T1 or T2, T3, T4. The owner's `make_fixtures.py --real` can run as soon as wave 1 is
 merged. Files both agents of a wave touch (`api/*.txt`, the inventory, `TokenizerComponents.cs`, `Tests.All`,
 `EnvironmentVariables.cs`, the decoder count in `ModelPluginTests.cs`) are merged one agent at a time; the generated
 dumps are regenerated after a conflicting merge, never merged by hand, and that merge gets one build and the
