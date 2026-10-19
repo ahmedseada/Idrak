@@ -9,7 +9,7 @@ L0, L1, T0 and T2 are built and CPU-checked; T1 is in progress. Closes plug-in g
 | L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Done; CPU pass (155 tests) |
 | L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Done; CPU pass |
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
-| T1 | Unigram: encode, decode, byte fallback, sampling | In progress (agent B) |
+| T1 | Unigram: encode, decode, byte fallback, sampling | Done; CPU pass |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
 | T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection, GGUF and encodings done, CPU pass (`t5` encodes once T1 lands); callers (`TextEncoder`, `idrak tokenize`) in progress |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
@@ -500,6 +500,70 @@ lists every file. What the plan did not know:
 - `EncodeRange` into a reused list allocates 0 bytes once warm;
 - `TokenizerSuite` and `TokenizerModelSuite` pass.
 
+**T1 as built (2026-10-19).** `UnigramTokenizer` (internal, `src/Idrak/Models/Tokenizers/UnigramTokenizer.cs`),
+registered as `"Unigram"` beside BPE (`TokenizerModels.Unigram`, public). Group `tokenizers: unigram` (7 tests,
+`tests/Idrak.Tests/TokenizerUnigramTests.cs`). What the plan did not know:
+
+- **The 300-`a` tie is float rounding, not a tie rule.** Both references keep the first of equal scores; sentencepiece
+  sums in `float`, tokenizers in `double`. So the model has a `mode` field, as Precompiled has: the sentencepiece reader
+  writes `"mode": "sentencepiece"` on the Unigram model (scores summed in `float`; control, unknown and byte pieces not
+  matched in text; user-defined pieces with sentencepiece's bonus; unknown score = lowest *normal* score − 10), and
+  without it the lattice is tokenizers' (`double`, every piece in the trie, unknown score = lowest score − 10).
+  tokenizers ignores the field, so a saved file still loads there. Line 51 now agrees on both paths.
+- **Agreement** (ids, then ids and decoded text, of 102 corpus lines):
+  - tokenizer.json vs tokenizers: `unigram` 102 / 94, `unigram-bytes` 102 / 100. Every text difference is a known
+    line: tokenizers' `decoded` skips special tokens, `Decode` does not (`<unk>` stays `<unk>`, `</s>` stays). The
+    reference's ids with the post-processor's tokens decode to its `decoded_with_special` on every line.
+  - tokenizer.model vs sentencepiece: 100 / 100 on both. Lines 59 and 60 differ: the reader makes control pieces added
+    tokens, so `</s>`, `<unk>`, `<cls>` written in text are matched; sentencepiece never matches control pieces.
+    Candidate: a per-added-token "not matched in text" flag for the .model path.
+- **Unknowns and bytes:** a run of unknown characters fuses into one unknown id; with byte fallback it becomes the
+  `<0xNN>` pieces of its bytes (the unknown id if one is missing, as tokenizers). Arbitrary characters round-trip through
+  byte fallback on both paths.
+- **Metaspace on empty text:** text that normalizes to nothing (`\r`, blanks, a run of tatweel under the user rule)
+  gave a lone `▁`; tokenizers gives nothing (`NormalizedString::prepend` does nothing on empty text). Fixed in all three
+  forms (span, string stage, BPE's fast path); the BPE baseline is unchanged.
+- **The suite's "round trip is stable"** cannot hold where text decodes to the unknown piece's text: `<unk>` is an added
+  token and `" ⁇ "` normalizes to `??`, and both re-encode with `▁` after them, in both references. The test names
+  those cases (the `unigram` fixture, and `unigram-bytes` from the .model) and fails on anything else.
+- **Sampling:** `SamplingAlpha`, `SamplingBest` (default -1: forward filtering, backward sampling over the whole
+  lattice; more than 1: n best by a k-best pass, drawn by exp(alpha × score); 1: no sampling), `SamplingSeed`, with
+  `IDRAK_TOKENIZER_ALPHA`, `_NBEST`, `_SEED`. One generator per tokenizer, locked; a sampled encode bypasses the cache.
+  The `unigram-bytes` model's scores are so far apart that sentencepiece itself samples 2 of 60 lines other than the
+  best at alpha 0.1 (ours: 2), so the test samples the `unigram` fixture (sentencepiece: 48 of 60).
+- **Memory:** a thread keeps its lattice arrays for pieces up to 64 KiB of UTF-8 (longer pieces rent and return them);
+  `EncodeRange` into a reused list allocates 0 bytes once warm on every corpus line, both fixtures, both paths, with
+  the piece cache and without it.
+- **Taken from measurements (the reference is not the ceiling):**
+  - `ConcurrentDictionary.Count` takes every lock; the cache size check paid it on each miss (and on every piece with
+    the cache off). Unigram and BPE now count on add. No-cache Unigram went from 6.2M to 8.7-9.3M tokens/s on one
+    thread, from 10.6M to 25-27M on four.
+  - The lattice's arrays came from the pool six times a piece; now a thread keeps them.
+  - Precompiled (tokenizers' mode) looked up every ASCII character through a grapheme split, an encode and a trie walk;
+    an ASCII character that is its own cluster (followed by ASCII, not CR LF) now takes a 128-entry table. The
+    tokenizer.json path went from 14.7M to 18.4M tokens/s warm.
+- **Speed** (the corpus' non-blank lines repeated to 200,640 UTF-16 characters, as `--bench` repeats them to 204,136
+  code points; tokens a second, a 4-thread Linux container, noisy to about ±20%):
+
+  | | one thread cold | one thread warm | 4 threads warm |
+  |---|---|---|---|
+  | sentencepiece (`unigram`) | 6.84M | 7.45M | 19.0M |
+  | tokenizers (`unigram`) | 1.01M | 1.14M | 2.05M |
+  | Idrak, tokenizer.json, cache | 8.5M | 18.4M | 49.1M |
+  | Idrak, tokenizer.model, cache | 3.2M | 18.4M | 34.9M |
+  | Idrak, tokenizer.json, no cache | 6.2M | 9.4M | 29.5M |
+  | Idrak, tokenizer.model, no cache | 6.5M | 10.6M | 26.7M |
+  | sentencepiece (`unigram-bytes`) | 9.0M | 11.7M | 20.6M |
+  | Idrak (`unigram-bytes`), json / model, cache | 12.1M / 10.9M | 36.2M / 37.5M | 89.7M / 64.9M |
+
+  Measured in the test `tokenizers: unigram: speed` (the four Idrak rows per fixture), not yet in `--bench-text`.
+- **Candidates left:** the normalizer and pre-tokenizer are 38-64% of a no-cache pass (the `Replace` regexes, Strip,
+  sentencepiece-mode Precompiled encoding the whole text); a cold first pass on one thread runs tier-0 JIT code (the
+  .model path's 3.2M); BPE's `DecoderStage` Metaspace strips one leading space whatever the prepend scheme, where
+  tokenizers drops every `▁` of the first token unless the scheme is `never` (the same text on every fixture line; T5
+  can align it). The reader reads unused pieces as normal ones (sentencepiece skips them; no fixture has one). Offsets
+  are T3's.
+
 ## Phase T2: WordPiece
 
 **Components** (`BertComponents.cs`), as `tokenizers` defines them, each keeping alignments:
@@ -678,6 +742,21 @@ The reader also changes: `Gguf.cs` returns uint8 and int8 arrays as `byte[]` and
   seven BPE tokenizers on every corpus line (two derived from `pretrain/tokenizer` with the ByteLevel and
   RobertaProcessing post-processors), WordPiece truncation by each strategy, and padding to the longest and to 24.
 - **Run (CPU):** `tokenizers:`, `abstraction inventory`, `public API`: 42 passed, 0 failed.
+- **With T1 merged:** Unigram has the same detailed encode (its pieces through the piece cache, then aligned), checked
+  against `unigram` and `unigram-bytes`' expected-hf.json (lines and pairs). Three more of `tokenizers`' alignment rules
+  are followed:
+  - `Replace`'s content stands for the occurrence's last character (`NormalizedString.replace` inserts it after the
+    removed ones), so " {2,}" → "▁" stands for the last space.
+  - `Precompiled` (Hugging Face mode) aligns by position, through the same cursor as `transform`: the i-th character of
+    a replacement stands for the i-th it replaces, extra ones for the last, and characters it drops move the cursor on,
+    except at the text's start, where `tokenizers` has no earlier character to charge them to and everything after
+    stands one place earlier per dropped character. Idrak reproduces that too (the reference is the reference); the
+    sentencepiece mode keeps whole-replacement ranges.
+  - Unigram fuses a run of unknown characters before byte fallback, so each byte token spans the whole run.
+  - A raw sequence's type id is its number (0, or 1 for the pair), as `tokenizers` encodes them; without a
+    post-processor the pair keeps type id 1.
+- **Run (CPU), with T1:** `tokenizers:`, `tokenizer training`, `pretrained:`, `gguf:`, `plugins:`,
+  `abstraction inventory`, `public API`: 84 passed, 0 failed.
 
 ## Phase T4: trainers
 
@@ -826,4 +905,7 @@ python -I tools\tokenizers\make_fixtures.py --bench
 
 | Date | Phase | Machine | What | Result |
 |---|---|---|---|---|
+| 2026-10-19 | T1 | 4-thread Linux container, CPU | `tokenizers:`, then `plugins:`, `pretrained:`, `gguf:`, `tokenizer training:`, `override loop:`, `public API`, `inventory` | 29 and 49 passed; first run 5 failures (empty-text Metaspace, suite round trip on `<unk>`, sampling variety on `unigram-bytes`, API, inventory), fixed and rerun |
+| 2026-10-19 | T1 | same | `make_fixtures.py --bench` against `tokenizers: unigram: speed` | the table in T1 as built |
 | 2026-10-19 | T3 encodings | CPU (cloud, 4 threads) | `tokenizers:`, `abstraction inventory`, `public API` | 42 passed, 0 failed |
+| 2026-10-19 | T1 merged with T3 | CPU (cloud, 4 threads) | `tokenizers:`, `tokenizer training`, `pretrained:`, `gguf:`, `plugins:`, `abstraction inventory`, `public API` | 84 passed, 0 failed |

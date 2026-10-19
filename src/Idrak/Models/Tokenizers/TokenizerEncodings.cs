@@ -216,8 +216,8 @@ internal static class TokenizerEncodings
     private static int? PadIdOf(IPretrainedTokenizer tokenizer) =>
         tokenizer.IdOf("[PAD]") ?? tokenizer.IdOf("<pad>") ?? tokenizer.IdOf("<|endoftext|>");
 
-    // A raw encoding: the ids from `from` on (what a left limit keeps), their offsets and tokens, one sequence, all
-    // attended, none special.
+    // A raw encoding: the ids from `from` on (what a left limit keeps), their offsets and tokens, one sequence whose number
+    // is also its type id (as tokenizers encodes a pair's second text with type id 1), all attended, none special.
     public static TokenizerEncoding Raw(List<int> ids, List<(int Start, int End)> offsets, Func<int, string> tokenOf, int sequence, int from = 0)
     {
         var kept = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[from..];
@@ -229,7 +229,7 @@ internal static class TokenizerEncodings
 
         return new()
         {
-            Ids = kept.ToArray(), Offsets = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(offsets)[from..].ToArray(), TypeIds = new int[kept.Length],
+            Ids = kept.ToArray(), Offsets = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(offsets)[from..].ToArray(), TypeIds = Filled(kept.Length, sequence),
             AttentionMask = Ones(kept.Length), SpecialTokensMask = new int[kept.Length], SequenceIds = Filled(kept.Length, sequence), Tokens = tokens,
         };
     }
@@ -315,6 +315,34 @@ internal static class TokenizerEncodings
 
             ranges.Add((cursor, end - cursor));
             cursor = end;
+        }
+    }
+
+    // Unigram's byte fallback as tokenizers does it: a run of unknown characters is fused into one unknown token first, so
+    // every byte token of the run spans the whole run.
+    public static void FuseByteRuns(ReadOnlySpan<int> ids, Func<int, string> tokenOf, List<(int Start, int Length)> ranges)
+    {
+        for (int k = 0; k < ids.Length;)
+        {
+            if (!IsByteToken(tokenOf(ids[k])))
+            {
+                k++;
+                continue;
+            }
+
+            int end = k + 1;
+            while (end < ids.Length && IsByteToken(tokenOf(ids[end])))
+            {
+                end++;
+            }
+
+            int from = ranges[k].Start, to = ranges[end - 1].Start + ranges[end - 1].Length;
+            for (int i = k; i < end; i++)
+            {
+                ranges[i] = (from, to - from);
+            }
+
+            k = end;
         }
     }
 

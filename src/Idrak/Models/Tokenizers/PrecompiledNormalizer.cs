@@ -52,10 +52,20 @@ internal sealed class PrecompiledCharsMap
     private readonly DoubleArrayTrie _trie;
     private readonly byte[] _normalized;
 
+    // Each ASCII character's own entry (-1: none), looked up once: an ASCII character that is a cluster on its own is
+    // replaced (or not) without a grapheme split, an encode or a trie walk.
+    private readonly int[] _ascii = new int[128];
+
     private PrecompiledCharsMap(DoubleArrayTrie trie, byte[] normalized)
     {
         _trie = trie;
         _normalized = normalized;
+        Span<byte> one = stackalloc byte[1];
+        for (int c = 0; c < 128; c++)
+        {
+            one[0] = (byte)c;
+            _ascii[c] = c == 0 ? -1 : trie.ShortestPrefix(one, out _);
+        }
     }
 
     /// <summary>Reads a precompiled charsmap (trie size, trie units, then the NUL-terminated strings).</summary>
@@ -260,19 +270,32 @@ internal sealed class PrecompiledCharsMap
     }
 
     /// <summary>
-    /// <see cref="NormalizeHuggingFace(string)"/> on a <see cref="NormalizedText"/>: a cluster replaced whole stands for
-    /// the cluster, a character replaced on its own for that character.
+    /// <see cref="NormalizeHuggingFace(string)"/> on a <see cref="NormalizedText"/>, aligned as tokenizers aligns it: the
+    /// i-th character of a replacement stands for the i-th character it replaces (the last one for those beyond).
     /// </summary>
     public void NormalizeHuggingFace(NormalizedText text)
     {
         var span = text.Span;
-        var output = new SpanOutput(text);
+        var output = new SpanOutput(text) { Positional = true };
         Span<byte> utf8 = stackalloc byte[16];
         try
         {
             int i = 0;
             while (i < span.Length)
             {
+                // An ASCII character followed by ASCII (or the end) is a cluster on its own, but for CR LF.
+                char c = span[i];
+                if (c < 0x80 && (i + 1 == span.Length || (span[i + 1] < 0x80 && !(c == '\r' && span[i + 1] == '\n'))))
+                {
+                    if (_ascii[c] >= 0)
+                    {
+                        output.Replace(i, 1, ValueBytes(_ascii[c]));
+                    }
+
+                    i++;
+                    continue;
+                }
+
                 int length = StringInfo.GetNextTextElementLength(span[i..]);
                 var cluster = span.Slice(i, length);
                 if (length <= 5 && Encoding.UTF8.GetBytes(cluster, utf8) is var bytes and < 6
@@ -438,9 +461,12 @@ internal sealed class PrecompiledCharsMap
 
     // The result of a normalization on a NormalizedText: no change is begun until the first replacement, so text that does
     // not change is left as it is; then the unchanged runs are copied with their origins and each replacement's characters
-    // stand for what they replace.
+    // stand for what they replace: all of it (sentencepiece), or, Positional, by position as tokenizers' Precompiled
+    // aligns them (its replace: the i-th character kept, extra ones added after the last, missing ones removed).
     private struct SpanOutput(NormalizedText text) : IDisposable
     {
+        public bool Positional { get; init; }
+
         private NormalizedText.Rewriter _writer;
         private bool _started;
         private int _pending;
@@ -454,7 +480,15 @@ internal sealed class PrecompiledCharsMap
                 _started = true;
             }
 
-            _writer.Copy(_pending, start - _pending);
+            if (Positional)
+            {
+                CopyRun(_pending, start);
+            }
+            else
+            {
+                _writer.Copy(_pending, start - _pending);
+            }
+
             if (_chars is null || _chars.Length < utf8.Length)
             {
                 if (_chars is not null)
@@ -466,15 +500,134 @@ internal sealed class PrecompiledCharsMap
             }
 
             int count = Encoding.UTF8.GetChars(utf8, _chars);
-            _writer.Append(_chars.AsSpan(0, count), start, length);
+            if (Positional)
+            {
+                AppendPositional(_chars.AsSpan(0, count), start, length);
+            }
+            else
+            {
+                _writer.Append(_chars.AsSpan(0, count), start, length);
+            }
+
             _pending = start + length;
         }
 
-        public readonly void Finish()
+        // tokenizers' alignment (Precompiled's replace, then NormalizedString.transform): a cursor walks the source
+        // characters in order; a kept character stands for the one at the cursor and moves it on, an added one (beyond the
+        // characters it replaces) for the one before; characters a replacement drops move the cursor past them, unless
+        // nothing has been written yet (tokenizers then has no character to charge them to, so what follows stands one
+        // place earlier, which this reproduces).
+        private int _cursor, _previous, _previousWidth;
+        private bool _written;
+
+        private void Keep(ReadOnlySpan<char> chars)
+        {
+            var source = text.Span;
+            if (_cursor >= source.Length)
+            {
+                Add(chars);                                                    // past the source: the last character's
+                return;
+            }
+
+            int width = _cursor + 1 < source.Length && char.IsSurrogatePair(source[_cursor], source[_cursor + 1]) ? 2 : 1;
+            _writer.Append(chars, _cursor, width);
+            (_previous, _previousWidth) = (_cursor, width);
+            _cursor += width;
+            _written = true;
+        }
+
+        private void Add(ReadOnlySpan<char> chars)
+        {
+            if (_previousWidth > 0)
+            {
+                _writer.Append(chars, _previous, _previousWidth);
+            }
+            else
+            {
+                foreach (char c in chars)
+                {
+                    _writer.AppendOrigin(c, 0, 0);
+                }
+            }
+
+            _written = true;
+        }
+
+        // The unchanged characters [from, to): copied as they are while the cursor is on them, else each kept.
+        private void CopyRun(int from, int to)
+        {
+            if (_cursor == from)
+            {
+                _writer.Copy(from, to - from);
+                if (to > from)
+                {
+                    var source = text.Span;
+                    _previousWidth = to - from > 1 && char.IsSurrogatePair(source[to - 2], source[to - 1]) ? 2 : 1;
+                    _previous = to - _previousWidth;
+                    _written = true;
+                }
+
+                _cursor = to;
+                return;
+            }
+
+            var span = text.Span;
+            for (int i = from; i < to;)
+            {
+                int w = i + 1 < to && char.IsSurrogatePair(span[i], span[i + 1]) ? 2 : 1;
+                Keep(span.Slice(i, w));
+                i += w;
+            }
+        }
+
+        private void AppendPositional(ReadOnlySpan<char> chars, int start, int length)
+        {
+            var source = text.Span.Slice(start, length);
+            int replaced = 0;
+            for (int at = 0; at < source.Length; replaced++)
+            {
+                at += at + 1 < source.Length && char.IsSurrogatePair(source[at], source[at + 1]) ? 2 : 1;
+            }
+
+            int index = 0;
+            for (int i = 0; i < chars.Length; index++)
+            {
+                int w = i + 1 < chars.Length && char.IsSurrogatePair(chars[i], chars[i + 1]) ? 2 : 1;
+                if (index < replaced)
+                {
+                    Keep(chars.Slice(i, w));
+                }
+                else
+                {
+                    Add(chars.Slice(i, w));
+                }
+
+                i += w;
+            }
+
+            if (_written)
+            {
+                var span = text.Span;
+                for (int k = index; k < replaced && _cursor < span.Length; k++)
+                {
+                    _cursor += _cursor + 1 < span.Length && char.IsSurrogatePair(span[_cursor], span[_cursor + 1]) ? 2 : 1;
+                }
+            }
+        }
+
+        public void Finish()
         {
             if (_started)
             {
-                _writer.Copy(_pending, text.Length - _pending);
+                if (Positional)
+                {
+                    CopyRun(_pending, text.Length);
+                }
+                else
+                {
+                    _writer.Copy(_pending, text.Length - _pending);
+                }
+
                 _writer.Commit();
             }
         }
