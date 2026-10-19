@@ -9,7 +9,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliPretrainGroup =
     [
-        ("cli pretrain: data tokenizer learns the reference's tokenizer from the corpus, and data tokens writes the reference's token file", CliPretrainData),
+        ("cli pretrain: data tokenizer learns the reference's tokenizer from the corpus, and data tokens writes the reference's token file; --model unigram writes tokenizer.json and tokenizer.model, --model wordpiece BERT's tokenizer, and bad options and --model with --trainer are refused naming them", CliPretrainData),
         ("cli pretrain: create makes a model from a spec file (and create init's), pretrain trains it, Ctrl+C-like stops checkpoint, resume finishes, runs show reads the steps, run answers", CliPretrainRun),
         ("cli pretrain: an unknown architecture, a missing spec key, a missing tokenizer, no sources and a run folder in use are refused", CliPretrainRefusals),
         ("cli pretrain vision: create init --vision, create and pretrain an IdrakVision model with its plug-in (-P), resume, run with an image; without the plug-in the family is refused naming -P", CliPretrainVision),
@@ -81,8 +81,41 @@ internal static partial class Tests
             Check((long)encoded["documents"]! == 96 && File.Exists(tokens + ".json"), "96 documents, and the description beside it");
             var (code, _, error) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--separator", "<nope>", "-o", tokens);
             Check(code == 2 && error.Contains("no token '<nope>'", StringComparison.Ordinal), $"an unknown separator: {error}");
-            (code, _, error) = TrainCli("data", "tokenizer", PretrainData("corpus.txt"), "--trainer", "wordpiece", "-o", tokenizer);
+            (code, _, error) = TrainCli("data", "tokenizer", PretrainData("corpus.txt"), "--trainer", "nope", "-o", tokenizer);
             Check(code == 1 && error.Contains("is not registered", StringComparison.Ordinal) && error.Contains("-P", StringComparison.Ordinal), $"an unregistered trainer: {error}");
+
+            // Plan 24, T4: --model picks a built-in trainer; unigram writes tokenizer.model beside tokenizer.json.
+            string unigramJson = Path.Combine(folder, "unigram", "tokenizer.json");
+            var unigram = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--model", "unigram", "--vocab", "400", "--byte-fallback", "--no-special", "-o", unigramJson);
+            string unigramModel = Path.Combine(folder, "unigram", "tokenizer.model");
+            Check((string?)unigram["model"] == "Unigram" && (string?)unigram["trainer"] == "unigram" && File.Exists(unigramModel)
+                && unigram["companions"]!.AsArray().Select(c => (string)c!).SequenceEqual([unigramModel]), $"data tokenizer --model unigram: {unigram}");
+            var fromJson = PretrainedTokenizers.Load(unigramJson);
+            var fromModel = PretrainedTokenizers.Load(unigramModel);
+            foreach (string line in File.ReadLines(PretrainData("corpus.txt")).Take(50))
+            {
+                Check(fromJson.Encode(line).SequenceEqual(fromModel.Encode(line)), $"the CLI's tokenizer.json and tokenizer.model encode '{line}' alike");
+            }
+
+            string wordpieceJson = Path.Combine(folder, "wordpiece.json");
+            var wordpiece = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--model", "wordpiece", "--vocab", "600", "--lowercase", "--scoring", "likelihood",
+                "--arabic", "tatweel,diacritics", "-o", wordpieceJson);
+            Check((string?)wordpiece["model"] == "WordPiece" && (int)wordpiece["special"]! == 5 && PretrainedTokenizers.Load(wordpieceJson).IdOf("[CLS]") == 2,
+                $"data tokenizer --model wordpiece: BERT's special tokens by default: {wordpiece}");
+            var (_, text, _) = TrainCli("data", "tokenizer", PretrainData("corpus.txt"), "--model", "wordpiece", "--vocab", "600", "-o", wordpieceJson);
+            Check(text.Contains("a WordPiece tokenizer", StringComparison.Ordinal) && !text.Contains("merges", StringComparison.Ordinal), $"the summary names the model: {text}");
+
+            foreach (var (args, named) in new (string[] Args, string Named)[]
+                     {
+                         (["--model", "unigram", "--trainer", "bpe"], "not both"), (["--model", "sentencepiece"], "--model"),
+                         (["--model", "unigram", "--character-coverage", "2"], "--character-coverage"), (["--model", "unigram", "--shrinking", "x"], "--shrinking"),
+                         (["--model", "unigram", "--em-steps", "0"], "--em-steps"), (["--model", "wordpiece", "--scoring", "best"], "--scoring"),
+                         (["--model", "wordpiece", "--arabic", "kashida"], "--arabic"), (["--model", "wordpiece", "--strip-accents", "--keep-accents"], "not both"),
+                     })
+            {
+                (code, _, error) = TrainCli(["data", "tokenizer", PretrainData("corpus.txt"), .. args, "-o", tokenizer]);
+                Check(code == 2 && error.Contains(named, StringComparison.Ordinal), $"data tokenizer {string.Join(' ', args)}: exit {code}, {error}");
+            }
         }
         finally
         {

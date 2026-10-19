@@ -68,6 +68,33 @@ internal sealed class PrecompiledCharsMap
         }
     }
 
+    /// <summary>
+    /// Builds a precompiled character map (SentencePiece's blob, as <see cref="Read"/> reads it) that replaces each key with
+    /// its value (an empty value removes the key); keys are distinct and non-empty, without U+0000.
+    /// </summary>
+    public static byte[] Build(IReadOnlyList<(string Key, string Value)> rules)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        var normalized = new List<byte>();
+        var offsets = new Dictionary<string, int>(StringComparer.Ordinal);
+        var values = new int[rules.Count];
+        for (int i = 0; i < rules.Count; i++)
+        {
+            string value = rules[i].Value;
+            if (!offsets.TryGetValue(value, out int offset))
+            {
+                offsets[value] = offset = normalized.Count;
+                normalized.AddRange(System.Text.Encoding.UTF8.GetBytes(value));
+                normalized.Add(0);
+            }
+
+            values[i] = offset;
+        }
+
+        var trie = DoubleArrayTrie.Build([.. rules.Select(r => r.Key)], values);
+        return trie.Charsmap(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(normalized));
+    }
+
     /// <summary>Reads a precompiled charsmap (trie size, trie units, then the NUL-terminated strings).</summary>
     /// <exception cref="InvalidDataException">The bytes are not a charsmap.</exception>
     public static PrecompiledCharsMap Read(ReadOnlySpan<byte> charsmap)

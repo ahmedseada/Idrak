@@ -83,6 +83,31 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         Draw(force: false);
     }
 
+    /// <summary>
+    /// Ends the current stage (its line stays as it stands, or <paramref name="message"/> in its place) and starts the next
+    /// on a new line, with its own label, amount, rate and time left.
+    /// </summary>
+    public void NextStage(string label, long? total, ProgressUnit unit, string? message = null)
+    {
+        if (Enabled && !_finished)
+        {
+            lock (_writer)
+            {
+                string text = message ?? Format(Label, Done, Total, _watch.Elapsed, Unit);
+                _writer.Write("\r" + text.PadRight(_lastWidth) + "\n");
+                _writer.Flush();
+                _lastWidth = 0;
+                _lastDraw = NeverDrawn;
+            }
+        }
+
+        Label = label;
+        Total = total;
+        Unit = unit;
+        Interlocked.Exchange(ref _done, 0);
+        _watch.Restart();
+    }
+
     /// <summary>Draws the final state and ends the line (with <paramref name="message"/> in place of the progress, when given).</summary>
     public void Finish(string? message = null)
     {
