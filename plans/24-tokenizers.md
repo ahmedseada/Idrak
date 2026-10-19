@@ -1,14 +1,14 @@
 # Plan 24: Unigram (SentencePiece) and WordPiece tokenizers, built in
 
 **Status (2026-10-19, `abstraction`):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against e53acb8.
-Wave 1 is built and CPU-checked: L0, and T0's standalone part (fixtures, protobuf and SentencePiece readers, trie). Closes plug-in gap 11
+L0, L1, T0 and T2 are built and CPU-checked; T1 is in progress. Closes plug-in gap 11
 ([plug-in.md](plug-in.md), "Only BPE tokenizer models").
 
 | Phase | What | State |
 |---|---|---|
 | L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Done; CPU pass (155 tests) |
 | L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Done; CPU pass |
-| T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Wave 1 part done (fixtures, readers, trie); CPU pass. Left: the reader registered, Precompiled |
+| T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
 | T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
 | T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Planned |
@@ -441,6 +441,37 @@ lists every file. What the plan did not know:
   ```
   It downloads into `IDRAK_CACHE\tokenizers\<org>--<name>\`, or `~/.cache/idrak` when `IDRAK_CACHE` is unset, and
   writes only `tests\Idrak.Tests\data\tokenizers\real\<name>.json`.
+
+**T0, the rest, as built (2026-10-19)** (agent B, merged with L1, then with T2):
+- **The "sentencepiece" reader** (`TokenizerFiles.SentencePiece`, asked after tokenizer.json and before vocab.txt):
+  - Unigram and BPE models are read; WORD and CHAR models fail naming the type.
+  - BPE merges come by the `generate_merges` rule.
+  - The definition writes sentencepiece's normalizer as standard steps: Precompiled in sentencepiece's mode, Replace
+    `\A +`→"", Replace `" {2,}"`→" ", Prepend ▁, Replace " "→▁, Replace `(?:▁)+\z`→"", and a suffix rule for
+    `treat_whitespace_as_suffix` (implemented, but no fixture covers it).
+  - The pre-tokenizer is `Metaspace` (prepend never, split) only when no piece holds ▁ past its first character.
+  - A leading `Replace <unk>→" ⁇ "` in the decoder gives sentencepiece's unknown text.
+  - No post-processor, since sentencepiece adds no BOS or EOS.
+- **Evidence:** the C#-made definitions, saved as tokenizer.json and run through Python `tokenizers`, give
+  sentencepiece's ids and text on every line not in `known-differences.json`: unigram 99/102, unigram-bytes 97/102,
+  bpe 100/102.
+- **Precompiled** (`PrecompiledCharsMap`, string and span forms):
+  - Two modes: Hugging Face's (by grapheme) and sentencepiece's, chosen by `"mode": "sentencepiece"` on the normalizer.
+    `tokenizers.Tokenizer.from_str` accepts the extra field and drops it when it saves, so files stay loadable.
+  - Both modes equal `normalized.json` on every line.
+  - There were no .NET-vs-Rust grapheme differences on the corpus.
+  - Text that does not change comes back as the same string.
+- **Other changes:**
+  - `Prepend` leaves an empty text empty, as `tokenizers` does (string and span).
+  - `DoubleArrayTrie` gained `ShortestPrefix` and `LongestPrefix`.
+- **GGUF:**
+  - uint8 and int8 arrays are read as `byte[]` and `sbyte[]`, float32 as `float[]`, with `Get<long[]>` and
+    `Get<double[]>` converting.
+  - A real bug was found and fixed: the runtime treats `byte[]` and `sbyte[]` alike, so int8 arrays were read as
+    unsigned.
+  - Numeric arrays are read in one block. `FormatVersion` is unchanged: prepared files did not change.
+- **After both merges:** one build, `tokenizers:`, `gguf:`, `plugins:`, `pretrained:`, `tokenizer training:`,
+  `override loop:`, `public API` and `inventory`: 76 passed, 0 failed.
 
 ## Phase T1: Unigram
 

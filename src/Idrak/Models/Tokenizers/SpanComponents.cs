@@ -43,6 +43,7 @@ internal static class SpanComponents
             "Lowercase" => new LowercaseNormalizer().Run,
             "Strip" => new StripNormalizer((bool?)spec["strip_left"] ?? true, (bool?)spec["strip_right"] ?? true).Run,
             "BertNormalizer" => BertComponents.Normalizer(spec),
+            "Precompiled" => PrecompiledCharsMap.SpanStep(spec),
             _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
         };
     }
@@ -304,12 +305,18 @@ internal static class SpanComponents
         }
     }
 
-    // Prepend: the string goes before the text (also an empty one, as the string form does), standing for its first character.
+    // Prepend: the string goes before the text, standing for its first character; an empty text stays empty (as the string
+    // form and Hugging Face's do).
     private sealed class PrependNormalizer(string prepend)
     {
         public void Run(NormalizedText text)
         {
             int length = text.Length;
+            if (length == 0)
+            {
+                return;
+            }
+
             var writer = text.Rewrite();
             writer.Append(prepend, 0, Math.Min(1, length));
             writer.Copy(0, length);

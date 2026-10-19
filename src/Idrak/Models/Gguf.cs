@@ -45,8 +45,11 @@ public sealed class GgufFile : IDisposable
     public int Version { get; private set; }
 
     /// <summary>
-    /// Metadata by key: numbers as long / ulong / double, strings, booleans, and arrays (string[], long[], double[],
-    /// bool[] or object[]).
+    /// Metadata by key: numbers as long / ulong / double, strings, booleans, and arrays: uint8 as byte[], int8 as sbyte[],
+    /// float32 as float[], float64 as double[], the other integers as long[], and string[], bool[] or object[] (arrays of
+    /// arrays). Numeric arrays are read in one block (a tokenizer's 250,000 scores, or its charsmap, take one read, at
+    /// their own width). <see cref="Get{T}"/> converts byte[] and sbyte[] to long[] and float[] to double[] for callers that
+    /// ask for those.
     /// </summary>
     public Dictionary<string, object> Metadata { get; } = new(StringComparer.Ordinal);
 
@@ -61,15 +64,22 @@ public sealed class GgufFile : IDisposable
             return fallback;
         }
 
+        // The CLR lets a byte[] pass for an sbyte[] (and back), so those two are told apart by their exact type.
+        bool bytes = value.GetType() == typeof(byte[]), signedBytes = value.GetType() == typeof(sbyte[]);
         return value switch
         {
-            T t => t,
+            T t when !(bytes || signedBytes) || value.GetType() == typeof(T) || !typeof(T).IsArray => t,
             long l when typeof(T) == typeof(int) => (T)(object)checked((int)l),
             ulong u when typeof(T) == typeof(int) => (T)(object)checked((int)u),
             ulong u when typeof(T) == typeof(long) => (T)(object)checked((long)u),
             long l when typeof(T) == typeof(double) => (T)(object)(double)l,
             double d when typeof(T) == typeof(float) => (T)(object)(float)d,
             long[] a when typeof(T) == typeof(int) && a.Length > 0 => (T)(object)checked((int)a[0]),   // per-layer values: the first
+            byte[] a when bytes && typeof(T) == typeof(int) && a.Length > 0 => (T)(object)(int)a[0],
+            sbyte[] a when signedBytes && typeof(T) == typeof(int) && a.Length > 0 => (T)(object)(int)a[0],
+            byte[] a when bytes && typeof(T) == typeof(long[]) => (T)(object)Array.ConvertAll(a, x => (long)x),
+            sbyte[] a when signedBytes && typeof(T) == typeof(long[]) => (T)(object)Array.ConvertAll(a, x => (long)x),
+            float[] a when typeof(T) == typeof(double[]) => (T)(object)Array.ConvertAll(a, x => (double)x),
             _ => fallback,
         };
     }
@@ -612,7 +622,19 @@ public sealed class GgufFile : IDisposable
                 long count = checked((long)U64());
                 switch (itemType)
                 {
+                    case 0: return ReadArray<byte>(count);
+                    case 1: return ReadArray<sbyte>(count);
+                    case 2: return Array.ConvertAll(ReadArray<ushort>(count), x => (long)x);
+                    case 3: return Array.ConvertAll(ReadArray<short>(count), x => (long)x);
+                    case 4: return Array.ConvertAll(ReadArray<uint>(count), x => (long)x);
+                    case 5: return Array.ConvertAll(ReadArray<int>(count), x => (long)x);
+                    case 6: return ReadArray<float>(count);
+                    case 7: return Array.ConvertAll(ReadArray<byte>(count), x => x != 0);
+                    case 10: return Array.ConvertAll(ReadArray<ulong>(count), x => unchecked((long)x));
+                    case 11: return ReadArray<long>(count);
+                    case 12: return ReadArray<double>(count);
                     case 8:
+                        CheckCount(count, 8);                      // each string has at least its 8-byte length
                         var strings = new string[count];
                         for (long i = 0; i < count; i++)
                         {
@@ -620,23 +642,8 @@ public sealed class GgufFile : IDisposable
                         }
 
                         return strings;
-                    case 6 or 12:
-                        var doubles = new double[count];
-                        for (long i = 0; i < count; i++)
-                        {
-                            doubles[i] = (double)Value(itemType, depth + 1);
-                        }
-
-                        return doubles;
-                    case 7:
-                        var bools = new bool[count];
-                        for (long i = 0; i < count; i++)
-                        {
-                            bools[i] = (bool)Value(itemType, depth + 1);
-                        }
-
-                        return bools;
                     case 9:
+                        CheckCount(count, 12);                     // each array has at least its type and count
                         var items = new object[count];
                         for (long i = 0; i < count; i++)
                         {
@@ -645,14 +652,7 @@ public sealed class GgufFile : IDisposable
 
                         return items;
                     default:
-                        var longs = new long[count];
-                        for (long i = 0; i < count; i++)
-                        {
-                            var item = Value(itemType, depth + 1);
-                            longs[i] = item is long l ? l : unchecked((long)(ulong)item);
-                        }
-
-                        return longs;
+                        throw new InvalidDataException($"{Path}: unknown metadata array item type {itemType}.");
                 }
 
             default:
@@ -661,6 +661,38 @@ public sealed class GgufFile : IDisposable
     }
 
     private readonly byte[] _scratch = new byte[8];
+
+    // A metadata array of fixed-width items, read in one block straight into the array (GGUF is little-endian).
+    private T[] ReadArray<T>(long count) where T : unmanaged
+    {
+        int size = System.Runtime.CompilerServices.Unsafe.SizeOf<T>();
+        CheckCount(count, size);
+        var array = new T[count];
+        var bytes = MemoryMarshal.AsBytes(array.AsSpan());
+        ReadAt(bytes, _position);
+        _position += bytes.Length;
+        if (!BitConverter.IsLittleEndian && size > 1)
+        {
+            switch (size)
+            {
+                case 2: BinaryPrimitives.ReverseEndianness(MemoryMarshal.Cast<byte, ushort>(bytes), MemoryMarshal.Cast<byte, ushort>(bytes)); break;
+                case 4: BinaryPrimitives.ReverseEndianness(MemoryMarshal.Cast<byte, uint>(bytes), MemoryMarshal.Cast<byte, uint>(bytes)); break;
+                default: BinaryPrimitives.ReverseEndianness(MemoryMarshal.Cast<byte, ulong>(bytes), MemoryMarshal.Cast<byte, ulong>(bytes)); break;
+            }
+        }
+
+        return array;
+    }
+
+    // An array of count items of at least itemBytes bytes each must fit in the rest of the file.
+    private void CheckCount(long count, int itemBytes)
+    {
+        long left = _file.Length - _position;
+        if (count < 0 || count > left / itemBytes || count > Array.MaxLength)
+        {
+            throw new InvalidDataException($"{Path}: a metadata array of {count} items at byte {_position} does not fit in the {left} bytes left.");
+        }
+    }
 
     private ReadOnlySpan<byte> Bytes(int count)
     {

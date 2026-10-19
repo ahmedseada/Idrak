@@ -1558,6 +1558,7 @@ public sealed class Idrak.Models.Abstractions.TokenizerDefinition
   public string ModelType { get; }
 
 public static class Idrak.Models.Abstractions.TokenizerFiles
+  public const string SentencePiece = "sentencepiece"
   public const string TokenizerJson = "tokenizer.json"
   public const string VocabTxt = "vocab.txt"
   public static Idrak.Models.Abstractions.ITokenizerFileReader Get(string name)
