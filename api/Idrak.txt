@@ -1601,10 +1601,13 @@ public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquata
   public const string FormatVariable = "IDRAK_TOKENIZER_FORMAT"
   public const string MaxWordCharsVariable = "IDRAK_TOKENIZER_MAX_WORD_CHARS"
   public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE"
+  public const string WorkersVariable = "IDRAK_TOKENIZER_WORKERS"
   public int ResolvedMaxInputCharsPerWord(int file)
   public int ResolvedPieceCacheLimit()
+  public int ResolvedWorkers()
   public int? MaxInputCharsPerWord { get; init; }
   public int? PieceCacheLimit { get; init; }
+  public int? Workers { get; init; }
   public string? Format { get; init; }
   public string? ResolvedFormat()
 
@@ -1665,6 +1668,8 @@ public abstract class Idrak.Models.Abstractions.WeightCodec
   public static Idrak.Models.Abstractions.WeightCodec For(Idrak.Abstraction.Formats.WeightFormat format)
 
 public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.IPretrainedTokenizer, Idrak.Abstraction.Generation.ITokenizer
+  public Idrak.Abstraction.Generation.TokenizerEncoding Encode(string text, string? pair, Idrak.Abstraction.Generation.TokenizerEncodeOptions options)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.TokenizerEncoding> EncodeBatch(System.Collections.Generic.IReadOnlyList<string> texts, System.Collections.Generic.IReadOnlyList<string>? pairs, Idrak.Abstraction.Generation.TokenizerEncodeOptions options)
   public System.Collections.Generic.IReadOnlyList<int> Encode(string text)
   public System.Text.Json.Nodes.JsonObject ToJson()
   public bool IsSpecial(int id)

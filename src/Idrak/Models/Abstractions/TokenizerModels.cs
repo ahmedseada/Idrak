@@ -142,6 +142,13 @@ public static class TokenizerModels
             return slot.Call(() => app.Decode(copy.AsSpan()), () => library.Value.Decode(copy.AsSpan()), Comparisons.Exact);
         }
 
+        public TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options) =>
+            slot.Call(() => app.Encode(text, pair, options), () => library.Value.Encode(text, pair, options),
+                (expected, actual) => Comparisons.Sequences(expected.Ids, actual.Ids) ?? Comparisons.Sequences(expected.Offsets, actual.Offsets));
+
+        public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
+            [.. texts.Select((text, i) => Encode(text, pairs?[i], options))];
+
         public string TokenOf(int id) => app.TokenOf(id);
 
         public int? IdOf(string token) => app.IdOf(token);

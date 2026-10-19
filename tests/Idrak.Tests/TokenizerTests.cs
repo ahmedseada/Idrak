@@ -193,6 +193,11 @@ internal static partial class Tests
 
         public string Decode(IEnumerable<int> ids) => inner.Decode(ids);
 
+        public TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options) => throw new InvalidOperationException("the app's encode fails");
+
+        public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
+            throw new InvalidOperationException("the app's encode fails");
+
         public string TokenOf(int id) => inner.TokenOf(id);
 
         public int? IdOf(string token) => inner.IdOf(token);

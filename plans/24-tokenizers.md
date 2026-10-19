@@ -11,7 +11,7 @@ L0, L1, T0 and T2 are built and CPU-checked; T1 is in progress. Closes plug-in g
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
 | T1 | Unigram: encode, decode, byte fallback, sampling | In progress (agent B) |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
-| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection and GGUF done, CPU pass (`t5` encodes once T1 lands); encodings in progress |
+| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Detection, GGUF and encodings done, CPU pass (`t5` encodes once T1 lands); callers (`TextEncoder`, `idrak tokenize`) in progress |
 | T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Planned |
 | T5 | BPE onto the shared span pipeline (only if measured equal or faster) | On hold: not started until the owner decides (2026-10-19) |
 
@@ -650,6 +650,35 @@ The reader also changes: `Gguf.cs` returns uint8 and int8 arrays as `byte[]` and
 - each GGUF fixture gives the ids of the Hugging Face files it was made from;
 - `gguf:` passes with `FormatVersion` 2.
 
+**T3, encodings, as built (2026-10-19).** As planned, with these differences and findings:
+- **Contract:** `IPretrainedTokenizer.Encode(text, pair, options)`, `EncodeBatch(texts, pairs, options)` and a default
+  `Decode(ids, skipSpecialTokens)`. `TokenizerEncodeOptions` is `AddSpecialTokens` (default true, as `tokenizers`),
+  `MaxLength`, `Truncation`, `Padding` and `PadId`; a null option takes the tokenizer.json's `truncation` and `padding`.
+  `TokenizerEncoding` gains `Tokens`. The plain `Encode(string)` path does not change.
+- **Shared steps** (`TokenizerEncodings`, internal): settings, truncation, the post-processor, padding, batches over
+  `Workers` (`IDRAK_TOKENIZER_WORKERS`, results in input order), and the alignment of a piece's tokens to its characters
+  (matching text; byte-fallback tokens of one character all span it; an unknown token spans up to the next token's
+  text, or one character).
+- **tokenizers 0.23's early exit, followed:** with truncation on, each sequence is encoded a pre-token at a time until
+  it has `MaxLength` tokens (from its end for left truncation; the first text under `only_second` whole), and
+  `longest_first` compares those lengths, not the full ones. Its own `truncate_encodings` alone gives other splits:
+  32 and 42 tokens to 13 give 6/7 by the formula, 7/6 through `encode` (both cut to about 16 first, and the first is
+  longer). Idrak does the same, which also stops encoding a long text early.
+- **Normalization offsets as `tokenizers` aligns them:** a changed cluster is aligned by position, as
+  `unicode_normalization_alignments` and `NormalizedString.transform` do: each source character decomposes alone (its
+  first character kept, the rest added), canonical reordering moves them, a character composed of k parts removes
+  k - 1; a kept character stands for the next source character, an added one for the one before. So "e" with a
+  combining acute composed stands for the "e" alone, and a reordered mark for the source position, not its own
+  character. Checked per character for NFC, NFKC, NFD and NFKD (pipeline test).
+- **Post-processors:** `RobertaProcessing` and `ByteLevel` trim offsets (`trim_offsets`, `tokenizers`'
+  `process_offsets`); a `Sequence` applies ByteLevel's trim first.
+- **A tokenizer without an unknown token** refuses a character its vocabulary lacks (as `Encode` does since before
+  plan 24), where `tokenizers` drops it: such corpus lines are counted, not compared (`pretrain/metaspace`: 87 of 103).
+- **References:** `tools/tokenizers/make_encodings.py` writes `data/tokenizers/encodings.json` (tokenizers 0.23.2):
+  seven BPE tokenizers on every corpus line (two derived from `pretrain/tokenizer` with the ByteLevel and
+  RobertaProcessing post-processors), WordPiece truncation by each strategy, and padding to the longest and to 24.
+- **Run (CPU):** `tokenizers:`, `abstraction inventory`, `public API`: 42 passed, 0 failed.
+
 ## Phase T4: trainers
 
 **Contract**: `TokenizerTrainingOptions` gains:
@@ -797,4 +826,4 @@ python -I tools\tokenizers\make_fixtures.py --bench
 
 | Date | Phase | Machine | What | Result |
 |---|---|---|---|---|
-| | | | | |
+| 2026-10-19 | T3 encodings | CPU (cloud, 4 threads) | `tokenizers:`, `abstraction inventory`, `public API` | 42 passed, 0 failed |

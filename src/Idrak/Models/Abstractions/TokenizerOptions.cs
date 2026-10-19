@@ -17,6 +17,9 @@ public sealed record TokenizerOptions
     /// <summary>The variable <see cref="PieceCacheLimit"/> falls back to.</summary>
     public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE";
 
+    /// <summary>The variable <see cref="Workers"/> falls back to.</summary>
+    public const string WorkersVariable = "IDRAK_TOKENIZER_WORKERS";
+
     /// <summary>The variable <see cref="MaxInputCharsPerWord"/> falls back to.</summary>
     public const string MaxWordCharsVariable = "IDRAK_TOKENIZER_MAX_WORD_CHARS";
 
@@ -60,6 +63,33 @@ public sealed record TokenizerOptions
         return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) && value >= 1
             ? value
             : throw new InvalidOperationException($"{MaxWordCharsVariable} is '{text}': give a whole number of characters, 1 or more.");
+    }
+
+    /// <summary>
+    /// How many threads a batch encode (<see cref="IPretrainedTokenizer.EncodeBatch"/>) spreads over (0: every core); null
+    /// takes IDRAK_TOKENIZER_WORKERS, then 0.
+    /// </summary>
+    public int? Workers { get; init; }
+
+    /// <summary>The batch threads, from the setting, its variable or 0 (every core).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">The setting is negative.</exception>
+    /// <exception cref="InvalidOperationException">The variable is not a whole number of 0 or more.</exception>
+    public int ResolvedWorkers()
+    {
+        if (Workers is { } workers)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(workers, nameof(Workers));
+            return workers;
+        }
+
+        if (Environment.GetEnvironmentVariable(WorkersVariable) is not { Length: > 0 } text)
+        {
+            return 0;
+        }
+
+        return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) && value >= 0
+            ? value
+            : throw new InvalidOperationException($"{WorkersVariable} is '{text}': give a whole number of threads, 0 (every core) or more.");
     }
 
     /// <summary>The reader's name, from the setting or its variable; null when neither sets one.</summary>

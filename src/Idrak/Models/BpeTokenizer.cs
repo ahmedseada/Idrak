@@ -12,7 +12,7 @@ namespace Idrak.Models;
 /// <summary>
 /// A byte-pair-encoding tokenizer read from a Hugging Face <c>tokenizer.json</c>: byte-level BPE (GPT-2, Llama 3, Qwen,
 /// …) and SentencePiece-style BPE with the "▁" word marker and byte fallback (Llama 2, Mistral, Gemma, …). Special
-/// (added) tokens are matched exactly before anything else. <see cref="Encode"/> adds no special tokens itself (chat
+/// (added) tokens are matched exactly before anything else. <see cref="Encode(string)"/> adds no special tokens itself (chat
 /// templates write them), like <c>add_special_tokens=False</c>. Pieces of the file it does not know are reported, not
 /// guessed; other normalizer, pre-tokenizer and decoder types plug in through <see cref="TokenizerComponents"/>.
 /// </summary>
@@ -28,6 +28,15 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     // Tokenizer patterns run on every encode: compiled to IL where the runtime allows it (interpreted under native AOT).
     internal const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
     private readonly int _cacheLimit;                                         // cached pieces (TokenizerOptions.PieceCacheLimit)
+    private readonly int _workers;                                            // batch threads (TokenizerOptions.Workers)
+    private TokenizerEncodings.RawEncoder? _raw;                             // Raw, as Finish takes it (made once)
+
+    // The detailed encode's span pipeline and post-processor (plan 24, T3), made when first used.
+    private TokenizerPipeline? _offsetPipeline;
+    private ITokenizerPostProcessor? _postProcessor;
+    private bool _postProcessorRead;
+
+    [ThreadStatic] private static PreTokenizedText? t_pieces;
     private const int StackChars = 256;                                        // pieces up to this long stay on the stack
 
     private string[] _tokens;
@@ -88,7 +97,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     private readonly bool _ignoreMerges;
     private readonly int? _unknown;
 
-    private BpeTokenizer(JsonObject json, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges, int cacheLimit)
+    private BpeTokenizer(JsonObject json, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges, int cacheLimit, int workers)
     {
         var model = json["model"]?.AsObject() ?? throw new InvalidDataException("tokenizer.json has no model.");
         if ((string?)model["type"] != TokenizerModels.Bpe)
@@ -98,6 +107,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
 
         _cacheLimit = cacheLimit;
+        _workers = workers;
         _vocabulary = vocabulary;
         _vocabularySpans = _vocabulary.GetAlternateLookup<ReadOnlySpan<char>>();
         _cacheSpans = _cache.GetAlternateLookup<ReadOnlySpan<char>>();
@@ -204,7 +214,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             ?? throw new InvalidDataException("tokenizer.json has no model vocabulary.");
         var merges = (model["merges"]?.AsArray() ?? [])
             .Select(m => m is JsonArray pair ? ((string)pair[0]!, (string)pair[1]!) : Split((string)m!)).ToArray();
-        return new BpeTokenizer(json, vocabulary, merges, new TokenizerOptions().ResolvedPieceCacheLimit());
+        var options = new TokenizerOptions();
+        return new BpeTokenizer(json, vocabulary, merges, options.ResolvedPieceCacheLimit(), options.ResolvedWorkers());
     }
 
     // The library's "BPE" model (TokenizerModels): the tokenizer of a definition, which it takes as its own (the added
@@ -212,11 +223,11 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     internal static BpeTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) =>
         new(definition.Json,
             definition.Vocabulary ?? throw new InvalidDataException($"{definition.Source}: the BPE model has no vocabulary of token to id (model.vocab)."),
-            definition.Merges ?? [], options.ResolvedPieceCacheLimit());
+            definition.Merges ?? [], options.ResolvedPieceCacheLimit(), options.ResolvedWorkers());
 
     // A tokenizer from its parts: rest is a tokenizer.json without the model's vocab and merges (the trainers build one).
     internal static BpeTokenizer FromParts(JsonObject rest, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges)
-        => new(rest, vocabulary, merges, new TokenizerOptions().ResolvedPieceCacheLimit());
+        => new(rest, vocabulary, merges, new TokenizerOptions().ResolvedPieceCacheLimit(), new TokenizerOptions().ResolvedWorkers());
 
     // The byte-level alphabet: the character each byte is written as.
     internal static IReadOnlyList<char> ByteLevelAlphabet => ByteToChar;
@@ -382,7 +393,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
 
     /// <summary>
     /// Appends the ids of <paramref name="text"/>[<paramref name="start"/>..<paramref name="start"/> + <paramref name="length"/>]
-    /// to <paramref name="ids"/>: the ids <see cref="Encode"/> gives for that substring, without copying it.
+    /// to <paramref name="ids"/>: the ids <see cref="Encode(string)"/> gives for that substring, without copying it.
     /// </summary>
     public void EncodeRange(string text, int start, int length, List<int> ids)
     {
@@ -438,6 +449,110 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
 
         return copy is null ? text : new string(copy);
+    }
+
+    /// <inheritdoc />
+    public TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options) =>
+        TokenizerEncodings.Finish(text, pair, _raw ??= Raw, PostProcessor, options, _source, this);
+
+    /// <inheritdoc />
+    public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
+        TokenizerEncodings.Batch(texts, pairs, options, _source, this, _workers);
+
+    // The post-processor the tokenizer.json names, or null.
+    internal ITokenizerPostProcessor? PostProcessor
+    {
+        get
+        {
+            if (!_postProcessorRead)
+            {
+                _postProcessor = PostProcessors.Of(_source["post_processor"] as JsonObject);
+                _postProcessorRead = true;
+            }
+
+            return _postProcessor;
+        }
+    }
+
+    // A text's ids with their offsets in it: the span pipeline (equal to this tokenizer's own, plan 24 L1), each piece
+    // merged without the piece cache (keyed by raw text, while these pieces are already in the vocabulary's alphabet), and
+    // its tokens aligned to the characters they came from. The ids are the ones Encode gives.
+    private TokenizerEncoding Raw(string text, int sequence, int limit, bool left)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        text = WithoutLoneSurrogates(text);                                  // one character for one: offsets still index the text
+        var pipeline = _offsetPipeline ??= new TokenizerPipeline(_source);
+        var ids = new List<int>(text.Length / 3 + 4);
+        var offsets = new List<(int Start, int End)>(ids.Capacity);
+        var ranges = new List<(int Start, int Length)>();
+        var starts = left && limit < int.MaxValue ? new List<(int Start, bool Added)>() : null;  // each pre-token's first token
+        bool full = false;                                                    // a right limit reached: the rest is not encoded
+        var pieces = t_pieces ?? new PreTokenizedText();
+        t_pieces = null;
+        try
+        {
+            void Text(int start, int length, bool atStart)
+            {
+                if (length == 0 || full)
+                {
+                    return;
+                }
+
+                pipeline.Run(text, start, length, atStart, pieces);
+                for (int i = 0; i < pieces.Pieces.Count; i++)
+                {
+                    var (pieceStart, pieceLength) = pieces.Pieces[i];
+                    if (pieceLength == 0)
+                    {
+                        continue;
+                    }
+
+                    starts?.Add((ids.Count, false));
+
+                    var piece = pieces.Piece(i);
+                    int[] encoded = Bpe(piece);
+                    ranges.Clear();
+                    TokenizerEncodings.Align(piece, encoded, TokenOf, _byteFallback, ranges);
+                    ids.AddRange(encoded);
+                    foreach (var (from, count) in ranges)
+                    {
+                        offsets.Add(pieces.Text.OriginOf(pieceStart + from, count));
+                    }
+
+                    if (starts is null && ids.Count >= limit)
+                    {
+                        full = true;
+                        return;
+                    }
+                }
+            }
+
+            int last = 0;
+            if (_addedPattern is not null)
+            {
+                foreach (var match in _addedPattern.EnumerateMatches(text))
+                {
+                    Text(last, match.Index - last, last == 0);
+                    if (full)
+                    {
+                        break;
+                    }
+
+                    starts?.Add((ids.Count, true));
+                    ids.Add(_vocabularySpans[text.AsSpan(match.Index, match.Length)]);
+                    offsets.Add((match.Index, match.Index + match.Length));
+                    last = match.Index + match.Length;
+                }
+            }
+
+            Text(last, text.Length - last, last == 0);
+        }
+        finally
+        {
+            t_pieces = pieces;
+        }
+
+        return TokenizerEncodings.Raw(ids, offsets, TokenOf, sequence, starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit));
     }
 
     /// <inheritdoc />

@@ -16,7 +16,7 @@ namespace Idrak.Models;
 /// <c>tokenizers</c> runs it: added tokens matched first, the tokenizer.json's normalizer and pre-tokenizer on spans
 /// (<see cref="TokenizerPipeline"/>), then each word split greedily into the longest pieces of the vocabulary, the first
 /// from the word's start, the rest continuation pieces (<c>##</c>); a word with no such split, or longer than
-/// <c>max_input_chars_per_word</c>, is one unknown token. <see cref="Encode"/> adds no special tokens (the post-processor
+/// <c>max_input_chars_per_word</c>, is one unknown token. <see cref="Encode(string)"/> adds no special tokens (the post-processor
 /// does, when asked). Built by the "WordPiece" model of <see cref="TokenizerModels"/>.
 /// </summary>
 internal sealed class WordPieceTokenizer : IPretrainedTokenizer
@@ -39,6 +39,8 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
     private readonly TokenizerPipeline _pipeline;
     private readonly Func<List<string>, List<string>>? _decoder;
     private readonly int _cacheLimit;
+    private readonly int _workers;
+    private TokenizerEncodings.RawEncoder? _raw;                             // Raw, as Finish takes it (made once)
     private readonly ConcurrentDictionary<string, int[]> _cache = new();
     private readonly ConcurrentDictionary<string, int[]>.AlternateLookup<ReadOnlySpan<char>> _cacheSpans;
 
@@ -114,6 +116,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
         _decoder = definition.Json["decoder"] is JsonObject decoder ? Decoder(decoder) : null;
         PostProcessor = PostProcessors.Of(definition.Json["post_processor"] as JsonObject);
         _cacheLimit = options.ResolvedPieceCacheLimit();
+        _workers = options.ResolvedWorkers();
         _cacheSpans = _cache.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
@@ -231,14 +234,15 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
         }
 
         int before = ids.Count;
-        Split(word, ids);
+        Split(word, ids, null);
         if (_cache.Count < _cacheLimit)
         {
             _cache.TryAdd(new string(word), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..].ToArray());
         }
     }
 
-    private void Split(ReadOnlySpan<char> word, List<int> ids)
+    // The greedy split of a word; ranges (when given) gets each token's characters in the word.
+    private void Split(ReadOnlySpan<char> word, List<int> ids, List<(int Start, int Length)>? ranges)
     {
         int characters = 0;
         for (int i = 0; i < word.Length; i++)
@@ -252,6 +256,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
         if (characters > _maxChars)
         {
             ids.Add(_unknown);
+            ranges?.Add((0, word.Length));
             return;
         }
 
@@ -260,7 +265,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
         TrieMatch[]? rentedMatches = null;
         Span<byte> bytes = count <= StackBytes ? stackalloc byte[StackBytes] : (rentedBytes = ArrayPool<byte>.Shared.Rent(count));
         Span<TrieMatch> matches = stackalloc TrieMatch[StackMatches];
-        int before = ids.Count;
+        int before = ids.Count, rangesBefore = ranges?.Count ?? 0, character = 0;
         try
         {
             Encoding.UTF8.GetBytes(word, bytes);
@@ -272,6 +277,8 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
                 {
                     ids.RemoveRange(before, ids.Count - before);              // no split: the word is unknown
                     ids.Add(_unknown);
+                    ranges?.RemoveRange(rangesBefore, ranges.Count - rangesBefore);
+                    ranges?.Add((0, word.Length));
                     return;
                 }
 
@@ -297,6 +304,13 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
                 }
 
                 ids.Add(longest.Value);
+                if (ranges is not null)
+                {
+                    int chars = Encoding.UTF8.GetCharCount(bytes.Slice(at, longest.Length));
+                    ranges.Add((character, chars));
+                    character += chars;
+                }
+
                 at += longest.Length;
             }
         }
@@ -312,6 +326,88 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
                 ArrayPool<TrieMatch>.Shared.Return(rentedMatches);
             }
         }
+    }
+
+    public TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options) =>
+        TokenizerEncodings.Finish(text, pair, _raw ??= Raw, PostProcessor, options, _source, this);
+
+    public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
+        TokenizerEncodings.Batch(texts, pairs, options, _source, this, _workers);
+
+    // A text's ids with their offsets in it (no cache: a cached word has no token boundaries).
+    private TokenizerEncoding Raw(string text, int sequence, int limit, bool left)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        text = BpeTokenizer.WithoutLoneSurrogates(text);                      // one character for one: offsets still index the text
+        var ids = new List<int>(text.Length / 3 + 4);
+        var offsets = new List<(int Start, int End)>(ids.Capacity);
+        var ranges = new List<(int Start, int Length)>();
+        var starts = left && limit < int.MaxValue ? new List<(int Start, bool Added)>() : null;  // each pre-token's first token
+        bool full = false;                                                    // a right limit reached: the rest is not encoded
+        var pieces = t_pieces ?? new PreTokenizedText();
+        t_pieces = null;
+        try
+        {
+            void Text(int start, int length, bool atStart)
+            {
+                if (length == 0 || full)
+                {
+                    return;
+                }
+
+                _pipeline.Run(text, start, length, atStart, pieces);
+                for (int i = 0; i < pieces.Pieces.Count; i++)
+                {
+                    var (pieceStart, pieceLength) = pieces.Pieces[i];
+                    if (pieceLength == 0)
+                    {
+                        continue;
+                    }
+
+                    starts?.Add((ids.Count, false));
+
+                    ranges.Clear();
+                    Split(pieces.Piece(i), ids, ranges);
+                    foreach (var (from, count) in ranges)
+                    {
+                        var (s, e) = pieces.Text.OriginOf(pieceStart + from, count);
+                        offsets.Add((s, e));
+                    }
+
+                    if (starts is null && ids.Count >= limit)
+                    {
+                        full = true;
+                        return;
+                    }
+                }
+            }
+
+            int last = 0;
+            if (_addedPattern is not null)
+            {
+                foreach (var match in _addedPattern.EnumerateMatches(text))
+                {
+                    Text(last, match.Index - last, last == 0);
+                    if (full)
+                    {
+                        break;
+                    }
+
+                    starts?.Add((ids.Count, true));
+                    ids.Add(_vocabularySpans[text.AsSpan(match.Index, match.Length)]);
+                    offsets.Add((match.Index, match.Index + match.Length));
+                    last = match.Index + match.Length;
+                }
+            }
+
+            Text(last, text.Length - last, last == 0);
+        }
+        finally
+        {
+            t_pieces = pieces;
+        }
+
+        return TokenizerEncodings.Raw(ids, offsets, TokenOf, sequence, starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit));
     }
 
     public string Decode(IEnumerable<int> ids)
