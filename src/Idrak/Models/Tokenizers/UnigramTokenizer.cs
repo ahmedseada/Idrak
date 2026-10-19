@@ -68,7 +68,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
     private readonly Dictionary<string, int> _ids;
     private readonly Dictionary<string, int>.AlternateLookup<ReadOnlySpan<char>> _idSpans;
     private readonly HashSet<int> _special;
-    private readonly Regex? _addedPattern;
+    private readonly TokenizerRegex? _addedPattern;
     private readonly TokenizerPipeline _pipeline;
     private readonly Func<List<string>, List<string>>? _decoder;
 
@@ -199,8 +199,8 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
         _idSpans = _ids.GetAlternateLookup<ReadOnlySpan<char>>();
         if (added.Count > 0)
         {
-            _addedPattern = new Regex(string.Join('|', added.Select(a => a.Content).Where(c => c.Length > 0)
-                .Distinct(StringComparer.Ordinal).OrderByDescending(c => c.Length).Select(Regex.Escape)), BpeTokenizer.Fast);
+            _addedPattern = new TokenizerRegex(string.Join('|', added.Select(a => a.Content).Where(c => c.Length > 0)
+                .Distinct(StringComparer.Ordinal).OrderByDescending(c => c.Length).Select(Regex.Escape)));
         }
 
         // The trie and the scores. Hugging Face matches every piece; SentencePiece only normal, user-defined (and unused)
@@ -314,7 +314,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
         int last = start;
         if (_addedPattern is not null)
         {
-            foreach (var match in _addedPattern.EnumerateMatches(text.AsSpan(start, length)))
+            foreach (var match in _addedPattern.Local.EnumerateMatches(text.AsSpan(start, length)))
             {
                 int at = start + match.Index;
                 EncodeText(text, last, at - last, ids, last == start);
@@ -406,7 +406,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
             int last = 0;
             if (_addedPattern is not null)
             {
-                foreach (var match in _addedPattern.EnumerateMatches(text))
+                foreach (var match in _addedPattern.Local.EnumerateMatches(text))
                 {
                     Text(last, match.Index - last, last == 0);
                     if (full)

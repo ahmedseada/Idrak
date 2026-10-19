@@ -4,6 +4,8 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using Idrak.Abstraction.Text;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
@@ -165,6 +167,250 @@ internal static class BertComponents
 
         width = 1;
         return text[at];
+    }
+
+    /// <summary>
+    /// BertNormalizer then BertPreTokenizer (the library's own, as a tokenizer.json names them: a BERT tokenizer's usual
+    /// pipeline) in one pass over the text, for text whose every character the steps treat alone: kept as one character
+    /// (lowercased), dropped (clean_text's controls, strip_accents' non-spacing marks), whitespace, or a piece of its own
+    /// (punctuation, a CJK ideograph). It writes the normalized text, each character's range and the pieces the steps
+    /// write, character for character, without their passes over the whole text, their regular expressions or a rewrite
+    /// per step. A text with a character that needs the steps' context (under strip_accents, one NFD makes more than a
+    /// letter and non-spacing marks of, or a mark that is not non-spacing; U+0130 under lowercase without it; a surrogate
+    /// pair) is left to the steps (TryRun returns false).
+    /// </summary>
+    internal sealed class OnePass
+    {
+        // A character's kind (above bit 16) and the character it becomes (the low 16 bits).
+        private const int Word = 0, Separator = 1, Isolated = 2, Spaced = 3, Removed = 4, Complex = 5;
+
+        // Per setting (clean, chinese, strip, lowercase as 4 bits): per 256 UTF-16 code units, each one's kind and
+        // character, made when the block is first met and shared by every tokenizer with those settings.
+        private static readonly int[]?[]?[] Tables = new int[]?[]?[16];
+
+        // The pre-tokenizer's own patterns (WhitespaceSplit's \S+ cuts at \s; Punctuation's class), asked of one character
+        // at a time when a block is made, so a character's kind is what the patterns say.
+        private static readonly Regex Space = new(@"\s", RegexOptions.CultureInvariant);
+        private static readonly Regex Punctuation = new(BpeTokenizer.PunctuationPattern, RegexOptions.CultureInvariant);
+
+        private readonly bool _clean, _chinese, _strip, _lowercase;
+        private readonly int[]?[] _blocks;
+
+        private OnePass(bool clean, bool chinese, bool strip, bool lowercase)
+        {
+            (_clean, _chinese, _strip, _lowercase) = (clean, chinese, strip, lowercase);
+            int setting = (clean ? 1 : 0) | (chinese ? 2 : 0) | (strip ? 4 : 0) | (lowercase ? 8 : 0);
+            var blocks = Volatile.Read(ref Tables[setting]);
+            if (blocks is null)
+            {
+                blocks = new int[]?[256];
+                blocks = Interlocked.CompareExchange(ref Tables[setting], blocks, null) ?? blocks;
+            }
+
+            _blocks = blocks;
+        }
+
+        /// <summary>
+        /// The one pass for <paramref name="json"/>'s normalizer (none, or BertNormalizer) and pre-tokenizer (BertPreTokenizer),
+        /// or null for any other pipeline, or when an app registered its own type for one of them (or for the
+        /// pre-tokenizer's parts, WhitespaceSplit and Punctuation).
+        /// </summary>
+        public static OnePass? Of(JsonObject json)
+        {
+            if (json["pre_tokenizer"] is not JsonObject pre || (string?)pre["type"] != "BertPreTokenizer"
+                || TokenizerComponents.FindPreTokenizer("BertPreTokenizer") is not null || TokenizerComponents.FindPreTokenizer("WhitespaceSplit") is not null
+                || TokenizerComponents.FindPreTokenizer("Punctuation") is not null)
+            {
+                return null;
+            }
+
+            switch (json["normalizer"])
+            {
+                case null:
+                    return new OnePass(false, false, false, false);
+                case JsonObject spec when (string?)spec["type"] == "BertNormalizer" && TokenizerComponents.FindNormalizer("BertNormalizer") is null:
+                    bool lowercase = (bool?)spec["lowercase"] ?? true;
+                    return new OnePass((bool?)spec["clean_text"] ?? true, (bool?)spec["handle_chinese_chars"] ?? true, (bool?)spec["strip_accents"] ?? lowercase, lowercase);
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>Normalizes and pre-tokenizes <paramref name="text"/>[<paramref name="start"/>..<paramref name="start"/> + <paramref name="length"/>] into <paramref name="output"/>; false (output to be rewritten) when the text needs the steps.</summary>
+        public bool TryRun(string text, int start, int length, PreTokenizedText output)
+        {
+            output.Text.StartDirect(text, start, length, _chinese ? length * 3 : length);
+            return Split(text.AsSpan(start, length), start, output);
+        }
+
+        /// <summary><see cref="TryRun(string, int, int, PreTokenizedText)"/> on a caller's buffer (as TokenizerPipeline.Run's buffer form).</summary>
+        public bool TryRun(char[] text, int textLength, int start, int length, PreTokenizedText output)
+        {
+            output.Text.StartDirect(text, textLength, start, length, _chinese ? length * 3 : length);
+            return Split(text.AsSpan(start, length), start, output);
+        }
+
+        // The pass: every character's kind from its block, its normalized characters written with its range (the steps
+        // give each kept character, each space clean_text writes for whitespace and both spaces around an ideograph, the
+        // range of the character it came from), the pieces cut at whitespace and around isolated characters.
+        private bool Split(ReadOnlySpan<char> segment, int offset, PreTokenizedText output)
+        {
+            var normalized = output.Text;
+            var chars = normalized.DirectChars;
+            var starts = normalized.DirectStarts;
+            var ends = normalized.DirectEnds;
+            var pieces = output.Pieces;
+            pieces.Clear();
+            int n = 0, word = -1;
+            for (int i = 0; i < segment.Length; i++)
+            {
+                char c = segment[i];
+                int info = (_blocks[c >> 8] ?? Block(c >> 8))[c & 0xFF];
+                int at = offset + i;
+                switch (info >>> 16)
+                {
+                    case Word:
+                        word = word < 0 ? n : word;
+                        (chars[n], starts[n], ends[n]) = ((char)info, at, at + 1);
+                        n++;
+                        break;
+                    case Separator:
+                        if (word >= 0)
+                        {
+                            pieces.Add((word, n - word));
+                            word = -1;
+                        }
+
+                        (chars[n], starts[n], ends[n]) = ((char)info, at, at + 1);
+                        n++;
+                        break;
+                    case Isolated:
+                        if (word >= 0)
+                        {
+                            pieces.Add((word, n - word));
+                            word = -1;
+                        }
+
+                        (chars[n], starts[n], ends[n]) = ((char)info, at, at + 1);
+                        pieces.Add((n, 1));
+                        n++;
+                        break;
+                    case Spaced:
+                        if (word >= 0)
+                        {
+                            pieces.Add((word, n - word));
+                            word = -1;
+                        }
+
+                        (chars[n], starts[n], ends[n]) = (' ', at, at + 1);
+                        (chars[n + 1], starts[n + 1], ends[n + 1]) = ((char)info, at, at + 1);
+                        (chars[n + 2], starts[n + 2], ends[n + 2]) = (' ', at, at + 1);
+                        pieces.Add((n + 1, 1));
+                        n += 3;
+                        break;
+                    case Removed:
+                        break;
+                    default:
+                        return false;
+                }
+            }
+
+            if (word >= 0)
+            {
+                pieces.Add((word, n - word));
+            }
+
+            normalized.DirectLength = n;
+            return true;
+        }
+
+        // A block's kinds, made once (concurrent makers write the same values; the first array published wins).
+        private int[] Block(int block)
+        {
+            var made = new int[256];
+            for (int i = 0; i < 256; i++)
+            {
+                made[i] = Kind((char)((block << 8) | i));
+            }
+
+            return Interlocked.CompareExchange(ref _blocks[block], made, null) ?? made;
+        }
+
+        // A character as the steps treat it: clean_text drops it or makes whitespace a space; handle_chinese_chars puts
+        // spaces around an ideograph; strip_accents (NFD, then the non-spacing marks out) keeps the first character of its
+        // canonical decomposition when that is a starter (combining class 0, which NFD's reordering never moves) and the rest
+        // non-spacing marks (é, a letter with hamza: the letter, which the steps align to the character it came from), drops
+        // a character made only of non-spacing marks, and leaves anything else to the steps; lowercase maps what is kept as
+        // the Lowercase step does (U+0130, which becomes two characters, to the steps). Then the pre-tokenizer's patterns on
+        // what it became: whitespace cuts, punctuation is a piece of its own.
+        private int Kind(char c)
+        {
+            if (char.IsSurrogate(c))
+            {
+                return Complex << 16;
+            }
+
+            if (_clean && Dropped(c))
+            {
+                return Removed << 16;
+            }
+
+            if (_clean && IsWhitespace(c))
+            {
+                return (Separator << 16) | ' ';
+            }
+
+            bool spaced = _chinese && IsChinese(c);
+            char kept = c;
+            if (_strip)
+            {
+                Span<int> parts = stackalloc int[UnicodeNormalization.MaxDecompositionLength(compatibility: false)];
+                int count = UnicodeNormalization.Decompose(c, parts, compatibility: false);
+                for (int k = 1; k < count; k++)
+                {
+                    if (CharUnicodeInfo.GetUnicodeCategory(parts[k]) != UnicodeCategory.NonSpacingMark)
+                    {
+                        return Complex << 16;
+                    }
+                }
+
+                if (CharUnicodeInfo.GetUnicodeCategory(parts[0]) == UnicodeCategory.NonSpacingMark)
+                {
+                    return Removed << 16;
+                }
+
+                if (UnicodeNormalization.CombiningClass(parts[0]) != 0 || parts[0] > char.MaxValue)
+                {
+                    return Complex << 16;
+                }
+
+                kept = (char)parts[0];
+            }
+
+            char lowered = kept;
+            if (_lowercase)
+            {
+                if (kept == '\u0130')
+                {
+                    return Complex << 16;
+                }
+
+                Span<char> one = [kept];
+                Span<char> lower = stackalloc char[1];
+                ((ReadOnlySpan<char>)one).ToLowerInvariant(lower);
+                lowered = lower[0];
+            }
+
+            if (spaced)
+            {
+                return (Spaced << 16) | lowered;
+            }
+
+            string alone = lowered.ToString();
+            return Space.IsMatch(alone) ? (Separator << 16) | lowered
+                : Punctuation.IsMatch(alone) ? (Isolated << 16) | lowered
+                : (Word << 16) | lowered;
+        }
     }
 
     // BertPreTokenizer: whitespace removed, then each punctuation character (ASCII punctuation and Unicode's P categories)
