@@ -60,6 +60,14 @@ internal static class LibraryModelFormats
         TokenizerFiles.Register(new VocabTxtReader());
     }
 
+    public static void RegisterGgufTokenizers()
+    {
+        GgufTokenizers.Register("gpt2", GgufTokenizerFormats.Gpt2);
+        GgufTokenizers.Register("llama", GgufTokenizerFormats.Llama);
+        GgufTokenizers.Register("t5", GgufTokenizerFormats.T5);
+        GgufTokenizers.Register("bert", GgufTokenizerFormats.Bert);
+    }
+
     public static void RegisterGgufPreTokenizers()
     {
         foreach (var (name, pattern) in GgufBuiltIns.PreTokenizers())

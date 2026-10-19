@@ -12,7 +12,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 71 | 13 | 38 | 121 | 0 |
-| `Idrak` | 13 | 4 | 14 | 31 | 0 |
+| `Idrak` | 13 | 4 | 15 | 32 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 10 | 2 | 7 | 19 | 0 |
@@ -176,6 +176,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Layers.Abstractions.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | Idrak | Idrak |
+| `Idrak.Models.Abstractions.GgufTokenizers` | registry | public | — |  | bert, gpt2, llama, t5 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufTypes` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | TokenizerComponents.GuardedPreTokenizer, TokenizerComponents.PreTokenizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
