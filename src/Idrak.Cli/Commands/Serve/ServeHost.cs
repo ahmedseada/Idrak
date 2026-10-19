@@ -261,7 +261,7 @@ internal sealed class ServeHost
 
             string path = ModelChoices.Resolve(context, choice.Model);
             string folder = CheckpointFormats.For(path).Prepare(path);
-            var tokenizer = File.Exists(System.IO.Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
+            var tokenizer = PretrainedTokenizers.TryLoad(folder);
             var template = JinjaChatTemplate.Load(folder, tokenizer);
             string configFile = System.IO.Path.Combine(folder, "config.json");
             var config = File.Exists(configFile) ? JsonNode.Parse(File.ReadAllText(configFile)) as JsonObject : null;

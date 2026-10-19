@@ -505,9 +505,9 @@ public sealed class ChatTranscriptEncoder
             if (to > from)
             {
                 int count = tokens.Count;
-                if (Tokenizer is BpeTokenizer bpe)
+                if (Tokenizer is IPretrainedTokenizer pretrained)
                 {
-                    bpe.EncodeRange(text, from, to - from, tokens);                // no copy of the span's text
+                    pretrained.EncodeRange(text, from, to - from, tokens);         // no copy of the span's text
                 }
                 else
                 {

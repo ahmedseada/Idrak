@@ -31,7 +31,7 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
     private readonly ConcurrentDictionary<Rune, bool> _readable = new();
     private bool _disposed;
 
-    internal IdrakAudioTtsModel(IdrakAudioConfig config, IdrakAudioWeights weights, BpeTokenizer tokenizer, Device device)
+    internal IdrakAudioTtsModel(IdrakAudioConfig config, IdrakAudioWeights weights, IPretrainedTokenizer tokenizer, Device device)
     {
         if (tokenizer.VocabularySize > config.Classes)
         {
@@ -50,7 +50,7 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
     public IdrakAudioConfig Config { get; }
 
     /// <summary>The tokenizer: token i is label i.</summary>
-    public BpeTokenizer Tokenizer { get; }
+    public IPretrainedTokenizer Tokenizer { get; }
 
     /// <summary>
     /// A vocoder the app made (its own settings, a Griffin-Lim of more iterations say), used when a call names none

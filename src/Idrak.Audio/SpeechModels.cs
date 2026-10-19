@@ -69,7 +69,7 @@ public static class SpeechModels
     /// A speech model that did not exist: the family registered under the spec's architecture makes it from
     /// <paramref name="spec"/> (<see cref="ISpeechFamily.Create"/>: its tensors drawn from the seed, its config.json and
     /// other files), which is written into <paramref name="folder"/> (config.json with "architectures", model.safetensors
-    /// in float32, the tokenizer as tokenizer.json when it is a <see cref="BpeTokenizer"/> and the family wrote none, the
+    /// in float32, the tokenizer as tokenizer.json when it is an <see cref="IPretrainedTokenizer"/> and the family wrote none, the
     /// family's files) and loaded from there, so it is a model like any other: it transcribes, trains and saves (plan 21, S6).
     /// </summary>
     /// <exception cref="NotSupportedException">No family is registered under the architecture, or it makes no models from a description.</exception>
@@ -103,7 +103,7 @@ public static class SpeechModels
     }
 
     // A created model written as a model folder: config.json with "architectures", model.safetensors in float32, the
-    // family's files, and the tokenizer as tokenizer.json when it is a BpeTokenizer and the family wrote none.
+    // family's files, and the tokenizer as tokenizer.json when it is a pretrained one and the family wrote none.
     internal static void Write(string folder, string architecture, CreatedSpeechModel created, ITokenizer tokenizer)
     {
         var config = (JsonObject)created.Config.DeepClone();
@@ -115,9 +115,9 @@ public static class SpeechModels
             File.WriteAllText(Path.Combine(folder, name), text);
         }
 
-        if (!created.Files.ContainsKey("tokenizer.json") && tokenizer is BpeTokenizer bpe)
+        if (!created.Files.ContainsKey("tokenizer.json") && tokenizer is IPretrainedTokenizer pretrained)
         {
-            bpe.Save(Path.Combine(folder, "tokenizer.json"));
+            pretrained.Save(Path.Combine(folder, "tokenizer.json"));
         }
 
         File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");

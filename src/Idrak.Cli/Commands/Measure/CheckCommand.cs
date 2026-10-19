@@ -76,8 +76,8 @@ internal sealed class CheckCommand : Command
     private static int Check(CommandContext context, PretrainedModel model, ModelChoices.ModelChoice choice, JsonObject reference)
     {
         var device = context.Device;
-        var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json).");
-        string TokenOf(int id) => tokenizer is BpeTokenizer bpe ? bpe.TokenOf(id) : id.ToString(CultureInfo.InvariantCulture);
+        var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer.");
+        string TokenOf(int id) => tokenizer is IPretrainedTokenizer pretrained ? pretrained.TokenOf(id) : id.ToString(CultureInfo.InvariantCulture);
         int failures = 0;
         string kv = choice.Kv ?? "float32";
         bool approximate = choice.Weights is not null and not ("float32" or "f32") || kv != "float32";

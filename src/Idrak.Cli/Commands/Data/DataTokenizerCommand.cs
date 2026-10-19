@@ -175,7 +175,7 @@ internal sealed class DataTokenizerCommand : Command
         long total = files.Sum(f => new FileInfo(f).Length);
         var watch = Stopwatch.StartNew();
         TimeSpan counted = default;
-        Models.BpeTokenizer tokenizer;
+        IPretrainedTokenizer tokenizer;
         using (var line = new ProgressLine(context, "counting words", total: total, unit: ProgressUnit.Bytes))
         {
             var reports = new Reports(line, options.VocabularySize, () => counted = watch.Elapsed);

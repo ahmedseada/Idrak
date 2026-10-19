@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Datasets;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Cli.Commands.Data;
 
@@ -59,12 +60,7 @@ internal sealed class DataTokensCommand : Command
             throw new UsageException("Give the text files to encode.");
         }
 
-        if (!File.Exists(tokenizerPath) && !File.Exists(Path.Combine(tokenizerPath, "tokenizer.json")))
-        {
-            throw new UsageException($"No tokenizer.json at {tokenizerPath}.");
-        }
-
-        var tokenizer = BpeTokenizer.Load(tokenizerPath);
+        var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath} (readers: {string.Join(", ", TokenizerFiles.Names)}).");
         var type = (context.Option("--type") ?? "u16").ToLowerInvariant() switch
         {
             "u16" or "uint16" => TokenType.UInt16,

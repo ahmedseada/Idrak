@@ -12,7 +12,7 @@ using Idrak.Nlp;
 namespace Idrak.Cli.Commands.Run;
 
 /// <summary>A model's tokenizer and chat template, read without its weights (tokenize, template).</summary>
-internal sealed record ModelText(string Model, string Folder, BpeTokenizer Tokenizer, JinjaChatTemplate? Template)
+internal sealed record ModelText(string Model, string Folder, IPretrainedTokenizer Tokenizer, JinjaChatTemplate? Template)
 {
     /// <summary>Reads the tokenizer and template of the model named <paramref name="name"/> (alias, id, folder or .gguf file).</summary>
     public static ModelText Load(CommandContext context, string name)
@@ -20,12 +20,8 @@ internal sealed record ModelText(string Model, string Folder, BpeTokenizer Token
         var choice = ModelChoices.Choose(context, name);
         string path = ModelChoices.Resolve(context, choice.Model);
         string folder = CheckpointFormats.For(path).Prepare(path);   // a .gguf file: its tokenizer and template from the metadata
-        if (!File.Exists(Path.Combine(folder, "tokenizer.json")))
-        {
-            throw new InvalidOperationException($"{choice.Model} has no tokenizer.json.");
-        }
-
-        var tokenizer = BpeTokenizer.Load(folder);
+        var tokenizer = PretrainedTokenizers.TryLoad(folder)
+            ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (readers: {string.Join(", ", TokenizerFiles.Names)}).");
         return new ModelText(choice.Model, folder, tokenizer, JinjaChatTemplate.Load(folder, tokenizer));
     }
 }

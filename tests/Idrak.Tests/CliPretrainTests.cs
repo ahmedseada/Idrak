@@ -177,7 +177,7 @@ internal static partial class Tests
             Check(code == 1 && error.Contains("NoSuchForCausalLM", StringComparison.Ordinal), $"an unknown architecture: {error}");
             File.WriteAllText(spec, """{"format": "idrak-create/1", "tokenizer": "missing.json", "spec": {"dim": 32}}""");
             (code, _, error) = TrainCli("create", spec, "-o", Path.Combine(folder, "b"));
-            Check(code == 2 && error.Contains("No tokenizer.json", StringComparison.Ordinal), $"a missing tokenizer: {error}");
+            Check(code == 2 && error.Contains("No tokenizer at", StringComparison.Ordinal), $"a missing tokenizer: {error}");
             File.WriteAllText(spec, "{\"tokenizer\": " + tokenizerJson + ", \"spec\": {\"dim\": 32, \"heads\": 4}}");
             (code, _, error) = TrainCli("create", spec, "-o", Path.Combine(folder, "c"));
             Check(code == 2 && error.Contains("\"layers\"", StringComparison.Ordinal), $"a missing spec key: {error}");

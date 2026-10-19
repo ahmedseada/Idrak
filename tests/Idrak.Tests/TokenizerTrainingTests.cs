@@ -34,7 +34,7 @@ internal static partial class Tests
         };
     }
 
-    private static void CheckTrainedAgainstReference(BpeTokenizer trained, string folder)
+    private static void CheckTrainedAgainstReference(IPretrainedTokenizer trained, string folder)
     {
         var reference = JsonNode.Parse(File.ReadAllText(PretrainData($"{folder}/train.json")))!.AsObject();
         var json = trained.ToJson();
@@ -192,7 +192,7 @@ internal static partial class Tests
             File.WriteAllText(lf, string.Join("\n", lines) + "\n");
             File.WriteAllText(crlf, string.Join("\r\n", lines) + "\r\n");
             var trainer = TokenizerTrainers.Get(TokenizerTrainers.Bpe);
-            static string[] Vocabulary(BpeTokenizer t) => [.. Enumerable.Range(0, t.VocabularySize).Select(t.TokenOf)];
+            static string[] Vocabulary(IPretrainedTokenizer t) => [.. Enumerable.Range(0, t.VocabularySize).Select(t.TokenOf)];
             foreach (string pre in new[] { TokenizerTrainers.ByteLevel, TokenizerTrainers.Metaspace })
             {
                 var options = new TokenizerTrainingOptions { VocabularySize = 300, MinFrequency = 1, PreTokenizer = pre, Workers = 1 };

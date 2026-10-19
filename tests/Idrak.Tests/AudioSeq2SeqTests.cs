@@ -165,7 +165,7 @@ internal static partial class Tests
         ["subsample_layers"] = 2, ["subsample_kernel"] = 3, ["decoder_layers"] = 2, ["max_target_positions"] = maxTargetPositions,
     };
 
-    private static IdrakAudioSeq2SeqModel CreateToneSeq(string folder, BpeTokenizer tokenizer, Device device, int seed = 7, int maxTargetPositions = 32) =>
+    private static IdrakAudioSeq2SeqModel CreateToneSeq(string folder, IPretrainedTokenizer tokenizer, Device device, int seed = 7, int maxTargetPositions = 32) =>
         (IdrakAudioSeq2SeqModel)SpeechModels.Create(folder, ToneSeqSpec(maxTargetPositions), tokenizer, new SpeechCreateOptions { Device = device, Seed = seed });
 
     private static void AudioSeq2SeqCreate(Device device)

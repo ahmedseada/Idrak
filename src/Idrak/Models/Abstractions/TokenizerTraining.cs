@@ -48,7 +48,7 @@ public readonly record struct TokenizerTrainingProgress(string Stage, long Done,
 
 /// <summary>
 /// Learns a tokenizer from text files. The result encodes and decodes like one read from a tokenizer.json, and
-/// <see cref="BpeTokenizer.Save"/> writes it as one, so a model made from scratch (plan 19) carries its own vocabulary.
+/// <see cref="IPretrainedTokenizer.Save"/> writes it as one, so a model made from scratch (plan 19) carries its own vocabulary.
 /// Register one with <see cref="TokenizerTrainers.Register"/>.
 /// </summary>
 public interface ITokenizerTrainer
@@ -65,7 +65,7 @@ public interface ITokenizerTrainer
     /// </summary>
     /// <exception cref="FileNotFoundException">A file is missing.</exception>
     /// <exception cref="ArgumentException">An option is out of range.</exception>
-    BpeTokenizer Train(IReadOnlyList<string> files, TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress = null,
+    IPretrainedTokenizer Train(IReadOnlyList<string> files, TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }
 

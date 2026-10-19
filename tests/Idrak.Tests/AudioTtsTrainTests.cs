@@ -191,7 +191,7 @@ internal static partial class Tests
         ["decoder_layers"] = 2, ["decoder_dim"] = 32, ["decoder_heads"] = 2, ["decoder_ffn_dim"] = 64, ["duration_filters"] = 32,
     };
 
-    private static IdrakAudioTtsModel CreateToneTts(string folder, BpeTokenizer tokenizer, Device device, int seed = 7) =>
+    private static IdrakAudioTtsModel CreateToneTts(string folder, IPretrainedTokenizer tokenizer, Device device, int seed = 7) =>
         (IdrakAudioTtsModel)SpeechSynthesisModels.Create(folder, ToneTtsSpec(), tokenizer, new SpeechCreateOptions { Device = device, Seed = seed });
 
     // A vocoder of another mel layout, to be refused.

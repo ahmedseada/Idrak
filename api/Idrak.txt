@@ -1428,11 +1428,17 @@ public interface Idrak.Models.Abstractions.IPreTokenizer
 public interface Idrak.Models.Abstractions.ITokenizerDecoder
   public System.Collections.Generic.IReadOnlyList<string> Decode(System.Collections.Generic.IReadOnlyList<string> tokens)
 
+public interface Idrak.Models.Abstractions.ITokenizerFileReader
+  public Idrak.Models.Abstractions.TokenizerDefinition Read(string file, Idrak.Models.Abstractions.TokenizerOptions options)
+  public string Name { get; }
+  public string Summary { get; }
+  public string? Find(string path)
+
 public interface Idrak.Models.Abstractions.ITokenizerNormalizer
   public string Normalize(string text)
 
 public interface Idrak.Models.Abstractions.ITokenizerTrainer
-  public Idrak.Models.BpeTokenizer Train(System.Collections.Generic.IReadOnlyList<string> files, Idrak.Models.Abstractions.TokenizerTrainingOptions options, System.IProgress<Idrak.Models.Abstractions.TokenizerTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer Train(System.Collections.Generic.IReadOnlyList<string> files, Idrak.Models.Abstractions.TokenizerTrainingOptions options, System.IProgress<Idrak.Models.Abstractions.TokenizerTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public string Name { get; }
   public string Summary { get; }
 
@@ -1494,6 +1500,50 @@ public static class Idrak.Models.Abstractions.TokenizerComponents
   public static void SetNormalizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetPreTokenizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed class Idrak.Models.Abstractions.TokenizerDefinition
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public TokenizerDefinition()
+  public (string, string)[]? Merges { get; init; }
+  public System.Collections.Generic.Dictionary<string, int>? Vocabulary { get; init; }
+  public System.Collections.Generic.IReadOnlyList<(string, double)>? Pieces { get; init; }
+  public required System.Text.Json.Nodes.JsonObject Json { get; init; }
+  public required string Source { get; init; }
+  public string ModelType { get; }
+
+public static class Idrak.Models.Abstractions.TokenizerFiles
+  public const string TokenizerJson = "tokenizer.json"
+  public static Idrak.Models.Abstractions.ITokenizerFileReader Get(string name)
+  public static Idrak.Models.Abstractions.ITokenizerFileReader? Default(string name)
+  public static Idrak.Models.Abstractions.ITokenizerFileReader? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Models.Abstractions.ITokenizerFileReader> Readers { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.ITokenizerFileReader reader)
+
+public static class Idrak.Models.Abstractions.TokenizerModels
+  public const string Bpe = "BPE"
+  public static Idrak.Abstraction.Generation.IPretrainedTokenizer Create(Idrak.Models.Abstractions.TokenizerDefinition definition, Idrak.Models.Abstractions.TokenizerOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer> Get(string type)
+  public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer>? Default(string type)
+  public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer>? Find(string type)
+  public static bool Unregister(string type)
+  public static string Describe()
+  public static string? Origin(string type)
+  public static void Register(string type, System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer> create)
+  public static void SetPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquatable<Idrak.Models.Abstractions.TokenizerOptions>
+  public TokenizerOptions()
+  public const int DefaultPieceCacheLimit = 100000
+  public const string FormatVariable = "IDRAK_TOKENIZER_FORMAT"
+  public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE"
+  public int ResolvedPieceCacheLimit()
+  public int? PieceCacheLimit { get; init; }
+  public string? Format { get; init; }
+  public string? ResolvedFormat()
+
 public static class Idrak.Models.Abstractions.TokenizerTrainers
   public const string Bpe = "bpe"
   public const string ByteLevel = "bytelevel"
@@ -1550,7 +1600,7 @@ public abstract class Idrak.Models.Abstractions.WeightCodec
   public abstract void Encode(System.ReadOnlySpan<float> values, System.Span<byte> bytes)
   public static Idrak.Models.Abstractions.WeightCodec For(Idrak.Abstraction.Formats.WeightFormat format)
 
-public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.ITokenizer
+public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.IPretrainedTokenizer, Idrak.Abstraction.Generation.ITokenizer
   public System.Collections.Generic.IReadOnlyList<int> Encode(string text)
   public System.Text.Json.Nodes.JsonObject ToJson()
   public bool IsSpecial(int id)
@@ -1560,6 +1610,7 @@ public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.ITo
   public static Idrak.Models.BpeTokenizer Load(string path)
   public string Decode(System.Collections.Generic.IEnumerable<int> ids)
   public string Decode(System.ReadOnlySpan<int> ids)
+  public string Model { get; }
   public string TokenOf(int id)
   public void EncodeRange(string text, int start, int length, System.Collections.Generic.List<int> ids)
   public void PadVocabulary(int size)
@@ -1630,7 +1681,7 @@ public sealed record Idrak.Models.ModelFiles : System.IEquatable<Idrak.Models.Mo
 {{- '<|im_start|>assistant\\n' -}}
 {%- endif -%}
 "
-  public required Idrak.Models.BpeTokenizer Tokenizer { get; init; }
+  public required Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; init; }
   public string EosToken { get; init; }
   public string? BosToken { get; init; }
   public string? ChatTemplate { get; init; }
@@ -1715,6 +1766,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
 public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Models.PretrainedOptions>
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
+  public Idrak.Models.Abstractions.TokenizerOptions? Tokenizer { get; init; }
   public PretrainedOptions()
   public bool BFloat16 { get; init; }
   public bool Deferred { get; init; }
@@ -1726,6 +1778,13 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public string? HeadFormatName { get; init; }
   public string? MergeAdapter { get; init; }
   public string? PackedFormatName { get; init; }
+
+public static class Idrak.Models.PretrainedTokenizers
+  public static (string, Idrak.Models.Abstractions.ITokenizerFileReader)? Find(string path, Idrak.Models.Abstractions.TokenizerOptions? options = null)
+  public static Idrak.Abstraction.Generation.IPretrainedTokenizer Load(string path, Idrak.Models.Abstractions.TokenizerOptions? options = null)
+  public static Idrak.Abstraction.Generation.IPretrainedTokenizer? TryLoad(string path, Idrak.Models.Abstractions.TokenizerOptions? options = null)
+  public static Idrak.Models.Abstractions.TokenizerDefinition Read(string path, Idrak.Models.Abstractions.TokenizerOptions? options = null)
+  public static bool Exists(string path, Idrak.Models.Abstractions.TokenizerOptions? options = null)
 
 public sealed class Idrak.Models.PyTorchCheckpointReader : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)

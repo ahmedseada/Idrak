@@ -111,12 +111,7 @@ internal sealed class CreateCommand : Command
 
         string architecture = Text("--architecture", "architecture") ?? "LlamaForCausalLM";
         string tokenizerPath = PathOf("--tokenizer", "tokenizer") ?? throw new UsageException("Give --tokenizer FILE (idrak data tokenizer learns one), or \"tokenizer\" in the spec file.");
-        if (!File.Exists(tokenizerPath) && !File.Exists(Path.Combine(tokenizerPath, "tokenizer.json")))
-        {
-            throw new UsageException($"No tokenizer.json at {tokenizerPath}.");
-        }
-
-        var tokenizer = BpeTokenizer.Load(tokenizerPath);
+        var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath} (readers: {string.Join(", ", TokenizerFiles.Names)}).");
         int multiple = context.IntOption("--vocab-multiple", wrapped && (int?)file["vocab_multiple"] is int m ? m : 64);
         DecoderSpec spec;
         try
@@ -204,12 +199,7 @@ internal sealed class CreateCommand : Command
             ?? throw new UsageException($"{specPath}: give the speech family's \"architecture\" (IdrakAudio, from -P Idrak.IdrakAudio.dll).");
         string tokenizerPath = context.Option("--tokenizer") ?? ((string?)file["tokenizer"] is { } t ? Path.Combine(folder, t) : null)
             ?? throw new UsageException("Give --tokenizer FILE (idrak data tokenizer learns one from the transcripts), or \"tokenizer\" in the spec file.");
-        if (!File.Exists(tokenizerPath) && !File.Exists(Path.Combine(tokenizerPath, "tokenizer.json")))
-        {
-            throw new UsageException($"No tokenizer.json at {tokenizerPath}.");
-        }
-
-        var tokenizer = BpeTokenizer.Load(tokenizerPath);
+        var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath} (readers: {string.Join(", ", TokenizerFiles.Names)}).");
         var spec = (JsonObject)speech.DeepClone();
         spec["architecture"] = architecture;
         int seed = context.Seed ?? ((int?)file["seed"] ?? 0);

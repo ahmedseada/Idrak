@@ -137,6 +137,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckLinkProfile(Idrak.Abstraction.Cluster.ILinkProfile profile, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckPretrained(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IPretrainedTokenizer? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckSpeechRecognizer(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -308,6 +309,16 @@ public readonly record struct Idrak.Abstraction.Testing.PowerSpectra : System.IE
   public float[] Power { get; init; }
   public int Bins { get; init; }
   public int Frames { get; init; }
+
+public sealed class Idrak.Abstraction.Testing.PretrainedTokenizerSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IPretrainedTokenizer>
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer? Reference { get; }
+  public PretrainedTokenizerSuite(Idrak.Abstraction.Generation.IPretrainedTokenizer? reference = null)
+  public System.Collections.Generic.IReadOnlyList<string> ExtraTexts { get; init; }
+  public bool ExactRoundTrip { get; init; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Generation.IPretrainedTokenizer implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public readonly record struct Idrak.Abstraction.Testing.RecognizedSegment : System.IEquatable<Idrak.Abstraction.Testing.RecognizedSegment>
   public RecognizedSegment(double Start, double End, string Text)

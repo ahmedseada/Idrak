@@ -30,6 +30,49 @@ public interface ITokenizer
 }
 
 /// <summary>
+/// A tokenizer a model ships with (a Hugging Face <c>tokenizer.json</c>, a SentencePiece model, a vocabulary file), or one
+/// a trainer learned: a vocabulary of named tokens with special ones, written back as a <c>tokenizer.json</c>. The library's
+/// models (BPE, and the others registered by name) implement it, so code that loads, pads, saves or looks tokens up works
+/// with any of them.
+/// </summary>
+public interface IPretrainedTokenizer : ITokenizer
+{
+    /// <summary>The tokenizer model's type, as tokenizer.json names it ("BPE", "Unigram", "WordPiece", …).</summary>
+    string Model { get; }
+
+    /// <summary>The id of <paramref name="token"/> (a vocabulary entry or an added token), or null.</summary>
+    int? IdOf(string token);
+
+    /// <summary>Whether <paramref name="id"/> is a special token (false for any id outside the vocabulary).</summary>
+    bool IsSpecial(int id);
+
+    /// <summary>
+    /// Extends the vocabulary to <paramref name="size"/> ids (models often have more embedding rows than the tokenizer has
+    /// tokens, for alignment); the extra ids decode to nothing. A smaller size changes nothing.
+    /// </summary>
+    void PadVocabulary(int size);
+
+    /// <summary>
+    /// Appends the ids of <paramref name="text"/>[<paramref name="start"/>..<paramref name="start"/> + <paramref name="length"/>]
+    /// to <paramref name="ids"/>: the ids <see cref="ITokenizer.Encode"/> gives for that substring, without copying it.
+    /// </summary>
+    void EncodeRange(string text, int start, int length, List<int> ids);
+
+    /// <summary>The tokenizer as the JSON of a tokenizer.json (see <see cref="Save"/>).</summary>
+    JsonObject ToJson();
+
+    /// <summary>Writes the tokenizer.json (see <see cref="Save"/>) to <paramref name="stream"/>.</summary>
+    void WriteTo(Stream stream);
+
+    /// <summary>
+    /// Writes the tokenizer as a tokenizer.json (UTF-8), from which the library's loader reads back a tokenizer that encodes
+    /// every text to the same ids.
+    /// </summary>
+    /// <param name="path">A file, or a folder (then its tokenizer.json).</param>
+    void Save(string path);
+}
+
+/// <summary>
 /// One token per character of a fixed alphabet (the vocabulary string). Characters outside the alphabet are
 /// dropped when encoding, or replaced by <see cref="UnknownCharacter"/> when it is part of the alphabet.
 /// </summary>
