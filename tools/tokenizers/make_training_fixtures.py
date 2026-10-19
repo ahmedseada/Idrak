@@ -3,15 +3,27 @@ C# trainers to be held to.
 
     tok/bin/python -I tools/tokenizers/make_training_fixtures.py            # writes tests/Idrak.Tests/data/tokenizer-training/
     tok/bin/python -I tools/tokenizers/make_training_fixtures.py --runs 5   # also: how much Hugging Face's WordPiece runs agree
+    tok/bin/python -I tools/tokenizers/make_training_fixtures.py --part unigram --part normalization   # only those files
 
 The training text is data/tokenizers/corpus.txt and data/pretrain/corpus.txt, read as the C# trainers read them (each
 line without its "\n", a "\r" before it dropped, as LineEnds "lf" reads it). Files written (the folder is emptied first,
 README.md kept):
 
 - unigram.json: per configuration, the options and the pieces (piece, score, type) sentencepiece's unigram trainer learns
-  (one thread, no shuffling, the identity normalization, the Arabic marks removed by a user rule where the configuration
-  says so). The C# trainer is held to these by overlap of the learned (normal) pieces, above a threshold measured here
-  and recorded in plans/24-tokenizers.md: the two sum in different orders, so equal is not expected.
+  (one thread, no shuffling, the identity normalization unless the configuration names a built-in rule, the Arabic marks
+  removed by a user rule where the configuration says so, no line skipped for length unless it gives
+  max_sentence_length). The C# trainer is held to these by overlap of the learned (normal) pieces, above a threshold
+  measured here and recorded in plans/24-tokenizers.md: the two sum in different orders, so equal is not expected. Some
+  configurations also hold the ids sentencepiece's own model gives each line of data/tokenizers/corpus.txt
+  ("encodings"), for the C# reader to give from the same pieces and switches.
+- whitespace-corpus.txt: made here (a fixed seed): lines of code whose indentation is runs of the literal ▁, the text
+  the allow_whitespace_only_pieces configuration learns from (the test corpus has no run of ▁ for it to change).
+- normalization.json: what sentencepiece's built-in rules "nfkc" and "nmt_nfkc" make of every code point (U+0001 to
+  U+10FFFF but the surrogates; only those they change are written, nmt_nfkc's where it differs from nfkc), of a sample of
+  combining sequences (keys of the rules' own maps, base letters with marks in every order of two, Hangul jamo) and of
+  every line of the training text (only the lines they change), the charsmap alone (no whitespace handling). Also the
+  code points whose Unicode 18 NFKC (from tests/Idrak.Tests/data/unicode/normalization-test.txt.gz, the library's
+  tables' version) differs from what sentencepiece's older tables make of them, with both outputs.
 - wordpiece.json: the words BERT's normalizer and pre-tokenizer make of the text, then the vocabulary of Hugging Face's
   WordPieceTrainer algorithm (BPE merges with the ## prefix) ported here with its ties in a fixed order (the ##
   characters numbered in code-point order after the alphabet, the words taken in code-point order, the queue as .NET's
@@ -53,23 +65,56 @@ UNIGRAM = {
     "unigram": dict(vocab_size=1000),
     "unigram-bytes": dict(vocab_size=1000, byte_fallback=True, split_digits=True),
     "unigram-arabic": dict(vocab_size=800, arabic=True, max_sentencepiece_length=8, shrinking_factor=0.8, num_sub_iterations=3),
+    # SentencePiece's switches, each against its default (plan 24, what is left, item 3); the whitespace and script
+    # switches at 2000, where they change the pieces of this text (at 800 they barely do; split_by_number changes none).
+    "unigram-no-whitespace-split": dict(vocab_size=2000, split_by_whitespace=False),
+    "unigram-no-script-split": dict(vocab_size=2000, split_by_unicode_script=False),
+    "unigram-no-number-split": dict(vocab_size=800, split_by_number=False),
+    "unigram-suffix": dict(vocab_size=800, treat_whitespace_as_suffix=True, encodings=True),
+    "unigram-whitespace-pieces": dict(vocab_size=300, allow_whitespace_only_pieces=True, corpus="whitespace"),
+    "unigram-max-sentence": dict(vocab_size=800, max_sentence_length=200),
+    "unigram-nmt-nfkc": dict(vocab_size=800, normalization="nmt_nfkc", encodings=True),
+    "unigram-nfkc": dict(vocab_size=800, normalization="nfkc"),
 }
+NORMALIZATION_RULES = ["nfkc", "nmt_nfkc"]
+UNICODE_TEST = os.path.join(DATA, "unicode", "normalization-test.txt.gz")
 WORDPIECE = dict(vocab_size=2000, min_frequency=2, special_tokens=["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"], lowercase=True)
 
 
 def lines():
     """Every line of the training files as the C# trainers read them (LineEnds "lf")."""
+    return [line for name in FILES for line in corpus_lines(name)]
+
+
+def corpus_lines(name):
+    """The lines of one file under data/, as the C# trainers read them (LineEnds "lf")."""
     out = []
-    for name in FILES:
-        with open(os.path.join(DATA, name), encoding="utf-8", newline="") as f:
-            text = f.read()
-        parts = text.split("\n")
-        for i, line in enumerate(parts):
-            if i == len(parts) - 1 and line == "":
-                break
-            if i < len(parts) - 1 and line.endswith("\r"):
-                line = line[:-1]
-            out.append(line)
+    with open(os.path.join(DATA, name), encoding="utf-8", newline="") as f:
+        text = f.read()
+    parts = text.split("\n")
+    for i, line in enumerate(parts):
+        if i == len(parts) - 1 and line == "":
+            break
+        if i < len(parts) - 1 and line.endswith("\r"):
+            line = line[:-1]
+        out.append(line)
+    return out
+
+
+def whitespace_corpus():
+    """Lines of code indented by runs of the literal ▁ (2, 4 or 8), from a fixed seed: identity normalization keeps them,
+    so the allow_whitespace_only_pieces switch has runs of ▁ to learn."""
+    import random
+    rng = random.Random(SEED)
+    names = ["value", "total", "items", "index", "count", "result", "name", "left", "right", "node", "text", "size"]
+    calls = ["print", "append", "update", "len", "range", "sorted", "sum", "max", "min", "open"]
+    out = []
+    for _ in range(600):
+        depth = rng.choice([1, 1, 2, 2, 3, 4])
+        a, b = rng.choice(names), rng.choice(names)
+        line = rng.choice([f"{a} = {rng.choice(calls)}({b})", f"if {a} > {b}:", f"for {a} in {rng.choice(calls)}({b}):",
+                           f"return {a} + {b}", f"{a}.{rng.choice(calls)}({b}, {rng.randint(0, 99)})", f"while {a}:", "pass"])
+        out.append("\u2581" * (2 * depth if depth < 4 else 8) + line)
     return out
 
 
@@ -83,6 +128,9 @@ def write_json(path, value):
 # ---------------------------------------------------------------------------------------------------------------------
 def train_unigram(name, settings, text, work):
     settings = dict(settings)
+    encodings = settings.pop("encodings", False)
+    corpus = settings.pop("corpus", None)
+    normalization = settings.pop("normalization", "identity")
     extra = {}
     if settings.pop("arabic", False):
         rules = os.path.join(work, "arabic-removals.tsv")
@@ -90,20 +138,30 @@ def train_unigram(name, settings, text, work):
             f.write("\n".join(ARABIC_RULES) + "\n")
         extra["normalization_rule_tsv"] = rules
     else:
-        extra["normalization_rule_name"] = "identity"
+        extra["normalization_rule_name"] = normalization
+    if corpus == "whitespace":
+        text = whitespace_corpus()
     spm.set_random_generator_seed(SEED)
     import io
     writer = io.BytesIO()
     spm.SentencePieceTrainer.train(sentence_iterator=iter(text), model_writer=writer, num_threads=1, minloglevel=2,
                                    model_type="unigram", shuffle_input_sentence=False, hard_vocab_limit=False,
-                                   character_coverage=0.9995, max_sentence_length=1 << 20, **settings, **extra)
+                                   character_coverage=0.9995, **dict(dict(max_sentence_length=1 << 20), **settings), **extra)
     proto = model_pb2.ModelProto()
     proto.ParseFromString(writer.getvalue())
     options = dict(settings, character_coverage=0.9995, special_tokens=["<unk>", "<s>", "</s>"],
                    arabic=["tatweel", "diacritics"] if extra.get("normalization_rule_tsv") else [])
+    if normalization != "identity":
+        options["normalization"] = normalization
+    if corpus:
+        options["corpus"] = corpus
     pieces = [[p.piece, p.score, int(p.type)] for p in proto.pieces]
     print(f"{name}: {len(pieces)} pieces", file=sys.stderr)
-    return {"options": options, "pieces": pieces}
+    entry = {"options": options, "pieces": pieces}
+    if encodings:
+        model = spm.SentencePieceProcessor(model_proto=writer.getvalue())
+        entry["encodings"] = [model.encode(line) for line in corpus_lines("tokenizers/corpus.txt")]
+    return entry
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -276,6 +334,88 @@ def wordpiece_huggingface(text):
     return [token for token, _ in sorted(vocab.items(), key=lambda kv: kv[1])]
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# Normalization: sentencepiece's built-in rules, the charsmap alone.
+# ---------------------------------------------------------------------------------------------------------------------
+def is_hangul(c):
+    return 0x1100 <= c <= 0x11FF or 0x3130 <= c <= 0x318F or 0xFFA0 <= c <= 0xFFDC or 0xAC00 <= c <= 0xD7A3 \
+        or 0xA960 <= c <= 0xA97F or 0xD7B0 <= c <= 0xD7FF
+
+
+def code_points():
+    return [c for c in range(1, 0x110000) if not 0xD800 <= c <= 0xDFFF]
+
+
+def unicode_nfkc():
+    """Each code point's NFKC by the Unicode version of the library's tables (part 1 of its NormalizationTest: every
+    character with a decomposition), where it changes."""
+    import gzip
+    out, part = {}, None
+    with gzip.open(UNICODE_TEST, "rt", encoding="utf-8") as f:
+        for row in f:
+            row = row.rstrip("\n")
+            if row.startswith("#") or not row:
+                continue
+            if row.startswith("@"):
+                part = row
+                continue
+            if part == "@Part1":
+                fields = row.split(";")
+                source = [int(x, 16) for x in fields[0].split()]
+                nfkc = "".join(chr(int(x, 16)) for x in fields[3].split())
+                if len(source) == 1 and nfkc != chr(source[0]):
+                    out[source[0]] = nfkc
+    return out
+
+
+def sequences(normalizer):
+    """Combining sequences: a sample of the rule's own keys (the Hangul ones apart), base letters with every ordered pair
+    of ten marks, and Hangul jamo (conjoining, compatibility and halfwidth) in syllable order."""
+    import random
+    rng = random.Random(SEED)
+    keys = sorted({k for k, _ in normalizer.decompile() if len(k) >= 2})
+    plain = [k for k in keys if not any(is_hangul(ord(c)) for c in k)]
+    hangul = [k for k in keys if any(is_hangul(ord(c)) for c in k)]
+    out = rng.sample(plain, 1200) + rng.sample(hangul, 200)
+    marks = [0x301, 0x300, 0x302, 0x308, 0x323, 0x327, 0x328, 0x30C, 0x31B, 0x306]
+    for base in "aeoAOuU\uff45\u03b1\u0438":
+        for m1 in marks:
+            for m2 in marks:
+                if m1 != m2 and rng.random() < 0.35:
+                    out.append(base + chr(m1) + chr(m2))
+    for i in range(120):
+        lead, vowel, tail = rng.randrange(19), rng.randrange(21), rng.randrange(28)
+        out.append(chr(0x1100 + lead) + chr(0x1161 + vowel) + (chr(0x11A7 + tail) if tail else ""))
+    out += ["\u3131\u314f", "\uffa1\uffc2", "\u3131\u314f\u11a8", "\u1100\u1161\u11a8\u11a8", "\u3132\u3150"]
+    return out
+
+
+def normalization():
+    plain = {r: spm.SentencePieceNormalizer(rule_name=r) for r in NORMALIZATION_RULES}
+    points = code_points()
+    singles = {}
+    for rule, normalizer in plain.items():
+        singles[rule] = dict(zip(points, normalizer.normalize([chr(c) for c in points])))
+    unicode = unicode_nfkc()
+    lacking = sorted(c for c, value in unicode.items() if singles["nfkc"][c] != value)
+    changed = {c: v for c, v in singles["nfkc"].items() if v != chr(c)}
+    nmt = {c: v for c, v in singles["nmt_nfkc"].items() if v != singles["nfkc"][c]}
+    sample = sequences(plain["nfkc"])
+    text = lines()
+    corpus = {}
+    for rule, normalizer in plain.items():
+        corpus[rule] = {str(i): out for i, (line, out) in enumerate(zip(text, normalizer.normalize(text))) if out != line}
+    print(f"normalization: nfkc changes {len(changed)} code points, nmt_nfkc {len(nmt)} more; {len(sample)} sequences; "
+          f"sentencepiece's tables lack {len(lacking)} of Unicode 18's", file=sys.stderr)
+    return {
+        "nfkc": {f"{c:04X}": v for c, v in sorted(changed.items())},
+        "nmt_nfkc": {f"{c:04X}": v for c, v in sorted(nmt.items())},
+        "unicode_lacking": {f"{c:04X}": {"unicode": unicode[c], "sentencepiece": singles["nfkc"][c]} for c in lacking},
+        "sequences": [[s, plain["nfkc"].normalize(s), plain["nmt_nfkc"].normalize(s)] for s in sample],
+        "corpus": corpus,
+    }
+
+
 def overlap(a, b):
     return len(set(a) & set(b)) / max(1, len(set(b)))
 
@@ -283,27 +423,40 @@ def overlap(a, b):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--runs", type=int, default=0, help="also train tokenizers' WordPiece this many times and print their agreement")
+    parser.add_argument("--part", action="append", choices=["unigram", "wordpiece", "normalization"],
+                        help="write only these files (and the manifest), keeping the others; default: every file, the folder emptied first")
     args = parser.parse_args()
+    parts = set(args.part or ["unigram", "wordpiece", "normalization"])
     text = lines()
-    if os.path.isdir(OUT):
+    if not args.part and os.path.isdir(OUT):
         for entry in sorted(os.listdir(OUT)):
             if entry != "README.md":
                 path = os.path.join(OUT, entry)
                 shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
     os.makedirs(OUT, exist_ok=True)
-    work = os.path.join(OUT, ".work")
-    os.makedirs(work)
-    try:
-        write_json(os.path.join(OUT, "unigram.json"), {name: train_unigram(name, settings, text, work) for name, settings in UNIGRAM.items()})
-    finally:
-        shutil.rmtree(work)
+    if "unigram" in parts:
+        work = os.path.join(OUT, ".work")
+        os.makedirs(work)
+        try:
+            with open(os.path.join(OUT, "whitespace-corpus.txt"), "w", encoding="utf-8", newline="\n") as f:
+                f.write("\n".join(whitespace_corpus()) + "\n")
+            write_json(os.path.join(OUT, "unigram.json"), {name: train_unigram(name, settings, text, work) for name, settings in UNIGRAM.items()})
+        finally:
+            shutil.rmtree(work)
+    if "normalization" in parts:
+        write_json(os.path.join(OUT, "normalization.json"), normalization())
+    if "wordpiece" in parts:
+        wordpiece(text, args.runs)
+    manifest()
 
+
+def wordpiece(text, runs):
     words = bert_words(text, WORDPIECE["lowercase"])
     fixed = wordpiece_fixed(words, WORDPIECE["special_tokens"], WORDPIECE["vocab_size"], WORDPIECE["min_frequency"])
     hf = wordpiece_huggingface(text)
     print(f"wordpiece: {len(words)} words, fixed {len(fixed)} tokens, tokenizers {len(hf)} tokens, overlap {overlap(fixed, hf):.4f}",
           file=sys.stderr)
-    for run in range(args.runs):
+    for run in range(runs):
         again = wordpiece_huggingface(text)
         print(f"tokenizers run {run + 1}: overlap with the first {overlap(again, hf):.4f}, with fixed {overlap(fixed, again):.4f}",
               file=sys.stderr)
@@ -314,6 +467,8 @@ def main():
         "huggingface": hf,
     })
 
+
+def manifest():
     files = {}
     for name in sorted(os.listdir(OUT)):
         if name in ("manifest.json", "README.md"):
@@ -322,7 +477,7 @@ def main():
             data = f.read()
         files[name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
     inputs = {}
-    for name in FILES:
+    for name in FILES + ["unicode/normalization-test.txt.gz"]:
         with open(os.path.join(DATA, name), "rb") as f:
             data = f.read()
         inputs[name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
