@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Idrak.Abstraction.Text;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
@@ -1497,10 +1498,10 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         {
             "Sequence" => Chain([.. n["normalizers"]!.AsArray().OfType<JsonObject>().Select(inner =>
                 TokenizerComponents.FindNormalizer((string?)inner["type"]) is { } create ? create(inner).Normalize : NormalizerStep(inner))]),
-            "NFC" => s => s.Normalize(NormalizationForm.FormC),
-            "NFKC" => s => s.Normalize(NormalizationForm.FormKC),
-            "NFD" => s => s.Normalize(NormalizationForm.FormD),
-            "NFKD" => s => s.Normalize(NormalizationForm.FormKD),
+            "NFC" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormC),
+            "NFKC" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormKC),
+            "NFD" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormD),
+            "NFKD" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormKD),
             "Prepend" => s => s.Length == 0 ? s : (string)n["prepend"]! + s,   // empty text stays empty, as in Hugging Face's
             "Replace" => Replacer(n),
             "Lowercase" => BertComponents.Lowercase,

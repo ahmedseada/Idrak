@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using Idrak.Abstraction.Text;
 
 namespace Idrak.Abstraction.Generation;
 
@@ -67,7 +68,7 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
         {
             var kept = new StringBuilder(text.Length);
             Span<char> units = stackalloc char[2];                         // a rune's UTF-16 (no string per rune)
-            foreach (var rune in text.Normalize(NormalizationForm.FormD).EnumerateRunes())
+            foreach (var rune in UnicodeNormalization.Normalize(text, NormalizationForm.FormD).EnumerateRunes())
             {
                 if (Rune.GetUnicodeCategory(rune) != UnicodeCategory.NonSpacingMark)
                 {
@@ -78,7 +79,7 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
             text = kept.ToString();
         }
 
-        text = text.Normalize(NormalizationForm.FormC);
+        text = UnicodeNormalization.Normalize(text, NormalizationForm.FormC);
         return fold ? text.ToLowerInvariant() : text;
     }
 

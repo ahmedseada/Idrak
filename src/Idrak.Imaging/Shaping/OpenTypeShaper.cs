@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using Idrak.Abstraction.Text;
 
 namespace Idrak.Imaging.Shaping;
 
@@ -512,7 +513,7 @@ internal class OpenTypeShaper : ITextShaper
     private static int[]? Decompose(IFontFace font, int cp)
     {
         string s = char.ConvertFromUtf32(cp);
-        string d = s.Normalize(NormalizationForm.FormD);
+        string d = UnicodeNormalization.Normalize(s, NormalizationForm.FormD);
         if (d == s)
         {
             return null;
@@ -542,7 +543,7 @@ internal class OpenTypeShaper : ITextShaper
         }
 
         string s = char.ConvertFromUtf32(a) + char.ConvertFromUtf32(b);
-        string c = s.Normalize(NormalizationForm.FormC);
+        string c = UnicodeNormalization.Normalize(s, NormalizationForm.FormC);
         if (c.Length == 0 || c == s)
         {
             return null;

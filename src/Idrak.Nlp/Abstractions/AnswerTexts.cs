@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using System.Text;
+using Idrak.Abstraction.Text;
 
 namespace Idrak.Nlp.Abstractions;
 
@@ -96,7 +97,7 @@ public static class AnswerTexts
 
         var builder = new StringBuilder(text.Length);
         bool space = false;
-        foreach (char c in text.Normalize(NormalizationForm.FormC))
+        foreach (char c in UnicodeNormalization.Normalize(text, NormalizationForm.FormC))
         {
             if (c == '﻿')
             {
