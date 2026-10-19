@@ -96,6 +96,55 @@ public sealed class NormalizedText : IDisposable
     /// <summary>Starts over with all of <paramref name="original"/>.</summary>
     public void Reset(string original) => Reset(original, 0, original?.Length ?? 0);
 
+    // Starts over as Reset does, but with no characters yet: a one-pass stage writes them and their ranges straight into the
+    // buffers (DirectChars, DirectStarts, DirectEnds, room for `capacity`), then sets how many it wrote (DirectLength).
+    internal void StartDirect(string original, int start, int length, int capacity)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentOutOfRangeException.ThrowIfNegative(start);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, original.Length - start);
+        _original = original;
+        _originalChars = null;
+        StartEmpty(start, length, capacity);
+    }
+
+    // StartDirect on original[start..start + length] of a caller's buffer (as the buffer form of Reset).
+    internal void StartDirect(char[] original, int originalLength, int start, int length, int capacity)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentOutOfRangeException.ThrowIfNegative(start);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(originalLength, original.Length);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, originalLength - start);
+        _original = null;
+        (_originalChars, _originalLength) = (original, originalLength);
+        StartEmpty(start, length, capacity);
+    }
+
+    private void StartEmpty(int start, int length, int capacity)
+    {
+        _rewriting = false;
+        OriginalStart = start;
+        OriginalEnd = start + length;
+        Ensure(ref _chars, ref _starts, ref _ends, capacity);
+        _length = 0;
+    }
+
+    internal Span<char> DirectChars => _chars;
+
+    internal Span<int> DirectStarts => _starts;
+
+    internal Span<int> DirectEnds => _ends;
+
+    // How many characters a one-pass stage wrote (StartDirect).
+    internal int DirectLength
+    {
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)value, (uint)_chars.Length, nameof(value));
+            _length = value;
+        }
+    }
+
     /// <summary>The range of <see cref="Original"/> the character at <paramref name="index"/> stands for.</summary>
     public (int Start, int End) OriginOf(int index)
     {
@@ -119,11 +168,13 @@ public sealed class NormalizedText : IDisposable
             return (at, at);
         }
 
-        int from = int.MaxValue, to = int.MinValue;
-        for (int i = start; i < start + length; i++)
+        var starts = _starts.AsSpan(start, length);
+        var ends = _ends.AsSpan(start, length);
+        int from = starts[0], to = ends[0];
+        for (int i = 1; i < starts.Length; i++)
         {
-            from = Math.Min(from, _starts[i]);
-            to = Math.Max(to, _ends[i]);
+            from = Math.Min(from, starts[i]);
+            to = Math.Max(to, ends[i]);
         }
 
         return (from, to);

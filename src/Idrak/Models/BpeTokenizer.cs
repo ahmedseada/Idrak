@@ -28,7 +28,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     private static readonly UTF8Encoding StrictUtf8 = new(false, throwOnInvalidBytes: true);
     // Tokenizer patterns run on every encode: compiled to IL where the runtime allows it (interpreted under native AOT).
     internal const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
-    private readonly int _cacheLimit;                                         // cached pieces (TokenizerOptions.PieceCacheLimit)
     private readonly int _workers;                                            // batch threads (TokenizerOptions.Workers)
     private TokenizerEncodings.RawEncoder? _raw;                             // Raw, as Finish takes it (made once)
 
@@ -40,6 +39,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     [ThreadStatic] private static PreTokenizedText? t_pieces;
     [ThreadStatic] private static List<(int Start, int Length)>? t_ranges, t_nextRanges;    // the split stages' ranges (EncodeRanges)
     [ThreadStatic] private static MergeScratch? t_merge;                                    // MergeLong's linked list and heap
+    [ThreadStatic] private static List<(int Start, int Length)>? t_align;                   // a cached piece's token ranges (EncodePiece)
     private const int StackChars = 256;                                        // pieces up to this long stay on the stack
 
     private string[] _tokens;
@@ -52,7 +52,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     private readonly List<(string Content, int Id)> _added;
     private readonly HashSet<int> _special;
     private readonly HashSet<int> _addedIds;
-    private readonly Regex? _addedPattern;
+    private readonly TokenizerRegex? _addedPattern;
     private readonly List<Func<List<string>, bool, List<string>>> _preTokenizers = [];   // (pieces, text starts the input)
     private readonly List<Func<string, string>> _normalizers = [];
     private readonly List<(string Type, Func<List<string>, List<string>> Run, Func<string, string>? Map)> _decoders = [];
@@ -64,7 +64,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     // The pre-tokenizer when it is the only one and rewrites text: Metaspace, or ByteLevel with add_prefix_space (its
     // regex, null without use_regex); these run on spans.
     private (string Replacement, string Scheme, bool Split)? _metaspace;
-    private (bool Prefix, Regex? Pattern)? _prefixByteLevel;
+    private (bool Prefix, TokenizerRegex? Pattern)? _prefixByteLevel;
 
     // Decoding without token lists (see DecodeTable), or null; built on the first decode.
     private DecodeTable? _decodeTable;
@@ -72,11 +72,13 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
 
     // Pre-tokenizers that only split (no stage rewrites the text) as stages over ranges of one string, or null when
     // some stage rewrites text (then the string pipeline above runs).
-    private List<(Regex Pattern, string Behavior, bool Invert)>? _splits = [];
+    private List<(TokenizerRegex Pattern, string Behavior, bool Invert)>? _splits = [];
 
     // Encoded pieces (shared by concurrent encodes); looked up by span, so a hit allocates nothing. The detailed encode's
-    // pieces are in the vocabulary's alphabet: they share this cache unless a fast path keys it by raw text whose bytes it
-    // maps first (byte level), and then have their own (_alphabetCache, made when first used).
+    // pieces are in the vocabulary's alphabet: they share this cache (whose entries then keep each token's range in the
+    // piece, so a detailed hit aligns nothing) unless a fast path keys it by raw text whose bytes it maps first (byte
+    // level), and then have their own (_alphabetCache, made when first used), counted against this one's budget: the two
+    // never hold more pieces than TokenizerOptions.PieceCacheLimit together.
     private readonly PieceCache _cache;
     private PieceCache? _alphabetCache;
     private Func<int, string>? _tokenOf;                                      // TokenOf as a delegate, made once (Align takes it)
@@ -112,11 +114,9 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 + "which builds every registered model type (TokenizerModels.Register adds one).");
         }
 
-        _cacheLimit = cacheLimit;
         _workers = workers;
         _vocabulary = vocabulary;
         _vocabularySpans = _vocabulary.GetAlternateLookup<ReadOnlySpan<char>>();
-        _cache = new PieceCache(cacheLimit);
         _merges = merges;
         _byteFallback = (bool?)model["byte_fallback"] ?? false;
         _ignoreMerges = (bool?)model["ignore_merges"] ?? false;
@@ -165,7 +165,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
 
         if (_added.Count > 0)
         {
-            _addedPattern = new Regex(string.Join('|', _added.Select(a => a.Content).OrderByDescending(c => c.Length).Select(Regex.Escape)), Fast);
+            _addedPattern = new TokenizerRegex(string.Join('|', _added.Select(a => a.Content).OrderByDescending(c => c.Length).Select(Regex.Escape)));
         }
 
         AddNormalizer(json["normalizer"]);
@@ -174,6 +174,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         {
             (_metaspace, _prefixByteLevel) = (null, null);
         }
+
+        _cache = new PieceCache(cacheLimit, ranges: AlphabetKeys);
 
         AddDecoder(json["decoder"]);
         _fusedDecoders = FusedDecoders();
@@ -418,7 +420,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         int last = start;
         if (_addedPattern is not null)
         {
-            foreach (var match in _addedPattern.EnumerateMatches(text.AsSpan(start, length)))
+            foreach (var match in _addedPattern.Local.EnumerateMatches(text.AsSpan(start, length)))
             {
                 int at = start + match.Index;
                 EncodeText(text, last, at - last, ids, last == start);
@@ -481,9 +483,9 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     }
 
     // A text's ids with their offsets in it, into the scratch's lists: the span pipeline (equal to this tokenizer's own,
-    // plan 24 L1), each piece's ids through the piece cache of pieces in the vocabulary's alphabet (Bpe of the piece, as
-    // the merges give them), and its tokens aligned to the characters they came from. The ids are the ones Encode gives.
-    // Returns how many tokens a left limit drops.
+    // plan 24 L1), each piece's ids and its tokens' ranges through the piece cache of pieces in the vocabulary's alphabet
+    // (Bpe of the piece, as the merges give them, aligned to the characters they came from once, when cached). The ids are
+    // the ones Encode gives. Returns how many tokens a left limit drops.
     private int Raw(string text, int limit, bool left, TokenizerEncodings.RawScratch scratch)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -517,22 +519,28 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                     starts?.Add((ids.Count, false));
 
                     var piece = pieces.Piece(i);
-                    int before = ids.Count;
-                    if (cache.TryGet(piece, out var cached))
+                    var normalized = pieces.Text;
+                    if (cache.TryGet(piece, out var cachedIds, out var cachedRanges))
                     {
-                        ids.AddRange(cached);
+                        ids.AddRange(cachedIds);
+                        foreach (int packed in cachedRanges)
+                        {
+                            var (from, count) = PieceCache.Range(packed);
+                            offsets.Add(normalized.OriginOf(pieceStart + from, count));
+                        }
                     }
                     else
                     {
+                        int before = ids.Count;
                         Bpe(piece, ids);
-                        cache.Add(piece, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..]);
-                    }
-
-                    ranges.Clear();
-                    TokenizerEncodings.Align(piece, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..], tokenOf, _byteFallback, ranges);
-                    foreach (var (from, count) in ranges)
-                    {
-                        offsets.Add(pieces.Text.OriginOf(pieceStart + from, count));
+                        var made = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..];
+                        ranges.Clear();
+                        TokenizerEncodings.Align(piece, made, tokenOf, _byteFallback, ranges);
+                        cache.Add(piece, made, ranges);
+                        foreach (var (from, count) in ranges)
+                        {
+                            offsets.Add(normalized.OriginOf(pieceStart + from, count));
+                        }
                     }
 
                     if (starts is null && ids.Count >= limit)
@@ -546,7 +554,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             int last = 0;
             if (_addedPattern is not null)
             {
-                foreach (var match in _addedPattern.EnumerateMatches(text))
+                foreach (var match in _addedPattern.Local.EnumerateMatches(text))
                 {
                     Text(last, match.Index - last, last == 0);
                     if (full)
@@ -571,8 +579,16 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         return starts is null ? 0 : TokenizerEncodings.Limited(starts, ids.Count, limit);
     }
 
-    // The cache of the detailed encode's pieces: the fast paths' own when every entry there is Bpe of its key (no fast path
-    // maps a raw piece's bytes first), else one of its own, so a raw text and an alphabet text never meet under one key.
+    // How many pieces the caches hold together (tests: they share one PieceCacheLimit).
+    internal int CachedPieces => Volatile.Read(ref _cache.Shared.Count);
+
+    // Whether the fast paths' pieces are in the vocabulary's alphabet (no fast path maps a raw piece's bytes first), so
+    // every entry of their cache is Bpe of its key.
+    private bool AlphabetKeys => !_byteLevel && _prefixByteLevel is null;
+
+    // The cache of the detailed encode's pieces (keeping each token's range): the fast paths' own when its keys are in the
+    // alphabet, else one of its own on the same budget, so a raw text and an alphabet text never meet under one key and
+    // the two together hold at most PieceCacheLimit pieces.
     private PieceCache AlphabetCache
     {
         get
@@ -582,7 +598,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 return cache;
             }
 
-            var made = !_byteLevel && _prefixByteLevel is null ? _cache : new PieceCache(_cacheLimit);
+            var made = AlphabetKeys ? _cache : new PieceCache(_cache.Shared, ranges: true);
             return Interlocked.CompareExchange(ref _alphabetCache, made, null) ?? made;
         }
     }
@@ -931,7 +947,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
         else if (_prefixByteLevel is { } byteLevel)
         {
-            EncodePrefixedByteLevel(segment, byteLevel.Pattern, ids);
+            EncodePrefixedByteLevel(segment, byteLevel.Pattern?.Local, ids);
         }
         else
         {
@@ -1067,9 +1083,10 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             foreach (var (pattern, behavior, invert) in splits)
             {
                 next.Clear();
+                var regex = pattern.Local;                                     // this thread's matcher, once a stage
                 foreach (var range in current)
                 {
-                    SplitRange(text, range, pattern, behavior, invert, next);
+                    SplitRange(text, range, regex, behavior, invert, next);
                 }
 
                 (current, next) = (next, current);
@@ -1088,7 +1105,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
 
     // A pre-token piece: its cached ids, or the merges (mapBytes: the piece is raw text of a byte-level tokenizer, so its
     // UTF-8 bytes are written as the byte map's characters first). The merges run in the caller's list, after its ids, so
-    // a miss allocates nothing but the cache's own entry.
+    // a miss allocates nothing but the cache's own entry (with each token's range in the piece, aligned in this thread's
+    // list, when the cache keeps them for the detailed encode).
     private void EncodePiece(ReadOnlySpan<char> piece, List<int> ids, bool mapBytes)
     {
         if (piece.IsEmpty)
@@ -1096,7 +1114,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             return;
         }
 
-        if (_cache.TryGet(piece, out var cached))
+        if (_cache.TryGet(piece, out ReadOnlySpan<int> cached))
         {
             ids.AddRange(cached);
             return;
@@ -1126,7 +1144,22 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             Bpe(piece, ids);
         }
 
-        _cache.Add(piece, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..]);
+        if (!_cache.Accepts(piece.Length))
+        {
+            return;
+        }
+
+        var made = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[before..];
+        if (!_cache.Ranges)
+        {
+            _cache.Add(piece, made, null);
+            return;
+        }
+
+        var ranges = t_align ??= [];
+        ranges.Clear();
+        TokenizerEncodings.Align(piece, made, _tokenOf ??= TokenOf, _byteFallback, ranges);
+        _cache.Add(piece, made, ranges);
     }
 
     // Byte-level merges straight from the bytes: each byte starts as its character's token. Appends the ids to output.
@@ -1575,8 +1608,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             return s => s.Replace(from, content, StringComparison.Ordinal);
         }
 
-        var regex = new Regex((string)n["pattern"]!["Regex"]!, Fast);
-        return s => regex.Replace(s, content);
+        var regex = new TokenizerRegex((string)n["pattern"]!["Regex"]!);
+        return s => regex.Local.Replace(s, content);
     }
 
     // Returns true when the tokenizer is byte-level (its pieces are bytes written as characters).
@@ -1612,7 +1645,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 return false;
             case "ByteLevel":
                 bool prefix = (bool?)p["add_prefix_space"] ?? false, useRegex = (bool?)p["use_regex"] ?? true;
-                var gpt2 = new Regex(Gpt2Pattern, Fast);
+                var gpt2 = new TokenizerRegex(Gpt2Pattern);
                 if (prefix)
                 {
                     _splits = null;                                               // rewrites text: the string pipeline runs
@@ -1637,12 +1670,12 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 _splits?.Add((digits, "Isolated", false));
                 return false;
             case "Whitespace":
-                var words = new Regex(WordsPattern, Fast);
+                var words = new TokenizerRegex(WordsPattern);
                 _preTokenizers.Add(WhitespaceStage(words));
                 _splits?.Add((words, "Removed", true));                           // keeps the matches only
                 return false;
             case "WhitespaceSplit":
-                var runs = new Regex(NonWhitespacePattern, Fast);
+                var runs = new TokenizerRegex(NonWhitespacePattern);
                 _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, runs, "Removed", true));
                 _splits?.Add((runs, "Removed", true));
                 return false;
@@ -1652,7 +1685,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 _splits?.Add((punctuation, punctuationBehavior, false));
                 return false;
             case "BertPreTokenizer":
-                var whitespaceRuns = new Regex(NonWhitespacePattern, Fast);
+                var whitespaceRuns = new TokenizerRegex(NonWhitespacePattern);
                 var (bertPunctuation, _) = PunctuationSettings(p);
                 _preTokenizers.Add(BertComponents.StringPreTokenizer());
                 _splits?.Add((whitespaceRuns, "Removed", true));
@@ -1690,7 +1723,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 var (pattern, behavior, invert) = SplitSettings(p);
                 return (pieces, atStart) => SplitPieces(pieces, pattern, behavior, invert);
             case "ByteLevel":
-                return ByteLevelStage((bool?)p["add_prefix_space"] ?? false, (bool?)p["use_regex"] ?? true, new Regex(Gpt2Pattern, Fast));
+                return ByteLevelStage((bool?)p["add_prefix_space"] ?? false, (bool?)p["use_regex"] ?? true, new TokenizerRegex(Gpt2Pattern));
             case "Metaspace":
                 var (replacement, scheme, split) = MetaspaceSettings(p);
                 return MetaspaceStage(replacement, scheme, split);
@@ -1698,9 +1731,9 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 var digits = DigitsPattern(p);
                 return (pieces, atStart) => SplitPieces(pieces, digits, "Isolated", false);
             case "Whitespace":
-                return WhitespaceStage(new Regex(WordsPattern, Fast));
+                return WhitespaceStage(new TokenizerRegex(WordsPattern));
             case "WhitespaceSplit":
-                var runs = new Regex(NonWhitespacePattern, Fast);
+                var runs = new TokenizerRegex(NonWhitespacePattern);
                 return (pieces, atStart) => SplitPieces(pieces, runs, "Removed", true);
             case "Punctuation":
                 var (punctuation, behavior2) = PunctuationSettings(p);
@@ -1719,22 +1752,23 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     internal const string NonWhitespacePattern = @"\S+";
     internal const string PunctuationPattern = @"[\p{P}$+<=>^`|~]";
 
-    internal static (Regex Pattern, string Behavior, bool Invert) SplitSettings(JsonObject p) =>
-        (p["pattern"]!["Regex"] is { } r ? new Regex((string)r!, Fast) : new Regex(Regex.Escape((string)p["pattern"]!["String"]!), Fast),
+    internal static (TokenizerRegex Pattern, string Behavior, bool Invert) SplitSettings(JsonObject p) =>
+        (new TokenizerRegex(p["pattern"]!["Regex"] is { } r ? (string)r! : Regex.Escape((string)p["pattern"]!["String"]!)),
          (string?)p["behavior"] ?? "Isolated", (bool?)p["invert"] ?? false);
 
     internal static (string Replacement, string Scheme, bool Split) MetaspaceSettings(JsonObject p) =>
         ((string?)p["replacement"] ?? "▁", (string?)p["prepend_scheme"] ?? (((bool?)p["add_prefix_space"] ?? true) ? "always" : "never"),
          (bool?)p["split"] ?? true);
 
-    internal static (Regex Pattern, string Behavior) PunctuationSettings(JsonObject p) =>
-        (new Regex(PunctuationPattern, Fast), (string?)p["behavior"] ?? "Isolated");
+    internal static (TokenizerRegex Pattern, string Behavior) PunctuationSettings(JsonObject p) =>
+        (new TokenizerRegex(PunctuationPattern), (string?)p["behavior"] ?? "Isolated");
 
-    internal static Regex DigitsPattern(JsonObject p) => new(((bool?)p["individual_digits"] ?? false) ? @"\p{Nd}" : @"\p{Nd}+", Fast);
+    internal static TokenizerRegex DigitsPattern(JsonObject p) => new(((bool?)p["individual_digits"] ?? false) ? @"\p{Nd}" : @"\p{Nd}+");
 
-    private static Func<List<string>, bool, List<string>> ByteLevelStage(bool prefix, bool useRegex, Regex gpt2) => (pieces, atStart) =>
+    private static Func<List<string>, bool, List<string>> ByteLevelStage(bool prefix, bool useRegex, TokenizerRegex pattern) => (pieces, atStart) =>
     {
         var result = new List<string>(pieces.Count);
+        var gpt2 = pattern.Local;
         foreach (var text in pieces)
         {
             string piece = prefix && !text.StartsWith(' ') ? " " + text : text;
@@ -1784,9 +1818,10 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         return result;
     };
 
-    private static Func<List<string>, bool, List<string>> WhitespaceStage(Regex words) => (pieces, atStart) =>
+    private static Func<List<string>, bool, List<string>> WhitespaceStage(TokenizerRegex pattern) => (pieces, atStart) =>
     {
         var result = new List<string>(pieces.Count);
+        var words = pattern.Local;
         foreach (var piece in pieces)
         {
             foreach (var m in words.EnumerateMatches(piece))
@@ -1799,10 +1834,11 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     };
 
     // A split stage on pieces of the string pipeline: SplitRange on each piece, then the ranges copied out.
-    private static List<string> SplitPieces(List<string> pieces, Regex pattern, string behavior, bool invert)
+    private static List<string> SplitPieces(List<string> pieces, TokenizerRegex pattern, string behavior, bool invert)
     {
         var result = new List<string>(pieces.Count);
         var ranges = new List<(int Start, int Length)>();
+        var regex = pattern.Local;
         foreach (var piece in pieces)
         {
             if (behavior is not ("Isolated" or "Removed" or "MergedWithPrevious" or "MergedWithNext"))
@@ -1811,7 +1847,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             }
 
             ranges.Clear();
-            SplitRange(piece, (0, piece.Length), pattern, behavior, invert, ranges);
+            SplitRange(piece, (0, piece.Length), regex, behavior, invert, ranges);
             foreach (var (start, length) in ranges)
             {
                 result.Add(length == piece.Length ? piece : piece.Substring(start, length));
@@ -2030,34 +2066,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     {
         int space = merge.IndexOf(' ', 1);
         return (merge[..space], merge[(space + 1)..]);
-    }
-
-    // A piece cache: a piece's ids by its text, up to TokenizerOptions.PieceCacheLimit pieces, shared by concurrent encodes
-    // and looked up by span (a hit allocates nothing). Pieces longer than StackChars are not kept: long pieces (unsplit
-    // SentencePiece text) rarely repeat. The size is counted on add: ConcurrentDictionary.Count takes every lock, which each
-    // miss would pay.
-    private sealed class PieceCache
-    {
-        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]> _entries = new();
-        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]>.AlternateLookup<ReadOnlySpan<char>> _spans;
-        private readonly int _limit;
-        private int _count;
-
-        public PieceCache(int limit)
-        {
-            _limit = limit;
-            _spans = _entries.GetAlternateLookup<ReadOnlySpan<char>>();
-        }
-
-        public bool TryGet(ReadOnlySpan<char> piece, out int[] ids) => _spans.TryGetValue(piece, out ids!);
-
-        public void Add(ReadOnlySpan<char> piece, ReadOnlySpan<int> ids)
-        {
-            if (piece.Length <= StackChars && Volatile.Read(ref _count) < _limit && _spans.TryAdd(piece, ids.ToArray()))
-            {
-                Interlocked.Increment(ref _count);
-            }
-        }
     }
 
     // GPT-2's byte → printable character table: printable bytes map to themselves, the rest to 256 + n.

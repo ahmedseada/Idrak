@@ -10,19 +10,28 @@ namespace Idrak.Models;
 /// A tokenizer.json's normalizer and pre-tokenizer on spans (plan 24, L1): text in, the pieces a tokenizer model encodes
 /// out, as ranges of one normalized text that knows where each character came from. Built once per tokenizer; safe to run
 /// from several threads at once, each with its own <see cref="PreTokenizedText"/> (which keeps its buffers between runs, so
-/// a warm run allocates nothing).
+/// a warm run allocates nothing). A BERT pipeline (BertNormalizer, BertPreTokenizer) runs in one pass over text whose
+/// characters allow it (<see cref="BertComponents.OnePass"/>), with the same result.
 /// </summary>
 internal sealed class TokenizerPipeline
 {
     private readonly Action<NormalizedText>? _normalizer;
     private readonly Action<PreTokenizedText, bool>? _preTokenizer;
+    private readonly BertComponents.OnePass? _onePass;
 
     /// <summary>The pipeline of <paramref name="json"/> (a tokenizer.json, or its definition's JSON).</summary>
     public TokenizerPipeline(JsonObject json)
+        : this(json, onePass: true)
+    {
+    }
+
+    // onePass false: always the steps (tests compare the one pass with them).
+    internal TokenizerPipeline(JsonObject json, bool onePass)
     {
         ArgumentNullException.ThrowIfNull(json);
         _normalizer = json["normalizer"] is JsonObject normalizer ? SpanComponents.Normalizer(normalizer) : null;
         _preTokenizer = json["pre_tokenizer"] is JsonObject preTokenizer ? SpanComponents.PreTokenizer(preTokenizer) : null;
+        _onePass = onePass ? BertComponents.OnePass.Of(json) : null;
     }
 
     /// <summary>
@@ -33,6 +42,11 @@ internal sealed class TokenizerPipeline
     public void Run(string text, int start, int length, bool atStart, PreTokenizedText output)
     {
         ArgumentNullException.ThrowIfNull(output);
+        if (_onePass?.TryRun(text, start, length, output) == true)
+        {
+            return;
+        }
+
         output.Text.Reset(text, start, length);
         Run(atStart, output);
     }
@@ -45,6 +59,11 @@ internal sealed class TokenizerPipeline
     public void Run(char[] text, int textLength, int start, int length, bool atStart, PreTokenizedText output)
     {
         ArgumentNullException.ThrowIfNull(output);
+        if (_onePass?.TryRun(text, textLength, start, length, output) == true)
+        {
+            return;
+        }
+
         output.Text.Reset(text, textLength, start, length);
         Run(atStart, output);
     }

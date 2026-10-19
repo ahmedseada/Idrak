@@ -14,7 +14,106 @@ internal static partial class Tests
         ("tokenizers: pipeline: each piece stands for its range of the original text (splits in order, a metaspace's replacement for its space, a prefix for the first character, NFKC and lowercase per character, a range inside a longer text)", TokenizerPipelineOrigins),
         ("tokenizers: pipeline: an app's string-only normalizer and pre-tokenizer run in the span pipeline with their results, Strip, WhitespaceSplit and Punctuation load in a BPE tokenizer.json, and the post-processor table lists the built-ins and registers, guards and unregisters an app's", TokenizerPipelineAppComponents),
         ("tokenizers: pipeline: a warm run allocates nothing on text normalization leaves as it is (NFKC, Replace, Lowercase, Strip, Metaspace, Split and ByteLevel on Latin, Arabic and CJK text); text NFKC changes allocates nothing either (the library's own normalization)", TokenizerPipelineAllocations),
+        ("tokenizers: pipeline: the BERT one pass (BertNormalizer and BertPreTokenizer) writes the normalized text, every character's range and the pieces the steps write, for every BertNormalizer setting and none, on the pipeline texts and hand-made ones; text it leaves to the steps is theirs; a warm pass allocates nothing", TokenizerPipelineBertOnePass),
     ];
+
+    // Characters each BertNormalizer step treats specially, alone and in words: controls and format characters, whitespace
+    // of every kind (a compatibility space NFD changes), CJK and compatibility ideographs, accents precomposed and
+    // combining, Arabic marks in and out of canonical order, a spacing mark, Hangul, U+0130, a surrogate pair, a lone one.
+    private static readonly string[] BertTexts =
+    [
+        "Hello, World! It's 3.14 -- \"quoted\" (a+b)=c; x^2 ~ y|z `code` $5 <tag> [x] {y} #1 @me 100%",
+        "tab\there\nline\r\nend \u000b\u000c vertical \u0085next \u00a0nbsp \u2000quad\u2003em \u3000ideographic \u2028\u2029",
+        "ctrl\u0001x\u001fy zero\u200bwidth \u00adsoft\ufeffbom \u0000nul \ufffdrep \ue000private \u001c\u001d\u001e",
+        "中文字符和标点。日本語のテキスト 한국어 텍스트 \uf900\uf901 豈 \U0002F800 \u2f80",
+        "Café naïve résumé Ελληνικά ΣΊΣΥΦΟΣ İstanbul ǅ ß ﬁ ＦＵＬＬ ①",
+        "cafe\u0301 nai\u0308ve a\u0300\u0301 e\u0327\u0301 o\u031b\u0323",
+        "اَلْعِلْمُ نُورٌ، كَتَبَ الطَّالِبُ؛ ب\u0651\u064e ب\u064e\u0651 ب\u0670 ١٢٣ ۱۲۳ ـــ",
+        "देवनागरी क्षत्रिय की ि ा ঔ ক্ষ \u0903\u093e",
+        "emoji 😀 👍🏽 ok 𝒳 𐐀𐐨 end",
+        "lone \ud800 high and \udc00 low",
+        "", " ", "a", ".", "  hello  world  ", "x\u0301", "\u0301x", "\u064e", "İ", "ı I i",
+    ];
+
+    private static void TokenizerPipelineBertOnePass(Device device)
+    {
+        _ = device;
+        string[] texts = [.. PipelineTexts(), .. BertTexts];
+        var specs = new List<JsonObject> { new() { ["normalizer"] = null, ["pre_tokenizer"] = new JsonObject { ["type"] = "BertPreTokenizer" } } };
+        for (int setting = 0; setting < 16; setting++)
+        {
+            specs.Add(new JsonObject
+            {
+                ["normalizer"] = new JsonObject
+                {
+                    ["type"] = "BertNormalizer", ["clean_text"] = (setting & 1) != 0, ["handle_chinese_chars"] = (setting & 2) != 0,
+                    ["strip_accents"] = (setting & 4) != 0, ["lowercase"] = (setting & 8) != 0,
+                },
+                ["pre_tokenizer"] = new JsonObject { ["type"] = "BertPreTokenizer" },
+            });
+        }
+
+        specs.Add(new JsonObject
+        {
+            ["normalizer"] = new JsonObject { ["type"] = "BertNormalizer", ["lowercase"] = true, ["strip_accents"] = null },
+            ["pre_tokenizer"] = new JsonObject { ["type"] = "BertPreTokenizer" },
+        });
+        using var fused = new PreTokenizedText();
+        using var steps = new PreTokenizedText();
+        foreach (var spec in specs)
+        {
+            var onePass = BertComponents.OnePass.Of(spec);
+            Check(onePass is not null, $"{spec.ToJsonString()}: no one pass");
+            var pipeline = new TokenizerPipeline(spec, onePass: false);
+            int taken = 0;
+            foreach (string text in texts)
+            {
+                foreach (var (start, length) in new[] { (0, text.Length), (Math.Min(2, text.Length), Math.Max(0, text.Length - 3)) })
+                {
+                    if (!onePass!.TryRun(text, start, length, fused))
+                    {
+                        continue;
+                    }
+
+                    taken++;
+                    pipeline.Run(text, start, length, true, steps);
+                    string what = $"{spec["normalizer"]?.ToJsonString() ?? "no normalizer"}: '{Escaped(text[start..(start + length)])}'";
+                    Check(fused.Text.Span.SequenceEqual(steps.Text.Span), $"{what}: one pass '{Escaped(fused.Text.ToString())}', the steps '{Escaped(steps.Text.ToString())}'");
+                    for (int i = 0; i < steps.Text.Length; i++)
+                    {
+                        Check(fused.Text.OriginOf(i) == steps.Text.OriginOf(i), $"{what}: character {i} stands for {fused.Text.OriginOf(i)}, the steps' for {steps.Text.OriginOf(i)}");
+                    }
+
+                    Check(fused.Pieces.SequenceEqual(steps.Pieces), $"{what}: pieces [{string.Join(" | ", fused.PieceStrings())}], the steps' [{string.Join(" | ", steps.PieceStrings())}]");
+                    Check(fused.Text.Original == steps.Text.Original && fused.Text.OriginalStart == steps.Text.OriginalStart && fused.Text.OriginalEnd == steps.Text.OriginalEnd,
+                        $"{what}: the original range differs");
+                }
+            }
+
+            Console.WriteLine($"    {spec["normalizer"]?.ToJsonString() ?? "no normalizer"}: the one pass took {taken} of {texts.Length * 2} texts");
+            Check(taken * 2 >= texts.Length, $"{spec.ToJsonString()}: the one pass took only {taken} of {texts.Length * 2} texts");
+        }
+
+        // The corpus through the default uncased BERT normalizer: most lines take the one pass, and a warm pass allocates nothing.
+        var uncased = BertComponents.OnePass.Of(specs[^1])!;
+        var lines = TokenizerCorpusLines();
+        int lineCount = lines.Count(line => uncased.TryRun(line, 0, line.Length, fused));
+        Console.WriteLine($"    uncased BERT pipeline: the one pass takes {lineCount} of {lines.Length} corpus lines");
+        Check(lineCount * 2 > lines.Length, $"the one pass took {lineCount} of {lines.Length} corpus lines");
+        var bert = new TokenizerPipeline(specs[^1]);
+        foreach (string line in lines)
+        {
+            bert.Run(line, 0, line.Length, true, fused);
+        }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        foreach (string line in lines)
+        {
+            bert.Run(line, 0, line.Length, true, fused);
+        }
+
+        Check(GC.GetAllocatedBytesForCurrentThread() == before, $"a warm pass allocated {GC.GetAllocatedBytesForCurrentThread() - before} bytes");
+    }
 
     // The texts every pipeline check runs on: the suite's, both corpora.
     private static string[] PipelineTexts()
