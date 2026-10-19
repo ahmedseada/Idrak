@@ -1403,6 +1403,16 @@ public static class Idrak.Models.Abstractions.GgufPreTokenizers
   public static string? Origin(string name)
   public static void Register(string name, string? pattern)
 
+public static class Idrak.Models.Abstractions.GgufTokenizers
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition> Get(string name)
+  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition>? Default(string name)
+  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition>? Find(string name)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition> convert)
+
 public sealed class Idrak.Models.Abstractions.GgufType
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufType()
   public override string ToString()
@@ -1560,6 +1570,7 @@ public sealed class Idrak.Models.Abstractions.TokenizerDefinition
 public static class Idrak.Models.Abstractions.TokenizerFiles
   public const string SentencePiece = "sentencepiece"
   public const string TokenizerJson = "tokenizer.json"
+  public const string VocabTxt = "vocab.txt"
   public static Idrak.Models.Abstractions.ITokenizerFileReader Get(string name)
   public static Idrak.Models.Abstractions.ITokenizerFileReader? Default(string name)
   public static Idrak.Models.Abstractions.ITokenizerFileReader? Find(string name)
@@ -1573,6 +1584,7 @@ public static class Idrak.Models.Abstractions.TokenizerFiles
 public static class Idrak.Models.Abstractions.TokenizerModels
   public const string Bpe = "BPE"
   public const string Unigram = "Unigram"
+  public const string WordPiece = "WordPiece"
   public static Idrak.Abstraction.Generation.IPretrainedTokenizer Create(Idrak.Models.Abstractions.TokenizerDefinition definition, Idrak.Models.Abstractions.TokenizerOptions? options = null)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer> Get(string type)
@@ -1589,14 +1601,17 @@ public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquata
   public const int DefaultPieceCacheLimit = 100000
   public const int DefaultSamplingBest = -1
   public const string FormatVariable = "IDRAK_TOKENIZER_FORMAT"
+  public const string MaxWordCharsVariable = "IDRAK_TOKENIZER_MAX_WORD_CHARS"
   public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE"
   public const string SamplingAlphaVariable = "IDRAK_TOKENIZER_ALPHA"
   public const string SamplingBestVariable = "IDRAK_TOKENIZER_NBEST"
   public const string SamplingSeedVariable = "IDRAK_TOKENIZER_SEED"
   public double? ResolvedSamplingAlpha()
   public double? SamplingAlpha { get; init; }
+  public int ResolvedMaxInputCharsPerWord(int file)
   public int ResolvedPieceCacheLimit()
   public int ResolvedSamplingBest()
+  public int? MaxInputCharsPerWord { get; init; }
   public int? PieceCacheLimit { get; init; }
   public int? ResolvedSamplingSeed()
   public int? SamplingBest { get; init; }

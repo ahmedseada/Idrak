@@ -1388,8 +1388,9 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             "NFKD" => s => s.Normalize(NormalizationForm.FormKD),
             "Prepend" => s => s.Length == 0 ? s : (string)n["prepend"]! + s,   // empty text stays empty, as in Hugging Face's
             "Replace" => Replacer(n),
-            "Lowercase" => s => s.ToLowerInvariant(),
+            "Lowercase" => BertComponents.Lowercase,
             "Strip" => Stripper((bool?)n["strip_left"] ?? true, (bool?)n["strip_right"] ?? true),
+            "BertNormalizer" => BertComponents.StringNormalizer(n),
             "Precompiled" => PrecompiledCharsMap.Step(n),                         // the charsmap read once, here
             _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
         };
@@ -1498,6 +1499,13 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, punctuation, punctuationBehavior, false));
                 _splits?.Add((punctuation, punctuationBehavior, false));
                 return false;
+            case "BertPreTokenizer":
+                var whitespaceRuns = new Regex(NonWhitespacePattern, Fast);
+                var (bertPunctuation, _) = PunctuationSettings(p);
+                _preTokenizers.Add(BertComponents.StringPreTokenizer());
+                _splits?.Add((whitespaceRuns, "Removed", true));
+                _splits?.Add((bertPunctuation, "Isolated", false));
+                return false;
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
@@ -1545,6 +1553,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             case "Punctuation":
                 var (punctuation, behavior2) = PunctuationSettings(p);
                 return (pieces, atStart) => SplitPieces(pieces, punctuation, behavior2, false);
+            case "BertPreTokenizer":
+                return BertComponents.StringPreTokenizer();
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
@@ -1760,6 +1770,8 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 string content = (string)d["content"]!;
                 int start = (int?)d["start"] ?? 0, stop = (int?)d["stop"] ?? 0;
                 return tokens => Strip(tokens, content, start, stop);
+            case "WordPiece":
+                return BertComponents.WordPieceDecoder(d);
             case "Metaspace":
                 string replacement = (string?)d["replacement"] ?? "▁";
                 return tokens =>

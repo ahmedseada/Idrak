@@ -12,7 +12,7 @@ internal static partial class Tests
     [
         ("tokenizers: pipeline: every built-in normalizer and pre-tokenizer on spans gives the pieces its string form gives (every fixture's tokenizer.json and hand-made specs, the suite's texts and both corpora, at the start and not)", TokenizerPipelineEqualsStrings),
         ("tokenizers: pipeline: each piece stands for its range of the original text (splits in order, a metaspace's replacement for its space, a prefix for the first character, NFKC and lowercase per character, a range inside a longer text)", TokenizerPipelineOrigins),
-        ("tokenizers: pipeline: an app's string-only normalizer and pre-tokenizer run in the span pipeline with their results, Strip, WhitespaceSplit and Punctuation load in a BPE tokenizer.json, and the post-processor table registers, guards and unregisters", TokenizerPipelineAppComponents),
+        ("tokenizers: pipeline: an app's string-only normalizer and pre-tokenizer run in the span pipeline with their results, Strip, WhitespaceSplit and Punctuation load in a BPE tokenizer.json, and the post-processor table lists the built-ins and registers, guards and unregisters an app's", TokenizerPipelineAppComponents),
         ("tokenizers: pipeline: a warm run allocates nothing on text normalization leaves as it is (NFKC, Replace, Lowercase, Strip, Metaspace, Split and ByteLevel on Latin, Arabic and CJK text); text NFKC changes costs only the platform's normalization calls", TokenizerPipelineAllocations),
     ];
 
@@ -202,8 +202,9 @@ internal static partial class Tests
         var pieces = new[] { "Hello", ",", "world", "!" }.SelectMany(p => BpeTokenizer.FromJson(json).Encode(p)).ToArray();
         Check(ids.SequenceEqual(pieces), "Strip, WhitespaceSplit and Punctuation run in a BPE tokenizer");
 
-        // The post-processor table: empty of built-ins until T2, an app's type registered, guarded and removed.
-        Check(TokenizerComponents.PostProcessorTypes.Count == 0, "no post-processor is built in yet");
+        // The post-processor table: the built-in types (T2), an app's type registered, guarded and removed.
+        Check(new[] { "TemplateProcessing", "BertProcessing", "RobertaProcessing", "ByteLevel", "Sequence" }.All(TokenizerComponents.PostProcessorTypes.Contains),
+            $"the built-in post-processors (registered: {string.Join(", ", TokenizerComponents.PostProcessorTypes)})");
         TokenizerComponents.RegisterPostProcessor("TestWrap", spec => new WrapPostProcessor((int)spec["id"]!));
         try
         {

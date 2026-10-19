@@ -17,6 +17,9 @@ public sealed record TokenizerOptions
     /// <summary>The variable <see cref="PieceCacheLimit"/> falls back to.</summary>
     public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE";
 
+    /// <summary>The variable <see cref="MaxInputCharsPerWord"/> falls back to.</summary>
+    public const string MaxWordCharsVariable = "IDRAK_TOKENIZER_MAX_WORD_CHARS";
+
     /// <summary>The number of encoded pieces a tokenizer keeps when nothing sets <see cref="PieceCacheLimit"/>.</summary>
     public const int DefaultPieceCacheLimit = 100_000;
 
@@ -126,6 +129,33 @@ public sealed record TokenizerOptions
         return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
             ? value
             : throw new InvalidOperationException($"{SamplingSeedVariable} is '{text}': give a whole number.");
+    }
+
+    /// <summary>
+    /// WordPiece: a word of more characters (code points) than this is one unknown token; null takes
+    /// IDRAK_TOKENIZER_MAX_WORD_CHARS, then the tokenizer's own (<c>max_input_chars_per_word</c>, 100 when it names none).
+    /// </summary>
+    public int? MaxInputCharsPerWord { get; init; }
+
+    /// <summary>The longest word, from the setting, its variable, or <paramref name="file"/> (the tokenizer's own).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">The setting is less than 1.</exception>
+    /// <exception cref="InvalidOperationException">The variable is not a whole number of 1 or more.</exception>
+    public int ResolvedMaxInputCharsPerWord(int file)
+    {
+        if (MaxInputCharsPerWord is { } limit)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1, nameof(MaxInputCharsPerWord));
+            return limit;
+        }
+
+        if (Environment.GetEnvironmentVariable(MaxWordCharsVariable) is not { Length: > 0 } text)
+        {
+            return file;
+        }
+
+        return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) && value >= 1
+            ? value
+            : throw new InvalidOperationException($"{MaxWordCharsVariable} is '{text}': give a whole number of characters, 1 or more.");
     }
 
     /// <summary>The reader's name, from the setting or its variable; null when neither sets one.</summary>

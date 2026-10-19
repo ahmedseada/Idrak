@@ -46,12 +46,13 @@ internal static class GgufBuiltIns
 /// Architectures: llama (Llama, Mistral, Mixtral), qwen2, qwen3, qwen2moe, qwen3moe, and those registered with
 /// <see cref="GgufArchitectures.Register"/>. Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read
 /// one expert at a time.
-/// Tokenizers: byte-level BPE (tokenizer.ggml.model "gpt2").
+/// Tokenizers: by tokenizer.ggml.model through GgufTokenizers: byte-level BPE ("gpt2"), SentencePiece BPE ("llama") and Unigram
+/// ("t5"), WordPiece ("bert").
 /// </summary>
 public static class GgufModel
 {
     private const string Marker = "gguf.json";
-    private const int FormatVersion = 1;                            // bump when the prepared files change
+    private const int FormatVersion = 2;                            // bump when the prepared files change (2: llama, t5 and bert tokenizers)
 
     /// <summary>Whether <paramref name="folder"/> was made by <see cref="Prepare"/>.</summary>
     public static bool IsPrepared(string folder) => File.Exists(Path.Combine(folder, Marker));
@@ -265,55 +266,13 @@ public static class GgufModel
             ["original_max_position_embeddings"] = 8192 };
     }
 
-    private static void WriteTokenizer(GgufFile file, string folder, string[] tokens, List<string> notes)
+    // The tokenizer.json of the file's tokenizer (GgufTokenizers, by tokenizer.ggml.model), then tokenizer_config.json and
+    // generation_config.json.
+    internal static void WriteTokenizer(GgufFile file, string folder, string[] tokens, List<string> notes)
     {
         string model = file.Get("tokenizer.ggml.model", "");
-        if (model != "gpt2")
-        {
-            throw new NotSupportedException($"{file.Path}: tokenizer '{model}' is not supported yet (byte-level BPE, 'gpt2', is: Llama 3, Qwen, Mistral Nemo …).");
-        }
-
-        var types = file.Get<long[]>("tokenizer.ggml.token_type", []);
-        var merges = file.Get<string[]>("tokenizer.ggml.merges", []);
-        var vocab = new JsonObject();
-        var added = new JsonArray();
-        for (int id = 0; id < tokens.Length; id++)
-        {
-            long type = id < types.Length ? types[id] : 1;
-            if (type is 3 or 4)
-            {
-                added.Add((JsonNode)new JsonObject { ["id"] = id, ["content"] = tokens[id], ["special"] = type == 3 });
-            }
-
-            if (!vocab.ContainsKey(tokens[id]))
-            {
-                vocab[tokens[id]] = id;
-            }
-        }
-
-        string pre = file.Get("tokenizer.ggml.pre", "default");
-        if (!GgufPreTokenizers.TryGet(pre, out string? pattern))
-        {
-            pattern = GgufBuiltIns.Llama3Pattern;
-            notes.Add($"pre-tokenizer '{pre}' is not registered; Llama 3's splitting rule is used (tokens may differ slightly from the original; " +
-                "register the family's pattern with GgufPreTokenizers.Register).");
-        }
-
-        var pretokenizers = new JsonArray();
-        if (pattern is not null)
-        {
-            pretokenizers.Add((JsonNode)new JsonObject { ["type"] = "Split", ["pattern"] = new JsonObject { ["Regex"] = pattern }, ["behavior"] = "Isolated", ["invert"] = false });
-        }
-
-        pretokenizers.Add((JsonNode)new JsonObject { ["type"] = "ByteLevel", ["add_prefix_space"] = false, ["trim_offsets"] = false, ["use_regex"] = pattern is null });
-        WriteJson(Path.Combine(folder, "tokenizer.json"), new JsonObject
-        {
-            ["added_tokens"] = added,
-            ["normalizer"] = null,
-            ["pre_tokenizer"] = new JsonObject { ["type"] = "Sequence", ["pretokenizers"] = pretokenizers },
-            ["decoder"] = new JsonObject { ["type"] = "ByteLevel" },
-            ["model"] = new JsonObject { ["type"] = "BPE", ["vocab"] = vocab, ["merges"] = new JsonArray([.. merges.Select(m => (JsonNode?)JsonValue.Create(m))]) },
-        });
+        var definition = GgufTokenizers.Get(model)(file, tokens, notes);
+        TokenizerJsonReader.Write(definition, Path.Combine(folder, "tokenizer.json"));
 
         string? Token(string key) => file.Metadata.TryGetValue(key, out var v) && Convert.ToInt64(v, System.Globalization.CultureInfo.InvariantCulture) is var id
                                      && id >= 0 && id < tokens.Length ? tokens[id] : null;

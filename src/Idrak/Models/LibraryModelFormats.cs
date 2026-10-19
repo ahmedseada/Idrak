@@ -50,12 +50,23 @@ internal static class LibraryModelFormats
     {
         TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
         TokenizerModels.Register(UnigramTokenizer.Type, UnigramTokenizer.FromDefinition);
+        TokenizerModels.Register(TokenizerModels.WordPiece, WordPieceTokenizer.FromDefinition);
     }
 
+    // Asked in this order: a folder with several files reads tokenizer.json first, then a SentencePiece model, then vocab.txt.
     public static void RegisterTokenizerFiles()
     {
         TokenizerFiles.Register(new TokenizerJsonReader());
-        TokenizerFiles.Register(new SentencePieceReader());      // after tokenizer.json: a folder with both reads that
+        TokenizerFiles.Register(new SentencePieceReader());
+        TokenizerFiles.Register(new VocabTxtReader());
+    }
+
+    public static void RegisterGgufTokenizers()
+    {
+        GgufTokenizers.Register("gpt2", GgufTokenizerFormats.Gpt2);
+        GgufTokenizers.Register("llama", GgufTokenizerFormats.Llama);
+        GgufTokenizers.Register("t5", GgufTokenizerFormats.T5);
+        GgufTokenizers.Register("bert", GgufTokenizerFormats.Bert);
     }
 
     public static void RegisterGgufPreTokenizers()
