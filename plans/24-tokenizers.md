@@ -1,8 +1,10 @@
 # Plan 24: Unigram (SentencePiece) and WordPiece tokenizers, built in
 
-**Status (2026-10-19, `abstraction`):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against e53acb8.
-L0, L1, T0, T1, T2 and T4 are built and CPU-checked; T3's encodings are in progress. Closes plug-in gap 11
-([plug-in.md](plug-in.md), "Only BPE tokenizer models").
+**Status (2026-10-19, `abstraction` 7b8c85f):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against
+e53acb8. Every phase but T5 is built, merged and pushed, and so are the handover's three leftovers (library-owned
+Unicode normalization, the T3 callers, the T4 leftovers) and two speed rounds the `--bench-text` rows exposed; the last
+merged run passed 147 of 147 targeted CPU tests. T5 is on hold for the owner; the owner's Windows and CUDA runs are
+next ("The owner's runs"). Closes plug-in gap 11 ([plug-in.md](plug-in.md), "Only BPE tokenizer models").
 
 | Phase | What | State |
 |---|---|---|
@@ -11,8 +13,10 @@ L0, L1, T0, T1, T2 and T4 are built and CPU-checked; T3's encodings are in progr
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Done; CPU pass |
 | T1 | Unigram: encode, decode, byte fallback, sampling | Done; CPU pass |
 | T2 | WordPiece: the BERT components, greedy longest match, `[CLS] … [SEP]` and pairs | Done; CPU pass |
-| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Encodings, detection and GGUF done, CPU pass (BPE, WordPiece, Unigram); callers (`TextEncoder`, `idrak tokenize` options) not started, see "What is left" |
-| T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Done; CPU pass (unigram: SentencePiece's pieces, 100% on the fixtures; wordpiece: exact against the fixed-tie reference) |
+| T3 | Encodings (offsets, type ids, masks, pairs, batch), detection across files, GGUF `llama` / `bert` / `t5` | Done; CPU pass (BPE, WordPiece, Unigram); callers done after the handover ("Finished after the handover", 2) |
+| T4 | Trainers: Unigram (EM), WordPiece; `idrak data tokenizer --model` | Done; CPU pass (unigram: SentencePiece's pieces, 100% on the fixtures; wordpiece: exact against the fixed-tie reference); leftovers done after the handover (3) |
+| N | Unicode normalization owned by the library (`UnicodeNormalization`, Unicode 18.0 tables) | Done after the handover (1); CPU pass, a real CLI process checked |
+| S | Speed rounds from the `--bench-text` rows: BPE, the encodings, the trainers, regex contention, WordPiece | Done (4, 5); results proven unchanged by full encoding dumps |
 | T5 | BPE onto the shared span pipeline (only if measured equal or faster) | On hold: not started until the owner decides (2026-10-19) |
 
 ## Goal
@@ -926,41 +930,156 @@ numbers go in the Runs table and BPE stays as it is.
 
 ---
 
-## What is left (handover, 2026-10-19)
+## Finished after the handover (2026-10-19)
 
-Everything above "Done" is merged and pushed to `abstraction` (48d058d); the last targeted CPU run passed 103 of 103.
-Nothing is in progress: two agents were started for items 1 and 2 and stopped before they changed anything, on the
-owner's instruction (no new work until the owner says so). Take these in order, one at a time, only when the owner asks.
+The handover's "What is left" (items 1-3) was done on the owner's "finish plan 24", one piece at a time, each merged
+into `abstraction` after a build and its targeted CPU filters; then two speed rounds on what the new bench rows showed.
+The merged tree (7b8c85f) passed 147 of 147 targeted CPU tests before the last push.
 
-1. **Unicode normalization owned by the library (a bug, rule 70).** `src/Idrak.Cli` builds with
-   `InvariantGlobalization=true`, and the library's NFC / NFD / NFKC / NFKD (`SpanComponents.UnicodeNormalizer`,
-   `UnicodeStability`: span `TryNormalize`, `IsNormalized`, `GetNormalizedLength`, `string.Normalize`) go through the
-   platform's ICU. In the real CLI they silently do nothing: BERT's accent stripping keeps accents (Hugging Face
-   disagrees on 35 of 98 corpus lines for a WordPiece tokenizer trained with `--lowercase`), NFKC normalizers do
-   nothing, Korean syllables become `[UNK]`. The test process has ICU, so every test passes. The fix:
-   - a generator under `tools/` (Unicode Character Database, or Python's `unicodedata` in the pinned venv; record the
-     version) writing compact C# tables: combining classes, canonical and compatibility decompositions, composition
-     pairs and exclusions, quick-check; Hangul by its algorithm;
-   - a span normalizer in C# (quick-check fast path, pooled buffers, nothing allocated warm, UAX #15 ordering and
-     composition) that also gives the `(char, change)` stream T3's positional alignment needs, so
-     `UnicodeNormalizer.AppendAligned` stops calling the platform per character;
-   - every platform normalization call in `src/` replaced (grep `Normalize(`, `NormalizationForm`, `IsNormalized`);
-   - proof (rule 71): equal to the platform on every code point in the four forms (in the test process), the existing
-     offset tests unchanged, a check that the CLI path strips accents, and a test that nothing in `src/` calls the
-     platform's normalization; speed equal or better (the pipeline speed test, `--bench-text`).
-2. **T3 callers.**
-   - `TextEncoder` (Idrak.Nlp) pads and masks through `EncodeBatch` when its tokenizer is an `IPretrainedTokenizer`:
-     the same vectors as today (a test compares them), one tokenize pass, the batch on the tokenizer's `Workers`.
-   - `idrak tokenize` gains `--offsets`, `--pair TEXT`, `--special` (and `--max-length`, `--truncation` if cheap), with
-     English and Arabic help (`Messages.Arabic.cs`; the help-layout and `cli arabic:` checks stay green). The owner's
-     run list below already shows these options: they fail until this is done.
-3. **T4 leftovers** (from "T4 as built"): Unigram training switches SentencePiece has and Idrak keeps at its defaults
-   (split by whitespace / script / number, NFKC, the longest sentence) become settings with CLI options when someone
-   needs them; `--bench-text` rows for the trainers.
-4. **T5** (BPE onto the shared span pipeline): on hold until the owner decides. Do not start it.
-5. **The owner's runs** (below): the T3 and T4 lists on Windows, CUDA `pretrained:|gguf:`, and
-   `make_fixtures.py --real` for the real models' references (`tokenizers real:`).
-6. **Scope:** finishing this plan is the only work; no other plan is started (the owner dropped Plan 25).
+**1. Unicode normalization owned by the library** (bebfc2b, 63783ee; rule 70).
+- **The bug, confirmed:** .NET's `string.Normalize` goes through ICU on Linux and macOS and through NLS on Windows. Under
+  `InvariantGlobalization` (the idrak tool) it returns the text unchanged, so BERT's `strip_accents` kept accents, NFKC
+  did nothing and Hangul became `[UNK]`. .NET 10's own character data (`CharUnicodeInfo`) is Unicode 16.0; this
+  container's ICU 74 is Unicode 15.1.
+- **The tables:** `tools/unicode/make_normalization_tables.py` reads the UCD 18.0.0 files (`UnicodeData.txt`,
+  `DerivedNormalizationProps.txt`, `NormalizationTest.txt`; unicode.org is blocked here, raw.githubusercontent.com
+  serves the unicodetools repository's `unicodetools/data/ucd/18.0.0/`), the same version as Imaging's text tables.
+  It writes `src/Idrak.Abstraction/Text/UnicodeNormalization.Data.cs` (a two-stage table, 256 code points a page:
+  110 pages, 3,948 records of combining class, quick-check and segment flags and full decompositions; 961
+  composition pairs; longest decompositions 4 canonical, 18 compatibility) and the conformance file
+  `tests/Idrak.Tests/data/unicode/normalization-test.txt.gz` (comments removed, 168 KB). Reruns write the same bytes.
+- **`Idrak.Abstraction.Text.UnicodeNormalization`** (public): `IsNormalized`, `Normalize` (the same instance when
+  normalized), `TryNormalize`, `GetNormalizedLength`, `Decompose`, `Compose`, `CombiningClass`,
+  `MaxDecompositionLength`, `UnicodeVersion`. A quick check (a vectorized skip of the plain range, then one bit per
+  basic-plane code unit, 8 KB a form, built once) finds the first segment that may change; only such segments are
+  decomposed, reordered and composed, the rest copied. Nothing is allocated once warm; a lone surrogate is refused
+  as .NET refuses it.
+- **Every platform call in `src/` replaced:** the span normalizer (`SpanComponents.UnicodeNormalizer`: its alignments
+  unchanged, the per-block stability table and its platform calls gone), BPE's string normalizers, the OpenType
+  shaper, `AnswerTexts`, the tuning metrics.
+- **Tests** (`tokenizers: unicode normalization:`, 6): every line of NormalizationTest.txt 18.0 in the four forms
+  (20,171 lines, every other code point left as it is, the four APIs agreeing); equal to the platform on every code
+  point, the corpora and every composition pair, except characters newer than the platform's Unicode (here NFC 40,
+  NFD 20, NFKC 145, NFKD 125, counted and printed; on Windows the counts differ); no allocation; no platform call left
+  in `src/` (a scan); the idrak tool's own process (its runtimeconfig checked for invariant globalization) strips
+  accents and decomposes Hangul with this process's ids; speed printed. The pipeline allocation test now expects 0
+  bytes on text NFKC changes (it allowed up to 2 KB, 624 B measured).
+- **Speed** (61,743 characters of the corpora, median of 61 runs, fully optimized JIT, µs; the platform is ICU 74):
+
+  | form | `Normalize`, ours | the platform's | `IsNormalized`, ours | the platform's |
+  |---|---|---|---|---|
+  | NFC | 190-195 | 236-387 | 5-8 | 39-83 |
+  | NFD | 215-225 | 269-279 | 0.4-0.6 | 37 |
+  | NFKC | 200-223 | 238-326 | 3.6-5 | 39 |
+  | NFKD | 219-220 | 281-295 | 0.4-0.5 | 37-38 |
+
+**2. The T3 callers** (7232737, 63783ee).
+- **`idrak tokenize`** gains `--offsets` (UTF-16 start and end and the covered text), `--pair TEXT` (type and sequence
+  ids), `--special` (the post-processor's tokens), `--max-length N` and `--truncation
+  longest_first|only_first|only_second`; without them the output is byte for byte as before. Nothing is padded;
+  without `--max-length` nothing is cut. Bad values are refused naming the option (exit 2). The summary is shorter
+  (the help line limit), in English and Arabic.
+- **`TokenizerEncodeOptions.TruncationDirection`** ("right", "left"; null: the tokenizer.json's): the direction came
+  only from the file, so a file truncating from the left gave `TextEncoder` other ids.
+- **`TokenizerEncodeOptions.Offsets`** (true by default): false sends a single text through the tokenizer's plain
+  encode (its piece cache), with the same ids, type ids, masks, truncation, special tokens and padding, offsets
+  (0, 0) and no token strings; a pair keeps the detailed path (tokenizers' pair truncation depends on its pre-tokens).
+  Found by measurement: the detailed batch made `TextEncoder` slower than before and 13-17 times the memory.
+- **`TextEncoder`** (Idrak.Nlp) encodes each batch with one `EncodeBatch` (ids only, right truncation to its
+  `MaxLength`, no special tokens, not padded; it writes the pad ids and weights itself). A plain `ITokenizer` keeps
+  the per-text path. The vectors are bit for bit those of the plain path (bpe, wordpiece, unigram fixtures; 1, 2, 3
+  and all workers; empty, long, Arabic and emoji texts; a left-truncating, padding tokenizer.json).
+- **A bug fixed on the way:** an app's tokenizer overriding a built-in (`TokenizerModels`' guard) encoded a batch one
+  text at a time and never padded to the longest; each side's own `EncodeBatch` now runs, compared text by text.
+- **Tests:** `retrieval: text encoder with a pretrained tokenizer …`, `cli run: tokenize --offsets, --pair,
+  --special, …` (against `expected-hf.json` and `encodings.json`), the guarded batch in `tokenizers:`, and ids only
+  against the detailed encode on every fixture (special tokens, truncation from either end, padding).
+
+**3. The T4 leftovers** (c4fe91c, 67b8f7d).
+- **The Unigram trainer's fixed SentencePiece choices are settings** (`TokenizerTrainingOptions`, checked by
+  `Validate`, written into tokenizer.model's TrainerSpec fields 18, 21-24, 26 and the NormalizerSpec):
+
+  | setting | default | `idrak data tokenizer` option |
+  |---|---|---|
+  | `SplitByWhitespace` | true | `--no-whitespace-split` |
+  | `SplitByUnicodeScript` | true | `--no-script-split` |
+  | `SplitByNumber` | true | `--no-number-split` |
+  | `TreatWhitespaceAsSuffix` | false | `--whitespace-suffix` |
+  | `AllowWhitespaceOnlyPieces` | false | `--whitespace-pieces` |
+  | `MaxSentenceLength` | 0, no limit | `--max-sentence` |
+  | `Normalization` | `identity` (also `nfkc`, `nmt_nfkc`) | `--normalization` |
+  | `DesiredSizeFactor` | 1.1 | `--desired-size` |
+  | `ExpectedCountFloor` | 0.5 | `--expected-floor` |
+  | `UnknownPenalty` | 10 | `--unknown-penalty` |
+
+  - `MaxSentenceLength` defaults to no limit, not sentencepiece's 4,192 bytes, so no corpus loses text it kept before
+    (a paragraph a line of Arabic often passes 4,192 bytes); no limit is written as sentencepiece's maximum.
+  - `nfkc` and `nmt_nfkc` are built in C# (`SentencePieceRules.cs`: sentencepiece's `BuildNFKCMap`, `MergeNmtMap`,
+    `RemoveRedundantMap` on `UnicodeNormalization`), once a process; the Arabic removals fold into the same map.
+    Against sentencepiece's built-in maps, on all 1,112,063 code points, 1,839 combining sequences and every corpus
+    line: equal but 68 code points Unicode 18 maps and sentencepiece's older data does not (listed in
+    `tokenizer-training/normalization.json`).
+  - Each of the eight switch configurations learns sentencepiece's pieces, 100%; `--whitespace-pieces` all 143 at the
+    same ids. sentencepiece reads our nmt_nfkc and whitespace-suffix models to our ids on 100 of 102 lines (the two
+    control-piece lines); one nmt_nfkc line is an exact float tie ("000"), accepted only as a proven tie.
+  - `DoubleArrayTrie`'s builder: 3.5 s → 0.4 s for the 225,000-key NFKC map (it checked every position of nearly
+    full blocks; the bases are identical).
+  - **Not done:** the `_cf` rules (no case-folding table); `add_dummy_prefix` and `remove_extra_whitespaces` stay fixed.
+- **`--bench-text`** takes sections (`text`, `tokenizers`, `trainers`) and the variables `IDRAK_BENCH_TEXT_CHARACTERS`
+  (200,000), `_SECONDS` (1), `_LOADS` (5), `_WORKERS` (0), `_TOKENIZERS`, `_REFERENCE` (`make_fixtures.py --bench`'s
+  JSON), `_TRAIN_FILES`, `_TRAIN_MB` (16), `_TRAIN_VOCAB` (3,000), `_TRAINERS`. Rows: every fixture tokenizer, ids,
+  detailed, batch detailed and ids only on 1 and all workers, cold and warm, bytes a text, load time and memory; the
+  three trainers on 1 and all workers.
+
+**4. Speed round one** (846b028), from the new rows; results proven unchanged by a dump of every encoding of every
+fixture (every path and option, batches on 1 and 4 workers, cache on and off) and of BPE and WordPiece vocabularies
+trained on 1 and 4 workers, before and after (identical but the message text of the `AggregateException`s of
+4-worker batches over refused texts, a race in how many failures are aggregated).
+
+| row | before | after |
+|---|---|---|
+| BPE `EncodeRange` into a reused list (bpe model / pretrain json) | 119 / 243 B a text | 0 B |
+| ids-only batch, bpe json, 1 / 4 workers | 22.2M / 65.9M tok/s, 3,975 B | 37.4M / 99.8M, 1,759 B |
+| detailed BPE, bpe json, 1 thread | 4.5M, 10,357 B | 14.4M, 2,210 B |
+| detailed BPE batch, 1 → 4 workers | 2.6M → 4.3M | 14.2M → 48.1M |
+| BPE trainer, 4 workers (16 MB) | 0.65-0.74 s, 506-575 MB | 0.14-0.18 s, 13.3 MB |
+| WordPiece trainer, 4 workers | 0.56-0.64 s, 206-210 MB | 0.29-0.32 s, 5.3 MB |
+
+The trainers' waste was regex contention: one `Regex` shared by threads builds a matcher per match on every other
+thread.
+
+**5. Speed round two** (9756572), proven unchanged the same way.
+- **Regex contention in encoding:** every tokenizer pattern is a `TokenizerRegex` (compiled once, a per-thread copy
+  sharing the compiled matcher, about 6 µs a thread). A 4-worker batch now allocates within 1.1 B a text of one
+  worker (a test, tolerance 32 B); wordpiece-uncased ids-only on 4 workers 9.4M → 44.1M tok/s, bpe json detailed
+  44.6M → 74.4M.
+- **WordPiece:** a one-pass BERT normalizer and pre-tokenizer (`BertComponents.OnePass`, its character classes built
+  from the steps' own rules; context-dependent text falls back to the steps), and the shared `PieceCache` (no
+  `ConcurrentDictionary.Count` per miss; it keeps token ranges for the detailed encode). Uncased ids 3.96M → 17.0M,
+  cased 6.77M → 21.3M, detailed 2.94M → 9.9M; training on 16 MB, 1 / 4 workers, 1.37 / 0.36 s → 0.67 / 0.27 s.
+- **Detailed BPE:** caches serving the detailed encode keep each token's range beside its ids; in-place one-character
+  Replace and Lowercase. bpe json detailed 13.8M → 19.5M.
+- **One cache budget:** a byte-level tokenizer's two caches together hold at most `PieceCacheLimit` pieces (before,
+  up to twice that).
+
+## What is left (2026-10-19, after 7b8c85f)
+
+1. **The owner's runs** ("The owner's runs"): the targeted Windows CPU list, CUDA `pretrained:|gguf:|tokenizers:
+   gguf|retrieval: text encoder`, the CLI on real models, `make_fixtures.py --real` and `tokenizers real:`, and
+   `--bench-text tokenizers trainers`. Their results go in the Runs table.
+2. **T5** (BPE onto the shared span pipeline): on hold until the owner decides.
+3. **Measured, not taken** (each a candidate for the owner to schedule; none is started without the owner):
+   - detailed BPE is still 1.8 times the ids-only encode (a per-token origin lookup; `TokenizerEncodings.Resolve`
+     reads the tokenizer.json's settings on every encode);
+   - the byte-level span pre-tokenizer costs 42 of 124 ns a character on the detailed byte-level path;
+   - Unigram's detailed encode realigns every cache hit (WordPiece's cached ranges would apply);
+   - each tokenizer compiles its patterns on load (about 6 ms for the long ones);
+   - an nfkc or nmt_nfkc tokenizer.model is about 2 MB against sentencepiece's 240 KB (`DoubleArrayTrie` does not
+     merge shared suffixes);
+   - the Unigram trainer gains little from workers on the repeated fixture corpus (7.1 → 6.1 s on 16 MB) and peaks at
+     about 270 MB of heap;
+   - an ids-only encoding still holds the contract's six arrays (about 1.1-1.8 KB a text in a batch);
+   - truncation `stride` (overflowing windows) is not implemented.
 
 ## Speed and memory
 
@@ -1035,6 +1154,24 @@ dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-text
 python -I tools\tokenizers\make_fixtures.py --bench
 ```
 
+After the handover's items (7b8c85f), everything changed since 48d058d in one list:
+
+```powershell
+git checkout abstraction; git pull
+dotnet build -c Release tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "tokenizers:|tokenizer training|cli pretrain|pretrained:|gguf:|plugins:|override loop:|abstraction inventory|public API|cli health: every environment variable|cli arabic:|cli polish|cli run:|retrieval: text encoder|shaping:|answer texts:|vision tuning contracts: cer and wer"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "pretrained:|gguf:|tokenizers: gguf|retrieval: text encoder"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+dotnet run -c Release --project src\Idrak.Cli -- tokenize google-t5/t5-small "Hello, مرحبا 😀" --offsets
+dotnet run -c Release --project src\Idrak.Cli -- tokenize google-bert/bert-base-uncased "Café Résumé" --pair "Second" --special
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-text tokenizers trainers
+```
+
+On Windows, `tokenizers: unicode normalization: equal to the platform's normalization` compares with Windows' NLS:
+differences on characters newer than its Unicode are counted and printed, any other fails.
+
 ## Risks
 
 - **Two references disagree.** `sentencepiece` and `tokenizers` differ on a few inputs for the same model (whitespace
@@ -1060,3 +1197,12 @@ python -I tools\tokenizers\make_fixtures.py --bench
 | 2026-10-19 | T4 | 4-thread Linux container, CPU | `tokenizer training`, `cli pretrain`, `tokenizers: unigram`, `public API`, `abstraction inventory`, and the CLI's environment, help and Arabic-catalogue checks | 30 passed, 3 failed (three tests gave a vocabulary smaller than the corpus' 655-character alphabet); after the fix, `tokenizer training` and `cli pretrain: data tokenizer`: 13 passed, 1 failed (a decode expectation that missed T1's added-token segments); that test: 1 passed |
 | 2026-10-19 | T4 | same | the unigram trainer against sentencepiece 0.2.2 on 17 MB, vocabulary 8000, Release CLI | 20.1 s against 23.5 s (one thread), 14.4 s against 15.3 s (four); live heap within 320 MB against 390 MB RSS; 99.92% of its pieces |
 | 2026-10-19 | T4 | same | the trained files read by the references (`idrak tokenize` per corpus line) | unigram: sentencepiece and tokenizers give our ids but on T1's known lines; wordpiece: tokenizers equal on 98/98 with `--keep-accents`, 63/98 with accents stripped (the CLI's NFD under invariant globalization) |
+| 2026-10-19 | 1 (normalization) | CPU (cloud, 4 threads) | `tokenizers:`, `tokenizer training`, `cli pretrain`, `pretrained:`, `gguf:`, `plugins:`, `abstraction inventory`, `public API`, `cli health: every environment variable`, `cli arabic:`, `shaping:`, `answer texts:`, `vision tuning contracts: cer and wer` | 113 passed, 3 failed (the platform comparison's tolerance missed Todhri, new in 16.0; a CLI check assumed a "caf" token; the API dump); after one rebuild the normalization, pipeline, wordpiece and encoding groups 20 of 20 |
+| 2026-10-19 | 1 and 2 merged | same | the list above with `cli run:`, `cli polish`, `retrieval: text encoder`, `override loop:` | 140 passed, 0 failed; with ids only: 139 and 1 (an empty text's pad and special tokens), then `tokenizers: encoding` 5 of 5 |
+| 2026-10-19 | 1 | same, a quiet scratch bench | `UnicodeNormalization` against ICU 74 | the table in "Finished after the handover", 1 |
+| 2026-10-19 | 2 (agent) | same | `tokenizers:`, `pretrained:`, `cli run:`, `cli polish`, `cli arabic:`, `cli health`, `public API`, `inventory`, `retrieval: text encoder` | 79 passed, 2 failed (a help line over 120 characters, the API dump); 11 of 11 after |
+| 2026-10-19 | 3 (agent) | same | `tokenizer training`, `cli pretrain`, `tokenizers:`, `public API`, `abstraction inventory`, `cli polish`, `cli arabic:`, `cli health` | 84 passed, 4 failed (inventory, a wrong nmt_nfkc check, a missing folder, a float tie); 70 and 1 of 1 after |
+| 2026-10-19 | 3 (agent) | same | `--bench-text` (Release) and `make_fixtures.py --bench` | the tables in commit 67b8f7d |
+| 2026-10-19 | speed 1 (agent) | same | `tokenizers:`, `tokenizer training`, `pretrained:`, `gguf:`, `cli pretrain`, `retrieval: text encoder`, `cli run: tokenize`, `public API`, `abstraction inventory` | 87 passed, 0 failed; after a trainer change `tokenizer training|cli pretrain` 17 of 17 |
+| 2026-10-19 | speed 2 (agent) | same | the speed 1 list with `plugins:`, `override loop:` | 112 passed, 0 failed |
+| 2026-10-19 | all merged (7b8c85f) | same | the owner's CPU list above | 147 passed, 0 failed |
