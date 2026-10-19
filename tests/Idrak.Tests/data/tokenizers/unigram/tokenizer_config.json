@@ -1,0 +1,9 @@
+{
+ "additional_special_tokens": ["<extra_id_0>","<extra_id_1>"],
+ "eos_token": "</s>",
+ "extra_ids": 2,
+ "model_max_length": 512,
+ "pad_token": "<pad>",
+ "tokenizer_class": "T5Tokenizer",
+ "unk_token": "<unk>"
+}
