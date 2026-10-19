@@ -25,7 +25,7 @@ public sealed class IdrakAudioSeq2SeqModel : ISequenceSpeechModel
     private readonly CrossAttention[] _crosses;
     private readonly IdrakAudioTranscriber _transcriber;
 
-    internal IdrakAudioSeq2SeqModel(IdrakAudioConfig config, IdrakAudioWeights weights, BpeTokenizer tokenizer, Device device)
+    internal IdrakAudioSeq2SeqModel(IdrakAudioConfig config, IdrakAudioWeights weights, IPretrainedTokenizer tokenizer, Device device)
     {
         if (tokenizer.VocabularySize > config.Classes)
         {
@@ -64,7 +64,7 @@ public sealed class IdrakAudioSeq2SeqModel : ISequenceSpeechModel
     public Sequential Decoder { get; }
 
     /// <summary>The tokenizer: token i is class i.</summary>
-    public BpeTokenizer Tokenizer { get; }
+    public IPretrainedTokenizer Tokenizer { get; }
 
     /// <inheritdoc />
     public string Architecture => IdrakAudioFamily.Architecture;

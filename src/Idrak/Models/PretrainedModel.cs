@@ -43,8 +43,8 @@ public sealed record ModelFiles
         + "{{- '<|im_start|>assistant\\n' -}}\n"
         + "{%- endif -%}\n";
 
-    /// <summary>The tokenizer (one read from a tokenizer.json, or one a <see cref="TokenizerTrainers">trainer</see> learned).</summary>
-    public required BpeTokenizer Tokenizer { get; init; }
+    /// <summary>The tokenizer (one <see cref="PretrainedTokenizers.Load"/> read, or one a <see cref="TokenizerTrainers">trainer</see> learned).</summary>
+    public required IPretrainedTokenizer Tokenizer { get; init; }
 
     /// <summary>The Jinja chat template, or null for <see cref="ChatMLWithParts"/>.</summary>
     public string? ChatTemplate { get; init; }
@@ -150,6 +150,9 @@ public sealed record PretrainedOptions
 
     /// <summary>The architecture to use instead of the one named in config.json.</summary>
     public string? Architecture { get; init; }
+
+    /// <summary>How the tokenizer is read (which file, its piece cache); null takes the variables, then the defaults.</summary>
+    public TokenizerOptions? Tokenizer { get; init; }
 
     /// <summary>
     /// The share of the device's memory the settings suggested after loading leave free beyond the device's own reserve
@@ -378,7 +381,7 @@ public sealed class PretrainedModel : IDisposable
         notes.InsertRange(0, format.Notes(folder));                 // where the weights come from, first
 
         long tokenizing = Stopwatch.GetTimestamp();
-        var tokenizer = File.Exists(Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
+        var tokenizer = PretrainedTokenizers.TryLoad(folder, options.Tokenizer);
         tokenizer?.PadVocabulary(spec.Vocabulary);
         var template = ChatTemplates.Load(folder, tokenizer);
         long tokenized = Stopwatch.GetTimestamp();

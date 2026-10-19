@@ -104,7 +104,7 @@ internal sealed class ModelFacts
         string? template = null, templateSource = null, toolCalls = null;
         try
         {
-            var tokenizer = File.Exists(Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
+            var tokenizer = PretrainedTokenizers.TryLoad(folder);
             if (JinjaChatTemplate.Load(folder, tokenizer) is { } chat)
             {
                 template = chat.Source;

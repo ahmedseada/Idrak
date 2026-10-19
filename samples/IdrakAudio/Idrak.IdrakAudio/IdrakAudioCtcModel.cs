@@ -19,7 +19,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
     private readonly IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> _layout;
     private readonly IdrakAudioTranscriber _transcriber;
 
-    internal IdrakAudioCtcModel(IdrakAudioConfig config, IdrakAudioWeights weights, BpeTokenizer tokenizer, Device device)
+    internal IdrakAudioCtcModel(IdrakAudioConfig config, IdrakAudioWeights weights, IPretrainedTokenizer tokenizer, Device device)
     {
         Config = config;
         Device = device;
@@ -42,7 +42,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
     public IdrakAudioEncoder Encoder { get; }
 
     /// <summary>The tokenizer: token i is class i below the blank, i + 1 from it on.</summary>
-    public BpeTokenizer Tokenizer { get; }
+    public IPretrainedTokenizer Tokenizer { get; }
 
     /// <inheritdoc />
     public string Architecture => IdrakAudioFamily.Architecture;

@@ -32,7 +32,7 @@ public sealed class WhisperFamily : ISpeechFamily
 
         var generation = ReadJson(Path.Combine(folder, "generation_config.json"));
         var config = WhisperConfig.Read(checkpoint.Config, generation, WhisperConfig.AddedTokens(tokenizerFile));
-        var tokenizer = BpeTokenizer.Load(tokenizerFile);
+        var tokenizer = PretrainedTokenizers.Load(tokenizerFile);
         var preprocessor = ReadJson(Path.Combine(folder, "preprocessor_config.json"));
         var defaults = new AudioFeatureOptions { Mels = config.Mels };
         var featureOptions = preprocessor is null ? defaults : AudioFeatureOptions.FromConfig(preprocessor, defaults);

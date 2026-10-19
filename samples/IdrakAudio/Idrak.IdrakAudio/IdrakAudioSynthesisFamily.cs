@@ -31,7 +31,7 @@ public sealed class IdrakAudioSynthesisFamily : ISpeechSynthesisFamily
             throw new InvalidDataException($"An IdrakAudio model folder holds its tokenizer.json; {tokenizerFile} was not found.");
         }
 
-        var tokenizer = BpeTokenizer.Load(tokenizerFile);
+        var tokenizer = PretrainedTokenizers.Load(tokenizerFile);
         var device = options.Device ?? Device.Default;
         var weights = IdrakAudioWeights.Read(checkpoint.Tensors, device);
         IdrakAudioTtsModel? model = null;
@@ -74,9 +74,9 @@ public sealed class IdrakAudioSynthesisFamily : ISpeechSynthesisFamily
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(tokenizer);
-        if (tokenizer is not BpeTokenizer)
+        if (tokenizer is not IPretrainedTokenizer)
         {
-            throw new NotSupportedException($"An IdrakAudio model keeps its tokenizer as tokenizer.json; give a BpeTokenizer (TokenizerTrainers \"bpe\"), not a {tokenizer.GetType().Name}.");
+            throw new NotSupportedException($"An IdrakAudio model keeps its tokenizer as tokenizer.json; give a pretrained tokenizer (one PretrainedTokenizers.Load reads or a TokenizerTrainers trainer learns), not a {tokenizer.GetType().Name}.");
         }
 
         var config = IdrakAudioConfig.FromJson(spec, tokenizer.VocabularySize);

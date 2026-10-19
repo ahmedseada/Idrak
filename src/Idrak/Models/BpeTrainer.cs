@@ -30,7 +30,7 @@ internal sealed class BpeTrainer : ITokenizerTrainer
 
     public string Summary => "byte-pair encoding as Hugging Face's BpeTrainer learns it (the same vocabulary and merges from the same files)";
 
-    public BpeTokenizer Train(IReadOnlyList<string> files, TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress = null,
+    public IPretrainedTokenizer Train(IReadOnlyList<string> files, TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(files);

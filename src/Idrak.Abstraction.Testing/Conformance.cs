@@ -109,6 +109,14 @@ public static class Conformance
         Check(tokenizer, new TokenizerSuite(reference), options);
 
     /// <summary>
+    /// Checks a pretrained tokenizer (one a tokenizer model built): every tokenizer check, ranges encoded as their text is,
+    /// tokens found by name, and its tokenizer.json naming its model; given a <paramref name="reference"/> (the library's
+    /// model it replaces), the same ids and text as it (<see cref="PretrainedTokenizerSuite"/>).
+    /// </summary>
+    public static ConformanceReport CheckPretrained(IPretrainedTokenizer tokenizer, IPretrainedTokenizer? reference = null, ContractCheckOptions? options = null) =>
+        Check(tokenizer, new PretrainedTokenizerSuite(reference), options);
+
+    /// <summary>
     /// Checks the RoPE scaling method registered as <paramref name="type"/> (or <paramref name="method"/>, when given)
     /// against the library's method of that name (<see cref="RopeScalings.Default"/>): as many frequencies, finite and
     /// positive, the same frequencies and attention factor within a tolerance, the same per position, and safe to call

@@ -16,7 +16,7 @@ namespace Idrak.Models;
 /// templates write them), like <c>add_special_tokens=False</c>. Pieces of the file it does not know are reported, not
 /// guessed; other normalizer, pre-tokenizer and decoder types plug in through <see cref="TokenizerComponents"/>.
 /// </summary>
-public sealed class BpeTokenizer : ITokenizer
+public sealed class BpeTokenizer : IPretrainedTokenizer
 {
     private static readonly string Gpt2Pattern = @"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+";
     private static readonly char[] ByteToChar = BuildByteMap();
@@ -27,7 +27,7 @@ public sealed class BpeTokenizer : ITokenizer
     private static readonly UTF8Encoding StrictUtf8 = new(false, throwOnInvalidBytes: true);
     // Tokenizer patterns run on every encode: compiled to IL where the runtime allows it (interpreted under native AOT).
     private const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
-    private const int CacheLimit = 100_000;                                    // cached pieces
+    private readonly int _cacheLimit;                                         // cached pieces (TokenizerOptions.PieceCacheLimit)
     private const int StackChars = 256;                                        // pieces up to this long stay on the stack
 
     private string[] _tokens;
@@ -88,14 +88,16 @@ public sealed class BpeTokenizer : ITokenizer
     private readonly bool _ignoreMerges;
     private readonly int? _unknown;
 
-    private BpeTokenizer(JsonObject json, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges)
+    private BpeTokenizer(JsonObject json, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges, int cacheLimit)
     {
         var model = json["model"]?.AsObject() ?? throw new InvalidDataException("tokenizer.json has no model.");
-        if ((string?)model["type"] != "BPE")
+        if ((string?)model["type"] != TokenizerModels.Bpe)
         {
-            throw new NotSupportedException($"Tokenizer model '{model["type"]}' is not supported (BPE).");
+            throw new NotSupportedException($"Tokenizer model '{model["type"]}' is not BPE; load it with PretrainedTokenizers.Load, "
+                + "which builds every registered model type (TokenizerModels.Register adds one).");
         }
 
+        _cacheLimit = cacheLimit;
         _vocabulary = vocabulary;
         _vocabularySpans = _vocabulary.GetAlternateLookup<ReadOnlySpan<char>>();
         _cacheSpans = _cache.GetAlternateLookup<ReadOnlySpan<char>>();
@@ -180,7 +182,10 @@ public sealed class BpeTokenizer : ITokenizer
         }
     }
 
-    /// <summary>Reads tokenizer.json from a file or a model folder.</summary>
+    /// <summary>
+    /// Reads tokenizer.json from a file or a model folder. The file must name the BPE model; <see cref="PretrainedTokenizers.Load"/>
+    /// reads any registered model type (and other tokenizer files).
+    /// </summary>
     public static BpeTokenizer Load(string path)
     {
         if (Directory.Exists(path))
@@ -188,65 +193,7 @@ public sealed class BpeTokenizer : ITokenizer
             path = Path.Combine(path, "tokenizer.json");
         }
 
-        // The vocabulary and merges (most of the file) are read straight from the document; only the small rest becomes
-        // a JSON object tree.
-        using var document = JsonDocument.Parse(File.ReadAllBytes(path), new JsonDocumentOptions { MaxDepth = 256 });
-        var root = document.RootElement;
-        var rest = new JsonObject();
-        Dictionary<string, int>? vocabulary = null;
-        (string, string)[] merges = [];
-        foreach (var property in root.EnumerateObject())
-        {
-            if (property.NameEquals("model") && property.Value.ValueKind == JsonValueKind.Object)
-            {
-                var model = new JsonObject();
-                foreach (var field in property.Value.EnumerateObject())
-                {
-                    if (field.NameEquals("vocab") && field.Value.ValueKind == JsonValueKind.Object)
-                    {
-                        vocabulary = new Dictionary<string, int>(CountProperties(field.Value));
-                        foreach (var entry in field.Value.EnumerateObject())
-                        {
-                            vocabulary[entry.Name] = entry.Value.GetInt32();
-                        }
-                    }
-                    else if (field.NameEquals("merges") && field.Value.ValueKind == JsonValueKind.Array)
-                    {
-                        merges = new (string, string)[field.Value.GetArrayLength()];
-                        int i = 0;
-                        foreach (var merge in field.Value.EnumerateArray())
-                        {
-                            merges[i++] = merge.ValueKind == JsonValueKind.Array
-                                ? (merge[0].GetString()!, merge[1].GetString()!)
-                                : Split(merge.GetString()!);
-                        }
-                    }
-                    else
-                    {
-                        model[field.Name] = JsonNode.Parse(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(field.Value));
-                    }
-                }
-
-                rest[property.Name] = model;
-            }
-            else
-            {
-                rest[property.Name] = JsonNode.Parse(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(property.Value));
-            }
-        }
-
-        return new BpeTokenizer(rest, vocabulary ?? throw new InvalidDataException("tokenizer.json has no model vocabulary."), merges);
-    }
-
-    private static int CountProperties(JsonElement element)
-    {
-        int count = 0;
-        foreach (var _ in element.EnumerateObject())
-        {
-            count++;
-        }
-
-        return count;
+        return FromDefinition(TokenizerJsonReader.ReadFile(path), new TokenizerOptions());
     }
 
     /// <summary>Reads a tokenizer from the JSON of a tokenizer.json.</summary>
@@ -257,12 +204,19 @@ public sealed class BpeTokenizer : ITokenizer
             ?? throw new InvalidDataException("tokenizer.json has no model vocabulary.");
         var merges = (model["merges"]?.AsArray() ?? [])
             .Select(m => m is JsonArray pair ? ((string)pair[0]!, (string)pair[1]!) : Split((string)m!)).ToArray();
-        return new BpeTokenizer(json, vocabulary, merges);
+        return new BpeTokenizer(json, vocabulary, merges, new TokenizerOptions().ResolvedPieceCacheLimit());
     }
+
+    // The library's "BPE" model (TokenizerModels): the tokenizer of a definition, which it takes as its own (the added
+    // tokens join its vocabulary).
+    internal static BpeTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) =>
+        new(definition.Json,
+            definition.Vocabulary ?? throw new InvalidDataException($"{definition.Source}: the BPE model has no vocabulary of token to id (model.vocab)."),
+            definition.Merges ?? [], options.ResolvedPieceCacheLimit());
 
     // A tokenizer from its parts: rest is a tokenizer.json without the model's vocab and merges (the trainers build one).
     internal static BpeTokenizer FromParts(JsonObject rest, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges)
-        => new(rest, vocabulary, merges);
+        => new(rest, vocabulary, merges, new TokenizerOptions().ResolvedPieceCacheLimit());
 
     // The byte-level alphabet: the character each byte is written as.
     internal static IReadOnlyList<char> ByteLevelAlphabet => ByteToChar;
@@ -389,6 +343,9 @@ public sealed class BpeTokenizer : ITokenizer
 
         writer.WriteEndObject();
     }
+
+    /// <inheritdoc />
+    public string Model => TokenizerModels.Bpe;
 
     /// <inheritdoc />
     public int VocabularySize => _tokens.Length;
@@ -1004,7 +961,7 @@ public sealed class BpeTokenizer : ITokenizer
             encoded = Bpe(piece);
         }
 
-        if (_cache.Count < CacheLimit && piece.Length <= StackChars)          // long pieces (unsplit SentencePiece text) rarely repeat
+        if (_cache.Count < _cacheLimit && piece.Length <= StackChars)          // long pieces (unsplit SentencePiece text) rarely repeat
         {
             _cacheSpans.TryAdd(piece, encoded);
         }
@@ -1868,7 +1825,7 @@ public sealed class BpeTokenizer : ITokenizer
         return tokens;
     }
 
-    private static (string, string) Split(string merge)
+    internal static (string, string) Split(string merge)
     {
         int space = merge.IndexOf(' ', 1);
         return (merge[..space], merge[(space + 1)..]);

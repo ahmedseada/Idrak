@@ -1,11 +1,12 @@
 # Plan 24: Unigram (SentencePiece) and WordPiece tokenizers, built in
 
 **Status (2026-10-19, `abstraction`):** planned 2026-10-19 from the owner's spec (plan 24, draft 1) against e53acb8.
-Nothing is built. Closes plug-in gap 11 ([plug-in.md](plug-in.md), "Only BPE tokenizer models").
+L0 is built and CPU-checked; T0's standalone part is in progress (wave 1). Closes plug-in gap 11
+([plug-in.md](plug-in.md), "Only BPE tokenizer models").
 
 | Phase | What | State |
 |---|---|---|
-| L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Planned |
+| L0 | The tokenizer model registry, one tokenizer contract, one loader; callers off `BpeTokenizer` | Done; CPU pass (155 tests) |
 | L1 | The span pipeline with alignments: built-in components on spans, the post-processor table | Planned |
 | T0 | Reference fixtures; the SentencePiece `tokenizer.model` reader; the Precompiled normalizer | Planned |
 | T1 | Unigram: encode, decode, byte fallback, sampling | Planned |
@@ -230,6 +231,27 @@ Existing groups run unchanged: `pretrained:`, `tokenizer training:`, `plugins:`,
 - no library file names `BpeTokenizer` outside its own and the registry's;
 - the API dump and the inventory are regenerated;
 - the BPE ids hash is unchanged.
+
+**L0 as built (2026-10-19).** As planned, with these differences:
+- `TokenizerDefinition` carries the tables as `Vocabulary` (`Dictionary<string, int>`, BPE and WordPiece),
+  `Pieces` (`(string Piece, double Score)` list, Unigram) and `Merges`, in place of one `TokenTable`. BPE takes the
+  dictionary as it was read, so loading copies nothing. A guarded registry gives the library's model its own copy, made
+  only when an app overrides a built-in.
+- File readers implement `ITokenizerFileReader` (`Name`, `Summary`, `Find`, `Read`), as the trainers implement
+  `ITokenizerTrainer`, in place of two delegates.
+- `PretrainedTokenizers` also has `TryLoad` (null when no reader finds a file; finds it once) and `Exists`, which the
+  CLI, `PretrainedModel` and the serve host use in place of their own `File.Exists("tokenizer.json")` checks.
+- The suite is `PretrainedTokenizerSuite` (`Conformance.CheckPretrained`): every `TokenizerSuite` check, plus ranges
+  (the whole text and a slice, appended to a list that already holds ids), tokens found by name, `IsSpecial` false
+  outside the vocabulary, and tokenizer.json naming the model.
+- The baseline, `tests/Idrak.Tests/data/tokenizers/bpe-baseline.json`, was recorded at e53acb8 before any change. It
+  covers all 23 `tokenizer.json` fixtures in the test data (888 texts: the suite's, two more, and `pretrain/corpus.txt`)
+  and includes the refusals of tokenizers without an unknown token.
+- The CLI's missing-tokenizer messages name the readers: "No tokenizer at X (readers: tokenizer.json)".
+- Run (CPU, 4 threads): `tokenizers:` (6 new), `tokenizer training:`, `pretrained:`, `plugins:`, `gguf:`,
+  `cli pretrain:`, `override loop:`, `conformance kit:`, `fine-tuning:`, `cli run:`, `cli models:`, `cli design:`,
+  `cli measure:`, `cli serve:`, `cli train data:`, the audio train, seq2seq, tts train and cli groups, `public API` and
+  `inventory`: 155 passed, 0 failed. Owner: no GPU run is needed for L0 (nothing on a device changed).
 
 ## Phase L1: the span pipeline with alignments
 

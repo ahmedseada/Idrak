@@ -24,7 +24,7 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
     private readonly CrossAttention[] _crosses;
     private bool _disposed;
 
-    internal WhisperRecognizer(WhisperConfig config, BpeTokenizer tokenizer, IAudioFeatureExtractor features, WhisperEncoder encoder, Sequential decoder, Device device,
+    internal WhisperRecognizer(WhisperConfig config, IPretrainedTokenizer tokenizer, IAudioFeatureExtractor features, WhisperEncoder encoder, Sequential decoder, Device device,
         KeyValueFormat cache, IReadOnlyList<string> notes)
     {
         Config = config;
@@ -45,7 +45,7 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
     public WhisperConfig Config { get; }
 
     /// <summary>The checkpoint's tokenizer.</summary>
-    public BpeTokenizer Tokenizer { get; }
+    public IPretrainedTokenizer Tokenizer { get; }
 
     /// <summary>The feature extractor (preprocessor_config.json).</summary>
     public IAudioFeatureExtractor Features { get; }

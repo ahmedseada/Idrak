@@ -280,7 +280,7 @@ int Check(string referencePath)
     var reference = JsonNode.Parse(File.ReadAllText(referencePath))!.AsObject();
     adapterFolder ??= (string?)reference["adapter"];
     using var model = Load(folderOverride ?? (string)reference["folder"]!);
-    var tokenizer = (BpeTokenizer)(model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer.json."));
+    var tokenizer = (IPretrainedTokenizer)(model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."));
     int failures = 0;
 
     // 1. Tokenizer: the same ids as transformers, and decoding gives the text back.

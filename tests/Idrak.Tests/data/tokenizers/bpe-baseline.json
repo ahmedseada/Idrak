@@ -1,0 +1,121 @@
+{
+  "about": "Plan 24, phase L0: what BpeTokenizer.Load gave at e53acb8 (before the tokenizer model registry), as SHA-256 of every text\u0027s id count and ids (int32 little-endian) and of every decoded text (UTF-8, NUL after each); a text the tokenizer refuses adds \u0022!\u0022, the exception\u0027s type and message and a NUL to the ids instead, over the texts below then the lines of pretrain/corpus.txt.",
+  "texts": [
+    "",
+    " ",
+    "a",
+    "hello world",
+    "Hello, World! How are you?",
+    "  leading and trailing  ",
+    "line\nbreak\ttab\r\nwindows",
+    "\u00DCn\u00EFc\u00F6d\u00E9 \u00DF caf\u00E9 na\u00EFve fa\u00E7ade",
+    "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645\u060C \u0643\u064A\u0641 \u062D\u0627\u0644\u0643\u061F",
+    "\u4E2D\u6587\u5B57\u7B26\u548C\u6807\u70B9\u3002",
+    "emoji \uD83D\uDE00\uD83D\uDC4D\uD83C\uDFFD and \uD83C\uDDF8\uD83C\uDDE6 flags",
+    "\u00E9 combining",
+    "\u200F\u200E marks \uFEFF",
+    "control \u0001\u001F chars",
+    "digits 12345 3.14159 -0.5e10",
+    "if (x) { y(); } // code",
+    "\u003Csum\u003E special \u003Cunk\u003E tokens \u003C/s\u003E",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word ",
+    "\u003C|im_start|\u003Euser\n\u0645\u0631\u062D\u0628\u0627\u003C|im_end|\u003E\n",
+    "lone \uFFFD surrogate"
+  ],
+  "corpus": "pretrain/corpus.txt",
+  "fixtures": {
+    "audio/audio-language/model/tokenizer.json": {
+      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "audio/ctc/model-conv/tokenizer.json": {
+      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
+      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+    },
+    "audio/ctc/model/tokenizer.json": {
+      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
+      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+    },
+    "audio/seq2seq/model-untied/tokenizer.json": {
+      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
+      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+    },
+    "audio/seq2seq/model/tokenizer.json": {
+      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
+      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+    },
+    "audio/tiny-whisper/tokenizer.json": {
+      "ids": "6dc14e47ffccf647987301aeaf45f7a07b9fbf987b6debd574bd308f2dab4b82",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "audio/tts/model/tokenizer.json": {
+      "ids": "e5eea8fd7c8a59105b6cf0b687ffbc738d078ab36f7cc75179de0aeca2650b2b",
+      "decoded": "e4f35b17c76f39e30436e89a59a2e37058ed28895dae802652e4393deabf5d57"
+    },
+    "gguf/tiny-llama-hf/tokenizer.json": {
+      "ids": "17776d71fe6e8b5f5da0e8d77af4981f994c5d7ee772990b8061a088eed6ef09",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "gguf/tiny-qwen3-q8-hf/tokenizer.json": {
+      "ids": "17776d71fe6e8b5f5da0e8d77af4981f994c5d7ee772990b8061a088eed6ef09",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "pretrain/metaspace/tokenizer.json": {
+      "ids": "ceb2db5629d6934fef614ed34925cdbbe3c66bc1d46a798942b9d6d4b72c69fb",
+      "decoded": "3b72b67dbd920f278160f95bf3fa36fd94808f10d695a1b40c7612ee754d47ed"
+    },
+    "pretrain/tiny-llama/tokenizer.json": {
+      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "pretrain/tokenizer-full/tokenizer.json": {
+      "ids": "d45f1b2d80f1a3e97df793a3d716eaa5d02f166006f5afd95393d23251acedf0",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "pretrain/tokenizer/tokenizer.json": {
+      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm-llava/tiny-llava-full/tokenizer.json": {
+      "ids": "d37c595a2129f86b8c27cb6029d9816d695f7cfe62bb36647b95d31fa9cd7dd3",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm-llava/tiny-llava/tokenizer.json": {
+      "ids": "d37c595a2129f86b8c27cb6029d9816d695f7cfe62bb36647b95d31fa9cd7dd3",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm-qwen/tiny-qwen2-vl-flat/tokenizer.json": {
+      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm-qwen/tiny-qwen2-vl/tokenizer.json": {
+      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm-qwen/tiny-qwen2.5-vl-flat/tokenizer.json": {
+      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm-qwen/tiny-qwen2.5-vl/tokenizer.json": {
+      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm-scratch/tiny-idrak-vision/tokenizer.json": {
+      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm/tiny-gemma3-pre452/tokenizer.json": {
+      "ids": "41c227c3414565d8287450c8f0ec7351958c9eaf283c77327dc43cbc7fda0cf6",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm/tiny-gemma3-v5/tokenizer.json": {
+      "ids": "41c227c3414565d8287450c8f0ec7351958c9eaf283c77327dc43cbc7fda0cf6",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    },
+    "vlm/tiny-gemma3/tokenizer.json": {
+      "ids": "41c227c3414565d8287450c8f0ec7351958c9eaf283c77327dc43cbc7fda0cf6",
+      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+    }
+  }
+}

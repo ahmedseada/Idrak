@@ -457,7 +457,7 @@ internal static partial class Tests
 
     // A character tokenizer for the tone letters: Metaspace BPE trained to its alphabet alone (no merges): the letters, "▁"
     // and the line end (the trainer reads each line with its end, as Hugging Face's train_from_files does).
-    private static BpeTokenizer ToneTokenizer(string folder, IEnumerable<string> texts)
+    private static IPretrainedTokenizer ToneTokenizer(string folder, IEnumerable<string> texts)
     {
         string file = Path.Combine(folder, "texts.txt");
         File.WriteAllLines(file, texts);
@@ -472,7 +472,7 @@ internal static partial class Tests
         ["subsample_layers"] = 2, ["subsample_kernel"] = 3, ["convolution_module"] = convolution, ["convolution_kernel"] = 5,
     };
 
-    private static IdrakAudioCtcModel CreateTone(string folder, BpeTokenizer tokenizer, Device device, int seed = 7, bool convolution = false) =>
+    private static IdrakAudioCtcModel CreateTone(string folder, IPretrainedTokenizer tokenizer, Device device, int seed = 7, bool convolution = false) =>
         (IdrakAudioCtcModel)SpeechModels.Create(folder, ToneSpec(convolution), tokenizer, new SpeechCreateOptions { Device = device, Seed = seed });
 
     private static void AudioTrainCreate(Device device)

@@ -2961,6 +2961,16 @@ public interface Idrak.Abstraction.Generation.IModelPart
   public bool In(System.Text.Json.Nodes.JsonObject config)
   public string Kind { get; }
 
+public interface Idrak.Abstraction.Generation.IPretrainedTokenizer : Idrak.Abstraction.Generation.ITokenizer
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public bool IsSpecial(int id)
+  public int? IdOf(string token)
+  public string Model { get; }
+  public void EncodeRange(string text, int start, int length, System.Collections.Generic.List<int> ids)
+  public void PadVocabulary(int size)
+  public void Save(string path)
+  public void WriteTo(System.IO.Stream stream)
+
 public interface Idrak.Abstraction.Generation.ISoftPartSource
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }

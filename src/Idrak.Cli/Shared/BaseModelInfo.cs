@@ -13,7 +13,7 @@ namespace Idrak.Cli.Shared;
 /// or pulled GGUF file under <c>--cache</c>, or Hugging Face's own cache) and read with <see cref="ModelFacts"/>; when
 /// it is not there the rules continue with what they know and say so (<c>idrak pull</c> fetches it).
 /// </summary>
-internal sealed record BaseModelInfo(string Name, string? Folder, long? Parameters, int? Hidden, int? Layers, int? Context, BpeTokenizer? Tokenizer)
+internal sealed record BaseModelInfo(string Name, string? Folder, long? Parameters, int? Hidden, int? Layers, int? Context, IPretrainedTokenizer? Tokenizer)
 {
     /// <summary>Reads what is available about <paramref name="name"/> (after alias resolution).</summary>
     public static BaseModelInfo Inspect(CommandContext context, string name)
@@ -40,9 +40,8 @@ internal sealed record BaseModelInfo(string Name, string? Folder, long? Paramete
         // The decoder's sizes when the family is registered, else the config's own fields.
         var text = facts.Config["text_config"] as JsonObject ?? facts.Config;
         var spec = facts.Spec;
-        string tokenizer = Path.Combine(local.Folder, "tokenizer.json");
         return new BaseModelInfo(name, local.Folder, facts.Parameters > 0 ? facts.Parameters : null,
             spec?.Dim ?? (int?)text["hidden_size"], spec?.Layers ?? (int?)text["num_hidden_layers"], spec?.MaxPositions ?? (int?)text["max_position_embeddings"],
-            File.Exists(tokenizer) ? BpeTokenizer.Load(tokenizer) : null);
+            PretrainedTokenizers.TryLoad(local.Folder));
     }
 }

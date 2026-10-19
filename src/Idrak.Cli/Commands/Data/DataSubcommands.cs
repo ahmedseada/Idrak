@@ -301,10 +301,9 @@ internal sealed class DataStatsCommand : Command
             {
                 var choice = ModelChoices.Choose(context, name);
                 string resolved = ModelChoices.Resolve(context, choice.Model);
-                if (Directory.Exists(resolved) && File.Exists(Path.Combine(resolved, "tokenizer.json")))
+                if (Directory.Exists(resolved) && PretrainedTokenizers.TryLoad(resolved) is { } pretrained)
                 {
-                    var bpe = BpeTokenizer.Load(resolved);
-                    (tokenizer, template) = (bpe, JinjaChatTemplate.Load(resolved, bpe));
+                    (tokenizer, template) = (pretrained, JinjaChatTemplate.Load(resolved, pretrained));
                     contextLength ??= JsonNode.Parse(File.Exists(Path.Combine(resolved, "config.json")) ? File.ReadAllText(Path.Combine(resolved, "config.json")) : "{}")?["max_position_embeddings"]?.GetValue<int>();
                 }
                 else

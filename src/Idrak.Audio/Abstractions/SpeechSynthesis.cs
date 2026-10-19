@@ -222,7 +222,7 @@ public static class SpeechSynthesisModels
     /// A text-to-speech model that did not exist: the family registered under the spec's architecture makes it from
     /// <paramref name="spec"/> (<see cref="ISpeechSynthesisFamily.Create"/>: its tensors drawn from the seed, its config.json
     /// and other files), which is written into <paramref name="folder"/> (config.json with "architectures",
-    /// model.safetensors in float32, the tokenizer as tokenizer.json when it is a <c>BpeTokenizer</c> and the family wrote
+    /// model.safetensors in float32, the tokenizer as tokenizer.json when it is an <c>IPretrainedTokenizer</c> and the family wrote
     /// none, the family's files) and loaded from there, so it is a model like any other: it speaks, trains and saves (plan 21, S6).
     /// </summary>
     /// <exception cref="NotSupportedException">No family is registered under the architecture, or it makes no models from a description.</exception>
