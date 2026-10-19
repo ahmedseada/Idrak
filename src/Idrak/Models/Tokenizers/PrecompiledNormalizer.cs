@@ -52,10 +52,20 @@ internal sealed class PrecompiledCharsMap
     private readonly DoubleArrayTrie _trie;
     private readonly byte[] _normalized;
 
+    // Each ASCII character's own entry (-1: none), looked up once: an ASCII character that is a cluster on its own is
+    // replaced (or not) without a grapheme split, an encode or a trie walk.
+    private readonly int[] _ascii = new int[128];
+
     private PrecompiledCharsMap(DoubleArrayTrie trie, byte[] normalized)
     {
         _trie = trie;
         _normalized = normalized;
+        Span<byte> one = stackalloc byte[1];
+        for (int c = 0; c < 128; c++)
+        {
+            one[0] = (byte)c;
+            _ascii[c] = c == 0 ? -1 : trie.ShortestPrefix(one, out _);
+        }
     }
 
     /// <summary>Reads a precompiled charsmap (trie size, trie units, then the NUL-terminated strings).</summary>
@@ -273,6 +283,19 @@ internal sealed class PrecompiledCharsMap
             int i = 0;
             while (i < span.Length)
             {
+                // An ASCII character followed by ASCII (or the end) is a cluster on its own, but for CR LF.
+                char c = span[i];
+                if (c < 0x80 && (i + 1 == span.Length || (span[i + 1] < 0x80 && !(c == '\r' && span[i + 1] == '\n'))))
+                {
+                    if (_ascii[c] >= 0)
+                    {
+                        output.Replace(i, 1, ValueBytes(_ascii[c]));
+                    }
+
+                    i++;
+                    continue;
+                }
+
                 int length = StringInfo.GetNextTextElementLength(span[i..]);
                 var cluster = span.Slice(i, length);
                 if (length <= 5 && Encoding.UTF8.GetBytes(cluster, utf8) is var bytes and < 6

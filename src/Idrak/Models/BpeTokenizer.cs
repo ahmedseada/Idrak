@@ -28,6 +28,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     // Tokenizer patterns run on every encode: compiled to IL where the runtime allows it (interpreted under native AOT).
     internal const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
     private readonly int _cacheLimit;                                         // cached pieces (TokenizerOptions.PieceCacheLimit)
+    private int _cached;                                                      // pieces in the cache (counted on add)
     private const int StackChars = 256;                                        // pieces up to this long stay on the stack
 
     private string[] _tokens;
@@ -415,7 +416,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
 
     // Half of a surrogate pair is not a character (it has no UTF-8 bytes, and Unicode normalization rejects it): it
     // becomes U+FFFD, as it does when such text is written as UTF-8.
-    private static string WithoutLoneSurrogates(string text)
+    internal static string WithoutLoneSurrogates(string text)
     {
         int at = text.AsSpan().IndexOfAnyInRange('\uD800', '\uDFFF');
         if (at < 0)
@@ -830,7 +831,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             }
 
             int start = replacement.Length;
-            if (prepend && !buffer[start..at].StartsWith(replacement, StringComparison.Ordinal))
+            if (prepend && at > start && !buffer[start..at].StartsWith(replacement, StringComparison.Ordinal))   // empty text stays empty
             {
                 start = 0;
                 replacement.CopyTo(buffer);
@@ -961,9 +962,11 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             encoded = Bpe(piece);
         }
 
-        if (_cache.Count < _cacheLimit && piece.Length <= StackChars)          // long pieces (unsplit SentencePiece text) rarely repeat
+        // Long pieces (unsplit SentencePiece text) rarely repeat. The size is counted on add: ConcurrentDictionary.Count
+        // takes every lock, which each miss would pay.
+        if (piece.Length <= StackChars && Volatile.Read(ref _cached) < _cacheLimit && _cacheSpans.TryAdd(piece, encoded))
         {
-            _cacheSpans.TryAdd(piece, encoded);
+            Interlocked.Increment(ref _cached);
         }
 
         ids.AddRange(encoded);
@@ -1594,7 +1597,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         for (int i = 0; i < pieces.Count; i++)
         {
             string s = pieces[i].Replace(" ", replacement, StringComparison.Ordinal);
-            if ((scheme == "always" || scheme == "first" && i == 0 && atStart) && !s.StartsWith(replacement, StringComparison.Ordinal))
+            if ((scheme == "always" || scheme == "first" && i == 0 && atStart) && s.Length > 0 && !s.StartsWith(replacement, StringComparison.Ordinal))
             {
                 s = replacement + s;
             }

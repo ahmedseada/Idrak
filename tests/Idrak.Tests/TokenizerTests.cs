@@ -123,7 +123,7 @@ internal static partial class Tests
         string? previous = Environment.GetEnvironmentVariable(TokenizerOptions.FormatVariable);
         try
         {
-            // A Unigram tokenizer.json: the list vocabulary becomes pieces and scores; no Unigram model is registered yet.
+            // A Unigram tokenizer.json: the list vocabulary becomes pieces and scores.
             string unigram = Path.Combine(temporary.FullName, "unigram.json");
             File.WriteAllText(unigram, """
                 {"added_tokens": [], "normalizer": null, "pre_tokenizer": null, "post_processor": null, "decoder": null,
