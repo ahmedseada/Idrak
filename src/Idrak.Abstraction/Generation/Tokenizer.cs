@@ -137,6 +137,14 @@ public sealed record TokenizerEncodeOptions
 
     /// <summary>The id padding adds; null: the tokenizer.json's <c>padding.pad_id</c>, else the tokenizer's padding token.</summary>
     public int? PadId { get; init; }
+
+    /// <summary>
+    /// Whether each token's offsets and vocabulary entry are found (true by default). False, for a caller that needs only
+    /// ids, type ids and masks: a single text goes through the tokenizer's plain encode (its piece cache, no strings), every
+    /// offset is (0, 0) and <see cref="TokenizerEncoding.Tokens"/> is empty; the ids, truncation, special tokens and
+    /// padding are the same. A pair is always encoded in detail (tokenizers' pair truncation depends on its pre-tokens).
+    /// </summary>
+    public bool Offsets { get; init; } = true;
 }
 
 

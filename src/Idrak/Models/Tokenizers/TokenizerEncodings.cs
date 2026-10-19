@@ -75,7 +75,7 @@ internal static class TokenizerEncodings
         ArgumentNullException.ThrowIfNull(options);
         var settings = Resolve(options, source);
         int Limit(int sequence) => settings.MaxLength is int m && (settings.Truncation != "only_second" || sequence != 0) ? m : int.MaxValue;
-        var first = raw(text, 0, Limit(0), settings.TruncateLeft);
+        var first = !options.Offsets && pair is null ? Plain(text, tokenizer) : raw(text, 0, Limit(0), settings.TruncateLeft);
         var second = pair is null ? null : raw(pair, 1, Limit(1), settings.TruncateLeft);
         if (settings.MaxLength is int max)
         {
@@ -88,6 +88,32 @@ internal static class TokenizerEncodings
             ? Pad(result, settings.FixedLength ?? throw new ArgumentException("Padding to max_length needs MaxLength.", nameof(options)), settings, tokenizer)
             : result;
     }
+
+    // A single text's ids through the tokenizer's plain encode (into this thread's list), without offsets or tokens: a single
+    // sequence truncated afterwards keeps the tokens the early exit of the detailed encode would keep.
+    private static TokenizerEncoding Plain(string text, IPretrainedTokenizer tokenizer)
+    {
+        var ids = t_ids ?? new List<int>();
+        t_ids = null;
+        try
+        {
+            ids.Clear();
+            tokenizer.EncodeRange(text, 0, text.Length, ids);
+            int count = ids.Count;
+            return new()
+            {
+                Ids = [.. ids], Offsets = new (int Start, int End)[count], TypeIds = new int[count], AttentionMask = Ones(count),
+                SpecialTokensMask = new int[count], SequenceIds = new int[count],
+            };
+        }
+        finally
+        {
+            t_ids = ids.Capacity <= 1 << 16 ? ids : null;
+        }
+    }
+
+    [ThreadStatic]
+    private static List<int>? t_ids;
 
     // A batch: each text finished on the tokenizer's workers, in input order; "longest" pads all to the longest.
     public static IReadOnlyList<TokenizerEncoding> Batch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options,

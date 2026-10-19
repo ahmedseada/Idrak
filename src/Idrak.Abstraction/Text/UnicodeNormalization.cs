@@ -291,65 +291,76 @@ public static partial class UnicodeNormalization
     // that passes the quick check is copied as it is (in runs), another is normalized on its own.
     private static void Run(ReadOnlySpan<char> text, ref Sink sink, in Rules rules, int from = 0)
     {
-        int copyFrom = 0, segment = from;
-        bool clean = true;
-        uint lastClass = 0;
-        var bits = rules.Bits;
-        for (int i = from; i < text.Length;)
+        int[]? scratch = null;
+        try
         {
-            char c = text[i];
-            uint info;
-            int width;
-            if ((bits[c >> 6] & (1UL << c)) != 0)
+            int copyFrom = 0, segment = from;
+            bool clean = true;
+            uint lastClass = 0;
+            var bits = rules.Bits;
+            for (int i = from; i < text.Length;)
             {
-                if (clean)
+                char c = text[i];
+                uint info;
+                int width;
+                if ((bits[c >> 6] & (1UL << c)) != 0)
                 {
-                    segment = i;                                                   // a clean segment ends here; nothing to do
-                    lastClass = 0;
-                    i++;
-                    continue;
+                    if (clean)
+                    {
+                        segment = i;                                                   // a clean segment ends here; nothing to do
+                        lastClass = 0;
+                        i++;
+                        continue;
+                    }
+
+                    info = rules.Boundary;
+                    width = 1;
+                }
+                else
+                {
+                    info = Info(CodePointAt(text, i, out width));
                 }
 
-                info = rules.Boundary;
-                width = 1;
+                if ((info & rules.Boundary) != 0 && i > segment)
+                {
+                    if (!clean)
+                    {
+                        sink.Write(text[copyFrom..segment]);
+                        NormalizeSegment(text[segment..i], ref sink, rules, ref scratch);
+                        copyFrom = i;
+                    }
+
+                    segment = i;
+                    clean = true;
+                    lastClass = 0;
+                }
+
+                uint cls = info >> 16;
+                if ((info & (rules.No | rules.Maybe)) != 0 || (cls != 0 && lastClass > cls))
+                {
+                    clean = false;
+                }
+
+                lastClass = cls;
+                i += width;
+            }
+
+            if (clean)
+            {
+                sink.Write(text[copyFrom..]);
             }
             else
             {
-                info = Info(CodePointAt(text, i, out width));
+                sink.Write(text[copyFrom..segment]);
+                NormalizeSegment(text[segment..], ref sink, rules, ref scratch);
             }
-
-            if ((info & rules.Boundary) != 0 && i > segment)
-            {
-                if (!clean)
-                {
-                    sink.Write(text[copyFrom..segment]);
-                    NormalizeSegment(text[segment..i], ref sink, rules);
-                    copyFrom = i;
-                }
-
-                segment = i;
-                clean = true;
-                lastClass = 0;
-            }
-
-            uint cls = info >> 16;
-            if ((info & (rules.No | rules.Maybe)) != 0 || (cls != 0 && lastClass > cls))
-            {
-                clean = false;
-            }
-
-            lastClass = cls;
-            i += width;
         }
-
-        if (clean)
+        finally
         {
-            sink.Write(text[copyFrom..]);
-        }
-        else
-        {
-            sink.Write(text[copyFrom..segment]);
-            NormalizeSegment(text[segment..], ref sink, rules);
+            if (scratch is not null)
+            {
+                ArrayPool<int>.Shared.Return(scratch);
+            }
         }
     }
 
@@ -357,6 +368,7 @@ public static partial class UnicodeNormalization
     private static bool SegmentsUnchanged(ReadOnlySpan<char> text, in Rules rules, int from)
     {
         char[] buffer = ArrayPool<char>.Shared.Rent(64);
+        int[]? scratch = null;
         try
         {
             int segment = from;
@@ -376,13 +388,13 @@ public static partial class UnicodeNormalization
                     {
                         var part = text[segment..i];
                         var sink = new Sink(buffer);
-                        NormalizeSegment(part, ref sink, rules);
+                        NormalizeSegment(part, ref sink, rules, ref scratch);
                         if (sink.Overflow)
                         {
                             ArrayPool<char>.Shared.Return(buffer);
                             buffer = ArrayPool<char>.Shared.Rent(sink.Count);
                             sink = new Sink(buffer);
-                            NormalizeSegment(part, ref sink, rules);
+                            NormalizeSegment(part, ref sink, rules, ref scratch);
                         }
 
                         if (!part.SequenceEqual(buffer.AsSpan(0, sink.Count)))
@@ -413,93 +425,117 @@ public static partial class UnicodeNormalization
         finally
         {
             ArrayPool<char>.Shared.Return(buffer);
+            if (scratch is not null)
+            {
+                ArrayPool<int>.Shared.Return(scratch);
+            }
         }
     }
 
     // One segment: full decomposition, canonical ordering, then composition for NFC and NFKC. The code points are kept
     // with their combining class (class << 21 | code point) in a pooled array.
-    private static void NormalizeSegment(ReadOnlySpan<char> text, ref Sink sink, in Rules rules)
+    private static void NormalizeSegment(ReadOnlySpan<char> text, ref Sink sink, in Rules rules, ref int[]? scratch)
     {
-        int room = text.Length * (rules.Compatibility ? MaxCompatibility : MaxCanonical);
-        int[]? kept = t_points;                                            // this thread's scratch; a longer segment rents
-        int[] points = kept is not null && kept.Length >= room ? kept : ArrayPool<int>.Shared.Rent(room);
-        t_points = null;                                                   // not shared with a nested call while in use
-        try
+        if (!rules.Composes && (text.Length == 1 || (text.Length == 2 && char.IsHighSurrogate(text[0]))))
         {
-            int count = 0;
-            for (int i = 0; i < text.Length;)
+            WriteDecomposition(CodePointAt(text, 0, out _), ref sink, rules.Compatibility);   // one code point: already in order
+            return;
+        }
+
+        int room = text.Length * (rules.Compatibility ? MaxCompatibility : MaxCanonical);
+        if (scratch is null || scratch.Length < room)
+        {
+            if (scratch is not null)
             {
-                int codePoint = CodePointAt(text, i, out int width);
-                i += width;
-                if ((uint)(codePoint - SBase) < SCount)
-                {
-                    count += DecomposeHangul(codePoint, points.AsSpan(count));
-                    continue;
-                }
-
-                int mapping = Mapping(codePoint, rules.Compatibility);
-                if (mapping == 0)
-                {
-                    points[count++] = (int)(Info(codePoint) >> 16 << 21) | codePoint;
-                    continue;
-                }
-
-                foreach (int part in Mappings.Slice(mapping >> 5, mapping & 31))
-                {
-                    points[count++] = (int)(Info(part) >> 16 << 21) | part;
-                }
+                ArrayPool<int>.Shared.Return(scratch);
             }
 
-            // Canonical ordering: a stable insertion sort of each run of non-starters by combining class.
-            for (int i = 1; i < count; i++)
+            scratch = ArrayPool<int>.Shared.Rent(Math.Max(room, 256));
+        }
+
+        int[] points = scratch;
+        int count = 0;
+        for (int i = 0; i < text.Length;)
+        {
+            int codePoint = CodePointAt(text, i, out int width);
+            i += width;
+            if ((uint)(codePoint - SBase) < SCount)
             {
-                int point = points[i];
-                int cls = point >> 21;
-                if (cls == 0)
-                {
-                    continue;
-                }
-
-                int j = i;
-                while (j > 0 && points[j - 1] >> 21 > cls)
-                {
-                    points[j] = points[j - 1];
-                    j--;
-                }
-
-                points[j] = point;
+                count += DecomposeHangul(codePoint, points.AsSpan(count));
+                continue;
             }
 
-            if (rules.Composes && count > 1)
+            int mapping = Mapping(codePoint, rules.Compatibility);
+            if (mapping == 0)
             {
-                count = ComposeAll(points.AsSpan(0, count));
+                points[count++] = (int)(Info(codePoint) >> 16 << 21) | codePoint;
+                continue;
             }
 
-            for (int i = 0; i < count; i++)
+            foreach (int part in Mappings.Slice(mapping >> 5, mapping & 31))
             {
-                sink.Write(points[i] & 0x1FFFFF);
+                points[count++] = (int)(Info(part) >> 16 << 21) | part;
             }
         }
-        finally
+
+        // Canonical ordering: a stable insertion sort of each run of non-starters by combining class.
+        for (int i = 1; i < count; i++)
         {
-            if (ReferenceEquals(points, kept) || (kept is null && points.Length <= ScratchLimit))
+            int point = points[i];
+            int cls = point >> 21;
+            if (cls == 0)
             {
-                t_points = points;
+                continue;
             }
-            else
+
+            int j = i;
+            while (j > 0 && points[j - 1] >> 21 > cls)
             {
-                ArrayPool<int>.Shared.Return(points);
-                t_points = kept;
+                points[j] = points[j - 1];
+                j--;
             }
+
+            points[j] = point;
+        }
+
+        if (rules.Composes && count > 1)
+        {
+            count = ComposeAll(points.AsSpan(0, count));
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            sink.Write(points[i] & 0x1FFFFF);
         }
     }
 
-    // A thread keeps one segment buffer of up to ScratchLimit code points (16 KB), so a text of many short changed
-    // segments (Hangul syllables under NFD, accented Latin) takes nothing from the pool per segment.
-    private const int ScratchLimit = 4096;
+    private static void WriteDecomposition(int codePoint, ref Sink sink, bool compatibility)
+    {
+        if ((uint)(codePoint - SBase) < SCount)
+        {
+            int s = codePoint - SBase;
+            sink.Write(LBase + s / NCount);
+            sink.Write(VBase + s % NCount / TCount);
+            if (s % TCount != 0)
+            {
+                sink.Write(TBase + s % TCount);
+            }
 
-    [ThreadStatic]
-    private static int[]? t_points;
+            return;
+        }
+
+        int mapping = Mapping(codePoint, compatibility);
+        if (mapping == 0)
+        {
+            sink.Write(codePoint);
+            return;
+        }
+
+        foreach (int part in Mappings.Slice(mapping >> 5, mapping & 31))
+        {
+            sink.Write(part);
+        }
+    }
 
     // UAX #15's canonical composition over decomposed, ordered code points (class << 21 | code point); returns the new
     // count. A character composes with the last starter unless something between blocks it (a starter, or a class not

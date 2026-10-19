@@ -3400,6 +3400,7 @@ public static class Idrak.Abstraction.Generation.TokenSamplers
 public sealed record Idrak.Abstraction.Generation.TokenizerEncodeOptions : System.IEquatable<Idrak.Abstraction.Generation.TokenizerEncodeOptions>
   public TokenizerEncodeOptions()
   public bool AddSpecialTokens { get; init; }
+  public bool Offsets { get; init; }
   public int? MaxLength { get; init; }
   public int? PadId { get; init; }
   public string? Padding { get; init; }
@@ -4769,6 +4770,17 @@ public sealed class Idrak.Abstraction.TensorScope : System.IDisposable
   public bool Owns(Idrak.Abstraction.Tensor tensor)
   public static Idrak.Abstraction.Tensor Untrack(Idrak.Abstraction.Tensor tensor)
   public void Dispose()
+
+public static class Idrak.Abstraction.Text.UnicodeNormalization
+  public const string UnicodeVersion = "18.0.0"
+  public static bool IsNormalized(System.ReadOnlySpan<char> text, System.Text.NormalizationForm form = (System.Text.NormalizationForm)1)
+  public static bool TryNormalize(System.ReadOnlySpan<char> source, System.Span<char> destination, out int written, System.Text.NormalizationForm form = (System.Text.NormalizationForm)1)
+  public static int CombiningClass(int codePoint)
+  public static int Compose(int first, int second)
+  public static int Decompose(int codePoint, System.Span<int> destination, bool compatibility)
+  public static int GetNormalizedLength(System.ReadOnlySpan<char> source, System.Text.NormalizationForm form = (System.Text.NormalizationForm)1)
+  public static int MaxDecompositionLength(bool compatibility)
+  public static string Normalize(string text, System.Text.NormalizationForm form = (System.Text.NormalizationForm)1)
 
 public class Idrak.Abstraction.Training.Adam : Idrak.Abstraction.Training.Optimizer
   protected virtual bool DecoupledWeightDecay { get; }

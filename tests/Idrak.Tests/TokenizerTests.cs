@@ -16,7 +16,7 @@ internal static partial class Tests
         ("tokenizers: every BPE fixture loads through PretrainedTokenizers.Load (and BpeTokenizer.Load) to the ids, refusals and text BpeTokenizer.Load gave before the registry (tokenizers/bpe-baseline.json)", TokenizersBpeBaseline),
         ("tokenizers: the model registry names BPE, builds it from a definition, refuses an unknown model type naming the registered ones and TokenizerModels.Register, and an app's model type is built and unregistered", TokenizersModelRegistry),
         ("tokenizers: the readers find tokenizer.json in a folder and as a file, a list vocabulary is read as pieces and scores, Format and IDRAK_TOKENIZER_FORMAT pick the reader, and a folder without a tokenizer names the readers", TokenizersFileReaders),
-        ("tokenizers: an app's model overriding BPE is guarded: under FallBack one that fails to build or to encode is answered by the built-in, under Throw its failure reaches the caller", TokenizersGuardedModel),
+        ("tokenizers: an app's model overriding BPE is guarded: under FallBack one that fails to build or to encode (a text, a range, a batch, padded as the built-in pads it) is answered by the built-in, under Throw its failure reaches the caller", TokenizersGuardedModel),
         ("tokenizers: the piece cache is a setting (PieceCacheLimit, IDRAK_TOKENIZER_CACHE; 0 caches nothing and gives the same ids), a bad value is refused naming it, and PretrainedOptions carries the settings", TokenizersPieceCache),
         ("tokenizers: the built-in BPE passes the pretrained tokenizer suite (ranges, tokens by name, tokenizer.json naming the model) and a saved tokenizer loads back to the same ids", TokenizersPretrainedSuite),
     ];
@@ -170,6 +170,10 @@ internal static partial class Tests
             var ranged = new List<int>();
             tokenizer.EncodeRange("guarded models answer", 0, 21, ranged);
             Check(ranged.SequenceEqual(expected), "and a range that throws");
+            var batch = tokenizer.EncodeBatch(["guarded", "guarded models answer"], null,
+                new TokenizerEncodeOptions { AddSpecialTokens = false, Padding = "longest", PadId = 0 });
+            Check(batch.Count == 2 && batch[1].Ids.SequenceEqual(expected) && batch[0].Count == batch[1].Count && batch[0].AttentionMask.Sum() < batch[0].Count,
+                "and a batch that throws, through the built-in's own batch encode (padded to its longest)");
         }
         finally
         {
