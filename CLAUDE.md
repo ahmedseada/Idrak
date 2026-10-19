@@ -49,7 +49,9 @@ These are the owner's standing rules. They hold in every session, after every co
   once with `--no-build` (CPU here). 5. Merge and push; a merge without conflicts gets no build and no tests (its
   branch was built and tested already). 6. Hand the owner one targeted command list for only what changed: one
   `dotnet build -c Release tests\Idrak.Tests`, then the CUDA filters with `--no-build`. At most two agents at a time,
-  so builds do not compete for the machine.
+  so builds do not compete for the machine. A slot never idles while work is ready: the moment an agent finishes, the
+  slot takes the next piece of work whose inputs are already merged, without waiting for the current wave to end
+  (waves are a dependency order, not a barrier).
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`.
