@@ -149,8 +149,27 @@ public static class TokenizerModels
             slot.Call(() => app.Encode(text, pair, options), () => library.Value.Encode(text, pair, options),
                 (expected, actual) => Comparisons.Sequences(expected.Ids, actual.Ids) ?? Comparisons.Sequences(expected.Offsets, actual.Offsets));
 
+        // Each side's own batch encode, so its padding to the longest and its workers apply; compared text by text.
         public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
-            [.. texts.Select((text, i) => Encode(text, pairs?[i], options))];
+            slot.Call(() => app.EncodeBatch(texts, pairs, options), () => library.Value.EncodeBatch(texts, pairs, options), SameEncodings);
+
+        private static string? SameEncodings(IReadOnlyList<TokenizerEncoding> expected, IReadOnlyList<TokenizerEncoding> actual)
+        {
+            if (expected.Count != actual.Count)
+            {
+                return $"{actual.Count} encodings, expected {expected.Count}";
+            }
+
+            for (int i = 0; i < expected.Count; i++)
+            {
+                if ((Comparisons.Sequences(expected[i].Ids, actual[i].Ids) ?? Comparisons.Sequences(expected[i].Offsets, actual[i].Offsets)) is { } difference)
+                {
+                    return $"text {i}: {difference}";
+                }
+            }
+
+            return null;
+        }
 
         public string TokenOf(int id) => app.TokenOf(id);
 

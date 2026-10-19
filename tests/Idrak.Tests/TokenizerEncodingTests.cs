@@ -12,7 +12,7 @@ internal static partial class Tests
     [
         ("tokenizers: encoding: BPE (byte level, Metaspace, Qwen's split, Gemma's byte fallback, Whisper, ByteLevel and RobertaProcessing trimming) gives tokenizers' ids, tokens, offsets, type ids, special-tokens mask and sequence ids on every corpus line", TokenizerEncodingBpe),
         ("tokenizers: encoding: WordPiece (uncased, cased), SentencePiece-style BPE and Unigram (with and without byte fallback) give expected-hf.json's offsets, ids, type ids, masks and sequence ids for single texts and pairs, and Decode skips special tokens when asked", TokenizerEncodingReferences),
-        ("tokenizers: encoding: the detailed encode gives Encode's ids for every tokenizer.json in the test data, on the suite's texts and the corpus", TokenizerEncodingSameIds),
+        ("tokenizers: encoding: the detailed encode gives Encode's ids for every tokenizer.json in the test data, on the suite's texts and the corpus; with Offsets false (ids only, through the plain encode) it gives the same ids, type ids and masks with special tokens, truncation from either end and padding", TokenizerEncodingSameIds),
         ("tokenizers: encoding: truncation (longest_first, only_first, only_second) and padding (a batch to its longest, to a fixed length) as tokenizers does them", TokenizerEncodingTruncationPadding),
         ("tokenizers: encoding: a batch equals its texts one by one, on one worker and on every core (Workers, IDRAK_TOKENIZER_WORKERS); a bad worker count is refused", TokenizerEncodingBatch),
     ];
@@ -112,10 +112,17 @@ internal static partial class Tests
         }
     }
 
+    private static readonly TokenizerEncodeOptions[] LeanCases =
+    [
+        new() { AddSpecialTokens = false }, new() { AddSpecialTokens = true },
+        new() { AddSpecialTokens = true, MaxLength = 7, Truncation = "longest_first", TruncationDirection = "right", PadId = 0, Padding = "max_length" },
+        new() { AddSpecialTokens = false, MaxLength = 5, Truncation = "longest_first", TruncationDirection = "left" },
+    ];
+
     private static void TokenizerEncodingSameIds(Device device)
     {
         string[] texts = PipelineTexts();
-        int checkedFiles = 0;
+        int checkedFiles = 0, lean = 0;
         foreach (string file in Directory.EnumerateFiles(TestData(""), "tokenizer.json", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
         {
             IPretrainedTokenizer tokenizer;
@@ -143,6 +150,23 @@ internal static partial class Tests
                 var detailed = tokenizer.Encode(text, null, new TokenizerEncodeOptions { AddSpecialTokens = false });
                 Check(detailed.Ids.SequenceEqual(ids), $"{file}: the detailed encode of '{text}' gives other ids than Encode");
                 Check(detailed.Offsets.All(o => o.Start >= 0 && o.Start <= o.End && o.End <= text.Length), $"{file}: offsets of '{text}' outside it");
+                if (lean++ % 5 != 0)
+                {
+                    continue;
+                }
+
+                // Offsets false: the same ids, type ids and masks through the plain encode, with special tokens, truncated
+                // from either end and padded; offsets (0, 0) and no tokens.
+                foreach (var options in LeanCases)
+                {
+                    var full = tokenizer.Encode(text, null, options);
+                    var plain = tokenizer.Encode(text, null, options with { Offsets = false });
+                    Check(plain.Ids.SequenceEqual(full.Ids) && plain.TypeIds.SequenceEqual(full.TypeIds) && plain.AttentionMask.SequenceEqual(full.AttentionMask)
+                        && plain.SpecialTokensMask.SequenceEqual(full.SpecialTokensMask) && plain.SequenceIds.SequenceEqual(full.SequenceIds),
+                        $"{file}: Offsets false on '{text}' ({options}) gives other ids, type ids or masks than the detailed encode");
+                    Check(plain.Offsets.Length == plain.Count && plain.Offsets.All(o => o == (0, 0)) && (plain.Tokens.Length == 0 || plain.SpecialTokensMask.Zip(plain.AttentionMask).All(p => p.First == 1 || p.Second == 0)),
+                        $"{file}: Offsets false leaves offsets (0, 0) and no tokens (but where every token is special or padding, as for an empty text)");
+                }
             }
 
             checkedFiles++;

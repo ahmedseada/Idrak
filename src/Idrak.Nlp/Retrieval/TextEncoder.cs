@@ -35,10 +35,11 @@ public sealed class TextEncoder : IEmbedder
         MaxLength = maxLength;
         PadId = padId;
         // A pretrained tokenizer's batch encode, giving Encode's ids cut to the first MaxLength: no special tokens, cut from
-        // the right (a long text is encoded only until it has MaxLength tokens), not padded (the pad ids are written below).
+        // the right, not padded (the pad ids are written below), ids only (offsets cost time and memory the encoder never uses).
         _batchOptions = new TokenizerEncodeOptions
         {
             AddSpecialTokens = false, MaxLength = maxLength, Truncation = "longest_first", TruncationDirection = "right", Padding = "none",
+            Offsets = false,                                   // ids only: the plain encode, no offsets or token strings
         };
     }
 
