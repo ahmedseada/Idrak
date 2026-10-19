@@ -514,11 +514,26 @@ numbers go in the Runs table and BPE stays as it is.
 
 ## Order and parallelism
 
-L0, L1 and T0 come first, in that order. T0's fixture script and protobuf reader can be written beside L1, at most two
-agents at a time (CLAUDE.md). T1 and T2 can then run in parallel, then T3, then T4. T5 comes last, and only on
-measurement. Each phase follows the owner's fix workflow: fix everything, update the tests it touches, build the changed
-projects once, run its filter once with `--no-build` (CPU here), merge and push to `abstraction`, and hand over the
-owner's commands.
+At most two agents at a time (CLAUDE.md), each in its own worktree, building only its projects:
+
+| Wave | Agent A | Agent B |
+|---|---|---|
+| 1 | L0 | T0, the part that needs nothing else: the fixture script and trained fixtures, `ProtoReader`, `DoubleArrayTrie`, `ModelProto` parsing |
+| 2 | L1 | T0, the rest: the `sentencepiece` reader registered (after L0), the Precompiled lookup; the GGUF reader's `byte[]` / `float[]` arrays |
+| 3 | T1 (Unigram; Precompiled's alignments on L1) | T2 (WordPiece, BERT components, post-processors, `vocab.txt`) |
+| 4 | T3a: encodings, offsets, pairs, batch | T3b: detection, GGUF `llama` / `bert` / `t5`, GGUF fixtures |
+| 5 | T4: the Unigram trainer, `SentencePieceWriter` | T4: the WordPiece trainer, then the CLI |
+| 6 | T5 (optional, measured) | none |
+
+The critical path is L0, L1, T1 or T2, T3, T4. The owner's `make_fixtures.py --real` can run as soon as wave 1 is
+merged. Files both agents of a wave touch (`api/*.txt`, the inventory, `TokenizerComponents.cs`, `Tests.All`,
+`EnvironmentVariables.cs`, the decoder count in `ModelPluginTests.cs`) are merged one agent at a time; the generated
+dumps are regenerated after a conflicting merge, never merged by hand, and that merge gets one build and the
+`public API` and `inventory` filters.
+
+Each phase follows the owner's fix workflow: fix everything, update the tests it touches, build the changed projects
+once, run its filter once with `--no-build` (CPU here), merge and push to `abstraction`, and hand over the owner's
+commands.
 
 ## The owner's runs
 
