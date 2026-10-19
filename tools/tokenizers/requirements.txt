@@ -1,0 +1,8 @@
+# The references for plan 24's tokenizer fixtures (tools/tokenizers/make_fixtures.py), pinned. Each version was
+# released at least two weeks before the fixtures were made (2026-10-19); manifest.json records what ran.
+# tokenizers 0.23.2 requires huggingface_hub below 2.0, so the hub client is the last 1.x.
+tokenizers==0.23.2
+sentencepiece==0.2.2
+transformers==5.18.0
+protobuf==7.36.2
+huggingface_hub==1.33.0
