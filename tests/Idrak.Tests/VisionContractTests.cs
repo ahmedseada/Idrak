@@ -288,7 +288,8 @@ internal static partial class Tests
         catch (NotSupportedException e)
         {
             Check(e.Message.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal)
-                  && e.Message.Contains("VisionFamilies.Register", StringComparison.Ordinal), $"the error names the registry: {e.Message}");
+                  && e.Message.Contains("VisionFamilies.Register", StringComparison.Ordinal) && e.Message.Contains("Idrak.Vision.Plugins", StringComparison.Ordinal),
+                $"the error names the registry and the plug-in package: {e.Message}");
         }
 
         Check(VisionFamilies.For("Gemma3ForCausalLM", new System.Text.Json.Nodes.JsonObject()) is null, "a text checkpoint needs no vision family");

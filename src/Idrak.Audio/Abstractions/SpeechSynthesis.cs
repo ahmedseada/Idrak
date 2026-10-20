@@ -184,7 +184,8 @@ public static class SpeechSynthesisFamilies
 
     internal static NotSupportedException NotRegistered(string name) =>
         new($"Speech synthesis family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "register it with SpeechSynthesisFamilies.Register (a plug-in or the app that brings the family; the library registers none).");
+            + "register it with SpeechSynthesisFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
+            + "or reference Idrak.Audio.Plugins and call AudioPlugins.RegisterAll().");
 }
 
 /// <summary>Loads a text-to-speech model from a folder: its config.json names the family, the checkpoint format reads its tensors.</summary>

@@ -171,7 +171,8 @@ internal static partial class Tests
         }
         catch (NotSupportedException ex)
         {
-            Check(ex.Message.Contains("'nope'", StringComparison.Ordinal) && ex.Message.Contains("qwen3-coder, pythonic", StringComparison.Ordinal), ex.Message);
+            Check(ex.Message.Contains("'nope'", StringComparison.Ordinal) && ex.Message.Contains("qwen3-coder, pythonic", StringComparison.Ordinal)
+                  && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), ex.Message);
         }
 
         // A template may make its own parser without registering anything.
