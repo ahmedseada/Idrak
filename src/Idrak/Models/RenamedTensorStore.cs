@@ -90,6 +90,12 @@ public sealed class RenamedTensorStore : ITensorStore
     };
 
     /// <inheritdoc />
+    /// <remarks>Two stored tensors are compared by the inner store (piece by piece where it can); a folded weight is computed first.</remarks>
+    public bool SameValues(string first, string second) =>
+        Resolve(first) is (var a, null) && Resolve(second) is (var b, null) ? _inner.SameValues(a, b)
+        : ShapeOf(first).AsSpan().SequenceEqual(ShapeOf(second)) && Read(first).AsSpan().SequenceEqual(Read(second));
+
+    /// <inheritdoc />
     public float[] ReadTransposed(string name)
     {
         var (stored, norm) = Resolve(name);

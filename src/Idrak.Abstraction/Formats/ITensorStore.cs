@@ -32,6 +32,16 @@ public interface ITensorStore : IDisposable
     WeightFormat? FormatOf(string name) => null;
 
     /// <summary>
+    /// Whether the tensors <paramref name="first"/> and <paramref name="second"/> have the same shape and the same float32
+    /// values as <see cref="Read"/> gives them (each pair compared as <c>float.Equals</c> does: a NaN equals a NaN, 0 equals
+    /// -0), for example a tied head checked against the embedding a checkpoint may repeat it as. The default reads both
+    /// whole; stores override it to compare piece by piece, so neither tensor is held whole on the host and the reading
+    /// stops at the first difference.
+    /// </summary>
+    bool SameValues(string first, string second) =>
+        ShapeOf(first).AsSpan().SequenceEqual(ShapeOf(second)) && Read(first).AsSpan().SequenceEqual(Read(second));
+
+    /// <summary>
     /// The 2-D tensor <paramref name="name"/> [rows, columns] transposed to [columns, rows]. Stores override this to
     /// transpose while reading, so the stored-order values never exist as a second full array.
     /// </summary>

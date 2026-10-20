@@ -25,6 +25,7 @@ public sealed class CompletionsApiOptions
     internal Dictionary<string, IChatModel> ChatModels { get; } = new(StringComparer.Ordinal);
     internal Dictionary<string, IEmbedder> Embedders { get; } = new(StringComparer.Ordinal);
     internal ImageInputOptions ImageSettings { get; } = new();
+    internal Dictionary<string, GenerationOptions> TextDefaultOptions { get; } = new(StringComparer.Ordinal);
 
     /// <summary>
     /// How <c>/chat/completions</c> and <c>/chat/upload</c> take images (<see cref="ImageInputOptions"/>: the most per
@@ -42,6 +43,19 @@ public sealed class CompletionsApiOptions
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ChatModels[name] = model ?? throw new ArgumentNullException(nameof(model));
+        return this;
+    }
+
+    /// <summary>
+    /// The generation options a <c>/completions</c> request to the model <paramref name="name"/> starts from, the request's
+    /// own fields set over them (by default <see cref="CompletionsTranslation.Options(JsonObject)"/>'s: the library's, with
+    /// repeat_penalty 1): for example a server's beam settings for an encoder-decoder, which the wire format has no field
+    /// for (a request may still give num_beams, length_penalty and early_stopping).
+    /// </summary>
+    public CompletionsApiOptions TextDefaults(string name, GenerationOptions defaults)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        TextDefaultOptions[name] = defaults ?? throw new ArgumentNullException(nameof(defaults));
         return this;
     }
 
@@ -183,7 +197,10 @@ public static class CompletionsApiEndpoints
         string? name = Pick(asked, settings.ChatModels.Keys.Concat(ChatNames(engine)));
         if (name is null)
         {
-            return Error(404, $"The model '{asked}' is not served; GET /models lists the models.", "model_not_found");
+            return asked is not null && engine is not null && engine.TryGetModel<ITextModel>(asked, out _)
+                ? Error(400, $"'{asked}' answers prompts, not conversations (a text model without a chat template, such as an encoder-decoder); use /completions.",
+                    "unsupported_model")
+                : Error(404, $"The model '{asked}' is not served; GET /models lists the models.", "model_not_found");
         }
 
         IChatModel model = settings.ChatModels.TryGetValue(name, out var extra) ? extra : engine!.Model<IChatModel>(name);
@@ -342,6 +359,11 @@ public static class CompletionsApiEndpoints
             return Error(404, settings.ChatModels.ContainsKey(asked ?? "")
                 ? $"'{asked}' answers chat requests only; use /chat/completions."
                 : $"The model '{asked}' is not served; GET /models lists the models.", "model_not_found");
+        }
+
+        if (settings.TextDefaultOptions.TryGetValue(name, out var defaults))
+        {
+            options = CompletionsTranslation.Options(body, defaults);       // the request's fields over the model's own settings
         }
 
         bool stream = (bool?)body["stream"] == true;
@@ -635,7 +657,7 @@ public static class CompletionsTranslation
     /// <summary>
     /// The chat request in an OpenAI-style body: messages (content as a string or text parts; assistant tool calls with
     /// arguments as a JSON string; tool results tied to their call by <c>tool_call_id</c>), tools, the reasoning effort
-    /// and the generation options (<see cref="Options"/>). Throws <see cref="ArgumentException"/> on bad input.
+    /// and the generation options (<see cref="Options(JsonObject)"/>). Throws <see cref="ArgumentException"/> on bad input.
     /// </summary>
     public static ChatRequest Chat(JsonObject body)
     {
@@ -704,14 +726,23 @@ public static class CompletionsTranslation
 
     /// <summary>
     /// The generation options of an OpenAI-style body: temperature, top_p, max_tokens (or max_completion_tokens), seed,
-    /// stop (a string or an array), presence_penalty, frequency_penalty, and the common extras top_k, min_p and
-    /// repeat_penalty; anything else is ignored. The library's defaults apply to what is not given, except
-    /// repeat_penalty: 1 (off) unless given, since the wire format has no repetition penalty (so an answer is the one
-    /// <c>idrak run</c> gives, and an OCR model may repeat characters a page repeats).
+    /// stop (a string or an array), presence_penalty, frequency_penalty, the common extras top_k, min_p and
+    /// repeat_penalty, and an encoder-decoder's beam search as transformers names it: num_beams, length_penalty and
+    /// early_stopping (a decoder samples and does not read them); anything else is ignored. The library's defaults apply
+    /// to what is not given, except repeat_penalty: 1 (off) unless given, since the wire format has no repetition penalty
+    /// (so an answer is the one <c>idrak run</c> gives, and an OCR model may repeat characters a page repeats).
     /// </summary>
-    public static GenerationOptions Options(JsonObject body)
+    public static GenerationOptions Options(JsonObject body) => Options(body, new GenerationOptions { RepeatPenalty = 1f });
+
+    /// <summary>
+    /// The generation options of an OpenAI-style body as <see cref="Options(JsonObject)"/> reads them, set over
+    /// <paramref name="defaults"/> (what the body does not give keeps its value there).
+    /// </summary>
+    public static GenerationOptions Options(JsonObject body, GenerationOptions defaults)
     {
-        var options = new GenerationOptions { RepeatPenalty = 1f };
+        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(defaults);
+        var options = defaults;
         if ((int?)body["n"] is > 1)
         {
             throw new ArgumentException("n: one choice per request.");
@@ -737,11 +768,14 @@ public static class CompletionsTranslation
                     "frequency_penalty" => options with { FrequencyPenalty = (float)value },
                     "seed" => options with { Seed = (int)value },
                     "max_tokens" or "max_completion_tokens" => options with { NumPredict = (int)value },
+                    "num_beams" => options with { NumBeams = (int)value },
+                    "length_penalty" => options with { LengthPenalty = (float)value },
+                    "early_stopping" => options with { EarlyStopping = (bool)value },
                     "stop" => options with { Stop = value is JsonArray a ? [.. a.Select(s => (string)s!)] : [(string)value!] },
                     _ => options,
                 };
             }
-            catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+            catch (Exception ex) when (ex is InvalidOperationException or FormatException or ArgumentOutOfRangeException)
             {
                 throw new ArgumentException($"{key}: {ex.Message}");
             }
@@ -880,7 +914,7 @@ public static class CompletionsTranslation
     /// <summary>
     /// The chat request of a <c>multipart/form-data</c> form (<c>/chat/upload</c>): the files of <c>image</c> (or
     /// <c>images</c>), then the text of <c>prompt</c>, as one user message after an optional <c>system</c> message; the
-    /// generation options by the names of <see cref="Options"/> (<c>max_tokens</c>, <c>temperature</c>, <c>top_p</c>,
+    /// generation options by the names of <see cref="Options(JsonObject)"/> (<c>max_tokens</c>, <c>temperature</c>, <c>top_p</c>,
     /// <c>top_k</c>, <c>min_p</c>, <c>seed</c>, <c>stop</c>, ...); <c>stream</c> and <c>include_usage</c> as true or
     /// false. Throws <see cref="ArgumentException"/> on bad input.
     /// </summary>

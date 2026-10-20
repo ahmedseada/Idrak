@@ -131,9 +131,10 @@ internal sealed class ServerPsCommand : Command
         context.WriteJson(answer);
         var models = answer["models"]?.AsArray() ?? [];
         context.Write($"Server {ServerClient.BaseUrl(context)} (keep-alive {answer["keep_alive"]})");
-        context.Table(["Model", "State", "Device", "Parameters", "Memory", "Context", "Unloads", "Last used", "Requests"], models.Select(m => (IReadOnlyList<string>)
+        context.Table(["Model", "Kind", "State", "Device", "Parameters", "Memory", "Context", "Unloads", "Last used", "Requests"], models.Select(m => (IReadOnlyList<string>)
         [
             (string)m!["name"]!,
+            (string?)m["kind"] ?? "chat",
             (bool)m["loaded"]! ? ((int)m["running"]! > 0 ? "running" : "loaded") : "not loaded",
             (string?)m["device"] ?? "",
             m["parameters"] is { } p ? Count((long)p) : "-",

@@ -219,7 +219,8 @@ internal static class T5Layers
                 : throw new InvalidDataException($"The T5 checkpoint has no {name}, and config.json's tie_word_embeddings false gives the decoder a head of its own.");
         }
 
-        if (tie && store.Read(name).AsSpan().SequenceEqual(store.Read(SharedName(store))))
+        // The values compared by the store piece by piece (neither table held whole on the host a second time).
+        if (tie && store.SameValues(name, SharedName(store)))
         {
             return Linear.Tied(words);                                          // the same values: one table, read in place
         }

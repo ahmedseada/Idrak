@@ -422,6 +422,12 @@ public static partial class DeviceCases
             b.ScaleMaskSoftmax(x, null, y, rows, cols, 1, 0.125f);
             b.ScaleMaskSoftmax(x, mask, y, rows, cols, maskRows, 0.5f);
             b.ArgMax(x, c.Zeros(rows), rows, cols);
+            foreach (int k in new[] { 1, 8, cols + 2 })
+            {
+                var (best, columns) = (c.Zeros(rows * k), c.Zeros(rows * k));
+                b.LogSoftmaxTopK(x, best, columns, rows, cols, k);
+                CheckTopK(c, Read(x), Read(best), Read(columns), rows, cols, k);
+            }
 
             var targets = c.Zeros(n);
             var targetValues = new float[n];
@@ -438,6 +444,59 @@ public static partial class DeviceCases
         }
 
         b.ClassMatch(Random(c, 9), c.Storage([.. Enumerable.Range(0, 9).Select(i => (float)(i % 2))]), c.Zeros(9), 9, 1, 0.25f);
+
+        // The best k log-probabilities: equal values keep the smaller column first, -∞ is never a candidate, and a row with
+        // no finite logit or with a NaN has none.
+        const float NegInf = float.NegativeInfinity;
+        float[] edges = [1f, NegInf, 1f, 0.5f, 2f, 1f, NegInf, NegInf, NegInf, NegInf, NegInf, NegInf, 0f, float.NaN, 1f, 2f, 3f, 4f];
+        var (edgeBest, edgeColumns) = (c.Zeros(3 * 4), c.Zeros(3 * 4));
+        var edgeLogits = c.Storage(edges);
+        b.LogSoftmaxTopK(edgeLogits, edgeBest, edgeColumns, 3, 6, 4);
+        CheckTopK(c, edges, Read(edgeBest), Read(edgeColumns), 3, 6, 4);
+        c.Expect(Read(edgeColumns).SequenceEqual([4f, 0f, 2f, 5f, -1f, -1f, -1f, -1f, -1f, -1f, -1f, -1f]), "the best k: ties in column order, no candidate from -∞ or a row with NaN");
+    }
+
+    // LogSoftmaxTopK against plain loops: the shift in double over each row, then every candidate sorted (larger first, then
+    // the smaller column), the first k of them, -∞ and -1 after the last.
+    private static void CheckTopK(DeviceCaseContext c, float[] x, float[] best, float[] columns, int rows, int cols, int k)
+    {
+        for (int r = 0; r < rows; r++)
+        {
+            var row = x.AsSpan(r * cols, cols);
+            float max = float.NegativeInfinity;
+            foreach (float v in row)
+            {
+                max = v > max ? v : max;
+            }
+
+            var expected = new List<(float Value, int Column)>();
+            if (!float.IsNegativeInfinity(max))
+            {
+                double sum = 0;
+                foreach (float v in row)
+                {
+                    sum += float.IsNegativeInfinity(v) ? 0 : Math.Exp(v - max);
+                }
+
+                float shift = (float)(max + Math.Log(sum));
+                for (int j = 0; j < cols; j++)
+                {
+                    float v = row[j] - shift;
+                    if (!float.IsNaN(v) && !float.IsNegativeInfinity(v))
+                    {
+                        expected.Add((v, j));
+                    }
+                }
+            }
+
+            expected.Sort((a, e) => a.Value != e.Value ? e.Value.CompareTo(a.Value) : a.Column.CompareTo(e.Column));
+            for (int j = 0; j < k; j++)
+            {
+                var (value, column) = j < expected.Count ? expected[j] : (float.NegativeInfinity, -1);
+                c.Expect(best[r * k + j].Equals(value) && columns[r * k + j] == column,
+                    $"LogSoftmaxTopK row {r}, rank {j}: {best[r * k + j]} at {columns[r * k + j]}, expected {value} at {column}");
+            }
+        }
     }
 
     private static void Normalization(DeviceCaseContext c)

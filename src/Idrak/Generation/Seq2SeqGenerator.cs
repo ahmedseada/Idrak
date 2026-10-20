@@ -51,6 +51,12 @@ public sealed class Seq2SeqGenerator(ISeq2SeqModel model, ITokenizer tokenizer) 
     public bool SkipSpecialTokens { get; init; } = true;
 
     /// <summary>
+    /// Whether a beam search chooses each step's candidates on the model's device and reads back only those (true, the
+    /// default: <see cref="BeamOptions.SelectOnDevice"/>); false reads every beam's logits back and chooses on the host.
+    /// </summary>
+    public bool SelectBeamsOnDevice { get; init; } = true;
+
+    /// <summary>
     /// Makes the sampler each generation chooses tokens with (<see cref="TokenSamplers.Create"/>: the sampler registered as
     /// <see cref="TokenSamplers.DefaultName"/>, unless set).
     /// </summary>
@@ -261,6 +267,7 @@ public sealed class Seq2SeqGenerator(ISeq2SeqModel model, ITokenizer tokenizer) 
             EndToken = Model.EndToken,
             LengthPenalty = options.LengthPenalty,
             EarlyStopping = options.EarlyStopping,
+            SelectOnDevice = SelectBeamsOnDevice,
         };
         var found = BeamSearch.Decode((ids, ctx) => Model.DecodeCached(ids, ctx), context, [Model.DecoderStartToken], search, cancellationToken: cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();                   // a stopped search is not an answer

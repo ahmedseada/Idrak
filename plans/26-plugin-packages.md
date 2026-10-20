@@ -826,15 +826,15 @@ notes below.
 | 6 | results | 🔴 | The CRNN's backward LSTM reads a batch's right padding: a line's reading depends on the batch it is in | P5 |
 | 7 | results | 🔴 | ArabicOcr training is not reproducible with one seed: training cannot be proven unchanged (rules 71, 86) | P5 |
 | 8 | bug | 🟡 | `idrak tune init` writes the text example for a Gemma 3 vision checkpoint unless `-P` is given | P6 |
-| 9 | bug | 🟡 | ONNX export of a `TransformerEncoderLayer` with a custom activation throws an invalid cast (existing) | P10 |
-| 10 | speed | 🟡 | Speed: the bucketed bias index rebuilt on the host each cached step; attention with a bias scores every cache slot | P8, P10 |
-| 11 | speed | 🟡 | Speed: beam search reads all beams x vocabulary logits back every step | P10 |
+| 9 | bug | ✅ | **Done (L1-T5).** ONNX export of a `TransformerEncoderLayer` with a custom activation throws an invalid cast (existing) | P10 |
+| 10 | speed | ✅ | **Done (L1-T5).** Speed: the bucketed bias index rebuilt on the host each cached step; attention with a bias scores every cache slot | P8, P10 |
+| 11 | speed | ✅ | **Done (L1-T5).** Speed: beam search reads all beams x vocabulary logits back every step | P10 |
 | 12 | speed | 🟡 | Speed: the CRNN prepares lines one after another, and builds random weights before overwriting them all | P5 |
-| 13 | memory | 🟡 | Memory: a tied checkpoint that also holds `lm_head.weight` is compared value by value on the host at load | P10 |
+| 13 | memory | ✅ | **Done (L1-T5).** Memory: a tied checkpoint that also holds `lm_head.weight` is compared value by value on the host at load | P10 |
 | 14 | memory | 🟡 | Memory: the public `SafeTensorsWriter.Write` holds every tensor's values at once | P5 |
 | 15 | contract | ✅ | **Done (L1-GGUF).** GGUF fallback chat templates (Llama 3's, ChatML) still chosen in the library; needs a template-fallback contract | P7 |
 | 16 | contract | 🟡 | Batch measuring twice: `MeasuredLineBatches` (plug-in) and the CLI's in `ImageModelSupport` | P5 |
-| 17 | feature | 🟡 | `idrak serve` cannot serve an encoder-decoder (`idrak run` can) | P10 |
+| 17 | feature | ✅ | **Done (L1-T5).** `idrak serve` cannot serve an encoder-decoder (`idrak run` can) | P10 |
 | 18 | feature | ✅ | **Done (L1-GGUF).** No GGUF mapping for Gemma (`GgufArchitecture.Configure` is now the hook) | P6, P7 |
 | 19 | small | 🟢 | `PretrainedArchitectures`' refusal says "No architecture 'X' is registered", unlike the other registries | P6 |
 | 20 | small | 🟢 | No test of `TextPhonemizers.First()` refusing when empty | P4 |
@@ -849,6 +849,13 @@ notes below.
 | 29 | small | 🟢 | No fixture for a Gemma 3 GGUF converted without `tokenizer.model` (llama.cpp then writes a `gpt2` tokenizer) | L1-GGUF |
 | 30 | feature | 🟢 | `gemma3n` and the Gemma embedding architecture are not mapped for GGUF | L1-GGUF |
 | 31 | small | 🟢 | `tools/gguf/make_fixtures.py` uses the unpinned PyPI `gguf` package; on Linux the torch pin installs the CUDA wheel (works on CPU) | L1-GGUF |
+| 32 | bug | 🔴 | `operations: every compute method of Backend is an operation` fails on the branch: `CopyTo`, `CopiesDirectlyTo` (Plan 23 C5, f483339), `UploadRange`, `LiveStorage` (Plan 23 C8b, 8e79901) are public virtual `Backend` methods that are neither operations nor listed as device plumbing (`tools/operations/generate.py`) | Plan 23, found in L1-T5 |
+| 33 | decide | 🟡 | To confirm (L1-T5): new public API (`DistancePositionBias`, `Tensor.LogSoftmaxTopK`, `ITensorStore.SameValues`, `OnInvalidated`, the serve overloads); `Idrak.AspNetCore`'s `/chat/completions` naming a text-only model answers 400 instead of 404; the serve table and `server ps` gain a Kind column | L1-T5 |
+| 34 | speed | 🟡 | Attention with a bias copies the filled cache slots (two extra launches per layer per step); a product reading the cache prefix in place removes them | L1-T5 |
+| 35 | speed | 🟡 | `log_softmax_topk_f32` runs one block per beam, leaving most of a large device idle; split the vocabulary across blocks | L1-T5 |
+| 36 | speed | 🟡 | HIP and Vulkan have no `LogSoftmaxTopK` kernel (they read the logits back); a beam step does two small readbacks (values, tokens) | L1-T5 |
+| 37 | bug | 🟢 | The bucketed bias with a sliding-window cache uses window-relative positions (existing) | L1-T5 |
+| 38 | small | 🟢 | Agents of two lanes share one scratchpad folder; give each lane its own | L1 |
 
 In the phases' words:
 - **ArabicOcr's left-to-right reading order (P3).** The recognizer now passes its direction to `runs`: right-to-left
@@ -935,13 +942,78 @@ The owner names the rows of "Leftovers for the owner" to work on; each round's a
 
 ### Round L1 (2026-10-20): the T5 and GGUF rows
 
-The owner: "work on all related t5 and gguf, max 2 agents". Lane A takes the T5 rows (10, 11, 13, 17), lane B the GGUF
-rows (15, 18). Row 9 (the ONNX export bug, found in P10) is not T5's path (ONNX export refuses RMS blocks) and is left
-for the owner.
+The owner: "work on all related t5 and gguf, max 2 agents". Lane A takes the T5 rows (9, 10, 11, 13, 17), lane B the
+GGUF rows (15, 18).
 
-#### L1-T5 (rows 10, 11, 13, 17)
+#### L1-T5 (rows 9, 10, 11, 13, 17)
 
-Not started.
+**As built (2026-10-20).**
+- **Row 9 (ONNX export of a custom activation):** `OnnxBuiltIns.EncoderLayer` read the block's children by position, so
+  with an activation the activation was cast to the second projection. It now takes the parts by role (internal
+  `FeedForwardIn`, `FeedForwardOut`, `Activation`) and exports the activation through its translator (`g.Module`: the
+  exporter's or `OnnxExportOps`'); one without a translator is refused naming its type and `OnnxExportOps.Register`.
+  `ExactGELU` (ONNX `Erf`) and `QuickGELU` (`x · Sigmoid(1.702 x)`) are registered translators now.
+- **Row 10 (the bias of a decoding step; scoring the filled slots):** `DistancePositionBias` (new public abstract base of
+  `RelativePositionBias` and `BucketedPositionBias`: `Table`, `Bucket`, one `Compute` for both) gives a step's bias (one
+  query, nothing training) as a slice of the values by distance, [heads, distances], made once on the bias's device for
+  the distances asked so far and widened (powers of two, at least 16 back) when a step asks past them; no index is built
+  on the host or uploaded per step. A pass over several queries keeps the index lookup, once per shape.
+  `AttentionPositionBias.Invalidate` also calls the new `OnInvalidated` (training passes, moves, loads drop the values by
+  distance; the per-shape cache alone is dropped on a new shape). `MultiHeadAttention.ForwardCached` and
+  `CausalSelfAttention`'s composed path with a bias score only the filled slots (`FilledSlots`: the layout's prefix, cut
+  to them), the causal mask's columns of them only when a step has several queries; without a bias nothing changed
+  (recordable as before).
+- **Row 11 (beam search selects on the device):** a new device operation `LogSoftmaxTopK` (`Backend.LogSoftmaxTopKKernel`,
+  `Tensor.LogSoftmaxTopK(k)`): each row's best k log-probabilities and their columns (shift = max + log Σ exp, NaN and -∞
+  never candidates, ties to the smaller column); the CPU kernel is the host's former code (double sum), the CUDA kernel
+  `log_softmax_topk_f32` one block per row (max, sum, then k block arg-max passes), HIP and Vulkan take the host
+  fallback. `BeamSearch.Decode` asks for 2·beams + the most tokens a row may not take that step (suppressed, the end
+  token before `MinTokens`, the n-gram rule) and drops those on the host, so the candidates are exactly the host's; it
+  reads back beams × k values and tokens instead of beams × vocabulary floats (4 beams of a 32,128-token vocabulary:
+  ~0.5 MB a step before, under 1 KB after). A `LogitsFilter` keeps the read-back path. Also fixed: the old path did not
+  return each step's pooled logits array.
+- **Row 13 (the tied head check):** `ITensorStore.SameValues(first, second)` (default: both read whole);
+  `SafeTensorsReader` compares chunk by chunk (1M values, pooled buffers, stops at the first differing chunk, values
+  compared as `float.Equals`, so float32 and bfloat16 tensors compare by value), `RenamedTensorStore` forwards it. The T5
+  plug-in compares `lm_head.weight` with the shared embedding through it; the refusal and the choice are as before.
+- **Row 17 (`idrak serve` with an encoder-decoder):** `ServeHost.ReadModels` finds a folder whose architecture is
+  registered in `PretrainedSeq2Seq` (`Seq2SeqRun.Architecture`; weight choices it does not take refused as `run` does,
+  shared `Seq2SeqRun.CheckChoice`; no tokenizer refused), registers it as `engine.Seq2SeqModel` (kind `seq2seq`, loaded on
+  first use with `--kv`'s cache layout). The chat routes refuse it with 400 naming the reason (`/api/chat` and
+  `/v1/chat/completions`, `/v1/chat/upload` in `Dispatch`; no `MapChatApi` for it; `Idrak.AspNetCore`'s own
+  `/chat/completions` answers a text-only model's name with 400 too), the web chat leaves it out of its list
+  (`ChatPage.For`), `/v1/completions` and MCP `generate` answer through `ITextModel`. The announcement's table has a Kind
+  column and an "Encoder-decoders" line, its JSON and `/idrak/ps` a `kind`, `server ps` a Kind column.
+- **Settings:** `BeamOptions.SelectOnDevice` (true) and `Seq2SeqGenerator.SelectBeamsOnDevice` (true); the request
+  fields `num_beams`, `length_penalty`, `early_stopping` on `/v1/completions` (`CompletionsTranslation.Options`, and the
+  overload over defaults) and `num_beams`, `length_penalty` on MCP `generate`; `CompletionsApiOptions.TextDefaults(name,
+  options)` and `McpTools.ModelTools(models, defaults)` for a model's starting options; `idrak serve --beams N
+  --length-penalty F` (the defaults of every request to an encoder-decoder; refused naming the option when none is
+  served). No new environment variable (the library reads none for these).
+- **Measured** (`benches` section `seq2seq`, new: `IDRAK_BENCH_SEQ2SEQ`; CPU, 4 cores, Debug build, the baseline built
+  from ca0818c with the same bench; runs alternated, median of the rounds): a random checkpoint of the T5 layout, width
+  512, 8 heads, 6 + 6 layers, vocabulary 32,128, `lm_head.weight` equal to `shared.weight` (scratch only): load host
+  allocation 374.9 → 249.4 MiB warm (611 → 497 MiB cold), load 590-643 → 495-576 ms cold, ~190 ms warm both; beam
+  search of 4 beams over 32 steps 40.0-41.5 → 37.7-38.5 ms a step; a cached step 15.8-15.9 → 16.1-18.7 ms (the head
+  and feed-forward dominate a step there; within the noise of the other lane's runs), launches a token 126 → 131. The
+  tiny fixture (width 32): a cached step 0.23-0.37 → 0.12-0.15 ms, a beam step 0.60-0.71 → 0.30-0.47 ms, launches 46 → 47.
+  The same tokens before and after (hash of the best hypothesis equal on both models); beam scores within 4e-7
+  (-3.8055422 → -3.8055418: the filled-slot attention sums fewer zeros in another grouping); on the CPU the device and
+  host selections give the same hypotheses bit for bit (tested).
+- **Tests:** `onnx: a TransformerEncoderLayer with its own activation …`, `engine: position bias steps …`, `engine:
+  beam search on the device …`, `pretrained: SafeTensorsReader.SameValues …`, `plugins: t5: a tied checkpoint that also
+  holds lm_head.weight …`, `cli serve: an encoder-decoder beside a chat model …`; the conformance kit's softmax case
+  checks `LogSoftmaxTopK` against plain loops (ties, -∞, NaN rows) and replays it on a device; the CUDA kernel's
+  signature is in `cuda: every kernel's declared parameter count`.
+- **Measured, not taken** (for the owner): the filled-slot copies of keys and values add two launches a layer a step
+  (126 → 131 a token on 6 layers); a product reading the cache prefix in place would remove them.
+  `log_softmax_topk_f32` runs one block per beam row (rule 81: few blocks on a large device; a split per vocabulary
+  slice, as `topk_candidates_f32`, would fill it); HIP and Vulkan have no kernel for it (host fallback, the old read-back
+  cost); a beam step reads back two small tensors (two syncs).
+- **Run (CPU, the agent):** baseline (same filters, before the change) 211 tests, 210 passed, 1 failed (`operations:
+  every compute method of Backend is an operation …`: `CopyTo`, `CopiesDirectlyTo`, `UploadRange`, `LiveStorages`
+  unclassified; present before this round, not touched). After: 217 = 211 + 6 new; 216 passed, the same 1 failed (one
+  run, then one fix in the new serve test's own arguments and a rerun of that test: 1 of 1).
 
 #### L1-GGUF (rows 15, 18)
 
@@ -1095,3 +1167,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P7 merged (on P6, no conflicts) | CPU (cloud, 4 threads) | one build, Chat and CodingAgent built; the P7 filters with the guards, pretrain, vlm scratch, audio language, vision contracts, qwen vl, a cluster child-process test | 284 passed, 0 failed |
 | 2026-10-20 | L1-GGUF (rows 15, 18) | CPU (cloud, 4 threads) | gguf, pretrained, plugins, chat templates, tokenizers, cli run, cli serve, decoder and the guards; mixture of experts and cli models | 195 before; 197 passed, 2 failed (a provider name in a public member, the plug-ins' GGUF list), then 199 passed, 0 failed (the four new); 9 passed |
 | 2026-10-20 | L1-GGUF merged (on ca0818c, no conflicts) | CPU (cloud, 4 threads) | one build; gguf, pretrained, plugins, chat templates, tokenizers, cli run, cli serve, decoder, mixture of experts, cli models, the guards, engine, generic components | 208 passed, 0 failed |
+| 2026-10-20 | L1-T5 merged (on L1-GGUF) | CPU (cloud, 4 threads) | one build, benches built; plugins, engine, beam, generation, decoder, cli run, cli serve, pretrained, audio seq2seq, onnx, cli health, cuda, operations, safetensors, mcp, gguf, chat templates, aspnet, the guards | 234 passed, 1 failed: `operations: every compute method…`, failing on db6af32 before the merge too (row 32) |
