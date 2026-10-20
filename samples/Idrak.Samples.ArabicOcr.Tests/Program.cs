@@ -18,6 +18,7 @@ using Idrak.Text.Abstractions;
 using Idrak.Samples.ArabicOcr;
 using Idrak.Samples.ArabicOcr.Tests;
 using Idrak.Abstraction.Generation;
+using Idrak.Vision.Abstractions;
 
 string device = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } devices ? devices.Split(',')[0].Trim() : "cpu";
 string root = Path.Combine(Path.GetTempPath(), $"idrak-ocr-tests-{Environment.ProcessId}");
@@ -33,7 +34,7 @@ var timings = new List<string>();
     {
         string[] text = [Theh + Teh + Dal + " " + Beh + Seen, Alef + Reh + Meem, Teh + Theh + " " + Theh + Teh, Seen + Beh + Dal + Reh];
         var (page, rows) = Synthetic.Page(text, new Random(1));
-        var (lines, skew) = LineSegmenter.Find(page);
+        var (lines, skew) = TextLineSegmenters.Segment(page);
         Check(skew == 0, $"skew {skew}");
         Check(lines.Count == 4, $"{lines.Count} lines");
         for (int i = 0; i < 4; i++)
@@ -49,16 +50,17 @@ var timings = new List<string>();
         string[] text = [Theh + Teh + Dal + Beh + Seen + Meem + Reh + Alef + Teh + Seen, Alef + Reh + Meem + Seen + Seen + Beh + Dal + Teh,
             Teh + Theh + Theh + Teh + Dal + Dal + Seen + Meem, Seen + Beh + Dal + Reh + Meem + Alef + Teh + Theh];
         var (page, _) = Synthetic.Page(text, new Random(2), skewDegrees: 2);
-        var (lines, skew) = LineSegmenter.Find(page);
+        var (lines, skew) = TextLineSegmenters.Segment(page);
         Check(Math.Abs(skew - 2) <= 0.41, $"skew measured {skew}");
         Check(lines.Count == 4, $"{lines.Count} lines");
     }),
     ("ocr text: reading order reverses digits and Latin runs only, and undoes itself", () =>
     {
         string logical = Beh + Alef + " 123 " + Seen + " abc de " + Meem + " ١٢";
-        string columns = ReadingOrder.ToColumns(logical);
+        var order = ReadingOrders.Get(ReadingOrders.Runs);
+        string columns = order.ToColumns(logical, rightToLeft: true);
         Check(columns == Beh + Alef + " 321 " + Seen + " ed cba " + Meem + " ٢١", $"columns: {columns}");
-        Check(ReadingOrder.FromColumns(columns) == logical, "not its own inverse");
+        Check(order.FromColumns(columns, rightToLeft: true) == logical, "not its own inverse");
         Check(OcrText.Normalize("﻿  a\r\n\tb  ") == "a b" && OcrText.Normalize("é") == "é", "normalization");
     }),
     ("ocr text: JSON answers give their text values in order; drafts snap to the page's text in order", () =>
@@ -67,7 +69,8 @@ var timings = new List<string>();
         Check(OcrText.AnswerText(answer, "values") == Beh + Alef + "\n" + Seen + Meem + "\n12", $"values: {OcrText.AnswerText(answer, "values")}");
         Check(OcrText.AnswerText("not json", "values") == "not json" && OcrText.AnswerText(answer, "raw") == answer, "raw and plain text");
         string page = "the first line here then a second line and the third one";
-        var aligned = TextAlignment.Align(["the frst line hre", "zzzzzzzzzzzzzzzzzzzz", "a secnd line", "the thrd one"], page);
+        var aligned = TextMatchers.Align(["the frst line hre", "zzzzzzzzzzzzzzzzzzzz", "a secnd line", "the thrd one"], page)
+            .Select(a => a is null ? ((string Text, double Match)?)null : (OcrText.Normalize(a.Text), a.Match)).ToList();
         Check(aligned[0]?.Text == "the first line here" && aligned[1] is null && aligned[2]?.Text == "a second line" && aligned[3]?.Text == "the third one",
             $"aligned: {string.Join(" | ", aligned.Select(a => a?.Text ?? "(none)"))}");
         Check(aligned[0]!.Value.Match is > 0.8 and < 1, $"match {aligned[0]!.Value.Match}");

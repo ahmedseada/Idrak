@@ -11,9 +11,10 @@ namespace Idrak.Abstraction.Testing;
 /// them (Idrak.Vision's <c>IImageModelFamily</c>, <c>ImageModel</c> and predictors) and this kit depends on
 /// Idrak.Abstraction alone, so a test wraps the loaded model in these delegates: its task, its labels, and each image's
 /// outputs (logits for a classifier, the decoded detections flattened for a detector, the mask for a segmenter, the
-/// features for a backbone; whatever the test compares with its reference).
+/// features for a backbone, the decoded class ids of a line recognizer's reading; whatever the test compares with its
+/// reference).
 /// </summary>
-/// <param name="task">"classification", "detection", "segmentation" or "features".</param>
+/// <param name="task">"classification", "detection", "segmentation", "features" or "line-recognition".</param>
 /// <param name="labels">The class names, or null when the checkpoint gives none.</param>
 /// <param name="predict">Each image's outputs, in the order given (the images run as one batch where the model can).</param>
 /// <param name="owner">Disposed with this (the loaded model), or null.</param>
@@ -50,8 +51,9 @@ public sealed record ImageFamilySample(string Path, IReadOnlyList<ImageData>? Im
 /// checkpoints of its own. The implementation is the loading, as a delegate: a checkpoint's path in, the loaded model out
 /// (<see cref="ImageModelUnderTest"/>; <c>path =&gt; Wrap(ImageModels.Load(path))</c>). For each sample:
 /// <list type="bullet">
-/// <item>it loads; its task is one of the four, its labels (when given) are not empty, and a classifier gives one output
-/// per label;</item>
+/// <item>it loads; its task is one of the five, its labels (when given) are not empty, a classifier gives one output per
+/// label, and a line recognizer (task "line-recognition", its outputs each line's decoded class ids) has labels and reads
+/// only class ids whose label is not empty (never the blank's);</item>
 /// <item>every image gets outputs, all finite, the same on a second prediction and from two predictions at once;</item>
 /// <item>each image's outputs are the same alone as in the batch (within the tolerance): images do not leak into each
 /// other, whatever their sizes;</item>
@@ -64,7 +66,9 @@ public sealed record ImageFamilySample(string Path, IReadOnlyList<ImageData>? Im
 /// <param name="samples">The checkpoints, of the family checked.</param>
 public sealed class ImageModelFamilySuite(IReadOnlyList<ImageFamilySample> samples) : ContractSuite<Func<string, ImageModelUnderTest>>
 {
-    private static readonly HashSet<string> Tasks = new(StringComparer.Ordinal) { "classification", "detection", "segmentation", "features" };
+    private static readonly HashSet<string> Tasks = new(StringComparer.Ordinal) { "classification", "detection", "segmentation", "features", LineRecognition };
+
+    private const string LineRecognition = "line-recognition";
 
     private readonly IReadOnlyList<ImageFamilySample> _samples = samples is { Count: > 0 } ? samples
         : throw new ArgumentException("An image model family is checked on checkpoints of its own: give at least one sample.", nameof(samples));
@@ -120,8 +124,12 @@ public sealed class ImageModelFamilySuite(IReadOnlyList<ImageFamilySample> sampl
 
         var images = Images(sample, @case.Data);
         using var model = implementation(sample.Path);
-        checks.Check("the task is classification, detection, segmentation or features", Tasks.Contains(model.Task), $"task \"{model.Task}\"");
+        checks.Check("the task is classification, detection, segmentation, features or line-recognition", Tasks.Contains(model.Task), $"task \"{model.Task}\"");
         checks.Check("labels, when given, are not empty", model.Labels is not { Count: 0 }, "an empty list of labels");
+        if (model.Task == LineRecognition)
+        {
+            checks.Check("a line recognizer has its labels (one per class)", model.Labels is { Count: > 1 }, $"{model.Labels?.Count ?? 0} labels");
+        }
         if (images.Count == 0)
         {
             checks.Skip("outputs", "no images in this case");
@@ -140,6 +148,13 @@ public sealed class ImageModelFamilySuite(IReadOnlyList<ImageFamilySample> sampl
         {
             checks.Check("a classifier gives one output per label", first.All(o => o.Length == labels.Count),
                 $"{string.Join(", ", first.Select(o => o.Length).Distinct())} outputs for {labels.Count} labels");
+        }
+
+        if (model.Task == LineRecognition && model.Labels is { Count: > 1 } classes)
+        {
+            string? wrong = first.SelectMany(o => o).Select(v => v != MathF.Round(v) || v < 0 || v >= classes.Count ? $"class {v} is not one of the {classes.Count} classes"
+                : classes[(int)v].Length == 0 ? $"class {v} has an empty label (the blank's)" : null).FirstOrDefault(w => w is not null);
+            checks.Check("a line recognizer reads class ids with a label (not the blank)", wrong is null, wrong ?? "");
         }
 
         checks.Compare("the same outputs on a second prediction", Different(first, model.Predict(images), 0f));

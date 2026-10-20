@@ -5,7 +5,7 @@ namespace Idrak.Vision;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the augmentations of detection and
-/// segmentation samples beyond Idrak.Imaging's flip and shift. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls
+/// segmentation samples (and pixel noise) beyond Idrak.Imaging's flip and shift. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used. The registries that live here (vision
 /// losses, box matchers, vision metrics) register their built-ins themselves.
 /// </summary>
@@ -64,6 +64,11 @@ internal static class LibraryRegistrations
         {
             o.Allow("alpha", "p");
             return new MixUp(o.Number("alpha", 32), o.Number("p", 1));
+        });
+        Augmentations.Register("noise", o =>
+        {
+            o.Allow("std", "p");
+            return new PixelNoise(o.Number("std", 0.05), o.Number("p", 1));
         });
         Augmentations.Register("resize", o =>
         {

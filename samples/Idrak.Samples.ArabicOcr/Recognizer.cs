@@ -23,7 +23,10 @@ internal sealed record RecognizerSettings
     /// <summary>The height every line is scaled to (a multiple of 4).</summary>
     public int Height { get; init; } = 48;
 
-    /// <summary>Whether lines read right to left (each line image is flipped horizontally first; see <see cref="ReadingOrder"/>).</summary>
+    /// <summary>
+    /// Whether lines read right to left (each line image is flipped horizontally first; the transcription is turned to the
+    /// flipped line's column order by the library's reading order "runs", <see cref="ReadingOrders.Runs"/>).
+    /// </summary>
     public bool RightToLeft { get; init; } = true;
 
     /// <summary>The convolution blocks' channels (at least 3: the first two halve height and width, the rest the height).</summary>
@@ -82,34 +85,9 @@ internal sealed record PreparedLine(float[] Pixels, int Width)
     /// </summary>
     public static PreparedLine From(ImageData line, int height, bool rightToLeft)
     {
-        var grey = Foreground.Grey(line);
-        double mean = grey.Average();
-        float lo = float.MaxValue, hi = float.MinValue;
-        for (int i = 0; i < grey.Length; i++)
-        {
-            float v = mean > 0.5 ? 1f - grey[i] : grey[i];
-            grey[i] = v;
-            lo = Math.Min(lo, v);
-            hi = Math.Max(hi, v);
-        }
-
-        float range = hi - lo;
-        for (int i = 0; i < grey.Length; i++)
-        {
-            grey[i] = range > 1e-3f ? (grey[i] - lo) / range : 0f;
-        }
-
-        int width = Math.Max(RecognizerSettings.Stride, (int)Math.Round(line.Width * (double)height / line.Height));
-        var pixels = new ImageData(grey, 1, line.Height, line.Width).Resize(1, height, width);
-        if (rightToLeft)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                Array.Reverse(pixels, y * width, width);
-            }
-        }
-
-        return new PreparedLine(pixels, width);
+        // The library's line preparation (a line recognizer's, ModelLineReader.Prepare), at the recognizer's stride.
+        var prepared = ModelLineReader.Prepare(line, new LineRecognitionSettings { Height = height, Stride = RecognizerSettings.Stride, RightToLeft = rightToLeft });
+        return new PreparedLine(prepared.Pixels, prepared.Width);
     }
 }
 
@@ -231,7 +209,7 @@ internal sealed class Recognizer : IDisposable
         var labels = new List<int>();
         var unknown = new List<string>();
         Span<char> pair = stackalloc char[2];
-        foreach (var rune in ReadingOrder.ToColumns(OcrText.Normalize(transcription)).EnumerateRunes())
+        foreach (var rune in Order.ToColumns(OcrText.Normalize(transcription), Settings.RightToLeft).EnumerateRunes())
         {
             var chars = pair[..rune.EncodeToUtf16(pair)];
             if (index.TryGetValue(chars, out int id))
@@ -259,8 +237,12 @@ internal sealed class Recognizer : IDisposable
             }
         }
 
-        return OcrText.Normalize(ReadingOrder.FromColumns(builder.ToString()));
+        return OcrText.Normalize(Order.FromColumns(builder.ToString(), Settings.RightToLeft));
     }
+
+    // The line's column order: digits and Latin runs reversed in a right-to-left line (the library's "runs"; UAX #9's
+    // "bidi" maps a number before a Latin word and after it to the same columns, so it cannot read them back).
+    private static IReadingOrder Order => ReadingOrders.Get(ReadingOrders.Runs);
 
     private Dictionary<string, int>? _index;
 

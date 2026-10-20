@@ -53,6 +53,12 @@ internal sealed record ImageRunOptions
     /// <summary>The decoder of a detector (DetectionDecoders and DetectionHeads); null: the model's.</summary>
     public string? Decoder { get; init; }
 
+    /// <summary>A builder line recognizer's lines: ltr or rtl (flipped before the network); null: ltr.</summary>
+    public string? Direction { get; init; }
+
+    /// <summary>A builder line recognizer's reading order (ReadingOrders); null: "runs" for rtl, none for ltr.</summary>
+    public string? ReadingOrder { get; init; }
+
     public JsonObject ToJson() => new()
     {
         ["model"] = Model,
@@ -64,6 +70,8 @@ internal sealed record ImageRunOptions
         ["metric"] = Metric,
         ["eval"] = Eval,
         ["decoder"] = Decoder,
+        ["direction"] = Direction,
+        ["reading_order"] = ReadingOrder,
     };
 
     public static ImageRunOptions FromJson(JsonObject json) => new()
@@ -77,16 +85,19 @@ internal sealed record ImageRunOptions
         Metric = (string?)json["metric"],
         Eval = (string?)json["eval"],
         Decoder = (string?)json["decoder"],
+        Direction = (string?)json["direction"],
+        ReadingOrder = (string?)json["reading_order"],
     };
 
-    /// <summary>The task named by --task (classify, segment, detect and their nouns), or null.</summary>
+    /// <summary>The task named by --task (classify, segment, detect, line-recognition and their nouns), or null.</summary>
     public static ImageTask? ParseTask(string? text) => text?.ToLowerInvariant() switch
     {
         null => null,
         "classify" or "classification" => ImageTask.Classification,
         "segment" or "segmentation" => ImageTask.Segmentation,
         "detect" or "detection" => ImageTask.Detection,
-        _ => throw new UsageException($"--task {text}: for images use classify, segment or detect."),
+        "line-recognition" or "lines" or "recognize-lines" => ImageTask.LineRecognition,
+        _ => throw new UsageException($"--task {text}: for images use classify, segment, detect or line-recognition."),
     };
 }
 
@@ -204,6 +215,11 @@ internal static class ImageTraining
         if (family is not null && family.Task != task)
         {
             throw new UsageException($"{options.Model} is a {ImagePredict.Task(family.Task)} model; --task {options.Task} does not train it.");
+        }
+
+        if (task == ImageTask.LineRecognition)
+        {
+            return LineTraining.Train(context, settings, options, folder, family, builder, network, resume, epochsDone, epochs);
         }
 
         if (task == ImageTask.Features)

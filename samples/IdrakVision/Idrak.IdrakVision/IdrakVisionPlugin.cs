@@ -9,19 +9,19 @@ namespace Idrak.IdrakVision;
 
 /// <summary>
 /// Registers IdrakVision: its text decoder (a Llama decoder read from <c>text_config</c>, its tensors under
-/// <c>language_model.</c>, written back from a spec) in <see cref="PretrainedArchitectures"/>, its vision part in
-/// <see cref="VisionFamilies"/>, and the image attention rule "idrak-image-blocks" (an image's tokens see each other, the
-/// rest causal) in <see cref="ImageAttentionRules"/>, all under <see cref="IdrakVisionFamily.Architecture"/>.
+/// <c>language_model.</c>, written back from a spec) in <see cref="PretrainedArchitectures"/> and its vision part in
+/// <see cref="VisionFamilies"/>, both under <see cref="IdrakVisionFamily.Architecture"/>. Its image tokens attend by the
+/// library's rule "image-blocks" (<see cref="ImageAttentionRules.ImageBlocks"/>: an image's tokens see each other, the
+/// rest causal), or by "causal".
 /// </summary>
 public static class IdrakVisionPlugin
 {
-    /// <summary>The image attention rule's name: an image's tokens attend to each other in both directions.</summary>
-    public const string ImageBlocks = "idrak-image-blocks";
+    /// <summary>The image attention rule's name (the library's): an image's tokens attend to each other in both directions.</summary>
+    public const string ImageBlocks = ImageAttentionRules.ImageBlocks;
 
-    /// <summary>Registers the family (its text decoder, vision part and attention rule).</summary>
+    /// <summary>Registers the family (its text decoder and vision part).</summary>
     public static void Register()
     {
-        ImageAttentionRules.Register(new ImageBlockRule());
         PretrainedArchitectures.Register(IdrakVisionFamily.Architecture, TextDecoder());
         VisionFamilies.Register(new IdrakVisionFamily());
     }
@@ -34,7 +34,6 @@ public static class IdrakVisionPlugin
     {
         VisionFamilies.Unregister(IdrakVisionFamily.Architecture);
         PretrainedArchitectures.Unregister(IdrakVisionFamily.Architecture);
-        ImageAttentionRules.Unregister(ImageBlocks);
     }
 
     // The text side: Llama's spec from text_config, its tensors under language_model., a spec written as text_config.
@@ -48,14 +47,5 @@ public static class IdrakVisionPlugin
             TensorName = name => PretrainedFamilies.LlamaTensorName(name) is { } stored ? "language_model." + stored : null,
             Config = spec => new JsonObject { ["text_config"] = llama.Config!(spec), ["tie_word_embeddings"] = spec.TieEmbeddings },
         };
-    }
-
-    private sealed class ImageBlockRule : IImageAttentionRule
-    {
-        public string Name => ImageBlocks;
-
-        public bool Causal => false;
-
-        public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.ImageBlocks(rows, blocks, window);
     }
 }
