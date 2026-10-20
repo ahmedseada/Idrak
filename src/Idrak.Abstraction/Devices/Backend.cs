@@ -1283,6 +1283,21 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// The best k log-probabilities of each row of x [rows, cols] and their columns (a beam search's candidates, read back
+    /// instead of the whole rows): with shift = max + log Σ exp(x - max) over the row (the max ignoring NaN, the sum the
+    /// entries other than -∞), each entry's log-probability is x - shift in float32; values[r, j] is the row's j-th best of
+    /// those that are neither NaN nor -∞ (larger first, the smaller column first on equal values) and indices[r, j] its column
+    /// (as a float), j &lt; k; past the row's last such entry values gets -∞ and indices -1. A row with no finite logit, a
+    /// NaN or a +∞ one has a NaN shift, so none. The CPU sums in double (its shift rounded to float32 once); a device's sum
+    /// may differ from it by float rounding.
+    /// </summary>
+    public virtual void LogSoftmaxTopKKernel(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.LogSoftmaxTopK(h[x], h[values], h[indices], rows, cols, k);
+    }
+
+    /// <summary>
     /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
     /// otherwise argmax(p) == argmax(t).
     /// </summary>

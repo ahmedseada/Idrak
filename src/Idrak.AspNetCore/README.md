@@ -23,6 +23,14 @@ files, `prompt`, `stream`, ...) and on `MapChatApi` as `images` or image parts; 
 app.MapCompletionsApi("/v1", o => o.Images(i => { i.MaxImages = 4; i.AllowUrls = false; }));
 ```
 
+An encoder-decoder (the engine's "seq2seq" kind) is a text model, not a chat model: it answers `/v1/completions`
+(`num_beams`, `length_penalty` and `early_stopping` per request), and `/v1/chat/completions` answers it with 400. A
+model's own starting options, such as a server's beams, are `TextDefaults`:
+
+```csharp
+app.MapCompletionsApi("/v1", o => o.TextDefaults("summarizer", new GenerationOptions { NumBeams = 4, RepeatPenalty = 1f }));
+```
+
 ## Install
 
 ```bash

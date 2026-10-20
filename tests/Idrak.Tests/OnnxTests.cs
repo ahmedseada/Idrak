@@ -17,6 +17,7 @@ internal static partial class Tests
         ("onnx: CNN (Conv2d with stride and padding, BatchNorm, MaxPool2d, GlobalAveragePool2d, Flatten) matches", OnnxCnn),
         ("onnx: LSTM and GRU (sequences and last state), LastStep, FirstStep, Reshape match", OnnxRecurrent),
         ("onnx: transformer classifier and causal GPT (Embedding, PositionalEncoding, attention) match", OnnxTransformer),
+        ("onnx: a TransformerEncoderLayer with its own activation (ExactGELU, QuickGELU, ReLU; pre- and post-norm) matches; one without a translator is refused naming it, and exports with the exporter's", OnnxEncoderActivation),
         ("onnx: LoRA merged on export, custom lambda translator, metadata, names, errors, predictor", OnnxExtras),
         ("onnx import: MLP, CNN, LSTM/GRU, transformer, GPT round-trip into Idrak layers on the device", OnnxImportRoundTrip),
         ("onnx import: PyTorch-style Gemm and erf GELU; .ikm package; unsupported ops are named", OnnxImportForeign),
@@ -364,6 +365,43 @@ internal static partial class Tests
         CheckOnnx(gpt, [12], RandomIds(device, r, 24, 2, 12), "causal gpt");
         using var attention = Network.Sequence(6, 8).OnDevice(device).Seed(14).MultiHeadAttention(heads: 2).LayerNorm().Build();
         CheckOnnx(attention, [6, 8], RandomInput(device, r, 2, 6, 8), "attention alone");
+    }
+
+    // A TransformerEncoderLayer built with its own activation exports that activation through its translator (it was read
+    // as the second projection before, an invalid cast), pre- and post-norm; one with no translator is refused naming it,
+    // and exports once the exporter is given one.
+    private static void OnnxEncoderActivation(Device device)
+    {
+        var r = new Random(21);
+        TransformerEncoderLayer Layer(Module activation, NormPlacement placement, int seed)
+        {
+            var random = new Random(seed);
+            return TransformerEncoderLayer.FromLayers(new LayerNorm(8, device: device), new MultiHeadAttention(8, 2, false, 0f, device, random), new LayerNorm(8, device: device),
+                new Linear(8, 16, device: device, random: random), new Linear(16, 8, device: device, random: random), activation, placement);
+        }
+
+        foreach (var (make, name) in new (Func<Module> Make, string Name)[] { (() => new ExactGELU(), "ExactGELU"), (() => new QuickGELU(), "QuickGELU"), (() => new ReLU(), "ReLU") })
+        {
+            foreach (var placement in new[] { NormPlacement.Before, NormPlacement.After })
+            {
+                using var model = new Sequential { Layer(make(), placement, 22) };
+                CheckOnnx(model, [5, 8], RandomInput(device, r, 2, 5, 8), $"an encoder layer with {name}, {placement}");
+            }
+        }
+
+        using var custom = new Sequential { Layer(new Times(3f), NormPlacement.Before, 23) };
+        try
+        {
+            OnnxExport.For(custom).Input(5, 8).ToBytes();
+            Check(false, "an activation without a translator must be refused");
+        }
+        catch (NotSupportedException ex)
+        {
+            Check(ex.Message.Contains("Times") && ex.Message.Contains("OnnxExportOps.Register"), ex.Message);
+        }
+
+        CheckOnnx(custom, [5, 8], RandomInput(device, r, 2, 5, 8), "an encoder layer with an activation the exporter is given a translator for",
+            e => e.Module<Times>((g, m, v, shape) => g.Node("Mul", [v, g.Scalar("factor", m.Factor)], shape)));
     }
 
     private static void OnnxExtras(Device device)

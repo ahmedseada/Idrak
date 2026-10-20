@@ -21,6 +21,9 @@ internal sealed unsafe partial class CudaBackend
     public override void ArgMaxKernel(Storage x, Storage y, int rows, int cols) =>
         LaunchRows(K("argmax_f32"), rows, P(x), P(y), U(cols), U(rows));
 
+    public override void LogSoftmaxTopKKernel(Storage x, Storage values, Storage indices, int rows, int cols, int k) =>
+        LaunchRows(K("log_softmax_topk_f32"), rows, P(x), P(values), P(indices), U(cols), U(k), U(rows));
+
     public override void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold) =>
         LaunchRows(K("class_match_f32"), rows, P(predictions), P(targets), P(y), U(cols), F(threshold), U(rows));
 

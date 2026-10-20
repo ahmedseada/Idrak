@@ -12,6 +12,7 @@
     <ProjectReference Include="..\..\src\Idrak.Gpu\Idrak.Gpu.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Audio\Idrak.Audio.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
   </ItemGroup>
 
 </Project>

@@ -23,6 +23,9 @@ standing rules; they win over anything here), then the plan you are asked to wor
   holds no model family: every family is in `Idrak.Text.Plugins`, `Idrak.Vision.Plugins` or `Idrak.Audio.Plugins`, and
   the CLI registers all three at startup. The owner's runs are in each phase's note (P7 asks for the full suite). **Next:
   the plan's "Leftovers for the owner"**, discussed with the owner one by one; none starts before the owner says so.
+- **Leftover round L1 (2026-10-20):** rows 9, 10, 11, 13, 15, 17, 18 done and pushed (T5 and GGUF). The owner stopped
+  there: every other row of "Leftovers for the owner" (now 1-38, with the rounds' finds) waits for the owner. **Row 32 is a
+  failing test on the branch** (`operations:`, from Plan 23), to raise first.
 - **Scope:** Plan 24's owner runs, and Plan 26 only when the owner names a phase (the owner dropped Plan 25,
   Idrak.Extensions.AI).
 - **No new work until the owner says so.** Report status and wait for the owner to name the next item.

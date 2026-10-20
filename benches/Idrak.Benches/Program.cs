@@ -22,6 +22,9 @@
 //                  synthetic ones): one cold step then IDRAK_BENCH_CALLS timed ones, each listed with the device tuning
 //                  in it; the fastest timed step's seconds and audio, launches a step by operation, peak memory, at one
 //                  and several clips
+//   seq2seq        a text encoder-decoder (IDRAK_BENCH_SEQ2SEQ names the folder, default the tiny fixture under tests/):
+//                  the load (cold, warm, host memory allocated), a cached decoding step (ms a token, launches a token)
+//                  and a beam search of 4 beams (ms a step), the best hypothesis hashed so a change shows it kept it
 //   memory         stress: the pool over thousands of varied shapes (rule 77: device memory does not grow), long
 //                  sequences, the largest batch the device takes before it runs out
 //
@@ -30,7 +33,7 @@
 // is skipped with the reason), IDRAK_BENCH_REPEATS (timed rounds after the cold one, default 5), IDRAK_BENCH_WARMUP
 // (untimed calls first, default 30), IDRAK_BENCH_CALLS (calls a timed round in the ops section, default 8: one device
 // sync a round, so a driver's submission latency does not stand for a 10 µs kernel), IDRAK_BENCH_SECONDS (the most a
-// stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS.
+// stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS, IDRAK_BENCH_SEQ2SEQ.
 
 using Idrak.Benches;
 
@@ -41,7 +44,7 @@ if (args is ["compare", var before, var after])
 
 if (args.Any(a => a is "-h" or "--help" or "help"))
 {
-    Console.WriteLine("sections: ops matmul train-decoder infer-decoder train-speech memory (default: all); compare before.json after.json");
+    Console.WriteLine("sections: ops matmul train-decoder infer-decoder train-speech seq2seq memory (default: all); compare before.json after.json");
     return 0;
 }
 
