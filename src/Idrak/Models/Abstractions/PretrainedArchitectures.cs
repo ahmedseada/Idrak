@@ -104,7 +104,7 @@ public static class PretrainedArchitectures
 
     /// <summary>The architecture registered as <paramref name="name"/>.</summary>
     public static PretrainedArchitecture Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No architecture '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with PretrainedArchitectures.Register.");
+        ?? throw new NotSupportedException($"No architecture '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with PretrainedArchitectures.Register, or reference Idrak.Text.Plugins (text models) or Idrak.Vision.Plugins (vision-language models) and call its RegisterAll().");
 
     /// <summary>The library's architecture <paramref name="name"/>, whatever an app registered over it (for an app's family to build on); null when the library has none.</summary>
     public static PretrainedArchitecture? Default(string name) => Registry.Default(name);

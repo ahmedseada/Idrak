@@ -13,8 +13,8 @@ namespace Idrak.Layers;
 /// never stored whole (<see cref="Tensor.AttentionFastest"/>: tiled over the keys, or the composed scores where the device
 /// measured them faster); gradients flow to the queries, the memory and the projections for training.
 /// <para>
-/// Inference computes the memory's projections once per sequence: <see cref="SetMemory"/> projects it and hands the keys
-/// and values to the <see cref="DecodingContext"/> (<see cref="DecodingContext.SetMemory"/>), and every cached step
+/// Inference computes the memory's projections once per sequence: <see cref="SetMemory(Tensor, DecodingContext)"/> projects it and hands the keys
+/// and values to the <see cref="DecodingContext"/> (<see cref="DecodingContext.SetMemory(object, Tensor, Tensor)"/>), and every cached step
 /// (<see cref="ForwardCached"/>) reads them from there. A training pass gives the memory with the input
 /// (<see cref="Forward(Tensor, Tensor)"/>), or opens an <see cref="EncoderMemory"/> scope around a pass through blocks that
 /// call <see cref="Module.Forward"/> alone.
@@ -67,7 +67,7 @@ public sealed class CrossAttention : Module, ICachedModule
         _keyValue = [key, value];
         Heads = heads;
         HeadDim = inner / heads;
-        ScoreScale = 1f / MathF.Sqrt(HeadDim);
+        _scale = 1f / MathF.Sqrt(HeadDim);
     }
 
     /// <summary>Attention heads.</summary>
@@ -94,8 +94,16 @@ public sealed class CrossAttention : Module, ICachedModule
     /// <summary>Output projection ("o").</summary>
     public Linear Output { get; }
 
-    /// <summary>The factor on each query·key product before the softmax (1 / √<see cref="HeadDim"/> unless set).</summary>
-    public float ScoreScale { get; init; }
+    /// <summary>The factor on each query·key product before the softmax (1 / √<see cref="HeadDim"/> unless set; 1 for a family that scales nothing).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not finite and positive.</exception>
+    public float ScoreScale
+    {
+        get => _scale;
+        init => _scale = float.IsFinite(value) && value > 0f ? value
+            : throw new ArgumentOutOfRangeException(nameof(ScoreScale), value, "The attention setting ScoreScale is a finite positive factor (1 / \u221Ahead size by default).");
+    }
+
+    private readonly float _scale;
 
     /// <inheritdoc />
     public override IEnumerable<Module> Children() => [Query, Key, Value, Output];
@@ -120,13 +128,21 @@ public sealed class CrossAttention : Module, ICachedModule
 
     /// <summary>
     /// Projects <paramref name="memory"/> once and hands the keys and values to <paramref name="context"/>
-    /// (<see cref="DecodingContext.SetMemory"/>) for every step of the sequence. A memory of one sequence serves a context
+    /// (<see cref="DecodingContext.SetMemory(object, Tensor, Tensor)"/>) for every step of the sequence. A memory of one sequence serves a context
     /// of several rows (a beam search's beams): its projections are repeated for each row.
     /// </summary>
     /// <param name="memory">The encoder's output, [1 or batch, memory, memoryDim].</param>
     /// <param name="context">The decoding context (its batch is the rows decoded together).</param>
     /// <exception cref="ArgumentException">The memory's batch is neither 1 nor the context's.</exception>
-    public void SetMemory(Tensor memory, DecodingContext context)
+    public void SetMemory(Tensor memory, DecodingContext context) => SetMemory(memory, context, null);
+
+    /// <summary>
+    /// <see cref="SetMemory(Tensor, DecodingContext)"/> for a padded batch of memories: row b of the context attends to its
+    /// first <paramref name="lengths"/>[b] memory positions only (all of them when null), as
+    /// <see cref="Forward(Tensor, Tensor, IReadOnlyList{int})"/> does; one length serves every row of a memory of one sequence.
+    /// </summary>
+    /// <exception cref="ArgumentException">The memory's batch is neither 1 nor the context's, or a length is outside 1 to the memory's positions.</exception>
+    public void SetMemory(Tensor memory, DecodingContext context, IReadOnlyList<int>? lengths)
     {
         ArgumentNullException.ThrowIfNull(memory);
         ArgumentNullException.ThrowIfNull(context);
@@ -136,6 +152,8 @@ public sealed class CrossAttention : Module, ICachedModule
             throw new ArgumentException($"The memory holds {n} sequences for a context of {context.Batch} rows (one sequence serves every row).");
         }
 
+        var own = Lengths(lengths, memory);                               // checked against the memory, before anything is made
+        int[]? rows = own is null ? null : n == context.Batch ? own : [.. Enumerable.Repeat(own[0], context.Batch)];
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
         var (keys, values) = Project(memory);
@@ -148,7 +166,7 @@ public sealed class CrossAttention : Module, ICachedModule
             values = Tensor.Concat(copies);
         }
 
-        context.SetMemory(this, TensorScope.Untrack(keys), TensorScope.Untrack(values));
+        context.SetMemory(this, TensorScope.Untrack(keys), TensorScope.Untrack(values), rows);
     }
 
     /// <summary>Attention of <paramref name="input"/> [batch, time, dim] over <paramref name="memory"/> [batch, memory, memoryDim] → [batch, time, dim].</summary>
@@ -180,7 +198,7 @@ public sealed class CrossAttention : Module, ICachedModule
     {
         ArgumentNullException.ThrowIfNull(context);
         var memory = context.MemoryOf(this) ?? throw new InvalidOperationException("The decoding context holds no memory for this CrossAttention: call SetMemory(memory, context) before the first step.");
-        return Attend(input, memory.Keys, memory.Values, null);
+        return Attend(input, memory.Keys, memory.Values, context.MemoryLengthsOf(this) is { } lengths ? lengths as int[] ?? [.. lengths] : null);
     }
 
     // The lengths checked against the memory [n, m, memoryDim]: null when every sequence has all m positions.
@@ -279,7 +297,7 @@ public sealed class CrossAttention : Module, ICachedModule
 /// <summary>
 /// The encoder's output for a pass through decoder blocks called with <see cref="Module.Forward"/> alone (a training
 /// step through a <see cref="Sequential"/>): every <see cref="CrossAttention"/> on this thread attends over it until the
-/// scope is disposed. Decoding with a <see cref="DecodingContext"/> uses <see cref="CrossAttention.SetMemory"/> instead.
+/// scope is disposed. Decoding with a <see cref="DecodingContext"/> uses <see cref="CrossAttention.SetMemory(Tensor, DecodingContext)"/> instead.
 /// </summary>
 /// <example>
 /// <code>

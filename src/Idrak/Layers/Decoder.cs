@@ -167,7 +167,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         Heads = heads;
         KvHeads = kvHeads;
         HeadDim = headDim;
-        ScoreScale = 1f / MathF.Sqrt(headDim);
+        _scale = 1f / MathF.Sqrt(headDim);
         Rope = rope;
         MaxPositions = maxPositions;
         if (rope is not null)
@@ -210,7 +210,35 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     public RMSNorm? KeyNorm { get; }
 
     /// <summary>The factor on each query·key product before the softmax (1 / √<see cref="HeadDim"/> unless set).</summary>
-    public float ScoreScale { get; init; }
+    /// <exception cref="ArgumentOutOfRangeException">Not finite and positive.</exception>
+    public float ScoreScale
+    {
+        get => _scale;
+        init => _scale = float.IsFinite(value) && value > 0f ? value
+            : throw new ArgumentOutOfRangeException(nameof(ScoreScale), value, "The attention setting ScoreScale is a finite positive factor (1 / \u221Ahead size by default).");
+    }
+
+    private readonly float _scale;
+
+    /// <summary>
+    /// A bias by the query's and the key's positions, [heads, queries, keys], added to the scaled scores before the causal
+    /// mask and the softmax (null, the default: none). The scores are then composed (q · kᵀ over the sequence, or over every
+    /// cached slot in decoding, each step reading its rows of the bias); packed sequences, images and rows of different
+    /// lengths are refused. When it is a <see cref="Module"/> its parameters are this layer's, unless
+    /// <see cref="SharesPositionBias"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The bias is for another number of heads.</exception>
+    public IAttentionPositionBias? PositionBias
+    {
+        get => _bias;
+        init => _bias = value is null || value.Heads == Heads ? value
+            : throw new ArgumentException($"The attention setting PositionBias gives {value.Heads} heads a bias; the layer has {Heads}.", nameof(PositionBias));
+    }
+
+    private readonly IAttentionPositionBias? _bias;
+
+    /// <summary>Whether <see cref="PositionBias"/> belongs to another layer (shared by every layer, owned by the first): its parameters are then not this layer's. False by default.</summary>
+    public bool SharesPositionBias { get; init; }
 
     /// <summary>
     /// How many positions each query attends to, itself included (query position minus key position below the window),
@@ -258,10 +286,10 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     private bool SlidesIn(Backend backend) => Windowed && WindowKernels && HeadDim <= backend.Capabilities.DecodeAttentionHeadDim;
 
     /// <summary>Whether packed sequences and rows of different lengths can attend through <paramref name="backend"/>'s kernels for this layer.</summary>
-    internal bool SupportsSegmented(Backend backend) => (PlainCausal || WindowKernels) && backend.SupportsSegmentedAttention(HeadDim, Variant);
+    internal bool SupportsSegmented(Backend backend) => _bias is null && (PlainCausal || WindowKernels) && backend.SupportsSegmentedAttention(HeadDim, Variant);
 
     /// <summary>Whether rows of different lengths decoded together (per-row starts) can attend through <paramref name="backend"/>'s kernels for this layer.</summary>
-    internal bool SupportsRows(Backend backend) => (PlainCausal || WindowKernels) && backend.SupportsAttentionRows(HeadDim, Variant);
+    internal bool SupportsRows(Backend backend) => _bias is null && (PlainCausal || WindowKernels) && backend.SupportsAttentionRows(HeadDim, Variant);
 
     // Whether attention over keys at positions [0, keys) for queries ending at keys - 1 needs more than plain causal
     // attention (the kernels with Variant, or the composed path): soft-capped scores, or a window some query reaches past.
@@ -285,6 +313,11 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         {
             yield return KeyNorm;
         }
+
+        if (_bias is Module owned && !SharesPositionBias)
+        {
+            yield return owned;
+        }
     }
 
     /// <inheritdoc />
@@ -302,6 +335,16 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         if (packing is not null && !PlainCausal && !WindowKernels)
         {
             throw new NotSupportedException("Packed sequences need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores (pad the batches instead).");
+        }
+
+        if (_bias is not null)
+        {
+            if (packing is not null || ImageBlocks.Current is { } biasedImages && biasedImages.AttendsFor(n, t))
+            {
+                throw new NotSupportedException("An attention layer with a position bias attends over whole sequences: packed sequences and image blocks are not supported (pad the batches instead).");
+            }
+
+            return BiasedForward(input, n, t);
         }
 
         // Images placed on several rotary axes (M-RoPE): each token rotates by its own rows.
@@ -387,6 +430,27 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         int n = input.Shape[0], t = input.Shape[1];
         var positions = context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first.");
         var cache = context.CacheFor(this, n * KvHeads, HeadDim, SlidesIn(input.Backend) ? _window!.Value : 0);
+        if (_bias is not null)
+        {
+            if (context.RowStarts is not null || ImageBlocks.Current is { } biasedImages && biasedImages.AttendsFor(n, t))
+            {
+                throw new NotSupportedException("An attention layer with a position bias decodes rows that start together, without image blocks.");
+            }
+
+            if (ComputeGraph.IsCapturing)
+            {
+                throw new NotSupportedException("A step of an attention layer with a position bias cannot be recorded as a graph (its bias rows follow the position on the host); decode it step by step.");
+            }
+
+            var (bq, bk, bv) = Project(input, context.RotaryPositions ?? context.Positions!, cache, context.PositionOf(cache));
+            if (bk is not null)
+            {
+                cache.Layout.Write(bk, bv!, cache, context.PositionOf(cache));
+            }
+
+            return MergeHeads(AttendComposed(bq, cache, context, t, ScoreScale), n, t);
+        }
+
         var rotary = Rope is not null ? ImageBlocks.Current?.Rotary(Rope, HeadDim, n, t, input.Device) : null;
         if (ImageBlocks.Current is { } images && images.AttendsFor(n, t))
         {
@@ -508,6 +572,12 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         }
 
         var mask = context.MaskOf(cache)!;
+        if (_bias is not null)
+        {
+            // The step's rows of the bias over every slot, [heads, t, capacity], under the causal mask [t, capacity].
+            mask = _bias.For(t, keys.Shape[1], context.LengthOf(cache), q.Device) + mask;
+        }
+
         if (Windowed)
         {
             // Key j is before query i's window when j <= position + i - window: the causal mask of a cache `window` slots
@@ -518,6 +588,34 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         }
 
         return raw.ScaleMaskSoftmax(scale, mask).MatMul(values);
+    }
+
+    // A whole pass with the position bias: the scores q · kᵀ [n·kv, group·t, t] composed, (soft-capped,) the bias of each
+    // head [heads, t, t] and the causal mask added, then the softmax and the values. Query head h = kv · group + g sits at
+    // rows (b · kv + kv') · group · t + g · t + i, so the scores read as [n, heads, t, t] take the bias as it is.
+    private Tensor BiasedForward(Tensor input, int n, int t)
+    {
+        var (q, keys, values) = Project(input, Positions(t));
+        var raw = q.MatMul(keys!, transposeB: true);                             // [n·kv, group·t, t]
+        float scale = ScoreScale;
+        if (_softcap is { } cap)
+        {
+            (raw, scale) = (Softcap(raw, scale, cap), 1f);
+        }
+
+        var bias = _bias!.For(t, t, 0, input.Device);                           // [heads, t, t]
+        Tensor weights;
+        if (!Autograd.IsEnabled)
+        {
+            weights = raw.ScaleMaskSoftmax(scale, bias + CausalMask(t, 1));       // mask row = query row % (heads · t)
+        }
+        else
+        {
+            var scores = (raw * scale).Reshape(n, Heads, t, t) + bias + CausalMask(t, 1);
+            weights = scores.Reshape(n * KvHeads, Group * t, t).Softmax();
+        }
+
+        return Merge(weights.MatMul(values!), n, t);
     }
 
     // cap · tanh(scale · scores / cap): the scaled scores, soft-capped.
@@ -671,13 +769,18 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         }
 
         _iota?.Dispose();
+        if (_bias is Module owned && !SharesPositionBias)
+        {
+            owned.Dispose();                                                     // its kept bias too (its parameters again: a no-op)
+        }
+
         base.Dispose();
     }
 
     /// <inheritdoc />
     public override string ToString() =>
         $"CausalSelfAttention({Heads} heads{(KvHeads != Heads ? $", {KvHeads} kv heads" : "")}, head size {HeadDim}{(Rope is null ? "" : ", rope")}{(QueryNorm is null ? "" : ", qk-norm")}"
-        + $"{(_window is { } w ? $", window {w}" : "")}{(_softcap is { } c ? $", softcap {c}" : "")})";
+        + $"{(_window is { } w ? $", window {w}" : "")}{(_softcap is { } c ? $", softcap {c}" : "")}{(_bias is null ? "" : ", position bias")})";
 }
 
 /// <summary>
@@ -881,7 +984,7 @@ public sealed class DecoderBlock : Module, ICachedModule
     /// <param name="attentionNorm">Normalization before the self-attention ("attn_norm").</param>
     /// <param name="attention">The self-attention layer.</param>
     /// <param name="crossNorm">Normalization before the cross-attention ("cross_norm").</param>
-    /// <param name="cross">The cross-attention layer ("cross"); its memory comes from the decoding context (<see cref="CrossAttention.SetMemory"/>) or an <see cref="EncoderMemory"/> scope.</param>
+    /// <param name="cross">The cross-attention layer ("cross"); its memory comes from the decoding context (<see cref="CrossAttention.SetMemory(Tensor, DecodingContext)"/>) or an <see cref="EncoderMemory"/> scope.</param>
     /// <param name="feedForwardNorm">Normalization before the feed-forward block ("mlp_norm").</param>
     /// <param name="feedForward">The feed-forward block.</param>
     /// <param name="residualDropout">Dropout on each branch's output before its residual addition (training only), or null.</param>

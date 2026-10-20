@@ -170,6 +170,10 @@ public sealed class DecodingContext : IDisposable
     // sequence), by layer: read by every decoding step, owned by this context.
     private readonly Dictionary<object, (Tensor Keys, Tensor Values)> _memories = new(ReferenceEqualityComparer.Instance);
 
+    // Each memory's lengths (a padded batch of memories: row b sees its first lengths[b] positions), by layer; none when
+    // every row sees the whole memory.
+    private readonly Dictionary<object, int[]> _memoryLengths = new(ReferenceEqualityComparer.Instance);
+
     // The sliding windows' caches (SlidingWindowSteps), one group per window length.
     private readonly List<SlidingWindow> _windows = [];
     private int _slidingSteps;
@@ -217,7 +221,7 @@ public sealed class DecodingContext : IDisposable
     /// <summary>Device memory used by the key/value caches created so far, in bytes.</summary>
     public long CacheBytes => _caches.Values.Sum(c => c.Bytes);
 
-    /// <summary>Device memory used by the cross-attention memories (<see cref="SetMemory"/>), in bytes.</summary>
+    /// <summary>Device memory used by the cross-attention memories (<see cref="SetMemory(object, Tensor, Tensor)"/>), in bytes.</summary>
     public long MemoryBytes => _memories.Values.Sum(m => 4L * (m.Keys.Size + m.Values.Size));
 
     /// <summary>
@@ -228,7 +232,14 @@ public sealed class DecodingContext : IDisposable
     /// <see cref="Dispose"/>.
     /// </summary>
     /// <exception cref="ArgumentException">Keys and values are not [rows, memory, headDim] alike, or not on this context's device.</exception>
-    public void SetMemory(object owner, Tensor keys, Tensor values)
+    public void SetMemory(object owner, Tensor keys, Tensor values) => SetMemory(owner, keys, values, null);
+
+    /// <summary>
+    /// <see cref="SetMemory(object, Tensor, Tensor)"/> for a padded batch of memories: row b of the context sees the first
+    /// <paramref name="lengths"/>[b] memory positions only (all of them when null), read back by <see cref="MemoryLengthsOf"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">Keys and values do not fit, or the lengths are not one per row of the context, each 1 to the memory's positions.</exception>
+    public void SetMemory(object owner, Tensor keys, Tensor values, IReadOnlyList<int>? lengths)
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(keys);
@@ -238,6 +249,22 @@ public sealed class DecodingContext : IDisposable
             throw new ArgumentException($"A memory's keys and values are [rows, memory, headDim] alike on {Device}; got {Tensor.FormatShape(keys.Shape)} on {keys.Device} and {Tensor.FormatShape(values.Shape)} on {values.Device}.");
         }
 
+        if (lengths is not null)
+        {
+            if (lengths.Count != Batch)
+            {
+                throw new ArgumentException($"{lengths.Count} memory lengths for a context of {Batch} rows.", nameof(lengths));
+            }
+
+            foreach (int length in lengths)
+            {
+                if (length < 1 || length > keys.Shape[1])
+                {
+                    throw new ArgumentException($"A memory length of {length} is outside 1 to the memory's {keys.Shape[1]} positions.", nameof(lengths));
+                }
+            }
+        }
+
         if (_memories.TryGetValue(owner, out var earlier))
         {
             earlier.Keys.Dispose();
@@ -245,16 +272,31 @@ public sealed class DecodingContext : IDisposable
         }
 
         _memories[owner] = (keys, values);
+        if (lengths is null || lengths.All(l => l == keys.Shape[1]))
+        {
+            _memoryLengths.Remove(owner);
+        }
+        else
+        {
+            _memoryLengths[owner] = [.. lengths];
+        }
     }
 
-    /// <summary>The memory held for <paramref name="owner"/> (<see cref="SetMemory"/>), or null when none is.</summary>
+    /// <summary>The lengths the memory of <paramref name="owner"/> was set with (one per row), or null when every row sees the whole memory.</summary>
+    public IReadOnlyList<int>? MemoryLengthsOf(object owner)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        return _memoryLengths.GetValueOrDefault(owner);
+    }
+
+    /// <summary>The memory held for <paramref name="owner"/> (<see cref="SetMemory(object, Tensor, Tensor)"/>), or null when none is.</summary>
     public (Tensor Keys, Tensor Values)? MemoryOf(object owner)
     {
         ArgumentNullException.ThrowIfNull(owner);
         return _memories.TryGetValue(owner, out var memory) ? memory : null;
     }
 
-    /// <summary>Frees every memory set with <see cref="SetMemory"/> (a new sound's encoder output replaces them).</summary>
+    /// <summary>Frees every memory set with <see cref="SetMemory(object, Tensor, Tensor)"/> (a new sound's encoder output replaces them).</summary>
     public void ClearMemory()
     {
         foreach (var (keys, values) in _memories.Values)
@@ -264,6 +306,7 @@ public sealed class DecodingContext : IDisposable
         }
 
         _memories.Clear();
+        _memoryLengths.Clear();
     }
 
     /// <summary>
