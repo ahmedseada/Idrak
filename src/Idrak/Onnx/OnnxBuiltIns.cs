@@ -286,6 +286,14 @@ internal static class OnnxBuiltIns
     {
         var c = layer.Children().ToList();
         var (norm1, attention, norm2, ff1, ff2) = ((LayerNorm)c[0], (MultiHeadAttention)c[1], (LayerNorm)c[2], (Layers.Linear)c[3], (Layers.Linear)c[4]);
+        if (layer.Placement == NormPlacement.After)
+        {
+            // Post-norm: x = LayerNorm1(x + Attention(x)), then LayerNorm2(x + FeedForward(x)).
+            var normed = LayerNorm(g, norm1, g.Node("Add", [x, Attention(g, attention, x, x.Shape)], x.Shape), x.Shape);
+            var fed = Linear(g, ff2, Gelu(g, Linear(g, ff1, normed, null), null), null);
+            return LayerNorm(g, norm2, g.Node("Add", [normed, fed], x.Shape), shape);
+        }
+
         var attended = g.Node("Add", [x, Attention(g, attention, LayerNorm(g, norm1, x, x.Shape), x.Shape)], x.Shape);
         var hidden = Linear(g, ff2, Gelu(g, Linear(g, ff1, LayerNorm(g, norm2, attended, x.Shape), null), null), null);
         return g.Node("Add", [attended, hidden], shape);

@@ -428,12 +428,24 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         $"MultiHeadAttention(dim {Dim}, {Heads} heads{(Inner != Dim ? $", inner {Inner}" : "")}{(Causal ? ", causal" : "")}{(_bias is null ? "" : ", position bias")})";
 }
 
+/// <summary>Where a transformer block's normalizations sit (<see cref="TransformerEncoderLayer.Placement"/>).</summary>
+public enum NormPlacement
+{
+    /// <summary>Before each sublayer ("pre-norm"): x + Sublayer(Norm(x)). The default.</summary>
+    Before,
+
+    /// <summary>After each residual sum ("post-norm", the original transformer's): Norm(x + Sublayer(x)).</summary>
+    After,
+}
+
 /// <summary>
-/// One pre-norm transformer encoder block over [batch, time, dim]:
-/// x + Attention(LayerNorm(x)), then x + FeedForward(LayerNorm(x)) with a GELU feed-forward of width ffDim.
+/// One transformer encoder block over [batch, time, dim], its LayerNorms placed by <see cref="Placement"/>: pre-norm (the
+/// default), x + Attention(LayerNorm(x)), then x + FeedForward(LayerNorm(x)); or post-norm, x = LayerNorm(x + Attention(x)),
+/// then LayerNorm(x + FeedForward(x)). The feed-forward is GELU (or the block's own activation) of width ffDim.
 /// </summary>
 public sealed class TransformerEncoderLayer : Module, ICachedModule
 {
+    private readonly NormPlacement _placement;
     private readonly LayerNorm _norm1;
     private readonly MultiHeadAttention _attention;
     private readonly LayerNorm _norm2;
@@ -461,8 +473,10 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         Dim = dim;
     }
 
-    private TransformerEncoderLayer(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module? activation)
+    private TransformerEncoderLayer(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module? activation,
+        NormPlacement placement)
     {
+        _placement = placement;
         _activation = activation;
         _norm1 = norm1;
         _attention = attention;
@@ -479,7 +493,7 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
     /// layers are exactly this.
     /// </summary>
     public static TransformerEncoderLayer FromLayers(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2) =>
-        Create(norm1, attention, norm2, feedForward1, feedForward2, null);
+        Create(norm1, attention, norm2, feedForward1, feedForward2, null, NormPlacement.Before);
 
     /// <summary>
     /// A block around existing layers, as <see cref="FromLayers(LayerNorm, MultiHeadAttention, LayerNorm, Linear, Linear)"/>, with
@@ -489,10 +503,23 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
     public static TransformerEncoderLayer FromLayers(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module activation)
     {
         ArgumentNullException.ThrowIfNull(activation);
-        return Create(norm1, attention, norm2, feedForward1, feedForward2, activation);
+        return Create(norm1, attention, norm2, feedForward1, feedForward2, activation, NormPlacement.Before);
     }
 
-    private static TransformerEncoderLayer Create(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module? activation)
+    /// <summary>
+    /// A block around existing layers (for example loaded weights), without dropout, its norms placed by
+    /// <paramref name="placement"/>; the block takes ownership. Post-norm (<see cref="NormPlacement.After"/>):
+    /// x = <paramref name="norm1"/>(x + attention(x)), then <paramref name="norm2"/>(x + feed-forward(x)), the
+    /// feed-forward <paramref name="feedForward2"/>(activation(<paramref name="feedForward1"/>(x))) with
+    /// <paramref name="activation"/>, or GELU with the tanh approximation when null.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The placement is not a defined one.</exception>
+    public static TransformerEncoderLayer FromLayers(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2,
+        Module? activation, NormPlacement placement) =>
+        Create(norm1, attention, norm2, feedForward1, feedForward2, activation, Checked(placement));
+
+    private static TransformerEncoderLayer Create(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module? activation,
+        NormPlacement placement)
     {
         ArgumentNullException.ThrowIfNull(norm1);
         ArgumentNullException.ThrowIfNull(attention);
@@ -507,15 +534,36 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
                 + $"feed-forward [{feedForward1.InFeatures}, {feedForward1.OutFeatures}] and [{feedForward2.InFeatures}, {feedForward2.OutFeatures}].");
         }
 
-        return new TransformerEncoderLayer(norm1, attention, norm2, feedForward1, feedForward2, activation);
+        return new TransformerEncoderLayer(norm1, attention, norm2, feedForward1, feedForward2, activation, placement);
     }
+
+    private static NormPlacement Checked(NormPlacement placement) => Enum.IsDefined(placement) ? placement
+        : throw new ArgumentOutOfRangeException(nameof(placement), placement, "The block setting Placement is NormPlacement.Before or NormPlacement.After.");
 
     /// <summary>Model width.</summary>
     public int Dim { get; }
 
+    /// <summary>
+    /// Where the block's two LayerNorms sit: <see cref="NormPlacement.Before"/> each sublayer (pre-norm, the default) or
+    /// <see cref="NormPlacement.After"/> each residual sum (post-norm). Set it on a new block
+    /// (<c>new TransformerEncoderLayer(dim, heads) { Placement = NormPlacement.After }</c>) or through
+    /// <see cref="FromLayers(LayerNorm, MultiHeadAttention, LayerNorm, Linear, Linear, Module, NormPlacement)"/>.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not a defined placement.</exception>
+    public NormPlacement Placement
+    {
+        get => _placement;
+        init => _placement = Checked(value);
+    }
+
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
     {
+        if (_placement == NormPlacement.After)
+        {
+            return ForwardPostNorm(input);
+        }
+
         if (_dropout is null && _activation is null && FusedPasses(input))
         {
             // Inference: each residual added in its output projection's epilogue and the GELU in the first feed-forward
@@ -530,9 +578,34 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         return x + (_dropout?.Forward(hidden) ?? hidden);
     }
 
+    // Post-norm: x = norm1(x + attention(x)), then norm2(x + feed-forward(x)).
+    private Tensor ForwardPostNorm(Tensor input)
+    {
+        if (_dropout is null && FusedPasses(input))
+        {
+            // Inference: each residual added in its output projection's epilogue, the bias (and the tanh GELU) in the first
+            // feed-forward projection's, where the layers hold packed weights (else the same operations one by one): the
+            // same values as below.
+            var sum = _norm1.Forward(_attention.ForwardAdding(input, input));
+            var hidden = _activation is null ? _feedForward1.ProjectGelu(sum) : _activation.Forward(_feedForward1.ProjectBiased(sum));
+            return _norm2.Forward(_feedForward2.ProjectAdding(hidden, sum));
+        }
+
+        var attended = _attention.Forward(input);
+        var x = _norm1.Forward(input + (_dropout?.Forward(attended) ?? attended));
+        var fed = _feedForward2.Forward(FeedForwardHidden(x));
+        return _norm2.Forward(x + (_dropout?.Forward(fed) ?? fed));
+    }
+
     /// <inheritdoc />
     public Tensor ForwardCached(Tensor input, DecodingContext context)
     {
+        if (_placement == NormPlacement.After)
+        {
+            var y = _norm1.Forward(input + _attention.ForwardCached(input, context));
+            return _norm2.Forward(y + _feedForward2.Forward(FeedForwardHidden(y)));
+        }
+
         var x = input + _attention.ForwardCached(_norm1.Forward(input), context);
         return x + _feedForward2.Forward(FeedForwardHidden(_norm2.Forward(x)));
     }
@@ -559,7 +632,7 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
             : [_norm1, _attention, _norm2, _feedForward1, _feedForward2, _dropout];
 
     /// <inheritdoc />
-    public override string ToString() => $"TransformerEncoderLayer(dim {Dim})";
+    public override string ToString() => $"TransformerEncoderLayer(dim {Dim}{(_placement == NormPlacement.After ? ", post-norm" : "")})";
 }
 
 /// <summary>

@@ -33,7 +33,8 @@ public sealed record SafeTensorInfo(string Name, SafeTensorType Type, int[] Shap
 /// <summary>
 /// Reads safetensors weights: one file, or a sharded checkpoint (<c>model.safetensors.index.json</c> naming the file of
 /// each tensor). Tensors are read one at a time, straight from disk, and converted to float32, or, for bfloat16 ones, also
-/// copied as their 16-bit values (<see cref="ReadBFloat16"/>).
+/// copied as their 16-bit values (<see cref="ReadBFloat16"/>). Tensors of integer or boolean types (buffers a checkpoint
+/// may carry beside its weights, such as position ids) are left out (<see cref="LeftOut"/>), not refused.
 /// </summary>
 public sealed class SafeTensorsReader : IDisposable, ITensorStore
 {
@@ -50,6 +51,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
     };
 
     private readonly Dictionary<string, SafeTensorInfo> _tensors = [];
+    private readonly Dictionary<string, string> _leftOut = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FileStream> _files = [];
     private long _readTicks;                                            // Stopwatch ticks spent reading tensor bytes
     private long _bytesRead;                                            // bytes of tensor values read
@@ -60,6 +62,12 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
 
     /// <summary>The tensors, by name.</summary>
     public IReadOnlyDictionary<string, SafeTensorInfo> Tensors => _tensors;
+
+    /// <summary>
+    /// The tensors of integer or boolean types ("I64", "I32", "U8", "BOOL", ...), by name with their type: not weights
+    /// (buffers such as position ids), so they are not among <see cref="Tensors"/> and are not read.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> LeftOut => _leftOut;
 
     /// <summary>Metadata of the files (the "__metadata__" entries), merged.</summary>
     public Dictionary<string, string> Metadata { get; } = [];
@@ -110,7 +118,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
     /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored).</summary>
     public float[] Read(string name)
     {
-        var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}'.");
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw Missing(name);
         // Positional reads (no shared stream position, so tensors can be read concurrently) straight into the result:
         // float32 bytes land in place; 16-bit types are widened chunk by chunk through one pooled buffer.
         int count = checked((int)info.Count);
@@ -145,7 +153,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
     /// <summary>The 2-D tensor <paramref name="name"/> [rows, columns] as float32 values transposed to [columns, rows].</summary>
     public float[] ReadTransposed(string name)
     {
-        var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}'.");
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw Missing(name);
         if (info.Shape.Length != 2)
         {
             throw new ArgumentException($"'{name}' is [{string.Join(", ", info.Shape)}], not a matrix.", nameof(name));
@@ -382,6 +390,12 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
             }
 
             string dtype = (string)node!["dtype"]!;
+            if (dtype is "I64" or "I32" or "I16" or "I8" or "U64" or "U32" or "U16" or "U8" or "BOOL")
+            {
+                _leftOut[name] = dtype;                                     // a buffer (position ids, a mask), not a weight
+                continue;
+            }
+
             var type = dtype switch
             {
                 "F32" => SafeTensorType.F32,
@@ -395,6 +409,10 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
             _tensors[name] = new SafeTensorInfo(name, type, shape, dataStart + begin, end - begin, file);
         }
     }
+
+    private Exception Missing(string name) => _leftOut.TryGetValue(name, out string? type)
+        ? new NotSupportedException($"The tensor '{name}' is of type {type}, a buffer the reader leaves out (it reads F32, F16 and BF16 tensors).")
+        : new KeyNotFoundException($"No tensor named '{name}'.");
 
     internal static float[] Decode(byte[] bytes, SafeTensorType type, int count)
     {

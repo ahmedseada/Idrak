@@ -49,7 +49,13 @@ internal static class LibraryNetworkOps
         NetworkOps.Register("flatten", (b, _) => Of(b).Flatten());
         NetworkOps.Register("embedding", (b, a) => Of(b).Embedding(a.Int("vocabulary"), a.Int("dim")));
         NetworkOps.Register("positional", (b, a) => Of(b).PositionalEncoding(a.OptionalInt("maxLength")));
-        NetworkOps.Register("transformer", (b, a) => Of(b).TransformerEncoderLayer(a.Int("heads"), a.OptionalInt("ffDim"), a.Float("dropout"), a.Bool("causal")));
+        NetworkOps.Register("transformer", (b, a) => Of(b).TransformerEncoderLayer(a.Int("heads"), a.OptionalInt("ffDim"), a.Float("dropout"), a.Bool("causal"),
+            (string?)a.Json["norms"] switch
+            {
+                null or "before" => NormPlacement.Before,
+                "after" => NormPlacement.After,
+                var other => throw new InvalidDataException($"The network step 'transformer' takes norms \"before\" or \"after\"; got \"{other}\"."),
+            }));
         NetworkOps.Register("attention", (b, a) => Of(b).MultiHeadAttention(a.Int("heads"), a.Bool("causal"), a.Float("dropout")));
         NetworkOps.Register("lstm", (b, a) => a.Has("bidirectional")
             ? Of(b).LSTM(a.Int("hidden"), a.Bool("returnSequences"), a.Bool("bidirectional"), a.OptionalInt("layers") ?? 1)

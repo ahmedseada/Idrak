@@ -1167,7 +1167,7 @@ public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INet
   public Idrak.Layers.NetworkBuilder Sigmoid()
   public Idrak.Layers.NetworkBuilder Softmax()
   public Idrak.Layers.NetworkBuilder Tanh()
-  public Idrak.Layers.NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false)
+  public Idrak.Layers.NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, Idrak.Layers.NormPlacement placement = (Idrak.Layers.NormPlacement)0)
   public Idrak.Layers.NetworkBuilder Upsample((float, float) scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
   public Idrak.Layers.NetworkBuilder Upsample(float scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
   public Idrak.Layers.NetworkBuilder UpsampleToSize((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
@@ -1179,6 +1179,10 @@ public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INet
   public bool IsDescribable { get; }
   public int Count { get; }
   public override string ToString()
+
+public enum Idrak.Layers.NormPlacement : int
+  After = 1
+  Before = 0
 
 public sealed class Idrak.Layers.PackedSequences : System.IDisposable
   nested Idrak.Layers.PackedSequences.Scope (below)
@@ -1346,12 +1350,14 @@ public sealed class Idrak.Layers.Tanh : Idrak.Abstraction.Module
 
 public sealed class Idrak.Layers.TransformerEncoderLayer : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
+  public Idrak.Layers.NormPlacement Placement { get; init; }
   public TransformerEncoderLayer(int dim, int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public int Dim { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
   public override string ToString()
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2)
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2, Idrak.Abstraction.Module activation)
+  public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2, Idrak.Abstraction.Module? activation, Idrak.Layers.NormPlacement placement)
 
 public sealed class Idrak.Layers.Upsample : Idrak.Abstraction.Module
   public (float, float)? ScaleFactor { get; }
@@ -1424,6 +1430,7 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
 public sealed record Idrak.Models.Abstractions.EncoderHeadRequest : System.IEquatable<Idrak.Models.Abstractions.EncoderHeadRequest>
   public EncoderHeadRequest(int Width, int Outputs, System.Text.Json.Nodes.JsonObject Settings, Idrak.Abstraction.Device? Device = null, int Seed = 0, System.Func<string, System.Collections.Generic.IReadOnlyList<int>, float[]?>? Weights = null)
   public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Layers.Embedding? TiedTo { get; init; }
   public System.Func<string, System.Collections.Generic.IReadOnlyList<int>, float[]?>? Weights { get; init; }
   public System.Text.Json.Nodes.JsonObject Settings { get; init; }
   public int Outputs { get; init; }
@@ -1432,6 +1439,7 @@ public sealed record Idrak.Models.Abstractions.EncoderHeadRequest : System.IEqua
 
 public static class Idrak.Models.Abstractions.EncoderHeads
   public const string MaskedLanguageModel = "masked-lm"
+  public const string Pooler = "pooler"
   public const string SequenceClassification = "sequence-classification"
   public static Idrak.Models.EncoderHead Create(string name, Idrak.Models.Abstractions.EncoderHeadRequest request)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
@@ -2079,6 +2087,7 @@ public enum Idrak.Models.SafeTensorType : int
 public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public System.Collections.Generic.Dictionary<string, string> Metadata { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.SafeTensorInfo> Tensors { get; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> LeftOut { get; }
   public System.TimeSpan ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)

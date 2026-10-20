@@ -172,7 +172,7 @@ internal static partial class Tests
 
         var misplaced = Abstractions().Select(a => Misplaced(a.Type)).OfType<string>().ToList();
         Check(misplaced.Count == 0, $"contracts that do not live with their users (decision 10): {string.Join("; ", misplaced)}");
-        var stale = Shared.Value.Keys.Where(t => ContractUsers().Users[t].Count > 1).Select(Display).Order(StringComparer.Ordinal).ToList();
+        var stale = Shared.Value.Keys.Where(t => PlacingUsers(t).Count > 1).Select(Display).Order(StringComparer.Ordinal).ToList();
         Check(stale.Count == 0, $"{SharedContractsPath}: several packages use these now (decision 10 keeps them in Abstraction); remove their lines: {string.Join(", ", stale)}");
     }
 
@@ -198,7 +198,7 @@ internal static partial class Tests
     // uses it; the one package that uses it otherwise; where it is when no library assembly does.
     private static string BelongsIn(Type type)
     {
-        var users = ContractUsers().Users[Outermost(type)];
+        var users = PlacingUsers(Outermost(type));
         if (Shared.Value.ContainsKey(Outermost(type)))
         {
             return AbstractionAssembly;                                    // any package can use it (shared-contracts.txt)
@@ -212,6 +212,19 @@ internal static partial class Tests
         };
     }
 
+    // The plug-in packages (plan 26): model families written on the library's public API, as an application is. They
+    // register into the library's contracts and call them, so their use places no contract: a contract only they use stays
+    // where the library keeps it, and theirs with another package's is not "several packages".
+    private static readonly string[] PluginPackageNames = ["Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins"];
+
+    // The users that decide where a contract lives: every library assembly using it but the plug-in packages (unless the
+    // contract is one of theirs).
+    private static HashSet<string> PlacingUsers(Type type)
+    {
+        string own = type.Assembly.GetName().Name!;
+        return [.. ContractUsers().Users[type].Where(u => u == own || !PluginPackageNames.Contains(u, StringComparer.Ordinal))];
+    }
+
     // Why a contract is in the wrong assembly, with where it goes; null when it is where decision 10 puts it.
     private static string? Misplaced(Type type)
     {
@@ -221,7 +234,7 @@ internal static partial class Tests
             return null;
         }
 
-        string users = string.Join(", ", ContractUsers().Users[Outermost(type)].Order(StringComparer.Ordinal));
+        string users = string.Join(", ", PlacingUsers(Outermost(type)).Order(StringComparer.Ordinal));
         return target == AbstractionAssembly
             ? $"{Display(type)} (in {assembly}) is used by {users}: move it to {AbstractionArea(type)}"
             : $"{Display(type)} (in {assembly}) is used by {target} alone: move it to {target}, namespace {PackageNamespace(type, target)}";
