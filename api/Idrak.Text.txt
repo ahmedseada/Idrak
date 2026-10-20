@@ -41,6 +41,12 @@ public interface Idrak.Text.Abstractions.IJsonRepair
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Text.Abstractions.IKeywordIndex
+  public Idrak.Text.Abstractions.KeywordIndexOptions Options { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.SearchHit> Search(string query, int top)
+  public int Count { get; }
+  public string Name { get; }
+
 public interface Idrak.Text.Abstractions.IPagePartFiller
   public string Name { get; }
   public string Summary { get; }
@@ -90,6 +96,24 @@ public static class Idrak.Text.Abstractions.JsonRepairs
   public static string? Origin(string name)
   public static void Register(Idrak.Text.Abstractions.IJsonRepair repair)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Text.Abstractions.KeywordIndexOptions : System.IEquatable<Idrak.Text.Abstractions.KeywordIndexOptions>
+  public KeywordIndexOptions()
+  public System.Collections.Generic.IReadOnlyDictionary<string, double> Parameters { get; init; }
+  public double B { get; init; }
+  public double K1 { get; init; }
+
+public static class Idrak.Text.Abstractions.KeywordIndexes
+  public const string Bm25 = "bm25"
+  public static Idrak.Text.Abstractions.IKeywordIndex Create(string name, System.Collections.Generic.IEnumerable<string> texts, Idrak.Text.Abstractions.KeywordIndexOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex> Get(string name)
+  public static System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex>? Default(string name)
+  public static System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex>? Find(string name)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex> factory, string? summary = null)
 
 public sealed class Idrak.Text.Abstractions.PagePartContext
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PagePartContext()
@@ -934,12 +958,14 @@ public sealed record Idrak.Text.Retrieval.Abstractions.RetrievedChunk : System.I
   public int? KeywordRank { get; init; }
   public int? VectorRank { get; init; }
 
-public sealed class Idrak.Text.Retrieval.Bm25Index
+public sealed class Idrak.Text.Retrieval.Bm25Index : Idrak.Text.Abstractions.IKeywordIndex
   public Bm25Index(System.Collections.Generic.IEnumerable<string> texts, double k1 = 1.2, double b = 0.75)
+  public Idrak.Text.Abstractions.KeywordIndexOptions Options { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.SearchHit> Search(string query, int top)
   public double B { get; }
   public double K1 { get; }
   public int Count { get; }
+  public string Name { get; }
 
 public enum Idrak.Text.Retrieval.ChunkUnit : int
   Sentences = 1
@@ -1007,7 +1033,7 @@ public sealed class Idrak.Text.Retrieval.RetrievalIndex : Idrak.Text.Retrieval.A
   public Idrak.Abstraction.Retrieval.IEmbedder? Embedder { get; }
   public Idrak.Abstraction.Retrieval.IVectorStore? Store { get; }
   public Idrak.Abstraction.Retrieval.VectorIndex? Vectors { get; }
-  public Idrak.Text.Retrieval.Bm25Index? Keywords { get; }
+  public Idrak.Text.Abstractions.IKeywordIndex? Keywords { get; }
   public Idrak.Text.Retrieval.TextEncoder? Encoder { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.Chunk> Chunks { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk> Search(string query, int top)
@@ -1027,6 +1053,7 @@ public sealed class Idrak.Text.Retrieval.RetrievalIndexBuilder
   public Idrak.Text.Retrieval.RetrievalIndexBuilder Documents(System.Collections.Generic.IEnumerable<Idrak.Text.Retrieval.Document> documents, Idrak.Text.Retrieval.ChunkUnit unit, int size, int overlap)
   public Idrak.Text.Retrieval.RetrievalIndexBuilder Embeddings(Idrak.Abstraction.Retrieval.IEmbedder embedder, int batchSize = 256)
   public Idrak.Text.Retrieval.RetrievalIndexBuilder Fusion(int k, int depth)
+  public Idrak.Text.Retrieval.RetrievalIndexBuilder Keywords(string name, Idrak.Text.Abstractions.KeywordIndexOptions? options = null)
   public Idrak.Text.Retrieval.RetrievalIndexBuilder VectorStore(Idrak.Abstraction.Retrieval.IVectorStore store)
   public System.Threading.Tasks.ValueTask<Idrak.Text.Retrieval.RetrievalIndex> BuildAsync(System.Threading.CancellationToken cancellationToken = default)
 

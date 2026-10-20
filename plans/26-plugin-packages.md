@@ -9,7 +9,7 @@ built. No phase starts until the owner names it.
 |---|---|---|---|
 | P0 | `Idrak.Nlp` renamed `Idrak.Text` (project, assembly, package, namespaces, every reference) | A, alone | Done 2026-10-20; CPU pass |
 | P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | A | Done 2026-10-20; CPU pass (2 leftovers, see its note) |
-| P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Not started |
+| P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Done 2026-10-20; CPU pass |
 | P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Not started |
 | P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Not started |
 | P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Not started |
@@ -324,6 +324,38 @@ the rename reaches every package.
 byte for byte on the CLI's own tests, the tokenizer's ids for BMP text unchanged); the samples' tests pass with the
 library's versions.
 
+**P2 as built (2026-10-20).** G1-G7 and P1's setting:
+- **G1** `RenamedTensorStore` (`src/Idrak/Models/RenamedTensorStore.cs`): a name map or a rename function, weight-norm
+  folding (`weight_g`/`weight_v` and the `parametrizations` form), owning the inner store or not; passes the inner
+  store's format, bfloat16 copies, transposed reads and read statistics. The Qwen-VL and Gemma 3 copies are gone;
+  `OpenVoiceTensors` keeps only its name map.
+- **G2** probe `timings` (intrusive): each operation by name, direction and shape, each layer by type and depth (tables
+  "operation timings", "layer timings"); timing synchronization only during its run, a key stored once per new shape.
+  The Chat sample's `ProfileRecorder` is gone; its profile command runs `Profiler.Run` with the probe.
+- **G3** `CharTokenizerOptions { CodePoints, UnknownCharacter }`: default unchanged (BMP ids and the saved file).
+  GptTraining's `RuneTokenizer` is gone (same ids on random text). Code-point mode refuses a vocabulary with a repeated
+  or empty entry, where the sample's tolerated it.
+- **G4** `IProgressReporter` + `ProgressReporters` (`Idrak.Abstraction.Diagnostics`): `console` (the CLI's line, output
+  byte for byte), `plain`, `json`, `quiet`; chosen by option, then `IDRAK_PROGRESS`, then the output; a report between
+  showings allocates nothing (the suite checks it). The CLI's `ProgressLine` is a thin adapter; ArabicOcr's `LiveLine` is
+  gone; LegalOcr's `StartupLoad` uses the library's (its test expects the library's line).
+- **G5** `IKeywordIndex` + `KeywordIndexes` (`Idrak.Text.Abstractions`), `bm25` with `k1`/`b`; `RetrievalIndex` builds
+  through it (rankings and the saved default index unchanged); `idrak rag index --keywords NAME`. ReRanker's `Bm25` is
+  gone (its old one also returned zero-score passages after the matches; the library's leaves them out).
+- **G6** `INetworkRecipe` + `NetworkRecipes` (`src/Idrak/Layers/Abstractions/NetworkRecipes.cs`, guarded): `mlp`, `cnn`,
+  `rnn`, `transformer-classifier`, `gpt` over the static `Architectures`; `CharGpt.Create` builds through `gpt` (the
+  same network weight for weight, tested).
+- **G7** `FiniteJsonNumbers` (single and double converters); the profile and telemetry JSON writers use it (output
+  unchanged); LegalOcr's `FiniteNumbers.cs` is gone.
+- **P1's setting:** `IDRAK_PLUGIN_PACKAGES` (`all`, `none`, or `text,vision,audio`), refused naming the variable; it
+  and `IDRAK_PROGRESS` are in the tool's environment table.
+- **Left (goes with P3):** GptTraining's own tqdm-style progress line (decision 9) moves onto the library's reporter; the
+  new registries join `plugins list`. **Found, listed for the owner:** `Downloader.Size` formats with the current
+  culture (rule 49; the CLI hides it with invariant globalization).
+- **Run (CPU, the agent):** 219 passed, 1 failed (`profiler:`'s list of probes lacked `timings`), then 2 of 2; samples
+  ArabicOcr 14, LegalOcr 12. **Merged on P8 (2026-10-20, b9540df):** one build, the 7 changed samples built; the P2
+  filters with `engine:`, `decoder:`, `sampler:`: 249 passed, 0 failed; ArabicOcr 14, LegalOcr 12.
+
 ## Phase P3: generic components, vision part (G8-G14)
 
 - New contracts first (G11 line segmentation, G12 text matching, G13 reading order, and G14's extension of
@@ -521,3 +553,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P0 | CPU (cloud, 4 threads) | the P0 filters above, the three sample test projects | 158 passed, 1 failed (naming test matched itself), then 3 of 3; samples 4, 14, 12 passed |
 | 2026-10-20 | P1 merged | CPU (cloud, 4 threads) | the P1 filters (merge on c023893) | 133 passed, 0 failed |
 | 2026-10-20 | P8 merged (with P1's leftover message) | CPU (cloud, 4 threads) | the P1 and P8 filters together | 287 passed, 0 failed |
+| 2026-10-20 | P2 merged (on P8) | CPU (cloud, 4 threads) | the P2 filters with engine, decoder, sampler; ArabicOcr and LegalOcr tests | 249 passed, 0 failed; 14 and 12 passed |

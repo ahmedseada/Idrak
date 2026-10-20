@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
+using Idrak.Text.Abstractions;
 using Idrak.Text.Retrieval.Abstractions;
 
 namespace Idrak.Text.Retrieval;
@@ -125,9 +126,10 @@ public static partial class Chunker
 
 /// <summary>
 /// Okapi BM25 keyword search: scores a text by the query words it contains, weighting rare words more, damping
-/// repeated words and penalizing long texts slightly. Words are split like <see cref="WordTokenizer.Split"/>.
+/// repeated words and penalizing long texts slightly. Words are split like <see cref="WordTokenizer.Split"/>. The library's
+/// keyword index, registered as <see cref="KeywordIndexes.Bm25"/>.
 /// </summary>
-public sealed class Bm25Index
+public sealed class Bm25Index : IKeywordIndex
 {
     private readonly int[] _lengths;
     // Each word's idf and the texts holding it (in id order), found with one lookup.
@@ -142,6 +144,7 @@ public sealed class Bm25Index
     {
         K1 = k1;
         B = b;
+        Options = new KeywordIndexOptions { K1 = k1, B = b };
         // Words get ids in order of first use (a string only for a new word); each text is counted by id, its words
         // taken in order of first use as a word-keyed count dictionary would list them.
         var ids = new Dictionary<string, int>();
@@ -200,6 +203,12 @@ public sealed class Bm25Index
 
     /// <summary>Number of indexed texts.</summary>
     public int Count => _lengths.Length;
+
+    /// <inheritdoc />
+    public string Name => KeywordIndexes.Bm25;
+
+    /// <inheritdoc />
+    public KeywordIndexOptions Options { get; }
 
     /// <summary>The <paramref name="top"/> best texts for <paramref name="query"/>, best first (ties by id); texts sharing no word are left out.</summary>
     public IReadOnlyList<SearchHit> Search(string query, int top)

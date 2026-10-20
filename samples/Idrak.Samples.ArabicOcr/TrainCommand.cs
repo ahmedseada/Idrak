@@ -93,15 +93,20 @@ internal static class TrainCommand
         }
 
         // Loading shows where it is: reading tens of thousands of transcriptions and decoding as many images takes a while.
-        var live = new LiveLine(error);
-        var loading = Stopwatch.StartNew();
-        Action<int, int> Phase(string what, string unit) => (done, total) => live.Show(() =>
+        using var live = ProgressReporters.Start("loading", options: new ProgressOptions { Output = error });
+        Action<int, int> Phase(string what, string unit)
         {
-            double seconds = loading.Elapsed.TotalSeconds, rate = done / Math.Max(1e-9, seconds);
-            var left = TimeSpan.FromSeconds(rate > 0 ? (total - done) / rate : 0);
-            return FormattableString.Invariant($"{what} {LiveLine.Bar(done / (double)Math.Max(1, total), 10)} {done:N0}/{total:N0} {unit}")
-                   + FormattableString.Invariant($" | {rate:F0} {unit}/s | {LiveLine.Time(loading.Elapsed)}, {LiveLine.Time(left)} left");
-        }, now: done == total);
+            live.NextStage($"{what} ({unit})", null, ProgressUnit.Items, keepLine: false);   // the amount and the clock start again
+            return (done, total) =>
+            {
+                live.Total = total;
+                live.Report(done);
+                if (done == total)
+                {
+                    live.Show();
+                }
+            };
+        }
 
         var train = LineFiles.Read(data, drafts, Phase("reading the training transcriptions", "files"));
         if (train.Count == 0)
@@ -109,7 +114,6 @@ internal static class TrainCommand
             throw new UsageException($"{data} has no line images with a transcription ({(drafts ? ".txt, .aligned.txt or .draft.txt" : "a filled .txt; drafts need --include-drafts")}).");
         }
 
-        loading.Restart();
         var evaluation = a.Option("--eval") is { } evalFolder ? LineFiles.Read(evalFolder, drafts: false, Phase("reading the held-out transcriptions", "files")) : [];
         var alphabet = train.SelectMany(s => s.Text.EnumerateRunes()).Select(r => r.ToString()).Distinct().Order(StringComparer.Ordinal).ToArray();
         var settings = new RecognizerSettings
@@ -125,9 +129,7 @@ internal static class TrainCommand
 
         using var recognizer = Recognizer.Create(settings, context.Device, seed);
         var clock = Stopwatch.StartNew();
-        loading.Restart();
         var trainLines = Prepare(recognizer, train, Phase("decoding and preparing the training lines", "lines"));
-        loading.Restart();
         var evalLines = new ImageData[evaluation.Count];
         var evalProgress = Phase("decoding the held-out lines", "lines");
         int decoded = 0;
@@ -136,7 +138,7 @@ internal static class TrainCommand
             evalLines[i] = ImageCodecs.Decode(evaluation[i].Image);
             evalProgress(Interlocked.Increment(ref decoded), evalLines.Length);
         });
-        live.Clear();
+        live.Erase();
         var labels = train.Select(s => recognizer.Encode(s.Text).Labels).ToArray();
         var unknown = new SortedDictionary<string, int>(StringComparer.Ordinal);
         foreach (var sample in evaluation)
@@ -174,7 +176,7 @@ internal static class TrainCommand
         using var subscription = log is null ? null : Telemetry.Subscribe(log);
         void Say(string line)
         {
-            live.Clear();
+            live.Erase();
             context.Say(line);
         }
 
@@ -206,6 +208,16 @@ internal static class TrainCommand
             double lossSum = 0, stepLoss = double.NaN;
             int seen = 0, done = 0;
             TimeSpan dataTime = default, computeTime = default;
+            // Most important first: a narrow console cuts the end of the line. Made only when the line is shown.
+            live.NextStage(FormattableString.Invariant($"epoch {epoch}/{epochs}"), stepsPerEpoch, ProgressUnit.Items, keepLine: false);
+            live.Detail = () =>
+            {
+                var memory = ComputeResources.GetMemoryUsage(context.Device);
+                return FormattableString.Invariant($"loss {lossSum / Math.Max(1, seen):F4} (step {stepLoss:F4}) | lr {optimizer.LearningRate:G3}")
+                       + FormattableString.Invariant($" | {seen / Math.Max(1e-9, epochClock.Elapsed.TotalSeconds):F0} lines/s")
+                       + FormattableString.Invariant($" | data {dataTime.TotalMilliseconds / Math.Max(1, done):F0} + step {computeTime.TotalMilliseconds / Math.Max(1, done):F0} ms")
+                       + $" | memory {ProgressText.Bytes(memory.InUse)}" + (memory.Peak > 0 ? $", peak {ProgressText.Bytes(memory.Peak)}" : "");
+            };
             foreach (var batch in Batches(trainLines, batchSize, seed, epoch))
             {
                 // --profile: steps profileWarm + 1 ... + N timed as they run; the N after them with every kernel timed.
@@ -295,29 +307,16 @@ internal static class TrainCommand
                     Telemetry.BatchCompleted(new BatchCompleted(epoch, done, stepsPerEpoch, step, batch.Length, stepLoss, optimizer.LearningRate, null, preparing, compute));
                 }
 
-                int epochNow = epoch, doneNow = done, seenNow = seen;
-                double sumNow = lossSum, lastNow = stepLoss, rateNow = optimizer.LearningRate;
-                live.Show(() =>
-                {
-                    double fraction = doneNow / (double)Math.Max(1, stepsPerEpoch);
-                    var elapsed = epochClock.Elapsed;
-                    var memory = ComputeResources.GetMemoryUsage(context.Device);
-                    var left = TimeSpan.FromSeconds(elapsed.TotalSeconds / Math.Max(fraction, 1e-9) * (1 - fraction));
-                    // Most important first: a narrow console cuts the end of the line.
-                    return FormattableString.Invariant($"epoch {epochNow}/{epochs} {LiveLine.Bar(fraction, 10)} {fraction * 100:F1}% {doneNow:N0}/{stepsPerEpoch:N0}")
-                           + FormattableString.Invariant($" | loss {sumNow / Math.Max(1, seenNow):F4} (step {lastNow:F4}) | lr {rateNow:G3}")
-                           + $" | {LiveLine.Time(elapsed)}, {LiveLine.Time(left)} left"
-                           + FormattableString.Invariant($" | {seenNow / Math.Max(1e-9, elapsed.TotalSeconds):F0} lines/s")
-                           + FormattableString.Invariant($" | data {dataTime.TotalMilliseconds / doneNow:F0} + step {computeTime.TotalMilliseconds / doneNow:F0} ms")
-                           + $" | memory {LiveLine.Bytes(memory.InUse)}" + (memory.Peak > 0 ? $", peak {LiveLine.Bytes(memory.Peak)}" : "");
-                });
+                live.Report(done);
             }
 
             double trainLoss = lossSum / Math.Max(1, seen);
             double? epochCer = null, epochWer = null;
             if (evaluation.Count > 0)
             {
-                live.Show(() => $"epoch {epoch}/{epochs}  reading the {evaluation.Count:N0} held-out lines for CER and WER ...", now: true);
+                live.Detail = null;
+                live.NextStage($"epoch {epoch}/{epochs}: reading the {evaluation.Count:N0} held-out lines for CER and WER", null, ProgressUnit.Elapsed, keepLine: false);
+                live.Show();
                 var readings = recognizer.Read(evalLines, CtcDecoders.Greedy, new CtcDecodeOptions(), measured);
                 var pairs = readings.Zip(evaluation).Select(p => (p.First.Text, p.Second.Text)).ToArray();
                 epochCer = TuningScore.Sum(pairs.Select(p => cer.Score(p.Item1, p.Item2))).Value;

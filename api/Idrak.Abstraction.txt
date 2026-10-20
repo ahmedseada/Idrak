@@ -2005,6 +2005,20 @@ public interface Idrak.Abstraction.Diagnostics.IProfileWriter
   public string Summary { get; }
   public void Write(Idrak.Abstraction.Diagnostics.ProfileReport report, System.IO.TextWriter output)
 
+public interface Idrak.Abstraction.Diagnostics.IProgressReporter : System.IDisposable, System.IProgress<long>
+  public Idrak.Abstraction.Diagnostics.ProgressUnit Unit { get; set; }
+  public System.Func<string>? Detail { get; set; }
+  public bool Enabled { get; }
+  public long Done { get; }
+  public long? Total { get; set; }
+  public string Label { get; set; }
+  public void Advance(long amount = 1)
+  public void Clear()
+  public void Erase()
+  public void Finish(string? message = null)
+  public void NextStage(string label, long? total, Idrak.Abstraction.Diagnostics.ProgressUnit unit, string? message = null, bool keepLine = true)
+  public void Show()
+
 public interface Idrak.Abstraction.Diagnostics.ISettingAdvisor
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Diagnostics.SettingSuggestion> Suggest(Idrak.Abstraction.Diagnostics.AdviceSituation situation)
   public string Name { get; }
@@ -2281,6 +2295,51 @@ public static class Idrak.Abstraction.Diagnostics.ProfileWriters
 public static class Idrak.Abstraction.Diagnostics.Profiler
   public static Idrak.Abstraction.Diagnostics.ProfileReport Run(string name, Idrak.Abstraction.Device device, System.Action<Idrak.Abstraction.Diagnostics.ProfileRun> workload, Idrak.Abstraction.Diagnostics.ProfileOptions? options = null)
 
+public sealed record Idrak.Abstraction.Diagnostics.ProgressOptions : System.IEquatable<Idrak.Abstraction.Diagnostics.ProgressOptions>
+  public ProgressOptions()
+  public System.IO.TextWriter? Output { get; init; }
+  public System.TimeSpan? Interval { get; init; }
+  public string? Reporter { get; init; }
+
+public static class Idrak.Abstraction.Diagnostics.ProgressReporters
+  public const string ConsoleReporter = "console"
+  public const string EnvironmentVariable = "IDRAK_PROGRESS"
+  public const string JsonReporter = "json"
+  public const string PlainReporter = "plain"
+  public const string QuietReporter = "quiet"
+  public static Idrak.Abstraction.Diagnostics.IProgressReporter Start(string label, long? total = null, Idrak.Abstraction.Diagnostics.ProgressUnit unit = (Idrak.Abstraction.Diagnostics.ProgressUnit)0, Idrak.Abstraction.Diagnostics.ProgressOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter> Get(string name)
+  public static System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>? Default(string name)
+  public static System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>? Find(string name)
+  public static bool Unregister(string name)
+  public static string Choose(Idrak.Abstraction.Diagnostics.ProgressOptions? options = null)
+  public static string Describe()
+  public static string? FromEnvironment()
+  public static string? Origin(string name)
+  public static void EraseOn(System.IO.TextWriter writer)
+  public static void Register(string name, System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter> factory, string? summary = null)
+
+public sealed record Idrak.Abstraction.Diagnostics.ProgressRequest : System.IEquatable<Idrak.Abstraction.Diagnostics.ProgressRequest>
+  public Idrak.Abstraction.Diagnostics.ProgressUnit Unit { get; init; }
+  public ProgressRequest(string Label, long? Total, Idrak.Abstraction.Diagnostics.ProgressUnit Unit, System.IO.TextWriter Output, System.TimeSpan? Interval)
+  public System.IO.TextWriter Output { get; init; }
+  public System.TimeSpan? Interval { get; init; }
+  public long? Total { get; init; }
+  public string Label { get; init; }
+
+public static class Idrak.Abstraction.Diagnostics.ProgressText
+  public static string Amount(long value, Idrak.Abstraction.Diagnostics.ProgressUnit unit)
+  public static string Bytes(long bytes)
+  public static string Duration(System.TimeSpan time)
+  public static string Format(string label, long done, long? total, System.TimeSpan elapsed, Idrak.Abstraction.Diagnostics.ProgressUnit unit)
+  public static string Rate(double perSecond, Idrak.Abstraction.Diagnostics.ProgressUnit unit)
+
+public enum Idrak.Abstraction.Diagnostics.ProgressUnit : int
+  Bytes = 1
+  Elapsed = 2
+  Items = 0
+
 public enum Idrak.Abstraction.Diagnostics.RankState : int
   Dropped = 2
   Finished = 5
@@ -2441,6 +2500,23 @@ public sealed class Idrak.Abstraction.DifferentiableFunction
   public Idrak.Abstraction.Tensor Apply(scoped params System.ReadOnlySpan<Idrak.Abstraction.Tensor> inputs)
   public string Name { get; }
 
+public sealed class Idrak.Abstraction.FiniteDoubleJsonConverter : System.Text.Json.Serialization.JsonConverter<double>
+  public FiniteDoubleJsonConverter()
+  public override bool HandleNull { get; }
+  public override double Read(ref System.Text.Json.Utf8JsonReader reader, System.Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+  public override void Write(System.Text.Json.Utf8JsonWriter writer, double value, System.Text.Json.JsonSerializerOptions options)
+
+public static class Idrak.Abstraction.FiniteJsonNumbers
+  public static System.Text.Json.JsonSerializerOptions Add(System.Text.Json.JsonSerializerOptions options)
+  public static void WriteNumber(System.Text.Json.Utf8JsonWriter writer, string name, double value)
+  public static void WriteNumberValue(System.Text.Json.Utf8JsonWriter writer, double value)
+
+public sealed class Idrak.Abstraction.FiniteSingleJsonConverter : System.Text.Json.Serialization.JsonConverter<float>
+  public FiniteSingleJsonConverter()
+  public override bool HandleNull { get; }
+  public override float Read(ref System.Text.Json.Utf8JsonReader reader, System.Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+  public override void Write(System.Text.Json.Utf8JsonWriter writer, float value, System.Text.Json.JsonSerializerOptions options)
+
 public static class Idrak.Abstraction.Formats.CheckpointFormats
   public static Idrak.Abstraction.Formats.ICheckpointFormat For(string path)
   public static Idrak.Abstraction.Formats.ICheckpointFormat Get(string name)
@@ -2564,7 +2640,10 @@ public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstract
   public static void CopyStoredBits(System.ReadOnlySpan<ushort> stored, System.Span<ushort> destination)
 
 public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstraction.Generation.ITokenizer
+  public CharTokenizer(System.Collections.Generic.IEnumerable<string> characters, Idrak.Abstraction.Generation.CharTokenizerOptions options)
+  public CharTokenizer(string vocabulary, Idrak.Abstraction.Generation.CharTokenizerOptions options)
   public CharTokenizer(string vocabulary, char? unknownCharacter = null)
+  public Idrak.Abstraction.Generation.CharTokenizerOptions Options { get; }
   public System.Collections.Generic.IReadOnlyList<int> Encode(string text)
   public bool Covers(string text)
   public char? UnknownCharacter { get; }
@@ -2575,6 +2654,11 @@ public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstracti
   public string Vocabulary { get; }
   public void Save(System.IO.Stream stream)
   public void Save(string path)
+
+public sealed record Idrak.Abstraction.Generation.CharTokenizerOptions : System.IEquatable<Idrak.Abstraction.Generation.CharTokenizerOptions>
+  public CharTokenizerOptions()
+  public bool CodePoints { get; init; }
+  public string? UnknownCharacter { get; init; }
 
 public sealed record Idrak.Abstraction.Generation.ChatChunk : System.IEquatable<Idrak.Abstraction.Generation.ChatChunk>
   public ChatChunk(Idrak.Abstraction.Generation.ChatDelta Delta, bool Done = false, string? DoneReason = null, Idrak.Abstraction.Generation.ChatMessage? Message = null, Idrak.Abstraction.Generation.GenerationStats? Stats = null)

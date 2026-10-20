@@ -136,8 +136,11 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckCollectives(Idrak.Abstraction.Testing.CollectivesUnderTest collectives, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckKeywordIndex(Idrak.Abstraction.Testing.KeywordIndexUnderTest index, Idrak.Abstraction.Testing.KeywordIndexUnderTest? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckLinkProfile(Idrak.Abstraction.Cluster.ILinkProfile profile, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckNetworkRecipe(string recipe, Idrak.Abstraction.Testing.NetworkRecipeUnderTest builder, Idrak.Abstraction.Testing.NetworkRecipeUnderTest? reference = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.NetworkRecipeSample>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckPretrained(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IPretrainedTokenizer? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckProgressReporter(string name, System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>? factory = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckSpeechRecognizer(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -297,12 +300,47 @@ public sealed class Idrak.Abstraction.Testing.ImageModelUnderTest : System.IDisp
   public string Task { get; }
   public void Dispose()
 
+public sealed class Idrak.Abstraction.Testing.KeywordIndexSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.KeywordIndexUnderTest>
+  public Idrak.Abstraction.Testing.KeywordIndexUnderTest? Reference { get; }
+  public KeywordIndexSuite(Idrak.Abstraction.Testing.KeywordIndexUnderTest? reference = null)
+  public double Tolerance { get; init; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.KeywordIndexUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.KeywordIndexUnderTest : System.IEquatable<Idrak.Abstraction.Testing.KeywordIndexUnderTest>
+  public KeywordIndexUnderTest(System.Func<System.Collections.Generic.IReadOnlyList<string>, Idrak.Abstraction.Testing.KeywordSearch> Build)
+  public System.Func<System.Collections.Generic.IReadOnlyList<string>, Idrak.Abstraction.Testing.KeywordSearch> Build { get; init; }
+
+public delegate System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.SearchHit> Idrak.Abstraction.Testing.KeywordSearch(string query, int top)
+
 public sealed class Idrak.Abstraction.Testing.LinkProfileSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Cluster.ILinkProfile>
   public LinkProfileSuite()
   public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Cluster.ILinkProfile implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.NetworkRecipeSample : System.IEquatable<Idrak.Abstraction.Testing.NetworkRecipeSample>
+  public NetworkRecipeSample(System.Text.Json.Nodes.JsonObject Arguments, int[] InputShape, int? Vocabulary = null)
+  public System.Text.Json.Nodes.JsonObject Arguments { get; init; }
+  public int? Vocabulary { get; init; }
+  public int[] InputShape { get; init; }
+
+public sealed class Idrak.Abstraction.Testing.NetworkRecipeSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.NetworkRecipeUnderTest>
+  public Idrak.Abstraction.Testing.NetworkRecipeUnderTest? Reference { get; }
+  public NetworkRecipeSuite(string recipe, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.NetworkRecipeSample>? samples = null, Idrak.Abstraction.Testing.NetworkRecipeUnderTest? reference = null)
+  public float Tolerance { get; init; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.NetworkRecipeUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+  public string Recipe { get; }
+
+public sealed record Idrak.Abstraction.Testing.NetworkRecipeUnderTest : System.IEquatable<Idrak.Abstraction.Testing.NetworkRecipeUnderTest>
+  public NetworkRecipeUnderTest(System.Func<System.Text.Json.Nodes.JsonObject, System.Random, Idrak.Abstraction.Module> Build)
+  public System.Func<System.Text.Json.Nodes.JsonObject, System.Random, Idrak.Abstraction.Module> Build { get; init; }
 
 public sealed class Idrak.Abstraction.Testing.PositionBiasSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IAttentionPositionBias>
   public PositionBiasSuite(Idrak.Abstraction.Generation.IAttentionPositionBias? reference = null, Idrak.Abstraction.Device? device = null)
@@ -328,6 +366,13 @@ public sealed class Idrak.Abstraction.Testing.PretrainedTokenizerSuite : Idrak.A
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.IPretrainedTokenizer implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.ProgressReporterSuite : Idrak.Abstraction.Testing.ContractSuite<System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>>
+  public ProgressReporterSuite()
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter> implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public readonly record struct Idrak.Abstraction.Testing.RecognizedSegment : System.IEquatable<Idrak.Abstraction.Testing.RecognizedSegment>
   public RecognizedSegment(double Start, double End, string Text)

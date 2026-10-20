@@ -375,7 +375,9 @@ int Generate()
     var itos = LoadVocab(Path.Combine(outDir, "vocab.txt"));
     using var model = spec.Build(options: new DecoderBuildOptions { Device = device });
     model.Load(path);
-    var generator = new TextGenerator(model, new RuneTokenizer(itos), spec.MaxPositions);
+    // One token per code point, as the corpus was encoded; a symbol outside the vocabulary reads as a space (else id 0).
+    var tokenizer = new CharTokenizer(itos, new CharTokenizerOptions { CodePoints = true, UnknownCharacter = itos.Contains(" ") ? " " : itos[0] });
+    var generator = new TextGenerator(model, tokenizer, spec.MaxPositions);
     var generation = new GenerationOptions
     {
         NumPredict = Int("--tokens", 500), Temperature = Float("--temperature", 0.7f), TopK = Int("--top-k", 0), TopP = Float("--top-p", 0.9f),
@@ -685,42 +687,6 @@ internal sealed unsafe class TokenFile : IDisposable
         _view.SafeMemoryMappedViewHandle.ReleasePointer();
         _view.Dispose();
         _file.Dispose();
-    }
-}
-
-// Characters (Unicode code points) ↔ ids for generation.
-internal sealed class RuneTokenizer(List<string> itos) : ITokenizer
-{
-    private readonly Dictionary<string, int> _stoi = itos.Select((s, i) => (s, i)).GroupBy(p => p.s).ToDictionary(g => g.Key, g => g.First().i);
-
-    public int VocabularySize => itos.Count;
-
-    public IReadOnlyList<int> Encode(string text)
-    {
-        int unknown = _stoi.TryGetValue(" ", out int space) ? space : 0;
-        var ids = new List<int>(text.Length);
-        var lookup = _stoi.GetAlternateLookup<ReadOnlySpan<char>>();                      // by the rune's chars: no string a character
-        Span<char> pair = stackalloc char[2];
-        foreach (var rune in text.EnumerateRunes())
-        {
-            ids.Add(lookup.TryGetValue(pair[..rune.EncodeToUtf16(pair)], out int id) ? id : unknown);
-        }
-
-        return ids;
-    }
-
-    public string Decode(IEnumerable<int> ids)
-    {
-        var sb = new StringBuilder();
-        foreach (int id in ids)
-        {
-            if ((uint)id < (uint)itos.Count)
-            {
-                sb.Append(itos[id]);
-            }
-        }
-
-        return sb.ToString();
     }
 }
 
