@@ -12,8 +12,8 @@ using Idrak.Vision.Abstractions;
 namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
-/// <c>idrak predict</c> on an image model: classes with their probabilities, boxes, per-class pixel counts (and mask PNGs)
-/// or feature vectors (and .npy files), through the model's own preprocessing. Images whose preprocessing gives the same
+/// <c>idrak predict</c> on an image model: classes with their probabilities, boxes, per-class pixel counts (and mask PNGs),
+/// feature vectors (and .npy files) or a line recognizer's texts, through the model's own preprocessing. Images whose preprocessing gives the same
 /// size run as one batch, as many at once as the device has room for (<see cref="MeasuredBatches"/>).
 /// </summary>
 internal static class ImagePredict
@@ -40,6 +40,11 @@ internal static class ImagePredict
         if (files.Count == 0)
         {
             throw new UsageException($"No images in {string.Join(", ", inputs)} (the codecs read {string.Join(", ", ImageFiles.DecodedExtensions)}).");
+        }
+
+        if (model.Task == ImageTask.LineRecognition)
+        {
+            return ReadLines(context, modelPath, model, files, inputs);
         }
 
         string? decoder = context.Option("--decoder");
@@ -161,8 +166,93 @@ internal static class ImagePredict
         return ExitCodes.Ok;
     }
 
-    /// <summary>The task's name in output: classification, detection, segmentation or features.</summary>
-    public static string Task(ImageTask task) => task.ToString().ToLowerInvariant();
+    /// <summary>The task's name in output: classification, detection, segmentation, features or line-recognition.</summary>
+    public static string Task(ImageTask task) => ImageModelPredictors.TaskName(task);
+
+    // A line recognizer: each file one line, read with a CTC decoder (--decoder, greedy by default). The lines' sizes come
+    // from their headers, widest first, so a batch pads little; each batch is decoded and prepared when it runs.
+    private static int ReadLines(CommandContext context, string modelPath, ImageModel model, IReadOnlyList<string> files, IReadOnlyList<string> inputs)
+    {
+        string decoder = context.Option("--decoder") ?? CtcDecoders.Greedy;
+        if (!CtcDecoders.Names.Contains(decoder))
+        {
+            throw new UsageException($"--decoder {decoder}: a line recognizer reads with a CTC decoder ({string.Join(", ", CtcDecoders.Names)}).");
+        }
+
+        int? ceiling = context.Option("--batch") is null ? null : context.IntOption("--batch", 1);
+        if (ceiling is <= 0)
+        {
+            throw new UsageException("--batch needs a positive number.");
+        }
+
+        var device = context.Device;
+        var reader = model.LineReader(decoder, device: device);
+        var lines = reader.Settings;
+        var widths = new int[files.Count];
+        for (int i = 0; i < files.Count; i++)
+        {
+            var info = ImageCodecs.ReadInfo(files[i]) ?? throw new InvalidDataException($"{files[i]}: not an image format of the registered codecs ({string.Join(", ", ImageCodecs.Names)}).");
+            widths[i] = Math.Max(lines.Stride, (int)Math.Round(info.Width * (double)lines.Height / info.Height));
+        }
+
+        var order = Enumerable.Range(0, files.Count).OrderByDescending(i => widths[i]).ThenBy(i => i).ToArray();
+        var results = new RecognizedLine[files.Count];
+        var batches = new MeasuredBatches(device, ceiling);
+        int runs = 0;
+        using (var progress = new ProgressLine(context, "reading lines", files.Count))
+        {
+            batches.Run(order.Length, (start, count) =>
+            {
+                var chunk = order.AsSpan(start, count).ToArray();
+                var prepared = new PreparedLine[chunk.Length];
+                Parallel.For(0, chunk.Length, ComputeResources.ParallelOptions, k => prepared[k] = reader.Prepare(ImageCodecs.Decode(files[chunk[k]])));
+                var read = reader.Read(prepared);
+                for (int k = 0; k < chunk.Length; k++)
+                {
+                    results[chunk[k]] = read[k];
+                }
+
+                runs++;
+                progress.Advance(count);
+            });
+            progress.Finish();
+        }
+
+        context.Write($"Model     {model.Architecture} · {Task(model.Task)}, {model.Labels!.Count - 1} characters · lines {lines.Height} high"
+                      + $"{(lines.RightToLeft ? ", right to left" : "")} · {decoder} · {device}");
+        context.Table(["File", "Text", "Confidence"], files.Select((file, i) => (IReadOnlyList<string>)
+            [Shown(file, inputs), results[i].Text, Percent(results[i].Confidence)]));
+        var rows = files.Select((file, i) => new JsonObject
+        {
+            ["file"] = file,
+            ["text"] = results[i].Text,
+            ["confidence"] = Math.Round(results[i].Confidence, 6),
+            ["log_probability"] = Math.Round(results[i].LogProbability, 6),
+        }).ToList();
+        string? output = context.Option("--out");
+        if (output is not null)
+        {
+            RowFiles.Write(rows, output);
+            context.Write($"{files.Count:N0} lines' readings written to {output}");
+        }
+
+        context.Detail($"{runs} batch{(runs == 1 ? "" : "es")}; up to {batches.Size?.ToString(CultureInfo.InvariantCulture) ?? "all the"} lines at once "
+                       + (ceiling is null ? $"(measured on {device}: the first line's peak memory against the free memory)" : $"(--batch {ceiling})"));
+        context.WriteJson(new JsonObject
+        {
+            ["model"] = modelPath,
+            ["architecture"] = model.Architecture,
+            ["task"] = Task(model.Task),
+            ["device"] = device.ToString(),
+            ["decoder"] = decoder,
+            ["images"] = files.Count,
+            ["batches"] = runs,
+            ["batch"] = batches.Size,
+            ["output"] = output,
+            ["predictions"] = new JsonArray([.. rows.Select(r => (JsonNode)r.DeepClone())]),
+        });
+        return ExitCodes.Ok;
+    }
 
     private static float Number(CommandContext context, string option, float fallback) => context.Option(option) is not { } text ? fallback
         : float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) && v is >= 0 and <= 1 ? v

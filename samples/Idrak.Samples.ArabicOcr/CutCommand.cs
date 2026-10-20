@@ -66,7 +66,7 @@ internal static class CutCommand
         string? images = a.Option("--images");
         var truths = truthFile is null ? null : Pages.ByImage(truthFile, images);
         double maxError = a.Number("--max-error", 0.5, 0);
-        var segmentation = new SegmentationSettings { MaxSkew = a.Number("--max-skew", 3, 0) };
+        var segmentation = new LineSegmentationOptions { MaxSkew = a.Number("--max-skew", 3, 0) };
         using var reader = prefill is null ? null : Readers.Create(prefill, context);
         Directory.CreateDirectory(folder);
 
@@ -78,7 +78,7 @@ internal static class CutCommand
         foreach (var page in Pages.Read(a.Words, images).Take(limit))
         {
             string? truth = page.Truth ?? (truths is not null && truths.TryGetValue(page.Image.Hash, out var known) ? known.Truth : null);
-            var (lines, skew) = LineSegmenter.Find(page.Decode(), segmentation);
+            var (lines, skew) = TextLineSegmenters.Segment(page.Decode(), segmentation);
             var files = new List<string>();
             foreach (var line in lines)
             {
@@ -135,13 +135,14 @@ internal static class CutCommand
             }
 
             // Snapped to the page's known text: every line's text (corrected ones too) anchors the order.
-            var snapped = truth is null || fresh.Count == 0 ? null : TextAlignment.Align(texts, OcrText.Normalize(OcrText.AnswerText(truth, truthMode)), maxError);
+            var snapped = truth is null || fresh.Count == 0 ? null
+                : TextMatchers.Align(texts, OcrText.Normalize(OcrText.AnswerText(truth, truthMode)), new TextMatchOptions { MaxError = maxError });
             int pageAligned = 0;
             foreach (int i in fresh)
             {
                 if (snapped?[i] is { } match)
                 {
-                    OcrText.Write(LineFiles.Of(files[i], LineFiles.Aligned), match.Text + "\n");
+                    OcrText.Write(LineFiles.Of(files[i], LineFiles.Aligned), OcrText.Normalize(match.Text) + "\n");
                     pageAligned++;
                 }
                 else

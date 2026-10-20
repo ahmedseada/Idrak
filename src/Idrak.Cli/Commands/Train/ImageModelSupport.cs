@@ -72,8 +72,9 @@ internal static class ImageModelFiles
     }
 
     /// <summary>
-    /// A package <c>idrak train</c> wrote for a detector, a segmenter or a backbone, as an image model: its network, the
-    /// resize to its input size with values in [0, 1] (as it was trained), its classes and decoder.
+    /// A package <c>idrak train</c> wrote for a detector, a segmenter, a backbone or a line recognizer, as an image model: its
+    /// network, the resize to its input size with values in [0, 1] (as it was trained), its classes and decoder (a line
+    /// recognizer's line settings).
     /// </summary>
     public static ImageModel FromPackage(ModelPackageReader package, JsonObject meta, Device device)
     {
@@ -89,6 +90,7 @@ internal static class ImageModelFiles
             "detection" => ImageTask.Detection,
             "segmentation" => ImageTask.Segmentation,
             "features" => ImageTask.Features,
+            "line-recognition" => ImageTask.LineRecognition,
             _ => ImageTask.Classification,
         };
         var network = package.BuildNetwork(device: device);
@@ -103,6 +105,9 @@ internal static class ImageModelFiles
             Labels = meta["classes"] is JsonArray classes && classes.Count > 0 ? [.. classes.Select(c => (string)c!)] : null,
             Decoder = (string?)meta["decoder"],
             DecoderSettings = meta["decoderSettings"] as JsonObject,
+            Lines = task == ImageTask.LineRecognition
+                ? LineRecognitionSettings.FromJson(meta["lines"] as JsonObject ?? throw new InvalidDataException("The line recognizer's package has no \"lines\" settings."))
+                : null,
         };
     }
 

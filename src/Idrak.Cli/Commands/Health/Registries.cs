@@ -13,6 +13,8 @@ using Idrak.Layers.Abstractions;
 using Idrak.Models.Abstractions;
 using Idrak.Onnx;
 using Idrak.Onnx.Abstractions;
+using Idrak.Text.Abstractions;
+using Idrak.Vision.Abstractions;
 
 namespace Idrak.Cli.Commands.Health;
 
@@ -52,6 +54,12 @@ internal static class Registries
             new("vocoders", "Vocoders", false, Sorted(Vocoders.Names)),
             new("converters", "Voice converter families", false, Sorted(VoiceConverters.Names)),
             new("splitters", "Audio splitters", false, Sorted(AudioSplitters.Names)),
+            new("progress", "Progress reporters", false, Sorted(ProgressReporters.Names)),
+            new("keywordindexes", "Keyword indexes", false, Sorted(KeywordIndexes.Names)),
+            new("recipes", "Network recipes", false, Sorted(NetworkRecipes.Names)),
+            new("linesegmenters", "Text line segmenters", false, Sorted(TextLineSegmenters.Names)),
+            new("textmatchers", "Text matchers", false, Sorted(TextMatchers.Names)),
+            new("readingorders", "Reading orders", false, Sorted(ReadingOrders.Names)),
             new("plugins", "Plug-ins (model families)", false, Sorted(IdrakPlugins.Names)),
             new("devices", "Device kinds", false, Sorted(DeviceListing.Backends.Select(b => b.Kind).Prepend("cpu"))),
         ];

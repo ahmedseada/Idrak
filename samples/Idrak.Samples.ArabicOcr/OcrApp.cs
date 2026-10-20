@@ -68,9 +68,8 @@ internal static class OcrApp
             return args.Length == 0 ? 2 : 0;
         }
 
-        // The app brings the families and augmentations it uses: the registries know nothing of them otherwise.
+        // The app brings the vision-language family it uses: the registries know nothing of it otherwise.
         Gemma3VisionPlugin.Register();
-        LineNoise.Register();
 
         string command = args[0];
         var rest = args.Skip(1).ToArray();
