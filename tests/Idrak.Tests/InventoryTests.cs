@@ -30,7 +30,8 @@ internal static partial class Tests
     // Idrak.Abstraction.Testing, is left out on purpose: it is a test tool, not a user of the contracts, and counting it
     // would pull contracts back into Idrak.Abstraction.
     private static readonly string[] LibraryAssemblyNames =
-        ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Text", "Idrak.Data", "Idrak.Vision", "Idrak.Audio", "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
+        ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Text", "Idrak.Data", "Idrak.Vision", "Idrak.Audio", "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp",
+            "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins"];
 
     // Each assembly whose internals others see, with those others (the tests aside): what must turn into public contract
     // or be justified. Idrak.Abstraction is not one since phase 4: it grants no library assembly its internals.
@@ -619,8 +620,10 @@ internal static partial class Tests
 
     private static List<Assembly> LibraryAssemblies() => [.. LibraryAssemblyNames.Select(n => Assembly.Load(n))];
 
-    // Every interface, abstract class and registry (a type declaring a static Register) in the library packages, public
-    // or internal; compiler-generated types and those private to a class (implementation details, not contracts) aside.
+    // Every interface, abstract class and registry (a type declaring a static Register that takes what it registers; a
+    // plug-in package's family class, whose parameterless Register registers the family itself, is a plug-in, not a
+    // registry: see IIdrakPlugin) in the library packages, public or internal; compiler-generated types and those private
+    // to a class (implementation details, not contracts) aside.
     private static List<Abstraction> Abstractions()
     {
         var found = new List<Abstraction>();
@@ -631,7 +634,7 @@ internal static partial class Tests
                 continue;
             }
 
-            bool registry = type.GetMethods(AllDeclared).Any(m => m.IsStatic && m.Name == "Register");
+            bool registry = type.GetMethods(AllDeclared).Any(m => m.IsStatic && m.Name == "Register" && m.GetParameters().Length > 0);
             string? kind = type.IsInterface ? "interface"
                 : type.IsClass && type.IsAbstract && !type.IsSealed ? (registry ? "abstract class, registry" : "abstract class")
                 : registry ? "registry"

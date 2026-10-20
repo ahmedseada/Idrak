@@ -27,6 +27,7 @@ its README lists it.
 | Retrieval (`Idrak.Abstraction.Retrieval`) | `IEmbedder` |
 | Serving (`Idrak.Abstraction.Serving`) | the engine's model kinds (`EngineModel<TCopy>`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
 | Diagnostics (`Idrak.Abstraction.Diagnostics`) | `Telemetry`, `ITelemetryHook`, `TelemetryLevel` and the telemetry events (`DeviceFailed`, `OverrideFailed` and `OverrideCompared` among them; `DeviceFailed`: a GPU error, or an operation retried on the CPU, with a hint naming `IDRAK_RETRY_ON_HOST` while the retry is off); `ConsoleLogger` and `JsonLinesLogger` always include device failures and overrides failing or compared |
+| Plug-ins (`Idrak.Abstraction.Plugins`) | `IIdrakPlugin` (a family or other named set of registrations kept outside the library), `IdrakPlugin` (its usual base: registers once, takes every part back), `IdrakPlugins` (the registered plug-ins by name; the plug-in packages' `RegisterAll()` go through it) |
 | The override loop (root) | `SlotTable<TKey, TValue>` (every registry's entries, each with its library default), `Slot`, `SlotPolicy` (`FallBack`, `Throw`, `Shadow`), `SlotGuard<TValue>`, `Overrides` (`Report()`, `AsLibraryDefaults`), `Comparisons` (shared with the testing kit) |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this

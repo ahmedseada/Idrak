@@ -41,9 +41,12 @@
     <Project Path="src/Idrak.Imaging/Idrak.Imaging.csproj" />
     <Project Path="src/Idrak.Gpu/Idrak.Gpu.csproj" />
     <Project Path="src/Idrak.Vision/Idrak.Vision.csproj" />
+    <Project Path="src/Idrak.Vision.Plugins/Idrak.Vision.Plugins.csproj" />
     <Project Path="src/Idrak.Cli/Idrak.Cli.csproj" />
     <Project Path="src/Idrak.Text/Idrak.Text.csproj" />
+    <Project Path="src/Idrak.Text.Plugins/Idrak.Text.Plugins.csproj" />
     <Project Path="src/Idrak.Audio/Idrak.Audio.csproj" />
+    <Project Path="src/Idrak.Audio.Plugins/Idrak.Audio.Plugins.csproj" />
     <Project Path="src/Idrak.Cluster/Idrak.Cluster.csproj" />
     <Project Path="src/Idrak.Network/Idrak.Network.csproj" />
     <Project Path="src/Idrak/Idrak.csproj" />

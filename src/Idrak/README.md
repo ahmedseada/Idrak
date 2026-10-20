@@ -178,6 +178,7 @@ Console.WriteLine(reply.Message!.Content);
 | `Idrak.Text` | Text generation and chat with tools, Jinja chat templates, the engine's text and chat models, LLM fine-tuning and evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text and Parquet files; Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.Vision` | Region classification in batches, content framing for classifiers of single objects, image statistics |
+| `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` | The model families as plug-ins, one namespace per family (`TextPlugins.RegisterAll()` and the like) |
 | `Idrak.AspNetCore` | Prediction, generation, a local chat API and an OpenAI-style `/v1` API in ASP.NET Core |
 | `Idrak.Mcp` | Model Context Protocol tools |
 | `Idrak.Onnx.Runtime` | Running `.onnx` models with ONNX Runtime as Idrak modules |

@@ -178,7 +178,7 @@ public static class ToolCallFormats
     {
         ArgumentNullException.ThrowIfNull(context);
         var entry = Table.Find(name)
-            ?? throw new NotSupportedException($"No tool-call format '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ToolCallFormats.Register.");
+            ?? throw new NotSupportedException($"No tool-call format '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ToolCallFormats.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
         return entry.Create(context);
     }
 

@@ -26,6 +26,10 @@
     <ProjectReference Include="..\..\src\Idrak.Vision\Idrak.Vision.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Text\Idrak.Text.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Audio\Idrak.Audio.csproj" />
+    <!-- The plug-in packages (plan 26): their tests live here, one filter group per family (plugins: ...). -->
+    <ProjectReference Include="..\..\src\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Cluster\Idrak.Cluster.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Network\Idrak.Network.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Cli\Idrak.Cli.csproj" />
