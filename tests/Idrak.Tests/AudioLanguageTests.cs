@@ -6,8 +6,8 @@ using Idrak.Abstraction.Generation;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Plan 21, phase S6: the audio-language task's plumbing. A model part stored beside the decoder (ModelParts: made with
 // the model, claimed when it loads, carried by every save, opened as a trainable soft-part source) and the pretraining

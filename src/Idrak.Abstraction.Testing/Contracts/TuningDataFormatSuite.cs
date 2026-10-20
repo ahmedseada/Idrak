@@ -18,7 +18,7 @@ namespace Idrak.Abstraction.Testing;
 public sealed record TuningDataSample(string Path, IReadOnlyList<IReadOnlyList<ChatMessage>>? Expected = null, string? Error = null);
 
 /// <summary>
-/// The checks of a fine-tuning data format (Idrak.Nlp's <c>ITuningDataFormat</c>) on data files of its own. The contract
+/// The checks of a fine-tuning data format (Idrak.Text's <c>ITuningDataFormat</c>) on data files of its own. The contract
 /// lives with the package that uses it and this kit depends on Idrak.Abstraction alone, so a test passes the format's
 /// reading as a delegate: a file's path in, each conversation's messages out (<c>format.Read(path, options).Select(t =&gt;
 /// t.Messages)</c>). For each sample:

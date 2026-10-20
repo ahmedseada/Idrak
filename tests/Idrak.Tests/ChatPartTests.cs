@@ -7,9 +7,9 @@ using Idrak.Abstraction.Testing;
 using Idrak.Cli.Commands.Run;
 using Idrak.Generation;
 using Idrak.Inference;
-using Idrak.Nlp;
-using Idrak.Nlp.Generation;
-using Idrak.Nlp.Inference;
+using Idrak.Text;
+using Idrak.Text.Generation;
+using Idrak.Text.Inference;
 
 // Plan 11, phase 1: message content as parts (ChatPart: text, images, kinds of one's own) registered in ChatParts, and
 // what a chat model or template takes (PartKinds), checked by one shared function before anything answers.

@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
 using Idrak.Imaging;
-using Idrak.Nlp;
+using Idrak.Text;
 
 // Plan 11, image transforms: the contract and registry (Idrak.Abstraction.Data), the library's transforms against
 // Pillow 12.3 byte for byte, and the JPEG encoder against libjpeg-turbo 3.1 (tools/vlm/make_image_transforms.py writes
@@ -249,7 +249,7 @@ internal static partial class Tests
         // The chat request: the image as sent, its transforms on the request (the generator's own are none).
         int[] expected = [.. ReadNpyInt64(Path.Combine(reference, "generated_ids.npy")).Select(t => (int)t)];
         var chat = model.CreateChat();
-        var reader = new Idrak.Nlp.Generation.ChatGenerator(chat.Generator, chat.Template) { Images = new Idrak.Nlp.Generation.ChatImages(encoder, vision.PromptFormat, vision.Attention) };
+        var reader = new Idrak.Text.Generation.ChatGenerator(chat.Generator, chat.Template) { Images = new Idrak.Text.Generation.ChatImages(encoder, vision.PromptFormat, vision.Attention) };
         var request = new ChatRequest([new ChatMessage("user", [image, new ChatText("What is in this image?")])])
         {
             Options = new GenerationOptions { Temperature = 0, NumPredict = 20, RepeatPenalty = 1 },
@@ -261,9 +261,9 @@ internal static partial class Tests
         Check(answer.Stats!.PromptTokens == (int)manifest["prompt_tokens"]!, $"prompt tokens {answer.Stats.PromptTokens}");
 
         // The same transforms as the images' own (ChatImages.Transforms), and none on the request overriding them.
-        var own = new Idrak.Nlp.Generation.ChatGenerator(chat.Generator, chat.Template)
+        var own = new Idrak.Text.Generation.ChatGenerator(chat.Generator, chat.Template)
         {
-            Images = new Idrak.Nlp.Generation.ChatImages(encoder, vision.PromptFormat, vision.Attention) { Transforms = request.ImageTransforms },
+            Images = new Idrak.Text.Generation.ChatImages(encoder, vision.PromptFormat, vision.Attention) { Transforms = request.ImageTransforms },
         };
         sampled.Clear();
         WithRecordedTokens(sampled, () => own.Chat(request with { ImageTransforms = null }));

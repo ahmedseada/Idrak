@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
+using Idrak.Text;
 
 namespace Idrak.Cli.Shared;
 

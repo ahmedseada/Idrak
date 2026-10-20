@@ -5,9 +5,9 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.Nlp;
-using Idrak.Nlp.Retrieval;
-using Idrak.Nlp.Retrieval.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Retrieval;
+using Idrak.Text.Retrieval.Abstractions;
 
 namespace Idrak.Cli.Commands.Retrieval;
 

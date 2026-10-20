@@ -11,7 +11,7 @@ namespace Idrak.Abstraction.Retrieval;
 /// <summary>How a <see cref="VectorIndex"/> compares vectors.</summary>
 public enum VectorMetric
 {
-    /// <summary>Dot product (use for vectors that are already unit length, like those of a text encoder such as Idrak.Nlp's <c>TextEncoder</c>).</summary>
+    /// <summary>Dot product (use for vectors that are already unit length, like those of a text encoder such as Idrak.Text's <c>TextEncoder</c>).</summary>
     Dot,
 
     /// <summary>Cosine similarity: vectors are scaled to unit length when added and when searched.</summary>

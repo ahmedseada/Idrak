@@ -5,9 +5,9 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Generation;
 using Idrak.IdrakVision;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
 
 // Plan 19, phase B3: the pretraining loop with images: every parameter of a vision-language model, or its vision side alone.
 internal static partial class Tests

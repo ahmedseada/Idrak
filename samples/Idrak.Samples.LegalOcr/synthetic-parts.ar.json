@@ -1,5 +1,5 @@
 {
-  // The parts the Fine-tune tab's "Make training pages" draws around each record's text (Idrak.Nlp's SyntheticPageParts):
+  // The parts the Fine-tune tab's "Make training pages" draws around each record's text (Idrak.Text's SyntheticPageParts):
   // each part's alternatives, one drawn per page at its chance, slots filled from the page's seed ({digits:N},
   // {number:MIN-MAX}, {pick:a|b}, {field:KEY} from the record's answer, {date:FORMAT}, {hijri:FORMAT}, {line:FILE}).
   // Edit freely: every line drawn is written into the page's answer, so the answer always matches the page.

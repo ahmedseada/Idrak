@@ -36,10 +36,10 @@ internal static partial class Tests
               && TokenSamplers.Default(TokenSamplers.DefaultName, 2) == TokenSamplers.Default(TokenSamplers.DefaultName), "the sampler default is version 2; version 1 is kept");
         Check(RopeScalings.Default(LinearType) is not null && Overrides.Report().All(o => o.Registry != "RopeScalings" || o.DefaultVersion >= 1), "other defaults are version 1");
 
-        // A table whose default (from Idrak.Nlp, which this assembly references) moved to version 2 in a later release.
+        // A table whose default (from Idrak.Text, which this assembly references) moved to version 2 in a later release.
         Func<SamplerRequest, ITokenSampler> first = TokenSamplers.Default(TokenSamplers.DefaultName, 1)!, second = TokenSampler.Create,
             mine = request => TokenSampler.Create(request);
-        string built = typeof(Tests).Assembly.GetReferencedAssemblies().Single(a => a.Name == "Idrak.Nlp").Version!.ToString(3);
+        string built = typeof(Tests).Assembly.GetReferencedAssemblies().Single(a => a.Name == "Idrak.Text").Version!.ToString(3);
         foreach (var (since, outdated) in new[] { ("99.0.0", true), (built, false) })
         {
             var table = new SlotTable<string, Func<SamplerRequest, ITokenSampler>>("TestVersions");
@@ -169,7 +169,7 @@ internal static partial class Tests
         Check(RopeScalings.Origin(LinearType) == library && TokenSamplers.Origin(TokenSamplers.DefaultName) == library
               && TokenizerComponents.NormalizerOrigin(LowercaseType) == library && TokenizerComponents.PreTokenizerOrigin("ByteLevel") == library
               && TokenizerComponents.DecoderOrigin("ByteFallback") == library, "the slots of the acceptance test start at the library's");
-        // Built-ins registered on first use, from Abstraction, core, Gpu, Data and Nlp.
+        // Built-ins registered on first use, from Abstraction, core, Gpu, Data and Text.
         Check(Idrak.Abstraction.Generation.ToolCallFormats.Origin("json") == library && Idrak.Abstraction.Generation.ChatTemplates.Origin("jinja") == library && PackedWeight.Origin("int4") == library
               && KeyValueLayouts.Origin("int8") == library && ModelSources.Origin("huggingface") == library && ModelSources.Origin("folder") == library
               && DeviceProviders.Origin("vulkan") == library && DeviceProviders.Origin("minimal") == "Idrak.Tests", "Abstraction's registries");
@@ -181,7 +181,7 @@ internal static partial class Tests
         Check(Idrak.Data.Abstractions.ParquetCodecs.Origin(1) == library && Idrak.Data.Abstractions.DataFileFormats.Origin("Csv") == library
               && Idrak.Data.Abstractions.DatasetSources.Origin("hf") == library, "Data's registries");
         var origins = Overrides.Report().Select(o => o.Origin).ToHashSet();
-        Check(!origins.Overlaps(["Idrak", "Idrak.Abstraction", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision"]),
+        Check(!origins.Overlaps(["Idrak", "Idrak.Abstraction", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision"]),
             $"no library assembly is reported as overriding: {string.Join(", ", origins)}");
         Check(RopeScalings.Get(LinearType) == RopeScalings.Default(LinearType), "with only its default, a slot hands it out as it is");
     }

@@ -13,7 +13,7 @@ using Idrak.Cli;
 using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Commands.Serve;
 using Idrak.Cluster;
-using Idrak.Nlp;
+using Idrak.Text;
 using EventLog = Idrak.Cluster.EventLog;
 
 // Plan 23, phase C9: the cluster dashboard. Each test starts the real server on 127.0.0.1 (a port the system picks) and

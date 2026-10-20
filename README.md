@@ -26,7 +26,7 @@ and `Idrak.Gpu` along; the others are added by domain.
 | `Idrak` | Layers and networks, training (`Trainer`, callbacks, mixed precision, activation checkpointing), datasets and loaders, model loading (safetensors, GGUF, PyTorch zip, PEFT adapters), packed weights (bfloat16, int8, int4), ONNX export and import, the inference engine, model packages (`.ikm`). |
 | `Idrak.Gpu` | The GPU devices: CUDA (driver API, PTX generated in C#), Vulkan (SPIR-V generated in C#), HIP (hipRTC). Loads the driver installed on the machine; no native files of its own. Kernel tuning per size class with a persisted cache. |
 | `Idrak.Data` | Row datasets: JSON Lines, JSON, CSV, TSV, text, code and Parquet; archives and compressed files; sources file, folder, http, Hugging Face, GitHub, Kaggle, Zenodo; filter, map, shuffle, deduplicate, split, mix; chat transcripts for fine-tuning; the Hugging Face model downloader. |
-| `Idrak.Nlp` | Text generation and chat with tools, the models' own Jinja chat templates, tool-call formats, LLM fine-tuning (LoRA, QLoRA, DoRA, full), distillation, evaluation, retrieval and RAG, synthetic training pages, the coding agent, the engine's text and chat models. |
+| `Idrak.Text` | Text generation and chat with tools, the models' own Jinja chat templates, tool-call formats, LLM fine-tuning (LoRA, QLoRA, DoRA, full), distillation, evaluation, retrieval and RAG, synthetic training pages, the coding agent, the engine's text and chat models. |
 | `Idrak.Imaging` | PNG, JPEG, BMP and Netpbm codecs; Pillow's resampling, filters and enhancements byte for byte; model preprocessors on the device; a font engine (TrueType, CFF, OpenType shaping, bidi) for rendering text; image transforms and augmentations; image-folder datasets. |
 | `Idrak.Vision` | Image model families (classifiers, detectors, segmenters), region classification in batches, content framing, channel statistics, detection and segmentation over any network, CTC decoding for OCR. |
 | `Idrak.Audio` | WAV, FLAC and MP3 decoding and WAV and MP3 encoding in C#; resampling, STFT and log-mel features; speech recognition and synthesis contracts; vocoders, speaker encoders, voice conversion and voice stores; speech training (CTC, seq2seq, TTS, adversarial synthesis) with the library's HiFi-GAN, WaveNet and flow layers. |
@@ -275,7 +275,7 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 The branch holds one breaking release, and it should ship as **0.4.0**, not as a 0.3.x patch:
 
 - `Idrak.Abstraction` is new and every shared type moved into it (the table in `CHANGELOG.md`); packages were regrouped
-  by domain (`Idrak.Datasets` → `Idrak.Data`, `Idrak.LanguageModels` retired into `Idrak` and `Idrak.Nlp`, `Idrak.Onnx`
+  by domain (`Idrak.Datasets` → `Idrak.Data`, `Idrak.LanguageModels` retired into `Idrak` and `Idrak.Nlp` (renamed `Idrak.Text` in 2026-10), `Idrak.Onnx`
   folded into `Idrak`, `Idrak.Vision`, `Idrak.Gpu`, `Idrak.Imaging`, `Idrak.Audio` new). Plug-ins compiled against
   0.3.x must be rebuilt: that is a minor bump under 0.x semantics.
 - The engine reaches models only through contracts (`engine.Model<IChatModel>(name)`), with no shims for the old

@@ -18,7 +18,7 @@ using Idrak.Samples.Gpt;
 using Idrak.Samples.GptApi;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Scalar.AspNetCore;
-using static Idrak.Nlp.Inference.GenerativeModels; // engine.ChatModel (all of Idrak.Nlp.Inference would bring a second ModelStatus)
+using static Idrak.Text.Inference.GenerativeModels; // engine.ChatModel (all of Idrak.Text.Inference would bring a second ModelStatus)
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>

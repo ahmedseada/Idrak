@@ -10,8 +10,8 @@ using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Generation;
 
 // Plan 12, phase 4: the command line. idrak tune on LlamaFactory's ShareGPT (<image> placeholders, an "images" list) with
 // the tiny Gemma 3 (its plug-in) and the tiny LLaVA (the test plug-in), images from a folder and from a zip: the adapters,

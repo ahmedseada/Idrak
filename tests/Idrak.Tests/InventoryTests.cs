@@ -30,13 +30,13 @@ internal static partial class Tests
     // Idrak.Abstraction.Testing, is left out on purpose: it is a test tool, not a user of the contracts, and counting it
     // would pull contracts back into Idrak.Abstraction.
     private static readonly string[] LibraryAssemblyNames =
-        ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Nlp", "Idrak.Data", "Idrak.Vision", "Idrak.Audio", "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
+        ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Text", "Idrak.Data", "Idrak.Vision", "Idrak.Audio", "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
 
     // Each assembly whose internals others see, with those others (the tests aside): what must turn into public contract
     // or be justified. Idrak.Abstraction is not one since phase 4: it grants no library assembly its internals.
     private static readonly (string Target, string[] Users)[] FriendAssemblies =
     [
-        ("Idrak", ["Idrak.Nlp"]),
+        ("Idrak", ["Idrak.Text"]),
         ("Idrak.Gpu", ["Idrak.Cli"]),
     ];
 
@@ -188,7 +188,7 @@ internal static partial class Tests
         }
 
         // The .Abstractions sub-namespace of a namespace this assembly's implementations use (Idrak.Vision.Abstractions
-        // beside Idrak.Vision, Idrak.Nlp.Retrieval.Abstractions beside Nlp's Idrak.Nlp.Retrieval).
+        // beside Idrak.Vision, Idrak.Text.Retrieval.Abstractions beside Idrak.Text.Retrieval).
         return ns.EndsWith(".Abstractions", StringComparison.Ordinal) && ns != "Idrak.Abstractions" && !InAbstractionNamespace(type)
                && type.Assembly.GetTypes().Any(t => t.Namespace == ns[..^".Abstractions".Length]);
     }
@@ -267,8 +267,8 @@ internal static partial class Tests
             "Idrak.Data" or "Idrak.Data.Parquet" or "Idrak.Datasets" or "Idrak.Imaging" => "Data",
             "Idrak.Vision" => "Vision",
             "Idrak.Audio" => "Audio",
-            "Idrak.Retrieval" or "Idrak.Nlp.Retrieval" => "Retrieval",
-            "Idrak.Generation" or "Idrak.Nlp" or "Idrak.Nlp.Generation" or "Idrak.Nlp.Inference" => "Generation",
+            "Idrak.Retrieval" or "Idrak.Text.Retrieval" => "Retrieval",
+            "Idrak.Generation" or "Idrak.Text" or "Idrak.Text.Generation" or "Idrak.Text.Inference" => "Generation",
             "Idrak.Models" or "Idrak.Onnx" or "Idrak.Onnx.Runtime" => "Formats",
             "Idrak.Inference" or "Idrak.AspNetCore" or "Idrak.Mcp" => "Serving",
             "Idrak.Diagnostics" => "Diagnostics",

@@ -10,9 +10,9 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
 
 // Plan 21, phase S3: the "audio" chat part, the soft-part contract in generation and tuning, audio in the tuning data
 // formats, and the audio-language contracts. The files come from tools/audio/make_tiny_audio.py (wav/, transcripts/).

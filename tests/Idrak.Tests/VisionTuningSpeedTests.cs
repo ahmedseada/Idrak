@@ -10,8 +10,8 @@ using Idrak.Gemma3Vision;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Plan 12, phase 6: speed and packing. Sequences with images packed into rows (each sequence its own key ranges by the
 // family's rule), the recordable image inputs of a graphed step (checked on the CPU without recording: the same pass from

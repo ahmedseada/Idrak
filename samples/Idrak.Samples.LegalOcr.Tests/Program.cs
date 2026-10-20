@@ -209,7 +209,7 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
         tuning.WaitAsync().GetAwaiter().GetResult();
         Check(tuning.Status.State == TuningState.Finished && tuning.Status.Loss is > 0, $"{tuning.Status.State}: {tuning.Status.Message}\n{string.Join("\n", tuning.Log())}");
         string folder = Path.Combine(root, "tune-q", "qwen");
-        Check(File.Exists(Path.Combine(folder, "adapter_model.safetensors")) && Idrak.Nlp.TuningManifest.Read(folder)!.BaseModel == Path.GetFullPath(tinyQwen), "the adapter and its manifest");
+        Check(File.Exists(Path.Combine(folder, "adapter_model.safetensors")) && Idrak.Text.TuningManifest.Read(folder)!.BaseModel == Path.GetFullPath(tinyQwen), "the adapter and its manifest");
         Load(readers, "adapter:qwen");
         var done = Read(readers, Page(24, 32), new ReadRequest(MaxTokens: 3), null)[^1];
         Check(done.Event == "done" && done.Data["model"]!.GetValue<string>() == "adapter:qwen", done.Data.ToJsonString());
@@ -235,8 +235,8 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
 
         string folder = Path.Combine(root, "tune-a", "first");
         var record = AdapterStore.Read(folder)!;
-        Check(File.Exists(Path.Combine(folder, "adapter_model.safetensors")) && Idrak.Nlp.TuningManifest.Read(folder)!.BaseModel == Path.GetFullPath(tinyGemma)
-              && Idrak.Nlp.TuningImages.Read(folder)!.Pipeline.ToString() == "grayscale,max_width=16",
+        Check(File.Exists(Path.Combine(folder, "adapter_model.safetensors")) && Idrak.Text.TuningManifest.Read(folder)!.BaseModel == Path.GetFullPath(tinyGemma)
+              && Idrak.Text.TuningImages.Read(folder)!.Pipeline.ToString() == "grayscale,max_width=16",
             "the adapter, its manifest and preparation");
         Check(record is { Base: "a", Prompt: "Extract details to JSON.", Preprocessing: "grayscale,max_width=16", Stopped: false, Steps: > 0, Cer: not null, CerBefore: not null },
             System.Text.Json.JsonSerializer.Serialize(record));
@@ -325,7 +325,7 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
     ("legal synthetic: the app's Arabic parts file reads with every slot registered; the Synthetic settings bind; a made page from it carries a header and its record's text", () =>
     {
         string app = Path.Combine(RepositoryRoot(), "samples", "Idrak.Samples.LegalOcr");
-        var parts = Idrak.Nlp.SyntheticPageParts.Read(Path.Combine(app, "synthetic-parts.ar.json"));
+        var parts = Idrak.Text.SyntheticPageParts.Read(Path.Combine(app, "synthetic-parts.ar.json"));
         Check(parts.HeaderStart.Count > 0 && parts.HeaderEnd.Count > 0 && parts.Subjects.Count > 0 && parts.Footers.Count > 0 && parts.Language == "ar" && parts.Digits == "٠١٢٣٤٥٦٧٨٩",
             "the parts and their language");
         var configuration = new ConfigurationBuilder().AddJsonFile(Path.Combine(app, "appsettings.json")).Build();
@@ -333,8 +333,8 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
         Check(settings.Synthetic is { PartsFile: "synthetic-parts.ar.json", Variants: 2, Output: "synthetic/pages.jsonl" } && settings.Synthetic.Scans.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "aged", "copied", "photo", "wrecked", "mixed", "mixed", "mixed"]) && settings.Synthetic.Layouts.SequenceEqual(["letter", "plain"])
               && new SyntheticSettings().Effective().Scans.SequenceEqual(["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "aged", "copied", "photo", "wrecked", "mixed", "mixed", "mixed"])
               && settings.Tuning.Synthetic, $"layouts {string.Join(",", settings.Synthetic.Layouts)}, scans {string.Join(",", settings.Synthetic.Scans)}");
-        var options = new Idrak.Nlp.SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFont()], Width = 400, Height = 300, BodySize = (10, 12) }, Parts = parts, Variants = 1 };
-        var page = Idrak.Nlp.SyntheticPages.Make("{\"court\": \"محكمة النقض\", \"full_text_extract\": \"حكمت المحكمة بقبول الطعن.\"}", options, record: 4);
+        var options = new Idrak.Text.SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFont()], Width = 400, Height = 300, BodySize = (10, 12) }, Parts = parts, Variants = 1 };
+        var page = Idrak.Text.SyntheticPages.Make("{\"court\": \"محكمة النقض\", \"full_text_extract\": \"حكمت المحكمة بقبول الطعن.\"}", options, record: 4);
         Check(page.Text.Contains("حكمت المحكمة بقبول الطعن.", StringComparison.Ordinal) && page.Text.Split('\n').Length > 1 && page.Answer.Contains("\"court\": \"محكمة النقض\"", StringComparison.Ordinal),
             page.Text);
     }),

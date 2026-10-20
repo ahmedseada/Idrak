@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Models;
-using Idrak.Nlp;
+using Idrak.Text;
 
 // The idrak tool's Measure and Retrieval groups (bench, eval, perplexity, profile, check, tuning show, rag ...), run
 // in-process through CommandLine.Run on the tiny fixture model and texts made here; speeds are not checked, only the

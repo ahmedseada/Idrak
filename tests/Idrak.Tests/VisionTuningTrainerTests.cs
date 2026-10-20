@@ -7,8 +7,8 @@ using Idrak.Gemma3Vision;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Plan 12, phase 2: images through the tuner. The fixtures of phase 0 (tests/Idrak.Tests/data/vlm-tuning) run through
 // FineTuner.Train with the family's vision side (TuningVision): the losses, adapters and projector of transformers' runs,

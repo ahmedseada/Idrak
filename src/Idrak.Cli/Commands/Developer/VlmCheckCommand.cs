@@ -11,7 +11,7 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text.Generation;
 
 namespace Idrak.Cli.Commands.Developer;
 

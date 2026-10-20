@@ -9,7 +9,7 @@ using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Models;
-using Idrak.Nlp.Generation;
+using Idrak.Text.Generation;
 
 // A page read profiled (plan 17, H3) through the library's profiler (Profiler, ProfileProbes, ProfileWriters): the app's
 // flow (the prepared page for the preview, then the read, greedy) on each device IDRAK_DEVICES names (default the CPU).

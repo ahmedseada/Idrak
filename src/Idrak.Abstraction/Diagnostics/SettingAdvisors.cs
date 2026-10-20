@@ -51,7 +51,7 @@ public interface ISettingAdvisor
 }
 
 /// <summary>
-/// The advisors asked for suggested settings, by name: every package adds its own for the subjects it ships (Idrak.Nlp:
+/// The advisors asked for suggested settings, by name: every package adds its own for the subjects it ships (Idrak.Text:
 /// "image reader"), and an app registers its own or replaces one. Each subject asks them all
 /// (<see cref="Suggest"/>) and publishes what they suggest, once each (<see cref="Publish"/>).
 /// </summary>

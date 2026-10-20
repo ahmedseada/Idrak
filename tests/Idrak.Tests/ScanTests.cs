@@ -4,7 +4,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Idrak.Abstraction.Data;
-using Idrak.Nlp;
+using Idrak.Text;
 
 // Plan 18, phase 4: scan degradations as image transforms, mixed by scan profiles drawn from a seed.
 internal static partial class Tests

@@ -12,9 +12,9 @@ using Idrak.Gemma3Vision;
 using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
 using Idrak.QwenVision;
 
 namespace Idrak.Samples.LegalOcr;

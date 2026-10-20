@@ -6,7 +6,7 @@ using System.Text.Json;
 using Idrak.Data;
 using Idrak.Datasets;
 using Idrak.Imaging;
-using Idrak.Nlp;
+using Idrak.Text;
 
 namespace Idrak.Samples.ArabicOcr;
 

@@ -84,7 +84,7 @@ def images_of(record):
 # ------------------------------------------------------------------ Idrak's masking, from the template alone
 
 class TemplateSpans:
-    """ChatTranscriptEncoder's rule (src/Idrak.Nlp/FineTuning.cs): the assistant's header is what the generation prompt
+    """ChatTranscriptEncoder's rule (src/Idrak.Text/FineTuning.cs): the assistant's header is what the generation prompt
     adds, its end the text after the answer in a probe conversation (trimmed; the EOS token when nothing is left); each
     assistant span runs from after the header to after the end (or to the text's end when the end is not found)."""
 

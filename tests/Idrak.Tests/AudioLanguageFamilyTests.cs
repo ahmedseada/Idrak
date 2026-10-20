@@ -10,9 +10,9 @@ using Idrak.IdrakAudio;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
 
 // Plan 21, phase S6: the IdrakAudio plug-in's audio-language model, against tools/audio/make_tiny_audio.py --sections
 // audio-language (audio-language/: a Llama decoder with the IdrakAudio encoder and projector in torch, three

@@ -11,7 +11,7 @@
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
 
-// The token-sampler contract is Idrak.Nlp's; the kit drives a sampler through a few delegates (Drive, below).
+// The token-sampler contract is Idrak.Text's; the kit drives a sampler through a few delegates (Drive, below).
 var current = Drive(TokenSamplers.Create);
 var samplers = new TokenSamplerSuite(Drive(TokenSampler.Create));
 

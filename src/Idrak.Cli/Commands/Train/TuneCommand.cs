@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Cli.Commands.Train;
 
@@ -344,7 +344,7 @@ internal sealed class TuneInitCommand : Command
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(model.Replace(':', '-'))).ToLowerInvariant();
         string adapters = context.Option("--adapter-out") ?? $"adapters/{(name.Length > 0 ? name : "model")}";
         string? device = context.Option("--device") ?? context.Config.Get("device");
-        var defaults = new Idrak.Nlp.FineTuningOptions();
+        var defaults = new Idrak.Text.FineTuningOptions();
         string Json(string text) => JsonValue.Create(text).ToJsonString(CommandContext.JsonOutput);
         string Number(double value) => value.ToString("R", CultureInfo.InvariantCulture);
         string evaluation = images

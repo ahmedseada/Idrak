@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Nlp.Retrieval;
-using Idrak.Nlp.Retrieval.Abstractions;
+using Idrak.Text.Retrieval;
+using Idrak.Text.Retrieval.Abstractions;
 
 namespace Idrak.Cli.Commands.Retrieval;
 

@@ -32,7 +32,7 @@ public readonly record struct SampledStatistics(int Id, float Probability, float
 
 /// <summary>
 /// A token sampler as the sampler checks drive it. The token-sampler contract lives with the package that uses it
-/// (<c>ITokenSampler</c> in Idrak.Nlp) and this kit depends on Idrak.Abstraction alone, so a test wraps the sampler it
+/// (<c>ITokenSampler</c> in Idrak.Text) and this kit depends on Idrak.Abstraction alone, so a test wraps the sampler it
 /// checks, and the library's one it compares with, in these few delegates.
 /// </summary>
 /// <param name="rows">Sequences sampled per step.</param>

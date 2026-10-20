@@ -147,7 +147,7 @@ static void Benchmark(CharGpt gpt, GenerationSettings settings)
 // The chat model on a request like an /api/chat call: reasoning, a tool call, then an answer from the tool result.
 static void ChatDemo(CharGpt gpt)
 {
-    var chat = new Idrak.Nlp.Generation.ChatGenerator(new Idrak.Generation.TextGenerator(gpt.Model,
+    var chat = new Idrak.Text.Generation.ChatGenerator(new Idrak.Generation.TextGenerator(gpt.Model,
         new Idrak.Abstraction.Generation.CharTokenizer(gpt.Config.Vocabulary), gpt.Config.Context));
     var options = new Idrak.Abstraction.Generation.GenerationOptions { Temperature = 1f, TopK = 20, TopP = 0.95f, MinP = 0f, RepeatPenalty = 1f, NumCtx = 4096, NumPredict = 300, Seed = 7 };
     var messages = new List<Idrak.Abstraction.Generation.ChatMessage>

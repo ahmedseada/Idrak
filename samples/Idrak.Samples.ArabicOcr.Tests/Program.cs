@@ -14,7 +14,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text.Abstractions;
 using Idrak.Samples.ArabicOcr;
 using Idrak.Samples.ArabicOcr.Tests;
 using Idrak.Abstraction.Generation;

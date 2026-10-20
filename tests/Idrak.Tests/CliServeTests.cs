@@ -13,7 +13,7 @@ using Idrak.Cli;
 using Idrak.Cli.Commands.Serve;
 using Idrak.Generation;
 using Idrak.Mcp;
-using Idrak.Nlp.Generation;
+using Idrak.Text.Generation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;

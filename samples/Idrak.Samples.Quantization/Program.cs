@@ -21,7 +21,7 @@ using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp.Retrieval;
+using Idrak.Text.Retrieval;
 using Idrak.Optimizers;
 using Idrak.Samples;
 using Idrak.Samples.Summarizer;

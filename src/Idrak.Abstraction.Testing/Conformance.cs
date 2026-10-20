@@ -151,7 +151,7 @@ public static class Conformance
         Check(kind ?? ChatParts.Get(name), new ChatPartKindSuite(name, samples), options);
 
     /// <summary>
-    /// Checks a fine-tuning data format (Idrak.Nlp's <c>ITuningDataFormat</c>, given as its reading: a path in, each
+    /// Checks a fine-tuning data format (Idrak.Text's <c>ITuningDataFormat</c>, given as its reading: a path in, each
     /// conversation's messages out) on data files of its own (<see cref="TuningDataFormatSuite"/>): valid files read the
     /// same every time, from several threads, and stopped early; image parts carry their bytes; the expected conversations
     /// when given; invalid files refused with an error naming the file. Four random cases unless <paramref name="options"/>

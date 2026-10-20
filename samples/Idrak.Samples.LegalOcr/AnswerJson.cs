@@ -3,7 +3,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Samples.LegalOcr;
 

@@ -6,8 +6,8 @@ using Idrak.Abstraction.Diagnostics;
 using Idrak.Data.Abstractions;
 using Idrak.Generation;
 using Idrak.Models;
-using Idrak.Nlp.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
 
 // A model's JSON answers read leniently (JsonRepairs), the text of an answer a metric compares (AnswerTexts), the model
 // host's limit on loaded models, and the image reader (ImageReader over ModelImages) on the tiny Gemma 3 fixture.

@@ -9,7 +9,7 @@ using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
-using Idrak.Nlp;
+using Idrak.Text;
 
 // Chat with a language model in the Hugging Face layout (Llama, Qwen, Mistral, Gemma …), run by Idrak's own engine
 // (CPU, CUDA or any Vulkan GPU):

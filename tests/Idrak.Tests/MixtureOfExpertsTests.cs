@@ -8,8 +8,8 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Mixture of experts (Mixtral, Qwen2-MoE, Qwen3-MoE): the routing, decoders against the loop reference (prompt, training,
 // cached decoding, batches, packed experts), gradients, fine-tuning, and checkpoints in each family's names (safetensors

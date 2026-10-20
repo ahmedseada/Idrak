@@ -6,8 +6,8 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Data;
 using Idrak.Abstraction.Generation;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Plan 18, phase 5: tuning data from text: records' answers drawn as pages, scanned, written again with the page and the
 // drawn text, read back by the tuning data formats.
