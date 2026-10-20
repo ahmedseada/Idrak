@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Diagnostics;
 using Idrak.Text;
+using Idrak.Vision;
 using Idrak.Abstraction.Generation;
 
 namespace Idrak.Samples.ArabicOcr;
@@ -116,7 +117,7 @@ internal static class TrainCommand
 
         var evaluation = a.Option("--eval") is { } evalFolder ? LineFiles.Read(evalFolder, drafts: false, Phase("reading the held-out transcriptions", "files")) : [];
         var alphabet = train.SelectMany(s => s.Text.EnumerateRunes()).Select(r => r.ToString()).Distinct().Order(StringComparer.Ordinal).ToArray();
-        var settings = new RecognizerSettings
+        var settings = new CrnnSettings
         {
             Alphabet = alphabet,
             Height = a.Integer("--height", 48, 8),
@@ -127,7 +128,12 @@ internal static class TrainCommand
             Augment = augment.Count == 0 ? "none" : augmentText,
         };
 
-        using var recognizer = Recognizer.Create(settings, context.Device, seed);
+        if (settings.Height % 4 != 0)
+        {
+            throw new UsageException($"--height must be a multiple of 4, at least 8 (given {settings.Height}).");
+        }
+
+        using var recognizer = CrnnRecognizer.Create(settings, context.Device, seed, OcrText.Normalize);
         var clock = Stopwatch.StartNew();
         var trainLines = Prepare(recognizer, train, Phase("decoding and preparing the training lines", "lines"));
         var evalLines = new ImageData[evaluation.Count];
@@ -181,7 +187,7 @@ internal static class TrainCommand
         }
 
         using var optimizer = new AdamW(recognizer.Network.Parameters(), learningRate, weightDecay: 1e-4f);
-        var measured = new MeasuredBatches(context.Device);
+        var measured = new MeasuredLineBatches(context.Device);
         var cer = TuningMetrics.Get(TuningMetrics.CharacterErrorRate);
         var wer = TuningMetrics.Get(TuningMetrics.WordErrorRate);
         int micro = batchSize, bestEpoch = 0;
@@ -349,10 +355,9 @@ internal static class TrainCommand
         // The settings file keeps the whole run (every epoch), beside the best epoch's weights.
         var summary = Summary();
         summary["history"] = history;
-        string settingsFile = Path.Combine(folder, Recognizer.SettingsFile);
-        var saved = (JsonObject)JsonNode.Parse(File.ReadAllText(settingsFile))!;
+        var saved = (JsonObject)JsonNode.Parse(File.ReadAllText(Path.Combine(folder, CrnnRecognizer.ConfigFile)))!;
         saved["training"] = summary.DeepClone();
-        OcrText.Write(settingsFile, saved.ToJsonString(Json.Indented));
+        CrnnRecognizer.WriteConfig(folder, saved);
         context.Say($"Saved     {Path.GetFullPath(folder)} (epoch {bestEpoch}{(double.IsNaN(bestCer) ? "" : FormattableString.Invariant($", cer {bestCer:F4}, wer {bestWer:F4}"))})");
         if (context.Json)
         {
@@ -409,7 +414,7 @@ internal static class TrainCommand
     }
 
     // The lines decoded and prepared once (in parallel), kept as bytes (a quarter of the floats).
-    private static StoredLine[] Prepare(Recognizer recognizer, IReadOnlyList<LineSample> samples, Action<int, int> progress)
+    private static StoredLine[] Prepare(CrnnRecognizer recognizer, IReadOnlyList<LineSample> samples, Action<int, int> progress)
     {
         var lines = new StoredLine[samples.Count];
         int done = 0;
@@ -462,7 +467,7 @@ internal static class TrainCommand
 
             if (augment.Count == 0)
             {
-                result[k] = new PreparedLine(pixels, line.Width);
+                result[k] = new PreparedLine(pixels, height, line.Width);
                 return;
             }
 
@@ -474,9 +479,9 @@ internal static class TrainCommand
             }
 
             var image = sample.Image;
-            var values = image.Height == height && image.Channels == 1 ? image.Pixels : image.Resize(1, height, Math.Max(RecognizerSettings.Stride, image.Width * height / image.Height));
+            var values = image.Height == height && image.Channels == 1 ? image.Pixels : image.Resize(1, height, Math.Max(CrnnSettings.Stride, image.Width * height / image.Height));
             int width = values.Length / height;
-            result[k] = new PreparedLine(values, width);
+            result[k] = new PreparedLine(values, height, width);
         });
         return result;
     }
@@ -486,6 +491,6 @@ internal static class TrainCommand
 
     private sealed record StoredLine(byte[] Pixels, int Width)
     {
-        public int Steps => (Width + RecognizerSettings.Stride - 1) / RecognizerSettings.Stride;
+        public int Steps => (Width + CrnnSettings.Stride - 1) / CrnnSettings.Stride;
     }
 }

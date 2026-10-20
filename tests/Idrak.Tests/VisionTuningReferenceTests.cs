@@ -40,7 +40,7 @@ internal static partial class Tests
         }
         else
         {
-            Idrak.PluginTests.LlavaPlugin.Register();
+            Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         }
 
         var tuning = JsonNode.Parse(File.ReadAllText(TuningData($"{family}/tuning.json")))!;

@@ -19,6 +19,15 @@ VisionPlugins.RegisterAll();      // every family of the package; calling it aga
 - The `idrak` tool registers this package at startup, before any `-P` plug-in (which can still take a family's place);
   `RegisterIdrakPlugin()` is the `-P` entry, for a host that loads `Idrak.Vision.Plugins.dll` itself.
 
+## The families
+
+| Namespace | Plug-in | Registers | Read more |
+|---|---|---|---|
+| `Idrak.Vision.Plugins.Qwen` | `QwenVisionPlugin` ("qwen-vl") | Qwen2.5-VL and Qwen2-VL: their vision parts (`VisionFamilies`) and text decoders (`PretrainedArchitectures`) | [Qwen/README.md](Qwen/README.md) |
+| `Idrak.Vision.Plugins.Llava` | `LlavaPlugin` ("llava") | LLaVA: a CLIP tower and MLP projector (`VisionFamilies`), its text decoder (`PretrainedArchitectures`) | `Llava/Llava.cs` |
+| `Idrak.Vision.Plugins.IdrakVision` | `IdrakVisionPlugin` ("idrak-vision") | IdrakVision, a family made to be created and pretrained (`VisionFamilies`, `PretrainedArchitectures`) | [IdrakVision/README.md](IdrakVision/README.md) |
+| `Idrak.Vision.Plugins.Crnn` | `CrnnPlugin` ("crnn") | The CRNN line recognizer (convolutions, a bidirectional LSTM, CTC) as an image model family of the line-recognition task (`ImageModelFamilies`) | [Crnn/README.md](Crnn/README.md) |
+
 A model whose family is not registered is refused with "not registered", naming this package.
 
 License: Apache 2.0.

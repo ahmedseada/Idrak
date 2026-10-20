@@ -122,10 +122,14 @@ of Qwen: it can go first or beside 1-3), 5, 6, 7 beside 5 on the owner's card, 8
 | 2 | Done | `RopeSettings.Sections` (`RotarySections`, value-compared, kept in the spec's JSON). A prompt whose images carry axis positions gets per-token cos and sin rows built on the host once per pass and setting, read through an identity index by every existing rotary kernel (fused ones step aside for that pass); text tokens' rows equal the plain table's. `DecodingContext.RotaryOffsets` (per row, set by `ImagePrefill.ForwardCached`), `RotaryPositions` computed on the device from `Position` plus a device copy of a uniform offset, so recorded decode steps stay valid; per-row offsets fall back to host positions and are not recordable (`DecodingContext.Recordable`, which `TextGenerator` now checks). `Truncate` restores the offsets before a pass's images and refuses a cut inside them |
 | 3 | Done | `IVisionEncoder.AxisPositions(layout)` (default null) carried by `TrainingImage.AxisPositions` into the step's `PromptImage`s; packed rows place each sequence from 0; `ImagePrefillInputs` keeps fixed rotary buffers for recorded passes. `TuningVision` no longer refuses multi-axis families (its prefetch now also covers the first step) |
 | 4 | Not done | Gemma 3's text decoder still is a library built-in; independent of Qwen |
-| 5, 6 | Done | `samples/QwenVision/Idrak.QwenVision` (README there): both families, both config layouts, `visual.` and `model.visual.` tensors, the processor, the tower on span attention, the merger, the encoder with axis positions, tuning parts (merger, tower) with export and import under the checkpoint's names, the text decoder |
+| 5, 6 | Done | `src/Idrak.Vision.Plugins/Qwen`, namespace `Idrak.Vision.Plugins.Qwen` (moved from `samples/QwenVision/Idrak.QwenVision` by plan 26 P5, 2026-10-20; README there): both families, both config layouts, `visual.` and `model.visual.` tensors, the processor, the tower on span attention, the merger, the encoder with axis positions, tuning parts (merger, tower) with export and import under the checkpoint's names, the text decoder |
 | 7 | Owner | Speed and memory of a real page on the card |
 | 8 | Done | The legal OCR app registers the plug-in; Qwen2.5-VL 3B and 7B in the switch (`MaxPixels` 1,003,520 each, the page's "Most pixels" field per read); a read sends only the vision options the loaded family takes (Gemma's pan and scan is no longer sent to other families) |
 | 9 | Owner | CER on the evaluation pages against bakrianoo's model; a short tuning run |
+
+Since plan 26 P5 (2026-10-20) the plug-in is `QwenVisionPlugin` ("qwen-vl") of the package Idrak.Vision.Plugins, which
+the idrak tool registers at startup (no `-P`); `QwenTextDecoder.Register(variant)` became `QwenTextDecoder.Architecture()`
+(the plug-in registers it), so the package's inventory has no registry of its own.
 
 Checked on the CPU: `qwen vl` (6 tests): every reference output within 4.2e-5, the same greedy tokens, rotary offsets
 equal to transformers' rope deltas; the legal OCR app's tests (10, the new Qwen read, pixel budget and tuning run among

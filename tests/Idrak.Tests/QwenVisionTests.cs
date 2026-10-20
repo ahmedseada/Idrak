@@ -8,9 +8,9 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Generation;
-using Idrak.QwenVision;
+using Idrak.Vision.Plugins.Qwen;
 
-// Plan 16: Qwen-VL as a plug-in (samples/QwenVision) on the library's multi-axis rotary positions, checked against
+// Plan 16: Qwen-VL as a plug-in (Idrak.Vision.Plugins.Qwen) on the library's multi-axis rotary positions, checked against
 // transformers 5.19's outputs for tiny random Qwen2.5-VL and Qwen2-VL checkpoints (tools/vlm/make_tiny_qwen_vl.py,
 // tests/Idrak.Tests/data/vlm-qwen).
 internal static partial class Tests
@@ -304,10 +304,10 @@ internal static partial class Tests
 
     private static void QwenNotRegistered(Device device)
     {
+        QwenVisionPlugin.Unregister();                                       // registered by an earlier test or the tool: taken back
         foreach (string architecture in (string[])[QwenVisionFamily.Qwen25VlArchitecture, QwenVisionFamily.Qwen2VlArchitecture])
         {
-            VisionFamilies.Unregister(architecture);
-            PretrainedArchitectures.Unregister(architecture);
+            Check(VisionFamilies.Find(architecture) is null && !PretrainedArchitectures.Names.Contains(architecture), $"{architecture}: unregistered with the plug-in");
             Check(VisionFamilies.Default(architecture) is null && PretrainedArchitectures.Default(architecture) is null, $"{architecture}: nothing of it in the library");
         }
 

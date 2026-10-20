@@ -3,7 +3,7 @@
 Written by `tools/vlm/make_tiny_scratch_vlm.py` (nothing downloaded); the versions are in `manifest.json`. Two runs
 write the same bytes on the same machine and library versions; this README (by hand) is kept across them.
 
-The family is IdrakVision (`samples/IdrakVision`): a SigLIP-style tower (a 7 x 7 patch convolution with a bias over a
+The family is IdrakVision (`src/Idrak.Vision.Plugins/IdrakVision`): a SigLIP-style tower (a 7 x 7 patch convolution with a bias over a
 28 x 28 image, 16 learned positions, 3 pre-LayerNorm encoder layers of width 16 with 2 heads, biased attention and a
 GELU-tanh MLP of 32, a final LayerNorm), the 4 x 4 patches average-pooled 2 x 2 into 4 tokens (row-major), a projector
 `linear_1` (16 to 32), GELU-tanh, `linear_2` (32 to 32), and the from-scratch text reference's Llama decoder (width 32, 2

@@ -7,7 +7,7 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Vision;
 
-namespace Idrak.IdrakVision;
+namespace Idrak.Vision.Plugins.IdrakVision;
 
 /// <summary>
 /// IdrakVision's vision side (<see cref="IVisionFamily"/>): reads a checkpoint's vision part (<c>vision_tower.*</c>,

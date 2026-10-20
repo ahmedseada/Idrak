@@ -596,7 +596,7 @@ internal static partial class Tests
         }
 
         Check(Failure<NotSupportedException>(() => tuning.Parameters(encoder, "decoder")).Message.Contains("it offers: projector, tower", StringComparison.Ordinal), "a part not offered");
-        Idrak.PluginTests.LlavaPlugin.Register();
+        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         using var llava = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
         using var otherEncoder = llava.Vision!.CreateEncoder(new VisionEncoderOptions { Device = device });
         Check(Failure<ArgumentException>(() => tuning.Features(otherEncoder, frozen)).Message.Contains("not an encoder of this Gemma 3 vision part", StringComparison.Ordinal), "another family's encoder");
@@ -604,7 +604,7 @@ internal static partial class Tests
 
     private static void VisionTuningPartLlava(Device device)
     {
-        Idrak.PluginTests.LlavaPlugin.Register();
+        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         var image = ImageCodecs.Decode(TestData("vlm/image.png"));
         foreach (string folder in new[] { "tiny-llava", "tiny-llava-full" })
         {

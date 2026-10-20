@@ -2,20 +2,21 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Plugins;
 using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
-namespace Idrak.QwenVision;
+namespace Idrak.Vision.Plugins.Qwen;
 
 /// <summary>
-/// The Qwen-VL vision-language families as a registration of Idrak's contracts (plan 16): the library knows no family;
-/// this assembly brings Qwen2.5-VL (<c>Qwen2_5_VLForConditionalGeneration</c>) and Qwen2-VL
+/// The Qwen-VL vision-language families as a plug-in of Idrak's contracts (plan 16): the library knows no family; this
+/// plug-in brings Qwen2.5-VL (<c>Qwen2_5_VLForConditionalGeneration</c>) and Qwen2-VL
 /// (<c>Qwen2VLForConditionalGeneration</c>). <see cref="Register"/> adds, for each, its vision part
 /// (<see cref="QwenVisionFamily"/> in <see cref="VisionFamilies"/>) and its text decoder
 /// (<see cref="QwenTextDecoder"/> in <see cref="PretrainedArchitectures"/>): one registration per family, nothing of
-/// Qwen in the library. Load it in the command line with <c>idrak -P Idrak.QwenVision.dll ...</c> (or the config's
-/// "plugins"), or call <see cref="Register"/> in an app.
+/// Qwen in the library. <see cref="VisionPlugins.RegisterAll"/> registers it with the package's other families (the
+/// idrak tool does at startup); an app may call <see cref="Register"/> alone.
 /// </summary>
 /// <remarks>
 /// What the library gives it: the image tokens placed on three rotary axes by the library's
@@ -27,18 +28,34 @@ namespace Idrak.QwenVision;
 /// </remarks>
 public static class QwenVisionPlugin
 {
-    /// <summary>Registers both families: the vision part and the text decoder of each (again: the same registrations).</summary>
-    public static void Register()
+    /// <summary>Both variants, in the order they are registered.</summary>
+    public static IReadOnlyList<QwenVlVariant> Variants { get; } = [QwenVlVariant.Qwen25Vl, QwenVlVariant.Qwen2Vl];
+
+    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("qwen-vl"; listed in <see cref="VisionPlugins.All"/>).</summary>
+    public static IIdrakPlugin Plugin { get; } = new QwenRegistration();
+
+    /// <summary>Whether the families are registered.</summary>
+    public static bool IsRegistered => Plugin.IsRegistered;
+
+    /// <summary>Registers both families: the vision part and the text decoder of each (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
+    public static void Register() => IdrakPlugins.Register(Plugin);
+
+    /// <summary>Unregisters both families, leaving <see cref="VisionFamilies"/> and <see cref="PretrainedArchitectures"/> as <see cref="Register"/> found them.</summary>
+    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
+
+    // Each variant's vision part and text decoder, one part each.
+    private sealed class QwenRegistration() : IdrakPlugin("qwen-vl")
     {
-        foreach (var variant in (QwenVlVariant[])[QwenVlVariant.Qwen25Vl, QwenVlVariant.Qwen2Vl])
+        protected override void RegisterParts()
         {
-            VisionFamilies.Register(new QwenVisionFamily(variant));
-            QwenTextDecoder.Register(variant);
+            foreach (var variant in Variants)
+            {
+                string architecture = QwenVisionFamily.ArchitectureOf(variant);
+                Part(() => VisionFamilies.Register(new QwenVisionFamily(variant)), () => VisionFamilies.Unregister(architecture));
+                Part(() => PretrainedArchitectures.Register(architecture, QwenTextDecoder.Architecture()), () => PretrainedArchitectures.Unregister(architecture));
+            }
         }
     }
-
-    /// <summary>The command line's plug-in entry (<c>-P</c>): <see cref="Register"/>.</summary>
-    public static void RegisterIdrakPlugin() => Register();
 }
 
 /// <summary>Which Qwen-VL family: the two differ in the vision tower (window attention, norms, activation) and in configuration keys.</summary>

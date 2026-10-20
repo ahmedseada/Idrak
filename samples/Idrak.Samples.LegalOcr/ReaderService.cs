@@ -15,7 +15,7 @@ using Idrak.Models;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
-using Idrak.QwenVision;
+using Idrak.Vision.Plugins.Qwen;
 
 namespace Idrak.Samples.LegalOcr;
 

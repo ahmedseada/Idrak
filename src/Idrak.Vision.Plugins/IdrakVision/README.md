@@ -41,17 +41,20 @@ Every key is optional; `"preprocessing"` (a preprocessor_config.json) is too (th
 
 ## Use
 
+The family is `Idrak.Vision.Plugins.IdrakVision` in the package Idrak.Vision.Plugins, which the idrak tool registers at
+startup:
+
 ```
-idrak create spec.json -o model -P Idrak.IdrakVision.dll
-idrak pretrain model -C pretrain.json -o run -P Idrak.IdrakVision.dll
-idrak run run/checkpoint-2000 --image page.png "Read the page." -P Idrak.IdrakVision.dll
+idrak create spec.json -o model
+idrak pretrain model -C pretrain.json -o run
+idrak run run/checkpoint-2000 --image page.png "Read the page."
 ```
 
-In an app: reference the project and call `IdrakVisionPlugin.Register()`.
+In an app: reference Idrak.Vision.Plugins and call `IdrakVisionPlugin.Register()` (or `VisionPlugins.RegisterAll()`).
 
 ## From nothing to a reader, in one script
 
-`scripts/b6-curriculum.ps1` (from the repository root) makes everything a missing `work` folder needs and teaches the
+`samples/IdrakVision/scripts/b6-curriculum.ps1` (an app: run it from the repository root) makes everything a missing `work` folder needs and teaches the
 model to read in three stages: a corpus, tokenizer and token file; the text model; the vision model on it; clean pages
 cut to their ink (`data synth --page crop=1`); then single words, two or three words and full lines, each stage from
 the previous one's checkpoint and evaluated by its character error rate on held-out images. What exists is kept and a

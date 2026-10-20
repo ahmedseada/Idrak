@@ -6,7 +6,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Imaging;
 
-namespace Idrak.QwenVision;
+namespace Idrak.Vision.Plugins.Qwen;
 
 /// <summary>
 /// Qwen-VL's image processor (Qwen2VLImageProcessor): a page resized to a height and width that are multiples of

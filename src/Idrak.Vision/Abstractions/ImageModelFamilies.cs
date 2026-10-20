@@ -271,8 +271,8 @@ public interface IImageModelFamily
 /// The image model families (classifiers, detectors, segmenters, backbones, line recognizers), by architecture name (config.json's
 /// "architectures", or an ONNX file's "architecture" metadata). The library registers none: a family (its configuration,
 /// tensor names, layers, preprocessing defaults and decoder) is an application of these contracts, registered by the
-/// plug-in or app that brings it (the test plug-ins in <c>tests/Idrak.PluginTests</c> register a small ResNet-style
-/// classifier and a grid detector). A checkpoint is matched to its own family by that exact name; one whose name has no
+/// plug-in or app that brings it (the plug-in package Idrak.Vision.Plugins registers the CRNN line recognizer; the test
+/// plug-ins in <c>tests/Idrak.PluginTests</c> register a small ResNet-style classifier and a grid detector). A checkpoint is matched to its own family by that exact name; one whose name has no
 /// family is refused, naming this registry: nothing falls back to another family. Load one with <see cref="ImageModels.Load"/>.
 /// </summary>
 public static class ImageModelFamilies

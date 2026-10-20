@@ -2,39 +2,52 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Data;
+using Idrak.Abstraction.Plugins;
 using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 
-namespace Idrak.PluginTests;
+namespace Idrak.Vision.Plugins.Llava;
 
 /// <summary>
-/// LLaVA (<c>LlavaForConditionalGeneration</c>) as a registration from outside the library, on its public API only (plan
-/// 11, "Vision contracts": the second family, proving the contracts general): a CLIP vision tower with a class token and
-/// quick-GELU layers, the hidden states of <c>vision_feature_layer</c> (one layer or several, concatenated) with
+/// LLaVA (<c>LlavaForConditionalGeneration</c>) as a plug-in on the library's public API only (plan 11, "Vision
+/// contracts": the second family, proving the contracts general): a CLIP vision tower with a class token and quick-GELU
+/// layers, the hidden states of <c>vision_feature_layer</c> (one layer or several, concatenated) with
 /// <c>vision_feature_select_strategy</c> ("default" drops the class token), a two-layer MLP projector, a Llama-style text
 /// decoder read with the library's text family, image tokens attending causally (the library's causal rule), and
 /// LlavaImageProcessor's preprocessing (resize by the shortest edge, bicubic, center crop, CLIP's mean and std).
+/// <see cref="VisionPlugins.RegisterAll"/> registers it with the package's other families (the idrak tool does at
+/// startup); an app may call <see cref="Register"/> alone.
 /// </summary>
 public static class LlavaPlugin
 {
     /// <summary>The architecture name.</summary>
     public const string Architecture = "LlavaForConditionalGeneration";
 
-    /// <summary>Registers LLaVA's text decoder (<see cref="PretrainedArchitectures"/>) and its vision family (<see cref="VisionFamilies"/>).</summary>
-    public static void Register()
-    {
-        PretrainedArchitectures.Register(Architecture, LlavaText.Architecture(LlavaText.Layouts[0]));
-        VisionFamilies.Register(new LlavaVisionFamily());
-    }
+    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("llava"; listed in <see cref="VisionPlugins.All"/>).</summary>
+    public static IIdrakPlugin Plugin { get; } = new LlavaRegistration();
 
-    /// <summary>Removes both registrations.</summary>
-    public static void Unregister()
+    /// <summary>Whether the family is registered.</summary>
+    public static bool IsRegistered => Plugin.IsRegistered;
+
+    /// <summary>
+    /// Registers LLaVA's text decoder (<see cref="PretrainedArchitectures"/>) and its vision family
+    /// (<see cref="VisionFamilies"/>) through <see cref="IdrakPlugins"/>; once: calling it again changes nothing.
+    /// </summary>
+    public static void Register() => IdrakPlugins.Register(Plugin);
+
+    /// <summary>Removes both registrations, leaving the registries as <see cref="Register"/> found them.</summary>
+    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
+
+    // The text decoder, then the vision part.
+    private sealed class LlavaRegistration() : IdrakPlugin("llava")
     {
-        PretrainedArchitectures.Unregister(Architecture);
-        VisionFamilies.Unregister(Architecture);
+        protected override void RegisterParts()
+        {
+            Part(() => PretrainedArchitectures.Register(Architecture, LlavaText.Architecture(LlavaText.Layouts[0])), () => PretrainedArchitectures.Unregister(Architecture));
+            Part(() => VisionFamilies.Register(new LlavaVisionFamily()), () => VisionFamilies.Unregister(Architecture));
+        }
     }
 }
 

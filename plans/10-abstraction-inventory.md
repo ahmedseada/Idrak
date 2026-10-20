@@ -112,7 +112,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, pytorch, safetensors | Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, PyTorchCheckpointFormat, SafeTensorsCheckpointFormat |  | Abstraction, Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
-| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, RenamedTensorStore, SafeTensorsReader, TensorDictionary |  | Abstraction, Audio, Audio.Plugins, Idrak, Text, Text.Plugins, Vision | Abstraction |
+| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, RenamedTensorStore, SafeTensorsReader, TensorDictionary |  | Abstraction, Audio, Audio.Plugins, Idrak, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.AttentionPositionBias` | abstract class | public | Device, Module, Tensor | BucketedPositionBias, RelativePositionBias |  | Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.AttentionPositionBiases` | registry | public | — |  | bucketed, relative | Text.Plugins | Abstraction |
@@ -127,9 +127,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatPartKind` | interface | public | — | AudioPartKind, ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IFeatureCache` | interface | public | Device, Tensor | DiskFeatureCache, MemoryFeatureCache |  | Abstraction, Audio, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule, ImageAttentionRules.ImageBlocksRule |  | Abstraction, Audio, Audio.Plugins, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule, ImageAttentionRules.ImageBlocksRule |  | Abstraction, Audio, Audio.Plugins, Idrak, Text, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IImagePositionRule` | interface | public | — | ImagePositionRules.GridRule, ImagePositionRules.GuardedRule |  | Idrak | Abstraction |
-| `Idrak.Abstraction.Generation.IImagePromptFormat` | interface | public | — | ImageTokenFormat |  | Abstraction, Audio, Audio.Plugins, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.IImagePromptFormat` | interface | public | — | ImageTokenFormat |  | Abstraction, Audio, Audio.Plugins, Idrak, Text, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IModelPart` | interface | public | — | AudioModelPart |  | Abstraction, Audio, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.IPretrainedTokenizer` | interface | public | — | BpeTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer |  | Audio, Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ISeq2SeqModel` | interface | public | Device, Module, Tensor | Seq2SeqNetwork |  | Idrak, Text, Text.Plugins | Abstraction |
@@ -138,35 +138,35 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ISoftPartSource` | interface | public | — | ChatAudioParts |  | Abstraction, Audio, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, Seq2SeqEngineModel, Seq2SeqGenerator, TextEngineModel, TextGenerator |  | Abstraction, AspNetCore, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Idrak | Abstraction |
-| `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer, WordTokenizer |  | Abstraction, Audio, Audio.Plugins, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer, WordTokenizer |  | Abstraction, Audio, Audio.Plugins, Idrak, Text, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | AspNetCore, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITrainableSoftParts` | interface | public | Tensor | ChatAudioParts |  | Abstraction, Audio, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Abstraction, Audio, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | ModelImages.LazyEncoder |  | Abstraction, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | — |  | Abstraction, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | — |  | Abstraction, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal, image-blocks | Audio.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | IdrakVisionEncoder, LlavaImageEncoder, ModelImages.LazyEncoder, QwenImageEncoder |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | IdrakVisionEncoder, LlavaImageEncoder, QwenImageEncoder |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | IdrakVisionPart, LlavaVision, QwenVision |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal, image-blocks | Audio.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ImagePositionRules` | registry | public | — |  | grid | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.MarkedToolCallParser` | abstract class | internal | — | DeepSeekToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ModelParts` | registry | public | — |  | audio | Audio, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.PackedWeight` | abstract class, registry | public | Device, Storage, Tensor | BFloat16Weight, Float16Weight, Int4Weight, Int8Weight | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Generation.PretrainedVision` | abstract class | public | — | — |  | Abstraction, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Audio.Plugins, Idrak, Text, Text.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.PretrainedVision` | abstract class | public | — | IdrakVisionPart, LlavaVision, QwenVision |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Audio.Plugins, Idrak, Text, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.SequencePoolers` | registry | public | Tensor |  | first, max, mean | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.TokenSamplers` | registry | public | — |  | default | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, wer | Abstraction, Audio, Text | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +63 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +71 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Text, Vision | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, EspeakNgPlugin.EspeakNgRegistration, IdrakAudioPlugin.IdrakAudioRegistration, OpenVoicePlugin.OpenVoiceRegistration, T5Plugin.T5Registration, VitsPlugin.VitsRegistration, +1 |  | Abstraction, Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, EspeakNgPlugin.EspeakNgRegistration, IdrakAudioPlugin.IdrakAudioRegistration, OpenVoicePlugin.OpenVoiceRegistration, T5Plugin.T5Registration, VitsPlugin.VitsRegistration, +1 |  | Audio.Plugins, Text.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CrnnPlugin.CrnnRegistration, EspeakNgPlugin.EspeakNgRegistration, IdrakAudioPlugin.IdrakAudioRegistration, IdrakVisionPlugin.IdrakVisionRegistration, LlavaPlugin.LlavaRegistration, +5 |  | Abstraction, Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CrnnPlugin.CrnnRegistration, EspeakNgPlugin.EspeakNgRegistration, IdrakAudioPlugin.IdrakAudioRegistration, IdrakVisionPlugin.IdrakVisionRegistration, LlavaPlugin.LlavaRegistration, +5 |  | Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IdrakPlugins` | registry | public | — |  | — | Abstraction, Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | AspNetCore, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | Text | Abstraction |
@@ -207,16 +207,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerPostProcessor` | interface | public | — | PostProcessors.Bert, PostProcessors.ByteLevel, PostProcessors.Chain, PostProcessors.Roberta, PostProcessors.Template, TokenizerComponents.GuardedPostProcessor |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer, UnigramTrainer, WordPieceTrainer |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | — |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | IdrakVisionFamily, LlavaVisionFamily, QwenVisionFamily |  | Idrak, Vision.Plugins | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | Device | CheckpointWeights |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Audio.Plugins, Idrak | Idrak |
+| `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Audio.Plugins, Idrak, Vision.Plugins | Idrak |
 | `Idrak.Models.Abstractions.PretrainedEncoders` | registry | public | — |  | — | Idrak, Text.Plugins | Idrak |
 | `Idrak.Models.Abstractions.PretrainedSeq2Seq` | registry | public | — |  | — | Idrak, Text.Plugins | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerFiles` | registry | public | — |  | sentencepiece, tokenizer.json, vocab.txt | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerModels` | registry | public | — |  | BPE, Unigram, WordPiece | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe, unigram, wordpiece | Idrak | Idrak |
-| `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak | Idrak |
+| `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak, Vision.Plugins | Idrak |
 | `Idrak.Models.Abstractions.WeightCodec` | abstract class | public | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxExportOps` | registry | public | Module |  | — | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxGraph` | abstract class | public | Module | OnnxGraphWriter |  | Idrak | Idrak |
@@ -275,14 +275,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Vision.Abstractions.DetectionDecoders` | registry | public | — |  | boxes-scores | Vision | Vision |
 | `Idrak.Vision.Abstractions.DetectionHeads` | registry | public | — |  | — | — | Vision |
 | `Idrak.Vision.Abstractions.IDetectionMetric` | interface | public | — | CocoAveragePrecision, VisionMetrics.GuardedDetection, VocAveragePrecision |  | Vision | Vision |
-| `Idrak.Vision.Abstractions.IImageModelFamily` | interface | public | — | — |  | Vision | Vision |
+| `Idrak.Vision.Abstractions.IImageModelFamily` | interface | public | — | CrnnFamily |  | Vision, Vision.Plugins | Vision |
 | `Idrak.Vision.Abstractions.IObjectDetector` | interface | public | — | ModelDetector |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IRegionProposer` | interface | public | — | ComponentProposer |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmentationMetric` | interface | public | — | SegmentationMetrics, VisionMetrics.GuardedSegmentation |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmenter` | interface | public | — | ModelSegmenter |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ITextLineSegmenter` | interface | public | — | ProjectionLineSegmenter, TextLineSegmenters.GuardedSegmenter |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IVisionMetric` | interface | public | — | CocoAveragePrecision, SegmentationMetrics, VisionMetrics.GuardedDetection, VisionMetrics.GuardedSegmentation, VocAveragePrecision |  | Vision | Vision |
-| `Idrak.Vision.Abstractions.ImageModelFamilies` | registry | public | — |  | — | Vision | Vision |
+| `Idrak.Vision.Abstractions.ImageModelFamilies` | registry | public | — |  | — | Vision, Vision.Plugins | Vision |
 | `Idrak.Vision.Abstractions.TextLineSegmenters` | registry | public | — |  | projection | — | Vision |
 | `Idrak.Vision.Abstractions.VisionLosses` | registry | public | Tensor |  | ciou, dice, diou, focal, giou, iou, l1, smooth-l1 | Vision | Vision |
 | `Idrak.Vision.Abstractions.VisionMetrics` | registry | public | — |  | coco, miou, voc, voc07 | — | Vision |

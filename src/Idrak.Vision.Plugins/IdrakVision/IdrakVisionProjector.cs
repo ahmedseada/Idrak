@@ -6,7 +6,7 @@ using Idrak.Layers;
 using Idrak.Models.Abstractions;
 using Idrak.Vision;
 
-namespace Idrak.IdrakVision;
+namespace Idrak.Vision.Plugins.IdrakVision;
 
 /// <summary>
 /// IdrakVision's projector: the tower's [images, side², dim] patches (row-major) average-pooled over PoolSize x PoolSize

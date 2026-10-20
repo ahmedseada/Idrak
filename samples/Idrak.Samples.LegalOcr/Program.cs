@@ -15,7 +15,7 @@
 
 using System.Text.Json.Serialization;
 using Idrak.Gemma3Vision;
-using Idrak.QwenVision;
+using Idrak.Vision.Plugins.Qwen;
 using Idrak.Samples.LegalOcr;
 
 // The app brings the families it reads with: the library's registries know nothing of them otherwise.

@@ -3,7 +3,7 @@
     python -m venv vlm && vlm/bin/pip install torch torchvision transformers tokenizers safetensors pillow numpy jinja2
     vlm/bin/python tools/vlm/make_tiny_qwen_vl.py tests/Idrak.Tests/data/vlm-qwen
 
-The reference the Qwen-VL plug-in (samples/QwenVision/Idrak.QwenVision) and the library's multi-axis rotary positions
+The reference the Qwen-VL plug-in (src/Idrak.Vision.Plugins/Qwen) and the library's multi-axis rotary positions
 are checked against. Nothing is downloaded: configs, weights and a byte-level BPE tokenizer (Qwen's pre-tokenizer
 regex, its special tokens) are made here; the pages are phase 0's test image (tests/Idrak.Tests/data/vlm/image.png,
 100 x 75) and two cut from it, written as PNG files:

@@ -1,10 +1,10 @@
-# Idrak.QwenVision: the Qwen-VL families as a plug-in
+# Idrak.Vision.Plugins.Qwen: the Qwen-VL families as a plug-in
 
 Qwen2.5-VL (`Qwen2_5_VLForConditionalGeneration`) and Qwen2-VL (`Qwen2VLForConditionalGeneration`) as one registration
-each of Idrak's vision-language contracts, outside the library ([plans/16-qwen-vl.md](../../../plans/16-qwen-vl.md)).
-`QwenVisionPlugin.Register()` adds, for both, the vision part (`VisionFamilies`) and the text decoder
-(`PretrainedArchitectures`); without it a Qwen-VL checkpoint is not registered. Built like
-[Idrak.Gemma3Vision](../../Gemma3Vision/Idrak.Gemma3Vision).
+each of Idrak's vision-language contracts, outside the library ([plans/16-qwen-vl.md](../../../plans/16-qwen-vl.md)), in
+the package Idrak.Vision.Plugins. `QwenVisionPlugin.Register()` (or `VisionPlugins.RegisterAll()`) adds, for both, the
+vision part (`VisionFamilies`) and the text decoder (`PretrainedArchitectures`); without it a Qwen-VL checkpoint is not
+registered.
 
 Checked against transformers 5.19 on tiny random checkpoints of both families, in transformers 5's and the hub's
 config.json layouts (`tests/Idrak.Tests/data/vlm-qwen`, `tools/vlm/make_tiny_qwen_vl.py`; the `qwen vl` test group):
@@ -15,12 +15,14 @@ and cached, 20 greedy tokens, two pages in one prompt, text only, the chat API, 
 ## Use
 
 ```powershell
-# the command line
-idrak -P .\samples\QwenVision\Idrak.QwenVision\bin\Release\net10.0\Idrak.QwenVision.dll run Qwen/Qwen2.5-VL-3B-Instruct --image scan.png "Read the page."
+# the command line registers the package at startup: nothing to load
+idrak run MODEL --image scan.png "Read the page."
 ```
 
 ```csharp
-// an app (the legal OCR sample registers it beside Gemma 3's)
+// an app references Idrak.Vision.Plugins (the legal OCR sample registers it beside Gemma 3's)
+using Idrak.Vision.Plugins.Qwen;
+
 QwenVisionPlugin.Register();
 ```
 

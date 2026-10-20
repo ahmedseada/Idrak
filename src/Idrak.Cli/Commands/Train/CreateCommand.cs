@@ -60,8 +60,8 @@ internal sealed class CreateCommand : Command
           idrak create spec.json -o my-model --seed 1
           idrak create spec.json -o my-model --tokenizer tokenizer.json --architecture Qwen3ForCausalLM
           idrak create init --vision -o vision-spec.json
-          idrak create vision-spec.json -o my-vlm --decoder my-model -P Idrak.IdrakVision.dll
-          idrak create vision-spec.json -o my-vlm -P Idrak.IdrakVision.dll
+          idrak create vision-spec.json -o my-vlm --decoder my-model
+          idrak create vision-spec.json -o my-vlm
           idrak pretrain my-model -o run --tokens tokens.bin --steps 2000
         """;
 
@@ -368,7 +368,7 @@ internal sealed class CreateInitCommand : Command
 
         Writes a spec file for idrak create: the family, the network's sizes (small ones to change: nothing in Idrak
         prefers a size), the tokenizer and the special tokens, every key with a comment. With --vision, a
-        vision-language model of the IdrakVision family (its plug-in, samples/IdrakVision, with -P). With --audio, an
+        vision-language model of the IdrakVision family (Idrak.Vision.Plugins, registered at startup). With --audio, an
         IdrakAudio model (Idrak.Audio.Plugins, built in): audio-language (a chat model that hears), ctc or seq2seq (a
         speech recognizer) or tts (a synthesizer). Comments and trailing commas are allowed in the file.
 
@@ -381,7 +381,7 @@ internal sealed class CreateInitCommand : Command
           idrak create init -o spec.json
           idrak create spec.json -o my-model
           idrak create init --vision -o vision-spec.json
-          idrak create vision-spec.json -o my-vlm --decoder my-model -P Idrak.IdrakVision.dll
+          idrak create vision-spec.json -o my-vlm --decoder my-model
           idrak create init --audio ctc -o asr-spec.json
           idrak create init --audio audio-language -o audio-spec.json
         """;
@@ -471,7 +471,7 @@ internal sealed class CreateInitCommand : Command
             }
 
             """.ReplaceLineEndings("\n").Replace("\"architecture\": \"LlamaForCausalLM\",", context.Flag("--vision")
-                ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // load its plug-in: idrak create ... -P Idrak.IdrakVision.dll"
+                ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // from Idrak.Vision.Plugins, which the tool registers"
                 : audio is not null ? "\"architecture\": \"IdrakAudioForConditionalGeneration\",   // Idrak.Audio.Plugins' IdrakAudio, which the tool registers"
                 : "\"architecture\": \"LlamaForCausalLM\",", StringComparison.Ordinal)
             .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart.ReplaceLineEndings("\n")

@@ -12,7 +12,7 @@ built. No phase starts until the owner names it.
 | P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Done 2026-10-20; CPU pass |
 | P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Done 2026-10-20; CPU pass |
 | P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Done 2026-10-20; CPU pass |
-| P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Not started |
+| P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Done 2026-10-20; CPU pass |
 | P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Not started |
 | P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
 | P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Done 2026-10-20 (core); CLI `run`/server for seq2seq and a beam setting go with P10 |
@@ -466,6 +466,46 @@ program for text.
 **Done when:** `qwen vl:`, `vision contracts`, `vision tuning contracts`, `vision tuning reference`, IdrakVision's groups
 and ArabicOcr's tests pass unchanged, and `samples/` holds only apps.
 
+**P5 as built (2026-10-20).** The four families in `Idrak.Vision.Plugins`, each an `IdrakPlugin` in `VisionPlugins.All`
+(in this order), public API only:
+- **Qwen-VL** → `Idrak.Vision.Plugins.Qwen` (`src/Idrak.Vision.Plugins/Qwen`, its README moved), plug-in "qwen-vl": both
+  variants' vision part and text decoder, one part each. Already on G1 (P2's `RenamedTensorStore`).
+  `QwenTextDecoder.Register(variant)` became `QwenTextDecoder.Architecture()`: a public static `Register` with an argument
+  counts as a registry in the inventory.
+- **LLaVA** → `Idrak.Vision.Plugins.Llava` (`tests/Idrak.PluginTests/Llava.cs` moved), plug-in "llava".
+  `Idrak.PluginTests` keeps its proof families and references the package for the outside family's text decoder (no
+  internals either way).
+- **IdrakVision** → `Idrak.Vision.Plugins.IdrakVision` (README moved), plug-in "idrak-vision", on G8 since P3 (the
+  library's `image-blocks`). `samples/IdrakVision/scripts/b6-curriculum.ps1` stays an app: it builds the CLI only and
+  passes no `-P`.
+- **CRNN** → `Idrak.Vision.Plugins.Crnn` (from ArabicOcr's `Recognizer.cs`), plug-in "crnn", on G14: `CrnnFamily`
+  (`IImageModelFamily`, task `LineRecognition`, architecture `CrnnForLineRecognition`) reads a model folder's config.json
+  (`CrnnSettings`: alphabet, height, direction, reading order, now a setting with `runs` as the default, sizes) and its
+  safetensors (tensors named by layer: `layers.{i}.parameters.{j}`, `layers.{i}.buffers.{j}`), each shape checked.
+  `CrnnRecognizer` makes, loads (through `ImageModels.Load`), saves, encodes and reads through the library's
+  `ModelLineReader` and `CtcDecoders`, with an optional text normalizer (the app passes its NFC and white-space form);
+  `MeasuredLineBatches` is ArabicOcr's measured batching, moved with it. So `idrak predict MODEL LINES` and `idrak train
+  MODEL --data LINES` read and fine-tune the app's recognizer.
+- **ArabicOcr** is an app on the package: it registers `CrnnPlugin` beside Gemma 3; its model folder is now config.json
+  and model.safetensors (it was `recognizer.ikm` and `recognizer.json`; such a folder still loads) — **for the owner to
+  confirm**. Its `runs` order and direction stay as P3 left them. LegalOcr references the package for Qwen-VL.
+- **The tool:** it registers the four with the package at startup, so the `-P Idrak.IdrakVision.dll` of `create`'s and
+  `pretrain`'s help is gone (and `create init --vision`'s comment). `samples/` keeps no vision family but Gemma 3 (P6).
+- **Tests:** the moved groups keep their names and counts. Two changed to the plug-in contract: `qwen vl:`'s
+  not-registered test unregisters through `QwenVisionPlugin.Unregister()` (a second `Register` does nothing now), and
+  `cli pretrain vision`'s refusal runs with `IDRAK_PLUGIN_PACKAGES=none` (the tool registers the package at startup).
+  New: `plugins: vision` (the four are `VisionPlugins.All`; Register twice, Unregister as found, origin the package) and
+  `plugins: crnn` (save, load through the family, the same readings as the recognizer and through `model.LineReader()`,
+  the image model family suite read a line at a time, the earlier layout, refusals, not registered). ArabicOcr's test
+  reads `CrnnRecognizer.ConfigFile`.
+- **Proven unchanged** (a scratch comparison, not committed): ArabicOcr's `eval` (the 32 held-out and the 160 training
+  lines) and `read` (8 pages), greedy and beam, on a model trained before the move, give the same JSON (texts, labels,
+  scores; timings aside) from the old app and the new one, and from the new one on that model saved in the new layout.
+  Training speed equal (0.37 and 0.38 s an epoch on the test set).
+- **Run (CPU, the agent):** 192 passed, 2 failed (`cli pretrain vision`'s refusal came after `create init` had
+  registered the package again; the family suite's batch check on the CRNN, whose backward LSTM reads a batch's
+  padding), then 2 of 2; final 194 passed, 0 failed; ArabicOcr 14, LegalOcr 12.
+
 ## Phase P6: Gemma
 
 - Gemma 1, 2, 3 (`GemmaForCausalLM`, `Gemma2ForCausalLM`, `Gemma3ForCausalLM`) and the text decoder of
@@ -667,6 +707,23 @@ The owner takes these after this plan is finished; no agent starts them before.
 - **P4, local folders:** `samples/IdrakAudio`, `samples/VitsSpeech`, `samples/WhisperSpeech/Idrak.WhisperSpeech` and
   `samples/OpenVoice/Idrak.OpenVoice` hold only untracked `obj`/`bin` output on a machine that built them; the owner
   may delete them locally.
+- **P5, to confirm:** ArabicOcr's model folder is now `config.json` + `model.safetensors` (positional tensor names
+  `layers.{i}.parameters.{j}`) so `idrak predict` and `idrak train` read it; old `recognizer.ikm` folders still load.
+  The tool registers Qwen-VL, LLaVA, IdrakVision and CRNN at startup (`Idrak.QwenVision.dll`, `Idrak.IdrakVision.dll`
+  gone; LLaVA, test-only before, now ships). A plug-in's `Register()` runs once until `Unregister()`.
+- **P5, ArabicOcr training not reproducible with one seed** (epoch-1 loss 2.78466, then 2.837; likely a CPU reduction
+  order): blocks proving training unchanged (rules 71, 86) and makes the CER thresholds fragile.
+- **P5, the CRNN's backward LSTM reads a batch's right padding** (`ModelLineReader.Batch`, the LSTM layer): readings
+  change with batch makeup; a mask would allow bigger batches and the image family suite's batch check.
+- **P5, two copies of batch measuring:** `MeasuredLineBatches` (plug-in) and the CLI's internal one in
+  `ImageModelSupport`; a candidate for one library contract (decision 9).
+- **P5, slowness:** `CrnnRecognizer.Read` prepares lines one after another (up to 256 pages' lines at once; rule 79);
+  `CrnnFamily.Read` builds the network with random weights, then overwrites them all.
+- **P5, memory:** the public `SafeTensorsWriter.Write` holds every tensor's values at once; the streaming overload is
+  internal.
+- **P5, format question:** the CRNN's tensor names are positional, so checkpoints from other tools cannot map to it.
+- **P5, local folders:** `samples/QwenVision/Idrak.QwenVision` and `samples/IdrakVision/Idrak.IdrakVision` hold only
+  ignored `bin`/`obj` on clones that built them.
 - Later phases add theirs here.
 
 ## Order and parallelism
@@ -733,3 +790,5 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P10 merged (on P3) | CPU (cloud, 4 threads) | the P10 filters with generic components, override loop and the guards | 178 passed, 0 failed |
 | 2026-10-20 | P4 | CPU (cloud, 4 threads) | the nine audio groups, the guards, engine, cli health, generic components, pytorch checkpoint, audio cleaning | 157 passed, 2 failed, then 16 of 16; the nine audio groups 64 before and after |
 | 2026-10-20 | P4 merged (on P10) | CPU (cloud, 4 threads) | the nine audio groups, audio cleaning, the guards, engine, cli health, cli run, generic components, pytorch checkpoint | 176 passed, 0 failed |
+| 2026-10-20 | P5 | CPU (cloud, 4 threads) | the P5 filters (qwen vl, vision contracts and tuning, image families, cli vision and images, plugins, vlm scratch, pretrain and distill vision, generic components, image prefill, outside plug-in, the guards, cli health, models, run, pretrained); ArabicOcr and LegalOcr tests | 192 passed, 2 failed, then 2 of 2; final 194 passed, 0 failed; 14 and 12 passed |
+| 2026-10-20 | P5 merged (on P4) | CPU (cloud, 4 threads) | the P5 and P4 filters with the guards, engine, cli run, cli models, pretrained; ArabicOcr and LegalOcr tests | 278 passed, 0 failed; 14 and 12 passed |

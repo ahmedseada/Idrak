@@ -109,8 +109,8 @@ and `Idrak.Gpu` along; the others are added by domain.
 - Classifiers, detectors and segmenters from checkpoints; region classification, content framing, non-maximum
   suppression, segmentation masks and metrics; connected components and foreground extraction.
 - Vision-language: image tokens in the decoder, a SigLIP encoder and projector, pan-and-scan crops, per-request vision
-  options; Gemma 3 vision as the plug-in `samples/Gemma3Vision`, Qwen-VL in `samples/QwenVision`, a from-scratch
-  family `IdrakVision` in `samples/IdrakVision`; images in `idrak chat`, `idrak serve` (`/v1` `image_url`, multipart,
+  options; Gemma 3 vision as the plug-in `samples/Gemma3Vision`; Qwen-VL, LLaVA and a from-scratch family `IdrakVision`
+  in the plug-in package `Idrak.Vision.Plugins` (with the CRNN line recognizer); images in `idrak chat`, `idrak serve` (`/v1` `image_url`, multipart,
   `/api/chat`).
 - OCR: CTC models, the Arabic and legal OCR samples, `idrak vlm check`.
 - Synthetic training pages: the library's own font engine (TrueType and CFF outlines, every GSUB and GPOS lookup
