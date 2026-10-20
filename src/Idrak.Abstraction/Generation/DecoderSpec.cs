@@ -339,7 +339,11 @@ public sealed record DecoderSpec
         RopeScaling? scaling = r["scaling"] is not JsonObject s ? null
             : s["parameters"] is JsonObject parameters ? new((string)s["type"]!, parameters)
             : (string)s["type"]! == "llama3"                                  // written before scalings were registered
-                ? RopeScaling.Llama3((double)s["factor"]!, (double)s["lowFrequencyFactor"]!, (double)s["highFrequencyFactor"]!, (int)s["originalMaxPositions"]!)
+                ? new RopeScaling("llama3", new JsonObject
+                {
+                    ["factor"] = (double)s["factor"]!, ["low_freq_factor"] = (double)s["lowFrequencyFactor"]!, ["high_freq_factor"] = (double)s["highFrequencyFactor"]!,
+                    ["original_max_position_embeddings"] = (int)s["originalMaxPositions"]!,
+                })
                 : new((string)s["type"]!, new JsonObject { ["factor"] = (double)s["factor"]! });
         return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!, scaling)
         {

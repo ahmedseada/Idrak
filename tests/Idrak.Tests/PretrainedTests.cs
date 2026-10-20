@@ -113,7 +113,7 @@ internal static partial class Tests
         var tensors = new List<(string, int[], float[])>();
         foreach (var (name, values) in weights.Values)
         {
-            string stored = PretrainedFamilies.LlamaTensorName(name)!;
+            string stored = PretrainedFamilies.CommonTensorName(name)!;
             bool linear = (name.Contains(".attn.") && !name.Contains("_norm") || name.Contains(".mlp.") || name.StartsWith("head")) && name.EndsWith(".weight");
             int[] shape = ShapeOf(spec, name);
             tensors.Add(linear ? (stored, [shape[1], shape[0]], Transpose2D(values, shape[0], shape[1])) : (stored, shape, values));
@@ -212,7 +212,7 @@ internal static partial class Tests
                     AssertClose(expected, int8.Network.Predict(input).ToArray(), 0.05f * expected.Max(MathF.Abs), "int8 checkpoint");
 
                     // A family registered by the application: same naming, a different spec (no q/k norm, so those weights go unused).
-                    PretrainedArchitectures.Register("TestNoQkNormForCausalLM", PretrainedFamilies.LlamaStyle((c, s, notes) => s));
+                    PretrainedArchitectures.Register("TestNoQkNormForCausalLM", PretrainedFamilies.CommonArchitecture((c, s, notes) => s));
                     using var custom = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Architecture = "TestNoQkNormForCausalLM" });
                     Check(!custom.Spec.QkNorm && custom.Notes.Any(n => n.Contains("not used")), "a custom registration reports unused q/k norm weights");
                 }

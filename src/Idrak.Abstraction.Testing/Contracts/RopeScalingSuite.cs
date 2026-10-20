@@ -13,15 +13,15 @@ namespace Idrak.Abstraction.Testing;
 /// position by position when the frequencies depend on the position; and its per-position frequencies may be asked for
 /// from several threads at once.
 /// </summary>
-/// <param name="type">The scaling type ("yarn", or a type of your own).</param>
+/// <param name="type">The scaling type ("yarn", a plug-in's, or a type of your own).</param>
 /// <param name="parameterSets">
-/// The parameters to try (as <see cref="RopeScaling.Parameters"/>); the built-in types have their own, a type of your own
-/// needs some.
+/// The parameters to try (as <see cref="RopeScaling.Parameters"/>); the library's types ("linear", "yarn", "dynamic") have
+/// their own, a plug-in's type or one of your own needs some.
 /// </param>
 public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? parameterSets = null) : ContractSuite<RopeScalingMethod>
 {
     private readonly IReadOnlyList<JsonObject> _parameterSets = parameterSets ?? BuiltInParameters(type)
-        ?? throw new ArgumentException($"RoPE scaling '{type}' is not built in: give the parameter sets to check it with.", nameof(parameterSets));
+        ?? throw new ArgumentException($"RoPE scaling '{type}' is not the library's: give the parameter sets to check it with.", nameof(parameterSets));
 
     /// <summary>The scaling type checked.</summary>
     public string Type { get; } = type;
@@ -160,7 +160,6 @@ public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? par
     private static List<JsonObject>? BuiltInParameters(string type) => type.ToLowerInvariant() switch
     {
         "linear" => [RopeScaling.Linear(2).Parameters, RopeScaling.Linear(8).Parameters, RopeScaling.Linear(0.5).Parameters],
-        "llama3" => [RopeScaling.Llama3(8).Parameters, RopeScaling.Llama3(32, 1, 4, 8192).Parameters, RopeScaling.Llama3(4, 2, 8, 4096).Parameters],
         "yarn" =>
         [
             RopeScaling.Yarn(4, 32_768).Parameters, RopeScaling.Yarn(40, 4096, betaFast: 32, betaSlow: 1).Parameters,

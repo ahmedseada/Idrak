@@ -9,33 +9,13 @@ using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 
-// The GGUF families and pre-tokenizer patterns this assembly knows, registered by LibraryRegistrations in GgufArchitectures
-// and GgufPreTokenizers (Idrak.Abstraction).
+// The GGUF pre-tokenizer names that are no family's (GPT-2's own rule), registered by LibraryRegistrations in
+// GgufPreTokenizers; the families' names and patterns are plug-ins' (Idrak.Text.Plugins).
 internal static class GgufBuiltIns
 {
-    // llama.cpp's split patterns (llama-vocab.cpp) for the llama3, qwen2 and tekken families.
-    internal const string Llama3Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
-    private const string Qwen2Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
-    private const string TekkenPattern = @"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+";
-
-    // llama (Llama, Mistral, and Mixtral when the file has experts), qwen2, qwen3, qwen2moe and qwen3moe.
-    internal static IEnumerable<(string Name, GgufArchitecture Architecture)> Architectures() =>
-    [
-        ("llama", new() { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true, WithExperts = "MixtralForCausalLM" }),
-        ("qwen2", new() { HuggingFace = "Qwen2ForCausalLM", InterleavedQueryKeys = false }),
-        ("qwen3", new() { HuggingFace = "Qwen3ForCausalLM", InterleavedQueryKeys = false }),
-        ("qwen2moe", new() { HuggingFace = "Qwen2MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = false }),
-        ("qwen3moe", new() { HuggingFace = "Qwen3MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = true }),
-    ];
-
-    // The pre-tokenizer names of llama.cpp's families and their patterns (null: GPT-2's own rule).
+    // The pre-tokenizer names of GPT-2's own rule (null: no split pattern).
     internal static IEnumerable<(string Name, string? Pattern)> PreTokenizers() =>
-    [
-        .. new[] { "llama3", "llama-bpe", "llama-v3", "smaug-bpe", "falcon3", "pixtral" }.Select(name => (name, (string?)Llama3Pattern)),
-        .. new[] { "qwen2", "qwen35", "deepseek-r1-qwen", "megrez", "hunyuan" }.Select(name => (name, (string?)Qwen2Pattern)),
-        ("tekken", TekkenPattern),
-        .. new[] { "gpt2", "gpt-2", "default" }.Select(name => (name, (string?)null)),
-    ];
+        new[] { "gpt2", "gpt-2", "default" }.Select(name => (name, (string?)null));
 }
 
 /// <summary>
@@ -43,8 +23,8 @@ internal static class GgufBuiltIns
 /// file's metadata describes, in the Hugging Face layout (config.json, tokenizer.json, tokenizer_config.json with the chat
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
 /// dequantized tensor by tensor, with llama.cpp's names and layouts turned back into the Hugging Face ones.
-/// Architectures: llama (Llama, Mistral, Mixtral), qwen2, qwen3, qwen2moe, qwen3moe, and those registered with
-/// <see cref="GgufArchitectures.Register"/>. Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read
+/// Architectures: those registered with <see cref="GgufArchitectures.Register"/> (the library registers none;
+/// Idrak.Text.Plugins registers its families'). Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read
 /// one expert at a time.
 /// Tokenizers: by tokenizer.ggml.model through GgufTokenizers: byte-level BPE ("gpt2"), SentencePiece BPE ("llama") and Unigram
 /// ("t5"), WordPiece ("bert").
@@ -156,8 +136,8 @@ public static class GgufModel
         int experts = file.Get($"{arch}.expert_count", 0);
         if (experts > 0)
         {
-            // The experts' keys as transformers names them (Mixtral counts its experts as num_local_experts).
-            config[hfArchitecture == "MixtralForCausalLM" ? "num_local_experts" : "num_experts"] = experts;
+            // The experts' keys as transformers names them (the family says what its expert count is called).
+            config[architecture.ExpertCountKey] = experts;
             config["num_experts_per_tok"] = file.Get($"{arch}.expert_used_count", 0);
             if (file.Metadata.ContainsKey($"{arch}.expert_feed_forward_length"))
             {
@@ -197,17 +177,16 @@ public static class GgufModel
             config["eos_token_id"] = file.Get("tokenizer.ggml.eos_token_id", 0);
         }
 
+        // The family's own keys (a RoPE scaling it stores its own way, …); the file's generic scaling keys only when it set none.
+        architecture.Configure?.Invoke(file, config, notes);
+        bool own = config["rope_scaling"] is not null;
         string scaling = file.Get($"{arch}.rope.scaling.type", "none");
         double factor = file.Get($"{arch}.rope.scaling.factor", 1.0);
-        if (file.Tensors.ContainsKey("rope_freqs.weight"))
-        {
-            config["rope_scaling"] = Llama3Scaling(file, config, notes);
-        }
-        else if (scaling == "linear" && factor > 1)
+        if (!own && scaling == "linear" && factor > 1)
         {
             config["rope_scaling"] = new JsonObject { ["rope_type"] = "linear", ["factor"] = factor };
         }
-        else if (scaling is "yarn" && factor > 1)
+        else if (!own && scaling is "yarn" && factor > 1)
         {
             // llama.cpp's YaRN keys, as Hugging Face's rope_scaling (the scaling registered as "yarn" reads it): the context
             // the model was trained on, and the ramp's bounds when the file sets them. The context length stays the file's.
@@ -228,43 +207,12 @@ public static class GgufModel
 
             config["rope_scaling"] = yarn;
         }
-        else if (scaling is not ("none" or "linear"))
+        else if (!own && scaling is not ("none" or "linear"))
         {
             notes.Add($"the file's RoPE scaling '{scaling}' is not read; the model is used within its stored context.");
         }
 
         return config;
-    }
-
-    // Llama 3.1+ stores its RoPE scaling as per-frequency divisors (rope_freqs.weight): recover the parameters and check them.
-    private static JsonObject Llama3Scaling(GgufFile file, JsonObject config, List<string> notes)
-    {
-        var divisors = file.Read("rope_freqs.weight");
-        double theta = (double)config["rope_theta"]!;
-        int headDim = (int)config["head_dim"]!;
-        double factor = divisors.Max();
-        foreach (int original in new[] { 8192, 4096, 16384, 32768 })
-        {
-            double worst = 0;
-            for (int i = 0; i < divisors.Length; i++)
-            {
-                double wavelength = 2 * Math.PI * Math.Pow(theta, 2.0 * i / headDim);
-                double low = original / 1.0, high = original / 4.0;
-                double expected = wavelength < high ? 1 : wavelength > low ? factor
-                    : 1 / ((1 - (original / wavelength - 1) / 3) / factor + (original / wavelength - 1) / 3);
-                worst = Math.Max(worst, Math.Abs(expected - divisors[i]) / expected);
-            }
-
-            if (worst < 1e-3)
-            {
-                return new JsonObject { ["rope_type"] = "llama3", ["factor"] = factor, ["low_freq_factor"] = 1.0, ["high_freq_factor"] = 4.0,
-                    ["original_max_position_embeddings"] = original };
-            }
-        }
-
-        notes.Add("rope_freqs.weight does not match Llama 3's scaling with the usual parameters; they were assumed (factor from the file, original 8192).");
-        return new JsonObject { ["rope_type"] = "llama3", ["factor"] = factor, ["low_freq_factor"] = 1.0, ["high_freq_factor"] = 4.0,
-            ["original_max_position_embeddings"] = 8192 };
     }
 
     // The tokenizer.json of the file's tokenizer (GgufTokenizers, by tokenizer.ggml.model), then tokenizer_config.json and

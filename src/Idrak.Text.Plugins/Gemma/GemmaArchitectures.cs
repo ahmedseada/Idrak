@@ -19,7 +19,7 @@ namespace Idrak.Text.Plugins.Gemma;
 public static class GemmaArchitectures
 {
     /// <summary>Gemma (<c>GemmaForCausalLM</c>): the Llama naming, gains stored as a difference from 1, embeddings scaled by √dim and tied; writes its configuration from a spec ("gemma").</summary>
-    public static PretrainedArchitecture Gemma() => PretrainedFamilies.LlamaStyle((config, spec, _) => spec with
+    public static PretrainedArchitecture Gemma() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec with
     {
         NormOffset = 1f,                                                  // Gemma scales by (1 + weight)
         EmbeddingScale = MathF.Sqrt(spec.Dim),
@@ -209,7 +209,7 @@ public static class GemmaArchitectures
     }
 
     /// <summary>
-    /// Idrak weight names → Gemma 2 / Gemma 3 checkpoint names: the Llama names (<see cref="PretrainedFamilies.LlamaTensorName"/>),
+    /// Idrak weight names → Gemma 2 / Gemma 3 checkpoint names: the common names (<see cref="PretrainedFamilies.CommonTensorName"/>),
     /// with four normalizations per layer (input_layernorm, post_attention_layernorm after attention,
     /// pre_feedforward_layernorm, post_feedforward_layernorm).
     /// </summary>
@@ -232,6 +232,6 @@ public static class GemmaArchitectures
             }
         }
 
-        return PretrainedFamilies.LlamaTensorName(name);
+        return PretrainedFamilies.CommonTensorName(name);
     }
 }

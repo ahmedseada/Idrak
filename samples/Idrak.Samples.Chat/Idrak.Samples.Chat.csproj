@@ -8,6 +8,7 @@
     <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Data\Idrak.Data.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Text\Idrak.Text.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
   </ItemGroup>
 
 </Project>

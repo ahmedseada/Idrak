@@ -75,20 +75,18 @@ public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec,
 
 /// <summary>
 /// The model families pretrained models are loaded as, by the architecture name in <c>config.json</c>
-/// ("architectures": [...]). Idrak registers Llama, Mistral, Qwen2, Qwen3 and the mixture-of-experts families Mixtral,
-/// Qwen2-MoE and Qwen3-MoE; the other families are plug-ins (Idrak.Text.Plugins, Idrak.Vision.Plugins), and a
-/// vision-language model's vision part is a <see cref="VisionFamilies"/> registration, which the library does not make.
-/// Add others with <see cref="Register"/> (its <c>PretrainedFamilies.LlamaStyle</c> makes one for families that share the
-/// Llama naming).
+/// ("architectures": [...]). The library registers none: the families are plug-ins (Idrak.Text.Plugins,
+/// Idrak.Vision.Plugins), and a vision-language model's vision part is a <see cref="VisionFamilies"/> registration. Add
+/// others with <see cref="Register"/> (its <c>PretrainedFamilies.CommonArchitecture</c> makes one for families that share
+/// the common configuration keys and checkpoint names). An architecture nobody registered is refused, naming the plug-in
+/// packages.
 /// </summary>
 public static class PretrainedArchitectures
 {
     private static readonly SlotTable<string, PretrainedArchitecture> Registry = new(nameof(PretrainedArchitectures), comparer: StringComparer.Ordinal,
         unguarded: "a family's functions (spec, tensor names, build) must agree with one another, so the app's and the library's cannot be mixed");
 
-    static PretrainedArchitectures() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterPretrainedArchitectures);   // the built-in families, on first use
-
-    /// <summary>Registers how to read the architecture <paramref name="name"/>; under a built-in name it overrides the library's until <see cref="Unregister"/>.</summary>
+    /// <summary>Registers how to read the architecture <paramref name="name"/>, until <see cref="Unregister"/>.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, PretrainedArchitecture architecture)
     {
@@ -97,7 +95,7 @@ public static class PretrainedArchitectures
         Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly(), architecture.Spec);
     }
 
-    /// <summary>Removes the app's architecture <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    /// <summary>Removes the architecture <paramref name="name"/> an app or plug-in registered; false when none did.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered architecture names.</summary>

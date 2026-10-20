@@ -15,7 +15,7 @@ namespace Idrak.Vision.Plugins.Llava;
 /// contracts": the second family, proving the contracts general): a CLIP vision tower with a class token and quick-GELU
 /// layers, the hidden states of <c>vision_feature_layer</c> (one layer or several, concatenated) with
 /// <c>vision_feature_select_strategy</c> ("default" drops the class token), a two-layer MLP projector, a Llama-style text
-/// decoder read with the library's text family, image tokens attending causally (the library's causal rule), and
+/// decoder read with Idrak.Text.Plugins' text family (registered when missing), image tokens attending causally (the library's causal rule), and
 /// LlavaImageProcessor's preprocessing (resize by the shortest edge, bicubic, center crop, CLIP's mean and std).
 /// <see cref="VisionPlugins.RegisterAll"/> registers it with the package's other families (the idrak tool does at
 /// startup); an app may call <see cref="Register"/> alone.
@@ -40,25 +40,29 @@ public static class LlavaPlugin
     /// <summary>Removes both registrations, leaving the registries as <see cref="Register"/> found them.</summary>
     public static void Unregister() => IdrakPlugins.Unregister(Plugin);
 
-    // The text decoder, then the vision part.
+    // The text families its text_config names (Idrak.Text.Plugins', each when missing), the text decoder, then the vision part.
     private sealed class LlavaRegistration() : IdrakPlugin("llava")
     {
         protected override void RegisterParts()
         {
+            Requires(Idrak.Text.Plugins.Llama.LlamaPlugin.Plugin);
+            Requires(Idrak.Text.Plugins.Mistral.MistralPlugin.Plugin);
+            Requires(Idrak.Text.Plugins.Qwen.QwenPlugin.Plugin);
             Part(() => PretrainedArchitectures.Register(Architecture, LlavaText.Architecture(LlavaText.Layouts[0])), () => PretrainedArchitectures.Unregister(Architecture));
             Part(() => VisionFamilies.Register(new LlavaVisionFamily()), () => VisionFamilies.Unregister(Architecture));
         }
     }
 }
 
-// LLaVA's text decoder: text_config read by the library's text family of its model_type, under the checkpoint's naming.
+// LLaVA's text decoder: text_config read by Idrak.Text.Plugins' text family of its model_type, under the checkpoint's naming.
 internal static class LlavaText
 {
     public static readonly (string Text, string Head)[] Layouts = [("language_model.model.", "language_model.lm_head."), ("model.language_model.", "lm_head.")];
 
     private static readonly Dictionary<string, string> TextFamilies = new(StringComparer.Ordinal)
     {
-        ["llama"] = "LlamaForCausalLM", ["mistral"] = "MistralForCausalLM", ["qwen2"] = "Qwen2ForCausalLM",
+        ["llama"] = Idrak.Text.Plugins.Llama.LlamaPlugin.LlamaForCausalLM, ["mistral"] = Idrak.Text.Plugins.Mistral.MistralPlugin.MistralForCausalLM,
+        ["qwen2"] = Idrak.Text.Plugins.Qwen.QwenPlugin.Qwen2ForCausalLM,
     };
 
     // transformers' LlamaConfig defaults, for the keys a sparse text_config leaves out (llava-1.5's names only a few).
@@ -74,7 +78,7 @@ internal static class LlavaText
             var (family, text) = TextConfig(config);
             return PretrainedArchitectures.Get(family).Spec(text, notes);
         },
-        TensorName = name => PretrainedFamilies.LlamaTensorName(name) switch
+        TensorName = name => PretrainedFamilies.CommonTensorName(name) switch
         {
             null => null,
             var stored when stored.StartsWith("model.", StringComparison.Ordinal) => layout.Text + stored["model.".Length..],
