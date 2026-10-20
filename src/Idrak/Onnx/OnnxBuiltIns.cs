@@ -29,6 +29,8 @@ internal static class OnnxBuiltIns
         OnnxExportOps.Register<Tanh>((g, _, x, shape) => g.Node("Tanh", [x], shape));
         OnnxExportOps.Register<Sigmoid>((g, _, x, shape) => g.Node("Sigmoid", [x], shape));
         OnnxExportOps.Register<GELU>((g, _, x, shape) => Gelu(g, x, shape));
+        OnnxExportOps.Register<ExactGELU>((g, _, x, shape) => ExactGelu(g, x, shape));
+        OnnxExportOps.Register<QuickGELU>((g, _, x, shape) => g.Node("Mul", [x, g.Node("Sigmoid", [g.Node("Mul", [x, g.Scalar("quick_gelu", 1.702f)])])], shape));
         OnnxExportOps.Register<Softmax>((g, _, x, shape) => g.Node("Softmax", [x], shape, OnnxAttribute.Of("axis", -1L)));
         OnnxExportOps.Register<Dropout>((_, _, x, _) => x);
         OnnxExportOps.Register<BatchNorm>((g, bn, x, shape) => g.Node("BatchNormalization",
@@ -290,18 +292,40 @@ internal static class OnnxBuiltIns
         }
 
         var c = layer.Children().ToList();
-        var (norm1, attention, norm2, ff1, ff2) = ((LayerNorm)c[0], (MultiHeadAttention)c[1], (LayerNorm)c[2], (Layers.Linear)c[3], (Layers.Linear)c[4]);
+        var (norm1, attention, norm2) = ((LayerNorm)c[0], (MultiHeadAttention)c[1], (LayerNorm)c[2]);
+        var (ff1, ff2) = (layer.FeedForwardIn!, layer.FeedForwardOut!);
+
+        // The feed-forward: GELU (the tanh form) between the projections, or the block's own activation through its
+        // translator (the exporter's or OnnxExportOps'), on the hidden width; one without a translator is refused naming it.
+        OnnxValue FeedForward(OnnxValue input)
+        {
+            var projected = Linear(g, ff1, input, null);
+            if (layer.Activation is not { } activation)
+            {
+                return Linear(g, ff2, Gelu(g, projected, null), null);
+            }
+
+            var known = input.Shape ?? throw new InvalidOperationException("The shape of a TransformerEncoderLayer's input is unknown.");
+            int[] hidden = [.. known.Take(known.Count - 1), ff1.OutFeatures];
+            return Linear(g, ff2, g.Module(activation, projected with { Shape = hidden }), null);
+        }
+
         if (layer.Placement == NormPlacement.After)
         {
             // Post-norm: x = LayerNorm1(x + Attention(x)), then LayerNorm2(x + FeedForward(x)).
             var normed = LayerNorm(g, norm1, g.Node("Add", [x, Attention(g, attention, x, x.Shape)], x.Shape), x.Shape);
-            var fed = Linear(g, ff2, Gelu(g, Linear(g, ff1, normed, null), null), null);
-            return LayerNorm(g, norm2, g.Node("Add", [normed, fed], x.Shape), shape);
+            return LayerNorm(g, norm2, g.Node("Add", [normed, FeedForward(normed)], x.Shape), shape);
         }
 
         var attended = g.Node("Add", [x, Attention(g, attention, LayerNorm(g, norm1, x, x.Shape), x.Shape)], x.Shape);
-        var hidden = Linear(g, ff2, Gelu(g, Linear(g, ff1, LayerNorm(g, norm2, attended, x.Shape), null), null), null);
-        return g.Node("Add", [attended, hidden], shape);
+        return g.Node("Add", [attended, FeedForward(LayerNorm(g, norm2, attended, x.Shape))], shape);
+    }
+
+    // 0.5 · x · (1 + erf(x / √2)): ONNX's Erf (opset 9 on), as the exact GELU computes it.
+    private static OnnxValue ExactGelu(OnnxGraph g, OnnxValue x, IReadOnlyList<int>? shape)
+    {
+        var erf = g.Node("Erf", [g.Node("Mul", [x, g.Scalar("inv_sqrt2", 0.70710678f)])]);
+        return g.Node("Mul", [g.Node("Mul", [x, g.Node("Add", [erf, g.Scalar("one", 1f)])]), g.Scalar("half", 0.5f)], shape);
     }
 
     // ONNX LSTM/GRU with the time-major layout: X [T, N, I] → Y [T, D, N, H], Y_h [D, N, H] for D directions, one node per

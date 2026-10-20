@@ -203,6 +203,75 @@ internal sealed partial class CpuBackend
         }
     }
 
+    public override void LogSoftmaxTopKKernel(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        float[] xv = D(x), vv = D(values), iv = D(indices);
+        HostParallel.For(rows, Math.Max(1, (1 << 16) / Math.Max(1, cols)), (r0, r1) =>
+        {
+            for (int r = r0; r < r1; r++)
+            {
+                LogSoftmaxTopKRow(xv.AsSpan(r * cols, cols), vv.AsSpan(r * k, k), iv.AsSpan(r * k, k));
+            }
+        });
+    }
+
+    // One row of LogSoftmaxTopK: the shift as the beam search computed it on the host (max over the non-NaN entries, the sum
+    // of exponentials in double over those other than -∞, rounded to float once), then the best k of x - shift by one pass
+    // keeping a short ordered list (equal values keep the earlier column first).
+    private static void LogSoftmaxTopKRow(ReadOnlySpan<float> row, Span<float> values, Span<float> indices)
+    {
+        values.Fill(float.NegativeInfinity);
+        indices.Fill(-1f);
+        float max = float.NegativeInfinity;
+        foreach (float x in row)
+        {
+            if (x > max)
+            {
+                max = x;
+            }
+        }
+
+        if (float.IsNegativeInfinity(max) || values.Length == 0)
+        {
+            return;                                                         // no finite logit: no candidate
+        }
+
+        double sum = 0;
+        foreach (float x in row)
+        {
+            if (!float.IsNegativeInfinity(x))
+            {
+                sum += Math.Exp(x - max);
+            }
+        }
+
+        float shift = (float)(max + Math.Log(sum));
+        int count = values.Length, held = 0;
+        for (int t = 0; t < row.Length; t++)
+        {
+            float v = row[t] - shift;
+            if (float.IsNegativeInfinity(v) || float.IsNaN(v) || held == count && v <= values[held - 1])
+            {
+                continue;
+            }
+
+            int at = held < count ? held : held - 1;
+            while (at > 0 && values[at - 1] < v)
+            {
+                values[at] = values[at - 1];
+                indices[at] = indices[at - 1];
+                at--;
+            }
+
+            values[at] = v;
+            indices[at] = t;
+            if (held < count)
+            {
+                held++;
+            }
+        }
+    }
+
     public override void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
         float[] pv = D(predictions), tv = D(targets), yv = D(y);

@@ -41,6 +41,16 @@ public sealed record BeamOptions
 
     /// <summary>Tokens never chosen at the first step.</summary>
     public IReadOnlyList<int> BeginSuppressTokens { get; init; } = [];
+
+    /// <summary>
+    /// Whether <see cref="BeamSearch.Decode"/> chooses each step's candidates where the logits are (true, the default): the
+    /// log-softmax and each row's best 2·beams tokens (and one more for each token the row may not take that step) are
+    /// found on the decoder's device (<c>Tensor.LogSoftmaxTopK</c>) and only those are read back, not beams × vocabulary
+    /// logits. False reads every row back and chooses on the host. A <see cref="LogitsFilter"/> changes whole rows, so
+    /// with one the rows are always read back. The CPU chooses the same tokens with the same scores either way; a GPU's
+    /// log-softmax sums in float32 where the host sums in double, so its scores may differ by float rounding.
+    /// </summary>
+    public bool SelectOnDevice { get; init; } = true;
 }
 
 /// <summary>
@@ -62,8 +72,10 @@ public sealed record BeamHypothesis(IReadOnlyList<int> Tokens, float Score, floa
 /// at every step as transformers' beam search keeps them (each step's 2·beams best candidates over beams × vocabulary,
 /// a hypothesis ending when the end token is among the first beams of them, the search done by
 /// <see cref="BeamOptions.EarlyStopping"/>), the key/value caches' rows reordered to the beams kept
-/// (<see cref="DecodingContext.ReorderRows"/>, any cache format). The logits of a step are read back once (beams ×
-/// vocabulary floats) for the candidates and the filters. A beam of 1 is greedy decoding.
+/// (<see cref="DecodingContext.ReorderRows"/>, any cache format). Each step's candidates are chosen on the decoder's
+/// device and only they are read back (<see cref="BeamOptions.SelectOnDevice"/>; beams × (2·beams + the tokens a row may
+/// not take) values and tokens), or, with a <see cref="LogitsFilter"/> or that setting off, the logits are read back once
+/// (beams × vocabulary floats) for the candidates and the filters. A beam of 1 is greedy decoding.
 /// </summary>
 /// <example>
 /// <code>
@@ -137,10 +149,21 @@ public static class BeamSearch
 
         int vocabulary = 0;
         float[]? logits = null;
+        bool onDevice = options.SelectOnDevice && filter is null;
+        var picks = onDevice ? new Picks(beams) : null;
         try
         {
             long prefillStart = Telemetry.Start(TelemetryLevel.Inference);
-            logits = Logits(step, context, promptIds, [beams, prompt.Count], beams, ref vocabulary);
+            if (picks is not null)
+            {
+                picks.Ban(0, prompt, sequences, scores, options);
+                picks.Read(step, context, promptIds, [beams, prompt.Count], ref vocabulary);
+            }
+            else
+            {
+                logits = Logits(step, context, promptIds, [beams, prompt.Count], beams, ref vocabulary);
+            }
+
             Telemetry.InferenceStage(InferenceStageKind.Prefill, device, prefillStart, prompt.Count);
             long decodeStart = Telemetry.Start(TelemetryLevel.Inference);
             int produced = 0;
@@ -156,7 +179,13 @@ public static class BeamSearch
                         continue;
                     }
 
-                    var row = logits.AsSpan(b * vocabulary, vocabulary);
+                    if (picks is not null)
+                    {
+                        picks.Candidates(b, scores[b], 2 * beams, candidates);
+                        continue;
+                    }
+
+                    var row = logits!.AsSpan(b * vocabulary, vocabulary);
                     Filter(row, s, prompt, sequences[b], options, filter);
                     TopCandidates(row, b, scores[b], 2 * beams, candidates);
                 }
@@ -216,7 +245,17 @@ public static class BeamSearch
                 }
 
                 context.ReorderRows(sources);
-                logits = Logits(step, context, ids, [beams, 1], beams, ref vocabulary);
+                if (picks is not null)
+                {
+                    picks.Ban(s + 1, prompt, sequences, scores, options);
+                    picks.Read(step, context, ids, [beams, 1], ref vocabulary);
+                }
+                else
+                {
+                    ArrayPool<float>.Shared.Return(logits!);
+                    logits = null;
+                    logits = Logits(step, context, ids, [beams, 1], beams, ref vocabulary);
+                }
             }
 
             Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, device, decodeStart, produced);
@@ -459,6 +498,128 @@ public static class BeamSearch
         {
             ArrayPool<float>.Shared.Return(values);
             throw;
+        }
+    }
+
+    // Each row's candidates chosen on the device (Tensor.LogSoftmaxTopK) and read back alone: the 2·beams best
+    // log-probabilities of every row and as many more as the tokens the row may not take this step (suppressed, the end
+    // token before the least length, a repeated n-gram), so dropping those on the host leaves exactly the 2·beams best
+    // the filtered row has, in the order the host's choice gives them.
+    private sealed class Picks(int beams)
+    {
+        private readonly HashSet<int>[] _banned = [.. Enumerable.Range(0, beams).Select(_ => new HashSet<int>())];
+        private float[] _values = [];
+        private float[] _tokens = [];
+        private int _k;
+
+        // The tokens each live row may not take at `step` (the same rules Filter applies to a row read back).
+        public void Ban(int step, IReadOnlyList<int> prompt, List<int>[] sequences, double[] scores, BeamOptions options)
+        {
+            for (int b = 0; b < beams; b++)
+            {
+                var banned = _banned[b];
+                banned.Clear();
+                if (double.IsNegativeInfinity(scores[b]))
+                {
+                    continue;
+                }
+
+                banned.UnionWith(options.SuppressTokens);
+                if (step == 0)
+                {
+                    banned.UnionWith(options.BeginSuppressTokens);
+                }
+
+                if (step < options.MinTokens && options.EndToken >= 0)
+                {
+                    banned.Add(options.EndToken);
+                }
+
+                if (options.NoRepeatNgram > 0)
+                {
+                    RepeatedNgramEnds(prompt, sequences[b], options.NoRepeatNgram, banned);
+                }
+            }
+        }
+
+        // The step's logits [beams, (1,) vocabulary] → each row's best k = 2·beams + its most banned tokens, read back.
+        public void Read(Func<Tensor, DecodingContext, Tensor> step, DecodingContext context, float[] ids, int[] shape, ref int vocabulary)
+        {
+            using var noGrad = Autograd.NoGrad();
+            using var scope = new TensorScope();
+            using var input = Tensor.From(ids, shape, context.Device);
+            var output = step(input, context);
+            int v = output.Shape[^1];
+            if (output.Size != beams * v)
+            {
+                throw new InvalidOperationException($"The step gave {Tensor.FormatShape(output.Shape)}; the search reads one row of logits per beam ([{beams}, vocabulary]).");
+            }
+
+            vocabulary = v;
+            int most = 0;
+            foreach (var banned in _banned)
+            {
+                most = Math.Max(most, banned.Count);
+            }
+
+            _k = Math.Min(v, 2 * beams + most);
+            var (values, tokens) = output.Reshape(beams, v).LogSoftmaxTopK(_k);
+            if (_values.Length != beams * _k)
+            {
+                (_values, _tokens) = (new float[beams * _k], new float[beams * _k]);
+            }
+
+            values.CopyTo(_values);
+            tokens.CopyTo(_tokens);
+        }
+
+        // Row b's `count` best tokens the row may take, added to the candidates with the beam's score plus their log-probability.
+        public void Candidates(int b, double score, int count, List<(int Beam, int Token, double Score)> candidates)
+        {
+            var banned = _banned[b];
+            int added = 0;
+            for (int j = 0; j < _k && added < count; j++)
+            {
+                int token = (int)_tokens[b * _k + j];
+                float value = _values[b * _k + j];
+                if (token < 0 || float.IsNegativeInfinity(value) || float.IsNaN(value))
+                {
+                    break;
+                }
+
+                if (banned.Contains(token))
+                {
+                    continue;
+                }
+
+                candidates.Add((b, token, score + value));
+                added++;
+            }
+        }
+    }
+
+    // The tokens that would complete an n-gram the sequence (prompt and generated) already holds, added to `banned`.
+    private static void RepeatedNgramEnds(IReadOnlyList<int> prompt, List<int> generated, int n, HashSet<int> banned)
+    {
+        int length = prompt.Count + generated.Count;
+        if (length < n)
+        {
+            return;
+        }
+
+        int At(int i) => i < prompt.Count ? prompt[i] : generated[i - prompt.Count];
+        for (int start = 0; start + n <= length; start++)
+        {
+            bool same = true;
+            for (int j = 0; j < n - 1 && same; j++)
+            {
+                same = At(start + j) == At(length - (n - 1) + j);
+            }
+
+            if (same)
+            {
+                banned.Add(At(start + n - 1));
+            }
         }
     }
 

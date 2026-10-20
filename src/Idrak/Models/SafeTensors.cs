@@ -150,6 +150,56 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         return values;
     }
 
+    /// <inheritdoc cref="ITensorStore.SameValues"/>
+    /// <remarks>
+    /// Both tensors are read and widened a chunk at a time (1M values each, through pooled buffers) and compared chunk by
+    /// chunk: the memory is a few chunks whatever the tensors' size, and the reading stops at the first chunk that differs.
+    /// </remarks>
+    public bool SameValues(string first, string second)
+    {
+        var a = _tensors.TryGetValue(first, out var t1) ? t1 : throw Missing(first);
+        var b = _tensors.TryGetValue(second, out var t2) ? t2 : throw Missing(second);
+        if (!a.Shape.AsSpan().SequenceEqual(b.Shape))
+        {
+            return false;
+        }
+
+        const int ChunkValues = 1 << 20;
+        long count = a.Count;
+        int chunk = (int)Math.Min(count, ChunkValues);
+        int widthA = a.Type == SafeTensorType.F32 ? 4 : 2, widthB = b.Type == SafeTensorType.F32 ? 4 : 2;
+        byte[] bytesA = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Max(1, chunk * widthA));
+        byte[] bytesB = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Max(1, chunk * widthB));
+        float[] valuesA = System.Buffers.ArrayPool<float>.Shared.Rent(Math.Max(1, chunk));
+        float[] valuesB = System.Buffers.ArrayPool<float>.Shared.Rent(Math.Max(1, chunk));
+        try
+        {
+            var handleA = _files[a.File].SafeFileHandle;
+            var handleB = _files[b.File].SafeFileHandle;
+            for (long start = 0; start < count; start += ChunkValues)
+            {
+                int n = (int)Math.Min(ChunkValues, count - start);
+                ReadTimed(handleA, bytesA.AsSpan(0, n * widthA), a.Offset + start * widthA);
+                ReadTimed(handleB, bytesB.AsSpan(0, n * widthB), b.Offset + start * widthB);
+                DecodeInto(bytesA, a.Type, valuesA, 0, n);
+                DecodeInto(bytesB, b.Type, valuesB, 0, n);
+                if (!valuesA.AsSpan(0, n).SequenceEqual(valuesB.AsSpan(0, n)))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(bytesA);
+            System.Buffers.ArrayPool<byte>.Shared.Return(bytesB);
+            System.Buffers.ArrayPool<float>.Shared.Return(valuesA);
+            System.Buffers.ArrayPool<float>.Shared.Return(valuesB);
+        }
+    }
+
     /// <summary>The 2-D tensor <paramref name="name"/> [rows, columns] as float32 values transposed to [columns, rows].</summary>
     public float[] ReadTransposed(string name)
     {

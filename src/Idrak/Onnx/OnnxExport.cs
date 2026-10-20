@@ -42,8 +42,9 @@ public static class OnnxExport
 
 /// <summary>
 /// Configures an ONNX export. The layers registered in <see cref="OnnxExportOps"/> are supported: Linear (LoRA adapters
-/// are merged), activations, Softmax, Dropout (removed), BatchNorm, LayerNorm, Conv2d, MaxPool2d, GlobalAveragePool2d,
-/// Flatten, Embedding, PositionalEncoding, MultiHeadAttention, TransformerEncoderLayer, LSTM, GRU, Sequential,
+/// are merged), activations (ReLU, Tanh, Sigmoid, GELU, ExactGELU, QuickGELU), Softmax, Dropout (removed), BatchNorm,
+/// LayerNorm, Conv2d, MaxPool2d, GlobalAveragePool2d, Flatten, Embedding, PositionalEncoding, MultiHeadAttention,
+/// TransformerEncoderLayer (its own activation through that activation's translator), LSTM, GRU, Sequential,
 /// GraphModule (skip connections, branches and shape arithmetic, so an imported graph can be exported again), and the
 /// builder's MeanOverTime, FirstStep, LastStep and Reshape lambdas. Other lambdas and custom modules need a translator,
 /// registered for every export (<see cref="OnnxExportOps"/>) or given to this one (<see cref="Lambda"/>,

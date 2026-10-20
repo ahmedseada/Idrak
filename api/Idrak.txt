@@ -279,6 +279,7 @@ public sealed record Idrak.Generation.BeamOptions : System.IEquatable<Idrak.Gene
   public System.Collections.Generic.IReadOnlyList<int> BeginSuppressTokens { get; init; }
   public System.Collections.Generic.IReadOnlyList<int> SuppressTokens { get; init; }
   public bool EarlyStopping { get; init; }
+  public bool SelectOnDevice { get; init; }
   public float LengthPenalty { get; init; }
   public int Beams { get; init; }
   public int EndToken { get; init; }
@@ -305,6 +306,7 @@ public sealed class Idrak.Generation.Seq2SeqGenerator : Idrak.Abstraction.Genera
   public System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> CreateSampler { get; set; }
   public bool AddSpecialTokens { get; init; }
   public bool EndSource { get; init; }
+  public bool SelectBeamsOnDevice { get; init; }
   public bool SkipSpecialTokens { get; init; }
 
 public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
@@ -2131,6 +2133,7 @@ public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.
   public System.TimeSpan? ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public bool SameValues(string first, string second)
   public float[] Read(string name)
   public float[] ReadTransposed(string name)
   public int[] ShapeOf(string name)
@@ -2159,6 +2162,7 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.I
   public System.TimeSpan ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public bool SameValues(string first, string second)
   public float[] Read(string name)
   public float[] ReadTransposed(string name)
   public long BytesRead { get; }

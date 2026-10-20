@@ -74,6 +74,24 @@ internal static class Seq2SeqRun
         return (beams, penalty);
     }
 
+    /// <summary>
+    /// Refuses, naming the option, the weight choices an encoder-decoder does not take (it is read as stored, float32,
+    /// without an adapter or a head format): for <c>run</c> and for <c>serve</c>.
+    /// </summary>
+    public static void CheckChoice(ModelChoices.ModelChoice choice, string model, string architecture)
+    {
+        string Refused(string option, string why) => $"{option}: {model} is an encoder-decoder ({architecture}); {why}.";
+        if (choice.Weights is { } weights && weights.ToLowerInvariant() is not ("float32" or "f32"))
+        {
+            throw new UsageException(Refused("--weights", $"its weights are read as stored (float32), not as {weights}"));
+        }
+
+        if (choice.HeadWeights is not null || choice.Adapter is not null)
+        {
+            throw new UsageException(Refused(choice.Adapter is not null ? "--adapter" : "--head-weights", "it is read as stored, without an adapter or a head format"));
+        }
+    }
+
     /// <summary>Answers <paramref name="prompt"/> with the encoder-decoder in <paramref name="folder"/>; the exit code.</summary>
     public static int Run(CommandContext context, ModelChoices.ModelChoice choice, string folder, string architecture, string prompt, GenerationSettings settings,
         string? outFile)
@@ -100,16 +118,7 @@ internal static class Seq2SeqRun
             }
         }
 
-        if (choice.Weights is { } weights && weights.ToLowerInvariant() is not ("float32" or "f32"))
-        {
-            throw new UsageException(Refused("--weights", $"its weights are read as stored (float32), not as {weights}"));
-        }
-
-        if (choice.HeadWeights is not null || choice.Adapter is not null)
-        {
-            throw new UsageException(Refused(choice.Adapter is not null ? "--adapter" : "--head-weights", "it is read as stored, without an adapter or a head format"));
-        }
-
+        CheckChoice(choice, model, architecture);
         var (beams, penalty) = Beams(context);
         var layout = ModelChoices.CacheLayout(choice);
         var device = context.Device;

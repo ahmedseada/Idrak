@@ -64,6 +64,9 @@ internal sealed class ServeCommand : Command
                                      {"KEY": VALUE}, over these
               --allow-image-urls     let image_url parts name http(s) addresses the server downloads (off: data
                                      URLs and uploads only; each download is held to --max-request-mb and 30 s)
+              --beams N              an encoder-decoder's beam search for every request (default 1: the sampler); a
+                                     /v1/completions request or an MCP generate call gives its own as num_beams
+              --length-penalty F     the beams' length penalty (default 1: the mean log-probability; 0: the sum)
           -w, --weights FORMAT       int8, int4, bf16 or a registered packed format
               --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores, less
                                      memory than int8/int4 heads, slower)
@@ -98,7 +101,10 @@ internal sealed class ServeCommand : Command
           metrics            GET /metrics (with --metrics)
         A vision-language model (Gemma 3, such as an OCR fine-tune) takes images on /v1/chat/completions,
         /v1/chat/upload and /api/chat (PNG, JPEG, BMP, PPM/PGM; turned upright by their EXIF orientation); a
-        text-only model answers an image with 400. Tool calls are returned to the client, which runs the tools. Point clients at http://127.0.0.1:7317 (the
+        text-only model answers an image with 400. An encoder-decoder (a folder whose architecture a plug-in registers as
+        one) answers prompts on /v1/completions and MCP generate (num_beams, length_penalty and early_stopping per
+        request, --beams and --length-penalty for every request); the chat routes answer it with 400 and the web chat
+        leaves it out. Tool calls are returned to the client, which runs the tools. Point clients at http://127.0.0.1:7317 (the
         chat API's base address, or http://127.0.0.1:7317/v1 for the OpenAI-style API), or serve on the port they
         expect with -p.
 

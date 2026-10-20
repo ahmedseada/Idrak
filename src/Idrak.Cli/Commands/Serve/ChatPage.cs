@@ -6,6 +6,15 @@ namespace Idrak.Cli.Commands.Serve;
 /// <summary>The web chat page served at <c>/ui</c>: one HTML file that streams answers from the OpenAI-style API.</summary>
 internal static class ChatPage
 {
+    /// <summary>
+    /// The page with <paramref name="notChat"/> (models that answer prompts, not conversations, such as encoder-decoders)
+    /// left out of its model list.
+    /// </summary>
+    public static string For(IEnumerable<string> notChat) =>
+        Html.Replace(NotChatSlot, System.Text.Json.JsonSerializer.Serialize(notChat.ToArray()), StringComparison.Ordinal);
+
+    private const string NotChatSlot = "/*NOT_CHAT*/[]";
+
     public const string Html = """
 <!doctype html>
 <html lang="en">
@@ -45,13 +54,14 @@ internal static class ChatPage
 <script>
 const log = document.getElementById('log'), prompt = document.getElementById('prompt'), model = document.getElementById('model'), key = document.getElementById('key');
 let messages = [];
+const notChat = new Set(/*NOT_CHAT*/[]);
 const headers = () => Object.assign({ 'Content-Type': 'application/json' }, key.value ? { Authorization: 'Bearer ' + key.value } : {});
 function add(cls, text) { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; log.appendChild(d); log.scrollTop = log.scrollHeight; return d; }
 async function models() {
   const r = await fetch('v1/models', { headers: headers() });
   if (!r.ok) { add('stats', 'Could not list the models (' + r.status + '); enter the API key if the server has one.'); return; }
   model.innerHTML = '';
-  for (const m of (await r.json()).data) { const o = document.createElement('option'); o.textContent = m.id; model.appendChild(o); }
+  for (const m of (await r.json()).data) { if (notChat.has(m.id)) continue; const o = document.createElement('option'); o.textContent = m.id; model.appendChild(o); }
 }
 async function send(text) {
   messages.push({ role: 'user', content: text });

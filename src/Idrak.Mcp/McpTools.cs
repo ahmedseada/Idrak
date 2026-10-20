@@ -18,7 +18,7 @@ namespace Idrak.Mcp;
 /// Connects to Model Context Protocol servers (<see cref="ConnectAsync"/>, <see cref="ConnectStdioAsync"/>,
 /// <see cref="ConnectHttpAsync"/>) so their tools can be added to a <see cref="ToolRegistry"/>, and serves tools to MCP
 /// clients: a registry's (<see cref="ServerTools(IToolRegistry)"/>) and the models of an inference engine
-/// (<see cref="ServerTools(IModelCatalog)"/>, <see cref="ModelTools"/>).
+/// (<see cref="ServerTools(IModelCatalog)"/>, <see cref="ModelTools(IModelCatalog)"/>).
 /// </summary>
 public static partial class McpTools
 {

@@ -1445,6 +1445,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void LayerNormTrainKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage beta, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage stats, int rows, int cols, float eps)
   public virtual void LeakyReluBackwardKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float slope)
   public virtual void LeakyReluKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float slope)
+  public virtual void LogSoftmaxTopKKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage indices, int rows, int cols, int k)
   public virtual void MatMulManyKernel(Idrak.Abstraction.Devices.Storage a, int m, int k, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, int)> products)
   public virtual void MaxPoolBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage argmax, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g)
   public virtual void MaxPoolBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage argmax, Idrak.Abstraction.Devices.Storage dx, int count)
@@ -1569,6 +1570,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void LayerNormTrain(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage gamma, Idrak.Abstraction.Devices.Storage beta, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage stats, int rows, int cols, float eps)
   public void LeakyRelu(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float slope)
   public void LeakyReluBackward(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float slope)
+  public void LogSoftmaxTopK(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage indices, int rows, int cols, int k)
   public void MatMul(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int m, int n, int k, bool transA, bool transB, float beta)
   public void MatMulMany(Idrak.Abstraction.Devices.Storage a, int m, int k, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, int)> products)
   public void MaxPool(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage argmax, in Idrak.Abstraction.Devices.ConvGeometry g)
@@ -2561,6 +2563,7 @@ public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
   public (default) Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
   public (default) System.TimeSpan? ReadTime { get; }
   public (default) bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public (default) bool SameValues(string first, string second)
   public (default) float[] ReadTransposed(string name)
   public (default) long? BytesRead { get; }
   public System.Collections.Generic.IEnumerable<string> Names { get; }
@@ -2620,6 +2623,7 @@ public abstract class Idrak.Abstraction.Generation.AttentionPositionBias : Idrak
   protected abstract Idrak.Abstraction.Tensor Compute(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
   protected override Idrak.Abstraction.Tensor ForwardCore(Idrak.Abstraction.Tensor input)
   protected override void MoveTo(Idrak.Abstraction.Device device)
+  protected virtual void OnInvalidated()
   public Idrak.Abstraction.Tensor For(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
   public int Heads { get; }
   public override void Dispose()
@@ -2657,15 +2661,15 @@ public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstract
   public static Idrak.Abstraction.Generation.BFloat16Weight? FromBits(int rows, int columns, Idrak.Abstraction.Device device, System.Func<System.Span<ushort>, int, bool> write)
   public static void CopyStoredBits(System.ReadOnlySpan<ushort> stored, System.Span<ushort> destination)
 
-public sealed class Idrak.Abstraction.Generation.BucketedPositionBias : Idrak.Abstraction.Generation.AttentionPositionBias
+public sealed class Idrak.Abstraction.Generation.BucketedPositionBias : Idrak.Abstraction.Generation.DistancePositionBias
   public BucketedPositionBias(int heads, int buckets, int maxDistance, bool bidirectional, Idrak.Abstraction.Device? device = null, System.Random? random = null)
-  public Idrak.Abstraction.Tensor Table { get; }
   public bool Bidirectional { get; }
   public const string KindName = "bucketed"
-  public int Bucket(int relative)
   public int Buckets { get; }
   public int MaxDistance { get; }
+  public override Idrak.Abstraction.Tensor Table { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override int Bucket(int relative)
   public override string ToString()
 
 public sealed class Idrak.Abstraction.Generation.CharBuffer
@@ -2949,6 +2953,13 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public void SetRotaryOffsets(System.Collections.Generic.IReadOnlyList<int>? offsets, int from)
   public void SetRowStarts(System.Collections.Generic.IReadOnlyList<int>? starts)
   public void Truncate(int length)
+
+public abstract class Idrak.Abstraction.Generation.DistancePositionBias : Idrak.Abstraction.Generation.AttentionPositionBias
+  protected DistancePositionBias(int heads)
+  protected override void OnInvalidated()
+  protected sealed override Idrak.Abstraction.Tensor Compute(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
+  public abstract Idrak.Abstraction.Tensor Table { get; }
+  public abstract int Bucket(int relative)
 
 public sealed record Idrak.Abstraction.Generation.EncoderDecoderSpec : System.IEquatable<Idrak.Abstraction.Generation.EncoderDecoderSpec>
   public EncoderDecoderSpec(Idrak.Abstraction.Generation.DecoderSpec Decoder, System.Text.Json.Nodes.JsonObject Encoder)
@@ -3478,15 +3489,15 @@ public abstract class Idrak.Abstraction.Generation.PretrainedVision
   public virtual System.Collections.Generic.IReadOnlyCollection<string> VisionOptionKeys { get; }
   public virtual string Describe()
 
-public sealed class Idrak.Abstraction.Generation.RelativePositionBias : Idrak.Abstraction.Generation.AttentionPositionBias
-  public Idrak.Abstraction.Tensor Table { get; }
+public sealed class Idrak.Abstraction.Generation.RelativePositionBias : Idrak.Abstraction.Generation.DistancePositionBias
   public RelativePositionBias(int heads, int maxDistance, bool bidirectional, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public bool Bidirectional { get; }
   public const string KindName = "relative"
-  public int Bucket(int relative)
   public int Buckets { get; }
   public int MaxDistance { get; }
+  public override Idrak.Abstraction.Tensor Table { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override int Bucket(int relative)
   public override string ToString()
 
 public sealed record Idrak.Abstraction.Generation.RopeScaling : System.IEquatable<Idrak.Abstraction.Generation.RopeScaling>
@@ -4052,6 +4063,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.LayerNormTrain (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LeakyRelu (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LeakyReluBackward (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.LogSoftmaxTopK (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LstmCell (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LstmCellBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.LstmSequence (below)
@@ -4297,6 +4309,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.LeakyRelu(Idr
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.LeakyReluBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float slope)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.LogSoftmaxTopK(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage indices, int rows, int cols, int k)
+
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.LstmCell(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage projected, Idrak.Abstraction.Devices.Storage recurrent, Idrak.Abstraction.Devices.Storage cell, Idrak.Abstraction.Devices.Storage hidden, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage? gates, Idrak.Abstraction.Devices.Storage? cells, int step, int steps, int batch, int hiddenSize)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.LstmCellBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage gates, Idrak.Abstraction.Devices.Storage cells, Idrak.Abstraction.Devices.Storage? dOutput, Idrak.Abstraction.Devices.Storage dHidden, Idrak.Abstraction.Devices.Storage dCell, Idrak.Abstraction.Devices.Storage dGates, Idrak.Abstraction.Devices.Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
@@ -4509,6 +4523,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation LayerNormTrain
   public static readonly Idrak.Abstraction.Operations.Operation LeakyRelu
   public static readonly Idrak.Abstraction.Operations.Operation LeakyReluBackward
+  public static readonly Idrak.Abstraction.Operations.Operation LogSoftmaxTopK
   public static readonly Idrak.Abstraction.Operations.Operation LstmCell
   public static readonly Idrak.Abstraction.Operations.Operation LstmCellBackward
   public static readonly Idrak.Abstraction.Operations.Operation LstmSequence
@@ -4847,6 +4862,7 @@ public sealed class Idrak.Abstraction.SyncProgress<T> : System.IProgress<T>
   public void Report(T value)
 
 public sealed class Idrak.Abstraction.Tensor : System.IDisposable
+  public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) LogSoftmaxTopK(int k)
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Devices.Backend Backend { get; }
   public Idrak.Abstraction.Devices.Storage GradStorage()

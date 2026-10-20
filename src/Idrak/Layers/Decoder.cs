@@ -222,8 +222,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule
 
     /// <summary>
     /// A bias by the query's and the key's positions, [heads, queries, keys], added to the scaled scores before the causal
-    /// mask and the softmax (null, the default: none). The scores are then composed (q · kᵀ over the sequence, or over every
-    /// cached slot in decoding, each step reading its rows of the bias); packed sequences, images and rows of different
+    /// mask and the softmax (null, the default: none). The scores are then composed (q · kᵀ over the sequence, or over the
+    /// filled cache slots in decoding, each step reading its rows of the bias); packed sequences, images and rows of different
     /// lengths are refused. When it is a <see cref="Module"/> its parameters are this layer's, unless
     /// <see cref="SharesPositionBias"/>.
     /// </summary>
@@ -558,33 +558,40 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         return attended.Reshape(n * KvHeads, Group * t, HeadDim);
     }
 
-    // Attention over every cached slot from basic operations (any layout, any backend; device-side masks, so recordable):
-    // the scores [rows, group·t, capacity], soft-capped, with the causal mask and, for a window, the positions before it
-    // masked too.
+    // Attention from basic operations (any layout, any backend), soft-capped, with the causal mask and, for a window, the
+    // positions before it masked too. Without a position bias over every cached slot, the scores [rows, group·t, capacity]
+    // under device-side masks (so recordable); with one (never recorded: its rows follow the host's position) over the
+    // filled slots only, [rows, group·t, filled], the bias's rows over them, and the causal mask's columns of them only
+    // when the step has several queries (one query sees every filled slot).
     private Tensor AttendComposed(Tensor q, KeyValueCache cache, DecodingContext context, int t, float scale)
     {
-        var keys = cache.Layout.Expand(cache, keys: true);
-        var values = cache.Layout.Expand(cache, keys: false);
+        int start = context.LengthOf(cache);
+        int? filled = _bias is null ? null : start + t;
+        var keys = filled is { } f ? FilledSlots.Of(cache, keys: true, f) : cache.Layout.Expand(cache, keys: true);
+        var values = filled is { } g ? FilledSlots.Of(cache, keys: false, g) : cache.Layout.Expand(cache, keys: false);
+        int slots = keys.Shape[1];
         var raw = q.MatMul(keys, transposeB: true);
         if (_softcap is { } cap)
         {
             (raw, scale) = (Softcap(raw, scale, cap), 1f);
         }
 
-        var mask = context.MaskOf(cache)!;
+        Tensor? mask = filled is null || t > 1 ? FilledSlots.Columns(context.MaskOf(cache)!, slots) : null;
         if (_bias is not null)
         {
-            // The step's rows of the bias over every slot, [heads, t, capacity], under the causal mask [t, capacity].
-            mask = _bias.For(t, keys.Shape[1], context.LengthOf(cache), q.Device) + mask;
+            // The step's rows of the bias over the filled slots, [heads, t, slots] (under the causal mask [t, slots]).
+            var bias = _bias.For(t, slots, start, q.Device);
+            mask = mask is null ? bias : bias + mask;
         }
 
         if (Windowed)
         {
             // Key j is before query i's window when j <= position + i - window: the causal mask of a cache `window` slots
             // wider, read from slot `window` on, is 0 exactly there (-1e9 elsewhere), so -1e9 - it masks those keys.
-            int capacity = keys.Shape[1], window = _window!.Value;
+            int capacity = cache.Capacity, window = _window!.Value;
             var wider = Tensor.DecoderMask(context.PositionOf(cache), t, capacity + window);
-            mask = mask + (wider.Narrow(1, window, capacity) * -1f + -1e9f);
+            var before = wider.Narrow(1, window, slots) * -1f + -1e9f;
+            mask = mask is null ? before : mask + before;
         }
 
         return raw.ScaleMaskSoftmax(scale, mask).MatMul(values);
