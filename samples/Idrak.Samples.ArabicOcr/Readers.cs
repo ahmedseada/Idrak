@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Text;
+using Idrak.Vision;
 using Idrak.Text.Generation;
 using Idrak.Abstraction.Generation;
 
@@ -63,17 +64,22 @@ internal static class Readers
 /// </summary>
 internal sealed class LinesReader : IPageReader
 {
-    private readonly Recognizer _recognizer;
+    private readonly CrnnRecognizer _recognizer;
     private readonly string _decoder;
     private readonly CtcDecodeOptions _options;
     private readonly bool _singleLine;
     private readonly LineSegmentationOptions _segmentation;
-    private readonly MeasuredBatches _batches;
+    private readonly MeasuredLineBatches _batches;
 
     public LinesReader(OcrContext context, string folder)
     {
         var args = context.Args;
-        _recognizer = Recognizer.Load(folder, context.Device);
+        if (!CrnnRecognizer.IsRecognizerFolder(folder))
+        {
+            throw new UsageException($"{folder} is not a recognizer folder (no {CrnnRecognizer.ConfigFile} and {CrnnRecognizer.WeightsFile}); train one with: train --data DIR -o {folder}");
+        }
+
+        _recognizer = CrnnRecognizer.Load(folder, context.Device, OcrText.Normalize);
         _decoder = args.Option("--decoder") ?? CtcDecoders.Greedy;
         if (!CtcDecoders.Names.Contains(_decoder))
         {
@@ -83,7 +89,7 @@ internal sealed class LinesReader : IPageReader
         _options = new CtcDecodeOptions { BeamWidth = args.Integer("--beam-width", 10, 1) };
         _singleLine = args.Flag("--single-line");
         _segmentation = new LineSegmentationOptions { MaxSkew = args.Number("--max-skew", 3, 0) };
-        _batches = new MeasuredBatches(context.Device, args.Option("--batch") is null ? null : args.Integer("--batch", 1, 1));
+        _batches = new MeasuredLineBatches(context.Device, args.Option("--batch") is null ? null : args.Integer("--batch", 1, 1));
         Alphabet = _recognizer.Settings.Alphabet;
     }
 
@@ -93,7 +99,7 @@ internal sealed class LinesReader : IPageReader
     public IReadOnlyList<string> Alphabet { get; }
 
     /// <summary>Batches run so far: the largest, and how often one was halved for memory.</summary>
-    public MeasuredBatches Batches => _batches;
+    public MeasuredLineBatches Batches => _batches;
 
     /// <summary>The texts of <paramref name="lines"/> (each one line, already cut), through the network together.</summary>
     public IReadOnlyList<string> ReadLines(IReadOnlyList<ImageData> lines) =>
@@ -111,7 +117,7 @@ internal sealed class LinesReader : IPageReader
 
     /// <summary>
     /// The pages decoded and their lines found in parallel (independent pages, rule 79), then every line of them through
-    /// the network together (the batches of <see cref="Recognizer.Read"/>), the readings handed back page by page. A page's
+    /// the network together (the batches of <see cref="CrnnRecognizer.Read"/>), the readings handed back page by page. A page's
     /// seconds are the call's, shared evenly.
     /// </summary>
     public IReadOnlyList<PageReading> ReadMany(IReadOnlyList<Page> pages)
@@ -139,7 +145,7 @@ internal sealed class LinesReader : IPageReader
         return result;
     }
 
-    private PageReading Reading(IReadOnlyList<PageLine> lines, IReadOnlyList<LineReading> readings, double skew, double seconds)
+    private PageReading Reading(IReadOnlyList<PageLine> lines, IReadOnlyList<RecognizedLine> readings, double skew, double seconds)
     {
         string text = string.Join("\n", readings.Select(r => r.Text));
         var details = new JsonObject

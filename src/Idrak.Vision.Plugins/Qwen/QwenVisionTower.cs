@@ -4,7 +4,7 @@
 using Idrak.Layers;
 using Idrak.Models;
 
-namespace Idrak.QwenVision;
+namespace Idrak.Vision.Plugins.Qwen;
 
 /// <summary>
 /// The Qwen-VL vision transformer (Qwen2_5_VisionTransformerPretrainedModel / Qwen2VisionTransformerPretrainedModel),

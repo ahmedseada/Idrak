@@ -5,7 +5,7 @@ using Idrak.Imaging;
 using Idrak.Models.Abstractions;
 using Idrak.Vision;
 
-namespace Idrak.IdrakVision;
+namespace Idrak.Vision.Plugins.IdrakVision;
 
 /// <summary>
 /// An IdrakVision image encoder: an image becomes one block of <see cref="IdrakVisionTokens.TokensPerImage"/> tokens

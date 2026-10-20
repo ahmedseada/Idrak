@@ -4,7 +4,7 @@
   three words, full lines).
 
 .DESCRIPTION
-  Builds the CLI and the IdrakVision plug-in, then makes whatever the work folder is missing, in order:
+  Builds the CLI (it registers the vision plug-ins package, IdrakVision among them, at startup), then makes whatever the work folder is missing, in order:
     1. the text corpus, its tokenizer and token file (idrak data text, data tokenizer, data tokens);
     2. the text model (A5: idrak create, then pretrain);
     3. the vision model on it (create init --vision at -ImageSize pixels, create --decoder);
@@ -68,7 +68,7 @@ function Last([string]$run) {
 function Train([string]$from, [string]$out, [int]$steps, [string[]]$more) {
     if (Test-Path (Join-Path $out "checkpoint-$steps")) { Write-Host "$out is done ($steps steps)"; return }
     if ((Test-Path (Join-Path $out "run.json")) -and (Last $out)) {
-        Idrak resume $out -d $Device -P $script:plugin
+        Idrak resume $out -d $Device
         return
     }
 
@@ -88,13 +88,10 @@ function WriteDocs([string]$path, [string[]]$docs) {
 }
 
 try {
-    Step "Building the command-line tool and the IdrakVision plug-in"
+    Step "Building the command-line tool (with the vision plug-ins, IdrakVision among them)"
     dotnet build -c Release src/Idrak.Cli
     if ($LASTEXITCODE -ne 0) { throw "building src/Idrak.Cli failed" }
-    dotnet build -c Release samples/IdrakVision/Idrak.IdrakVision
-    if ($LASTEXITCODE -ne 0) { throw "building the IdrakVision plug-in failed" }
     $script:idrak = Join-Path $root "src/Idrak.Cli/bin/Release/net10.0/Idrak.Cli.dll"
-    $script:plugin = Join-Path $root "samples/IdrakVision/Idrak.IdrakVision/bin/Release/net10.0/Idrak.IdrakVision.dll"
 
     Step "1. Text: corpus, tokenizer, token file"
     if (-not (Test-Path (W "corpus.txt"))) { Idrak data text -n $CorpusPages --unit pages -o (W "corpus.txt") }
@@ -117,7 +114,7 @@ try {
     }
 
     $vlm = W "vlm$ImageSize"
-    if (-not (Test-Path (Join-Path $vlm "config.json"))) { Idrak create $visionSpec -o $vlm --decoder $text -P $plugin }
+    if (-not (Test-Path (Join-Path $vlm "config.json"))) { Idrak create $visionSpec -o $vlm --decoder $text }
 
     Step "4. Fonts"
     if ($Fonts -eq "") {
@@ -174,11 +171,11 @@ try {
         $out = W "c$($s + 1)"
         Write-Host "stage $($s + 1): $name, $($StageSteps[$s]) steps at $($StageRates[$s])"
         Train $from $out $StageSteps[$s] @("--data", (W "s-$name/pages.jsonl"), "--images", (W "s-$name/pages.zip"), "--trained", "all",
-            "--lr", $StageRates[$s], "-P", $plugin)
+            "--lr", $StageRates[$s])
         $from = Last $out
         Idrak runs show $out
         $heldSet = W "s-held-$name"
-        $line = (& dotnet $idrak tune evaluate $from (Join-Path $heldSet "pages.jsonl") --images (Join-Path $heldSet "pages.zip") --metric cer -d $Device -P $plugin) |
+        $line = (& dotnet $idrak tune evaluate $from (Join-Path $heldSet "pages.jsonl") --images (Join-Path $heldSet "pages.zip") --metric cer -d $Device) |
             ForEach-Object { Write-Host $_; $_ } | Where-Object { $_ -match "cer " } | Select-Object -Last 1
         if ($LASTEXITCODE -ne 0) { throw "evaluating $from failed" }
         $results += "stage $($s + 1) ($name): $line"

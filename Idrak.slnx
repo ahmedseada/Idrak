@@ -1,8 +1,6 @@
 <Solution>
   <Folder Name="/samples/">
     <Project Path="samples/Gemma3Vision/Idrak.Gemma3Vision/Idrak.Gemma3Vision.csproj" />
-    <Project Path="samples/QwenVision/Idrak.QwenVision/Idrak.QwenVision.csproj" />
-    <Project Path="samples/IdrakVision/Idrak.IdrakVision/Idrak.IdrakVision.csproj" />
     <Project Path="samples/IdrakAudio/Idrak.IdrakAudio/Idrak.IdrakAudio.csproj" />
     <Project Path="samples/OpenVoice/Idrak.OpenVoice/Idrak.OpenVoice.csproj" />
     <Project Path="samples/VitsSpeech/Idrak.VitsSpeech/Idrak.VitsSpeech.csproj" />

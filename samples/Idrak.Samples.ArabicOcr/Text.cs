@@ -55,3 +55,13 @@ internal static class OcrText
         _ => throw new UsageException($"--truth-text is raw or values, not '{mode}'."),
     };
 }
+
+/// <summary>JSON writing options of the app.</summary>
+internal static class Json
+{
+    public static readonly JsonSerializerOptions Indented = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,                 // Arabic as itself, not \u escapes
+    };
+}

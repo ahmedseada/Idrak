@@ -4,7 +4,7 @@
 using Idrak.Layers;
 using Idrak.Models;
 
-namespace Idrak.QwenVision;
+namespace Idrak.Vision.Plugins.Qwen;
 
 /// <summary>
 /// Qwen-VL's patch merger (Qwen2_5_VLPatchMerger / PatchMerger): the tower's patch outputs normalized (<c>ln_q</c>:
