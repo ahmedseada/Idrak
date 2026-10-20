@@ -19,6 +19,10 @@ standing rules; they win over anything here), then the plan you are asked to wor
   2026-10-20: every reusable piece outside the library is a candidate, contract first, no copies in samples or plug-ins
   (only the override proofs keep their own); phases P0-P10 in two lanes. Nothing is built; the plug-in tests live in
   `tests/Idrak.Tests` (decided).
+- **Plan 26 progress (2026-10-20):** P0, P1, P2, P3, P8, P9, P10 merged and pushed (3419965); P4 (audio) and P5
+  (vision) running; P6 and P7 next. The owner said: finish the plan first; the plan's **"Leftovers for the owner"**
+  (ArabicOcr's left-to-right order, `idrak serve` for an encoder-decoder, the slowness and ONNX bug found) are the
+  owner's after it, not worked on before.
 - **Scope:** Plan 24's owner runs, and Plan 26 only when the owner names a phase (the owner dropped Plan 25,
   Idrak.Extensions.AI).
 - **No new work until the owner says so.** Report status and wait for the owner to name the next item.
