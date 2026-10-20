@@ -43,6 +43,9 @@ standing rules; they win over anything here), then the plan you are asked to wor
   work, and the owner objected ("you will chase an endless job"). Finish what was asked; list what measurements show
   in the plan's "What is left" with numbers; ask in one line before starting any agent or fix the owner did not
   name, and never announce a count of remaining work and then exceed it.
+- **After every merge with `origin/abstraction`, build once, run the targeted filters, push only when green, then log the
+  plan's status** (its phase table and a short status to the owner) after every successful merge and push (the owner,
+  2026-10-20).
 - **After merging an agent's work, build and run before pushing** (the owner, 2026-10-19): merge into the local
   `abstraction`, build once, run the targeted CPU filters once, push only when green. Two pieces each tested alone
   can fail together (a merge of C and E went out untested before this was asked; the joint run later passed).
@@ -79,7 +82,8 @@ standing rules; they win over anything here), then the plan you are asked to wor
 
 ## A fresh cloud container
 
-- .NET SDK 10: `apt-get install -y dotnet-sdk-10.0` (packages.microsoft.com is reachable).
+- .NET SDK 10: `apt-get update && apt-get install -y dotnet-sdk-10.0`, from Ubuntu's own archive (noble-updates; SDK
+  10.0.112 at `/usr/lib/dotnet`), not from packages.microsoft.com.
 - The tokenizer references: `python3 -m venv /home/user/t0-venv && /home/user/t0-venv/bin/pip install -r
   tools/tokenizers/requirements.txt` (PyPI is reachable; huggingface.co is not, so real models are the owner's
   `make_fixtures.py --real` run). Run reference scripts with `-I`.
@@ -105,10 +109,18 @@ standing rules; they win over anything here), then the plan you are asked to wor
 - Tests that pass only because the test process has something the CLI lacks (ICU) prove nothing about the CLI. The
   library no longer calls the platform's normalization (a test scans `src/`); `tokenizers: unicode normalization:`
   runs the real idrak tool in its own process.
-- **A build of `tests/Idrak.Tests` takes about 3 minutes in this cloud container even when it is idle** (3m 04s
-  measured), longer while another build runs. Every new worktree starts cold. Do not build in parallel with agents
-  when it can be avoided, batch every fix before a build, and read the code a failing test touches before changing
-  its expectation, so one rebuild covers all failures.
+- **Builds are fast when the compiler server stays warm** (corrected 2026-10-20; an earlier note here said 3 minutes,
+  measured right after `dotnet build-server shutdown`, which makes every build cold). The first build of a session (or
+  of a new worktree) restores and compiles everything and is slow; after it, a rebuild of `tests/Idrak.Tests` after
+  library changes takes about a minute on 4 cores. The pattern:
+  ```
+  dotnet build tests/Idrak.Tests -v q --no-restore     # after the first build of the session
+  IDRAK_DEVICES=cpu IDRAK_FILTER="..." dotnet run --project tests/Idrak.Tests --no-build
+  ```
+  Never `dotnet build-server shutdown`, `--disable-build-servers`, `dotnet clean` or deleting `obj`; never `-c Release`
+  here (Release is the owner's Windows runs); never `dotnet run` without `--no-build`. Batch every fix before a build,
+  read the code a failing test touches before changing its expectation, and do not build in parallel with agents when
+  it can be avoided.
 - **A stuck compiler server** (`VBCSCompiler` at 140% CPU with no build running) skewed timings for an hour; check
   `ps` before measuring and run `dotnet build-server shutdown` when one lingers. Measure speed in a scratch Release
   program with `DOTNET_TieredCompilation=0` and medians, not in the shared test run (±50% there).
