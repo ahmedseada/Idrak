@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Generation;
-using Idrak.IdrakVision;
+using Idrak.Vision.Plugins.IdrakVision;
 using Idrak.Models;
 using Idrak.Text;
 using Idrak.Text.Abstractions;

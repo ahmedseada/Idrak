@@ -15,6 +15,9 @@
     <ProjectReference Include="..\..\src\Idrak.Vision\Idrak.Vision.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Audio\Idrak.Audio.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
+    <!-- LLaVA, the text decoder of the outside vision family (VisionFamilyPlugin.cs), comes from the plug-in package, which
+         has no internals either (plan 26, P5). -->
+    <ProjectReference Include="..\..\src\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
   </ItemGroup>
 
 </Project>

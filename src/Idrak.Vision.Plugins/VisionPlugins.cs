@@ -17,8 +17,13 @@ public static class VisionPlugins
     /// <summary>The package's name, as the library's "not registered" messages name it: "Idrak.Vision.Plugins".</summary>
     public const string Package = "Idrak.Vision.Plugins";
 
-    /// <summary>Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them (none yet: plan 26 moves the families in).</summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [];
+    /// <summary>
+    /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: Qwen-VL
+    /// (<see cref="Qwen.QwenVisionPlugin"/>), LLaVA (<see cref="Llava.LlavaPlugin"/>), IdrakVision
+    /// (<see cref="IdrakVision.IdrakVisionPlugin"/>), the CRNN line recognizer (<see cref="Crnn.CrnnPlugin"/>).
+    /// </summary>
+    public static IReadOnlyList<IIdrakPlugin> All { get; } =
+        [Qwen.QwenVisionPlugin.Plugin, Llava.LlavaPlugin.Plugin, IdrakVision.IdrakVisionPlugin.Plugin, Crnn.CrnnPlugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

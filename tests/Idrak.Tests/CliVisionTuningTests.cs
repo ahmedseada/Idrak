@@ -150,7 +150,7 @@ internal static partial class Tests
             Check(lines.Length == 2 && JsonNode.Parse(lines[0])!["adapter adapter"]!["cer"] is not null, $"tune evaluate -o: {string.Join("\n", lines)}");
 
             // The tiny LLaVA (the test plug-in): the same command line, another family.
-            Idrak.PluginTests.LlavaPlugin.Register();
+            Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
             string llava = Path.Combine(folder, "llava");
             string llavaTrain = WriteShareGpt(folder, "llava", "llava.json");
             var other = TrainCli(["tune", "-b", TestData("vlm-llava/tiny-llava"), "--data", llavaTrain, "--images", zip, "--train-projector", "--epochs", "2", "-o", llava, .. TinyTuning]);

@@ -19,6 +19,7 @@ using Idrak.Samples.ArabicOcr;
 using Idrak.Samples.ArabicOcr.Tests;
 using Idrak.Abstraction.Generation;
 using Idrak.Vision.Abstractions;
+using Idrak.Vision.Plugins.Crnn;
 
 string device = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } devices ? devices.Split(',')[0].Trim() : "cpu";
 string root = Path.Combine(Path.GetTempPath(), $"idrak-ocr-tests-{Environment.ProcessId}");
@@ -97,7 +98,7 @@ var timings = new List<string>();
     ("ocr train: CER falls substantially within a few epochs on a tiny synthetic set", () =>
     {
         string model = TrainedModel();
-        var json = (JsonObject)JsonNode.Parse(File.ReadAllText(Path.Combine(model, Recognizer.SettingsFile)))!;
+        var json = (JsonObject)JsonNode.Parse(File.ReadAllText(Path.Combine(model, CrnnRecognizer.ConfigFile)))!;
         var history = json["training"]!["history"]!.AsArray();
         double first = (double)history[0]!["cer"]!, best = (double)json["training"]!["cer"]!;
         Check(best <= 0.2 && best <= first / 3, $"cer {first} at the first epoch, best {best}");

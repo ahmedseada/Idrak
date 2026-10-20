@@ -16,7 +16,7 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data.Abstractions;
 using Idrak.Gemma3Vision;
-using Idrak.QwenVision;
+using Idrak.Vision.Plugins.Qwen;
 using Idrak.Samples.LegalOcr;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;

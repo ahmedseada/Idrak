@@ -4,7 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Generation;
 using Idrak.Data;
-using Idrak.IdrakVision;
+using Idrak.Vision.Plugins.IdrakVision;
 using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models;

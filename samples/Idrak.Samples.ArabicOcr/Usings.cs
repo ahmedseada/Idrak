@@ -7,3 +7,4 @@ global using Idrak.Data;
 global using Idrak.Data.Abstractions;
 global using Idrak.Text.Abstractions;
 global using Idrak.Vision.Abstractions;
+global using Idrak.Vision.Plugins.Crnn;

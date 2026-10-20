@@ -27,7 +27,7 @@ internal static partial class Tests
 
     private static void LlavaMatchesReference(Device device)
     {
-        Idrak.PluginTests.LlavaPlugin.Register();
+        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         var manifest = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(LlavaData("manifest.json")))!;
         var image = ImageCodecs.Decode(TestData("vlm/image.png"));
         using var noGrad = Autograd.NoGrad();
@@ -42,12 +42,12 @@ internal static partial class Tests
             int tokens = (int)facts["image_tokens"]!;
             using var model = PretrainedModel.Load(LlavaData(folder), new PretrainedOptions { Device = device });
             Check(model.Notes.Count == 0, $"{folder}: {string.Join("; ", model.Notes)}");
-            var vision = model.Vision as Idrak.PluginTests.LlavaVision ?? throw new InvalidOperationException($"{folder}: no LLaVA vision part");
+            var vision = model.Vision as Idrak.Vision.Plugins.Llava.LlavaVision ?? throw new InvalidOperationException($"{folder}: no LLaVA vision part");
             Check(vision is { Family: "LlavaForConditionalGeneration", Width: 32 } && vision.Layout.Tokens == tokens && vision.Attention.Causal
                   && vision.PromptFormat.ImageToken == (int)manifest["token_ids"]!["<image>"]!, $"{folder}: {vision.Layout}, rule {vision.Attention.Name}");
 
             // Pixels (shortest edge, bicubic, center crop), the selected hidden states, the projected features.
-            using var encoder = (Idrak.PluginTests.LlavaImageEncoder)vision.CreateEncoder(new VisionEncoderOptions { Device = device });
+            using var encoder = (Idrak.Vision.Plugins.Llava.LlavaImageEncoder)vision.CreateEncoder(new VisionEncoderOptions { Device = device });
             float[] pixels = encoder.Preprocessor.Pixels(image);
             AssertClose(ReadNpyFloat32(LlavaData($"reference/pixel_values{tag}.npy")), pixels, 1e-5f, $"{folder}: pixel values");
             using var pixelTensor = Tensor.From(pixels, [1, 3, 28, 28], device);
@@ -119,7 +119,7 @@ internal static partial class Tests
 
     private static void LlavaChat(Device device)
     {
-        Idrak.PluginTests.LlavaPlugin.Register();
+        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         var facts = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(LlavaData("manifest.json")))!["facts"]!["tiny-llava"]!;
         int[] newTokens = [.. facts["new_tokens"]!.AsArray().Select(n => (int)n!)];
         using var model = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
@@ -193,7 +193,7 @@ internal static partial class Tests
     private static void VisionEncoderConformance(Device device)
     {
         RegisterGemma3Vision();
-        Idrak.PluginTests.LlavaPlugin.Register();
+        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         var samples = new[] { ImageCodecs.Decode(TestData("vlm/image.png")), ImageCodecs.Decode(TestData("vlm/image-gray.jpg")) };
         foreach (string folder in new[] { "vlm/tiny-gemma3", "vlm-llava/tiny-llava", "vlm-llava/tiny-llava-full" })
         {
@@ -246,7 +246,7 @@ internal static partial class Tests
         Check(Fails(() => _ = new ImageTokenLayout(6) { Grid = [2, 2] }), "a grid that does not hold the tokens is refused");
 
         // The M-RoPE slot: position ids reach the decoder; a decoder without rotary sections (LLaVA's) refuses them.
-        Idrak.PluginTests.LlavaPlugin.Register();
+        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         using var model = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
         using var features = new ImageFeatures(Tensor.From(new float[16 * 32], [16, 32], device), new ImageTokenLayout(16) { Grid = [4, 4] },
             Tensor.From(new float[3 * 16], [3, 16], device));
