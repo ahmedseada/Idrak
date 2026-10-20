@@ -10,13 +10,28 @@ namespace Idrak.Text.Plugins.Llama;
 /// <summary>
 /// How the Llama family is read: its Hugging Face architecture (<see cref="Llama()"/>, the common configuration keys and
 /// checkpoint names), its GGUF mapping (<see cref="Gguf()"/>: llama.cpp's "llama", which Mistral's files use too, with
-/// its experts read as Mixtral, and Llama 3's RoPE scaling stored as rope_freqs.weight), and the split pattern of its
-/// GGUF pre-tokenizers (<see cref="SplitPattern"/>, llama.cpp's llama-vocab.cpp).
+/// its experts read as Mixtral, and Llama 3's RoPE scaling stored as rope_freqs.weight), the split pattern of its
+/// GGUF pre-tokenizers (<see cref="SplitPattern"/>, llama.cpp's llama-vocab.cpp), and Llama 3's chat template for a GGUF
+/// file without one (<see cref="ChatTemplateFallback"/>).
 /// </summary>
 public static class LlamaArchitectures
 {
     /// <summary>llama.cpp's split pattern for the llama3 family (llama-vocab.cpp), the names in <see cref="LlamaPlugin.PreTokenizers"/>.</summary>
     public const string SplitPattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+
+    /// <summary>
+    /// Llama 3's chat turns (<c>&lt;|start_header_id|&gt;role&lt;|end_header_id|&gt;</c> … <c>&lt;|eot_id|&gt;</c>, after the
+    /// begin token), the template a GGUF file without one gets when its vocabulary holds <c>&lt;|start_header_id|&gt;</c>
+    /// (<see cref="ChatTemplateFallback"/>, registered in <see cref="GgufChatTemplates"/> as "llama3").
+    /// </summary>
+    public const string ChatTemplateText = "{{- bos_token }}{%- for message in messages %}{{ '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n\\n' + message['content'] | trim + '<|eot_id|>' }}{%- endfor %}"
+                                           + "{%- if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}{%- endif %}";
+
+    /// <summary>
+    /// The fallback chat template of a GGUF file without one (<see cref="GgufChatTemplates"/>): <see cref="ChatTemplateText"/>,
+    /// for a file whose vocabulary holds <c>&lt;|start_header_id|&gt;</c>.
+    /// </summary>
+    public static GgufChatTemplate ChatTemplateFallback() => new() { Matches = (_, tokens) => tokens.Contains("<|start_header_id|>"), Template = ChatTemplateText };
 
     /// <summary>LlamaForCausalLM: the common keys and names as they are, written back as config.json with model_type "llama".</summary>
     public static PretrainedArchitecture Llama() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "llama");

@@ -939,7 +939,83 @@ Not started.
 
 #### L1-GGUF (rows 15, 18)
 
-Not started.
+**L1-GGUF as built (2026-10-20).** The GGUF fallback chat templates leave the library through a registry, and the Gemma
+plug-in reads llama.cpp's Gemma files:
+- **Row 15, the contract:** `GgufChatTemplate` (`Matches(file, tokens)`, `Template`) and the registry `GgufChatTemplates`
+  (`Idrak.Models.Abstractions`, a `SlotTable` asked in registration order, the library's first; `Register`,
+  `Unregister`, `Names`, `Get` refusing "GGUF chat template 'x' is not registered … GgufChatTemplates.Register …
+  Idrak.Text.Plugins", `Find`, `Default`, `Origin`, `For`). Only the library's `GgufModel` asks it and plug-ins do not
+  place contracts (decision 11), so it lives in `Idrak` beside `GgufArchitectures` (the inventory agrees: 0 misplaced).
+  `GgufModel.WriteTokenizer` writes the first template whose tokens match. **ChatML is the library's** ("chatml", for a
+  vocabulary holding `<|im_start|>`): it is no one family's format but the turn layout many families share and the one
+  Idrak's own created models use (`ModelFiles.ChatMLWithParts`, `ChatMLTemplate` in `Idrak.Abstraction`), so it is a
+  generic default, not a family fallback. **Llama 3's template is `Idrak.Text.Plugins.Llama`'s** ("llama3",
+  `LlamaArchitectures.ChatTemplateText` and `ChatTemplateFallback()`, `LlamaPlugin.ChatTemplateName`, one more part of
+  the Llama plug-in, for `<|start_header_id|>`). Both texts moved byte for byte; ChatML is asked first, as the old
+  conditional did, so a file holding both tokens still gets ChatML. **With nothing registered for its tokens** a file
+  gets no template, as a model folder without one does (`PretrainedModel.ChatTemplate` null: chat is refused with "has
+  no chat template", plain generation and fine-tuning on text work), and the prepared model's note names the registry,
+  the names registered, `GgufChatTemplates.Register` and the package.
+- **Row 18, the feature:** `Idrak.Text.Plugins.Gemma.GemmaGguf` (`Gemma()`, `Gemma2(queryScalar)`, `Gemma3(queryScalar)`,
+  `TensorName`, `StoredOffset`, `ImpliedQueryScalar`); `GemmaPlugin` registers llama.cpp's `gemma`, `gemma2` and `gemma3`
+  (`GemmaPlugin.GgufNames`, three more parts) as `GemmaForCausalLM`, `Gemma2ForCausalLM` and `Gemma3ForCausalLM`, read by
+  the family's existing specs. The tensor-name map was still a closed switch in `GgufModel` (`HfName`): it is now the
+  default of a hook, `GgufArchitecture.TensorName` (null: `GgufArchitecture.CommonTensorName`, the old switch moved as it
+  was), and a second hook, `GgufArchitecture.StoredOffset` (what the converter added to a tensor's values, by Hugging Face
+  name, subtracted on reading: a vector loop with a scalar tail, nothing done for 0). Gemma 2 and 3 map llama.cpp's
+  `post_attention_norm`, `ffn_norm` (before the feed-forward block) and `post_ffw_norm` (not `ffn_post_norm`: llama.cpp's
+  `MODEL_TENSOR.FFN_POST_NORM` is `blk.{bid}.post_ffw_norm`); Gemma's other names are the common ones. `Configure` sets
+  GELU (`gelu_pytorch_tanh`: llama.cpp's `LLM_FFN_GELU`), and for Gemma 2 and 3 the file's `attn_logit_softcapping`
+  (Gemma 2), `final_logit_softcapping`, `attention.sliding_window`, `attention.sliding_window_pattern` (flags or a layer
+  count, as `layer_types`) and `rope.freq_base_swa` (Gemma 3's `rope_local_base_freq`), each when present, else what
+  llama.cpp assumes, which are the family's defaults already (Gemma 2: window 4096 every other layer, caps 50 and 30;
+  Gemma 3: five windowed layers in six, local base 10,000 unscaled, no cap; a Gemma 3 file without a window gets every
+  layer global, as llama.cpp reads it). The embedding scale (√width) is the family spec's, as llama.cpp's graph does it;
+  the global RoPE base and linear scaling are the file's generic keys. **The query scalar** is not in the files:
+  llama.cpp takes the head width, or width / heads for the layer counts it reads as the family's widest size (46 for
+  gemma2, 62 for gemma3); `ImpliedQueryScalar` does the same, and an app registers `GemmaGguf.Gemma2(queryScalar)` or
+  `Gemma3(queryScalar)` under the name for another (the setting).
+- **The +1:** llama.cpp's converter adds 1 to every Gemma norm gain: `conversion/gemma.py` at tag b11756 (commit
+  d806193), `GemmaModel.modify_tensors` and `Gemma2Model.modify_tensors` (`if name.endswith("norm.weight"): data_torch =
+  data_torch + 1`) and `Gemma3Model.norm_shift` (1.0 for every name ending in `norm.weight`: the layers' norms, the q/k
+  norms, the final norm); its graph multiplies by the stored gain. So `GemmaGguf.StoredOffset` gives 1 for those names and
+  the loader takes it back off, and the family's spec (`NormOffset` 1, as for safetensors) adds it again; the fixture
+  script checks the written files (every norm equals the checkpoint's gain + 1 in float32, every matrix the
+  checkpoint's).
+- **Tokenizer:** Gemma files carry llama.cpp's SentencePiece `llama` tokenizer (scores, types, `add_space_prefix` false),
+  which Plan 24's `GgufTokenizerFormats.Llama` already reads as a SentencePiece BPE model; nothing was missing. The tests
+  show its ids equal the folder's tokenizer.json on plain text and on the chat prompt, whose turn markers (control
+  tokens in the file) encode as their special ids.
+- **Fixtures:** `tools/gguf/make_gemma.py` with `tools/gguf/requirements.txt` (llama.cpp's own pins: torch 2.11.0,
+  transformers 4.57.6, sentencepiece 0.2.1, numpy 2.2.6, protobuf 4.25.8; and llama.cpp's converter and gguf-py at tag
+  b11756, not the PyPI gguf). Three tiny text models on the tiny Gemma 3's tokenizer and text sizes
+  (`data/vlm/tiny-gemma3`; its tokenizer.model written from its tokenizer.json, checked to give the same ids): Gemma,
+  2 layers; Gemma 2, 2 layers, caps 2 and 3, window 8; Gemma 3, 6 layers (the pattern llama.cpp assumes), window 8, base
+  10^6 scaled linearly by 8 and a local 10^4. Matrices drawn in float16, so the f16 GGUF files hold exactly the folders'
+  values. `data/gguf/tiny-gemma{,2,3}.gguf` (53, 54, 105 KB) and `tiny-gemma{,2,3}-hf/` (float32 safetensors with the
+  tokenizer files), `gemma-manifest.json` (versions, the llama.cpp tag and commit, SHA-256s); 672 KB in all.
+- **Tests:** new `gguf: gemma`, `gguf: gemma2`, `gguf: gemma3` (spec equal to the folder's, the SentencePiece ids of
+  five texts and of the chat prompt, the template, logits within 1e-4 over 13+ tokens, past the window, and the greedy
+  text of 16 tokens equal), `gguf: chat templates` (ChatML, Llama 3's, both, a file's own kept, an app's new and
+  overriding template and back, none matching without the families: no template, `ChatTemplates.Load` null, the note
+  naming the registry; `Get` of a name nobody registered refused as not registered). Changed: `plugins: gemma` (no
+  library GGUF mapping; a gemma2 file refused naming the package; the three registered once and taken back; the names
+  and offsets), `plugins: llama` (the template part registered once and taken back), `plugins:`'s built-in check (the GGUF
+  architectures are Llama's, Qwen's and Gemma's).
+- **Run (CPU, the agent):** before, 140 passed over `gguf:`, `pretrained:`, `plugins:`, `chat templates`, `tokenizers:`,
+  `cli run:`, `cli serve:`, `decoder:`, and 195 with the guards (`public API`, `abstraction inventory`, `naming:`,
+  `conformance kit:`, `override loop:`, `engine:`, `generic components`). After the build: 197 passed, 2 failed (`naming:`
+  refused a provider in the public name `LlamaCppQueryScalar`, renamed `ImpliedQueryScalar`; `plugins:` expected the five
+  GGUF architectures, now eight); after one rebuild 199 passed, 0 failed (144 in the first eight groups, the four new);
+  `mixture of experts:` and `cli models:` (they read GGUF tensors) 9 passed. API dump and inventory regenerated
+  (`GgufChatTemplates`, registry 20 of `Idrak`).
+- **For the owner to confirm:** ChatML stays the library's (above); the new public names (`GgufChatTemplate`,
+  `GgufChatTemplates`, `GgufArchitecture.TensorName`, `StoredOffset`, `CommonTensorName`, `GemmaGguf`,
+  `GemmaPlugin.GgufNames`, `LlamaArchitectures.ChatTemplateText`, `ChatTemplateFallback`, `LlamaPlugin.ChatTemplateName`);
+  without `Idrak.Text.Plugins` a GGUF file with Llama 3's tokens and no template now gets none (the library keeps
+  ChatML only) and its note names the registry; the query scalar of Gemma files follows llama.cpp's layer-count rule;
+  llama.cpp's converter marks Gemma (1) files' id 107 as the end of turn (its CodeGemma rule), which the prepared model
+  stops at, as llama.cpp does.
 
 ## Order and parallelism
 
@@ -1011,3 +1087,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P6 merged (on P5) | CPU (cloud, 4 threads) | the P6 and P5 filters with the guards; ArabicOcr and LegalOcr tests | 282 passed, 1 failed (P5's `plugins: vision` expected four plug-ins; Gemma 3 vision is the fifth), fixed: `plugins:` and the guards 43 passed, 0 failed; 14 and 12 passed |
 | 2026-10-20 | P7 | CPU (cloud, 4 threads) | the P7 groups (pretrained, gguf, decoder, rope scaling, chat templates, fine-tuning, cli run, cli serve, tokenizers with the BPE baseline, plugins, mixture of experts, generation, coding tools, cli models), the guards and every group loading a moved family | 178 before; after one build 467 passed, 0 failed (the P7 groups the same counts, plugins 25 → 30 with the five new); inventory column fix, then 6 of 6 |
 | 2026-10-20 | P7 merged (on P6, no conflicts) | CPU (cloud, 4 threads) | one build, Chat and CodingAgent built; the P7 filters with the guards, pretrain, vlm scratch, audio language, vision contracts, qwen vl, a cluster child-process test | 284 passed, 0 failed |
+| 2026-10-20 | L1-GGUF (rows 15, 18) | CPU (cloud, 4 threads) | gguf, pretrained, plugins, chat templates, tokenizers, cli run, cli serve, decoder and the guards; mixture of experts and cli models | 195 before; 197 passed, 2 failed (a provider name in a public member, the plug-ins' GGUF list), then 199 passed, 0 failed (the four new); 9 passed |

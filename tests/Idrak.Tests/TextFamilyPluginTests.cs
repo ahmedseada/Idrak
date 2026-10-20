@@ -23,7 +23,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] TextFamilyGroup =
     [
-        ("plugins: llama: the library's family tables are empty (no architecture, GGUF mapping or RoPE scaling of its own, GPT-2's pre-tokenizer rule only); without the family a Llama folder and a llama GGUF file are refused as not registered, naming Idrak.Text.Plugins; Register (twice) adds LlamaForCausalLM, llama, six pre-tokenizer names, the llama3 scaling and the pre-tokenizer fallback when none is set, once, from the plug-in, and Unregister takes them back; the idrak tool's own process chats with a Llama folder and runs a qwen3 GGUF file with nothing added (no -P)", LlamaPluginRegistration),
+        ("plugins: llama: the library's family tables are empty (no architecture, GGUF mapping or RoPE scaling of its own, GPT-2's pre-tokenizer rule only); without the family a Llama folder and a llama GGUF file are refused as not registered, naming Idrak.Text.Plugins; Register (twice) adds LlamaForCausalLM, llama, six pre-tokenizer names, the llama3 scaling, Llama 3's GGUF fallback chat template and the pre-tokenizer fallback when none is set, once, from the plug-in, and Unregister takes them back; the idrak tool's own process chats with a Llama folder and runs a qwen3 GGUF file with nothing added (no -P)", LlamaPluginRegistration),
         ("plugins: qwen: without the family a Qwen3 folder and a qwen3 GGUF file are refused naming Idrak.Text.Plugins; Register adds Qwen2, Qwen3 and their mixtures of experts, the four GGUF mappings, four pre-tokenizer names and the qwen3-coder tool-call format, once, and the folder loads; Unregister takes them back", QwenPluginRegistration),
         ("plugins: mistral: Register adds MistralForCausalLM, MixtralForCausalLM, the tekken pre-tokenizer and the mistral tool-call format, with Llama's GGUF mapping when it is missing (taken back only then); unregistered, the architecture is refused naming Idrak.Text.Plugins", MistralPluginRegistration),
         ("plugins: deepseek: Register adds the deepseek tool-call format and the deepseek-r1-qwen pre-tokenizer (Qwen2's rule), once; unregistered, a DeepSeek template detects the library's json format and the format is refused naming Idrak.Text.Plugins", DeepSeekPluginRegistration),
@@ -88,7 +88,8 @@ internal static partial class Tests
             WithoutTextFamilies(() =>
             {
                 Check(!PretrainedArchitectures.Names.Contains(LlamaPlugin.LlamaForCausalLM) && GgufArchitectures.Find(LlamaPlugin.GgufName) is null
-                      && !RopeScalings.Contains(LlamaRopeScaling.Name) && !LlamaPlugin.PreTokenizers.Any(n => GgufPreTokenizers.TryGet(n, out _)) && GgufPreTokenizers.Fallback is null,
+                      && !RopeScalings.Contains(LlamaRopeScaling.Name) && !LlamaPlugin.PreTokenizers.Any(n => GgufPreTokenizers.TryGet(n, out _)) && GgufPreTokenizers.Fallback is null
+                      && GgufChatTemplates.Find(LlamaPlugin.ChatTemplateName) is null,
                     "without the family nothing of it is registered, and no pre-tokenizer fallback is set");
 
                 // A library user without the package: the folder and the GGUF file are refused, naming the package.
@@ -108,8 +109,9 @@ internal static partial class Tests
                       && PretrainedArchitectures.Origin(LlamaPlugin.LlamaForCausalLM) == assembly && PretrainedArchitectures.Names.Count(n => n == LlamaPlugin.LlamaForCausalLM) == 1
                       && GgufArchitectures.Origin(LlamaPlugin.GgufName) == assembly && RopeScalings.Origin(LlamaRopeScaling.Name) == assembly
                       && LlamaPlugin.PreTokenizers.All(n => GgufPreTokenizers.Origin(n) == assembly && GgufPreTokenizers.TryGet(n, out string? p) && p == LlamaArchitectures.SplitPattern)
-                      && GgufPreTokenizers.Fallback == "llama3",
-                    "Register (twice) adds the architecture, the GGUF mapping, the six pre-tokenizer names, the scaling and the fallback once, from the plug-in");
+                      && GgufPreTokenizers.Fallback == "llama3" && GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == assembly
+                      && GgufChatTemplates.Names.Count(n => n == LlamaPlugin.ChatTemplateName) == 1,
+                    "Register (twice) adds the architecture, the GGUF mapping, the six pre-tokenizer names, the scaling, the chat template and the fallback once, from the plug-in");
                 using (var model = PretrainedModel.Load(TestData("gguf/tiny-llama-hf"), new PretrainedOptions { Device = Device.Cpu }))
                 {
                     Check(ReferenceEquals(model.Architecture, PretrainedArchitectures.Get(LlamaPlugin.LlamaForCausalLM)), "the folder loads with the family");
@@ -117,7 +119,8 @@ internal static partial class Tests
 
                 LlamaPlugin.Unregister();
                 Check(!LlamaPlugin.IsRegistered && !PretrainedArchitectures.Names.Contains(LlamaPlugin.LlamaForCausalLM) && GgufArchitectures.Find(LlamaPlugin.GgufName) is null
-                      && !RopeScalings.Contains(LlamaRopeScaling.Name) && GgufPreTokenizers.Fallback is null, "Unregister takes every part back");
+                      && !RopeScalings.Contains(LlamaRopeScaling.Name) && GgufPreTokenizers.Fallback is null && GgufChatTemplates.Find(LlamaPlugin.ChatTemplateName) is null,
+                    "Unregister takes every part back");
 
                 // A fallback someone else set is left alone.
                 GgufPreTokenizers.Fallback = "gpt2";
