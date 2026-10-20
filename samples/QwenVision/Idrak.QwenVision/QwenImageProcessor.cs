@@ -251,25 +251,3 @@ public sealed record QwenImageGrid(int Frames, int Rows, int Columns)
     /// <summary>The token layout the decoder sees: the merged grid [rows / merge, columns / merge].</summary>
     public ImageTokenLayout Layout(int mergeSize) => new(Tokens(mergeSize)) { Grid = [Rows / mergeSize, Columns / mergeSize] };
 }
-
-// A store showing some tensors of another under other names (the vision part's names, without the checkpoint's prefix).
-internal sealed class RenamedTensorStore(ITensorStore inner, Dictionary<string, string> names) : ITensorStore
-{
-    public IEnumerable<string> Names => names.Keys;
-
-    public bool Contains(string name) => names.ContainsKey(name);
-
-    public int[] ShapeOf(string name) => inner.ShapeOf(Stored(name));
-
-    public float[] Read(string name) => inner.Read(Stored(name));
-
-    public float[] ReadTransposed(string name) => inner.ReadTransposed(Stored(name));
-
-    public WeightFormat? FormatOf(string name) => inner.FormatOf(Stored(name));
-
-    public bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride) => inner.ReadBFloat16(Stored(name), transposed, destination, stride);
-
-    public void Dispose() => inner.Dispose();
-
-    private string Stored(string name) => names.TryGetValue(name, out var stored) ? stored : throw new KeyNotFoundException($"No vision tensor '{name}'.");
-}

@@ -74,7 +74,7 @@ public sealed class AdapterStore(LegalOcrSettings settings, string contentRoot)
     /// <summary>The switch's prefix of an adapter's id.</summary>
     public const string Prefix = "adapter:";
 
-    private static readonly JsonSerializerOptions Json = FiniteNumbers.Add(new()
+    private static readonly JsonSerializerOptions Json = FiniteJsonNumbers.Add(new()
     {
         WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     });

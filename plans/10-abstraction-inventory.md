@@ -11,11 +11,11 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 72 | 14 | 39 | 124 | 0 |
-| `Idrak` | 14 | 4 | 15 | 33 | 0 |
+| `Idrak.Abstraction` | 73 | 14 | 40 | 126 | 0 |
+| `Idrak` | 15 | 4 | 16 | 35 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Text` | 10 | 2 | 7 | 19 | 0 |
+| `Idrak.Text` | 11 | 2 | 8 | 21 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
 | `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
@@ -98,17 +98,19 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, DeferredStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ClusterProbe, NetworkProbe, ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.HeapProbe, ProfileProbes.KernelsProbe, +3 |  | Abstraction, Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ClusterProbe, NetworkProbe, ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.HeapProbe, ProfileProbes.KernelsProbe, +4 |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileWriter` | interface | public | — | ProfileWriters.CsvWriter, ProfileWriters.JsonWriter, ProfileWriters.TableWriter |  | — | Abstraction |
+| `Idrak.Abstraction.Diagnostics.IProgressReporter` | interface | public | — | JsonProgressReporter, LineProgressReporter, QuietProgressReporter |  | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ISettingAdvisor` | interface | public | — | ClusterSettingAdvisor, ImageReaderAdvisor, PretrainedModelAdvisor, SettingAdvisors.GuardedAdvisor |  | Abstraction, Idrak, Network, Text | Abstraction |
-| `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ClusterProbe.Hook, ConsoleLogger, JsonLinesLogger, MetricsRecorder, NetworkProbe.Hook, +1 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Diagnostics.ProfileProbes` | registry | public | Backend |  | bandwidth, cluster, cpu, heap, kernels, memory, network, operations, +1 | Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ClusterProbe.Hook, ConsoleLogger, JsonLinesLogger, MetricsRecorder, NetworkProbe.Hook, +2 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Diagnostics.ProfileProbes` | registry | public | Backend |  | bandwidth, cluster, cpu, heap, kernels, memory, network, operations, +2 | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ProfileWriters` | registry | public | — |  | csv, json, markdown, table | — | Abstraction |
+| `Idrak.Abstraction.Diagnostics.ProgressReporters` | registry | public | — |  | console, json, plain, quiet | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.SettingAdvisors` | registry | public | — |  | cluster, image reader, pretrained model | Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, pytorch, safetensors | Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, PyTorchCheckpointFormat, SafeTensorsCheckpointFormat |  | Abstraction, Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
-| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, SafeTensorsReader, TensorDictionary |  | Abstraction, Audio, Idrak, Text, Vision | Abstraction |
+| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, RenamedTensorStore, SafeTensorsReader, TensorDictionary |  | Abstraction, Audio, Idrak, Text, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ChatPart` | abstract class | public | — | ChatAudio, ChatImage, ChatText, PendingAudio, PendingImage |  | Abstraction, AspNetCore, Audio, Idrak, Imaging, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | audio, image, text | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
@@ -177,8 +179,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, CrossAttention, DecoderBlock, MultiHeadAttention, PipelineBoundary, PositionEmbedding, +3 |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkBuilder` | interface | public | Device, Module, Tensor | NetworkBuilder |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.INetworkRecipe` | interface | public | — | NetworkRecipes.GuardedRecipe, NetworkRecipes.LibraryRecipe |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, conv2d, convtranspose2d, dropout, +20 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, columnsToSequence, conv2d, convtranspose2d, +23 | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.NetworkRecipes` | registry | public | — |  | cnn, gpt, mlp, rnn, transformer-classifier | — | Idrak |
 | `Idrak.Layers.Abstractions.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | Idrak | Idrak |
@@ -214,6 +218,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | Text | Text |
 | `Idrak.Text.Abstractions.IAnswerText` | interface | public | — | AnswerTexts.GuardedText, JsonValuesAnswerText, RawAnswerText |  | Text | Text |
 | `Idrak.Text.Abstractions.IJsonRepair` | interface | public | — | JsonRepairs.GuardedRepair, LenientJsonRepair |  | Text | Text |
+| `Idrak.Text.Abstractions.IKeywordIndex` | interface | public | — | Bm25Index |  | Text | Text |
 | `Idrak.Text.Abstractions.IPagePartFiller` | interface | public | — | LibraryPagePartFillers.Filler |  | Text | Text |
 | `Idrak.Text.Abstractions.IPretrainingReader` | interface | public | — | RecordPretrainingSource.Reader, TokenPretrainingSource.Reader |  | Text | Text |
 | `Idrak.Text.Abstractions.IPretrainingSource` | interface | public | — | RecordPretrainingSource, TokenPretrainingSource |  | Text | Text |
@@ -221,6 +226,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.ISyntheticRecordFormat` | interface | public | — | MessagesSyntheticRecords, ShareGptSyntheticRecords, TextSyntheticRecords |  | Text | Text |
 | `Idrak.Text.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat, TranscriptsDataFormat |  | Text | Text |
 | `Idrak.Text.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Text | Text |
+| `Idrak.Text.Abstractions.KeywordIndexes` | registry | public | — |  | bm25 | Text | Text |
 | `Idrak.Text.Abstractions.PagePartFillers` | registry | public | — |  | date, digits, field, hijri, line, number, pick | Text | Text |
 | `Idrak.Text.Abstractions.PretrainingSources` | registry | public | — |  | records, tokens | Text | Text |
 | `Idrak.Text.Abstractions.RandomTextSources` | registry | public | — |  | ar, en | — | Text |

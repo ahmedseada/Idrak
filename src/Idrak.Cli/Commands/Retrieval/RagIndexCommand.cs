@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
+using Idrak.Text.Abstractions;
 using Idrak.Text.Retrieval;
 using Idrak.Text.Retrieval.Abstractions;
 
@@ -33,12 +34,13 @@ internal sealed class RagIndexCommand : Command
         "      --overlap N       units shared by consecutive chunks (default 40 words, or 1 sentence)\n" +
         "      --sentences       count chunks in sentences rather than words\n" +
         "      --extensions LIST the files to read (default " + DefaultExtensions + "; '*' for every file)\n" +
-        "      --max-tokens N    tokens of a chunk the model embeds (default 512)\n\n" +
+        "      --max-tokens N    tokens of a chunk the model embeds (default 512)\n" +
+        "      --keywords NAME   the keyword index (default bm25; a plug-in's by its name)\n\n" +
         "Examples:\n" +
         "  idrak rag index ./docs -o docs.idx\n" +
         "  idrak rag index ./docs -o docs.idx -m org/model -w int8 --chunk 120 --overlap 20";
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--model", "--weights", "--chunk", "--overlap", "--extensions", "--max-tokens"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--model", "--weights", "--chunk", "--overlap", "--extensions", "--max-tokens", "--keywords"];
 
     public override IReadOnlyCollection<string> Flags => ["--force", "--sentences"];
 
@@ -81,7 +83,13 @@ internal sealed class RagIndexCommand : Command
         }
 
         var watch = Stopwatch.StartNew();
-        var builder = RetrievalIndex.Create().Documents(documents, sentences ? ChunkUnit.Sentences : ChunkUnit.Words, size, overlap).Bm25();
+        string keywords = context.Option("--keywords") ?? KeywordIndexes.Bm25;
+        if (KeywordIndexes.Find(keywords) is null)
+        {
+            throw new UsageException($"--keywords: no keyword index '{keywords}' is registered ({string.Join(", ", KeywordIndexes.Names)}).");
+        }
+
+        var builder = RetrievalIndex.Create().Documents(documents, sentences ? ChunkUnit.Sentences : ChunkUnit.Words, size, overlap).Keywords(keywords);
         Recorder? recorder = null;
         RagIndexFile.EmbeddingInfo? embedding = null;
         Idrak.Models.PretrainedModel? model = null;
@@ -114,7 +122,8 @@ internal sealed class RagIndexCommand : Command
             };
             RagIndexFile.Save(output, index, embedding, recorder?.Vectors, extra);
             long bytes = new FileInfo(output).Length;
-            string search = embedding is null ? "keywords (BM25)" : $"keywords (BM25) and vectors ({embedding.Model}, {embedding.Dimensions} dimensions)";
+            string kind = keywords.Equals(KeywordIndexes.Bm25, StringComparison.OrdinalIgnoreCase) ? "BM25" : keywords;
+            string search = embedding is null ? $"keywords ({kind})" : $"keywords ({kind}) and vectors ({embedding.Model}, {embedding.Dimensions} dimensions)";
             context.Write($"Indexed {documents.Count} document(s) into {index.Chunks.Count} chunks of up to {size} {(sentences ? "sentences" : "words")} ({overlap} shared) in {watch.Elapsed.TotalSeconds:F1} s");
             context.Write($"Search: {search}");
             context.Write($"Wrote {output} ({bytes / 1024.0:F1} KiB). Next: idrak rag search \"query\" --index {output}");

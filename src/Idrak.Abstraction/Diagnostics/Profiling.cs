@@ -491,6 +491,10 @@ public static class Profiler
 /// device): the stages of reading an answer (<see cref="InferenceStage"/>) in the run: "{stage} time" (ms), "{stage} count"
 /// and "{stage} size" (MB) for each stage seen (the caches allocated, the encoder's output, a recorded graph's memory), and
 /// the device's peak above the run's start when the encoder ends ("encoder peak above start", MB: its activations and output).</item>
+/// <item>"timings" (intrusive: the device is waited for at every operation, <see cref="Telemetry.SynchronizeForTiming"/>):
+/// the time of every operation by name, direction and output shape, and of every layer by type and depth, from the
+/// telemetry's operation and layer events ("operation time", ms; "operation calls"; "operation shapes"; "layer calls"),
+/// with the tables "operation timings" and "layer timings", slowest first. Nothing is subscribed outside its run.</item>
 /// </list>
 /// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
 /// <see cref="Unregister"/> brings back. The registry has no guard: a probe holds what it measures through a run, so it
@@ -507,7 +511,7 @@ public static class ProfileProbes
         var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a probe holds what it measures from before a run to after it, so it cannot be swapped half-way");
         // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
-        foreach (var probe in new IProfileProbe[] { new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe(), new StagesProbe() })
+        foreach (var probe in new IProfileProbe[] { new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe() })
         {
             table.RegisterDefault(probe.Name, probe);
         }
@@ -701,6 +705,105 @@ public static class ProfileProbes
                     {
                         EncoderPeak = Math.Max(EncoderPeak ?? 0, backend.GetMemoryUsage().Peak - startInUse);
                     }
+                }
+            }
+        }
+    }
+
+    // Time per operation (by name, direction and output shape) and per layer (by type and depth), from the telemetry's
+    // operation and layer events, the device waited for before each measurement so the times are execution times.
+    // Intrusive: that waiting changes the run's time. A key is stored once per new operation and shape (no string per call).
+    private sealed class TimingsProbe : IProfileProbe
+    {
+        public string Name => "timings";
+
+        public string Summary => "the time of every operation by name and output shape, and of every layer by type and depth, the device waited for at each";
+
+        public bool Intrusive => true;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            bool synchronize = Telemetry.SynchronizeForTiming;
+            Telemetry.SynchronizeForTiming = true;
+            var hook = new TimingSums();
+            var subscription = Telemetry.Subscribe(hook);
+            return () =>
+            {
+                subscription.Dispose();
+                Telemetry.SynchronizeForTiming = synchronize;
+                lock (hook)
+                {
+                    var operations = hook.Operations.OrderByDescending(o => o.Value.Ms).ThenBy(o => o.Key.Operation, StringComparer.Ordinal).ToList();
+                    var layers = hook.Layers.OrderByDescending(l => l.Value.Ms).ThenBy(l => l.Key.Type, StringComparer.Ordinal).ThenBy(l => l.Key.Depth).ToList();
+                    double total = operations.Sum(o => o.Value.Ms);
+                    run.Record("operation time", total, "ms");
+                    run.Record("operation calls", operations.Sum(o => o.Value.Calls), "calls");
+                    run.Record("operation shapes", operations.Count);
+                    run.Record("layer calls", layers.Sum(l => l.Value.Calls), "calls");
+                    run.Add(new ProfileTable("operation timings", ["operation", "shape", "calls", "ms", "share"],
+                        [.. operations.Select(o => (IReadOnlyList<string>)[o.Key.Backward ? o.Key.Operation + " (backward)" : o.Key.Operation, Tensor.FormatShape(o.Key.Shape),
+                            Text(o.Value.Calls), Text(o.Value.Ms), Text(total > 0 ? 100 * o.Value.Ms / total : 0) + "%"])]));
+                    run.Add(new ProfileTable("layer timings", ["layer", "depth", "calls", "ms"],
+                        [.. layers.Select(l => (IReadOnlyList<string>)[l.Key.Type, Text(l.Key.Depth), Text(l.Value.Calls), Text(l.Value.Ms)])]));
+                }
+            };
+        }
+
+        // An operation by name, direction and output shape (the shape compared by its values).
+        private readonly record struct OperationKey(string Operation, bool Backward, int[] Shape);
+
+        private sealed class OperationKeys : IEqualityComparer<OperationKey>
+        {
+            public bool Equals(OperationKey x, OperationKey y) =>
+                x.Backward == y.Backward && string.Equals(x.Operation, y.Operation, StringComparison.Ordinal) && x.Shape.AsSpan().SequenceEqual(y.Shape);
+
+            public int GetHashCode(OperationKey key)
+            {
+                var hash = new HashCode();
+                hash.Add(key.Operation, StringComparer.Ordinal);
+                hash.Add(key.Backward);
+                foreach (int d in key.Shape)
+                {
+                    hash.Add(d);
+                }
+
+                return hash.ToHashCode();
+            }
+        }
+
+        private sealed class TimingSums : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Operations | TelemetryLevel.Layers;
+
+            public Dictionary<OperationKey, (long Calls, double Ms)> Operations { get; } = new(new OperationKeys());
+
+            public Dictionary<(string Type, int Depth), (long Calls, double Ms)> Layers { get; } = [];
+
+            public void OnOperation(in OperationCompleted e)
+            {
+                lock (this)
+                {
+                    var key = new OperationKey(e.Operation, e.Backward, e.Shape);
+                    ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrNullRef(Operations, key);
+                    if (Unsafe.IsNullRef(ref sum))
+                    {
+                        // The first call of a shape keeps its own copy: the key must not change with a reused array.
+                        Operations.Add(key with { Shape = [.. e.Shape] }, (1, e.Duration.TotalMilliseconds));
+                        return;
+                    }
+
+                    sum = (sum.Calls + 1, sum.Ms + e.Duration.TotalMilliseconds);
+                }
+            }
+
+            public void OnLayerForward(in LayerForward e)
+            {
+                lock (this)
+                {
+                    ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(Layers, (e.LayerType, e.Depth), out _);
+                    sum = (sum.Calls + 1, sum.Ms + e.Duration.TotalMilliseconds);
                 }
             }
         }

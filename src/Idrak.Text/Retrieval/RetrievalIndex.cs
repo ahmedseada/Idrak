@@ -4,12 +4,14 @@
 using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Text.Abstractions;
 using Idrak.Text.Retrieval.Abstractions;
 
 namespace Idrak.Text.Retrieval;
 
 /// <summary>
-/// Searchable chunks: keyword search (<see cref="Bm25Index"/>), vector search (<see cref="TextEncoder"/> +
+/// Searchable chunks: keyword search (any <see cref="IKeywordIndex"/> registered in <see cref="KeywordIndexes"/>, BM25 by
+/// default), vector search (<see cref="TextEncoder"/> +
 /// <see cref="VectorIndex"/>, or any <see cref="IEmbedder"/> with any <see cref="IVectorStore"/>), or both merged with
 /// reciprocal rank fusion. Create one with <see cref="Create"/>.
 /// </summary>
@@ -17,12 +19,14 @@ public sealed class RetrievalIndex : IRetriever
 {
     private const string Format = "idrak-retrieval/1";
 
-    internal RetrievalIndex(IReadOnlyList<Chunk> chunks, (double K1, double B)? bm25, TextEncoder? encoder, VectorIndex? vectors, (int K, int Depth)? fusion,
+    private readonly KeywordChoice? _keywords;                     // the keyword index asked for, as saved
+
+    internal RetrievalIndex(IReadOnlyList<Chunk> chunks, KeywordChoice? keywords, TextEncoder? encoder, VectorIndex? vectors, (int K, int Depth)? fusion,
         IEmbedder? embedder = null, IVectorStore? store = null)
     {
         Chunks = chunks;
-        Bm25Settings = bm25;
-        Keywords = bm25 is { } b ? new Bm25Index(chunks.Select(c => c.Text), b.K1, b.B) : null;
+        _keywords = keywords;
+        Keywords = keywords is { } k ? KeywordIndexes.Create(k.Name, chunks.Select(c => c.Text), k.Options) : null;
         Encoder = encoder;
         Vectors = vectors;
         Fusion = fusion;
@@ -36,8 +40,8 @@ public sealed class RetrievalIndex : IRetriever
     /// <summary>The indexed chunks; a chunk's <see cref="Chunk.Id"/> is its position here.</summary>
     public IReadOnlyList<Chunk> Chunks { get; }
 
-    /// <summary>The keyword index, if keyword search is on.</summary>
-    public Bm25Index? Keywords { get; }
+    /// <summary>The keyword index (from <see cref="KeywordIndexes"/>, BM25 by default), if keyword search is on.</summary>
+    public IKeywordIndex? Keywords { get; }
 
     /// <summary>The text encoder, if vector search is on.</summary>
     public TextEncoder? Encoder { get; }
@@ -53,8 +57,6 @@ public sealed class RetrievalIndex : IRetriever
 
     /// <summary>Reciprocal rank fusion settings when both searches are on: score = Σ 1 / (K + rank) over the first Depth results of each.</summary>
     public (int K, int Depth)? Fusion { get; }
-
-    private (double K1, double B)? Bm25Settings { get; }
 
     /// <summary>
     /// The <paramref name="top"/> best chunks for <paramref name="query"/>, best first (ties by chunk id). With an
@@ -152,7 +154,8 @@ public sealed class RetrievalIndex : IRetriever
         var settings = new JsonObject
         {
             ["format"] = Format,
-            ["bm25"] = Bm25Settings is { } b ? new JsonObject { ["k1"] = b.K1, ["b"] = b.B } : null,
+            // BM25 as before ("bm25": {k1, b}); another keyword index by name in "keywords", read back through KeywordIndexes.
+            ["bm25"] = _keywords is { } bm25 && IsPlainBm25(bm25) ? new JsonObject { ["k1"] = bm25.Options.K1, ["b"] = bm25.Options.B } : null,
             ["vectors"] = Vectors is not null,
             ["store"] = Store is not null,
             ["fusion"] = Fusion is { } f ? new JsonObject { ["k"] = f.K, ["depth"] = f.Depth } : null,
@@ -163,6 +166,15 @@ public sealed class RetrievalIndex : IRetriever
                 ["text"] = c.Text,
             })]),
         };
+        if (_keywords is { } other && !IsPlainBm25(other))
+        {
+            settings["keywords"] = new JsonObject
+            {
+                ["name"] = other.Name, ["k1"] = other.Options.K1, ["b"] = other.Options.B,
+                ["parameters"] = new JsonObject(other.Options.Parameters.Select(p => KeyValuePair.Create(p.Key, (JsonNode?)p.Value))),
+            };
+        }
+
         using (var entry = zip.CreateEntry("index.json").Open())
         using (var writer = new Utf8JsonWriter(entry))
         {
@@ -195,19 +207,19 @@ public sealed class RetrievalIndex : IRetriever
     {
         ArgumentNullException.ThrowIfNull(embedder);
         ArgumentNullException.ThrowIfNull(store);
-        var (chunks, bm25, fusion, settings, _) = ReadSettings(stream);
+        var (chunks, keywords, fusion, settings, _) = ReadSettings(stream);
         if (settings["store"] is not JsonValue saved || !(bool)saved)
         {
             throw new InvalidDataException("This index keeps its own vectors; load it with Load(path, encoder).");
         }
 
-        return new RetrievalIndex(chunks, bm25, null, null, fusion, embedder, store);
+        return new RetrievalIndex(chunks, keywords, null, null, fusion, embedder, store);
     }
 
     /// <summary>Reads an index written by <see cref="Save(Stream)"/>. Pass the same text encoder if it uses vector search.</summary>
     public static RetrievalIndex Load(Stream stream, TextEncoder? encoder)
     {
-        var (chunks, bm25, fusion, settings, zip) = ReadSettings(stream);
+        var (chunks, keywords, fusion, settings, zip) = ReadSettings(stream);
         using var _ = zip;
         if (settings["store"] is JsonValue saved && (bool)saved)
         {
@@ -229,10 +241,14 @@ public sealed class RetrievalIndex : IRetriever
             vectors = VectorIndex.Load(buffer);
         }
 
-        return new RetrievalIndex(chunks, bm25, vectors is null ? null : encoder, vectors, fusion);
+        return new RetrievalIndex(chunks, keywords, vectors is null ? null : encoder, vectors, fusion);
     }
 
-    private static (List<Chunk> Chunks, (double, double)? Bm25, (int, int)? Fusion, JsonObject Settings, ZipArchive Zip) ReadSettings(Stream stream)
+    // Whether the index is the library's BM25 with no settings beyond k1 and b (saved as "bm25", as before keyword indexes had names).
+    private static bool IsPlainBm25(KeywordChoice choice) =>
+        string.Equals(choice.Name, KeywordIndexes.Bm25, StringComparison.OrdinalIgnoreCase) && choice.Options.Parameters.Count == 0;
+
+    private static (List<Chunk> Chunks, KeywordChoice? Keywords, (int, int)? Fusion, JsonObject Settings, ZipArchive Zip) ReadSettings(Stream stream)
     {
         var zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         JsonObject settings;
@@ -248,23 +264,32 @@ public sealed class RetrievalIndex : IRetriever
 
         var chunks = settings["chunks"]!.AsArray().Select((c, i) =>
             new Chunk(i, (string)c!["document"]!, (int)c["position"]!, (string)c["text"]!)).ToList();
-        (double, double)? bm25 = settings["bm25"] is JsonObject b ? ((double)b["k1"]!, (double)b["b"]!) : null;
+        KeywordChoice? keywords = settings["keywords"] is JsonObject k
+            ? new KeywordChoice((string)k["name"]!, new KeywordIndexOptions
+            {
+                K1 = (double)k["k1"]!, B = (double)k["b"]!,
+                Parameters = (k["parameters"] as JsonObject)?.ToDictionary(p => p.Key, p => (double)p.Value!) ?? new Dictionary<string, double>(),
+            })
+            : settings["bm25"] is JsonObject b ? new KeywordChoice(KeywordIndexes.Bm25, new KeywordIndexOptions { K1 = (double)b["k1"]!, B = (double)b["b"]! }) : null;
         (int, int)? fusion = settings["fusion"] is JsonObject f ? ((int)f["k"]!, (int)f["depth"]!) : null;
-        return (chunks, bm25, fusion, settings, zip);
+        return (chunks, keywords, fusion, settings, zip);
     }
 
     private static Dictionary<int, int> Ranks(IReadOnlyList<SearchHit>? hits) =>
         hits is null ? [] : hits.Select((h, i) => (h.Id, Rank: i + 1)).ToDictionary(p => p.Id, p => p.Rank);
 }
 
+// The keyword index an index builds over its chunks: its name in KeywordIndexes and its settings.
+internal readonly record struct KeywordChoice(string Name, KeywordIndexOptions Options);
+
 /// <summary>
 /// Builds a <see cref="RetrievalIndex"/>: the chunks (<see cref="Add"/> or <see cref="Documents"/>), then keyword
-/// search (<see cref="Bm25"/>), vector search (<see cref="Embeddings"/>), or both, which also needs <see cref="Fusion"/>.
+/// search (<see cref="Bm25"/>, or any registered index with <see cref="Keywords"/>), vector search (<see cref="Embeddings"/>), or both, which also needs <see cref="Fusion"/>.
 /// </summary>
 public sealed class RetrievalIndexBuilder
 {
     private readonly List<Chunk> _chunks = [];
-    private (double K1, double B)? _bm25;
+    private KeywordChoice? _keywords;
     private IEmbedder? _embedder;
     private IVectorStore? _store;
     private int _encodeBatch;
@@ -290,9 +315,17 @@ public sealed class RetrievalIndexBuilder
         Add(Chunker.Split(documents, unit, size, overlap));
 
     /// <summary>Keyword search with BM25 (<paramref name="k1"/>: term-frequency saturation, <paramref name="b"/>: length normalization).</summary>
-    public RetrievalIndexBuilder Bm25(double k1 = 1.2, double b = 0.75)
+    public RetrievalIndexBuilder Bm25(double k1 = 1.2, double b = 0.75) => Keywords(KeywordIndexes.Bm25, new KeywordIndexOptions { K1 = k1, B = b });
+
+    /// <summary>
+    /// Keyword search with the index registered as <paramref name="name"/> in <see cref="KeywordIndexes"/> ("bm25", or one
+    /// of your own), built with <paramref name="options"/> (the defaults when null).
+    /// </summary>
+    /// <exception cref="NotSupportedException">No keyword index has that name.</exception>
+    public RetrievalIndexBuilder Keywords(string name, KeywordIndexOptions? options = null)
     {
-        _bm25 = (k1, b);
+        _ = KeywordIndexes.Get(name);                                            // an unknown name fails here, not at Build
+        _keywords = new KeywordChoice(name, options ?? new KeywordIndexOptions());
         return this;
     }
 
@@ -340,7 +373,7 @@ public sealed class RetrievalIndexBuilder
         Validate();
         if (_embedder is null)
         {
-            return new RetrievalIndex([.. _chunks], _bm25, null, null, _fusion);    // keyword search only
+            return new RetrievalIndex([.. _chunks], _keywords, null, null, _fusion);    // keyword search only
         }
 
         if (_embedder is TextEncoder encoder && _store is null)
@@ -348,7 +381,7 @@ public sealed class RetrievalIndexBuilder
             var encoded = encoder.Encode([.. _chunks.Select(c => c.Text)], _encodeBatch);
             var vectors = new VectorIndex(encoded.Length > 0 ? encoded[0].Length : 1, VectorMetric.Dot);
             vectors.AddRange(encoded);
-            return new RetrievalIndex([.. _chunks], _bm25, encoder, vectors, _fusion);
+            return new RetrievalIndex([.. _chunks], _keywords, encoder, vectors, _fusion);
         }
 
         return BuildAsync().AsTask().GetAwaiter().GetResult();
@@ -379,24 +412,24 @@ public sealed class RetrievalIndexBuilder
                 cancellationToken).ConfigureAwait(false);
         }
 
-        return new RetrievalIndex([.. _chunks], _bm25, null, null, _fusion, _embedder, store ?? new InMemoryVectorStore(1));
+        return new RetrievalIndex([.. _chunks], _keywords, null, null, _fusion, _embedder, store ?? new InMemoryVectorStore(1));
     }
 
     private void Validate()
     {
-        if (_bm25 is null && _embedder is null)
+        if (_keywords is null && _embedder is null)
         {
-            throw new InvalidOperationException("Choose keyword search (Bm25), vector search (Embeddings), or both.");
+            throw new InvalidOperationException("Choose keyword search (Bm25 or Keywords), vector search (Embeddings), or both.");
         }
 
-        if (_bm25 is not null && _embedder is not null && _fusion is null)
+        if (_keywords is not null && _embedder is not null && _fusion is null)
         {
             throw new InvalidOperationException("Keyword and vector search together need Fusion(k, depth) to merge their results.");
         }
 
-        if (_fusion is not null && (_bm25 is null || _embedder is null))
+        if (_fusion is not null && (_keywords is null || _embedder is null))
         {
-            throw new InvalidOperationException("Fusion merges keyword and vector results; it needs both Bm25 and Embeddings.");
+            throw new InvalidOperationException("Fusion merges keyword and vector results; it needs both keyword search (Bm25 or Keywords) and Embeddings.");
         }
 
         if (_store is not null && _embedder is null)

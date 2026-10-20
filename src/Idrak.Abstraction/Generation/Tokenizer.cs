@@ -148,43 +148,160 @@ public sealed record TokenizerEncodeOptions
 }
 
 
+/// <summary>How a <see cref="CharTokenizer"/> reads characters, and what it does with those outside its alphabet.</summary>
+public sealed record CharTokenizerOptions
+{
+    /// <summary>
+    /// Whether a character is a whole Unicode code point: a surrogate pair is one character and one id, and a lone
+    /// surrogate in a text reads as U+FFFD (as <see cref="string.EnumerateRunes"/> reads it). False (the default): one
+    /// character per UTF-16 unit, as before.
+    /// </summary>
+    public bool CodePoints { get; init; }
+
+    /// <summary>
+    /// The stand-in for characters outside the alphabet (one character of the alphabet: one code point with
+    /// <see cref="CodePoints"/>), or null to drop them (the default).
+    /// </summary>
+    public string? UnknownCharacter { get; init; }
+}
+
 /// <summary>
-/// One token per character of a fixed alphabet (the vocabulary string). Characters outside the alphabet are
-/// dropped when encoding, or replaced by <see cref="UnknownCharacter"/> when it is part of the alphabet.
+/// One token per character of a fixed alphabet (the vocabulary string): per UTF-16 unit by default, or per whole code
+/// point (<see cref="CharTokenizerOptions.CodePoints"/>, a surrogate pair one token). Characters outside the alphabet are
+/// dropped when encoding, or replaced by the unknown character when it is part of the alphabet.
 /// </summary>
 public sealed class CharTokenizer : ITokenizer
 {
-    private readonly Dictionary<char, int> _index;
-    private readonly int _unknownId = -1;                      // the id of UnknownCharacter (-1: none), looked up once
+    private readonly Dictionary<char, int> _index;              // per UTF-16 unit (empty with code points)
+    private readonly Dictionary<int, int>? _points;             // per code point, or null
+    private readonly string[]? _characters;                     // each id's code point as text, or null
+    private readonly int _unknownId = -1;                      // the id of the unknown character (-1: none), looked up once
 
     /// <summary>Creates the tokenizer for the characters of <paramref name="vocabulary"/> (id = position).</summary>
     public CharTokenizer(string vocabulary, char? unknownCharacter = null)
     {
         Vocabulary = vocabulary;
         _index = vocabulary.Select((c, i) => (c, i)).ToDictionary(p => p.c, p => p.i);
+        Options = new CharTokenizerOptions();
         if (unknownCharacter is { } u && _index.TryGetValue(u, out int unknownId))
         {
             UnknownCharacter = u;
             _unknownId = unknownId;
+            Options = Options with { UnknownCharacter = u.ToString() };
         }
     }
 
-    /// <summary>The alphabet; character i has id i.</summary>
+    /// <summary>
+    /// Creates the tokenizer for the characters of <paramref name="vocabulary"/> read as <paramref name="options"/> say
+    /// (id = the character's position: its code point's, with <see cref="CharTokenizerOptions.CodePoints"/>).
+    /// </summary>
+    /// <exception cref="ArgumentException">A character appears twice, or the unknown character is not one character of the alphabet.</exception>
+    public CharTokenizer(string vocabulary, CharTokenizerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(vocabulary);
+        ArgumentNullException.ThrowIfNull(options);
+        Vocabulary = vocabulary;
+        Options = options;
+        if (!options.CodePoints)
+        {
+            _index = vocabulary.Select((c, i) => (c, i)).ToDictionary(p => p.c, p => p.i);
+            if (options.UnknownCharacter is { } u)
+            {
+                _unknownId = u.Length == 1 && _index.TryGetValue(u[0], out int id) ? id
+                    : throw new ArgumentException($"The unknown character '{u}' is not one character of the alphabet.", nameof(options));
+                UnknownCharacter = u[0];
+            }
+
+            return;
+        }
+
+        _index = [];
+        _points = [];
+        var characters = new List<string>(vocabulary.Length);
+        for (int i = 0; i < vocabulary.Length; i++)
+        {
+            int point = CodePointAt(vocabulary, ref i, vocabularyText: true);
+            if (!_points.TryAdd(point, characters.Count))
+            {
+                throw new ArgumentException($"The character U+{point:X4} appears twice in the alphabet.", nameof(vocabulary));
+            }
+
+            characters.Add(char.IsSurrogate(vocabulary[i]) && point > 0xFFFF ? vocabulary.Substring(i - 1, 2) : vocabulary[i].ToString());
+        }
+
+        _characters = [.. characters];
+        if (options.UnknownCharacter is { } unknown)
+        {
+            int at = 0;
+            int point = unknown.Length is 1 or 2 ? CodePointAt(unknown, ref at, vocabularyText: true) : -1;
+            _unknownId = point >= 0 && at == unknown.Length - 1 && _points.TryGetValue(point, out int id) ? id
+                : throw new ArgumentException($"The unknown character '{unknown}' is not one code point of the alphabet.", nameof(options));
+            UnknownCharacter = unknown.Length == 1 ? unknown[0] : null;
+        }
+    }
+
+    /// <summary>
+    /// Creates the tokenizer for <paramref name="characters"/>, one character each (id = position): a whole code point
+    /// each with <see cref="CharTokenizerOptions.CodePoints"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">An entry that is not one character, a character that appears twice, or an unknown character outside the alphabet.</exception>
+    public CharTokenizer(IEnumerable<string> characters, CharTokenizerOptions options)
+        : this(Joined(characters, options), options)
+    {
+    }
+
+    /// <summary>The alphabet; character i has id i (with code points, the i-th code point).</summary>
     public string Vocabulary { get; }
 
-    /// <summary>Stand-in for characters outside the alphabet, or null to drop them.</summary>
+    /// <summary>Stand-in for characters outside the alphabet, or null to drop them (or when it is a code point beyond one UTF-16 unit: see <see cref="Options"/>).</summary>
     public char? UnknownCharacter { get; }
 
+    /// <summary>How characters are read and what happens to unknown ones (the unknown character only when it is in the alphabet).</summary>
+    public CharTokenizerOptions Options { get; }
+
     /// <inheritdoc />
-    public int VocabularySize => Vocabulary.Length;
+    public int VocabularySize => _characters?.Length ?? Vocabulary.Length;
 
     /// <summary>Whether every character of <paramref name="text"/> is in the alphabet.</summary>
-    public bool Covers(string text) => text.All(_index.ContainsKey);
+    public bool Covers(string text)
+    {
+        if (_points is null)
+        {
+            return text.All(_index.ContainsKey);
+        }
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!_points.ContainsKey(CodePointAt(text, ref i, vocabularyText: false)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <inheritdoc />
     public IReadOnlyList<int> Encode(string text)
     {
         var ids = new List<int>(text.Length);
+        if (_points is not null)
+        {
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (_points.TryGetValue(CodePointAt(text, ref i, vocabularyText: false), out int id))
+                {
+                    ids.Add(id);
+                }
+                else if (_unknownId >= 0)
+                {
+                    ids.Add(_unknownId);
+                }
+            }
+
+            return ids;
+        }
+
         foreach (char c in text)
         {
             if (_index.TryGetValue(c, out int id))
@@ -205,27 +322,87 @@ public sealed class CharTokenizer : ITokenizer
     {
         int[] array => DecodeSpan(array),
         List<int> list => DecodeSpan(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(list)),
-        _ => string.Concat(ids.Select(i => (uint)i < (uint)Vocabulary.Length ? Vocabulary[i] : '�')),
+        _ when _characters is not null => DecodeSpan([.. ids]),
+        _ => string.Concat(ids.Select(i => (uint)i < (uint)Vocabulary.Length ? Vocabulary[i] : '\uFFFD')),
     };
 
     string ITokenizer.Decode(ReadOnlySpan<int> ids) => DecodeSpan(ids);
 
-    // One character per id, gathered in a stack or pooled buffer and copied once into the result.
+    // The code point at text[i] (i moved to a pair's second half). A lone surrogate reads as U+FFFD in a text, and as
+    // itself in an alphabet (where it can then never match).
+    private static int CodePointAt(string text, ref int i, bool vocabularyText)
+    {
+        char c = text[i];
+        if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+        {
+            return char.ConvertToUtf32(c, text[++i]);
+        }
+
+        return char.IsSurrogate(c) && !vocabularyText ? 0xFFFD : c;
+    }
+
+    // The alphabet of one-character entries as one string, each entry checked.
+    private static string Joined(IEnumerable<string> characters, CharTokenizerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(characters);
+        ArgumentNullException.ThrowIfNull(options);
+        var text = new System.Text.StringBuilder();
+        foreach (string character in characters)
+        {
+            bool one = character.Length == 1 || options.CodePoints && character.Length == 2 && char.IsSurrogatePair(character[0], character[1]);
+            if (!one)
+            {
+                throw new ArgumentException($"'{character}' is not one {(options.CodePoints ? "code point" : "UTF-16 character")}.", nameof(characters));
+            }
+
+            text.Append(character);
+        }
+
+        return text.ToString();
+    }
+
+    // One character per id (two units for a code point beyond the first plane), gathered in a stack or pooled buffer and
+    // copied once into the result.
     private string DecodeSpan(ReadOnlySpan<int> ids)
     {
         string vocabulary = Vocabulary;
+        string[]? characters = _characters;
+        int most = characters is null ? ids.Length : 2 * ids.Length;
         char[]? rented = null;
-        Span<char> chars = ids.Length <= 256 ? stackalloc char[256] : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(ids.Length));
+        Span<char> chars = most <= 256 ? stackalloc char[256] : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(most));
         try
         {
-            chars = chars[..ids.Length];
-            for (int i = 0; i < chars.Length; i++)
+            int n = 0;
+            if (characters is null)
             {
-                int id = ids[i];
-                chars[i] = (uint)id < (uint)vocabulary.Length ? vocabulary[id] : '�';
+                for (int i = 0; i < ids.Length; i++)
+                {
+                    int id = ids[i];
+                    chars[n++] = (uint)id < (uint)vocabulary.Length ? vocabulary[id] : '\uFFFD';
+                }
+            }
+            else
+            {
+                for (int i = 0; i < ids.Length; i++)
+                {
+                    int id = ids[i];
+                    if ((uint)id < (uint)characters.Length)
+                    {
+                        string character = characters[id];
+                        chars[n++] = character[0];
+                        if (character.Length == 2)
+                        {
+                            chars[n++] = character[1];
+                        }
+                    }
+                    else
+                    {
+                        chars[n++] = '\uFFFD';
+                    }
+                }
             }
 
-            return new string(chars);
+            return new string(chars[..n]);
         }
         finally
         {
@@ -244,12 +421,21 @@ public sealed class CharTokenizer : ITokenizer
     }
 
     /// <summary>Writes the tokenizer as JSON to <paramref name="stream"/>; the stream stays open.</summary>
-    public void Save(Stream stream) => Tokenizers.Write(stream, new JsonObject
+    public void Save(Stream stream)
     {
-        ["type"] = "char",
-        ["vocabulary"] = Vocabulary,
-        ["unknown"] = UnknownCharacter?.ToString(),
-    });
+        var json = new JsonObject
+        {
+            ["type"] = "char",
+            ["vocabulary"] = Vocabulary,
+            ["unknown"] = _characters is null ? UnknownCharacter?.ToString() : _unknownId >= 0 ? _characters[_unknownId] : null,
+        };
+        if (_characters is not null)
+        {
+            json["code_points"] = true;                                    // written only when set: the default file is as before
+        }
+
+        Tokenizers.Write(stream, json);
+    }
 
     /// <summary>Loads a tokenizer written by <see cref="Save(string)"/>.</summary>
     public static CharTokenizer Load(string path)
@@ -471,6 +657,8 @@ public static class Tokenizers
         var json = JsonNode.Parse(stream) as JsonObject ?? throw new InvalidDataException("A tokenizer file must contain a JSON object.");
         return (string?)json["type"] switch
         {
+            "char" when json["code_points"] is JsonValue points && (bool)points =>
+                new CharTokenizer((string)json["vocabulary"]!, new CharTokenizerOptions { CodePoints = true, UnknownCharacter = (string?)json["unknown"] }),
             "char" => new CharTokenizer((string)json["vocabulary"]!, ((string?)json["unknown"]) is { Length: 1 } u ? u[0] : null),
             "word" => new WordTokenizer([.. json["words"]!.AsArray().Select(w => (string)w!)], (string)json["unknown"]!, (bool)json["lowercase"]!),
             var type => throw new InvalidDataException($"Unknown tokenizer type '{type}'."),

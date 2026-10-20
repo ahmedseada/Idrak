@@ -17,21 +17,57 @@ internal static class CommandLine
 {
     /// <summary>
     /// The plug-in packages the tool ships with (plan 26), in the order they are registered (text first: a vision or audio
-    /// family may build on a text one). Registered before every command: before <c>plugins list</c> takes its snapshot (they
-    /// are the tool's own, not added) and before the <c>--plugin</c> assemblies load (which can still take a family's
-    /// place). Registering is idempotent and loads no model: only the families' names.
+    /// family may build on a text one), each with its short name in <see cref="PluginPackagesVariable"/>. Registered before
+    /// every command: before <c>plugins list</c> takes its snapshot (they are the tool's own, not added) and before the
+    /// <c>--plugin</c> assemblies load (which can still take a family's place). Registering is idempotent and loads no
+    /// model: only the families' names.
     /// </summary>
-    internal static readonly (string Package, Action RegisterAll)[] PluginPackages =
+    internal static readonly (string Name, string Package, Action RegisterAll)[] PluginPackages =
     [
-        (TextPlugins.Package, TextPlugins.RegisterAll),
-        (VisionPlugins.Package, VisionPlugins.RegisterAll),
-        (AudioPlugins.Package, AudioPlugins.RegisterAll),
+        ("text", TextPlugins.Package, TextPlugins.RegisterAll),
+        ("vision", VisionPlugins.Package, VisionPlugins.RegisterAll),
+        ("audio", AudioPlugins.Package, AudioPlugins.RegisterAll),
     ];
 
-    /// <summary>Registers every family of <see cref="PluginPackages"/> (once: again changes nothing).</summary>
+    /// <summary>
+    /// The environment variable that chooses the plug-in packages registered at startup: unset or empty for all three,
+    /// "none" for none, or a comma list of their short names (text, vision, audio); <c>-P</c> plug-ins load either way.
+    /// </summary>
+    internal const string PluginPackagesVariable = "IDRAK_PLUGIN_PACKAGES";
+
+    /// <summary>
+    /// The packages <paramref name="value"/> (the variable's value) chooses, in <see cref="PluginPackages"/>' order.
+    /// </summary>
+    /// <exception cref="UsageException">A name that is not one of the packages (the message names the variable).</exception>
+    internal static IReadOnlyList<(string Name, string Package, Action RegisterAll)> ChosenPluginPackages(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            return PluginPackages;
+        }
+
+        if (value.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var names = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (string name in names)
+        {
+            if (!PluginPackages.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new UsageException($"{PluginPackagesVariable}={value}: '{name}' is not a plug-in package; give none, all, or a comma list of "
+                                         + $"{string.Join(", ", PluginPackages.Select(p => p.Name))}.");
+            }
+        }
+
+        return [.. PluginPackages.Where(p => names.Contains(p.Name, StringComparer.OrdinalIgnoreCase))];
+    }
+
+    /// <summary>Registers every family of the packages <see cref="PluginPackagesVariable"/> chooses (once: again changes nothing).</summary>
     internal static void RegisterPluginPackages()
     {
-        foreach (var (_, registerAll) in PluginPackages)
+        foreach (var (_, _, registerAll) in ChosenPluginPackages(Environment.GetEnvironmentVariable(PluginPackagesVariable)))
         {
             registerAll();
         }
