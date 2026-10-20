@@ -15,8 +15,10 @@ standing rules; they win over anything here), then the plan you are asked to wor
   may start without the owner.
 - **Plan 26 (model families as plug-in packages)** — [26-plugin-packages.md](26-plugin-packages.md): written 2026-10-19
   from the owner's decisions (one plug-in package per parent, one namespace per family, every family out of the library
-  including the text language models, `Idrak.Nlp` renamed `Idrak.Text`, BERT and T5 first in the list). Nothing is
-  built; the plug-in tests live in `tests/Idrak.Tests` (decided).
+  including the text language models, `Idrak.Nlp` renamed `Idrak.Text`, BERT and T5 first in the list). Widened
+  2026-10-20: every reusable piece outside the library is a candidate, contract first, no copies in samples or plug-ins
+  (only the override proofs keep their own); phases P0-P10 in two lanes. Nothing is built; the plug-in tests live in
+  `tests/Idrak.Tests` (decided).
 - **Scope:** Plan 24's owner runs, and Plan 26 only when the owner names a phase (the owner dropped Plan 25,
   Idrak.Extensions.AI).
 - **No new work until the owner says so.** Report status and wait for the owner to name the next item.
