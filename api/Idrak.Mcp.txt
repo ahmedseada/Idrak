@@ -12,6 +12,7 @@ public static class Idrak.Mcp.McpTools
   public const string EmbedTool = "embed"
   public const string GenerateTool = "generate"
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> ModelTools(Idrak.Abstraction.Serving.IModelCatalog models)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> ModelTools(Idrak.Abstraction.Serving.IModelCatalog models, System.Func<string, Idrak.Abstraction.Generation.GenerationOptions?>? defaults)
   public static System.Collections.Generic.IReadOnlyList<ModelContextProtocol.Server.McpServerTool> ServerTools(Idrak.Abstraction.Generation.IToolRegistry registry)
   public static System.Collections.Generic.IReadOnlyList<ModelContextProtocol.Server.McpServerTool> ServerTools(Idrak.Abstraction.Serving.IModelCatalog models)
   public static System.Threading.Tasks.Task<Idrak.Mcp.McpToolSource> ConnectAsync(ModelContextProtocol.Client.IClientTransport transport, System.Threading.CancellationToken cancellationToken = default)

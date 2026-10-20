@@ -22,7 +22,7 @@ public static partial class McpTools
     public const string EmbedTool = "embed";
 
     /// <summary>
-    /// The models of <paramref name="models"/> (an inference engine, for example) as MCP server tools: <see cref="ModelTools"/>
+    /// The models of <paramref name="models"/> (an inference engine, for example) as MCP server tools: <see cref="ModelTools(IModelCatalog)"/>
     /// served through a <see cref="ToolRegistry"/>, so arguments are validated and a failed call is returned with
     /// <c>isError</c> set.
     /// </summary>
@@ -33,8 +33,8 @@ public static partial class McpTools
     /// The models of <paramref name="models"/> as tools, one per contract a model offers, each with a <c>model</c>
     /// argument naming one of the models that offer it (optional when only one does):
     /// <list type="bullet">
-    /// <item><c>generate</c> (<see cref="ITextModel"/>): <c>prompt</c>, and optionally <c>max_tokens</c>, <c>temperature</c>
-    /// and <c>seed</c>; returns the generated text.</item>
+    /// <item><c>generate</c> (<see cref="ITextModel"/>): <c>prompt</c>, and optionally <c>max_tokens</c>, <c>temperature</c>,
+    /// <c>seed</c>, and an encoder-decoder's beam search, <c>num_beams</c> and <c>length_penalty</c>; returns the generated text.</item>
     /// <item><c>chat</c> (<see cref="IChatModel"/>): <c>messages</c> (a list of <c>{role, content}</c>), and optionally
     /// <c>think</c>, <c>max_tokens</c>, <c>temperature</c> and <c>seed</c>; returns the assistant's answer.</item>
     /// <item><c>embed</c> (<see cref="IEmbedder"/>): <c>input</c> (a list of texts); returns <c>{"embeddings": [[...], ...]}</c>
@@ -43,17 +43,31 @@ public static partial class McpTools
     /// A tool is left out when no model offers its contract. The tools ask the catalog for the model on each call, so
     /// an engine's queueing, timeouts and statistics apply.
     /// </summary>
-    public static IReadOnlyList<Tool> ModelTools(IModelCatalog models)
+    public static IReadOnlyList<Tool> ModelTools(IModelCatalog models) => ModelTools(models, null);
+
+    /// <summary>
+    /// The models of <paramref name="models"/> as tools, as <see cref="ModelTools(IModelCatalog)"/> makes them, a call's
+    /// arguments set over the options <paramref name="defaults"/> gives its model (null, or null for a model: the
+    /// library's): for example a server's beam settings for an encoder-decoder.
+    /// </summary>
+    public static IReadOnlyList<Tool> ModelTools(IModelCatalog models, Func<string, GenerationOptions?>? defaults)
     {
         ArgumentNullException.ThrowIfNull(models);
+        GenerationOptions Start(string model) => defaults?.Invoke(model) ?? new GenerationOptions();
         var tools = new List<Tool>();
         if (Offering<ITextModel>(models) is { Count: > 0 } text)
         {
             tools.Add(Tool.Create(GenerateTool, $"Continue a prompt with a local language model and return the generated text. Models: {string.Join(", ", text)}.",
-                Schema(text, new JsonObject { ["prompt"] = Property("string", "The text to continue.") }, ["prompt"], generation: true),
+                Schema(text, new JsonObject
+                {
+                    ["prompt"] = Property("string", "The text to continue."),
+                    ["num_beams"] = Property("integer", "Beam search with this many beams (an encoder-decoder; 1: the sampler)."),
+                    ["length_penalty"] = Property("number", "The beams' length penalty (1: the mean log-probability; 0: the sum)."),
+                }, ["prompt"], generation: true),
                 async (args, token) =>
                 {
-                    var (generated, _, _) = await models.Model<ITextModel>(Pick(args, text)).GenerateAsync((string)args["prompt"]!, Options(args), token)
+                    string model = Pick(args, text);
+                    var (generated, _, _) = await models.Model<ITextModel>(model).GenerateAsync((string)args["prompt"]!, Options(args, Start(model)), token)
                         .ConfigureAwait(false);
                     return generated;
                 }));
@@ -80,8 +94,9 @@ public static partial class McpTools
                 Schema(chat, properties, ["messages"], generation: true),
                 async (args, token) =>
                 {
-                    var request = new ChatRequest(Messages(args["messages"]!.AsArray()), Think: (bool?)args["think"], Options: Options(args));
-                    var reply = await models.Model<IChatModel>(Pick(args, chat)).ChatAsync(request, token).ConfigureAwait(false);
+                    string model = Pick(args, chat);
+                    var request = new ChatRequest(Messages(args["messages"]!.AsArray()), Think: (bool?)args["think"], Options: Options(args, Start(model)));
+                    var reply = await models.Model<IChatModel>(model).ChatAsync(request, token).ConfigureAwait(false);
                     return reply.Message?.Content ?? "";
                 }));
         }
@@ -147,9 +162,19 @@ public static partial class McpTools
 
     private static string Pick(JsonObject args, List<string> names) => (string?)args["model"] ?? names[0];
 
-    private static GenerationOptions Options(JsonObject args)
+    private static GenerationOptions Options(JsonObject args, GenerationOptions start)
     {
-        var options = new GenerationOptions();
+        var options = start;
+        if (args["num_beams"] is { } beams)
+        {
+            options = options with { NumBeams = (int)beams };
+        }
+
+        if (args["length_penalty"] is { } penalty)
+        {
+            options = options with { LengthPenalty = (float)penalty };
+        }
+
         if (args["max_tokens"] is { } max)
         {
             options = options with { NumPredict = (int)max };

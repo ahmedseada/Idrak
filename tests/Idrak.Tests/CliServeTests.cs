@@ -12,7 +12,11 @@ using Idrak.AspNetCore;
 using Idrak.Cli;
 using Idrak.Cli.Commands.Serve;
 using Idrak.Generation;
+using Idrak.Inference;
 using Idrak.Mcp;
+using Idrak.Models;
+using Idrak.Text.Inference;
+using Idrak.Text.Plugins.T5;
 using Idrak.Text.Generation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -47,6 +51,7 @@ internal static partial class Tests
         ("cli serve: mcp serve over pipes, --list", d => { if (d == Device.Cpu) CliMcpServe(); }),
         ("cli serve: images: idrak serve with the tiny Gemma 3 answers /v1 data URLs, uploads and /api/chat as run --image (grayscale per request and --grayscale as run --grayscale); text model, http URL, limits, bad input refused", CliServeImages),
         ("cli serve: OpenAI-style API in Idrak.AspNetCore (tool calls streamed and not, translation, embeddings)", d => { if (d == Device.Cpu) CompletionsApiScripted(); }),
+        ("cli serve: an encoder-decoder beside a chat model: served as the \"seq2seq\" kind (announcement, ps, /idrak/ps), /v1/completions answers with transformers' greedy text (num_beams 1) and with the best of --beams 3; /v1/chat/completions, /api/chat and the web chat leave it out naming the reason; MCP generate takes num_beams and the server's beams; --beams without one refused", CliServeSeq2Seq),
     ];
 
     private static (int Code, string Output, string Error) ServeCli(params string[] args)
@@ -90,6 +95,114 @@ internal static partial class Tests
         var list = ServeCli("server", "keys", "list", "-C", config, "-j");
         Check(list.Code == 0 && (string?)JsonNode.Parse(list.Output)!["keys"]![0]!["name"] == "laptop" && !list.Output.Contains("sha256"), $"keys list: {list.Output}");
         Check(ServeCli("server", "keys", "rm", "laptop", "-C", config).Code == 0 && ServeCli("server", "keys", "rm", "laptop", "-C", config).Code == 1, "keys rm");
+    }
+
+    private static void CliServeSeq2Seq(Device device)
+    {
+        string cache = TempFolder(), folder = TempFolder(), t5 = T5Folder("tiny-t5-gated");
+        string config = Path.Combine(folder, "config.json");
+        var c = T5Record()["models"]!["tiny-t5-gated"]!["cases"]!["single0"]!.AsObject();
+        string text = (string)c["text"]!, greedyText = (string)c["greedy_text"]!;
+        var tokenizer = (IPretrainedTokenizer)PretrainedTokenizers.Load(t5);
+        string beamText = tokenizer.Decode(Ints(c["beam_early"]![0]!["ids"]), skipSpecialTokens: true);
+
+        // --beams sets an encoder-decoder's search: refused when none is served.
+        var refused = ServeCli("serve", "tiny=" + TestData("gguf/tiny-qwen3-q8.gguf"), "--beams", "2", "-p", "0", "--cache", cache, "-C", config);
+        Check(refused.Code == ExitCodes.Usage && refused.Error.Contains("--beams", StringComparison.Ordinal) && refused.Error.Contains("encoder-decoder", StringComparison.Ordinal),
+            $"--beams without an encoder-decoder is refused naming it: {refused.Error}");
+
+        int port;
+        using (var probe = new TcpListener(IPAddress.Loopback, 0))
+        {
+            probe.Start();
+            port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        }
+
+        string url = $"http://127.0.0.1:{port}";
+        var serveOutput = new StringWriter();
+        var serveError = new StringWriter();
+        var server = Task.Run(() => CommandLine.Run(["serve", "t5=" + t5, "tiny=" + TestData("gguf/tiny-qwen3-q8.gguf"), "-p", port.ToString(), "-d", device.ToString(),
+            "--cache", cache, "-C", config, "--beams", "3"], TextWriter.Synchronized(serveOutput), TextWriter.Synchronized(serveError)));
+        using var http = new HttpClient { BaseAddress = new Uri(url), Timeout = TimeSpan.FromMinutes(2) };
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (true)
+        {
+            Check(!server.IsCompleted, $"the server stopped early: {serveOutput}{serveError}");
+            try
+            {
+                if (http.GetAsync("/").Result.IsSuccessStatusCode)
+                {
+                    break;
+                }
+            }
+            catch (AggregateException)
+            {
+            }
+
+            Check(DateTime.UtcNow < deadline, "the server answers within a minute");
+            Thread.Sleep(100);
+        }
+
+        try
+        {
+            string announced = serveOutput.ToString();
+            Check(announced.Contains("seq2seq", StringComparison.Ordinal) && announced.Contains("Encoder-decoders", StringComparison.Ordinal)
+                  && announced.Contains(T5Plugin.T5ForConditionalGeneration, StringComparison.Ordinal) && announced.Contains("3 beams", StringComparison.Ordinal),
+                $"the announcement names the encoder-decoder, its kind and the beams: {announced}");
+            (HttpStatusCode Status, JsonNode Body) Post(string path, string body)
+            {
+                var response = http.PostAsync(path, new StringContent(body, Encoding.UTF8, "application/json")).Result;
+                return (response.StatusCode, JsonNode.Parse(response.Content.ReadAsStringAsync().Result)!);
+            }
+
+            string prompt = JsonValue.Create(text).ToJsonString();
+            var greedy = Post("/v1/completions", $$"""{"model":"t5","prompt":{{prompt}},"max_tokens":16,"temperature":0,"num_beams":1}""");
+            Check(greedy.Status == HttpStatusCode.OK && (string?)greedy.Body["choices"]![0]!["text"] == greedyText && (string?)greedy.Body["choices"]![0]!["finish_reason"] == "stop",
+                $"/v1/completions with num_beams 1 answers transformers' greedy text '{greedyText}': {greedy.Body}");
+            var beams = Post("/v1/completions", $$"""{"model":"t5","prompt":{{prompt}},"max_tokens":10}""");
+            Check(beams.Status == HttpStatusCode.OK && (string?)beams.Body["choices"]![0]!["text"] == beamText,
+                $"/v1/completions takes the server's --beams 3: the best hypothesis '{beamText}': {beams.Body}");
+            var badBeams = Post("/v1/completions", $$"""{"model":"t5","prompt":{{prompt}},"num_beams":0}""");
+            Check(badBeams.Status == HttpStatusCode.BadRequest && badBeams.Body.ToJsonString().Contains("num_beams", StringComparison.Ordinal), $"num_beams 0 is a 400 naming it: {badBeams.Body}");
+
+            var chat = Post("/v1/chat/completions", """{"model":"t5","messages":[{"role":"user","content":"hi"}]}""");
+            Check(chat.Status == HttpStatusCode.BadRequest && ((string?)chat.Body["error"]!["message"])!.Contains("encoder-decoder", StringComparison.Ordinal)
+                  && ((string?)chat.Body["error"]!["message"])!.Contains("/v1/completions", StringComparison.Ordinal), $"/v1/chat/completions refuses the encoder-decoder naming why: {chat.Body}");
+            var api = Post("/api/chat", """{"model":"t5","messages":[{"role":"user","content":"hi"}],"stream":false}""");
+            Check(api.Status == HttpStatusCode.BadRequest && ((string?)api.Body["error"])!.Contains("encoder-decoder", StringComparison.Ordinal), $"/api/chat refuses it: {api.Body}");
+            var tiny = Post("/v1/chat/completions", """{"model":"tiny","messages":[{"role":"user","content":"hi"}],"max_tokens":2}""");
+            Check(tiny.Status == HttpStatusCode.OK && (string?)tiny.Body["object"] == "chat.completion", $"the chat model beside it still chats: {tiny.Body}");
+            Check(http.GetStringAsync("/ui").Result.Contains("new Set([\"t5\"])", StringComparison.Ordinal), "the web chat leaves the encoder-decoder out of its models");
+
+            var processes = JsonNode.Parse(http.GetStringAsync("/idrak/ps").Result)!["models"]!.AsArray();
+            Check(processes.Any(m => (string?)m!["name"] == "t5" && (string?)m["kind"] == "seq2seq" && (bool)m["loaded"]!)
+                  && processes.Any(m => (string?)m!["name"] == "tiny" && (string?)m["kind"] == "chat"), $"/idrak/ps shows the kinds: {processes}");
+            var ps = ServeCli("server", "ps", "-p", port.ToString());
+            Check(ps.Code == 0 && ps.Output.Contains("Kind", StringComparison.Ordinal) && ps.Output.Contains("seq2seq", StringComparison.Ordinal), $"server ps shows the kind: {ps.Output}{ps.Error}");
+        }
+        finally
+        {
+            var stop = ServeCli("server", "stop", "-p", port.ToString());
+            Check(stop.Code == 0, $"server stop: {stop.Output}{stop.Error}");
+            Check(server.Wait(TimeSpan.FromSeconds(60)) && server.Result == 0, $"serve exits with 0 after stop: {serveOutput}{serveError}");
+        }
+
+        // MCP generate: an encoder-decoder is a text model (generate, not chat), a call's num_beams over the server's beams.
+        var engine = InferenceEngine.Create().Seq2SeqModel("t5", t5, b => b.Device(device)).BuildAsync().GetAwaiter().GetResult();
+        try
+        {
+            var tools = McpTools.ModelTools(engine, _ => new GenerationOptions { NumBeams = 3, RepeatPenalty = 1f });
+            Check(tools.Any(t => t.Definition.Name == McpTools.GenerateTool) && tools.All(t => t.Definition.Name != McpTools.ChatTool), "MCP offers generate, not chat, for an encoder-decoder");
+            var generate = tools.Single(t => t.Definition.Name == McpTools.GenerateTool);
+            string best = generate.Invoke(new JsonObject { ["prompt"] = text, ["max_tokens"] = 10 }, default).GetAwaiter().GetResult();
+            string sampled = generate.Invoke(new JsonObject { ["prompt"] = text, ["max_tokens"] = 16, ["temperature"] = 0f, ["num_beams"] = 1 }, default).GetAwaiter().GetResult();
+            Check(best == beamText && sampled == greedyText, $"MCP generate: the server's 3 beams '{best}' (want '{beamText}'), num_beams 1 '{sampled}' (want '{greedyText}')");
+        }
+        finally
+        {
+            engine.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            Directory.Delete(t5, recursive: true);
+        }
     }
 
     private static void CliServeEndToEnd(Device device)

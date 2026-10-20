@@ -124,7 +124,7 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     /// <summary>
     /// A bias by the query's and the key's positions, [heads, queries, keys], added to the scaled scores before the softmax
     /// (null, the default: none). The scores are then composed whole ([batch · heads, time, time]); in cached decoding each
-    /// step reads its rows of the bias over every cached slot. When it is a <see cref="Module"/> its parameters are this
+    /// step scores the filled cache slots and reads its rows of the bias over them. When it is a <see cref="Module"/> its parameters are this
     /// layer's, unless <see cref="SharesPositionBias"/>.
     /// </summary>
     /// <exception cref="ArgumentException">The bias is for another number of heads.</exception>
@@ -270,8 +270,9 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     /// Cached attention for the new positions of [batch, newSteps, dim]: their keys and values are appended to this
     /// layer's <see cref="KeyValueCache"/>, and each new query attends to every cached position up to its own
     /// (the causal mask comes from the context), so a decoding step costs O(capacity) instead of O(steps²). With a
-    /// <see cref="PositionBias"/>, each step adds its rows of the bias over every cached slot (the scores composed; not
-    /// while a step is recorded as a graph, since the rows follow the host's position).
+    /// <see cref="PositionBias"/>, each step scores the filled slots only (those up to its last position, known on the
+    /// host) and adds its rows of the bias over them (the scores composed; not while a step is recorded as a graph, since
+    /// the rows follow the host's position).
     /// </summary>
     public Tensor ForwardCached(Tensor input, DecodingContext context)
     {
@@ -293,10 +294,17 @@ public sealed class MultiHeadAttention : Module, ICachedModule
                 throw new NotSupportedException("A step of an attention layer with a position bias cannot be recorded as a graph (its bias rows follow the position on the host); decode it step by step.");
             }
 
-            var keys = cache.Layout.Expand(cache, keys: true);
-            var values = cache.Layout.Expand(cache, keys: false);
-            int slots = keys.Shape[1];
-            var mask = _bias.For(t, slots, context.LengthOf(cache), input.Device) + context.MaskOf(cache)!;   // [H, t, slots]
+            // The filled slots only: the keys before this step and its own (one step's query sees them all; several
+            // steps' queries take the causal mask's columns of those slots).
+            int start = context.LengthOf(cache), slots = start + t;
+            var keys = FilledSlots.Of(cache, keys: true, slots);
+            var values = FilledSlots.Of(cache, keys: false, slots);
+            var mask = _bias.For(t, slots, start, input.Device);                                  // [H, t, slots]
+            if (t > 1)
+            {
+                mask = mask + FilledSlots.Columns(context.MaskOf(cache)!, slots);
+            }
+
             output = q.MatMul(keys, transposeB: true).ScaleMaskSoftmax(_scale, mask).MatMul(values);
         }
         else
@@ -731,6 +739,13 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
     /// <summary>The feed-forward block of its own (<see cref="FromLayers(Module, MultiHeadAttention, Module, FeedForward, NormPlacement)"/>), or null for two projections.</summary>
     public FeedForward? FeedForwardBlock => _feedForward;
 
+    // The parts by role, for the exporters (Children() lists the activation between the projections only when there is one).
+    internal Linear? FeedForwardIn => _feedForward1;
+
+    internal Linear? FeedForwardOut => _feedForward2;
+
+    internal Module? Activation => _activation;
+
     /// <inheritdoc />
     public override IEnumerable<Module> Children() =>
         _feedForward is not null ? [_norm1, _attention, _norm2, _feedForward]
@@ -804,4 +819,23 @@ public sealed class PositionalEncoding : Module, ICachedModule
 
     /// <inheritdoc />
     public override string ToString() => $"PositionalEncoding({MaxLength} x {Dim})";
+}
+
+/// <summary>
+/// The filled slots of a key/value cache, for attention composed from basic operations over what a step can see (a
+/// position bias's layers, whose step knows its position on the host): the first slots of the keys or values as float32,
+/// and the same columns of a [rows, capacity] mask, so the scores, the softmax and the values' product cover the filled
+/// slots, not the whole capacity.
+/// </summary>
+internal static class FilledSlots
+{
+    /// <summary>The keys (or values) of the first <paramref name="slots"/> slots, [rows, slots, headDim] (the layout's prefix, cut to them).</summary>
+    public static Tensor Of(KeyValueCache cache, bool keys, int slots)
+    {
+        var prefix = cache.Layout.ExpandPrefix(cache, keys, slots);
+        return prefix.Shape[1] == slots ? prefix : prefix.Narrow(1, 0, slots);
+    }
+
+    /// <summary>The first <paramref name="slots"/> columns of a mask over the slots, [..., slots].</summary>
+    public static Tensor Columns(Tensor mask, int slots) => mask.Shape[^1] == slots ? mask : mask.Narrow(mask.Rank - 1, 0, slots);
 }

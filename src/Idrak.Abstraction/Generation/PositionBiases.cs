@@ -75,7 +75,7 @@ public abstract class AttentionPositionBias : Module, IAttentionPositionBias
             return kept.Bias;
         }
 
-        Invalidate();
+        DropKept();
         Tensor bias;
         using (Autograd.NoGrad())
         using (new TensorScope())
@@ -94,8 +94,25 @@ public abstract class AttentionPositionBias : Module, IAttentionPositionBias
     /// </summary>
     protected abstract Tensor Compute(int queries, int keys, int queryStart, Device device);
 
-    /// <summary>Drops the kept bias (after the parameters were changed outside a training pass, for example loaded).</summary>
+    /// <summary>
+    /// Drops the kept bias, and whatever else the kind keeps from its parameters (<see cref="OnInvalidated"/>): after the
+    /// parameters were changed outside a training pass, for example loaded.
+    /// </summary>
     public void Invalidate()
+    {
+        DropKept();
+        OnInvalidated();
+    }
+
+    /// <summary>
+    /// Called by <see cref="Invalidate"/> (a training pass, a move, a load, the end): a kind that keeps more than the bias
+    /// of the last shape computed from its parameters drops it here. Nothing by default.
+    /// </summary>
+    protected virtual void OnInvalidated()
+    {
+    }
+
+    private void DropKept()
     {
         _kept?.Bias.Dispose();
         _kept = null;
@@ -138,13 +155,109 @@ public abstract class AttentionPositionBias : Module, IAttentionPositionBias
 }
 
 /// <summary>
+/// A position bias that follows the distance alone, key position minus query position: a learned value per head in each
+/// row of <see cref="Table"/> [rows, heads], the row of a distance given by <see cref="Bucket"/>. A pass over several
+/// queries looks the table up through an index of the shape's distances, once per shape (<see cref="AttentionPositionBias"/>).
+/// A decoding step (one query, nothing training) reads a slice of the values by distance instead, [heads, distances],
+/// which is made once on the bias's device for the distances asked so far and widened, twice as wide, when a step asks
+/// for more: a step builds no index on the host and uploads nothing. The values by distance follow the table: they are
+/// dropped by <see cref="AttentionPositionBias.Invalidate"/> (every training pass, a move, a load).
+/// </summary>
+public abstract class DistancePositionBias : AttentionPositionBias
+{
+    private (Device Device, int Back, Tensor Values)? _byDistance;     // [heads, back + ahead + 1]: column c is distance c - Back
+
+    /// <summary>A bias for <paramref name="heads"/> heads.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">The heads are not positive.</exception>
+    protected DistancePositionBias(int heads)
+        : base(heads)
+    {
+    }
+
+    /// <summary>The values, [rows, heads] ("table"): row <see cref="Bucket"/> of a distance holds each head's value.</summary>
+    public abstract Tensor Table { get; }
+
+    /// <summary>The table row of key position minus query position <paramref name="relative"/>.</summary>
+    public abstract int Bucket(int relative);
+
+    /// <inheritdoc />
+    protected sealed override Tensor Compute(int queries, int keys, int queryStart, Device device)
+    {
+        if (Table.Device != device)
+        {
+            throw new ArgumentException($"The position bias's table is on {Table.Device}; its bias was asked for on {device}.", nameof(device));
+        }
+
+        if (queries == 1 && !Autograd.IsEnabled)
+        {
+            return Step(keys, queryStart, device);
+        }
+
+        var index = new float[queries * keys];
+        for (int i = 0; i < queries; i++)
+        {
+            int query = queryStart + i;
+            var row = index.AsSpan(i * keys, keys);
+            for (int j = 0; j < keys; j++)
+            {
+                row[j] = Bucket(j - query);
+            }
+        }
+
+        var indices = Tensor.From(index, [queries * keys], device);
+        return Table.EmbeddingLookup(indices).Reshape(queries, keys, Heads).Permute(2, 0, 1);   // [heads, queries, keys]
+    }
+
+    /// <inheritdoc />
+    protected override void OnInvalidated()
+    {
+        _byDistance?.Values.Dispose();
+        _byDistance = null;
+    }
+
+    // The bias of the query at `start` over keys [0, keys): distances -start .. keys - 1 - start, a slice of the values by
+    // distance, [heads, 1, keys]. The values cover the distances asked so far, at least 16 back and none ahead, each side a
+    // power of two; they are made again, wider, only when a step asks past them.
+    private Tensor Step(int keys, int start, Device device)
+    {
+        int back = start, ahead = keys - 1 - start;
+        if (_byDistance is not { } held || held.Device != device || back > held.Back || ahead > held.Values.Shape[1] - 1 - held.Back)
+        {
+            int heldBack = _byDistance is { } b && b.Device == device ? b.Back : 0;
+            int heldAhead = _byDistance is { } a && a.Device == device ? a.Values.Shape[1] - 1 - a.Back : 0;
+            int newBack = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(16, Math.Max(back, heldBack)));
+            int newAhead = Math.Max(ahead, heldAhead) <= 0 ? 0 : (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(ahead, heldAhead));
+            var index = new float[newBack + newAhead + 1];
+            for (int c = 0; c < index.Length; c++)
+            {
+                index[c] = Bucket(c - newBack);
+            }
+
+            OnInvalidated();
+            Tensor values;
+            using (new TensorScope())
+            {
+                values = TensorScope.Untrack(Table.EmbeddingLookup(Tensor.From(index, [index.Length], device)).Permute(1, 0));   // [heads, distances]
+            }
+
+            _byDistance = (device, newBack, values);
+            held = _byDistance.Value;
+        }
+
+        return held.Values.Narrow(1, held.Back - start, keys).Reshape(Heads, 1, keys);
+    }
+}
+
+/// <summary>
 /// The library's position bias "relative": a learned value per head for each distance from the query to the key,
 /// key position minus query position clipped to [-<see cref="MaxDistance"/>, <see cref="MaxDistance"/>] (to
 /// [-<see cref="MaxDistance"/>, 0] when not <see cref="Bidirectional"/>: a causal layer's keys are never after its
 /// query). Its table is [buckets, heads] ("table"), buckets = 2 · max distance + 1 (max distance + 1 one-way).
 /// </summary>
-public sealed class RelativePositionBias : AttentionPositionBias
+public sealed class RelativePositionBias : DistancePositionBias
 {
+    private Tensor _table;
+
     /// <summary>Its name in <see cref="AttentionPositionBiases"/>: "relative".</summary>
     public const string KindName = "relative";
 
@@ -167,7 +280,7 @@ public sealed class RelativePositionBias : AttentionPositionBias
         Bidirectional = bidirectional;
         Buckets = bidirectional ? 2 * maxDistance + 1 : maxDistance + 1;
         random ??= new Random(0);
-        Table = CreateParameter(UniformValues(Buckets * heads, 0.02f, random), [Buckets, heads], device ?? Device.Default);
+        _table = CreateParameter(UniformValues(Buckets * heads, 0.02f, random), [Buckets, heads], device ?? Device.Default);
     }
 
     /// <summary>The farthest distance with a value of its own.</summary>
@@ -180,41 +293,19 @@ public sealed class RelativePositionBias : AttentionPositionBias
     public int Buckets { get; }
 
     /// <summary>The values, [buckets, heads] ("table"): row <see cref="Bucket"/> of a distance holds each head's value.</summary>
-    public Tensor Table { get; private set; }
+    public override Tensor Table => _table;
 
     /// <summary>The table row of key position minus query position <paramref name="relative"/>.</summary>
-    public int Bucket(int relative) => Math.Clamp(relative, -MaxDistance, Bidirectional ? MaxDistance : 0) + MaxDistance;
+    public override int Bucket(int relative) => Math.Clamp(relative, -MaxDistance, Bidirectional ? MaxDistance : 0) + MaxDistance;
 
     /// <inheritdoc />
-    protected override Tensor Compute(int queries, int keys, int queryStart, Device device)
-    {
-        if (Table.Device != device)
-        {
-            throw new ArgumentException($"The position bias's table is on {Table.Device}; its bias was asked for on {device}.", nameof(device));
-        }
-
-        var index = new float[queries * keys];
-        for (int i = 0; i < queries; i++)
-        {
-            int query = queryStart + i;
-            for (int j = 0; j < keys; j++)
-            {
-                index[i * keys + j] = Bucket(j - query);
-            }
-        }
-
-        var indices = Tensor.From(index, [queries * keys], device);
-        return Table.EmbeddingLookup(indices).Reshape(queries, keys, Heads).Permute(2, 0, 1);   // [heads, queries, keys]
-    }
-
-    /// <inheritdoc />
-    public override IEnumerable<Tensor> Parameters() => [Table];
+    public override IEnumerable<Tensor> Parameters() => [_table];
 
     /// <inheritdoc />
     protected override void MoveTo(Device device)
     {
         base.MoveTo(device);
-        Table = MoveTensor(Table, device);
+        _table = MoveTensor(_table, device);
     }
 
     /// <inheritdoc />
@@ -231,8 +322,10 @@ public sealed class RelativePositionBias : AttentionPositionBias
 /// the distances up to <see cref="MaxDistance"/>; a bias of a shape is then an index into them, computed once per shape
 /// (<see cref="AttentionPositionBias"/>).
 /// </summary>
-public sealed class BucketedPositionBias : AttentionPositionBias
+public sealed class BucketedPositionBias : DistancePositionBias
 {
+    private Tensor _table;
+
     /// <summary>Its name in <see cref="AttentionPositionBiases"/>: "bucketed".</summary>
     public const string KindName = "bucketed";
 
@@ -272,7 +365,7 @@ public sealed class BucketedPositionBias : AttentionPositionBias
         }
 
         random ??= new Random(0);
-        Table = CreateParameter(UniformValues(buckets * heads, 0.02f, random), [buckets, heads], device ?? Device.Default);
+        _table = CreateParameter(UniformValues(buckets * heads, 0.02f, random), [buckets, heads], device ?? Device.Default);
     }
 
     /// <summary>The table's rows.</summary>
@@ -285,10 +378,10 @@ public sealed class BucketedPositionBias : AttentionPositionBias
     public bool Bidirectional { get; }
 
     /// <summary>The values, [buckets, heads] ("table"): row <see cref="Bucket"/> of a distance holds each head's value.</summary>
-    public Tensor Table { get; private set; }
+    public override Tensor Table => _table;
 
     /// <summary>The table row of key position minus query position <paramref name="relative"/>.</summary>
-    public int Bucket(int relative) => _buckets[Math.Clamp(relative, -MaxDistance, MaxDistance) + MaxDistance];
+    public override int Bucket(int relative) => _buckets[Math.Clamp(relative, -MaxDistance, MaxDistance) + MaxDistance];
 
     // transformers' _relative_position_bucket of one distance, in its arithmetic: the far buckets from a float32 logarithm of
     // distance / exact, divided by the float32 of the double log(max distance / exact), times the far buckets, truncated.
@@ -323,36 +416,13 @@ public sealed class BucketedPositionBias : AttentionPositionBias
     }
 
     /// <inheritdoc />
-    protected override Tensor Compute(int queries, int keys, int queryStart, Device device)
-    {
-        if (Table.Device != device)
-        {
-            throw new ArgumentException($"The position bias's table is on {Table.Device}; its bias was asked for on {device}.", nameof(device));
-        }
-
-        var index = new float[queries * keys];
-        for (int i = 0; i < queries; i++)
-        {
-            int query = queryStart + i;
-            var row = index.AsSpan(i * keys, keys);
-            for (int j = 0; j < keys; j++)
-            {
-                row[j] = Bucket(j - query);
-            }
-        }
-
-        var indices = Tensor.From(index, [queries * keys], device);
-        return Table.EmbeddingLookup(indices).Reshape(queries, keys, Heads).Permute(2, 0, 1);   // [heads, queries, keys]
-    }
-
-    /// <inheritdoc />
-    public override IEnumerable<Tensor> Parameters() => [Table];
+    public override IEnumerable<Tensor> Parameters() => [_table];
 
     /// <inheritdoc />
     protected override void MoveTo(Device device)
     {
         base.MoveTo(device);
-        Table = MoveTensor(Table, device);
+        _table = MoveTensor(_table, device);
     }
 
     /// <inheritdoc />

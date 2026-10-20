@@ -28,6 +28,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Seq2SeqRun = Idrak.Cli.Commands.Run.Seq2SeqRun;
 
 namespace Idrak.Cli.Commands.Serve;
 
@@ -47,6 +48,21 @@ internal sealed record ServedModel(string Name, string Source, ModelChoices.Mode
 
     /// <summary>The architecture name config.json gives (its first "architectures" entry), or null.</summary>
     public static string? Architecture(JsonObject config) => config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;
+
+    /// <summary>
+    /// The architecture when it is an encoder-decoder a plug-in registered (<c>PretrainedSeq2Seq</c>), else null: such a
+    /// model is served as the engine's "seq2seq" kind (prompts on /v1/completions and MCP generate), not as a chat model.
+    /// </summary>
+    public string? EncoderDecoder { get; init; }
+
+    /// <summary>The engine kind it is served as: "chat", or "seq2seq" for an encoder-decoder.</summary>
+    public string Kind => EncoderDecoder is null ? ChatKind : Seq2SeqKind;
+
+    /// <summary>The kind of a model served as a chat model.</summary>
+    public const string ChatKind = "chat";
+
+    /// <summary>The kind of an encoder-decoder (the inference engine's name for it).</summary>
+    public const string Seq2SeqKind = "seq2seq";
 }
 
 /// <summary>The server's settings from the command line.</summary>
@@ -75,6 +91,12 @@ internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IRea
 
     /// <summary>Whether image_url parts may give http(s) addresses the server downloads (--allow-image-urls).</summary>
     public bool AllowImageUrls { get; init; }
+
+    /// <summary>An encoder-decoder's beams for every request that gives none (--beams; 1: the sampler).</summary>
+    public int Beams { get; init; } = 1;
+
+    /// <summary>The beams' length penalty for every request that gives none (--length-penalty).</summary>
+    public float LengthPenalty { get; init; } = 1f;
 }
 
 /// <summary>
@@ -100,7 +122,7 @@ internal sealed class ServeHost
 
     /// <summary>The options of serve and ui (besides the model options).</summary>
     public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--max-concurrency", "--keep-alive", "--log-requests",
-        "--max-request-mb", "--max-images", ModelChoices.VisionOption, ModelChoices.ImageTransformOption];
+        "--max-request-mb", "--max-images", ModelChoices.VisionOption, ModelChoices.ImageTransformOption, Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     /// <summary>The flags of serve and ui.</summary>
     public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls"];
@@ -204,6 +226,8 @@ internal sealed class ServeHost
             throw new UsageException("--max-images must be 0 (no images) or more.");
         }
 
+        var (beams, penalty) = Seq2SeqRun.Beams(context);
+
         return new ServeSettings(host, port, context.Option("--api-key") ?? Environment.GetEnvironmentVariable("IDRAK_API_KEY"),
             [.. context.Options("--cors").SelectMany(o => o.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))],
             concurrency, keep, keepText)
@@ -214,6 +238,8 @@ internal sealed class ServeHost
             MaxRequestBytes = requestMb * 1024L * 1024,
             MaxImages = images,
             AllowImageUrls = context.Flag("--allow-image-urls"),
+            Beams = beams,
+            LengthPenalty = penalty,
             LogContent = context.Flag("--log-content") && (context.Option("--log-requests") is not null
                 ? true : throw new UsageException("--log-content adds the request bodies to the request log; give the log with --log-requests FILE.")),
         };
@@ -275,7 +301,26 @@ internal sealed class ServeHost
                 throw new UsageException($"{name}: {e.Message}");
             }
 
-            models.Add(new ServedModel(name, source, choice, path, folder, template, config));
+            // An encoder-decoder a plug-in registered: served as one (weight choices it does not take refused now, as run does).
+            string? encoderDecoder = Seq2SeqRun.Architecture(folder);
+            if (encoderDecoder is not null)
+            {
+                Seq2SeqRun.CheckChoice(choice, name, encoderDecoder);
+                if (tokenizer is null)
+                {
+                    throw new UsageException($"{name}: {folder} has no tokenizer (tokenizer.json or a SentencePiece model), which an encoder-decoder ({encoderDecoder}) is served with.");
+                }
+            }
+
+            models.Add(new ServedModel(name, source, choice, path, folder, template, config) { EncoderDecoder = encoderDecoder });
+        }
+
+        foreach (string option in new[] { Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption })
+        {
+            if (context.Option(option) is not null && models.All(m => m.EncoderDecoder is null))
+            {
+                throw new UsageException($"{option}: no encoder-decoder is served (it sets an encoder-decoder's beam search; {string.Join(", ", models.Select(m => m.Name))} answer chat).");
+            }
         }
 
         return models;
@@ -329,9 +374,16 @@ internal sealed class ServeHost
     {
         string keep = Settings.KeepAlive is null ? "stays loaded" : Settings.KeepAlive == TimeSpan.Zero ? "unloads after each request" : $"unloads after {Settings.KeepAliveText} idle";
         _context.Write($"Serving {Served.Count} model{(Served.Count == 1 ? "" : "s")} on {url} (device {_context.Device}; each loads on its first request and {keep})");
-        _context.Table(["Model", "Source"], Served.Select(m => (IReadOnlyList<string>)[m.Name, m.Source]));
+        _context.Table(["Model", "Kind", "Source"], Served.Select(m => (IReadOnlyList<string>)[m.Name, m.Kind, m.Source]));
         _context.Write($"Chat API          {url}/api/chat");
         _context.Write($"OpenAI-style API  {url}/v1");
+        var encoderDecoders = Served.Where(m => m.EncoderDecoder is not null).ToList();
+        if (encoderDecoders.Count > 0)
+        {
+            _context.Write($"Encoder-decoders  {string.Join(", ", encoderDecoders.Select(m => $"{m.Name} ({m.EncoderDecoder})"))}: prompts on POST {url}/v1/completions and the MCP tool "
+                + $"generate ({BeamText()}; a request gives num_beams, length_penalty, early_stopping); the chat routes refuse them");
+        }
+
         var vision = Served.Where(m => m.ReadsImages).ToList();
         if (vision.Count > 0)
         {
@@ -364,12 +416,14 @@ internal sealed class ServeHost
             ["device"] = _context.Device.ToString(),
             ["keep_alive"] = Settings.KeepAliveText,
             ["max_concurrency"] = Settings.MaxConcurrency,
+            ["beams"] = Settings.Beams,
+            ["length_penalty"] = Settings.LengthPenalty,
             ["api_key"] = Settings.NeedsKey,
             ["metrics"] = Settings.Metrics ? url + "/metrics" : null,
             ["request_log"] = Settings.RequestLog is { } file ? System.IO.Path.GetFullPath(file) : null,
             ["models"] = new JsonArray([.. Served.Select(m => (JsonNode)new JsonObject
             {
-                ["name"] = m.Name, ["source"] = m.Source, ["path"] = m.Path, ["images"] = m.ReadsImages, ["audio"] = m.ReadsAudio, ["grayscale"] = m.ReadsImages && m.Choice.Grayscale,
+                ["name"] = m.Name, ["kind"] = m.Kind, ["source"] = m.Source, ["path"] = m.Path, ["images"] = m.ReadsImages, ["audio"] = m.ReadsAudio, ["grayscale"] = m.ReadsImages && m.Choice.Grayscale,
                 ["image_transforms"] = m.ReadsImages && !m.Choice.Transforms.IsEmpty ? m.Choice.Transforms.ToString() : null,
             })]),
         });
@@ -417,6 +471,11 @@ internal sealed class ServeHost
 
         for (int i = 0; i < Served.Count; i++)
         {
+            if (Served[i].EncoderDecoder is not null)
+            {
+                continue;                                       // not a chat model: /api/chat refuses it (Dispatch)
+            }
+
             string name = Served[i].Name;
             app.MapChatApi($"{Internal}/{i}/api", name, o => o.Tools(ToolExecution.Client).ModelName(name).Version(Version).Images(Limits));
         }
@@ -425,8 +484,16 @@ internal sealed class ServeHost
         app.MapGet("/api/version", () => Results.Json(new { version = Version }));
         app.MapGet("/api/tags", Tags);
         app.MapGet("/api/ps", (InferenceEngine engine) => Ps(engine));
-        app.MapCompletionsApi("/v1", o => o.Images(Limits));
-        app.MapGet("/ui", () => Results.Content(ChatPage.Html, "text/html; charset=utf-8"));
+        app.MapCompletionsApi("/v1", o =>
+        {
+            o.Images(Limits);
+            foreach (var model in Served.Where(m => m.EncoderDecoder is not null))
+            {
+                o.TextDefaults(model.Name, TextDefaults());                 // --beams and --length-penalty, under a request's own fields
+            }
+        });
+        string page = ChatPage.For(Served.Where(m => m.EncoderDecoder is not null).Select(m => m.Name));
+        app.MapGet("/ui", () => Results.Content(page, "text/html; charset=utf-8"));
         app.MapIdrakStatus("/idrak/status");
         if (Settings.Metrics)
         {
@@ -471,7 +538,8 @@ internal sealed class ServeHost
         var engine = AddModels(InferenceEngine.Create().LoadOnFirstUse()).BuildAsync().GetAwaiter().GetResult();
         try
         {
-            var registry = ToolRegistry.Create().Add(Idrak.Mcp.McpTools.ModelTools(engine)).Add(tools).Build();
+            var registry = ToolRegistry.Create().Add(Idrak.Mcp.McpTools.ModelTools(engine, name => Find(name, anyName: false)?.EncoderDecoder is null ? null : TextDefaults()))
+                .Add(tools).Build();
             return McpServeCommand.Serve(_context, registry);
         }
         finally
@@ -480,12 +548,19 @@ internal sealed class ServeHost
         }
     }
 
-    // Every served model as a chat model, loaded on its first request and unloaded after the keep-alive time.
+    // Every served model, loaded on its first request and unloaded after the keep-alive time: an encoder-decoder as the
+    // engine's "seq2seq" kind (a text model: /v1/completions and MCP generate), every other as a chat model.
     private InferenceEngineBuilder AddModels(InferenceEngineBuilder engine)
     {
         foreach (var model in Served)
         {
             var served = model;
+            if (served.EncoderDecoder is not null)
+            {
+                engine.Seq2SeqModel(served.Name, () => LoadSeq2Seq(served), b => b.KeepAlive(Settings.KeepAlive));
+                continue;
+            }
+
             engine.ChatModel(served.Name, () => Load(served), b =>
             {
                 b = b.KeepAlive(Settings.KeepAlive);
@@ -511,6 +586,34 @@ internal sealed class ServeHost
         Print($"loaded {model.Name} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
         return generator;
     }
+
+    // An encoder-decoder's generator: the folder's model and tokenizer on the server's device, its cache in --kv's format.
+    private Seq2SeqGenerator LoadSeq2Seq(ServedModel model)
+    {
+        var device = _context.Device;
+        long before = ComputeResources.GetMemoryUsage(device).InUse;
+        var watch = Stopwatch.StartNew();
+        var loaded = PretrainedSeq2SeqModel.Load(model.Folder, new PretrainedEncoderOptions { Device = device });
+        Seq2SeqGenerator generator;
+        try
+        {
+            generator = loaded.CreateGenerator(cacheLayout: ModelChoices.CacheLayout(model.Choice));
+        }
+        catch
+        {
+            loaded.Dispose();
+            throw;
+        }
+
+        _memory[model.Name] = Math.Max(0, ComputeResources.GetMemoryUsage(device).InUse - before);
+        Print($"loaded {model.Name} ({model.EncoderDecoder}, an encoder-decoder) in {watch.Elapsed.TotalSeconds:F1} s on {device}");
+        return generator;
+    }
+
+    // The options an encoder-decoder's request starts from: the wire format's (repeat_penalty 1) with --beams and --length-penalty.
+    private GenerationOptions TextDefaults() => new() { RepeatPenalty = 1f, NumBeams = Settings.Beams, LengthPenalty = Settings.LengthPenalty };
+
+    private string BeamText() => Settings.Beams > 1 ? $"{Settings.Beams} beams, length penalty {Settings.LengthPenalty.ToString(CultureInfo.InvariantCulture)}" : "sampled";
 
     // How a loaded copy reads images: the command line's (ModelImages: the encoder built on the first image, on the
     // model's device, with the model's preprocessing, grey with --grayscale or the alias's setting, EXIF orientation).
@@ -688,6 +791,18 @@ internal sealed class ServeHost
         }
 
         var served = Find(asked);
+        if (served?.EncoderDecoder is { } architecture && path is "/api/chat" or "/v1/chat/completions" or "/v1/chat/upload")
+        {
+            // An encoder-decoder answers prompts, not conversations: no chat template, tools or reasoning.
+            string reason = $"'{served.Name}' is an encoder-decoder ({architecture}): it answers prompts on POST /v1/completions and the MCP tool generate, "
+                + "not conversations (no chat template, tools or reasoning).";
+            http.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await (path == "/api/chat"
+                ? http.Response.WriteAsJsonAsync(new { error = reason })
+                : http.Response.WriteAsJsonAsync(new { error = new { message = reason, type = "invalid_request_error", code = "unsupported_model" } }));
+            return;
+        }
+
         if (path == "/api/chat")
         {
             if (served is null)
@@ -950,6 +1065,7 @@ internal sealed class ServeHost
             models.Add(new JsonObject
             {
                 ["name"] = model.Name,
+                ["kind"] = model.Kind,
                 ["source"] = model.Source,
                 ["loaded"] = status.Loaded,
                 ["device"] = description?.Device.ToString() ?? _context.Device.ToString(),

@@ -190,6 +190,28 @@ public sealed partial class Tensor
     }
 
     /// <summary>
+    /// The <paramref name="k"/> best log-probabilities along the last dimension (log-softmax over it) and their indices (as
+    /// floats), larger first and the smaller index first on equal values, each [..., k]; NaN and -∞ entries are never among
+    /// them, and past a row's last candidate the values are -∞ and the indices -1 (see <c>Backend.LogSoftmaxTopKKernel</c>:
+    /// a row with no finite logit, or with a NaN or a +∞ one, has none). Computed where the tensor is, so a search reads
+    /// back k values a row instead of the whole row; not differentiated.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="k"/> is not positive.</exception>
+    public (Tensor Values, Tensor Indices) LogSoftmaxTopK(int k)
+    {
+        ThrowIfDisposed();
+        RequireRank(1, "LogSoftmaxTopK");
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
+        int cols = _shape[^1], rows = cols == 0 ? 0 : Size / cols;
+        int[] shape = [.. _shape[..^1], k];
+        var values = Empty(shape, Device);
+        var indices = Empty(shape, Device);
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        Backend.LogSoftmaxTopK(Storage, values.Storage, indices.Storage, rows, cols, k);
+        return (Traced("log_softmax_topk", values, start), indices);
+    }
+
+    /// <summary>
     /// Fraction of rows predicted correctly, as a scalar: argmax match for multi-column outputs, or
     /// (prediction ≥ threshold) == (target ≥ 0.5) for a single column.
     /// </summary>

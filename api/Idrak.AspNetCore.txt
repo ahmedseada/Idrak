@@ -101,10 +101,12 @@ public sealed class Idrak.AspNetCore.CompletionsApiOptions
   public Idrak.AspNetCore.CompletionsApiOptions ChatModel(string name, Idrak.Abstraction.Generation.IChatModel model)
   public Idrak.AspNetCore.CompletionsApiOptions Embeddings(string name, Idrak.Abstraction.Retrieval.IEmbedder embedder)
   public Idrak.AspNetCore.CompletionsApiOptions Images(System.Action<Idrak.AspNetCore.ImageInputOptions> configure)
+  public Idrak.AspNetCore.CompletionsApiOptions TextDefaults(string name, Idrak.Abstraction.Generation.GenerationOptions defaults)
 
 public static class Idrak.AspNetCore.CompletionsTranslation
   public static Idrak.Abstraction.Generation.ChatRequest Chat(System.Text.Json.Nodes.JsonObject body)
   public static Idrak.Abstraction.Generation.GenerationOptions Options(System.Text.Json.Nodes.JsonObject body)
+  public static Idrak.Abstraction.Generation.GenerationOptions Options(System.Text.Json.Nodes.JsonObject body, Idrak.Abstraction.Generation.GenerationOptions defaults)
   public static System.Text.Json.Nodes.JsonObject Call(Idrak.Abstraction.Generation.ToolCall call)
   public static System.Text.Json.Nodes.JsonObject Message(Idrak.Abstraction.Generation.ChatMessage message)
   public static System.Threading.Tasks.Task<(Idrak.Abstraction.Generation.ChatRequest, bool, bool)> Upload(Microsoft.AspNetCore.Http.IFormCollection form, System.Threading.CancellationToken cancellationToken = default)

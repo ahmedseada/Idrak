@@ -12,7 +12,7 @@ internal static partial class PtxKernels
     public static readonly string[] AdvancedNames =
     [
         "exp_f32", "exp_bwd_f32", "log_f32", "log_bwd_f32", "gelu_f32", "gelu_bwd_f32", "gelu_erf_f32", "gelu_erf_bwd_f32", "inv_sqrt_f32",
-        "softmax_f32", "softmax_bwd_f32", "argmax_f32", "class_match_f32",
+        "softmax_f32", "softmax_bwd_f32", "argmax_f32", "log_softmax_topk_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
         "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32", "weight_norm_f32", "weight_norm_bwd_f32",
         "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
@@ -287,6 +287,59 @@ internal static partial class PtxKernels
             setp.eq.u32 %p3, %tx, 0;
             cvt.rn.f32.u32 %f7, %r7;
             @%p3 st.global.f32 [%a_y], %f7;
+            """);
+
+        // The best k log-probabilities of a row and their columns (Backend.LogSoftmaxTopK), one block per row: the max (NaN
+        // ignored), Σ exp(x - max) (a NaN makes it NaN, so the row has no candidate), shift = max + log Σ; then k passes, each
+        // the block's arg-max of v = x - shift over the entries after the previous pick in the order (larger v, then the
+        // smaller column), -∞ and NaN never picked; thread 0 writes each pick (-∞ and -1 once none is left). Each pass reads
+        // the row coalesced; the sums are block trees of a fixed shape.
+        RowBlock(sb, "log_softmax_topk_f32", ["x", "values", "indices"], [("u32", "cols"), ("u32", "k")],
+            BlockRowStart + $"""
+            add.u64 %rd2, %b_x, %rd1;
+            mov.f32 %f1, {NegInf};
+            """ + "\n" + StridedLoop("TKMAX", "%rd2", "%s_cols", "max.f32 %f1, %f1, %f2;") + "\n"
+            + BlockReduce("RTKMAX", "%f1", "max", NegInf) + "\n" + $"""
+            mov.f32 %f3, {Zero};
+            """ + "\n" + StridedLoop("TKEXP", "%rd2", "%s_cols", $"""
+            sub.f32 %f2, %f2, %f1;
+            mul.f32 %f2, %f2, {Log2E};
+            ex2.approx.ftz.f32 %f2, %f2;
+            add.f32 %f3, %f3, %f2;
+            """) + "\n" + BlockReduce("RTKSUM", "%f3", "add", Zero) + "\n" + $"""
+            lg2.approx.ftz.f32 %f5, %f3;
+            fma.rn.f32 %f5, %f5, {Ln2}, %f1;
+            mov.f32 %f6, {PosInf};
+            mov.u32 %r10, 0;
+            mov.u32 %r12, 0;
+            setp.eq.u32 %p5, %tx, 0;
+            TKPASS:
+            setp.ge.u32 %p6, %r12, %s_k;
+            @%p6 bra TKPASS_END;
+            mov.f32 %f7, {NegInf};
+            mov.u32 %r11, 0xFFFFFFFF;
+            """ + "\n" + StridedLoop("TKPICK", "%rd2", "%s_cols", """
+            sub.f32 %f8, %f2, %f5;
+            setp.lt.f32 %p3, %f8, %f6;
+            setp.eq.f32 %p4, %f8, %f6;
+            setp.gt.and.u32 %p4, %r6, %r10, %p4;
+            or.pred %p3, %p3, %p4;
+            setp.gt.and.f32 %p3, %f8, %f7, %p3;
+            selp.f32 %f7, %f8, %f7, %p3;
+            selp.b32 %r11, %r6, %r11, %p3;
+            """) + "\n" + BlockArgMax("RTKPICK", "%f7", "%r11") + "\n" + """
+            mad.lo.u32 %r13, %row, %s_k, %r12;
+            mul.wide.u32 %rd8, %r13, 4;
+            add.u64 %rd9, %b_values, %rd8;
+            add.u64 %rd10, %b_indices, %rd8;
+            cvt.rn.f32.s32 %f9, %r11;
+            @%p5 st.global.f32 [%rd9], %f7;
+            @%p5 st.global.f32 [%rd10], %f9;
+            mov.f32 %f6, %f7;
+            mov.u32 %r10, %r11;
+            add.u32 %r12, %r12, 1;
+            bra TKPASS;
+            TKPASS_END:
             """);
 
         RowBlock(sb, "class_match_f32", ["p", "t", "y"], [("u32", "cols"), ("f32", "threshold")],

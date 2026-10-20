@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 78 | 15 | 43 | 135 | 0 |
+| `Idrak.Abstraction` | 78 | 16 | 43 | 136 | 0 |
 | `Idrak` | 17 | 4 | 19 | 40 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -121,6 +121,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio, Audio.Plugins, Vision | Abstraction |
+| `Idrak.Abstraction.Generation.DistancePositionBias` | abstract class | public | Device, Tensor | BucketedPositionBias, RelativePositionBias |  | Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.FeatureCaches` | registry | public | — |  | disk, memory | Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IAttentionPositionBias` | interface | public | Device, Tensor | BucketedPositionBias, RelativePositionBias |  | Idrak, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IBinaryPartKind` | interface | public | — | AudioPartKind |  | AspNetCore, Audio, Text | Abstraction |
@@ -361,17 +362,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 176 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (151, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 177 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (152, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 136 of 186 |
-| `CudaBackend` | 180 of 186 |
-| `DeferredBackend` | 11 of 186 |
-| `HipBackend` | 23 of 186 |
-| `VulkanBackend` | 134 of 186 |
+| `CpuBackend` | 137 of 187 |
+| `CudaBackend` | 181 of 187 |
+| `DeferredBackend` | 11 of 187 |
+| `HipBackend` | 23 of 187 |
+| `VulkanBackend` | 134 of 187 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
@@ -487,6 +488,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LeakyReluBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LeakyReluKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LiveStorages(1)` | virtual |  |  |  |  |  |
+| `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  |  |  |
 | `LongLivedAllocations(0)` | virtual |  | ✓ |  |  |  |
 | `LstmCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |  |
 | `LstmCellKernel(11)` | virtual | ✓ | ✓ |  |  |  |

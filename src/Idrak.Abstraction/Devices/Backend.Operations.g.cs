@@ -1838,6 +1838,68 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// The best k log-probabilities of each row of x [rows, cols] and their columns (a beam search's candidates, read back
+    /// instead of the whole rows): with shift = max + log Σ exp(x - max) over the row (the max ignoring NaN, the sum the
+    /// entries other than -∞), each entry's log-probability is x - shift in float32; values[r, j] is the row's j-th best of
+    /// those that are neither NaN nor -∞ (larger first, the smaller column first on equal values) and indices[r, j] its column
+    /// (as a float), j &lt; k; past the row's last such entry values gets -∞ and indices -1. A row with no finite logit, a
+    /// NaN or a +∞ one has a NaN shift, so none. The CPU sums in double (its shift rounded to float32 once); a device's sum
+    /// may differ from it by float rounding.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LogSoftmaxTopK"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LogSoftmaxTopKKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void LogSoftmaxTopK(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+        }
+        else
+        {
+            LogSoftmaxTopKRegistered(x, values, indices, rows, cols, k);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LogSoftmaxTopKRegistered(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.LogSoftmaxTopK) is OperationKernels.LogSoftmaxTopK kernel)
+        {
+            kernel(this, x, values, indices, rows, cols, k);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.LogSoftmaxTopK))
+        {
+            LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.LogSoftmaxTopK);
+        try
+        {
+            LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            LogSoftmaxTopKOnHost(x, values, indices, rows, cols, k);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of LogSoftmaxTopK (the default body of LogSoftmaxTopKKernel), for RetryOnHost.
+    private void LogSoftmaxTopKOnHost(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        using var h = new HostCall(this, "LogSoftmaxTopK");
+        CpuBackend.Instance.LogSoftmaxTopK(h[x], h[values], h[indices], rows, cols, k);
+    }
+
+    /// <summary>
     /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
     /// otherwise argmax(p) == argmax(t).
     /// </summary>
