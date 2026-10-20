@@ -6,7 +6,7 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Vision;
 
-namespace Idrak.Gemma3Vision;
+namespace Idrak.Vision.Plugins.Gemma;
 
 /// <summary>
 /// Gemma 3's multimodal projector: the encoder's [images, side², visionDim] patch outputs (row-major) are average-pooled

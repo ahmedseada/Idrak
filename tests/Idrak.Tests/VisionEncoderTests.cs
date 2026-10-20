@@ -3,7 +3,7 @@
 
 using Idrak;
 using Idrak.Data;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models;

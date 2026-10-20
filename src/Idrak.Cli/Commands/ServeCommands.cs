@@ -115,7 +115,7 @@ internal sealed class ServeCommand : Command
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
           idrak serve ocr=bakrianoo/arabic-legal-documents-ocr-1.0 -d cuda:0 -w bf16 --grayscale
-          idrak serve -P Idrak.Gemma3Vision.dll ocr --image-transform "grayscale,max_width=1024,contrast=1.5"
+          idrak serve ocr --image-transform "grayscale,max_width=1024,contrast=1.5"
           idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
         """;
 

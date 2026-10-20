@@ -57,7 +57,7 @@ internal sealed class RunCommand : Command
           idrak run ./model.gguf -i question.txt --temperature 0 --json
           idrak run qwen "Extract the name and age: Sara is 31." --schema person.json
           idrak run google/gemma-3-4b-it --image scan.jpg --grayscale "Extract the text of this page." -j -o page.json
-          idrak run -P Idrak.Gemma3Vision.dll ocr --image scan.jpg --image-transform grayscale,max_width=1024,contrast=1.5 -j
+          idrak run ocr --image scan.jpg --image-transform grayscale,max_width=1024,contrast=1.5 -j
           idrak run ./encoder-decoder "translate English to German: The house is wonderful." --beams 4
 
         Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/plug-in.md gap 13), so

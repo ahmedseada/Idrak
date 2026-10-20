@@ -26,7 +26,7 @@ through its driver alone.
 | Layers | Linear, Conv2d, Conv1d and ConvTranspose1d with weight norm, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head and relative-position attention, transformer layers, convolutional feed-forward, mixture of experts, dilated depth-separable convolution, coupling flows (rational-quadratic spline, element-wise affine), padded-batch masks; graph modules with skip connections and branches; `StoredLayers` reads a checkpoint into them by name |
 | Training | `Trainer` and `TrainingRun`, losses, metrics, early stopping, SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, schedules, gradient clipping, memory offloading |
 | Datasets | In-memory datasets and lazy sources (streamed CSV, memory-mapped token files and .npy arrays), views, scalers, the `DataLoader` (`Idrak.Datasets`; image folders, augmentation and codecs are in `Idrak.Imaging`) |
-| Pretrained models | Llama, Qwen, Mistral, Gemma and mixture-of-experts models by Hugging Face id, folder or GGUF file: safetensors and quantized GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
+| Pretrained models | Llama, Qwen, Mistral and mixture-of-experts models (other families, such as Gemma, from `Idrak.Text.Plugins`) by Hugging Face id, folder or GGUF file: safetensors and quantized GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
 | Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive (text and chat models are added by `Idrak.Text`) |
 | Vision | Channel normalization layer; per-pixel loss for segmentation (region classification and content framing are in `Idrak.Vision`) |
 | ONNX | Export to `.onnx` (opset 17) that ONNX Runtime, TensorRT, OpenVINO, DirectML and other runtimes can run; import of `.onnx` files into layers or graph modules; no dependencies (the protobuf is read and written here) |
@@ -154,8 +154,9 @@ has one with 2,500 rows).
 
 ## Language models
 
-This package loads Llama, Qwen, Mistral, Gemma and mixture-of-experts models from Hugging Face folders or GGUF files,
-with their own tokenizers (`PretrainedModel`). The companion package `Idrak.Text` generates and chats with them (using
+This package loads Llama, Qwen, Mistral and mixture-of-experts models from Hugging Face folders or GGUF files, with
+their own tokenizers (`PretrainedModel`); other families, such as Gemma, are registered by the plug-in package
+`Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`). The companion package `Idrak.Text` generates and chats with them (using
 each model's own chat template), fine-tunes them (LoRA, DoRA, QLoRA, preference losses, distillation) and answers from
 documents (RAG); Hugging Face ids are downloaded by `Idrak.Data`, which it brings along:
 

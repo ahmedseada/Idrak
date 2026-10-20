@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
@@ -271,7 +271,7 @@ internal static partial class Tests
         }
 
         // The family unregistered after loading: the tuner says so with the registry's message, before any step (no adapter is added).
-        VisionFamilies.Unregister(Gemma3VisionFamily.Architecture);
+        UnregisterGemma3Vision();
         try
         {
             var options = new FineTuningOptions { Rank = 2, Alpha = 4, Targets = ["q"], Epochs = 1 };

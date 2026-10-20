@@ -7,6 +7,7 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
+using Idrak.Text.Plugins.Gemma;
 
 // Plan 19: language models made from scratch (phase A1: a model from a spec, saved as a folder; A3: the pretraining loop).
 internal static partial class Tests
@@ -292,6 +293,7 @@ internal static partial class Tests
             return;
         }
 
+        GemmaPlugin.Register();                      // GemmaForCausalLM and Gemma3ForCausalLM are Idrak.Text.Plugins' family
         var llama = TinyLlamaSpec();
         var specs = new (string Architecture, DecoderSpec Spec)[]
         {
@@ -386,6 +388,7 @@ internal static partial class Tests
             return;
         }
 
+        GemmaPlugin.Register();                      // Gemma3ForCausalLM below is refused for reading checkpoints only, not for being unknown
         string folder = TempFolder("pretrain-refusals");
         try
         {

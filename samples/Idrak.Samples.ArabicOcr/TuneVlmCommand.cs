@@ -12,8 +12,8 @@ internal static class TuneVlmCommand
 {
     private const string Help = """
         tune-vlm --model DIR --data train.json [--eval val.json] [--images DIR|ZIP] [-o ADAPTER] [--epochs N] [--grayscale]
-          Prints the PowerShell commands that fine-tune the model with idrak tune (plan 12: LoRA, the Gemma 3 plug-in, CER on
-          the evaluation set) and score it before and after; nothing is run.
+          Prints the PowerShell commands that fine-tune the model with idrak tune (plan 12: LoRA, the Gemma 3 plug-in the tool
+          registers itself, CER on the evaluation set) and score it before and after; nothing is run.
         """;
 
     public static int Run(string[] args, TextWriter output, TextWriter error)
@@ -31,7 +31,6 @@ internal static class TuneVlmCommand
         string adapter = a.Option("--out") is { } o ? Full(o) : model.TrimEnd('\\', '/') + "-lora";
         int epochs = a.Integer("--epochs", 1, 1);
         string root = RepositoryRoot() ?? @"D:\Projects\Idrak";
-        string plugin = Path.Combine(root, "samples", "Gemma3Vision", "Idrak.Gemma3Vision", "bin", "Release", "net10.0", "Idrak.Gemma3Vision.dll");
         string prep = (a.Flag("--grayscale") ? " --grayscale" : "") + (a.Option("--image-transform") is { } t ? $" --image-transform \"{t}\"" : "");
         string imagesOption = images is null ? "" : $" --images \"{images}\"";
         string cli = $"dotnet run -c Release --project \"{Path.Combine(root, "src", "Idrak.Cli")}\" --";
@@ -39,19 +38,17 @@ internal static class TuneVlmCommand
         {
             "# Fine-tuning is idrak tune's (plan 12); these are its commands for this data. From PowerShell:",
             $"cd \"{root}\"",
-            $"dotnet build -c Release \"{Path.Combine(root, "samples", "Gemma3Vision", "Idrak.Gemma3Vision")}\"",
-            $"$plugin = \"{plugin}\"",
         };
         if (eval is not null)
         {
-            lines.Add($"{cli} tune evaluate -P $plugin \"{model}\" \"{eval}\"{imagesOption}{prep} --metric cer --samples 20 -v");
+            lines.Add($"{cli} tune evaluate \"{model}\" \"{eval}\"{imagesOption}{prep} --metric cer --samples 20 -v");
         }
 
-        lines.Add($"{cli} tune -P $plugin -b \"{model}\" --data \"{data}\"{(eval is null ? " --eval-fraction 0.05" : $" --eval \"{eval}\"")}{imagesOption}{prep} "
+        lines.Add($"{cli} tune -b \"{model}\" --data \"{data}\"{(eval is null ? " --eval-fraction 0.05" : $" --eval \"{eval}\"")}{imagesOption}{prep} "
                   + $"--metric cer --metric-every 50 --metric-samples 20 --epochs {epochs} -o \"{adapter}\" -v");
         if (eval is not null)
         {
-            lines.Add($"{cli} tune evaluate -P $plugin \"{model}\" \"{eval}\"{imagesOption} --adapter \"{adapter}\" --metric cer --samples 20");
+            lines.Add($"{cli} tune evaluate \"{model}\" \"{eval}\"{imagesOption} --adapter \"{adapter}\" --metric cer --samples 20");
         }
 
         lines.Add("# Then read with the adapter (its image preparation comes with it):");
