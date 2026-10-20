@@ -9,14 +9,26 @@ namespace Idrak.Layers;
 /// <summary>
 /// Multi-head scaled dot-product self-attention over [batch, time, dim]: every position attends to every
 /// other (or only to earlier ones when <see cref="Causal"/>). Heads run as one batched matrix product.
+/// <para>
+/// Options, each off by default (and then the layer computes exactly as without it): the score scale
+/// (<see cref="ScoreScale"/>, 1 / √head size unless set), a bias by the query's and the key's positions added to the
+/// scores (<see cref="PositionBias"/>), and padding: inside a <see cref="PaddedSequences.Use"/> scope of the input's
+/// batch (or through <see cref="Forward(Tensor, PaddedSequences?)"/>) no position attends to another sequence's padding,
+/// so a sequence gives the same output alone and in a padded batch (a causal layer's real positions never see the
+/// padding after them, so it changes nothing there). The heads may be narrower or wider than the model
+/// (<see cref="FromWeights"/>: [dim, 3 · heads · headDim]).
+/// </para>
 /// </summary>
 public sealed class MultiHeadAttention : Module, ICachedModule
 {
     private readonly Linear _qkv;
     private readonly Linear _output;
     private readonly Dropout? _dropout;
+    private readonly float _scale;
+    private readonly IAttentionPositionBias? _bias;
     private Tensor? _mask;
     private (Tensor Starts, Tensor Ends)? _spans;
+    private (Tensor Starts, Tensor Ends, int Length, int[] Lengths, Device Device)? _paddedSpans;
 
     /// <summary>Creates the layer.</summary>
     /// <param name="dim">Model width; must be divisible by <paramref name="heads"/>.</param>
@@ -33,18 +45,42 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         }
 
         Dim = dim;
+        Inner = dim;
         Heads = heads;
+        HeadDim = dim / heads;
         Causal = causal;
+        _scale = 1f / MathF.Sqrt(HeadDim);
         _qkv = new Linear(dim, 3 * dim, device: device, random: random);
         _output = new Linear(dim, dim, device: device, random: random);
         _dropout = dropout > 0f ? new Dropout(dropout, random) : null;
     }
 
-    private MultiHeadAttention(Linear qkv, Linear output, int heads, bool causal)
+    /// <summary>
+    /// A layer around existing projections (for example loaded weights), without dropout; the layer takes ownership. The
+    /// same as <see cref="FromWeights"/>, for setting the options at once:
+    /// <c>new MultiHeadAttention(qkv, output, heads) { ScoreScale = 1f, PositionBias = bias }</c>.
+    /// </summary>
+    /// <param name="qkv">The query, key and value projections side by side, [dim, 3 · inner] (inner = heads · head size).</param>
+    /// <param name="output">The output projection, [inner, dim].</param>
+    /// <param name="heads">Number of heads (a divisor of inner).</param>
+    /// <param name="causal">Mask future positions.</param>
+    /// <exception cref="ArgumentException">The projections do not fit together.</exception>
+    public MultiHeadAttention(Linear qkv, Linear output, int heads, bool causal = false)
     {
+        ArgumentNullException.ThrowIfNull(qkv);
+        ArgumentNullException.ThrowIfNull(output);
+        if (heads <= 0 || output.InFeatures % heads != 0 || qkv.InFeatures != output.OutFeatures || qkv.OutFeatures != 3 * output.InFeatures)
+        {
+            throw new ArgumentException($"MultiHeadAttention takes qkv [dim, 3·inner] and output [inner, dim] with inner divisible by {heads} heads; "
+                + $"got qkv [{qkv.InFeatures}, {qkv.OutFeatures}] and output [{output.InFeatures}, {output.OutFeatures}].");
+        }
+
         Dim = output.OutFeatures;
+        Inner = output.InFeatures;
         Heads = heads;
+        HeadDim = Inner / heads;
         Causal = causal;
+        _scale = 1f / MathF.Sqrt(HeadDim);
         _qkv = qkv;
         _output = output;
     }
@@ -52,35 +88,74 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     /// <summary>
     /// A layer around existing projections (for example loaded weights), without dropout; the layer takes ownership.
     /// </summary>
-    /// <param name="qkv">The query, key and value projections side by side, [dim, 3 · dim]: the queries' columns first, then the keys', then the values' (within each, head after head).</param>
-    /// <param name="output">The output projection, [dim, dim].</param>
-    /// <param name="heads">Number of heads (a divisor of dim); scores are scaled by the head size^-0.5.</param>
+    /// <param name="qkv">The query, key and value projections side by side, [dim, 3 · inner] (inner = heads · head size, usually dim): the queries' columns first, then the keys', then the values' (within each, head after head).</param>
+    /// <param name="output">The output projection, [inner, dim].</param>
+    /// <param name="heads">Number of heads (a divisor of inner); scores are scaled by the head size^-0.5 unless <see cref="ScoreScale"/> is set.</param>
     /// <param name="causal">Mask future positions.</param>
-    public static MultiHeadAttention FromWeights(Linear qkv, Linear output, int heads, bool causal = false)
-    {
-        ArgumentNullException.ThrowIfNull(qkv);
-        ArgumentNullException.ThrowIfNull(output);
-        int dim = output.OutFeatures;
-        if (heads <= 0 || dim % heads != 0 || output.InFeatures != dim || qkv.InFeatures != dim || qkv.OutFeatures != 3 * dim)
-        {
-            throw new ArgumentException($"MultiHeadAttention takes qkv [dim, 3·dim] and output [dim, dim] with dim divisible by {heads} heads; "
-                + $"got qkv [{qkv.InFeatures}, {qkv.OutFeatures}] and output [{output.InFeatures}, {output.OutFeatures}].");
-        }
-
-        return new MultiHeadAttention(qkv, output, heads, causal);
-    }
+    public static MultiHeadAttention FromWeights(Linear qkv, Linear output, int heads, bool causal = false) => new(qkv, output, heads, causal);
 
     /// <summary>Model width.</summary>
     public int Dim { get; }
 
+    /// <summary>The heads' width side by side, heads · <see cref="HeadDim"/> (the model width unless built otherwise).</summary>
+    public int Inner { get; }
+
     /// <summary>Number of heads.</summary>
     public int Heads { get; }
+
+    /// <summary>Size of each head.</summary>
+    public int HeadDim { get; }
 
     /// <summary>Whether future positions are masked.</summary>
     public bool Causal { get; }
 
+    /// <summary>
+    /// The factor on each query·key product before the softmax: 1 / √<see cref="HeadDim"/> unless set (a family that
+    /// scales nothing sets 1).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not finite and positive.</exception>
+    public float ScoreScale
+    {
+        get => _scale;
+        init => _scale = float.IsFinite(value) && value > 0f ? value
+            : throw new ArgumentOutOfRangeException(nameof(ScoreScale), value, "The attention setting ScoreScale is a finite positive factor (1 / √head size by default).");
+    }
+
+    /// <summary>
+    /// A bias by the query's and the key's positions, [heads, queries, keys], added to the scaled scores before the softmax
+    /// (null, the default: none). The scores are then composed whole ([batch · heads, time, time]); in cached decoding each
+    /// step reads its rows of the bias over every cached slot. When it is a <see cref="Module"/> its parameters are this
+    /// layer's, unless <see cref="SharesPositionBias"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The bias is for another number of heads.</exception>
+    public IAttentionPositionBias? PositionBias
+    {
+        get => _bias;
+        init => _bias = value is null || value.Heads == Heads ? value
+            : throw new ArgumentException($"The attention setting PositionBias gives {value.Heads} heads a bias; the layer has {Heads}.", nameof(PositionBias));
+    }
+
+    /// <summary>
+    /// Whether <see cref="PositionBias"/> belongs to another layer (a bias shared by every layer, owned by the first): its
+    /// parameters are then not among this layer's. False by default.
+    /// </summary>
+    public bool SharesPositionBias { get; init; }
+
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) => Attend(input, null, fused: false);
+
+    /// <summary>
+    /// The layer's output for a padded batch: sequence b of <paramref name="input"/> [batch, time, dim] is its first
+    /// <paramref name="padding"/>.Lengths[b] positions and no position attends to its padding (null: nothing padded).
+    /// </summary>
+    public Tensor Forward(Tensor input, PaddedSequences? padding)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        using (padding is null ? null : PaddedSequences.Use(padding))
+        {
+            return Forward(input);
+        }
+    }
 
     /// <summary>
     /// residual + this layer's output, for inference: the projections' biases and the residual in their products'
@@ -98,48 +173,63 @@ public sealed class MultiHeadAttention : Module, ICachedModule
             throw new ArgumentException($"MultiHeadAttention expects [batch, time, {Dim}], got {Tensor.FormatShape(input.Shape)}.");
         }
 
-        int n = input.Shape[0], t = input.Shape[1], dh = Dim / Heads;
-        var qkv = fused ? _qkv.ProjectBiased(input) : _qkv.Forward(input); // [N, T, 3D]
+        int n = input.Shape[0], t = input.Shape[1], dh = HeadDim;
+        // The batch's padding, when it is this input's and pads something (a causal layer's real positions see none of it).
+        var padding = !Causal && PaddedSequences.Current is { } current && current.Matches(n, t) && current.Padded ? current : null;
+        var qkv = fused ? _qkv.ProjectBiased(input) : _qkv.Forward(input); // [N, T, 3·inner]
         Tensor Output(Tensor context) => residual is null ? _output.Forward(context) : _output.ProjectAdding(context, residual);
-        Tensor SplitHeads(int part) => qkv.Narrow(2, part * Dim, Dim)
+        Tensor SplitHeads(int part) => qkv.Narrow(2, part * Inner, Inner)
             .Reshape(n, t, Heads, dh)
             .Permute(0, 2, 1, 3)
             .Reshape(n * Heads, t, dh);                                   // [N·H, T, dh]
 
         Tensor context;
-        if (!Causal && (_dropout is null || !_dropout.IsTraining))
+        if (!Causal && _bias is null && (_dropout is null || !_dropout.IsTraining))
         {
             // Every position sees every other: one attention over key ranges (all keys for each row), tiled, so the
             // [T, T] scores of each head are never stored (the gradient recomputes them); or the full scores where the
             // device measured them faster and has the memory for them (Tensor.AttentionFastest). Without a gradient the
-            // key ranges read the heads in place from the projections and write [N, T, D] (no copies of the heads).
-            var (starts, ends) = AllKeys(t, input.Device);
-            if (Tensor.AttentionFastestPacked(qkv, Heads, Heads, dh, starts, ends, 1f / MathF.Sqrt(dh), everyKey: true) is { } attended)
+            // key ranges read the heads in place from the projections and write [N, T, inner] (no copies of the heads).
+            // A padded batch: each sequence's keys end at its length (a table of ranges per sequence, its heads' rows).
+            var (starts, ends) = padding is null ? AllKeys(t, input.Device) : PaddedKeys(padding, input.Device);
+            bool everyKey = padding is null;
+            if (Tensor.AttentionFastestPacked(qkv, Heads, Heads, dh, starts, ends, _scale, everyKey) is { } attended)
             {
                 return Output(attended);
             }
 
-            context = Tensor.AttentionFastest(SplitHeads(0), SplitHeads(1), SplitHeads(2), starts, ends, 1f / MathF.Sqrt(dh), everyKey: true);
+            context = Tensor.AttentionFastest(SplitHeads(0), SplitHeads(1), SplitHeads(2), starts, ends, _scale, everyKey);
             return Output(context
                 .Reshape(n, Heads, t, dh)
                 .Permute(0, 2, 1, 3)
-                .Reshape(n, t, Dim));
+                .Reshape(n, t, Inner));
         }
 
         var (q, k, v) = (SplitHeads(0), SplitHeads(1), SplitHeads(2));
         var raw = q.MatMul(k, transposeB: true);                           // [N·H, T, T]
+        var bias = _bias?.For(t, t, 0, input.Device);                      // [H, T, T]
         Tensor weights;
         if (!Autograd.IsEnabled)
         {
-            // Inference: scale, mask and softmax in one kernel.
-            weights = raw.ScaleMaskSoftmax(1f / MathF.Sqrt(dh), Causal ? CausalMask(t, input.Device) : null);
+            // Inference: scale, mask (the bias, causal and padding masks added into one) and softmax in one kernel.
+            weights = raw.ScaleMaskSoftmax(_scale, InferenceMask(bias, padding, n, t, input.Device));
         }
         else
         {
-            var scores = raw * (1f / MathF.Sqrt(dh));
+            var scores = raw * _scale;
+            if (bias is not null)
+            {
+                scores = (scores.Reshape(n, Heads, t, t) + bias).Reshape(n * Heads, t, t);
+            }
+
             if (Causal)
             {
                 scores = scores + CausalMask(t, input.Device);
+            }
+
+            if (padding is not null)
+            {
+                scores = scores + padding.Keys(Heads);
             }
 
             weights = scores.Softmax();
@@ -153,32 +243,71 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         context = weights.MatMul(v)                                       // [N·H, T, dh]
             .Reshape(n, Heads, t, dh)
             .Permute(0, 2, 1, 3)
-            .Reshape(n, t, Dim);
+            .Reshape(n, t, Inner);
         return Output(context);
+    }
+
+    // The additive mask of an inference pass over the full scores: none, the causal mask [T, T], the bias [H, T, T] (with
+    // the causal mask added), or with padding [N, H, T, T]; ScaleMaskSoftmax repeats its rows over the scores' rows.
+    private Tensor? InferenceMask(Tensor? bias, PaddedSequences? padding, int n, int t, Device device)
+    {
+        var mask = bias;
+        if (Causal)
+        {
+            mask = mask is null ? CausalMask(t, device) : mask + CausalMask(t, device);
+        }
+
+        if (padding is not null)
+        {
+            var keys = padding.Keys(Heads);                                // [N·H, T, T]
+            mask = mask is null ? keys : keys.Reshape(n, Heads, t, t) + mask;
+        }
+
+        return mask;
     }
 
     /// <summary>
     /// Cached attention for the new positions of [batch, newSteps, dim]: their keys and values are appended to this
     /// layer's <see cref="KeyValueCache"/>, and each new query attends to every cached position up to its own
-    /// (the causal mask comes from the context), so a decoding step costs O(capacity) instead of O(steps²).
+    /// (the causal mask comes from the context), so a decoding step costs O(capacity) instead of O(steps²). With a
+    /// <see cref="PositionBias"/>, each step adds its rows of the bias over every cached slot (the scores composed; not
+    /// while a step is recorded as a graph, since the rows follow the host's position).
     /// </summary>
     public Tensor ForwardCached(Tensor input, DecodingContext context)
     {
-        int n = input.Shape[0], t = input.Shape[1], dh = Dim / Heads;
+        int n = input.Shape[0], t = input.Shape[1], dh = HeadDim;
         var cache = context.CacheFor(this, n * Heads, dh);
         var qkv = _qkv.Forward(input);
-        Tensor SplitHeads(int part) => qkv.Narrow(2, part * Dim, Dim)
+        Tensor SplitHeads(int part) => qkv.Narrow(2, part * Inner, Inner)
             .Reshape(n, t, Heads, dh)
             .Permute(0, 2, 1, 3)
             .Reshape(n * Heads, t, dh);
 
         var q = SplitHeads(0);
         cache.Layout.Write(SplitHeads(1), SplitHeads(2), cache, context.Position);
-        var output = cache.Layout.Attend(q, cache, context, t, 1f / MathF.Sqrt(dh), decoderKernels: false);
+        Tensor output;
+        if (_bias is not null)
+        {
+            if (ComputeGraph.IsCapturing)
+            {
+                throw new NotSupportedException("A step of an attention layer with a position bias cannot be recorded as a graph (its bias rows follow the position on the host); decode it step by step.");
+            }
+
+            var keys = cache.Layout.Expand(cache, keys: true);
+            var values = cache.Layout.Expand(cache, keys: false);
+            int slots = keys.Shape[1];
+            var mask = _bias.For(t, slots, context.LengthOf(cache), input.Device) + context.MaskOf(cache)!;   // [H, t, slots]
+            output = q.MatMul(keys, transposeB: true).ScaleMaskSoftmax(_scale, mask).MatMul(values);
+        }
+        else
+        {
+            output = cache.Layout.Attend(q, cache, context, t, _scale, decoderKernels: false);
+        }
+
         output = output
             .Reshape(n, Heads, t, dh)
             .Permute(0, 2, 1, 3)
-            .Reshape(n, t, Dim);
+            .Reshape(n, t, Inner);
         return _output.Forward(output);
     }
 
@@ -195,6 +324,49 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         var spans = KeySpans.Bidirectional(t, t);
         _spans = (CreateBuffer([.. spans.Starts.Select(s => (float)s)], [t], device), CreateBuffer([.. spans.Ends.Select(e => (float)e)], [t], device));
         return _spans.Value;
+    }
+
+    // The key ranges of a padded batch: one table per sequence (its heads' rows), every row of sequence b seeing keys
+    // [0, length b). Cached per lengths and device: a training pass's backward, and the next batch of the same lengths,
+    // read the same tables.
+    private (Tensor Starts, Tensor Ends) PaddedKeys(PaddedSequences padding, Device device)
+    {
+        int n = padding.Batch, t = padding.Length;
+        if (_paddedSpans is { } cached && cached.Length == t && cached.Device == device && Same(cached.Lengths, padding.Lengths))
+        {
+            return (cached.Starts, cached.Ends);
+        }
+
+        _paddedSpans?.Starts.Dispose();
+        _paddedSpans?.Ends.Dispose();
+        var ends = new float[n * t];
+        for (int b = 0; b < n; b++)
+        {
+            ends.AsSpan(b * t, t).Fill(padding.Lengths[b]);
+        }
+
+        var starts = CreateBuffer(new float[n * t], [n * t], device);
+        var endsBuffer = CreateBuffer(ends, [n * t], device);
+        _paddedSpans = (starts, endsBuffer, t, [.. padding.Lengths], device);
+        return (starts, endsBuffer);
+    }
+
+    private static bool Same(int[] kept, IReadOnlyList<int> lengths)
+    {
+        if (kept.Length != lengths.Count)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < kept.Length; i++)
+        {
+            if (kept[i] != lengths[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>[T, T] with 0 on and below the diagonal and -1e9 above, cached per length and device.</summary>
@@ -220,7 +392,20 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     }
 
     /// <inheritdoc />
-    public override IEnumerable<Module> Children() => _dropout is null ? [_qkv, _output] : [_qkv, _output, _dropout];
+    public override IEnumerable<Module> Children()
+    {
+        yield return _qkv;
+        yield return _output;
+        if (_dropout is not null)
+        {
+            yield return _dropout;
+        }
+
+        if (_bias is Module owned && !SharesPositionBias)
+        {
+            yield return owned;
+        }
+    }
 
     /// <inheritdoc />
     public override void Dispose()
@@ -228,11 +413,19 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         _mask?.Dispose();
         _spans?.Starts.Dispose();
         _spans?.Ends.Dispose();
+        _paddedSpans?.Starts.Dispose();
+        _paddedSpans?.Ends.Dispose();
+        if (_bias is Module owned && !SharesPositionBias)
+        {
+            owned.Dispose();                                               // its kept bias too (its parameters again: a no-op)
+        }
+
         base.Dispose();
     }
 
     /// <inheritdoc />
-    public override string ToString() => $"MultiHeadAttention(dim {Dim}, {Heads} heads{(Causal ? ", causal" : "")})";
+    public override string ToString() =>
+        $"MultiHeadAttention(dim {Dim}, {Heads} heads{(Inner != Dim ? $", inner {Inner}" : "")}{(Causal ? ", causal" : "")}{(_bias is null ? "" : ", position bias")})";
 }
 
 /// <summary>

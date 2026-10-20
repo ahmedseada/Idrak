@@ -1,0 +1,324 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Runtime.CompilerServices;
+using System.Text.Json.Nodes;
+
+namespace Idrak.Abstraction.Generation;
+
+/// <summary>
+/// A bias an attention layer adds to its scores by the positions of the query and the key (after the score scale, before
+/// the softmax): [heads, queries, keys]. One provider serves one layer, or every layer that shares it (a bias the first
+/// layer owns and the others read). Idrak's attention layers take one through their <c>PositionBias</c> setting
+/// (<c>MultiHeadAttention</c>, <c>CausalSelfAttention</c>); the kinds are registered by name in
+/// <see cref="AttentionPositionBiases"/>. <see cref="AttentionPositionBias"/> is a base that computes a bias once per shape
+/// and keeps it while nothing is trained.
+/// </summary>
+public interface IAttentionPositionBias
+{
+    /// <summary>The heads it gives a bias for: the attention layer's query heads.</summary>
+    int Heads { get; }
+
+    /// <summary>
+    /// The bias of the queries at positions [<paramref name="queryStart"/>, <paramref name="queryStart"/> +
+    /// <paramref name="queries"/>) over the keys at positions [0, <paramref name="keys"/>): [heads, queries, keys] on
+    /// <paramref name="device"/>. A decoding step's bias is the rows of the whole sequence's bias for its positions (so
+    /// cached decoding equals the pass over the whole sequence). The caller reads it and never disposes it: a provider
+    /// that keeps it owns it, one that makes it for the call leaves it to the current <see cref="TensorScope"/>.
+    /// </summary>
+    /// <param name="queries">Query positions (at least 1).</param>
+    /// <param name="keys">Key positions (at least 1).</param>
+    /// <param name="queryStart">The first query's position (0 for a whole sequence; the cached length for a decoding step).</param>
+    /// <param name="device">Where the scores are.</param>
+    Tensor For(int queries, int keys, int queryStart, Device device);
+}
+
+/// <summary>
+/// A position bias that is a module (its parameters train and load with the attention layer that owns it) and computes
+/// its bias once per shape: while nothing records gradients for its parameters, the bias of the last
+/// (queries, keys, start, device) asked is kept, so the layers sharing one provider, and the batches of one length,
+/// compute it once; while its parameters train, it is computed for every pass (and the kept one dropped). A kind derives
+/// from it and implements <see cref="Compute"/>.
+/// </summary>
+public abstract class AttentionPositionBias : Module, IAttentionPositionBias
+{
+    private (int Queries, int Keys, int Start, Device Device, Tensor Bias)? _kept;
+
+    /// <summary>A bias for <paramref name="heads"/> heads.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">The heads are not positive.</exception>
+    protected AttentionPositionBias(int heads)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heads);
+        Heads = heads;
+    }
+
+    /// <inheritdoc />
+    public int Heads { get; }
+
+    /// <inheritdoc />
+    /// <exception cref="ArgumentOutOfRangeException">A count is not positive or the start is negative.</exception>
+    /// <exception cref="InvalidOperationException">The kind's <see cref="Compute"/> gave another shape than [heads, queries, keys].</exception>
+    public Tensor For(int queries, int keys, int queryStart, Device device)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queries);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(keys);
+        ArgumentOutOfRangeException.ThrowIfNegative(queryStart);
+        ArgumentNullException.ThrowIfNull(device);
+        if (Autograd.IsEnabled && Trains())
+        {
+            Invalidate();                                                   // the weights change: no kept bias outlives this pass
+            return Checked(Compute(queries, keys, queryStart, device), queries, keys);
+        }
+
+        if (_kept is { } kept && kept.Queries == queries && kept.Keys == keys && kept.Start == queryStart && kept.Device == device)
+        {
+            return kept.Bias;
+        }
+
+        Invalidate();
+        Tensor bias;
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            bias = TensorScope.Untrack(Checked(Compute(queries, keys, queryStart, device), queries, keys));
+        }
+
+        _kept = (queries, keys, queryStart, device, bias);
+        return bias;
+    }
+
+    /// <summary>
+    /// The bias of queries at [<paramref name="queryStart"/>, +<paramref name="queries"/>) over keys at [0,
+    /// <paramref name="keys"/>), [<see cref="Heads"/>, queries, keys], made with differentiable operations when the
+    /// parameters train.
+    /// </summary>
+    protected abstract Tensor Compute(int queries, int keys, int queryStart, Device device);
+
+    /// <summary>Drops the kept bias (after the parameters were changed outside a training pass, for example loaded).</summary>
+    public void Invalidate()
+    {
+        _kept?.Bias.Dispose();
+        _kept = null;
+    }
+
+    /// <inheritdoc />
+    protected override Tensor ForwardCore(Tensor input) =>
+        throw new NotSupportedException($"{GetType().Name} is read through For(queries, keys, queryStart, device), not Forward.");
+
+    /// <inheritdoc />
+    protected override void MoveTo(Device device)
+    {
+        Invalidate();
+        base.MoveTo(device);
+    }
+
+    /// <inheritdoc />
+    public override void Dispose()
+    {
+        Invalidate();
+        base.Dispose();
+    }
+
+    private bool Trains()
+    {
+        foreach (var parameter in Parameters())
+        {
+            if (parameter.RequiresGrad)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private Tensor Checked(Tensor bias, int queries, int keys) =>
+        bias.Rank == 3 && bias.Shape[0] == Heads && bias.Shape[1] == queries && bias.Shape[2] == keys ? bias
+            : throw new InvalidOperationException($"{GetType().Name} gave a bias of {Tensor.FormatShape(bias.Shape)}; [{Heads}, {queries}, {keys}] was asked for.");
+}
+
+/// <summary>
+/// The library's position bias "relative": a learned value per head for each distance from the query to the key,
+/// key position minus query position clipped to [-<see cref="MaxDistance"/>, <see cref="MaxDistance"/>] (to
+/// [-<see cref="MaxDistance"/>, 0] when not <see cref="Bidirectional"/>: a causal layer's keys are never after its
+/// query). Its table is [buckets, heads] ("table"), buckets = 2 · max distance + 1 (max distance + 1 one-way).
+/// </summary>
+public sealed class RelativePositionBias : AttentionPositionBias
+{
+    /// <summary>Its name in <see cref="AttentionPositionBiases"/>: "relative".</summary>
+    public const string KindName = "relative";
+
+    /// <summary>A bias of random values (uniform in ±0.02) drawn from <paramref name="random"/>.</summary>
+    /// <param name="heads">The attention layer's query heads.</param>
+    /// <param name="maxDistance">The farthest distance with a value of its own (farther keys share it).</param>
+    /// <param name="bidirectional">Whether keys after the query have values of their own (an encoder's layer).</param>
+    /// <param name="device">Where the table lives (the default device when null).</param>
+    /// <param name="random">The random source (seed 0 when null).</param>
+    /// <exception cref="ArgumentOutOfRangeException">The heads or the max distance are not positive.</exception>
+    public RelativePositionBias(int heads, int maxDistance, bool bidirectional, Device? device = null, Random? random = null)
+        : base(heads)
+    {
+        if (maxDistance <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxDistance), maxDistance, "The position bias setting max_distance is positive.");
+        }
+
+        MaxDistance = maxDistance;
+        Bidirectional = bidirectional;
+        Buckets = bidirectional ? 2 * maxDistance + 1 : maxDistance + 1;
+        random ??= new Random(0);
+        Table = CreateParameter(UniformValues(Buckets * heads, 0.02f, random), [Buckets, heads], device ?? Device.Default);
+    }
+
+    /// <summary>The farthest distance with a value of its own.</summary>
+    public int MaxDistance { get; }
+
+    /// <summary>Whether keys after the query have values of their own.</summary>
+    public bool Bidirectional { get; }
+
+    /// <summary>The table's rows: 2 · max distance + 1, or max distance + 1 one-way.</summary>
+    public int Buckets { get; }
+
+    /// <summary>The values, [buckets, heads] ("table"): row <see cref="Bucket"/> of a distance holds each head's value.</summary>
+    public Tensor Table { get; private set; }
+
+    /// <summary>The table row of key position minus query position <paramref name="relative"/>.</summary>
+    public int Bucket(int relative) => Math.Clamp(relative, -MaxDistance, Bidirectional ? MaxDistance : 0) + MaxDistance;
+
+    /// <inheritdoc />
+    protected override Tensor Compute(int queries, int keys, int queryStart, Device device)
+    {
+        if (Table.Device != device)
+        {
+            throw new ArgumentException($"The position bias's table is on {Table.Device}; its bias was asked for on {device}.", nameof(device));
+        }
+
+        var index = new float[queries * keys];
+        for (int i = 0; i < queries; i++)
+        {
+            int query = queryStart + i;
+            for (int j = 0; j < keys; j++)
+            {
+                index[i * keys + j] = Bucket(j - query);
+            }
+        }
+
+        var indices = Tensor.From(index, [queries * keys], device);
+        return Table.EmbeddingLookup(indices).Reshape(queries, keys, Heads).Permute(2, 0, 1);   // [heads, queries, keys]
+    }
+
+    /// <inheritdoc />
+    public override IEnumerable<Tensor> Parameters() => [Table];
+
+    /// <inheritdoc />
+    protected override void MoveTo(Device device)
+    {
+        base.MoveTo(device);
+        Table = MoveTensor(Table, device);
+    }
+
+    /// <inheritdoc />
+    public override string ToString() => $"RelativePositionBias({Heads} heads, max distance {MaxDistance}{(Bidirectional ? "" : ", one-way")})";
+}
+
+/// <summary>What <see cref="AttentionPositionBiases.Create"/> gives a kind to make a position bias from.</summary>
+/// <param name="Heads">The attention layer's query heads.</param>
+/// <param name="Settings">The kind's own settings (for "relative": <c>max_distance</c>, <c>bidirectional</c>).</param>
+/// <param name="Device">Where its parameters live (the default device when null).</param>
+/// <param name="Seed">The seed of random initial values.</param>
+/// <param name="Weights">
+/// Reads the kind's trained tensors by their names in the kind (for "relative": "table", [buckets, heads]) and shapes, or
+/// null for random values; it returns null for a tensor it does not hold.
+/// </param>
+public sealed record PositionBiasRequest(int Heads, JsonObject Settings, Device? Device = null, int Seed = 0,
+    Func<string, IReadOnlyList<int>, float[]?>? Weights = null);
+
+/// <summary>
+/// The kinds of attention position bias, by name. The library registers "relative" (<see cref="RelativePositionBias"/>:
+/// settings <c>max_distance</c>, default 128, and <c>bidirectional</c>, default true); a family that needs another (a
+/// bucketed bias, for example) registers its own from its plug-in. A kind is made once per model and its tensors
+/// trained with it, so an app's kind and the library's are never mixed in one model: the registry has no fallback.
+/// </summary>
+public static class AttentionPositionBiases
+{
+    private static readonly SlotTable<string, Func<PositionBiasRequest, IAttentionPositionBias>> Registry = BuiltIn();
+
+    private static SlotTable<string, Func<PositionBiasRequest, IAttentionPositionBias>> BuiltIn()
+    {
+        var table = new SlotTable<string, Func<PositionBiasRequest, IAttentionPositionBias>>(nameof(AttentionPositionBiases), comparer: StringComparer.Ordinal,
+            unguarded: "a bias is made once per model and its tensors trained with it, so an app's kind and the library's cannot be mixed in one model");
+        table.RegisterDefault(RelativePositionBias.KindName, Relative);
+        return table;
+    }
+
+    /// <summary>Registers the kind <paramref name="name"/>; under a library name it takes the library's place until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(string name, Func<PositionBiasRequest, IAttentionPositionBias> create)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        ArgumentNullException.ThrowIfNull(create);
+        Registry.Register(name, create, System.Reflection.Assembly.GetCallingAssembly());
+    }
+
+    /// <summary>Removes the app's kind <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
+
+    /// <summary>The registered kinds.</summary>
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
+
+    /// <summary>What makes the kind <paramref name="name"/>.</summary>
+    /// <exception cref="NotSupportedException">None is registered under that name; the message lists the registered ones.</exception>
+    public static Func<PositionBiasRequest, IAttentionPositionBias> Get(string name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"Attention position bias '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); "
+                                           + "register it with AttentionPositionBiases.Register (the plug-in that brings the kind does).");
+
+    /// <summary>A bias of the kind <paramref name="name"/> for <paramref name="request"/>.</summary>
+    /// <exception cref="NotSupportedException">The kind is not registered.</exception>
+    /// <exception cref="ArgumentException">A setting is invalid; the message names it.</exception>
+    public static IAttentionPositionBias Create(string name, PositionBiasRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var bias = Get(name)(request);
+        return bias.Heads == request.Heads ? bias
+            : throw new InvalidOperationException($"Attention position bias '{name}' made a bias of {bias.Heads} heads; {request.Heads} were asked for.");
+    }
+
+    /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static Func<PositionBiasRequest, IAttentionPositionBias>? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the kind <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
+
+    // "relative": max_distance (a positive whole number, default 128) and bidirectional (default true).
+    private static RelativePositionBias Relative(PositionBiasRequest request)
+    {
+        var settings = request.Settings ?? [];
+        int distance = 128;
+        if (settings["max_distance"] is { } node)
+        {
+            distance = node.GetValueKind() == System.Text.Json.JsonValueKind.Number && node.AsValue().TryGetValue(out int whole) && whole > 0 ? whole
+                : throw new ArgumentException($"The position bias setting max_distance is a positive whole number; got {node.ToJsonString()}.", nameof(request));
+        }
+
+        bool bidirectional = true;
+        if (settings["bidirectional"] is { } flag)
+        {
+            bidirectional = flag.GetValueKind() is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False ? flag.GetValue<bool>()
+                : throw new ArgumentException($"The position bias setting bidirectional is true or false; got {flag.ToJsonString()}.", nameof(request));
+        }
+
+        var bias = new RelativePositionBias(request.Heads, distance, bidirectional, request.Device, new Random(request.Seed));
+        if (request.Weights?.Invoke("table", [bias.Buckets, request.Heads]) is { } table)
+        {
+            if (table.Length != bias.Table.Size)
+            {
+                bias.Dispose();
+                throw new InvalidDataException($"The position bias's table has {table.Length} values; [{bias.Buckets}, {request.Heads}] is {bias.Table.Size}.");
+            }
+
+            bias.Table.CopyFrom(table);
+        }
+
+        return bias;
+    }
+}

@@ -13,12 +13,16 @@ namespace Idrak.Text.Retrieval;
 /// <summary>
 /// Turns texts into unit-length vectors whose dot product measures how related they are (a bi-encoder, for
 /// <see cref="VectorIndex"/>). The <see cref="Model"/> maps token ids [N, T] to hidden states [N, T, D] (for example
-/// an <see cref="Embedding"/> followed by transformer layers); the encoder averages the states of the real tokens
-/// (padding excluded) and scales the result to length 1.
+/// an <see cref="Embedding"/> followed by transformer layers), or an <see cref="ISequenceEncoder"/> (a pretrained encoder
+/// family's, or the library's <c>SequenceEncoder</c>) does, given each text's length so no token attends to padding; the
+/// states of the real tokens are pooled (<see cref="Pooler"/>: their average unless set, padding excluded) and the
+/// result scaled to length 1.
 /// </summary>
 public sealed class TextEncoder : IEmbedder
 {
     private readonly TokenizerEncodeOptions _batchOptions;   // an IPretrainedTokenizer's batch encode (made once)
+    private readonly ISequenceEncoder? _encoder;
+    private readonly ISequencePooler _pooler = SequencePoolers.Get(SequencePoolers.Mean);
 
     /// <summary>Creates the encoder.</summary>
     /// <param name="model">Token ids [N, T] → hidden states [N, T, D].</param>
@@ -43,8 +47,42 @@ public sealed class TextEncoder : IEmbedder
         };
     }
 
-    /// <summary>Token ids → hidden states.</summary>
+    /// <summary>
+    /// Creates the encoder over a sequence encoder: each batch's texts are encoded with their lengths (no token attends to
+    /// another text's padding), then pooled by <see cref="Pooler"/>.
+    /// </summary>
+    /// <param name="encoder">Token ids, lengths → hidden states [N, T, D].</param>
+    /// <param name="tokenizer">Turns text into ids (the encoder's vocabulary).</param>
+    /// <param name="maxLength">Texts are cut to this many tokens (at most the encoder's <see cref="ISequenceEncoder.MaxPositions"/>).</param>
+    /// <param name="padId">The id used to fill short texts.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The length is not positive or exceeds the encoder's.</exception>
+    public TextEncoder(ISequenceEncoder encoder, ITokenizer tokenizer, int maxLength, int padId)
+        : this((encoder ?? throw new ArgumentNullException(nameof(encoder))).Network, tokenizer, maxLength, padId)
+    {
+        if (maxLength > encoder.MaxPositions)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxLength), maxLength, $"The encoder takes at most {encoder.MaxPositions} tokens.");
+        }
+
+        _encoder = encoder;
+    }
+
+    /// <summary>Token ids → hidden states (the sequence encoder's layers when made over one).</summary>
     public Module Model { get; }
+
+    /// <summary>The sequence encoder, or null when the encoder runs <see cref="Model"/> on the ids alone.</summary>
+    public ISequenceEncoder? Encoder => _encoder;
+
+    /// <summary>
+    /// How the states become one vector per text: a name in <see cref="SequencePoolers"/> ("mean", the default: the
+    /// average of the real tokens' states, as always; "first", "max", or one registered).
+    /// </summary>
+    /// <exception cref="NotSupportedException">No pooler is registered under the name.</exception>
+    public string Pooler
+    {
+        get => _pooler.Name;
+        init => _pooler = SequencePoolers.Get(value);
+    }
 
     /// <summary>The tokenizer.</summary>
     public ITokenizer Tokenizer { get; }
@@ -162,10 +200,10 @@ public sealed class TextEncoder : IEmbedder
     {
         int n = texts.Count, t = MaxLength;
 
-        // The ids and weights are written into pooled buffers, uploaded (Tensor.From copies them), and returned in finally.
+        // The ids are written into a pooled buffer, uploaded (Tensor.From copies them), and returned in finally.
         float[] ids = ArrayPool<float>.Shared.Rent(n * t);
-        float[] weights = ArrayPool<float>.Shared.Rent(n * t);
-        Tensor input, mean;
+        var lengths = new int[n];
+        Tensor input;
         var device = Device;
         try
         {
@@ -175,7 +213,7 @@ public sealed class TextEncoder : IEmbedder
                 var encodings = pretrained.EncodeBatch(texts, null, _batchOptions);
                 for (int i = 0; i < n; i++)
                 {
-                    Fill(ids, weights, i, encodings[i].Ids);
+                    lengths[i] = Fill(ids, i, encodings[i].Ids);
                 }
             }
             else
@@ -183,39 +221,35 @@ public sealed class TextEncoder : IEmbedder
                 for (int i = 0; i < n; i++)
                 {
                     var tokens = Tokenizer.Encode(texts[i]);
-                    Fill(ids, weights, i, tokens);
+                    lengths[i] = Fill(ids, i, tokens);
                 }
             }
 
             input = Tensor.From(ids.AsSpan(0, n * t), [n, t], device);
-            mean = Tensor.From(weights.AsSpan(0, n * t), [n, 1, t], device);
         }
         finally
         {
             ArrayPool<float>.Shared.Return(ids);
-            ArrayPool<float>.Shared.Return(weights);
         }
 
-        var hidden = Model.Forward(input);                                                   // [N, T, D]
+        // [N, T, D]: a sequence encoder sees the lengths (no token attends to padding); a plain model the ids alone.
+        var hidden = _encoder is null ? Model.Forward(input) : _encoder.Encode(input, lengths);
         int d = hidden.Shape[^1];
-        var pooled = mean.MatMul(hidden).Reshape(n, d);                                      // weighted mean over real tokens
+        var pooled = _pooler.Pool(hidden, lengths);                                         // over the real tokens (the mean by default)
         var inverseNorm = ((pooled.Square().Sum(1) + 1e-12f).Log() * -0.5f).Exp();           // 1 / ‖x‖
         return inverseNorm.Reshape(n, 1, 1).MatMul(pooled.Reshape(n, 1, d)).Reshape(n, d);
     }
 
-    // Row i of the ids and weights: the first MaxLength tokens, then the pad id; each real token weighs 1 / length.
-    private void Fill(float[] ids, float[] weights, int i, IReadOnlyList<int> tokens)
+    // Row i of the ids: the first MaxLength tokens, then the pad id; returns the text's length (its tokens kept). The
+    // "mean" pooler weighs each real token 1 / length (an empty text: its first, padding, position), as this encoder did.
+    private int Fill(float[] ids, int i, IReadOnlyList<int> tokens)
     {
         int t = MaxLength, length = Math.Min(tokens.Count, t);
         for (int j = 0; j < t; j++)
         {
             ids[i * t + j] = j < length ? tokens[j] : PadId;
-            weights[i * t + j] = j < length ? 1f / Math.Max(length, 1) : 0f;
         }
 
-        if (length == 0)
-        {
-            weights[i * t] = 1f;                      // an empty text averages the first (padding) position
-        }
+        return length;
     }
 }

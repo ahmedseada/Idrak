@@ -292,6 +292,17 @@ public static class Idrak.Generation.BeamSearch
 
 public delegate void Idrak.Generation.LogitsFilter(int step, System.ReadOnlySpan<int> generated, System.Span<float> logits)
 
+public sealed class Idrak.Generation.Seq2SeqGenerator : Idrak.Abstraction.Generation.ITextModel
+  public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Generation.ISeq2SeqModel Model { get; }
+  public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
+  public Idrak.Abstraction.Generation.KeyValueLayout? CacheLayout { get; init; }
+  public Seq2SeqGenerator(Idrak.Abstraction.Generation.ISeq2SeqModel model, Idrak.Abstraction.Generation.ITokenizer tokenizer)
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.GenerationChunk> Stream(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<int> GenerateIds(System.Collections.Generic.IReadOnlyList<int> source, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> CreateSampler { get; set; }
+
 public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
   public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Abstraction.Device Device { get; }
@@ -664,6 +675,7 @@ public static class Idrak.Layers.Blocks
 public sealed class Idrak.Layers.CausalSelfAttention : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
   public CausalSelfAttention(Idrak.Layers.Linear query, Idrak.Layers.Linear key, Idrak.Layers.Linear value, Idrak.Layers.Linear output, Idrak.Layers.RMSNorm? queryNorm, Idrak.Layers.RMSNorm? keyNorm, int heads, int kvHeads, int headDim, Idrak.Abstraction.Generation.RopeSettings? rope, int maxPositions)
   public CausalSelfAttention(int dim, int heads, int kvHeads, int headDim, Idrak.Abstraction.Generation.RopeSettings? rope, int maxPositions, bool qkvBias = false, bool outputBias = false, float? qkNormEpsilon = null, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public Idrak.Abstraction.Generation.IAttentionPositionBias? PositionBias { get; init; }
   public Idrak.Abstraction.Generation.RopeSettings? Rope { get; }
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Layers.Linear Key { get; }
@@ -672,6 +684,7 @@ public sealed class Idrak.Layers.CausalSelfAttention : Idrak.Abstraction.Module,
   public Idrak.Layers.Linear Value { get; }
   public Idrak.Layers.RMSNorm? KeyNorm { get; }
   public Idrak.Layers.RMSNorm? QueryNorm { get; }
+  public bool SharesPositionBias { get; init; }
   public float ScoreScale { get; init; }
   public float? ScoreSoftcap { get; init; }
   public int HeadDim { get; }
@@ -820,6 +833,7 @@ public sealed class Idrak.Layers.CrossAttention : Idrak.Abstraction.Module, Idra
   public override string ToString()
   public override void Dispose()
   public void SetMemory(Idrak.Abstraction.Tensor memory, Idrak.Abstraction.Generation.DecodingContext context)
+  public void SetMemory(Idrak.Abstraction.Tensor memory, Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int>? lengths)
 
 public sealed class Idrak.Layers.DecoderBlock : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
   public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module crossNorm, Idrak.Layers.CrossAttention cross, Idrak.Abstraction.Module feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Layers.Dropout? residualDropout = null)
@@ -1079,11 +1093,18 @@ public static class Idrak.Layers.ModuleExtensions
   public static void SaveTrainable(this Idrak.Abstraction.Module module, string path)
 
 public sealed class Idrak.Layers.MultiHeadAttention : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
+  public Idrak.Abstraction.Generation.IAttentionPositionBias? PositionBias { get; init; }
+  public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor input, Idrak.Layers.PaddedSequences? padding)
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
+  public MultiHeadAttention(Idrak.Layers.Linear qkv, Idrak.Layers.Linear output, int heads, bool causal = false)
   public MultiHeadAttention(int dim, int heads, bool causal = false, float dropout = 0f, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public bool Causal { get; }
+  public bool SharesPositionBias { get; init; }
+  public float ScoreScale { get; init; }
   public int Dim { get; }
+  public int HeadDim { get; }
   public int Heads { get; }
+  public int Inner { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
   public override string ToString()
   public override void Dispose()
@@ -1182,9 +1203,13 @@ public sealed class Idrak.Layers.PaddedSequences : System.IDisposable
   public Idrak.Abstraction.Tensor Rows { get; }
   public PaddedSequences(System.Collections.Generic.IReadOnlyList<int> lengths, int length, Idrak.Abstraction.Device device)
   public System.Collections.Generic.IReadOnlyList<int> Lengths { get; }
+  public bool Matches(int batch, int length)
+  public bool Padded { get; }
   public int Batch { get; }
   public int Length { get; }
   public int Positions { get; }
+  public static Idrak.Layers.PaddedSequences? Current { get; }
+  public static System.IDisposable Use(Idrak.Layers.PaddedSequences batch)
   public void Dispose()
 
 public sealed class Idrak.Layers.PipelineBoundary : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
@@ -1274,6 +1299,25 @@ public sealed class Idrak.Layers.Scale : Idrak.Abstraction.Module
   public Scale(float factor)
   public float Factor { get; }
   public override string ToString()
+
+public sealed class Idrak.Layers.SequenceEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.ISequenceEncoder
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Module? EmbeddingNorm { get; }
+  public Idrak.Abstraction.Module? FinalNorm { get; }
+  public Idrak.Abstraction.Module? Positions { get; }
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<int>? lengths = null, Idrak.Abstraction.Tensor? tokenTypes = null)
+  public Idrak.Layers.Embedding Words { get; }
+  public Idrak.Layers.Embedding? TokenTypes { get; }
+  public SequenceEncoder(Idrak.Layers.Embedding words, System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> blocks, Idrak.Abstraction.Module? positions = null, Idrak.Layers.Embedding? tokenTypes = null, Idrak.Abstraction.Module? embeddingNorm = null, Idrak.Abstraction.Module? finalNorm = null, int? maxPositions = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Module> Blocks { get; }
+  public int MaxPositions { get; }
+  public int TypeVocabulary { get; }
+  public int Vocabulary { get; }
+  public int Width { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
 
 public sealed class Idrak.Layers.Sequential : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule, System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module>, System.Collections.IEnumerable
   public Idrak.Abstraction.Module this[int index] { get; }
@@ -1377,6 +1421,26 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
   public string? HeadFormatName { get; init; }
   public string? PackedFormatName { get; init; }
 
+public sealed record Idrak.Models.Abstractions.EncoderHeadRequest : System.IEquatable<Idrak.Models.Abstractions.EncoderHeadRequest>
+  public EncoderHeadRequest(int Width, int Outputs, System.Text.Json.Nodes.JsonObject Settings, Idrak.Abstraction.Device? Device = null, int Seed = 0, System.Func<string, System.Collections.Generic.IReadOnlyList<int>, float[]?>? Weights = null)
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public System.Func<string, System.Collections.Generic.IReadOnlyList<int>, float[]?>? Weights { get; init; }
+  public System.Text.Json.Nodes.JsonObject Settings { get; init; }
+  public int Outputs { get; init; }
+  public int Seed { get; init; }
+  public int Width { get; init; }
+
+public static class Idrak.Models.Abstractions.EncoderHeads
+  public const string MaskedLanguageModel = "masked-lm"
+  public const string SequenceClassification = "sequence-classification"
+  public static Idrak.Models.EncoderHead Create(string name, Idrak.Models.Abstractions.EncoderHeadRequest request)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead> Get(string name)
+  public static System.Func<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead>? Default(string name)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead> create)
+
 public sealed class Idrak.Models.Abstractions.GgufArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufArchitecture()
   public bool InterleavedQueryKeys { get; init; }
@@ -1435,6 +1499,16 @@ public static class Idrak.Models.Abstractions.GgufTypes
 public interface Idrak.Models.Abstractions.IPreTokenizer
   public (default) void PreTokenize(Idrak.Models.Abstractions.PreTokenizedText text, bool atStart)
   public System.Collections.Generic.IReadOnlyList<string> PreTokenize(System.Collections.Generic.IReadOnlyList<string> pieces, bool atStart)
+
+public interface Idrak.Models.Abstractions.IPretrainedEncoderFamily
+  public (default) System.Collections.Generic.IReadOnlyList<Idrak.Models.EncoderHead> Heads(Idrak.Models.Abstractions.PretrainedCheckpoint checkpoint, Idrak.Abstraction.Generation.ISequenceEncoder encoder)
+  public (default) string Pooler(System.Text.Json.Nodes.JsonObject config)
+  public Idrak.Abstraction.Generation.ISequenceEncoder Build(Idrak.Models.Abstractions.PretrainedCheckpoint checkpoint)
+  public string Name { get; }
+
+public interface Idrak.Models.Abstractions.IPretrainedSeq2SeqFamily
+  public Idrak.Abstraction.Generation.ISeq2SeqModel Build(Idrak.Models.Abstractions.PretrainedCheckpoint checkpoint)
+  public string Name { get; }
 
 public interface Idrak.Models.Abstractions.ITokenizerCompanionFiles
   public System.Collections.Generic.IReadOnlyList<string> CompanionFiles { get; }
@@ -1531,6 +1605,31 @@ public sealed record Idrak.Models.Abstractions.PretrainedBuildContext : System.I
   public PretrainedBuildContext(System.Text.Json.Nodes.JsonObject Config, Idrak.Abstraction.Generation.DecoderSpec Spec, Idrak.Models.Abstractions.IWeightSource Weights, Idrak.Abstraction.Formats.ITensorStore Checkpoint, Idrak.Models.Abstractions.DecoderBuildOptions Options, System.Collections.Generic.List<string> Notes)
   public System.Collections.Generic.List<string> Notes { get; init; }
   public System.Text.Json.Nodes.JsonObject Config { get; init; }
+
+public sealed record Idrak.Models.Abstractions.PretrainedCheckpoint : System.IEquatable<Idrak.Models.Abstractions.PretrainedCheckpoint>
+  public Idrak.Abstraction.Device Device { get; init; }
+  public Idrak.Abstraction.Formats.ITensorStore Tensors { get; init; }
+  public PretrainedCheckpoint(string Architecture, System.Text.Json.Nodes.JsonObject Config, Idrak.Abstraction.Formats.ITensorStore Tensors, string? Folder, Idrak.Abstraction.Device Device, System.Collections.Generic.List<string> Notes)
+  public System.Collections.Generic.List<string> Notes { get; init; }
+  public System.Text.Json.Nodes.JsonObject Config { get; init; }
+  public string Architecture { get; init; }
+  public string? Folder { get; init; }
+
+public static class Idrak.Models.Abstractions.PretrainedEncoders
+  public static Idrak.Models.Abstractions.IPretrainedEncoderFamily Get(string name)
+  public static Idrak.Models.Abstractions.IPretrainedEncoderFamily? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.IPretrainedEncoderFamily family)
+
+public static class Idrak.Models.Abstractions.PretrainedSeq2Seq
+  public static Idrak.Models.Abstractions.IPretrainedSeq2SeqFamily Get(string name)
+  public static Idrak.Models.Abstractions.IPretrainedSeq2SeqFamily? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.IPretrainedSeq2SeqFamily family)
 
 public static class Idrak.Models.Abstractions.TokenizerComponents
   public static System.Collections.Generic.IReadOnlyCollection<string> DecoderTypes { get; }
@@ -1746,6 +1845,15 @@ public sealed record Idrak.Models.CreateOptions : System.IEquatable<Idrak.Models
   public int Seed { get; init; }
   public string? Decoder { get; init; }
 
+public sealed class Idrak.Models.EncoderHead : Idrak.Abstraction.Module
+  public EncoderHead(string kind, bool pooled, int outputs, Idrak.Abstraction.Module network)
+  public Idrak.Abstraction.Module Network { get; }
+  public bool Pooled { get; }
+  public int Outputs { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public string Kind { get; }
+
 public sealed class Idrak.Models.GgufFile : System.IDisposable
   public System.Collections.Generic.Dictionary<string, object> Metadata { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.GgufTensorInfo> Tensors { get; }
@@ -1819,6 +1927,29 @@ public sealed class Idrak.Models.ParameterSet : Idrak.Abstraction.Module
   public override string ToString()
   public override void Dispose()
   public void Freeze(System.Collections.Generic.IReadOnlyCollection<string> parts)
+
+public sealed class Idrak.Models.PretrainedEncoderModel : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer? Tokenizer { get; }
+  public Idrak.Abstraction.Generation.ISequenceEncoder Encoder { get; }
+  public Idrak.Abstraction.Tensor Hidden(Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<int>? lengths = null, Idrak.Abstraction.Tensor? tokenTypes = null)
+  public Idrak.Abstraction.Tensor Logits(string kind, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<int>? lengths = null, Idrak.Abstraction.Tensor? tokenTypes = null)
+  public Idrak.Abstraction.Tensor Pooled(Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<int>? lengths = null, Idrak.Abstraction.Tensor? tokenTypes = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.EncoderHead> Heads { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
+  public System.Text.Json.Nodes.JsonObject Config { get; }
+  public static Idrak.Models.PretrainedEncoderModel Load(string folder, Idrak.Models.PretrainedEncoderOptions? options = null)
+  public string Architecture { get; }
+  public string Folder { get; }
+  public string Pooler { get; }
+  public void Dispose()
+
+public sealed record Idrak.Models.PretrainedEncoderOptions : System.IEquatable<Idrak.Models.PretrainedEncoderOptions>
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Models.Abstractions.TokenizerOptions? Tokenizer { get; init; }
+  public PretrainedEncoderOptions()
+  public string? Architecture { get; init; }
+  public string? Pooler { get; init; }
 
 public static class Idrak.Models.PretrainedFamilies
   public static Idrak.Abstraction.Generation.DecoderSpec CommonSpec(System.Text.Json.Nodes.JsonObject c, System.Collections.Generic.List<string> notes)
@@ -1897,6 +2028,18 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public string? MergeAdapter { get; init; }
   public string? PackedFormatName { get; init; }
 
+public sealed class Idrak.Models.PretrainedSeq2SeqModel : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer? Tokenizer { get; }
+  public Idrak.Abstraction.Generation.ISeq2SeqModel Model { get; }
+  public Idrak.Generation.Seq2SeqGenerator CreateGenerator(Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
+  public System.Text.Json.Nodes.JsonObject Config { get; }
+  public static Idrak.Models.PretrainedSeq2SeqModel Load(string folder, Idrak.Models.PretrainedEncoderOptions? options = null)
+  public string Architecture { get; }
+  public string Folder { get; }
+  public void Dispose()
+
 public static class Idrak.Models.PretrainedTokenizers
   public static (string, Idrak.Models.Abstractions.ITokenizerFileReader)? Find(string path, Idrak.Models.Abstractions.TokenizerOptions? options = null)
   public static Idrak.Abstraction.Generation.IPretrainedTokenizer Load(string path, Idrak.Models.Abstractions.TokenizerOptions? options = null)
@@ -1947,6 +2090,22 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.I
 
 public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
+
+public sealed class Idrak.Models.Seq2SeqNetwork : Idrak.Abstraction.Generation.ISeq2SeqModel, System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.ISequenceEncoder Encoder { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Decode(Idrak.Abstraction.Tensor ids, Idrak.Abstraction.Tensor memory, System.Collections.Generic.IReadOnlyList<int>? memoryLengths = null)
+  public Idrak.Abstraction.Tensor DecodeCached(Idrak.Abstraction.Tensor ids, Idrak.Abstraction.Generation.DecodingContext context)
+  public Idrak.Layers.Sequential Decoder { get; }
+  public Seq2SeqNetwork(Idrak.Abstraction.Generation.ISequenceEncoder encoder, Idrak.Layers.Sequential decoder, int decoderStartToken, int endToken, int? maxTargetPositions = null)
+  public int DecoderStartToken { get; }
+  public int EndToken { get; }
+  public int MaxTargetPositions { get; }
+  public int Vocabulary { get; }
+  public override string ToString()
+  public void Dispose()
+  public void SetMemory(Idrak.Abstraction.Tensor memory, Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int>? memoryLengths = null)
 
 public sealed class Idrak.Models.StoredLayers
   public (string, string)? WeightNormNames(string prefix)

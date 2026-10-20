@@ -247,16 +247,21 @@ internal static class OnnxBuiltIns
 
     private static OnnxValue Attention(OnnxGraph g, MultiHeadAttention mha, OnnxValue x, IReadOnlyList<int>? shape)
     {
+        if (mha.PositionBias is not null)
+        {
+            throw new NotSupportedException("A MultiHeadAttention with a position bias has no ONNX export (its bias is computed by position).");
+        }
+
         var children = mha.Children().ToList();
         var (qkvProjection, outputProjection) = ((Layers.Linear)children[0], (Layers.Linear)children[1]);
-        int t = x.Shape![1], d = mha.Dim, h = mha.Heads, dh = d / h;
+        int t = x.Shape![1], d = mha.Inner, h = mha.Heads, dh = d / h;
         var qkv = Linear(g, qkvProjection, x, null);                                            // [N, T, 3D]
         var split = g.Node("Transpose", [g.Node("Reshape", [qkv, g.Ints("shape", -1, t, 3, h, dh)])], null,
             OnnxAttribute.Of("perm", [2L, 0, 3, 1, 4]));                                        // [3, N, H, T, dh]
         OnnxValue Part(long i) => g.Node("Gather", [split, g.Constant("part", [i])], null, OnnxAttribute.Of("axis", 0L));
         var (q, k, v) = (Part(0), Part(1), Part(2));
         var scores = g.Node("Mul", [g.Node("MatMul", [q, g.Node("Transpose", [k], null, OnnxAttribute.Of("perm", [0L, 1, 3, 2]))]),
-            g.Scalar("scale", 1f / MathF.Sqrt(dh))]);
+            g.Scalar("scale", mha.ScoreScale)]);
         if (mha.Causal)
         {
             var mask = new float[t * t];

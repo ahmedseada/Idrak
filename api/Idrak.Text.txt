@@ -1034,15 +1034,18 @@ public static class Idrak.Text.Retrieval.RetrievalTools
   public static Idrak.Abstraction.Generation.Tool Search(Idrak.Text.Retrieval.Abstractions.IRetriever index, int top, string name, string description, System.Func<Idrak.Text.Retrieval.Abstractions.Chunk, string>? label = null)
 
 public sealed class Idrak.Text.Retrieval.TextEncoder : Idrak.Abstraction.Retrieval.IEmbedder
+  public Idrak.Abstraction.Generation.ISequenceEncoder? Encoder { get; }
   public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
   public Idrak.Abstraction.Module Model { get; }
   public System.Collections.Generic.IReadOnlyList<double> Train(System.Collections.Generic.IReadOnlyList<(string, string)> pairs, int epochs, int batchSize, System.Func<System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> optimizer, float temperature, int seed)
   public System.Threading.Tasks.ValueTask<float[][]> EmbedAsync(System.Collections.Generic.IReadOnlyList<string> texts, System.Threading.CancellationToken cancellationToken = default)
+  public TextEncoder(Idrak.Abstraction.Generation.ISequenceEncoder encoder, Idrak.Abstraction.Generation.ITokenizer tokenizer, int maxLength, int padId)
   public TextEncoder(Idrak.Abstraction.Module model, Idrak.Abstraction.Generation.ITokenizer tokenizer, int maxLength, int padId)
   public float[] Encode(string text)
   public float[][] Encode(System.Collections.Generic.IReadOnlyList<string> texts, int batchSize = 256)
   public int MaxLength { get; }
   public int PadId { get; }
+  public string Pooler { get; init; }
 
 public sealed record Idrak.Text.SyntheticPage : System.IEquatable<Idrak.Text.SyntheticPage>
   public Idrak.Abstraction.Data.ImageData Image { get; init; }

@@ -304,6 +304,15 @@ public sealed class Idrak.Abstraction.Testing.LinkProfileSuite : Idrak.Abstracti
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Cluster.ILinkProfile implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
+public sealed class Idrak.Abstraction.Testing.PositionBiasSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IAttentionPositionBias>
+  public PositionBiasSuite(Idrak.Abstraction.Generation.IAttentionPositionBias? reference = null, Idrak.Abstraction.Device? device = null)
+  public float Tolerance { get; init; }
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Generation.IAttentionPositionBias implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
 public readonly record struct Idrak.Abstraction.Testing.PowerSpectra : System.IEquatable<Idrak.Abstraction.Testing.PowerSpectra>
   public PowerSpectra(int Frames, int Bins, float[] Power)
   public float[] Power { get; init; }
@@ -408,6 +417,33 @@ public sealed class Idrak.Abstraction.Testing.SegmentationMetricSuite : Idrak.Ab
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.SegmentationImage>, double> implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.Seq2SeqModelSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.ISeq2SeqModel>
+  public Seq2SeqModelSuite(Idrak.Abstraction.Device? device = null)
+  public float Tolerance { get; init; }
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Generation.ISeq2SeqModel implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.SequenceEncoderSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.ISequenceEncoder>
+  public SequenceEncoderSuite(Idrak.Abstraction.Device? device = null)
+  public float Tolerance { get; init; }
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Generation.ISequenceEncoder implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.SequencePoolerSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.ISequencePooler>
+  public SequencePoolerSuite(Idrak.Abstraction.Generation.ISequencePooler? reference = null, Idrak.Abstraction.Device? device = null)
+  public float Tolerance { get; init; }
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Generation.ISequencePooler implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public sealed class Idrak.Abstraction.Testing.SpeechRecognizerSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.SpeechRecognizerUnderTest>
   public SpeechRecognizerSuite(int? silenceMaxChars = null)
