@@ -5,7 +5,7 @@ using System.IO.Compression;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Models;
@@ -214,12 +214,13 @@ internal static partial class Tests
             return;
         }
 
-        // An unregistered family: idrak tune exits with the registry's message before it reads the data (none exists here).
-        VisionFamilies.Unregister(Gemma3VisionFamily.Architecture);
+        // An unregistered family (the tool registering none of its plug-in packages): idrak tune exits with the registry's
+        // message before it reads the data (none exists here).
+        UnregisterGemma3Vision();
         ImageAttentionRules.Unregister(Gemma3VisionPlugin.ImageBlocks);
         try
         {
-            var refused = TrainCli("tune", "-b", VlmModel, "--data", Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json"), "-o", "unused", "-d", "cpu");
+            var refused = WithoutPluginPackages(() => TrainCli("tune", "-b", VlmModel, "--data", Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json"), "-o", "unused", "-d", "cpu"));
             Check(refused.Code == 1 && refused.Err.Contains($"Vision family '{Gemma3VisionFamily.Architecture}' is not registered", StringComparison.Ordinal)
                   && refused.Err.Contains("-P", StringComparison.Ordinal) && !refused.Err.Contains("missing-", StringComparison.Ordinal),
                 $"tune without the family: {refused.Code} {refused.Err}");

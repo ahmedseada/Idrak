@@ -280,7 +280,7 @@ var timings = new List<string>();
     ("ocr tune-vlm prints the idrak tune commands; bad options exit 2", () =>
     {
         var (code, output, error) = App("tune-vlm", "--model", "m", "--data", "train.json", "--eval", "val.json", "--images", "downloaded_images.zip", "--grayscale");
-        Check(code == 0 && output.Contains(" tune -P $plugin -b ") && output.Contains("--metric cer") && output.Contains("tune evaluate") && output.Contains("downloaded_images.zip"), output + error);
+        Check(code == 0 && output.Contains(" tune -b ") && !output.Contains("-P ") && output.Contains("--metric cer") && output.Contains("tune evaluate") && output.Contains("downloaded_images.zip"), output + error);
         (code, _, error) = App("read", "x.png", "--reader", "lines", "--nope");
         Check(code == 2 && error.Contains("--nope"), error);
         (code, _, error) = App("read", "x.png", "--reader", "other", "--model", "m");

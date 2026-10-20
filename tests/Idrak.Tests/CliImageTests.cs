@@ -6,7 +6,7 @@ using Idrak;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Models;
@@ -140,7 +140,7 @@ internal static partial class Tests
         var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu });
         using (model)
         {
-            // The prompt format and its token ids come from the family's registration (samples/Gemma3Vision).
+            // The prompt format and its token ids come from the family's registration (Idrak.Vision.Plugins).
             var vision = model.Vision!;
             var format = vision.PromptFormat;
             var layout = new ImageTokenLayout(4) { Grid = [2, 2] };
@@ -206,9 +206,10 @@ internal static partial class Tests
 
     private static void CliImageRun(Device device)
     {
-        // Without the Gemma 3 vision family registered, the vision checkpoint is refused, naming the registry.
+        // Without the Gemma 3 vision family registered (the tool registering none of its plug-in packages), the vision
+        // checkpoint is refused, naming the registry.
         Gemma3VisionNotRegistered(device);
-        var (refusedCode, _, refused) = RunIdrakOn(device, null, "run", VlmModel, "--image", TestData("vlm/image.png"), "hi");
+        var (refusedCode, _, refused) = WithoutPluginPackages(() => RunIdrakOn(device, null, "run", VlmModel, "--image", TestData("vlm/image.png"), "hi"));
         Check(refusedCode != 0 && refused.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal)
               && refused.Contains("VisionFamilies.Register", StringComparison.Ordinal), $"run --image without the family: {refusedCode} {refused}");
         RegisterGemma3Vision();

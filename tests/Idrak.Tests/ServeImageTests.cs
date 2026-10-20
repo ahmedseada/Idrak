@@ -10,7 +10,7 @@ using Idrak;
 using Idrak.AspNetCore;
 using Idrak.Cli;
 using Idrak.Data;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Inference;
@@ -331,9 +331,10 @@ internal static partial class Tests
     // `idrak serve` with the tiny Gemma 3 (and a text model beside it): the answers of `idrak run --image`, the limits.
     private static void CliServeImages(Device device)
     {
-        // Without the Gemma 3 vision family registered, serve refuses the vision model at startup, naming the registry.
+        // Without the Gemma 3 vision family registered (the tool registering none of its plug-in packages), serve refuses the
+        // vision model at startup, naming the registry.
         Gemma3VisionNotRegistered(device);
-        var (refusedCode, _, refused) = RunIdrakOn(device, null, "serve", VlmModel, "-p", "0");
+        var (refusedCode, _, refused) = WithoutPluginPackages(() => RunIdrakOn(device, null, "serve", VlmModel, "-p", "0"));
         Check(refusedCode == 2 && refused.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal),
             $"serve without the vision family: {refusedCode} {refused}");
         RegisterGemma3Vision();

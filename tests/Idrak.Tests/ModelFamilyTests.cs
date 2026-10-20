@@ -8,6 +8,7 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
+using Idrak.Text.Plugins.Gemma;
 
 // Model families beyond the plain decoder: RoPE scaling methods, sliding-window attention, soft-capping, families read
 // from config.json (Mistral, Qwen2, Gemma 2 and 3) and families that build their own network.
@@ -329,6 +330,7 @@ internal static partial class Tests
 
     private static void ModelFamilyConfigs(Device device)
     {
+        GemmaPlugin.Register();                      // Gemma 2 and 3 are Idrak.Text.Plugins' family
         DecoderSpec Read(JsonObject config) => PretrainedArchitectures.Get((string)config["architectures"]![0]!).Spec(Parsed(config), []);
 
         // Mistral: the window in every layer (none when null).
@@ -387,7 +389,7 @@ internal static partial class Tests
             var tensors = new List<(string, int[], float[])>();
             foreach (var (name, values) in weights.Values)
             {
-                string stored = PretrainedFamilies.GemmaTensorName(name)!;
+                string stored = GemmaArchitectures.TensorName(name)!;
                 bool linear = (name.Contains(".attn.") && !name.Contains("_norm") || name.Contains(".mlp.")) && name.EndsWith(".weight");
                 int[] shape = ShapeOf(gemmaSpec, name);
                 tensors.Add(linear ? (stored, [shape[1], shape[0]], Transpose2D(values, shape[0], shape[1])) : (stored, shape, values));
@@ -407,7 +409,7 @@ internal static partial class Tests
             PretrainedArchitectures.Register("TestOwnBuildForCausalLM", new PretrainedArchitecture
             {
                 Spec = (config, notes) => GemmaSpecOf(config, notes),
-                TensorName = PretrainedFamilies.GemmaTensorName,
+                TensorName = GemmaArchitectures.TensorName,
                 Build = context =>
                 {
                     seen = context;

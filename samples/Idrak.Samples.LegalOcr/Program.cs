@@ -14,7 +14,7 @@
 // scored by CER, one at a time or N in a row; the training pages are LegalOcr:TrainingData.
 
 using System.Text.Json.Serialization;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.QwenVision;
 using Idrak.Samples.LegalOcr;
 

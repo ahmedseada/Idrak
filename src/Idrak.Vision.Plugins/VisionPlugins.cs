@@ -17,8 +17,8 @@ public static class VisionPlugins
     /// <summary>The package's name, as the library's "not registered" messages name it: "Idrak.Vision.Plugins".</summary>
     public const string Package = "Idrak.Vision.Plugins";
 
-    /// <summary>Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them (none yet: plan 26 moves the families in).</summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [];
+    /// <summary>Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: Gemma 3 vision (<see cref="Gemma.Gemma3VisionPlugin"/>).</summary>
+    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Gemma.Gemma3VisionPlugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

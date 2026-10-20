@@ -2014,7 +2014,6 @@ public static class Idrak.Models.PretrainedFamilies
   public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
   public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
   public static System.Text.Json.Nodes.JsonObject CommonConfig(Idrak.Abstraction.Generation.DecoderSpec spec, string modelType)
-  public static string? GemmaTensorName(string name)
   public static string? LlamaTensorName(string name)
   public static string? MixtralTensorName(string name)
   public static string? QwenMoeTensorName(string name)

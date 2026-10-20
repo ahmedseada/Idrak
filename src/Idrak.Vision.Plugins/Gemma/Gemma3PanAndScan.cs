@@ -3,7 +3,7 @@
 
 using System.Text.Json;
 
-namespace Idrak.Gemma3Vision;
+namespace Idrak.Vision.Plugins.Gemma;
 
 /// <summary>
 /// Gemma 3's pan and scan: a tall or wide image is read as the whole image (squeezed to the encoder's square, as always)

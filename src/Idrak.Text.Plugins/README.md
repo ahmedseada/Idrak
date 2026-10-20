@@ -83,4 +83,26 @@ In the inference engine, an encoder-decoder is the `seq2seq` kind (`engine.Seq2S
 `ITextModel`); `idrak run FOLDER "prompt"` answers with it (`--beams N` for beam search). Other `feed_forward_proj`
 values, bucket settings that do not fit and checkpoints without a tensor the configuration names are refused naming them.
 
+### Gemma (`Idrak.Text.Plugins.Gemma`)
+
+`GemmaPlugin.Register()` registers `GemmaForCausalLM`, `Gemma2ForCausalLM`, `Gemma3ForCausalLM` and the text decoder of
+`Gemma3ForConditionalGeneration` in `PretrainedArchitectures` (`GemmaArchitectures`); `PretrainedModel.Load` then reads
+them on the library's decoder (`DecoderSpec`): gains stored as a difference from 1, embeddings scaled by √width and
+tied, and for Gemma 2 and 3 the norms after attention and the feed-forward block too (`GemmaArchitectures.TensorName`),
+scores scaled by `query_pre_attn_scalar`, windowed layers alternating as the configuration or `layer_types` says,
+soft-capping (Gemma 2), q/k norms and the windowed layers' own rotary base (Gemma 3, transformers 5's
+`rope_parameters` too). Gemma writes its configuration from a spec (`PretrainedModel.Create`); Gemma 2 and 3 are read
+from checkpoints only. The text decoder of Gemma 3 with images reads `text_config` (with transformers' defaults for
+absent keys), never soft-caps its logits, and fits each checkpoint's naming (`language_model.model.` or
+`model.language_model.`); its vision part is the Gemma 3 vision plug-in of `Idrak.Vision.Plugins`, which registers this
+family when it is missing. Without the vision plug-in such a checkpoint is refused, naming the vision family.
+
+```csharp
+using Idrak.Models;
+using Idrak.Text.Plugins.Gemma;
+
+GemmaPlugin.Register();
+using var model = PretrainedModel.Load(folder);
+```
+
 License: Apache 2.0.

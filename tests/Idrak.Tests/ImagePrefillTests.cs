@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Layers;
 using Idrak.Models;
 

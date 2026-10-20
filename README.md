@@ -81,9 +81,10 @@ and `Idrak.Gpu` along; the others are added by domain.
 
 ### Language models
 
-- Families registered: Gemma, Gemma 2, Gemma 3 (text and conditional generation), Llama, Mistral, Mixtral, Qwen2,
-  Qwen2-MoE, Qwen3, Qwen3-MoE; GGUF architectures llama, qwen2, qwen2moe, qwen3, qwen3moe. Any other family fails
-  loudly with "not registered" and is added as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
+- Families registered: Llama, Mistral, Mixtral, Qwen2, Qwen2-MoE, Qwen3, Qwen3-MoE; GGUF architectures llama, qwen2,
+  qwen2moe, qwen3, qwen3moe. Gemma, Gemma 2 and Gemma 3 (text and conditional generation) are the plug-in package
+  `Idrak.Text.Plugins` (`Idrak.Text.Plugins.Gemma`). Any other family fails loudly with "not registered" and is added
+  as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
 - Checkpoints: safetensors, GGUF (every ggml quantization dequantized or run packed), PyTorch zip read without running
   it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; packed weights bfloat16, int8, int4; KV caches in
   bfloat16, float32 or int8.
@@ -109,7 +110,7 @@ and `Idrak.Gpu` along; the others are added by domain.
 - Classifiers, detectors and segmenters from checkpoints; region classification, content framing, non-maximum
   suppression, segmentation masks and metrics; connected components and foreground extraction.
 - Vision-language: image tokens in the decoder, a SigLIP encoder and projector, pan-and-scan crops, per-request vision
-  options; Gemma 3 vision as the plug-in `samples/Gemma3Vision`, Qwen-VL in `samples/QwenVision`, a from-scratch
+  options; Gemma 3 vision in the plug-in package `Idrak.Vision.Plugins`, Qwen-VL in `samples/QwenVision`, a from-scratch
   family `IdrakVision` in `samples/IdrakVision`; images in `idrak chat`, `idrak serve` (`/v1` `image_url`, multipart,
   `/api/chat`).
 - OCR: CTC models, the Arabic and legal OCR samples, `idrak vlm check`.
@@ -265,7 +266,7 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | `src/` | the 13 packages |
 | `tests/Idrak.Tests`, `tests/Idrak.PluginTests` | the test program (824 tests, filtered by group) and the plug-in tests |
 | `benches/Idrak.Benches` | the benches above |
-| `samples/` | plug-ins (Gemma3Vision, QwenVision, IdrakVision) and 24 sample apps (chat, coding agent, GPT API and training, house prices, OCR and legal OCR, quantization, RAG, re-ranker, sentiment, shape recognition, summarizer, text generation, ONNX import, ...) |
+| `samples/` | plug-ins (QwenVision, IdrakVision) and 24 sample apps (chat, coding agent, GPT API and training, house prices, OCR and legal OCR, quantization, RAG, re-ranker, sentiment, shape recognition, summarizer, text generation, ONNX import, ...) |
 | `api/` | the public API dumps the guard test checks |
 | `plans/` | one plan per area with its status and dated runs; `plug-in.md` the extensibility survey; `idrak-cli.md` the CLI design; `gpu-checks.md` the GPU check list |
 | `docs/` | `optimization.md` and the longer guides |
@@ -305,9 +306,8 @@ Ordered by how soon they are likely to matter; each has a plan with the detail.
 - **Performance (plan 22):** a training step recorded as a device graph and replayed, with batches padded to size
   classes so shapes repeat (the only way below the driver's cost per launch); CPU `exp` and `erf` kernels; the
   remaining fixed policy constants reviewed.
-- **Vision-language (plans 11, 12, 16, 19):** phase 6 of plan 11 (the owner's choice to stop); Gemma 3's text decoder
-  into its plug-in (plan 16 step 4); the owner's runs of the real models and the from-scratch IdrakVision family on
-  the card (plan 19 A5 and B6).
+- **Vision-language (plans 11, 12, 16, 19):** phase 6 of plan 11 (the owner's choice to stop); the owner's runs of the
+  real models and the from-scratch IdrakVision family on the card (plan 19 A5 and B6).
 - **Extensibility gaps still open from `plans/plug-in.md`:** 7 (model packages storing custom architectures, scalers
   and tokenizers), 11 (tokenizer models beyond BPE: WordPiece, Unigram/SentencePiece), 12 (GGUF families unlike
   Llama), 13 (generation hooks: stopping criteria, logits processors, speculative decoding, structured output), 15
