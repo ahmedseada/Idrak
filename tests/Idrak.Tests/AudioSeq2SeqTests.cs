@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.IdrakAudio;
+using Idrak.Audio.Plugins.IdrakAudio;
 using Idrak.Models;
 
 // Plan 21, phase S6: the "seq2seq" objective and the IdrakAudio plug-in's "seq2seq" task. The fixture comes from

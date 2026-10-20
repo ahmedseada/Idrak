@@ -10,9 +10,9 @@ using Idrak.Cli.Commands.Data;
 using Idrak.Cli.Commands.Run;
 using Idrak.Cli.Shared;
 using Idrak.Models;
-using Idrak.OpenVoice;
-using Idrak.VitsSpeech;
-using Idrak.WhisperSpeech;
+using Idrak.Audio.Plugins.OpenVoice;
+using Idrak.Audio.Plugins.Vits;
+using Idrak.Audio.Plugins.Whisper;
 
 // Plan 21, S7: the audio commands run in-process through CommandLine.Run with captured output, their families given
 // with -P as a user gives them (the plug-in projects the tests reference), against the fixtures of the audio tests:
@@ -30,9 +30,9 @@ internal static partial class Tests
         ("audio cli: every audio command's help has its examples and options, idrak help audio lists the registries, 'idrak voice' names its subcommands, and --format srt is transcribe's own", d => { if (d == Device.Cpu) AudioCliHelp(); }),
     ];
 
-    private static string WhisperPlugin => typeof(WhisperSpeechPlugin).Assembly.Location;
+    private static string WhisperPluginPath => typeof(WhisperPlugin).Assembly.Location;
 
-    private static string VitsPlugin => typeof(VitsSpeechPlugin).Assembly.Location;
+    private static string VitsPluginPath => typeof(VitsPlugin).Assembly.Location;
 
     private static string OpenVoicePluginPath => typeof(OpenVoicePlugin).Assembly.Location;
 
@@ -43,6 +43,15 @@ internal static partial class Tests
         int code = StandardInput.With(new StringReader(""), () =>
             CommandLine.Run([.. args, "-C", Path.Combine(Path.GetTempPath(), "idrak-cli-audio-no-config.json")], output, error));
         return (code, output.ToString(), error.ToString());
+    }
+
+    // The tool with none of its plug-in packages registered at startup (IDRAK_PLUGIN_PACKAGES=none): a family the test
+    // unregistered stays so, as for a host without Idrak.Audio.Plugins.
+    private static (int Code, string Out, string Err) AudioCliWithoutPackages(params string[] args)
+    {
+        (int Code, string Out, string Err) result = default;
+        WithEnvironment(new Dictionary<string, string?> { [CommandLine.PluginPackagesVariable] = "none" }, () => result = AudioCli(args));
+        return result;
     }
 
     private static JsonObject AudioCliJson(params string[] args)
@@ -56,14 +65,14 @@ internal static partial class Tests
     {
         string model = AudioData("tiny-whisper"), wav = AudioData("wav/pcm16.wav"), d = device.ToString();
         string root = TempFolder("cli-transcribe");
-        WhisperSpeechPlugin.Unregister();
+        WhisperPlugin.Unregister();
         try
         {
-            var refused = AudioCli("transcribe", model, wav, "-d", d);
+            var refused = AudioCliWithoutPackages("transcribe", model, wav, "-d", d);
             Check(refused.Code == 1 && refused.Err.Contains("is not registered", StringComparison.Ordinal) && refused.Err.Contains("-P", StringComparison.Ordinal),
                 $"without the plug-in: {refused.Code} {refused.Err}");
 
-            WhisperSpeechPlugin.Register();
+            WhisperPlugin.Register();
             Transcription plain, timed;
             using (var recognizer = SpeechModels.Load(model, new SpeechModelOptions { Device = device }))
             {
@@ -72,27 +81,27 @@ internal static partial class Tests
                 timed = recognizer.Transcribe(audio, TranscribeCommand.Defaults with { Timestamps = true });
             }
 
-            WhisperSpeechPlugin.Unregister();                                    // the commands register it through -P
+            WhisperPlugin.Unregister();                                    // the commands register it through -P
             string text = Path.Combine(root, "talk.txt");
-            var (code, _, error) = AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "-o", text, "-d", d);
+            var (code, _, error) = AudioCli("transcribe", "-P", WhisperPluginPath, model, wav, "-o", text, "-d", d);
             Check(code == 0 && File.ReadAllText(text) == plain.Text.Trim() + "\n", $"-o talk.txt: {code} {error} '{(File.Exists(text) ? File.ReadAllText(text) : "")}' for '{plain.Text.Trim()}'");
 
-            var printed = AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "-d", d);
+            var printed = AudioCli("transcribe", "-P", WhisperPluginPath, model, wav, "-d", d);
             Check(printed.Code == 0 && printed.Out.TrimEnd() == plain.Text.Trim(), $"printed: '{printed.Out}' {printed.Err}");
 
-            var document = AudioCliJson("transcribe", "-P", WhisperPlugin, model, wav, "-d", d);
+            var document = AudioCliJson("transcribe", "-P", WhisperPluginPath, model, wav, "-d", d);
             var file = document["files"]!.AsArray()[0]!.AsObject();
             Check((string?)document["text"] == plain.Text.Trim() && (string?)file["text"] == plain.Text.Trim() && (string?)file["language"] == plain.Language
                   && file["segments"]!.AsArray().Count == plain.Segments.Count && (double)file["stats"]!["audio_seconds"]! == 1.5, $"-j: {document}");
 
             string json = Path.Combine(root, "talk.json");
-            Check(AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "-o", json, "-d", d).Code == 0
+            Check(AudioCli("transcribe", "-P", WhisperPluginPath, model, wav, "-o", json, "-d", d).Code == 0
                   && (string?)JsonNode.Parse(File.ReadAllText(json))!["text"] == plain.Text.Trim(), "-o talk.json: the JSON from the extension");
 
             string srt = Path.Combine(root, "talk.srt"), vtt = Path.Combine(root, "talk.vtt");
-            Check(AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "-o", srt, "-d", d).Code == 0, "-o talk.srt");
+            Check(AudioCli("transcribe", "-P", WhisperPluginPath, model, wav, "-o", srt, "-d", d).Code == 0, "-o talk.srt");
             Check(File.ReadAllText(srt) == Subtitles.Srt(timed), $"the SRT from the timestamped segments: {File.ReadAllText(srt)}");
-            var vttRun = AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "--format", "vtt", "-o", vtt, "-d", d);
+            var vttRun = AudioCli("transcribe", "-P", WhisperPluginPath, model, wav, "--format", "vtt", "-o", vtt, "-d", d);
             string cues = File.ReadAllText(vtt);
             Check(vttRun.Code == 0 && cues.StartsWith("WEBVTT\n\n", StringComparison.Ordinal) && cues == Subtitles.Vtt(timed), $"--format vtt: {vttRun.Err} {cues}");
             foreach (var segment in timed.Segments.Where(s => s.Text.Trim().Length > 0))
@@ -105,18 +114,18 @@ internal static partial class Tests
 
             // Several files into a folder: NAME.EXT each, in the order given.
             string folder = Path.Combine(root, "texts");
-            var many = AudioCliJson("transcribe", "-P", WhisperPlugin, model, wav, AudioData("wav/stereo16.wav"), "-o", folder, "--format", "srt", "-d", d);
+            var many = AudioCliJson("transcribe", "-P", WhisperPluginPath, model, wav, AudioData("wav/stereo16.wav"), "-o", folder, "--format", "srt", "-d", d);
             Check(File.Exists(Path.Combine(folder, "pcm16.srt")) && File.Exists(Path.Combine(folder, "stereo16.srt")) && many["files"]!.AsArray().Count == 2
                   && (string?)many["files"]![0]!["file"] == wav, $"a folder of subtitles: {many}");
 
-            var bad = AudioCli("transcribe", "-P", WhisperPlugin, model, wav, "--format", "csv");
+            var bad = AudioCli("transcribe", "-P", WhisperPluginPath, model, wav, "--format", "csv");
             Check(bad.Code == 2 && bad.Err.Contains("text, json, srt or vtt", StringComparison.Ordinal), $"--format csv: {bad.Err}");
-            var missing = AudioCli("transcribe", "-P", WhisperPlugin, model, Path.Combine(root, "nothing.wav"));
+            var missing = AudioCli("transcribe", "-P", WhisperPluginPath, model, Path.Combine(root, "nothing.wav"));
             Check(missing.Code == 2 && missing.Err.Contains("not found", StringComparison.Ordinal), $"a missing file: {missing.Err}");
         }
         finally
         {
-            WhisperSpeechPlugin.Unregister();
+            WhisperPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -126,15 +135,15 @@ internal static partial class Tests
         string model = AudioData("tiny-vits"), d = device.ToString(), root = TempFolder("cli-speak");
         string text = (string)JsonNode.Parse(File.ReadAllText(Path.Combine(model, "reference", "input.json")))!["text"]!;
         var expected = ReadNpyFloat32(Path.Combine(model, "reference", "waveform.npy"));
-        VitsSpeechPlugin.Unregister();
+        VitsPlugin.Unregister();
         try
         {
             string wav = Path.Combine(root, "abc.wav");
-            var refused = AudioCli("speak", model, text, "-o", wav, "-d", d);
+            var refused = AudioCliWithoutPackages("speak", model, text, "-o", wav, "-d", d);
             Check(refused.Code == 1 && refused.Err.Contains("is not registered", StringComparison.Ordinal) && refused.Err.Contains("-P", StringComparison.Ordinal),
                 $"without the plug-in: {refused.Code} {refused.Err}");
 
-            var spoken = AudioCliJson("speak", "-P", VitsPlugin, model, text, "--noise", "0", "--duration-noise", "0", "--bits", "float", "-o", wav, "-d", d);
+            var spoken = AudioCliJson("speak", "-P", VitsPluginPath, model, text, "--noise", "0", "--duration-noise", "0", "--bits", "float", "-o", wav, "-d", d);
             var audio = AudioCodecs.Decode(wav);
             Check(audio.SampleRate == 16000 && audio.Channels == 1 && (int)spoken["sample_rate"]! == 16000 && (string?)spoken["bits"] == "float", $"the WAV: {spoken}");
             float largest = expected.Max(MathF.Abs);
@@ -142,30 +151,30 @@ internal static partial class Tests
             AssertClose(expected, audio.Samples, 1e-3f * largest, $"speak's WAV against reference/waveform.npy (largest sample {largest:G3})");
             Check(spoken["cold"]!["real_time_factor"] is not null && spoken["warm"] is null, "-j: the cold call's figures, no warm call without -v");
 
-            var verbose = AudioCli("speak", "-P", VitsPlugin, model, text, "--noise", "0", "--duration-noise", "0", "-o", Path.Combine(root, "v.wav"), "-v", "-d", d);
+            var verbose = AudioCli("speak", "-P", VitsPluginPath, model, text, "--noise", "0", "--duration-noise", "0", "-o", Path.Combine(root, "v.wav"), "-v", "-d", d);
             Check(verbose.Code == 0 && verbose.Err.Contains("cold: ", StringComparison.Ordinal) && verbose.Err.Contains("warm: ", StringComparison.Ordinal)
                   && verbose.Err.Contains("peak device memory", StringComparison.Ordinal), $"-v: cold and warm stage times: {verbose.Err}");
 
             string mp3 = Path.Combine(root, "abc.mp3");
-            var asMp3 = AudioCli("speak", "-P", VitsPlugin, model, text, "--noise", "0", "--duration-noise", "0", "-o", mp3, "-d", d);
+            var asMp3 = AudioCli("speak", "-P", VitsPluginPath, model, text, "--noise", "0", "--duration-noise", "0", "-o", mp3, "-d", d);
             Check(asMp3.Code == 0 && File.Exists(mp3), $"-o abc.mp3 with the library's encoder: {asMp3.Err}");
             var decoded = AudioCodecs.Decode(mp3);
             Check(decoded.Length >= expected.Length && decoded.Channels == 1 && decoded.Samples.Any(v => v != 0), $"the MP3 decodes to {decoded.Length} samples at {decoded.SampleRate} Hz");
 
-            var noText = AudioCli("speak", "-P", VitsPlugin, model, "-o", wav);
+            var noText = AudioCli("speak", "-P", VitsPluginPath, model, "-o", wav);
             Check(noText.Code == 2 && noText.Err.Contains("text to speak", StringComparison.Ordinal), $"no text: {noText.Err}");
-            var noOut = AudioCli("speak", "-P", VitsPlugin, model, text);
+            var noOut = AudioCli("speak", "-P", VitsPluginPath, model, text);
             Check(noOut.Code == 2 && noOut.Err.Contains("--out", StringComparison.Ordinal), $"no -o: {noOut.Err}");
 
             string store = Path.Combine(root, "voices");
-            var listed = AudioCliJson("speak", "-P", VitsPlugin, model, "--list-voices", "--voices", store);
+            var listed = AudioCliJson("speak", "-P", VitsPluginPath, model, "--list-voices", "--voices", store);
             Check(listed["speakers"]!.AsArray().Count == 0 && listed["voices"]!.AsArray().Count == 0 && (string?)listed["store"] == Path.GetFullPath(store), $"--list-voices: {listed}");
-            var unknown = AudioCli("speak", "-P", VitsPlugin, model, text, "--voice", "stranger", "--voices", store, "-o", wav, "-d", d);
+            var unknown = AudioCli("speak", "-P", VitsPluginPath, model, text, "--voice", "stranger", "--voices", store, "-o", wav, "-d", d);
             Check(unknown.Code == 1 && unknown.Err.Contains("'stranger'", StringComparison.Ordinal) && unknown.Err.Contains("installed", StringComparison.Ordinal), $"an unknown voice: {unknown.Err}");
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
                 Directory.Delete(root, recursive: true);
         }
     }
@@ -177,7 +186,7 @@ internal static partial class Tests
         const string Consent = "I agree that this test voice is installed.";
         string[] add = ["voice", "add", "tester", "--from", stereo, "--from", pcm, "--converter", converter, "-P", OpenVoicePluginPath, "--voices", store, "-d", d];
         OpenVoicePlugin.Unregister();
-        VitsSpeechPlugin.Unregister();
+        VitsPlugin.Unregister();
         try
         {
             var noConsent = AudioCli(add);
@@ -219,7 +228,7 @@ internal static partial class Tests
             // speak --voice: the embedding voice converted by the converter voice.json names, as VoicedSynthesizer does it.
             string spokenPath = Path.Combine(root, "tester.wav");
             string sentence = (string)JsonNode.Parse(File.ReadAllText(Path.Combine(model, "reference", "input.json")))!["text"]!;
-            var spoken = AudioCli("speak", "-P", VitsPlugin, "-P", OpenVoicePluginPath, model, sentence, "--voice", "tester", "--voices", store, "--noise", "0", "--duration-noise", "0",
+            var spoken = AudioCli("speak", "-P", VitsPluginPath, "-P", OpenVoicePluginPath, model, sentence, "--voice", "tester", "--voices", store, "--noise", "0", "--duration-noise", "0",
                 "--bits", "float", "--seed", "3", "-o", spokenPath, "-d", d);
             Check(spoken.Code == 0, $"speak --voice tester: {spoken.Err}");
             using (var voiced = new VoicedSynthesizer(SpeechSynthesisModels.Load(model, new SpeechSynthesisLoadOptions { Device = device }), new FolderVoiceStore(store)))
@@ -233,7 +242,7 @@ internal static partial class Tests
                 Check(written.SampleRate == expected.SampleRate && written.Samples.AsSpan().SequenceEqual(expected.Samples), $"the converted voice: {written.Length} samples at {written.SampleRate} Hz");
             }
 
-            var voices = AudioCliJson("speak", "-P", VitsPlugin, model, "--list-voices", "--voices", store);
+            var voices = AudioCliJson("speak", "-P", VitsPluginPath, model, "--list-voices", "--voices", store);
             Check(voices["voices"]!.AsArray().Select(v => (string?)v!["name"]).SequenceEqual(["tester"]), $"--list-voices: {voices}");
 
             string zip = Path.Combine(root, "tester.zip");
@@ -249,7 +258,7 @@ internal static partial class Tests
         finally
         {
             OpenVoicePlugin.Unregister();
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }

@@ -25,7 +25,7 @@ internal static partial class Tests
         ("plugins: packages: an IdrakPlugin registers its parts once however often Register is called (from several threads too), Unregister leaves the registries as found, a failing part takes back the parts before it, Requires registers a needed plug-in only when missing; IdrakPlugins registers a plug-in once, replaces one of the same name (unregistering the earlier, which comes back when the new one fails) and names the packages when none is registered", PluginContract),
         ("plugins: packages: the tool registers the three packages at startup (text first), and -P on each package's DLL loads it through the tool's loader (RegisterIdrakPlugin runs) adding nothing twice", PluginPackagesCli),
         ("plugins: packages: IDRAK_PLUGIN_PACKAGES chooses the packages the tool registers at startup (all when unset, none, or a list taken in the tool's order) and is refused naming the variable when it names no package", PluginPackagesSetting),
-        ("plugins: packages: no library assembly nor the tool grants a plug-in package its internals, the plug-in packages grant none, and they are not library defaults", PluginPackagesNoInternals),
+        ("plugins: packages: no library assembly nor the tool grants a plug-in package its internals, the plug-in packages grant none but the test runner (as every library package does), and they are not library defaults", PluginPackagesNoInternals),
         ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures and ToolCallFormats name the plug-in package to reference and its RegisterAll", PluginPackagesMessages),
     ];
 
@@ -278,8 +278,8 @@ internal static partial class Tests
 
         foreach (var package in PluginPackages)
         {
-            var granted = package.Root.Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName).ToList();
-            Check(granted.Count == 0, $"{package.Name} grants its internals to {string.Join(", ", granted)}");
+            var granted = package.Root.Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName.Split(',')[0].Trim()).ToList();
+            Check(granted.All(a => a == "Idrak.Tests"), $"{package.Name} grants its internals to {string.Join(", ", granted)}: only the test runner may see them");
             Check(ApiAssemblyNames.Contains(package.Name) && LibraryAssemblyNames.Contains(package.Name), $"{package.Name} is in the API guard and the abstraction inventory");
         }
 

@@ -157,7 +157,7 @@ internal static class EnvironmentVariables
         new("ROCM_PATH", Hip, "/opt/rocm", "Where ROCm is (Linux)", OnDevice),
 
         new("IDRAK_VOICES", Sources, "voices/ under IDRAK_CACHE or ~/.cache/idrak", "The installed voices' folder (--voices wins; with --cache given and this unset: voices/ under it)", VoiceStore),
-        new("IDRAK_ESPEAK", Sources, "espeak-ng on the PATH", "The espeak-ng program the phonemizer runs for a speech model whose text front end wants phonemes (Idrak.Audio.SpeechText.EspeakNgPhonemizer)", ["speak", "pretrain", "tune", "serve"]),
+        new("IDRAK_ESPEAK", Sources, "espeak-ng on the PATH", "The espeak-ng program the phonemizer runs for a speech model whose text front end wants phonemes (Idrak.Audio.Plugins.EspeakNg.EspeakNgPhonemizer, registered with the VITS family)", ["speak", "pretrain", "tune", "serve"]),
         new("IDRAK_ESPEAK_VOICE", Sources, "the checkpoint's language", "The espeak-ng voice the phonemizer uses instead of the model's language", ["speak", "pretrain", "tune", "serve"]),
         new("IDRAK_MP3_BITRATE", Audio, "128 for stereo, 64 for mono (96 and 64 below 32 kHz)", "The MP3 encoder's constant bit rate in kbit/s (Mp3EncodeOptions.Bitrate)", ["speak"]),
         new("IDRAK_MP3_RATE", Audio, "the sound's rate", "The rate MP3 is written at, in Hz: 32000, 44100, 48000, 16000, 22050 or 24000", ["speak"]),

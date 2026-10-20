@@ -108,9 +108,9 @@ internal sealed class PretrainCommand : Command
           idrak create spec.json -o my-model
           idrak pretrain my-model --tokens tokens.bin --steps 2000 --lr 6e-4 -o run -d cuda:0
           idrak pretrain my-vlm --data pages.jsonl --images pages.zip --trained tower,projector -P Idrak.IdrakVision.dll
-          idrak pretrain my-audio-lm --data talks.jsonl --audio clips.zip --trained audio-encoder,audio-projector -P Idrak.IdrakAudio.dll
-          idrak pretrain my-ctc --data train.jsonl --audio clips --eval dev.jsonl --batch-seconds 120 -P Idrak.IdrakAudio.dll
-          idrak pretrain my-tts --data train.jsonl --audio clips --durations alignments.jsonl -P Idrak.IdrakAudio.dll
+          idrak pretrain my-audio-lm --data talks.jsonl --audio clips.zip --trained audio-encoder,audio-projector
+          idrak pretrain my-ctc --data train.jsonl --audio clips --eval dev.jsonl --batch-seconds 120
+          idrak pretrain my-tts --data train.jsonl --audio clips --durations alignments.jsonl
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
           idrak pretrain my-model --tokens tokens.bin -o run --cluster lan.json --placement pipeline

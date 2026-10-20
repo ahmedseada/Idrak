@@ -4,7 +4,7 @@
 using System.Diagnostics;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.VitsSpeech;
+using Idrak.Audio.Plugins.Vits;
 
 namespace Idrak.Benches;
 
@@ -24,7 +24,7 @@ internal static class SpeechBench
 
     public static void Run(Device device, Settings settings, Report report)
     {
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         string model = settings.Model ?? Fixture();
         string work = Path.Combine(Path.GetTempPath(), "idrak-benches", "speech");
         Directory.CreateDirectory(work);

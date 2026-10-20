@@ -91,7 +91,8 @@ internal sealed class VoiceAddCommand : Command
         and agreement, the converter) and the embedding. Each clip's agreement is the cosine of its embedding with the
         voice's: a clip far below the others is another speaker or noise, and is flagged. A voice is a person's
         likeness: --consent (who agreed, to what) is required, stored and shown by voice show; the library cannot verify
-        it. The converter family is a plug-in (-P): its folder holds config.json and the weights.
+        it. The converter family is a plug-in (Idrak.Audio.Plugins' OpenVoice is built in; another with -P): its folder
+        holds config.json and the weights.
 
         Arguments:
           NAME                   the voice's name (letters, digits, . - _)
@@ -114,8 +115,8 @@ internal sealed class VoiceAddCommand : Command
         """ + "\n" + VoiceText.StoreHelp + "\n" + """
 
         Examples:
-          idrak voice add ahmed --from clips/ --converter ./openvoice-v2 -P Idrak.OpenVoice.dll -l ar -l en --consent "I, Ahmed, agree that this voice is used for speech made with Idrak."
-          idrak voice add sara --from a.wav --from b.flac --converter ./openvoice-v2 -P Idrak.OpenVoice.dll --consent-file sara-consent.txt -d cuda
+          idrak voice add ahmed --from clips/ --converter ./openvoice-v2 -l ar -l en --consent "I, Ahmed, agree that this voice is used for speech made with Idrak."
+          idrak voice add sara --from a.wav --from b.flac --converter ./openvoice-v2 --consent-file sara-consent.txt -d cuda
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
@@ -147,7 +148,7 @@ internal sealed class VoiceAddCommand : Command
             throw new UsageException("The consent is empty: give the speaker's agreement, in their words.");
         }
 
-        string converterArgument = context.Option("--converter") ?? throw new UsageException("Missing --converter DIR (the voice converter's folder; its family is a plug-in given with -P).");
+        string converterArgument = context.Option("--converter") ?? throw new UsageException("Missing --converter DIR (the voice converter's folder; its family a registered plug-in's).");
         double warn = AudioFiles.Number(context, "--warn-agreement", VoiceText.WarnAgreement, -1, 1);
         var defaults = new VoiceAddOptions();
         var options = new VoiceAddOptions
@@ -195,7 +196,7 @@ internal sealed class VoiceAddCommand : Command
                         $"{flagged} clip(s) agree with the voice by less than {warn}: listen to them; reinstall without them (--overwrite) if they are another speaker or noise."));
                 }
 
-                context.Write($"next: idrak speak MODEL \"...\" --voice {voice.Name} -P <the model's plug-in> -P <the converter's plug-in> -o {voice.Name}.wav");
+                context.Write($"next: idrak speak MODEL \"...\" --voice {voice.Name} -o {voice.Name}.wav");
                 context.WriteJson(VoiceText.Json(voice, warn));
                 return ExitCodes.Ok;
             }

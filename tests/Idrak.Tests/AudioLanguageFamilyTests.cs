@@ -6,7 +6,7 @@ using Idrak.Abstraction.Testing;
 using Idrak.Abstraction.Generation;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.IdrakAudio;
+using Idrak.Audio.Plugins.IdrakAudio;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;

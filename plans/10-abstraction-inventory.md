@@ -26,7 +26,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text.Plugins` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Vision.Plugins` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Audio.Plugins` | 0 | 0 | 0 | 0 | 0 |
+| `Idrak.Audio.Plugins` | 1 | 0 | 0 | 1 | 0 |
 
 An abstract class that also declares `Register` counts once under abstract classes and once under registries.
 
@@ -112,7 +112,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, pytorch, safetensors | Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, PyTorchCheckpointFormat, SafeTensorsCheckpointFormat |  | Abstraction, Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
-| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, RenamedTensorStore, SafeTensorsReader, TensorDictionary |  | Abstraction, Audio, Idrak, Text, Text.Plugins, Vision | Abstraction |
+| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PyTorchCheckpointReader, RenamedTensorStore, SafeTensorsReader, TensorDictionary |  | Abstraction, Audio, Audio.Plugins, Idrak, Text, Text.Plugins, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.AttentionPositionBias` | abstract class | public | Device, Module, Tensor | RelativePositionBias |  | — | Abstraction |
 | `Idrak.Abstraction.Generation.AttentionPositionBiases` | registry | public | — |  | relative | — | Abstraction |
@@ -120,25 +120,25 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | audio, image, text | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio, Vision | Abstraction |
+| `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio, Audio.Plugins, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.FeatureCaches` | registry | public | — |  | disk, memory | Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IAttentionPositionBias` | interface | public | Device, Tensor | RelativePositionBias |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.IBinaryPartKind` | interface | public | — | AudioPartKind |  | AspNetCore, Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatPartKind` | interface | public | — | AudioPartKind, ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IFeatureCache` | interface | public | Device, Tensor | DiskFeatureCache, MemoryFeatureCache |  | Abstraction, Audio, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule, ImageAttentionRules.ImageBlocksRule |  | Abstraction, Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule, ImageAttentionRules.ImageBlocksRule |  | Abstraction, Audio, Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IImagePositionRule` | interface | public | — | ImagePositionRules.GridRule, ImagePositionRules.GuardedRule |  | Idrak | Abstraction |
-| `Idrak.Abstraction.Generation.IImagePromptFormat` | interface | public | — | ImageTokenFormat |  | Abstraction, Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.IImagePromptFormat` | interface | public | — | ImageTokenFormat |  | Abstraction, Audio, Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IModelPart` | interface | public | — | AudioModelPart |  | Abstraction, Audio, Idrak | Abstraction |
-| `Idrak.Abstraction.Generation.IPretrainedTokenizer` | interface | public | — | BpeTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer |  | Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.IPretrainedTokenizer` | interface | public | — | BpeTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer |  | Audio, Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ISeq2SeqModel` | interface | public | Device, Module, Tensor | Seq2SeqNetwork |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ISequenceEncoder` | interface | public | Device, Module, Tensor | SequenceEncoder |  | Idrak, Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ISequencePooler` | interface | public | Tensor | SequencePoolers.FirstPooler, SequencePoolers.MaxPooler, SequencePoolers.MeanPooler |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ISoftPartSource` | interface | public | — | ChatAudioParts |  | Abstraction, Audio, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, Seq2SeqGenerator, TextEngineModel, TextGenerator |  | Abstraction, AspNetCore, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Idrak | Abstraction |
-| `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer, WordTokenizer |  | Abstraction, Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer, WordTokenizer |  | Abstraction, Audio, Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | AspNetCore, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Text | Abstraction |
@@ -147,7 +147,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | ModelImages.LazyEncoder |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | — |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | — |  | Abstraction, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal, image-blocks | — | Abstraction |
+| `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal, image-blocks | Audio.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ImagePositionRules` | registry | public | — |  | grid | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
@@ -155,19 +155,19 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ModelParts` | registry | public | — |  | audio | Audio, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.PackedWeight` | abstract class, registry | public | Device, Storage, Tensor | BFloat16Weight, Float16Weight, Int4Weight, Int8Weight | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.PretrainedVision` | abstract class | public | — | — |  | Abstraction, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.SequencePoolers` | registry | public | Tensor |  | first, max, mean | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.TokenSamplers` | registry | public | — |  | default | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, wer | Abstraction, Audio, Text | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, +55 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, +61 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Text, Vision | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration |  | Abstraction, Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration |  | Text.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IdrakPlugins` | registry | public | — |  | — | Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, EspeakNgPlugin.EspeakNgRegistration, IdrakAudioPlugin.IdrakAudioRegistration, OpenVoicePlugin.OpenVoiceRegistration, VitsPlugin.VitsRegistration, WhisperPlugin.WhisperRegistration |  | Abstraction, Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, EspeakNgPlugin.EspeakNgRegistration, IdrakAudioPlugin.IdrakAudioRegistration, OpenVoicePlugin.OpenVoiceRegistration, VitsPlugin.VitsRegistration, WhisperPlugin.WhisperRegistration |  | Audio.Plugins, Text.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IdrakPlugins` | registry | public | — |  | — | Abstraction, Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | AspNetCore, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | Text | Abstraction |
 | `Idrak.Abstraction.Serving.EngineModel<TCopy>` | abstract class | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, TextEngineModel |  | AspNetCore, Idrak, Text | Abstraction |
@@ -192,7 +192,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, conv2d, convtranspose2d, dropout, +20 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, columnsToSequence, conv2d, convtranspose2d, +23 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.NetworkRecipes` | registry | public | — |  | cnn, gpt, mlp, rnn, transformer-classifier | — | Idrak |
-| `Idrak.Layers.Abstractions.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | Audio.Plugins, Idrak | Idrak |
 | `Idrak.Models.Abstractions.EncoderHeads` | registry | public | — |  | masked-lm, pooler, sequence-classification | Text.Plugins | Idrak |
 | `Idrak.Models.Abstractions.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | Idrak | Idrak |
@@ -209,7 +209,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer, UnigramTrainer, WordPieceTrainer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | — |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | Device | CheckpointWeights |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Idrak | Idrak |
+| `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Audio.Plugins, Idrak | Idrak |
 | `Idrak.Models.Abstractions.PretrainedEncoders` | registry | public | — |  | — | Idrak, Text.Plugins | Idrak |
 | `Idrak.Models.Abstractions.PretrainedSeq2Seq` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
@@ -295,50 +295,50 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.AudioCleaners` | registry | public | — |  | denoise, highpass, normalize, trim | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, mp3, wav | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | mp3, wav | — | Audio |
-| `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio | Audio |
-| `Idrak.Audio.Abstractions.AudioFeatureExtractors` | registry | public | — |  | log-mel | — | Audio |
+| `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.AudioFeatureExtractors` | registry | public | — |  | log-mel | Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.AudioSplitters` | registry | public | — |  | seconds, silence | — | Audio |
-| `Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer` | interface | public | Module | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer` | interface | public | Module | VitsSynthesizer |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | VitsTraining.Step |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioAugmentation` | interface | public | — | NoiseAugmentation, SpecMaskAugmentation, SpeedAugmentation |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCleaner` | interface | public | — | DenoiseCleaner, HighPassCleaner, NormalizeCleaner, TrimCleaner |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCodec` | interface | public | — | AudioCodecs.GuardedCodec, FlacCodec, Mp3Codec, WavCodec |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioEncoder` | interface | public | — | AudioEncoders.GuardedEncoder, Mp3Encoder, WavEncoder |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioFamily` | interface | public | — | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioFamily` | interface | public | — | IdrakAudioLanguageFamily |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures, VitsTrainingFeatures |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | IdrakAudioLanguageEncoder |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | Tensor | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Tensor | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISequenceSpeechModel` | interface | public | Tensor | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISpeechFamily` | interface | public | — | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | Tensor | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Tensor | IdrakAudioCtcModel |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ISequenceSpeechModel` | interface | public | Tensor | IdrakAudioSeq2SeqModel |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | OpenVoiceConverter |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ISpeechFamily` | interface | public | — | IdrakAudioFamily, WhisperFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechReader` | interface | public | — | SpeechReader |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISpeechRecognizer` | interface | public | Device | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ISpeechRecognizer` | interface | public | Device | IdrakAudioCtcModel, IdrakAudioSeq2SeqModel, WhisperRecognizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechSource` | interface | public | — | FolderSpeechSource, TranscriptSpeechSource |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISpeechSynthesisFamily` | interface | public | — | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ISpeechSynthesisFamily` | interface | public | — | IdrakAudioSynthesisFamily, VitsSpeechFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechSynthesisObjective` | interface | public | Tensor | DurationSynthesisObjective |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ISpeechSynthesizer` | interface | public | Device | VoicedSynthesizer |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ISpeechSynthesizer` | interface | public | Device | IdrakAudioTtsModel, VitsSynthesizer, VoicedSynthesizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechTrainingObjective` | interface | public | Tensor | CtcObjective, Seq2SeqObjective |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ITextPhonemizer` | interface | public | — | EspeakNgPhonemizer |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ITextRomanizer` | interface | public | — | UromanArabicRomanizer |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer` | interface | public | Module, Tensor | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, HifiGanVocoder, Vocoders.GuardedVocoder |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IVoiceConverter` | interface | public | — | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IVoiceConverterFamily` | interface | public | — | — |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ITextPhonemizer` | interface | public | — | EspeakNgPhonemizer |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ITextRomanizer` | interface | public | — | UromanArabicRomanizer |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | IdrakAudioCtcModel, IdrakAudioSeq2SeqModel |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer` | interface | public | Module, Tensor | IdrakAudioTtsModel |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, HifiGanVocoder, VitsSynthesizer.DecoderVocoder, Vocoders.GuardedVocoder |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IVoiceConverter` | interface | public | — | OpenVoiceConverter |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IVoiceConverterFamily` | interface | public | — | OpenVoiceFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IVoiceStore` | interface | public | — | FolderVoiceStore |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.PretrainedAudio` | abstract class | public | — | — |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.SpeechFamilies` | registry | public | — |  | — | Audio | Audio |
+| `Idrak.Audio.Abstractions.PretrainedAudio` | abstract class | public | — | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.SpeechFamilies` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.SpeechSources` | registry | public | — |  | audio-folder, transcripts | Audio | Audio |
-| `Idrak.Audio.Abstractions.SpeechSynthesisFamilies` | registry | public | — |  | — | Audio | Audio |
+| `Idrak.Audio.Abstractions.SpeechSynthesisFamilies` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.SpeechSynthesisObjectives` | registry | public | — |  | durations | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechTrainee` | abstract class | internal | Device, Module, Tensor | AdversarialSynthesisTrainer.AdversarialTrainee, SpeechSynthesisTrainer.SynthesisTrainee, SpeechTrainer.RecognizerTrainee |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechTrainingObjectives` | registry | public | — |  | ctc, seq2seq | Audio | Audio |
-| `Idrak.Audio.Abstractions.TextPhonemizers` | registry | public | — |  | espeak-ng | Audio | Audio |
-| `Idrak.Audio.Abstractions.TextRomanizers` | registry | public | — |  | uroman-arabic | — | Audio |
-| `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | Audio | Audio |
-| `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio | Audio |
+| `Idrak.Audio.Abstractions.TextPhonemizers` | registry | public | — |  | — | Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.TextRomanizers` | registry | public | — |  | — | Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.VoiceStores` | registry | public | — |  | folder | Audio | Audio |
 
 ### Idrak.Network
@@ -352,6 +352,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Networking.Abstractions.IGradientCompressor` | interface | public | — | DenseCompressor, TopKCompressor |  | Network | Network |
 | `Idrak.Networking.Abstractions.LocalTransport` | abstract class | internal | Storage | NvlinkTransport, PciHostTransport |  | Network | Network |
 | `Idrak.Networking.Abstractions.SyncCore` | abstract class | internal | Tensor | GradientReduction, LocalSgd |  | Network | Network |
+
+### Idrak.Audio.Plugins
+
+| Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
+|---|---|---|---|---|---|---|---|
+| `Idrak.Audio.Plugins.Vits.Abstractions.IVitsDurationPredictor` | interface | internal | Tensor | VitsDeterministicDurationPredictor, VitsStochasticDurationPredictor |  | Audio.Plugins | Audio.Plugins |
 
 ## The device contract (`Backend`)
 
