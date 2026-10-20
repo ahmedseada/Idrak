@@ -91,9 +91,10 @@ string tinyQwen = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data",
         Check(StartupLoad.RunAsync(service, "a", output, live: false).GetAwaiter().GetResult(), output.ToString());
         Check(service.Status is { State: ReaderState.Ready, Model: "a" } && output.ToString().Contains("is ready", StringComparison.Ordinal)
               && output.ToString().Contains("in use", StringComparison.Ordinal), output.ToString());
-        string line = StartupLoad.Line(service.Status with { Message = "Downloading o/m: model.safetensors", Download = new DownloadInfo("model.safetensors", 512L << 20, 1L << 30, 4) },
-            TimeSpan.FromSeconds(75), 128 << 20);
-        Check(line.StartsWith("Downloading o/m: model.safetensors · 512 MB of 1.00 GB at 128 MB/s, 4 s left · 1 min 15 s", StringComparison.Ordinal), line);
+        // The line is the library's progress text (ProgressReporters): the share, size, speed and time left of the file, then the memory.
+        string line = StartupLoad.Line(service.Status with { Message = "Downloading o/m: model.safetensors\u2026", Download = new DownloadInfo("model.safetensors", 512L << 20, 1L << 30, 4) },
+            TimeSpan.FromSeconds(4));
+        Check(line.StartsWith("Downloading o/m: model.safetensors   50%  512 MB / 1.00 GB  128 MB/s  4s left  ", StringComparison.Ordinal) && line.Contains("in use", StringComparison.Ordinal), line);
 
         var missing = new StringWriter();
         Check(!StartupLoad.RunAsync(service, "nope", missing, live: false).GetAwaiter().GetResult() && missing.ToString().StartsWith("Not loaded at start (nope)", StringComparison.Ordinal),

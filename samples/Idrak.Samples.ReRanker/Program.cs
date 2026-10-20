@@ -22,6 +22,7 @@ using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Samples;
 using Idrak.Samples.ReRanker;
+using Idrak.Text.Abstractions;
 using Idrak.Training;
 
 if (SampleOptions.Parse(args) is not { } options)
@@ -37,7 +38,10 @@ const int Length = 28, Dim = 64, Placeholders = 8, Group = 8, Candidates = 20, T
 string modelPath = options.ModelPath("reranker.weights");
 string vocabularyPath = Path.ChangeExtension(modelPath, ".vocab.txt");
 var collection = new Collection(Towns, seed: 1);
-var bm25 = new Bm25(collection.Passages.Select(p => p.Text));
+var bm25 = KeywordIndexes.Create(KeywordIndexes.Bm25, collection.Passages.Select(p => p.Text));   // the library's BM25 (k1 1.2, b 0.75)
+
+// The ids of the k best passages for a query by BM25, best first (passages sharing no word are left out).
+int[] FirstStage(string query, int k) => [.. bm25.Search(query, k).Select(hit => hit.Id)];
 
 if (options.PredictOnly)
 {
@@ -53,7 +57,7 @@ if (options.PredictOnly)
     loaded.Eval();
     var parts = (options.Input ?? "how many people live in " + collection.Towns[^1]).Split('|', StringSplitOptions.TrimEntries);
     string question = parts[0];
-    string[] passages = parts.Length > 1 ? parts[1..] : [.. bm25.Search(question, Candidates).Select(id => collection.Passages[id].Text)];
+    string[] passages = parts.Length > 1 ? parts[1..] : [.. FirstStage(question, Candidates).Select(id => collection.Passages[id].Text)];
     var scores = Score(loaded, loadedTokenizer, question, passages);
     Console.WriteLine($"Question: {question}\n\n  first stage (BM25 order)                          re-ranked (score)");
     var order = Enumerable.Range(0, passages.Length).OrderByDescending(i => scores[i]).ToArray();
@@ -81,7 +85,7 @@ var sample = testQueries[0];
 Console.WriteLine($"Example: \"{sample.Text}\" -> \"{collection.Passages[sample.Answer].Text}\"\n");
 
 // ---------------------------------------------------------------- first stage alone
-var firstStage = testQueries.Select(q => bm25.Search(q.Text, Candidates)).ToList();
+var firstStage = testQueries.Select(q => FirstStage(q.Text, Candidates)).ToList();
 var bm25Scores = Measure(testQueries, firstStage);
 Console.WriteLine($"BM25 alone:            {bm25Scores}");
 
@@ -200,7 +204,7 @@ Dataset Groups(List<Query> queries, Random r)
     for (int i = 0; i < queries.Count; i++)
     {
         var q = queries[i];
-        var negatives = bm25.Search(q.Text, Group + 4).Where(id => id != q.Answer).Take(Group - 1).ToList();
+        var negatives = FirstStage(q.Text, Group + 4).Where(id => id != q.Answer).Take(Group - 1).ToList();
         labels[i] = r.Next(Group);
         negatives.Insert(labels[i], q.Answer);
         for (int g = 0; g < Group; g++)

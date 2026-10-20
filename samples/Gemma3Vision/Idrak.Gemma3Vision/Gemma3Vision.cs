@@ -308,7 +308,7 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// Opens the checkpoint's vision tensors under the names of <see cref="Tensors"/>, as stored (no transposition): read
     /// them one at a time and dispose the store when done.
     /// </summary>
-    public ITensorStore OpenTensors() => new RenamedTensorStore(_open(), Tensors.ToDictionary(t => t.Key, t => t.Value.Stored, StringComparer.Ordinal));
+    public ITensorStore OpenTensors() => new Models.RenamedTensorStore(_open(), Tensors.ToDictionary(t => t.Key, t => t.Value.Stored, StringComparer.Ordinal));
 
     /// <summary>Gemma 3 lets its projector (the soft-embedding norm and the projection) and its SigLIP tower train.</summary>
     public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector, VisionTuningParts.Tower];
@@ -494,26 +494,6 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// <inheritdoc />
     public override string Describe() =>
         $"Gemma 3: SigLIP {Encoder.ImageSize} x {Encoder.ImageSize}, {Encoder.Layers} layers of {Encoder.Dim}, {ImageTokens.TokensPerImage} tokens per image, {PanAndScan}";
-
-    // A store showing some tensors of another under other names.
-    private sealed class RenamedTensorStore(ITensorStore inner, Dictionary<string, string> names) : ITensorStore
-    {
-        public IEnumerable<string> Names => names.Keys;
-
-        public bool Contains(string name) => names.ContainsKey(name);
-
-        public int[] ShapeOf(string name) => inner.ShapeOf(Stored(name));
-
-        public float[] Read(string name) => inner.Read(Stored(name));
-
-        public float[] ReadTransposed(string name) => inner.ReadTransposed(Stored(name));
-
-        public WeightFormat? FormatOf(string name) => inner.FormatOf(Stored(name));
-
-        public void Dispose() => inner.Dispose();
-
-        private string Stored(string name) => names.TryGetValue(name, out var stored) ? stored : throw new KeyNotFoundException($"No vision tensor '{name}'.");
-    }
 }
 
 /// <summary>One tensor of <see cref="Gemma3Vision.Tensors"/>.</summary>

@@ -34,11 +34,8 @@ internal static class Units
         _ => string.Create(CultureInfo.InvariantCulture, $"{value:0}"),
     };
 
-    /// <summary>A duration: "4s", "3m 05s" or "1h 02m".</summary>
-    public static string Duration(TimeSpan time) =>
-        time.TotalHours >= 1 ? string.Create(CultureInfo.InvariantCulture, $"{(int)time.TotalHours}h {time.Minutes:D2}m")
-        : time.TotalMinutes >= 1 ? string.Create(CultureInfo.InvariantCulture, $"{(int)time.TotalMinutes}m {time.Seconds:D2}s")
-        : string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0, (int)Math.Ceiling(time.TotalSeconds))}s");
+    /// <summary>A duration: "4s", "3m 05s" or "1h 02m" (as the library's progress reporters show it).</summary>
+    public static string Duration(TimeSpan time) => ProgressText.Duration(time);
 
     /// <summary>A time relative to now: "just now", "5 min ago", "3 days ago", or the date after 60 days.</summary>
     public static string Ago(DateTime utc)

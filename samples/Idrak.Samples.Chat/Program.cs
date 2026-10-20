@@ -232,24 +232,17 @@ int Profile(PretrainedModel model)
     Console.WriteLine($"generation with chat sampling (temperature {sampled.Temperature}, top-k {sampled.TopK}, top-p {sampled.TopP}): "
                       + $"{sampledStats.GeneratedTokens} tokens at {sampledStats.TokensPerSecond:F1} tok/s");
 
-    var recorder = new ProfileRecorder();
-    Telemetry.SynchronizeForTiming = true;
-    using (Telemetry.Subscribe(recorder))
+    // Time per operation (by shape) and per layer: the library's "timings" probe, in a run of its own after one timed run.
+    var timings = new ProfileOptions { Cold = false, WarmRuns = 1, Probes = ["timings"] };
+    PrintTimings(Profiler.Run($"prompt pass, {ids.Count} tokens", device, _ =>
     {
-        var watch = Stopwatch.StartNew();
-        using (var y = model.Network.Predict(input))
-        {
-            device.Synchronize();
-        }
-
-        recorder.Report($"prompt pass, {ids.Count} tokens, timed per operation: {watch.Elapsed.TotalMilliseconds:F1} ms wall");
-        recorder.Clear();
-        watch.Restart();
+        using var y = model.Network.Predict(input);
+    }, timings));
+    PrintTimings(Profiler.Run("generation (with the prompt)", device, run =>
+    {
         var (_, _, timed) = generator.Generate(prompt, greedy with { UseGraph = false });
-        recorder.Report($"generation of {timed.GeneratedTokens} tokens (with the prompt), timed per operation: {watch.Elapsed.TotalMilliseconds:F1} ms wall");
-    }
-
-    Telemetry.SynchronizeForTiming = false;
+        run.Record("generated tokens", timed.GeneratedTokens, "tokens");
+    }, timings));
 
     // GPU time per kernel (CUDA events around each launch; host launch costs excluded).
     if (device.Type == DeviceType.Cuda)
@@ -401,44 +394,21 @@ static string Shorten(string text)
     return flat.Length > 100 ? flat[..100] + "…" : flat;
 }
 
-// Sums the time of each operation (by name and shape) and each layer type.
-sealed class ProfileRecorder : ITelemetryHook
+// The slowest operations (by name and shape) and layers (by type and depth) of a profile's "timings" pass.
+static void PrintTimings(ProfileReport report)
 {
-    private readonly Dictionary<string, (int Count, double Ms)> _operations = [];
-    private readonly Dictionary<string, (int Count, double Ms)> _layers = [];
-
-    public TelemetryLevel Levels => TelemetryLevel.Operations | TelemetryLevel.Layers;
-
-    public void OnOperation(in OperationCompleted e) =>
-        Add(_operations, $"{e.Operation}{(e.Backward ? " (backward)" : "")} [{string.Join("x", e.Shape)}]", e.Duration);
-
-    public void OnLayerForward(in LayerForward e) => Add(_layers, $"{e.LayerType} (depth {e.Depth})", e.Duration);
-
-    private static void Add(Dictionary<string, (int Count, double Ms)> table, string key, TimeSpan duration)
+    var pass = report.Runs.Last(r => r.Probe == "timings");
+    string tokens = pass.Value("generated tokens") is { } generated ? $", {generated:F0} tokens" : "";
+    Console.WriteLine($"\n{report.Name}{tokens}: {report["wall"]?.Value:F1} ms wall; timed per operation (the device waited for at each):");
+    Console.WriteLine($"  operations: {pass.Value("operation time"):F1} ms in {pass.Value("operation calls"):F0} calls; the slowest:");
+    foreach (var row in pass.Tables.First(t => t.Name == "operation timings").Rows.Take(20))
     {
-        var (count, ms) = table.GetValueOrDefault(key);
-        table[key] = (count + 1, ms + duration.TotalMilliseconds);
+        Console.WriteLine($"    {row[3],9} ms {row[2],6}\u00D7  {row[0]} {row[1]}");
     }
 
-    public void Clear()
+    Console.WriteLine("  layers:");
+    foreach (var row in pass.Tables.First(t => t.Name == "layer timings").Rows.Take(12))
     {
-        _operations.Clear();
-        _layers.Clear();
-    }
-
-    public void Report(string title)
-    {
-        Console.WriteLine($"\n{title}");
-        Console.WriteLine($"  operations: {_operations.Values.Sum(v => v.Ms):F1} ms in {_operations.Values.Sum(v => v.Count)} calls; the slowest:");
-        foreach (var (name, (count, ms)) in _operations.OrderByDescending(p => p.Value.Ms).Take(20))
-        {
-            Console.WriteLine($"    {ms,9:F1} ms {count,6}×  {name}");
-        }
-
-        Console.WriteLine("  layers:");
-        foreach (var (name, (count, ms)) in _layers.OrderByDescending(p => p.Value.Ms).Take(12))
-        {
-            Console.WriteLine($"    {ms,9:F1} ms {count,6}×  {name}");
-        }
+        Console.WriteLine($"    {row[3],9} ms {row[2],6}\u00D7  {row[0]} (depth {row[1]})");
     }
 }
