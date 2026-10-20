@@ -1500,9 +1500,12 @@ public static class Idrak.Models.Abstractions.EncoderHeads
 public sealed class Idrak.Models.Abstractions.GgufArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufArchitecture()
   public System.Action<Idrak.Models.GgufFile, System.Text.Json.Nodes.JsonObject, System.Collections.Generic.List<string>>? Configure { get; init; }
+  public System.Func<string, float>? StoredOffset { get; init; }
+  public System.Func<string, string?>? TensorName { get; init; }
   public bool InterleavedQueryKeys { get; init; }
   public bool? NormalizeTopK { get; init; }
   public required string HuggingFace { get; init; }
+  public static string? CommonTensorName(string name)
   public string ExpertCountKey { get; init; }
   public string? WithExperts { get; init; }
 
@@ -1514,6 +1517,21 @@ public static class Idrak.Models.Abstractions.GgufArchitectures
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(string name, Idrak.Models.Abstractions.GgufArchitecture architecture)
+
+public sealed class Idrak.Models.Abstractions.GgufChatTemplate
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufChatTemplate()
+  public required System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, bool> Matches { get; init; }
+  public required string Template { get; init; }
+
+public static class Idrak.Models.Abstractions.GgufChatTemplates
+  public static (string, Idrak.Models.Abstractions.GgufChatTemplate)? For(Idrak.Models.GgufFile file, System.Collections.Generic.IReadOnlyList<string> tokens)
+  public static Idrak.Models.Abstractions.GgufChatTemplate Get(string name)
+  public static Idrak.Models.Abstractions.GgufChatTemplate? Default(string name)
+  public static Idrak.Models.Abstractions.GgufChatTemplate? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, Idrak.Models.Abstractions.GgufChatTemplate template)
 
 public delegate void Idrak.Models.Abstractions.GgufDequantizer(System.ReadOnlySpan<byte> raw, System.Span<float> values)
 

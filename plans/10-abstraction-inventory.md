@@ -12,7 +12,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 78 | 15 | 43 | 135 | 0 |
-| `Idrak` | 17 | 4 | 19 | 40 | 0 |
+| `Idrak` | 17 | 4 | 20 | 41 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 12 | 2 | 9 | 23 | 0 |
@@ -195,6 +195,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Layers.Abstractions.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | Audio.Plugins, Idrak | Idrak |
 | `Idrak.Models.Abstractions.EncoderHeads` | registry | public | — |  | masked-lm, pooler, sequence-classification | Text.Plugins | Idrak |
 | `Idrak.Models.Abstractions.GgufArchitectures` | registry | public | — |  | — | Idrak, Text.Plugins | Idrak |
+| `Idrak.Models.Abstractions.GgufChatTemplates` | registry | public | — |  | chatml | Idrak, Text.Plugins | Idrak |
 | `Idrak.Models.Abstractions.GgufPreTokenizers` | registry | public | — |  | default, gpt-2, gpt2 | Idrak, Text.Plugins | Idrak |
 | `Idrak.Models.Abstractions.GgufTokenizers` | registry | public | — |  | bert, gpt2, llama, t5 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufTypes` | registry | public | — |  | — | Idrak | Idrak |

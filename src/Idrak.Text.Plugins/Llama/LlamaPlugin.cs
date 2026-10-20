@@ -11,8 +11,10 @@ namespace Idrak.Text.Plugins.Llama;
 /// <see cref="PretrainedArchitectures"/>, llama.cpp's "llama" in <see cref="GgufArchitectures"/> (Mistral's GGUF files
 /// too; with experts they are Mixtral, <see cref="Mistral.MistralPlugin"/>'s), its GGUF pre-tokenizer names in
 /// <see cref="GgufPreTokenizers"/> (<see cref="PreTokenizers"/>, which also become the fallback for a name nobody
-/// registered when none is set), and Llama 3's RoPE scaling "llama3" in <see cref="RopeScalings"/>
-/// (<see cref="LlamaRopeScaling"/>), so Idrak's <c>PretrainedModel.Load</c> and <c>GgufModel</c> read them.
+/// registered when none is set), Llama 3's RoPE scaling "llama3" in <see cref="RopeScalings"/>
+/// (<see cref="LlamaRopeScaling"/>), and Llama 3's chat template for GGUF files without one, "llama3" in
+/// <see cref="GgufChatTemplates"/> (<see cref="LlamaArchitectures.ChatTemplateFallback"/>), so Idrak's <c>PretrainedModel.Load</c>
+/// and <c>GgufModel</c> read them.
 /// </summary>
 public static class LlamaPlugin
 {
@@ -31,6 +33,9 @@ public static class LlamaPlugin
     /// </summary>
     public static IReadOnlyList<string> PreTokenizers { get; } = ["llama3", "llama-bpe", "llama-v3", "smaug-bpe", "falcon3", "pixtral"];
 
+    /// <summary>The name of Llama 3's chat template in <see cref="GgufChatTemplates"/>: "llama3".</summary>
+    public const string ChatTemplateName = "llama3";
+
     /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("llama"; listed in <see cref="TextPlugins.All"/>).</summary>
     public static IIdrakPlugin Plugin { get; } = new LlamaRegistration();
 
@@ -43,7 +48,8 @@ public static class LlamaPlugin
     /// <summary>Unregisters the family, leaving the registries as <see cref="Register"/> found them.</summary>
     public static void Unregister() => IdrakPlugins.Unregister(Plugin);
 
-    // The architecture, the GGUF mapping, each pre-tokenizer name, the fallback when none is set, and the RoPE scaling.
+    // The architecture, the GGUF mapping, each pre-tokenizer name, the fallback when none is set, the RoPE scaling, and the
+    // GGUF fallback chat template.
     private sealed class LlamaRegistration() : IdrakPlugin("llama")
     {
         private bool _fallback;                                      // whether this plug-in set GgufPreTokenizers.Fallback
@@ -74,6 +80,7 @@ public static class LlamaPlugin
                 _fallback = false;
             });
             Part(() => RopeScalings.Register(LlamaRopeScaling.Name, LlamaRopeScaling.Scale), () => RopeScalings.Unregister(LlamaRopeScaling.Name));
+            Part(() => GgufChatTemplates.Register(ChatTemplateName, LlamaArchitectures.ChatTemplateFallback()), () => GgufChatTemplates.Unregister(ChatTemplateName));
         }
     }
 }

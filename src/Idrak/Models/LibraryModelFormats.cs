@@ -8,8 +8,8 @@ namespace Idrak.Models;
 /// <summary>
 /// The model-loading built-ins Idrak registers (from <c>LibraryRegistrations</c>, each when its registry is first used): the checkpoint formats (safetensors,
 /// PyTorch zip checkpoints read without running them, GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF
-/// pre-tokenizer patterns that are no family's (GPT-2's own rule), and the tokenizer models (BPE) and tokenizer file readers (tokenizer.json, sentencepiece). Idrak.Data adds the Hugging Face model source.
-/// The model families (pretrained and GGUF architectures, their pre-tokenizers) are plug-ins' (Idrak.Text.Plugins).
+/// pre-tokenizer patterns that are no family's (GPT-2's own rule), the GGUF fallback chat template that is no family's (ChatML), and the tokenizer models (BPE) and tokenizer file readers (tokenizer.json, sentencepiece). Idrak.Data adds the Hugging Face model source.
+/// The model families (pretrained and GGUF architectures, their pre-tokenizers and fallback chat templates) are plug-ins' (Idrak.Text.Plugins).
 /// </summary>
 internal static class LibraryModelFormats
 {
@@ -61,6 +61,11 @@ internal static class LibraryModelFormats
         GgufTokenizers.Register("t5", GgufTokenizerFormats.T5);
         GgufTokenizers.Register("bert", GgufTokenizerFormats.Bert);
     }
+
+    // ChatML: the turn layout Idrak's own created models use (ModelFiles.ChatMLWithParts) and many families share, so no
+    // family's; for a file whose vocabulary holds its start token, as GgufModel chose it before the registry.
+    public static void RegisterGgufChatTemplates() =>
+        GgufChatTemplates.Register(GgufModel.ChatMLName, new GgufChatTemplate { Matches = (_, tokens) => tokens.Contains("<|im_start|>"), Template = GgufModel.ChatML });
 
     public static void RegisterGgufPreTokenizers()
     {

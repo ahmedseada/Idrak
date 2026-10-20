@@ -22,7 +22,8 @@ internal static class GgufBuiltIns
 /// Models from GGUF files (the format of llama.cpp and of the local model store). <see cref="Prepare"/> writes a small folder with what the
 /// file's metadata describes, in the Hugging Face layout (config.json, tokenizer.json, tokenizer_config.json with the chat
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
-/// dequantized tensor by tensor, with llama.cpp's names and layouts turned back into the Hugging Face ones.
+/// dequantized tensor by tensor, with llama.cpp's names and layouts turned back into the Hugging Face ones (the family's
+/// <see cref="GgufArchitecture.TensorName"/>, less what the converter added to their values, <see cref="GgufArchitecture.StoredOffset"/>).
 /// Architectures: those registered with <see cref="GgufArchitectures.Register"/> (the library registers none;
 /// Idrak.Text.Plugins registers its families'). Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read
 /// one expert at a time.
@@ -228,10 +229,15 @@ public static class GgufModel
         string? template = file.Get<string?>("tokenizer.chat_template", null);
         if (template is null)
         {
-            template = tokens.Contains("<|im_start|>") ? ChatMl : tokens.Contains("<|start_header_id|>") ? Llama3Chat : null;
-            notes.Add(template is null
-                ? "the file has no chat template: chat is not available (plain text generation and fine-tuning on text work)."
-                : "the file has no chat template; a standard one for its tokens was used.");
+            // A registered fallback for the file's tokens (GgufChatTemplates: the library's ChatML, a family's from its
+            // plug-in); with none, no template, as a model folder without one.
+            var fallback = GgufChatTemplates.For(file, tokens);
+            template = fallback?.Template.Template;
+            notes.Add(fallback is { Name: var used }
+                ? $"the file has no chat template; the fallback '{used}' registered for its tokens (GgufChatTemplates) was used."
+                : $"the file has no chat template, and no fallback registered in GgufChatTemplates ({string.Join(", ", GgufChatTemplates.Names)}) is for its tokens: "
+                  + "chat is not available (plain text generation and fine-tuning on text work); register one with GgufChatTemplates.Register, "
+                  + "or reference Idrak.Text.Plugins (the families' templates) and call TextPlugins.RegisterAll().");
         }
 
         var tokenizerConfig = new JsonObject { ["bos_token"] = Token("tokenizer.ggml.bos_token_id"), ["eos_token"] = Token("tokenizer.ggml.eos_token_id") };
@@ -255,11 +261,11 @@ public static class GgufModel
         WriteJson(Path.Combine(folder, "generation_config.json"), new JsonObject { ["eos_token_id"] = stops });
     }
 
-    private const string ChatMl = "{%- for message in messages %}{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n' }}{%- endfor %}"
-                                  + "{%- if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{%- endif %}";
+    // The library's fallback chat template (GgufChatTemplates, "chatml"): ChatML turns.
+    internal const string ChatMLName = "chatml";
 
-    private const string Llama3Chat = "{{- bos_token }}{%- for message in messages %}{{ '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n\\n' + message['content'] | trim + '<|eot_id|>' }}{%- endfor %}"
-                                      + "{%- if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}{%- endif %}";
+    internal const string ChatML = "{%- for message in messages %}{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n' }}{%- endfor %}"
+                                   + "{%- if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{%- endif %}";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -279,8 +285,8 @@ public static class GgufModel
     private sealed class GgufTensors : ITensorStore
     {
         // A Hugging Face tensor: the GGUF tensor holding it, which expert of a tensor of all the experts (-1 for the whole
-        // tensor), and its shape.
-        private sealed record Source(string Gguf, int Expert, int[] Shape);
+        // tensor), its shape, and what llama.cpp added to its values (subtracted on reading).
+        private sealed record Source(string Gguf, int Expert, int[] Shape, float Offset = 0);
 
         private readonly GgufFile _file;
         private readonly Dictionary<string, Source> _names = new(StringComparer.Ordinal);    // Hugging Face name → GGUF tensor
@@ -299,15 +305,27 @@ public static class GgufModel
             // Experts' tensors are named through the Hugging Face family's own names (Mixtral's and Qwen's differ).
             var family = architecture is null ? null
                 : PretrainedArchitectures.Names.Contains(HuggingFaceOf(file, _arch, architecture)) ? PretrainedArchitectures.Get(HuggingFaceOf(file, _arch, architecture)) : null;
+            var tensorName = architecture?.TensorName ?? GgufArchitecture.CommonTensorName;
             foreach (var (name, info) in file.Tensors)
             {
-                if (HfName(name) is { } hf)
+                if (tensorName(name) is { } hf)
                 {
                     _names[hf] = new Source(name, -1, info.Shape);
                 }
                 else if (family is not null)
                 {
                     AddExperts(name, info, family);
+                }
+            }
+
+            if (architecture?.StoredOffset is { } offset)
+            {
+                foreach (var (hf, source) in _names.ToList())
+                {
+                    if (offset(hf) is var added && added != 0)
+                    {
+                        _names[hf] = source with { Offset = added };
+                    }
                 }
             }
         }
@@ -371,6 +389,7 @@ public static class GgufModel
                 int rows = source.Shape[0], columns = source.Shape[1];
                 var slice = GC.AllocateUninitializedArray<float>(checked(rows * columns));
                 _file.ReadRows(gguf, source.Expert * rows, slice, new byte[checked((int)(rows * _file.RowBytes(gguf)))]);
+                Subtract(slice, source.Offset);
                 return slice;
             }
 
@@ -382,7 +401,32 @@ public static class GgufModel
                 Unpermute(values, heads, shape[0], shape.Length > 1 ? shape[1] : 1);
             }
 
+            Subtract(values, source.Offset);
             return values;
+        }
+
+        // What the converter added to every value taken back off (nothing to do for 0): a vector loop, then a scalar tail.
+        private static void Subtract(Span<float> values, float offset)
+        {
+            if (offset == 0)
+            {
+                return;
+            }
+
+            int i = 0;
+            if (System.Numerics.Vector.IsHardwareAccelerated && values.Length >= System.Numerics.Vector<float>.Count)
+            {
+                var by = new System.Numerics.Vector<float>(offset);
+                for (; i <= values.Length - System.Numerics.Vector<float>.Count; i += System.Numerics.Vector<float>.Count)
+                {
+                    (new System.Numerics.Vector<float>(values[i..]) - by).CopyTo(values[i..]);
+                }
+            }
+
+            for (; i < values.Length; i++)
+            {
+                values[i] -= offset;
+            }
         }
 
         public float[] ReadTransposed(string name)
@@ -436,6 +480,7 @@ public static class GgufModel
                 System.Buffers.ArrayPool<byte>.Shared.Return(raw);
             }
 
+            Subtract(values, source.Offset);
             return values;
         }
 
@@ -464,39 +509,6 @@ public static class GgufModel
                     }
                 }
             }
-        }
-
-        private static string? HfName(string name)
-        {
-            switch (name)
-            {
-                case "token_embd.weight": return "model.embed_tokens.weight";
-                case "output_norm.weight": return "model.norm.weight";
-                case "output.weight": return "lm_head.weight";
-            }
-
-            var parts = name.Split('.');
-            if (parts is not ["blk", var layer, var part, var kind])
-            {
-                return null;
-            }
-
-            string? module = part switch
-            {
-                "attn_norm" => "input_layernorm",
-                "ffn_norm" => "post_attention_layernorm",
-                "attn_q" => "self_attn.q_proj",
-                "attn_k" => "self_attn.k_proj",
-                "attn_v" => "self_attn.v_proj",
-                "attn_output" => "self_attn.o_proj",
-                "attn_q_norm" => "self_attn.q_norm",
-                "attn_k_norm" => "self_attn.k_norm",
-                "ffn_gate" => "mlp.gate_proj",
-                "ffn_up" => "mlp.up_proj",
-                "ffn_down" => "mlp.down_proj",
-                _ => null,
-            };
-            return module is null ? null : $"model.layers.{layer}.{module}.{kind}";
         }
     }
 }
