@@ -7,8 +7,9 @@ namespace Idrak.Models;
 
 /// <summary>
 /// The model-loading built-ins Idrak registers (from <c>LibraryRegistrations</c>, each when its registry is first used): the checkpoint formats (safetensors,
-/// PyTorch zip checkpoints read without running them, GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF families and
-/// pre-tokenizer patterns, the pretrained model families, and the tokenizer models (BPE) and tokenizer file readers (tokenizer.json, sentencepiece). Idrak.Data adds the Hugging Face model source.
+/// PyTorch zip checkpoints read without running them, GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF
+/// pre-tokenizer patterns that are no family's (GPT-2's own rule), and the tokenizer models (BPE) and tokenizer file readers (tokenizer.json, sentencepiece). Idrak.Data adds the Hugging Face model source.
+/// The model families (pretrained and GGUF architectures, their pre-tokenizers) are plug-ins' (Idrak.Text.Plugins).
 /// </summary>
 internal static class LibraryModelFormats
 {
@@ -35,14 +36,6 @@ internal static class LibraryModelFormats
         foreach (var (id, type) in GgufFile.BuiltInTypes())
         {
             GgufTypes.Register(id, type);
-        }
-    }
-
-    public static void RegisterGgufArchitectures()
-    {
-        foreach (var (name, architecture) in GgufBuiltIns.Architectures())
-        {
-            GgufArchitectures.Register(name, architecture);
         }
     }
 
@@ -74,14 +67,6 @@ internal static class LibraryModelFormats
         foreach (var (name, pattern) in GgufBuiltIns.PreTokenizers())
         {
             GgufPreTokenizers.Register(name, pattern);
-        }
-    }
-
-    public static void RegisterPretrainedArchitectures()
-    {
-        foreach (var (name, architecture) in PretrainedFamilies.BuiltIns())
-        {
-            PretrainedArchitectures.Register(name, architecture);
         }
     }
 }

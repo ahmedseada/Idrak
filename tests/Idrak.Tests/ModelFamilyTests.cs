@@ -9,6 +9,7 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text.Plugins.Gemma;
+using Idrak.Text.Plugins.Llama;
 
 // Model families beyond the plain decoder: RoPE scaling methods, sliding-window attention, soft-capping, families read
 // from config.json (Mistral, Qwen2, Gemma 2 and 3) and families that build their own network.
@@ -51,7 +52,7 @@ internal static partial class Tests
             }
         }
 
-        var llamaScaled = new RopeSettings((float)theta, Scaling: RopeScaling.Llama3(8)).Scaled(dim);
+        var llamaScaled = new RopeSettings((float)theta, Scaling: LlamaRopeScaling.Create(8)).Scaled(dim);
         Check(llamaScaled.Frequencies.SequenceEqual(llama3) && llamaScaled.AttentionFactor == 1 && llamaScaled.FrequenciesAt is null, "llama3 unchanged");
 
         // YaRN, from the formulas of transformers' _compute_yarn_parameters written out independently.
@@ -165,7 +166,7 @@ internal static partial class Tests
         Check(DecoderSpec.FromJson(withYarn.ToJson()) == withYarn, "a YaRN spec round-trips through JSON");
         var old = SmallSpec.ToJson();
         old["rope"]!["scaling"] = new JsonObject { ["type"] = "llama3", ["factor"] = 8.0, ["lowFrequencyFactor"] = 1.0, ["highFrequencyFactor"] = 4.0, ["originalMaxPositions"] = 8 };
-        Check(DecoderSpec.FromJson(old).Rope!.Scaling == RopeScaling.Llama3(8, 1, 4, 8), "the earlier JSON form of llama3 reads");
+        Check(DecoderSpec.FromJson(old).Rope!.Scaling == LlamaRopeScaling.Create(8, 1, 4, 8), "the earlier JSON form of llama3 reads");
     }
 
     private static void RopeScalingDecoders(Device device)

@@ -211,12 +211,12 @@ public sealed class IdrakAudioLanguageFamily : IAudioFamily
     // The text side: Llama's spec from text_config, its tensors under language_model., a spec written as text_config.
     internal static PretrainedArchitecture TextDecoder()
     {
-        var llama = PretrainedFamilies.LlamaStyle((_, spec, _) => spec, "llama");
+        var llama = PretrainedFamilies.CommonArchitecture((_, spec, _) => spec, "llama");
         return new PretrainedArchitecture
         {
             Spec = (config, notes) => llama.Spec(config["text_config"] as JsonObject
                 ?? throw new InvalidDataException($"An {Architecture} config.json has a \"text_config\"."), notes),
-            TensorName = name => PretrainedFamilies.LlamaTensorName(name) is { } stored ? "language_model." + stored : null,
+            TensorName = name => PretrainedFamilies.CommonTensorName(name) is { } stored ? "language_model." + stored : null,
             Config = spec => new JsonObject { ["text_config"] = llama.Config!(spec), ["tie_word_embeddings"] = spec.TieEmbeddings },
         };
     }

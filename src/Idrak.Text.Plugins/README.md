@@ -105,4 +105,43 @@ GemmaPlugin.Register();
 using var model = PretrainedModel.Load(folder);
 ```
 
+### Llama (`Idrak.Text.Plugins.Llama`)
+
+`LlamaPlugin.Register()` registers `LlamaForCausalLM` in `PretrainedArchitectures` (`LlamaArchitectures.Llama()`: the
+library's common configuration keys and checkpoint names, `PretrainedFamilies.CommonArchitecture`), llama.cpp's `llama`
+in `GgufArchitectures` (each head's query and key rows put back in order, experts read as `MixtralForCausalLM`, and Llama
+3's RoPE scaling recovered from `rope_freqs.weight`), the GGUF pre-tokenizer names `llama3`, `llama-bpe`, `llama-v3`,
+`smaug-bpe`, `falcon3` and `pixtral` in `GgufPreTokenizers` (and `llama3` as `GgufPreTokenizers.Fallback`, the rule
+of a name nobody registered, when none is set), and the RoPE scaling `llama3` in `RopeScalings` (`LlamaRopeScaling`).
+
+### Qwen (`Idrak.Text.Plugins.Qwen`)
+
+`QwenPlugin.Register()` registers `Qwen2ForCausalLM` (query, key and value biases), `Qwen3ForCausalLM` (q/k norms),
+`Qwen2MoeForCausalLM` and `Qwen3MoeForCausalLM` (experts, a gated shared expert; `QwenArchitectures.MoeTensorName`) in
+`PretrainedArchitectures`, llama.cpp's `qwen2`, `qwen3`, `qwen2moe` and `qwen3moe` in `GgufArchitectures`, the GGUF
+pre-tokenizer names `qwen2`, `qwen35`, `megrez` and `hunyuan`, and the XML tool-call format `qwen3-coder` in
+`ToolCallFormats`. The vision-language Qwen models are `Idrak.Vision.Plugins`'.
+
+### Mistral (`Idrak.Text.Plugins.Mistral`)
+
+`MistralPlugin.Register()` registers `MistralForCausalLM` and `MixtralForCausalLM` (experts under `block_sparse_moe`,
+`MistralArchitectures.MixtralTensorName`) in `PretrainedArchitectures`, the GGUF pre-tokenizer `tekken`, and the
+tool-call format `mistral` (`[TOOL_CALLS]`). Mistral's GGUF files are llama.cpp's `llama`, so it registers the Llama
+plug-in when that is missing.
+
+### DeepSeek and harmony (`Idrak.Text.Plugins.DeepSeek`, `Idrak.Text.Plugins.Harmony`)
+
+`DeepSeekPlugin.Register()` registers DeepSeek's special-token tool-call format `deepseek` and the GGUF pre-tokenizer
+`deepseek-r1-qwen` (Qwen2's rule); `HarmonyPlugin.Register()` registers the harmony tool-call format `harmony`
+(reasoning in the analysis channel, calls as messages to `functions.name`). The tool-call parsers build on the library's
+`MarkedToolCallParser` and `ToolCallText`.
+
+```csharp
+using Idrak.Models;
+using Idrak.Text.Plugins.Qwen;
+
+QwenPlugin.Register();
+using var model = PretrainedModel.Load(folder);              // or GgufModel.Prepare("model.gguf") first
+```
+
 License: Apache 2.0.

@@ -34,7 +34,8 @@ internal static partial class Tests
         Check(TokenSamplers.DefaultVersion(TokenSamplers.DefaultName) == 2 && TokenSamplers.Default(TokenSamplers.DefaultName, 1) is not null
               && TokenSamplers.Default(TokenSamplers.DefaultName, 3) is null
               && TokenSamplers.Default(TokenSamplers.DefaultName, 2) == TokenSamplers.Default(TokenSamplers.DefaultName), "the sampler default is version 2; version 1 is kept");
-        Check(RopeScalings.Default(LinearType) is not null && Overrides.Report().All(o => o.Registry != "RopeScalings" || o.DefaultVersion >= 1), "other defaults are version 1");
+        Check(RopeScalings.Default(LinearType) is not null && Overrides.Report().All(o => o.Registry != "RopeScalings" || !o.ReplacesDefault || o.DefaultVersion >= 1),
+            "other defaults are version 1 (a plug-in's added scaling, such as Idrak.Text.Plugins' llama3, has none)");
 
         // A table whose default (from Idrak.Text, which this assembly references) moved to version 2 in a later release.
         Func<SamplerRequest, ITokenSampler> first = TokenSamplers.Default(TokenSamplers.DefaultName, 1)!, second = TokenSampler.Create,
@@ -173,8 +174,8 @@ internal static partial class Tests
         Check(Idrak.Abstraction.Generation.ToolCallFormats.Origin("json") == library && Idrak.Abstraction.Generation.ChatTemplates.Origin("jinja") == library && PackedWeight.Origin("int4") == library
               && KeyValueLayouts.Origin("int8") == library && ModelSources.Origin("huggingface") == library && ModelSources.Origin("folder") == library
               && DeviceProviders.Origin("vulkan") == library && DeviceProviders.Origin("minimal") == "Idrak.Tests", "Abstraction's registries");
-        Check(CheckpointFormats.Origin("gguf") == library && GgufTypes.Origin(8) == library && GgufArchitectures.Origin("llama") == library
-              && GgufPreTokenizers.Origin("qwen2") == library && PretrainedArchitectures.Origin("LlamaForCausalLM") == library
+        Check(CheckpointFormats.Origin("gguf") == library && GgufTypes.Origin(8) == library
+              && GgufPreTokenizers.Origin("gpt2") == library
               && GraphOps.Origin("relu") == library && NetworkOps.Origin("linear") == library && LayerTypes.Origin("linear") == library
               && ImageCodecs.Origin("png") == library && SampleSources.Origin("csv") == library && OnnxImportOps.Origin("Relu") == library
               && OnnxExportOps.GraphOpOrigin("relu") == library, $"core's registries; overridden now: {string.Join(", ", Overrides.Report().Select(o => $"{o.Registry}/{o.Name}"))}");
@@ -386,7 +387,8 @@ internal static partial class Tests
             Check(Choose(TokenSamplers.Create, device) == 1 && BpeTokenizer.FromJson(LowercaseTokenizer()).Encode("AB").SequenceEqual([4])
                   && Comparisons.Difference([.. new RopeSettings(10000f).Frequencies(8).Select(f => f / 2)], LinearRope().Frequencies(8), 1e-9) is null,
                 "and answers as before, under the Throw policy it kept");
-            Check(!Overrides.Report().Any(o => o.Registry is "RopeScalings" or "TokenSamplers" or "TokenizerComponents.Normalizers"), "the report is empty for them");
+            Check(!Overrides.Report().Any(o => o.Registry is "RopeScalings" or "TokenSamplers" or "TokenizerComponents.Normalizers" && o.Origin == "Idrak.Tests"),
+                "the report holds none of the test's for them (a plug-in's added scaling, such as Idrak.Text.Plugins' llama3, stays)");
         }
         finally
         {

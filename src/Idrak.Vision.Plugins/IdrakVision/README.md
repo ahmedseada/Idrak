@@ -7,7 +7,7 @@ setting, so anyone can make the model they need; nothing in it prefers a size or
 - **Tower**: a patch convolution with a bias, learned positions, pre-LayerNorm encoder layers (biased attention, every
   patch seeing every other; an MLP with the configured activation), a final LayerNorm.
 - **Projector**: the patch grid average-pooled `pool_size x pool_size`, then `depth` linear layers to the text width.
-- **Decoder**: a Llama decoder read from `text_config` (the library's Llama-style family), tensors under `language_model.`.
+- **Decoder**: a Llama decoder read from `text_config` (the library's common decoder keys, `PretrainedFamilies.CommonArchitecture`), tensors under `language_model.`.
 - **Prompt**: the chat template writes `<image>`; it becomes `<start_of_image>`, one `<image>` per image token and
   `<end_of_image>`. The image tokens attend to each other in both directions (`"image_attention": "image-blocks"`, the
   default) or causally (`"causal"`).

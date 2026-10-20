@@ -8,16 +8,29 @@ namespace Idrak.Models.Abstractions;
 /// <summary>
 /// How the tokenizer of a GGUF file splits text before byte-level BPE, by the file's <c>tokenizer.ggml.pre</c> name: a
 /// regular expression (the Hugging Face "Split" pre-tokenizer, isolated matches), or null for GPT-2's own rule.
-/// Idrak registers the patterns of llama.cpp's llama-vocab.cpp for the llama3, qwen2, tekken and gpt2
-/// families; add others with <see cref="Register"/>. A name nobody registered uses Llama 3's rule, and the prepared model
-/// notes it.
+/// The library registers GPT-2's own rule (gpt2, gpt-2, default); the families' patterns of llama.cpp's llama-vocab.cpp
+/// are plug-ins' (Idrak.Text.Plugins); add others with <see cref="Register"/>. A name nobody registered splits with the
+/// pre-tokenizer named by <see cref="Fallback"/>, and the prepared model notes it; with none set, the file is refused.
 /// </summary>
 public static class GgufPreTokenizers
 {
     private static readonly SlotTable<string, string?> Registry = new(nameof(GgufPreTokenizers), comparer: StringComparer.Ordinal,
         unguarded: "a pattern is data, not a call");
 
+    private static volatile string? _fallback;
+
     static GgufPreTokenizers() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterGgufPreTokenizers);   // the built-in pre-tokenizers, on first use
+
+    /// <summary>
+    /// The registered pre-tokenizer a file whose <c>tokenizer.ggml.pre</c> nobody registered splits with (the prepared
+    /// model notes it), or null to refuse such a file naming this registry. The library sets none; Idrak.Text.Plugins'
+    /// Llama family sets its "llama3" when none is set, and takes it back when it is unregistered.
+    /// </summary>
+    public static string? Fallback
+    {
+        get => _fallback;
+        set => _fallback = value is null || value.Length > 0 ? value : throw new ArgumentException("A fallback pre-tokenizer has a name; null sets none.", nameof(value));
+    }
 
     /// <summary>
     /// Registers the split pattern of the pre-tokenizer named <paramref name="name"/> in GGUF files; null for GPT-2's own
