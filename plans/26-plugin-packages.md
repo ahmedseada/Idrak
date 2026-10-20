@@ -16,7 +16,7 @@ built. No phase starts until the owner names it.
 | P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Not started |
 | P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
 | P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Done 2026-10-20 (core); CLI `run`/server for seq2seq and a beam setting go with P10 |
-| P9 | BERT (`Idrak.Text.Plugins.Bert`) | B | Not started |
+| P9 | BERT (`Idrak.Text.Plugins.Bert`) | B | Done 2026-10-20; CPU pass (real models: the owner) |
 | P10 | T5 (`Idrak.Text.Plugins.T5`) | B | Not started |
 
 ## Goal
@@ -485,6 +485,37 @@ decoder results are unchanged (`pretrained:`, `decoder:`, `sampler:`).
 **Done when:** hidden states, pooled vectors and logits equal transformers' within float tolerance, batched with padding
 equal to one by one.
 
+**P9 as built (2026-10-20).**
+- **Library (generic):** `TransformerEncoderLayer` takes `NormPlacement` (`Before`, the default, unchanged; `After`), by
+  an init property or a `FromLayers(…, activation, placement)` overload, with fused inference, gradient and cached paths,
+  carried by the layer description, the network builder (one optional parameter), the `transformer` network step and
+  ONNX export. Encoder heads gain `pooler` (dense + tanh over the first token) and `EncoderHeadRequest.TiedTo` (a
+  masked-LM decoder reading the word embeddings in place). The safetensors reader skips integer and boolean tensors
+  (listed in `LeftOut`) instead of refusing the file (real checkpoints carry an int64 `position_ids`).
+  `TextEncoder.SpecialTokens` (off by default) adds `[CLS] … [SEP]`.
+- **The plug-in** (`src/Idrak.Text.Plugins/Bert/`, `BertPlugin` in `TextPlugins.All`): `BertModel`, `BertForMaskedLM`,
+  `BertForSequenceClassification`; names with or without `bert.`, LayerNorm `weight`/`bias` or `gamma`/`beta`; tied
+  decoder unless `tie_word_embeddings` is false; refuses, naming the setting, other activations than gelu, gelu_new,
+  gelu_pytorch_tanh and relu, relative position embeddings and decoder checkpoints.
+- **Fixtures:** `tools/bert/make_tiny_bert.py` (torch 2.14.1, transformers 5.18.0, tokenizers 0.23.3, safetensors 0.8.0;
+  reruns write the same bytes) → `tests/Idrak.Tests/data/plugins/bert/` (a 337 KB model on the committed WordPiece
+  vocabulary, 2 layers, width 32; 110 KB of references: three texts and a padded batch of pairs with token types).
+  `--real` records the real models' references (the owner).
+- **Tolerance 1e-4** (absolute to 1, relative above): float32 on both sides, measured worst 6.7e-6 (masked-LM logits);
+  each real mistake it guards against (LayerNorm epsilon, tanh GELU, pre-norm, a transposed weight) moves outputs by
+  1e-3 or more. Real models 2e-3.
+- **Tests:** `plugins: bert` (5), `engine: post-norm block` (1), `bert real:` (the owner's).
+- **To confirm by the owner:** `InventoryTests` no longer counts the three plug-in packages as users when it decides
+  where a contract lives (they count as apps, like the CLI); otherwise the first plug-in demanded the library's
+  `EncoderHeads` move into a plug-in package. This reads decision 10 for plug-in packages.
+- **Measured, not taken** (from the code): `TextEncoder` pads each batch to `MaxLength`, not its longest text;
+  `PretrainedEncoderModel.Hidden`/`Pooled`/`Logits` leave gradients on when the caller forgets `NoGrad`; exact-erf GELU
+  is not fused into the first projection; the masked-LM head scores every position; the pooler weights exist twice
+  (pooler and classification heads).
+- **Run (CPU, the agent):** 73 and 59 passed. **Merged on P2 (2026-10-20, 207bf1d):** one build; `plugins:`, `engine:`,
+  `retrieval:`, `tokenizers: wordpiece`, `onnx`, `pretrained:`, `layers:`, `layer norm:`, `pytorch checkpoint`,
+  `safetensors`, `generic components`, `decoder:`, `builder:`, the guards: 150 passed, 0 failed.
+
 ## Phase P10: T5 (`Idrak.Text.Plugins.T5`)
 
 - `T5ForConditionalGeneration` on P8's encoder-decoder contract: RMS norms, the bucketed relative position bias of the
@@ -554,3 +585,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P1 merged | CPU (cloud, 4 threads) | the P1 filters (merge on c023893) | 133 passed, 0 failed |
 | 2026-10-20 | P8 merged (with P1's leftover message) | CPU (cloud, 4 threads) | the P1 and P8 filters together | 287 passed, 0 failed |
 | 2026-10-20 | P2 merged (on P8) | CPU (cloud, 4 threads) | the P2 filters with engine, decoder, sampler; ArabicOcr and LegalOcr tests | 249 passed, 0 failed; 14 and 12 passed |
+| 2026-10-20 | P9 merged (on P2) | CPU (cloud, 4 threads) | the P9 filters with the guards | 150 passed, 0 failed |

@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
+using Idrak.Layers;
 
 namespace Idrak.Models.Abstractions;
 
@@ -157,10 +158,18 @@ public static class PretrainedSeq2Seq
 /// optional bias then starts at zero).
 /// </param>
 public sealed record EncoderHeadRequest(int Width, int Outputs, JsonObject Settings, Device? Device = null, int Seed = 0,
-    Func<string, IReadOnlyList<int>, float[]?>? Weights = null);
+    Func<string, IReadOnlyList<int>, float[]?>? Weights = null)
+{
+    /// <summary>
+    /// The token embedding a head's output layer reads in place, transposed (a tied output: one copy of the table, which
+    /// gradients reach as the embedding's), instead of an "out.weight" of its own; null (the default) for none. The
+    /// "masked-lm" kind takes it ([outputs, width]); its "out.bias" is still read.
+    /// </summary>
+    public Embedding? TiedTo { get; init; }
+}
 
 /// <summary>
-/// The head kinds an encoder's checkpoint may hold, by name. The library registers two generic ones:
+/// The head kinds an encoder's checkpoint may hold, by name. The library registers three generic ones:
 /// <list type="bullet">
 /// <item>"sequence-classification": the pooled vector [batch, width] → logits [batch, outputs]: an optional dense layer
 /// ("dense": true; "dense.weight" [width, width], "dense.bias") with "activation" ("tanh", the default, "gelu", "relu"),
@@ -168,7 +177,10 @@ public sealed record EncoderHeadRequest(int Width, int Outputs, JsonObject Setti
 /// <item>"masked-lm": the states [batch, time, width] → logits [batch, time, outputs]: an optional transform
 /// ("transform": true; "dense.weight", "dense.bias", "activation" ("gelu", the default, "gelu-tanh", "relu", "tanh"),
 /// then a layer norm "norm.weight", "norm.bias" with "norm_epsilon", default 1e-5), then "out.weight"
-/// [width, outputs] (a tied head reads the token embedding transposed) and "out.bias".</item>
+/// [width, outputs] and "out.bias"; a tied head reads the token embedding in place instead
+/// (<see cref="EncoderHeadRequest.TiedTo"/>).</item>
+/// <item>"pooler": the pooled vector [batch, width] → [batch, width]: "dense.weight" [width, width] and "dense.bias",
+/// then "activation" ("tanh", the default, "gelu", "gelu-tanh", "relu"); its outputs are the width.</item>
 /// </list>
 /// A family maps its checkpoint's names onto these in its <see cref="EncoderHeadRequest.Weights"/>, or registers a kind of
 /// its own. A head is trained with its encoder, so the registry has no fallback.
@@ -181,6 +193,9 @@ public static class EncoderHeads
     /// <summary>The masked-language-model head: "masked-lm".</summary>
     public const string MaskedLanguageModel = "masked-lm";
 
+    /// <summary>The pooled vector's projection (a dense layer and an activation, the vector a classifier reads): "pooler".</summary>
+    public const string Pooler = "pooler";
+
     private static readonly SlotTable<string, Func<EncoderHeadRequest, EncoderHead>> Registry = BuiltIn();
 
     private static SlotTable<string, Func<EncoderHeadRequest, EncoderHead>> BuiltIn()
@@ -189,6 +204,7 @@ public static class EncoderHeads
             unguarded: "a head is trained with its encoder and read from its checkpoint, so an app's kind and the library's cannot be mixed");
         table.RegisterDefault(SequenceClassification, request => EncoderHead.Classification(request));
         table.RegisterDefault(MaskedLanguageModel, request => EncoderHead.MaskedLanguageModel(request));
+        table.RegisterDefault(Pooler, request => EncoderHead.Pooler(request));
         return table;
     }
 
