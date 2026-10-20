@@ -45,9 +45,10 @@ internal static class LibraryLayerTypes
             (d, device) => new Embedding(I(d, "vocabulary"), I(d, "dim"), device));
         LayerTypes.Register<PositionalEncoding>("positional", p => new() { ["maxLength"] = p.MaxLength, ["dim"] = p.Dim },
             (d, device) => new PositionalEncoding(I(d, "maxLength"), I(d, "dim"), device));
-        LayerTypes.Register<MultiHeadAttention>("attention", a => new() { ["dim"] = a.Dim, ["heads"] = a.Heads, ["causal"] = a.Causal },
+        LayerTypes.Register<MultiHeadAttention>("attention", a => Plain(a) ? new() { ["dim"] = a.Dim, ["heads"] = a.Heads, ["causal"] = a.Causal }
+                : throw new NotSupportedException("an attention layer with a score scale, a position bias or an inner width of its own cannot be described"),
             (d, device) => new MultiHeadAttention(I(d, "dim"), I(d, "heads"), B(d, "causal"), 0f, device));
-        LayerTypes.Register<TransformerEncoderLayer>("transformer", t => t.Children().ToList() is [_, MultiHeadAttention a, _, Linear ff, ..]
+        LayerTypes.Register<TransformerEncoderLayer>("transformer", t => t.Children().ToList() is [_, MultiHeadAttention a, _, Linear ff, ..] && Plain(a)
             ? new() { ["dim"] = t.Dim, ["heads"] = a.Heads, ["ffDim"] = ff.OutFeatures, ["causal"] = a.Causal }
             : throw new NotSupportedException("a transformer layer without its standard sublayers cannot be described"),
             (d, device) => new TransformerEncoderLayer(I(d, "dim"), I(d, "heads"), I(d, "ffDim"), 0f, B(d, "causal"), device));
@@ -116,6 +117,11 @@ internal static class LibraryLayerTypes
     }
 
     private static int I(JsonObject d, string key) => (int)d[key]!;
+
+    // An attention layer a description ("dim", "heads", "causal") rebuilds: the default score scale, no position bias, the
+    // heads as wide as the model.
+    private static bool Plain(MultiHeadAttention a) =>
+        a.PositionBias is null && a.Inner == a.Dim && BitConverter.SingleToInt32Bits(a.ScoreScale) == BitConverter.SingleToInt32Bits(1f / MathF.Sqrt(a.HeadDim));
 
     // A (height, width) pair: one number when both are equal (as square layers were always described), else [height, width].
     private static JsonNode Pair(int height, int width) => height == width ? JsonValue.Create(height) : new JsonArray(height, width);

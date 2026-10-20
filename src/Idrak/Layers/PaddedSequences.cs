@@ -9,9 +9,17 @@ namespace Idrak.Layers;
 /// (or head count) and kept until the batch is disposed; the tensors belong to no scope, so a mask first asked for inside
 /// a checkpointed block outlives it, and <see cref="Dispose"/> releases them once the pass's backward step has read them.
 /// Where a layer's signature takes a null batch, it stands for one sequence with nothing padded, and no mask is applied.
+/// <para>
+/// Layers called through <see cref="Module.Forward"/> alone (the blocks of an encoder in a <see cref="Sequential"/>) find
+/// the batch through a scope: <see cref="Use"/> makes it <see cref="Current"/> on this thread, and
+/// <see cref="MultiHeadAttention"/> then lets no position attend to padding (its keys stop at each sequence's length).
+/// </para>
 /// </summary>
 public sealed class PaddedSequences : IDisposable
 {
+    [ThreadStatic]
+    private static Scope? t_current;
+
     private readonly int[] _lengths;
     private readonly Device _device;
     private readonly Dictionary<int, Tensor> _byChannels = [];
@@ -118,6 +126,25 @@ public sealed class PaddedSequences : IDisposable
         return keys;
     }
 
+    /// <summary>The batch the current scope (<see cref="Use"/>) holds on this thread, or null outside one.</summary>
+    public static PaddedSequences? Current => t_current?.Batch;
+
+    /// <summary>
+    /// Makes <paramref name="batch"/> <see cref="Current"/> on this thread until the returned scope is disposed (scopes
+    /// nest; the batch is not owned). Layers called with Forward alone read it for inputs of its shape (<see cref="Matches"/>).
+    /// </summary>
+    public static IDisposable Use(PaddedSequences batch)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        return new Scope(batch);
+    }
+
+    /// <summary>Whether this batch describes an input of <paramref name="batch"/> sequences of <paramref name="length"/> positions.</summary>
+    public bool Matches(int batch, int length) => Batch == batch && Length == length;
+
+    /// <summary>Whether some sequence is shorter than the padded length (else nothing is padded and no mask changes anything).</summary>
+    public bool Padded => Positions < Batch * Length;
+
     /// <summary>Releases the masks: after the pass's backward step, which reads them.</summary>
     public void Dispose()
     {
@@ -135,5 +162,27 @@ public sealed class PaddedSequences : IDisposable
         _byChannels.Clear();
         _keys.Clear();
         _rows = null;
+    }
+
+    private sealed class Scope : IDisposable
+    {
+        private readonly Scope? _previous;
+
+        public Scope(PaddedSequences batch)
+        {
+            Batch = batch;
+            _previous = t_current;
+            t_current = this;
+        }
+
+        public PaddedSequences Batch { get; }
+
+        public void Dispose()
+        {
+            if (ReferenceEquals(t_current, this))
+            {
+                t_current = _previous;
+            }
+        }
     }
 }
