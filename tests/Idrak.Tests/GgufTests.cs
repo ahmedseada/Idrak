@@ -1,14 +1,20 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
+using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
+using Idrak.Text.Plugins;
+using Idrak.Text.Plugins.Llama;
 
 // GGUF: dequantization checked against the gguf package's reference, and models read from GGUF files against the same
-// models in the Hugging Face layout (tools/gguf/make_fixtures.py makes both).
+// models in the Hugging Face layout (tools/gguf/make_fixtures.py makes both; tools/gguf/make_gemma.py the Gemma files, with
+// llama.cpp's own converter).
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] GgufGroup =
@@ -16,6 +22,10 @@ internal static partial class Tests
         ("gguf: metadata, and F16, BF16, Q4_0–Q8_0, Q2_K–Q6_K, IQ4_NL, IQ4_XS dequantized as llama.cpp's reference does", GgufQuants),
         ("evaluation: final numbers (#### n), exact, contains and F1 scores of answers", EvaluationMetrics),
         ("gguf: Llama (q/k row order) and Qwen3 (Q8_0) models read from GGUF match their Hugging Face copies: config, tokens, chat, loss", GgufModels),
+        ("gguf: gemma: a Gemma file written by llama.cpp's converter (f16, its norm gains stored with the 1 added) reads as its Hugging Face folder: spec, SentencePiece tokens and the chat prompt's, chat template, logits, greedy tokens", device => GgufGemma(device, "tiny-gemma", "GemmaForCausalLM")),
+        ("gguf: gemma2: a Gemma 2 file written by llama.cpp's converter reads as its Hugging Face folder (post-norms under llama.cpp's names, GELU, soft-capping and window from the file, the query scalar llama.cpp takes): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma2", "Gemma2ForCausalLM")),
+        ("gguf: gemma3: a Gemma 3 file written by llama.cpp's converter reads as its Hugging Face folder (q/k norms, five windowed layers in six as llama.cpp assumes, the windowed layers' RoPE base from the file and the global one scaled): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma3", "Gemma3ForCausalLM")),
+        ("gguf: chat templates: a file without one gets the first registered fallback for its tokens (the library's ChatML, then Llama 3's from Idrak.Text.Plugins), an app's too; with none for its tokens it has no template, as a folder without one, and the note names GgufChatTemplates; a name nobody registered is refused as not registered", GgufChatTemplateFallbacks),
     ];
 
     private static void EvaluationMetrics(Device device)
@@ -47,6 +57,129 @@ internal static partial class Tests
             }
 
             Check(worst < 1e-5f, $"{type}: largest difference {worst:G3}");
+        }
+    }
+
+    // A Gemma GGUF file of tools/gguf/make_gemma.py against the Hugging Face folder it was converted from.
+    private static void GgufGemma(Device device, string name, string architecture)
+    {
+        string cache = Path.Combine(Path.GetTempPath(), "ns-gguf-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string folder = GgufModel.Prepare(TestData($"gguf/{name}.gguf"), cache);
+            using var fromGguf = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+            using var fromHf = PretrainedModel.Load(TestData($"gguf/{name}-hf"), new PretrainedOptions { Device = device });
+            var (specGguf, specHf) = (fromGguf.Spec.ToJson(), fromHf.Spec.ToJson());
+            Check((string?)fromGguf.Config["architectures"]?[0] == architecture && JsonNode.DeepEquals(specGguf, specHf),
+                $"{name}: same model spec\n  gguf {specGguf.ToJsonString()}\n  hf   {specHf.ToJsonString()}");
+            Check(fromGguf.Spec is { NormOffset: 1f, Activation: FeedForwardActivation.Gelu } && fromGguf.Notes.Any(n => n.Contains(".gguf", StringComparison.Ordinal)),
+                $"{name}: Gemma's (1 + gain) norms and GELU; notes say where the weights come from: {string.Join("; ", fromGguf.Notes)}");
+
+            // The file's SentencePiece tokenizer (tokenizer.ggml.model "llama") encodes as the folder's tokenizer.json, the
+            // chat template's turn markers as their special tokens.
+            foreach (string text in new[] { "the image is a scan of a page with lines of text", "Write one line about the moon and the sun in the night.",
+                         "what is in this image ?\n\nread the scan", "  two  spaces and\ttabs ", "العلم نور" })
+            {
+                var ids = fromGguf.Tokenizer!.Encode(text);
+                Check(ids.SequenceEqual(fromHf.Tokenizer!.Encode(text)) && fromGguf.Tokenizer.Decode(ids) == fromHf.Tokenizer.Decode(ids),
+                    $"{name}: tokens of '{text}': [{string.Join(",", ids)}] vs [{string.Join(",", fromHf.Tokenizer!.Encode(text))}]");
+            }
+
+            var chat = new[] { new ChatMessage("user", "Write one line about the moon.") };
+            string prompt = fromHf.ChatTemplate!.Render(chat, [], null);
+            Check(fromGguf.ChatTemplate!.Render(chat, [], null) == prompt && fromGguf.Tokenizer!.Encode(prompt).SequenceEqual(fromHf.Tokenizer!.Encode(prompt))
+                  && fromGguf.Tokenizer.Encode(prompt).Contains(((IPretrainedTokenizer)fromHf.Tokenizer).IdOf("<start_of_turn>")!.Value),
+                $"{name}: the chat prompt and its tokens: [{string.Join(",", fromGguf.Tokenizer!.Encode(prompt))}] vs [{string.Join(",", fromHf.Tokenizer!.Encode(prompt))}]");
+
+            // Logits over more positions than the window (8), and greedy tokens.
+            int[] tokens = [.. fromHf.Tokenizer.Encode("the image is a scan of a page with lines of text and a box in the corner")];
+            Check(tokens.Length > 12, $"{name}: {tokens.Length} tokens");
+            using var input = Tensor.From([.. tokens.Select(t => (float)t)], [1, tokens.Length], device);
+            AssertClose(fromHf.Network.Predict(input).ToArray(), fromGguf.Network.Predict(input).ToArray(), 1e-4f, $"{name}: logits from GGUF against the Hugging Face folder");
+            var greedy = new GenerationOptions { Temperature = 0, RepeatPenalty = 1, NumPredict = 16, Seed = 1 };
+            string textGguf = fromGguf.CreateGenerator().Generate("the moon and the sun", greedy).Text, textHf = fromHf.CreateGenerator().Generate("the moon and the sun", greedy).Text;
+            Check(textGguf == textHf && fromHf.Tokenizer.Encode(textHf).Count > 4, $"{name}: greedy text '{textGguf}' from GGUF, '{textHf}' from the Hugging Face folder");
+        }
+        finally
+        {
+            if (Directory.Exists(cache))
+            {
+                Directory.Delete(cache, true);
+            }
+        }
+    }
+
+    private static void GgufChatTemplateFallbacks(Device device)
+    {
+        _ = device;
+        string library = Overrides.Library;
+        Check(GgufChatTemplates.Names.First() == "chatml" && GgufChatTemplates.Origin("chatml") == library && GgufChatTemplates.Default("chatml") is not null
+              && GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package && GgufChatTemplates.Default(LlamaPlugin.ChatTemplateName) is null,
+            $"the library's ChatML first, Llama 3's the plug-in's: {string.Join(", ", GgufChatTemplates.Names.Select(n => $"{n}={GgufChatTemplates.Origin(n)}"))}");
+        string refused = Failure<NotSupportedException>(() => GgufChatTemplates.Get("imaginary")).Message;
+        Check(refused.Contains("GGUF chat template 'imaginary' is not registered", StringComparison.Ordinal) && refused.Contains("GgufChatTemplates.Register", StringComparison.Ordinal)
+              && refused.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), $"a name nobody registered: {refused}");
+
+        var root = Directory.CreateTempSubdirectory("idrak-gguf-template-");
+        try
+        {
+            // A GGUF tokenizer of these tokens (and template), prepared: the chat template written, and the notes.
+            int count = 0;
+            (string? Template, List<string> Notes, string Folder) Prepared(string[] tokens, string? template = null)
+            {
+                var notes = new List<string>();
+                List<KeyValuePair<string, object>> metadata = [new("tokenizer.ggml.model", "gpt2"), new("tokenizer.ggml.tokens", tokens)];
+                if (template is not null)
+                {
+                    metadata.Add(new("tokenizer.chat_template", template));
+                }
+
+                string folder = PrepareGgufTokenizer(root.FullName, $"t{count++}", metadata, notes);
+                return ((string?)JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "tokenizer_config.json")))!["chat_template"], notes, folder);
+            }
+
+            string[] chatMl = ["a", "b", "<|im_start|>", "<|im_end|>"], llama3 = ["a", "b", "<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"];
+            var (written, notes, _) = Prepared(chatMl);
+            Check(written == GgufChatTemplates.Default("chatml")!.Template && written.Contains("<|im_start|>", StringComparison.Ordinal)
+                  && notes.Any(n => n.Contains("'chatml'", StringComparison.Ordinal) && n.Contains("GgufChatTemplates", StringComparison.Ordinal)), $"ChatML's tokens: {string.Join("; ", notes)}");
+            (written, notes, _) = Prepared(llama3);
+            Check(written == LlamaArchitectures.ChatTemplateText && notes.Any(n => n.Contains("'llama3'", StringComparison.Ordinal)), $"Llama 3's tokens: {string.Join("; ", notes)}");
+            (written, _, _) = Prepared([.. chatMl, .. llama3[2..]]);
+            Check(written == GgufChatTemplates.Default("chatml")!.Template, "both: ChatML, the library's asked first (as before the registry)");
+            (written, notes, _) = Prepared(chatMl, "{{ 'own' }}");
+            Check(written == "{{ 'own' }}" && notes.Count == 0, "a file's own template is kept, no fallback asked");
+
+            // An app's template for its tokens, and over the library's; unregistered, the library's comes back.
+            GgufChatTemplates.Register("test-turns", new GgufChatTemplate { Matches = (_, tokens) => tokens.Contains("<|user|>"), Template = "{{ 'test' }}" });
+            GgufChatTemplates.Register("chatml", new GgufChatTemplate { Matches = (_, tokens) => tokens.Contains("<|im_start|>"), Template = "{{ 'app chatml' }}" });
+            try
+            {
+                Check(GgufChatTemplates.Origin("test-turns") == "Idrak.Tests" && GgufChatTemplates.Names.Last() == "test-turns" && GgufChatTemplates.Names.First() == "chatml",
+                    "an app's new name is asked last; its template over the library's keeps the library's place");
+                Check(Prepared(["a", "<|user|>"]).Template == "{{ 'test' }}" && Prepared(chatMl).Template == "{{ 'app chatml' }}", "the app's templates are used");
+            }
+            finally
+            {
+                Check(GgufChatTemplates.Unregister("test-turns") && GgufChatTemplates.Unregister("chatml") && !GgufChatTemplates.Unregister("chatml"), "unregistered");
+            }
+
+            Check(GgufChatTemplates.Find("test-turns") is null && Prepared(chatMl).Template == GgufChatTemplates.Default("chatml")!.Template, "the library's ChatML is back");
+
+            // Without the families, Llama 3's tokens find no template: none is written, as a folder without one has none.
+            WithoutTextFamilies(() =>
+            {
+                Check(GgufChatTemplates.Find(LlamaPlugin.ChatTemplateName) is null && GgufChatTemplates.Names.SequenceEqual(["chatml"]), "only the library's ChatML is left");
+                var (none, why, folder) = Prepared(llama3);
+                Check(none is null && Idrak.Abstraction.Generation.ChatTemplates.Load(folder) is null, "no chat template, as a model folder without one");
+                Check(why.Any(n => n.Contains("no fallback registered in GgufChatTemplates (chatml)", StringComparison.Ordinal) && n.Contains("chat is not available", StringComparison.Ordinal)
+                      && n.Contains("GgufChatTemplates.Register", StringComparison.Ordinal) && n.Contains("Idrak.Text.Plugins", StringComparison.Ordinal)), $"the note names the registry: {string.Join("; ", why)}");
+            });
+            Check(GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package && Prepared(llama3).Template == LlamaArchitectures.ChatTemplateText,
+                "registered again, Llama 3's template is back");
+        }
+        finally
+        {
+            root.Delete(recursive: true);
         }
     }
 

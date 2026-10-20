@@ -97,6 +97,15 @@ absent keys), never soft-caps its logits, and fits each checkpoint's naming (`la
 `model.language_model.`); its vision part is the Gemma 3 vision plug-in of `Idrak.Vision.Plugins`, which registers this
 family when it is missing. Without the vision plug-in such a checkpoint is refused, naming the vision family.
 
+It also registers llama.cpp's `gemma`, `gemma2` and `gemma3` in `GgufArchitectures` (`GemmaGguf`), read as
+`GemmaForCausalLM`, `Gemma2ForCausalLM` and `Gemma3ForCausalLM`: llama.cpp's converter stores every norm gain with
+Gemma's 1 added, taken back off as the gains are read (`GgufArchitecture.StoredOffset`); Gemma 2 and 3 keep their
+post-norms under llama.cpp's names (`post_attention_norm`, `ffn_norm` before the feed-forward block, `post_ffw_norm`;
+`GgufArchitecture.TensorName`); the feed-forward block is GELU (tanh); the sliding window, its layer pattern,
+soft-capping and the windowed layers' RoPE base come from the file when it has them, else as llama.cpp assumes; and the
+query scalar, which the files do not store, is llama.cpp's (`GemmaGguf.ImpliedQueryScalar`; `GemmaGguf.Gemma2` and
+`Gemma3` take another). The tokenizer is the file's SentencePiece one.
+
 ```csharp
 using Idrak.Models;
 using Idrak.Text.Plugins.Gemma;
@@ -112,7 +121,9 @@ library's common configuration keys and checkpoint names, `PretrainedFamilies.Co
 in `GgufArchitectures` (each head's query and key rows put back in order, experts read as `MixtralForCausalLM`, and Llama
 3's RoPE scaling recovered from `rope_freqs.weight`), the GGUF pre-tokenizer names `llama3`, `llama-bpe`, `llama-v3`,
 `smaug-bpe`, `falcon3` and `pixtral` in `GgufPreTokenizers` (and `llama3` as `GgufPreTokenizers.Fallback`, the rule
-of a name nobody registered, when none is set), and the RoPE scaling `llama3` in `RopeScalings` (`LlamaRopeScaling`).
+of a name nobody registered, when none is set), the RoPE scaling `llama3` in `RopeScalings` (`LlamaRopeScaling`), and
+Llama 3's chat template for a GGUF file without one whose vocabulary holds `<|start_header_id|>`, `llama3` in
+`GgufChatTemplates` (after the library's ChatML).
 
 ### Qwen (`Idrak.Text.Plugins.Qwen`)
 

@@ -1,0 +1,38 @@
+{
+ "files": {
+  "tiny-gemma-hf/config.json": "7966c662e6ff8ab8ff9677fb5039e476b2ba619c8d418f44d622053f9bf48d8e",
+  "tiny-gemma-hf/model.safetensors": "d292965a2d9a6d7206f52f3631abb52704eefe223f003ab8bcefac3d58512a42",
+  "tiny-gemma-hf/special_tokens_map.json": "94595be62bfbfbf45ff23b760cc13d11fd07cb58ace620fa7af609c922245c77",
+  "tiny-gemma-hf/tokenizer.json": "603a478e735ad923899872fd2f1d7d21a3c7f73ee7d29c7998e03fbf53e60b70",
+  "tiny-gemma-hf/tokenizer.model": "8ebaf64ba26696562c8042d31bb238ac021a388ee723cf53f67184ea488dec26",
+  "tiny-gemma-hf/tokenizer_config.json": "ff90e903ac8d1c03547f679432f4196cefcb8d7acb01f9e63e82839ed8206988",
+  "tiny-gemma.gguf": "199453ab07dad53a93931ee5d9744020ed5b61cfe99974e5cf68b996a750946c",
+  "tiny-gemma2-hf/config.json": "fca2ec2fb79b47e887462e62f738fd011b44e29a34ca1f46b4fe3ce70aebf41e",
+  "tiny-gemma2-hf/model.safetensors": "b02be13f5762513db0724e95b8b099b4b1acfeb1ae93201831d41e16ab3698c0",
+  "tiny-gemma2-hf/special_tokens_map.json": "94595be62bfbfbf45ff23b760cc13d11fd07cb58ace620fa7af609c922245c77",
+  "tiny-gemma2-hf/tokenizer.json": "603a478e735ad923899872fd2f1d7d21a3c7f73ee7d29c7998e03fbf53e60b70",
+  "tiny-gemma2-hf/tokenizer.model": "8ebaf64ba26696562c8042d31bb238ac021a388ee723cf53f67184ea488dec26",
+  "tiny-gemma2-hf/tokenizer_config.json": "ff90e903ac8d1c03547f679432f4196cefcb8d7acb01f9e63e82839ed8206988",
+  "tiny-gemma2.gguf": "d071ab99d0bfc444e3b937cfa0a75bac2c74b747c3c37a3b71e00292de59f582",
+  "tiny-gemma3-hf/config.json": "4d73ffb13ee2eacc7bdedf4e4995f95d503653770808417d25b0eb3766fc3456",
+  "tiny-gemma3-hf/model.safetensors": "0432eae864e0658e70c698cb9465b98216a39ff25968a9b43dbbabe15abde0dc",
+  "tiny-gemma3-hf/special_tokens_map.json": "94595be62bfbfbf45ff23b760cc13d11fd07cb58ace620fa7af609c922245c77",
+  "tiny-gemma3-hf/tokenizer.json": "603a478e735ad923899872fd2f1d7d21a3c7f73ee7d29c7998e03fbf53e60b70",
+  "tiny-gemma3-hf/tokenizer.model": "8ebaf64ba26696562c8042d31bb238ac021a388ee723cf53f67184ea488dec26",
+  "tiny-gemma3-hf/tokenizer_config.json": "ff90e903ac8d1c03547f679432f4196cefcb8d7acb01f9e63e82839ed8206988",
+  "tiny-gemma3.gguf": "f363267df87be5a83cc91fd07565d9b2d6069618ceb704ce29409657bff5c3f9"
+ },
+ "llama.cpp": {
+  "commit": "d80619397c2ba5cf1366c29f7d43699ca3a159b9",
+  "tag": "b11756"
+ },
+ "script": "tools/gguf/make_gemma.py",
+ "versions": {
+  "numpy": "2.2.6",
+  "python": "3.13.16",
+  "sentencepiece": "0.2.1",
+  "tokenizers": "0.22.2",
+  "torch": "2.11.0+cu130",
+  "transformers": "4.57.6"
+ }
+}
