@@ -1,20 +1,23 @@
 # Plan 26: model families as plug-in packages, and `Idrak.Nlp` renamed `Idrak.Text`
 
-**Status (2026-10-19, `abstraction`):** planned 2026-10-19 from the owner's decisions in the Plan 24 session, against the
-code at 63f8893 (a read of the code, not of the plans: every "Comes from" below was found in the source). Nothing is
+**Status (2026-10-20, `abstraction`):** planned 2026-10-19 from the owner's decisions in the Plan 24 session, against the
+code at 63f8893, and widened 2026-10-20 to every reusable piece outside the library (a read of the code of every
+package, sample and test project, not of the plans: every "Comes from" below was found in the source). Nothing is
 built. No phase starts until the owner names it.
 
-| Phase | What | State |
-|---|---|---|
-| P0 | `Idrak.Nlp` renamed `Idrak.Text` (project, assembly, package, namespaces, every reference) | Not started |
-| P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | Not started |
-| P2 | The plug-ins that already live outside the library move in: Qwen-VL, LLaVA, IdrakVision, Whisper, VITS, OpenVoice, IdrakAudio | Not started |
-| P3 | Gemma out of the library: Gemma 1/2/3 text and the Gemma 3 vision-language text decoder, with the Gemma 3 vision plug-in | Not started |
-| P4 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony (architectures, GGUF mappings, pre-tokenizer patterns, tool-call formats) | Not started |
-| P5 | The espeak-ng phonemizer out of the library | Not started |
-| P6 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | Not started |
-| P7 | BERT (`Idrak.Text.Plugins.Bert`) | Not started |
-| P8 | T5 (`Idrak.Text.Plugins.T5`) | Not started |
+| Phase | What | Lane | State |
+|---|---|---|---|
+| P0 | `Idrak.Nlp` renamed `Idrak.Text` (project, assembly, package, namespaces, every reference) | A, alone | Not started |
+| P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | A | Not started |
+| P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Not started |
+| P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Not started |
+| P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Not started |
+| P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Not started |
+| P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Not started |
+| P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
+| P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Not started |
+| P9 | BERT (`Idrak.Text.Plugins.Bert`) | B | Not started |
+| P10 | T5 (`Idrak.Text.Plugins.T5`) | B | Not started |
 
 ## Goal
 
@@ -33,9 +36,16 @@ the first new families, once the engine can run encoders and encoder-decoders.
    implementations and fallbacks.
 3. **`Idrak.Nlp` is renamed `Idrak.Text`** (the parent, not only the plug-in package), in line with `Idrak.Audio`,
    `Idrak.Imaging`, `Idrak.Vision` and `Idrak.Network`.
-4. **BERT and T5 head the candidate list.** They are built last (P7, P8) because they need the engine of P6.
+4. **BERT and T5 head the candidate list.** They wait for the engine (P8), which starts right after the rename.
 5. **Plan first:** this file is written before any code.
 6. **The plug-in tests live in `tests/Idrak.Tests`,** one filter group per family.
+7. **Not only model families (2026-10-20):** every plug-in or registration that lives outside the library and another
+   project could use is a candidate; moving it cuts the sample or test that held it.
+8. **Contract first (2026-10-20):** a candidate with no contract gets a contract and a registry first, then the
+   library's default implementation registered into it.
+9. **No own implementations (2026-10-20):** no plug-in or sample writes its own implementation of something the library
+   does, unless it exists to test the plug-in and override abilities.
+10. **At most two agents in parallel** (CLAUDE.md), in two lanes (see "Order and parallelism").
 
 ## Rules that hold for every phase
 
@@ -46,9 +56,12 @@ CLAUDE.md and [docs/optimization.md](../docs/optimization.md) apply in full. The
 - **Plug-ins use the public API only.** No plug-in package gets `InternalsVisibleTo`. Where a family in the library uses
   an internal today, the move makes a generic member public (with a reason in the API dump) or rewrites the family on
   public parts; it never grants internals.
-- **Contract plus registry (decision 10).** New engine behaviour (P6) is a contract and a `SlotTable` registry in
+- **Contract plus registry (decision 10).** New behaviour (P2, P3, P8) is a contract and a `SlotTable` registry in
   `Idrak.Abstraction` (or a package's `Abstractions` namespace when only that package can use it); the inventory and the
   API dump are regenerated after each public change. No CHANGELOG line, no version bump.
+- **Contract first, then the default (decision 8);** a sample or plug-in then uses the library's, never its own copy
+  (decision 9). The proof families of `tests/Idrak.PluginTests`, the fakes of `tests/Idrak.Tests` and the Override
+  sample are the only own implementations: they exist to test overriding.
 - **A family that is not registered fails loudly** with "not registered" and the hint to reference the plug-in package
   and call its registration; no family falls back to another.
 - **Tests only through filters,** CPU here; GPU tests, apps and the full suite are the owner's. Each phase lists the
@@ -85,9 +98,39 @@ CLAUDE.md and [docs/optimization.md](../docs/optimization.md) apply in full. The
 - `src/Idrak.Audio/SpeechText/EspeakNgPhonemizer.cs`: a phonemizer that runs the outside `espeak-ng` program (also
   against rule 70).
 
-**Not candidates:** the test families of `tests/Idrak.PluginTests` (`TinyResNetFamily`, `GridDetectorFamily`,
+**Generic components outside the library (the 2026-10-20 survey).** Copies and missing defaults found in samples and the
+command line; each is in "Generic components" below with its contract and phase:
+- `RenamedTensorStore` twice (`samples/QwenVision`, `samples/Gemma3Vision`) and `OpenVoiceTensors` (renames, folds
+  weight-norm) — one `ITensorStore` behaviour, three copies.
+- `ImageBlockRule` twice (`samples/IdrakVision`, `samples/Gemma3Vision`) — the library registers only `causal` and `grid`.
+- `samples/Idrak.Samples.ArabicOcr/LineNoise.cs` (its doc: the library's augmentations have no noise),
+  `LineSegmenter.cs` (page → lines by projection, on the library's `Foreground`), `Text.cs` (`TextAlignment`: Sellers'
+  semi-global edit distance; `ReadingOrder`: visual column order), `Recognizer.cs` (a conv + BiLSTM + CTC line
+  recognizer; the image-family contract has no line-recognition task), `LiveLine.cs` (a live progress line).
+- `src/Idrak.Cli/Shared/Progress.cs` (`ProgressLine`, internal to the tool) and
+  `samples/Idrak.Samples.LegalOcr/StartupLoad.cs` (its own progress line); `FiniteNumbers.cs` (NaN → null in JSON).
+- `samples/Idrak.Samples.Chat` `ProfileRecorder` (time per operation and shape, per layer type: the library's
+  `operations` probe counts calls only).
+- `samples/Idrak.Samples.ReRanker/Collection.cs` `Bm25` (the library has `Bm25Index`, a concrete class with no
+  registry); `samples/Idrak.Samples.GptTraining` `RuneTokenizer` (the library's `CharTokenizer` works per UTF-16 unit);
+  `samples/Idrak.Samples.Ocr/Pgm.cs` (the library has the Netpbm codec and encoder); `samples/Shared/Gpt/CharGpt.cs`
+  (builds its own causal transformer; the library's `Architectures.Gpt` is a static recipe, not a registry).
+
+**App-specific, stays in its sample:** LegalOcr's services (reader, tuning, synthetic data, evaluation pages, the
+preprocessing editor on the library's `IImageTransform.Parameters`, the adapter catalogue on `TuningManifest`), GptApi's
+service, the Ocr sample's toy font, renderer and glyph segmenter, Rag's `TownTokenizer` (it shows an app's own
+tokenizer), the synthetic data of the house, report, ReRanker, chat-corpus and Rag samples. VITS's `vits-frames`
+features reproduce VITS's own spectrogram and stay in its plug-in.
+
+**Not candidates (built to test overriding):** the test families of `tests/Idrak.PluginTests` (`TinyResNetFamily`, `GridDetectorFamily`,
 `OnnxSegmenterFamily`, `OnnxBackboneFamily`, `ToyFamily`, `OutsideRawCodec`, `AudioClipKind`) stay there: they prove that
-an outside assembly can plug into each contract. `YoloFormat` (`src/Idrak.Data`) is an annotation format, not a model.
+an outside assembly can plug into each contract. `YoloFormat` (`src/Idrak.Data`) is an annotation format, not a model. The registrations
+of `tests/Idrak.Tests` are fakes for override and failure tests (`SmallFamily`, `TinyCodec`, `FakeAudioFamily`,
+`FailingEncoder`, `BrokenImageKind`, "imaginary", "broken", "testllama"). `Idrak.Network`, `Idrak.Cluster`,
+`Idrak.Gpu`, `Idrak.Imaging`, `Idrak.Data`, `Idrak.Mcp`, `Idrak.AspNetCore` and `Idrak.Onnx.Runtime` hold no
+plug-in candidates: their named built-ins are formats (safetensors, GGUF, COCO, VOC, YOLO, ShareGPT, JPEG, PNG, WAV,
+FLAC, MP3), protocols (OpenAI-compatible endpoints, MCP), services (the Hugging Face Hub) and device or link kinds
+(CUDA, HIP, Vulkan, `nvlink` — a vendor-neutral peer copy despite its name — InfiniBand, RoCE), which stay as defaults.
 
 **The engine today runs decoder-only text models only:** `PretrainedArchitecture.Build` returns ids → logits
 `[batch, time, vocabulary]`; generation is causal. There is no encoder contract (hidden states, pooling, heads), no text
@@ -101,23 +144,24 @@ token-type input. The building blocks exist: `LayerNorm`, `RMSNorm`, GELU, `Embe
 
 | # | Family | Package | Namespace | Comes from | Phase |
 |---|---|---|---|---|---|
-| 1 | BERT | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Bert` | new | P7 |
-| 2 | T5 | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.T5` | new | P8 |
-| 3 | Llama (GGUF `llama`, its pre-tokenizer pattern, RoPE `llama3`) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Llama` | `src/Idrak`, `src/Idrak.Abstraction` | P4 |
-| 4 | Mistral, Mixtral (tool-call `mistral`) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Mistral` | `src/Idrak`, `src/Idrak.Abstraction` | P4 |
-| 5 | Qwen2, Qwen3 and their MoE (GGUF mappings, pre-tokenizer patterns, tool-call `qwen3-coder`) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Qwen` | `src/Idrak`, `src/Idrak.Abstraction` | P4 |
-| 6 | Gemma 1, 2, 3 and the Gemma 3 vision-language text decoder | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Gemma` | `src/Idrak` | P3 |
-| 7 | DeepSeek (tool-call `deepseek`, GGUF pre-tokenizer patterns) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.DeepSeek` | `src/Idrak`, `src/Idrak.Abstraction` | P4 |
-| 8 | Harmony (the gpt-oss tool-call format) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Harmony` | `src/Idrak.Abstraction` | P4 |
-| 9 | Qwen-VL | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.Qwen` | `samples/QwenVision` | P2 |
-| 10 | Gemma 3 vision (SigLIP, projector) | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.Gemma` | `samples/Gemma3Vision` | P3 |
-| 11 | LLaVA (CLIP, projector) | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.Llava` | `tests/Idrak.PluginTests/Llava.cs` | P2 |
-| 12 | IdrakVision | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.IdrakVision` | `samples/IdrakVision` | P2 |
-| 13 | Whisper | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.Whisper` | `samples/WhisperSpeech` | P2 |
-| 14 | VITS / MMS-TTS | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.Vits` | `samples/VitsSpeech` | P2 |
-| 15 | OpenVoice | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.OpenVoice` | `samples/OpenVoice` | P2 |
-| 16 | IdrakAudio | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.IdrakAudio` | `samples/IdrakAudio` | P2 |
-| 17 | espeak-ng phonemizer | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.EspeakNg` | `src/Idrak.Audio` | P5 |
+| 1 | BERT | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Bert` | new | P9 |
+| 2 | T5 | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.T5` | new | P10 |
+| 3 | Llama (GGUF `llama`, its pre-tokenizer names `llama3`, `llama-bpe`, `llama-v3`, `smaug-bpe`, `falcon3`, `pixtral`, RoPE `llama3`) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Llama` | `src/Idrak`, `src/Idrak.Abstraction` | P7 |
+| 4 | Mistral, Mixtral (tool-call `mistral`, pre-tokenizer `tekken`) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Mistral` | `src/Idrak`, `src/Idrak.Abstraction` | P7 |
+| 5 | Qwen2, Qwen3 and their MoE (GGUF mappings, pre-tokenizer names `qwen2`, `qwen35`, `megrez`, `hunyuan`, tool-call `qwen3-coder`) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Qwen` | `src/Idrak`, `src/Idrak.Abstraction` | P7 |
+| 6 | Gemma 1, 2, 3 and the Gemma 3 vision-language text decoder | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Gemma` | `src/Idrak` | P6 |
+| 7 | DeepSeek (tool-call `deepseek`, pre-tokenizer `deepseek-r1-qwen`) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.DeepSeek` | `src/Idrak`, `src/Idrak.Abstraction` | P7 |
+| 8 | Harmony (the gpt-oss tool-call format) | `Idrak.Text.Plugins` | `Idrak.Text.Plugins.Harmony` | `src/Idrak.Abstraction` | P7 |
+| 9 | Qwen-VL | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.Qwen` | `samples/QwenVision` | P5 |
+| 10 | Gemma 3 vision (SigLIP, projector) | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.Gemma` | `samples/Gemma3Vision` | P6 |
+| 11 | LLaVA (CLIP, projector) | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.Llava` | `tests/Idrak.PluginTests/Llava.cs` | P5 |
+| 12 | IdrakVision | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.IdrakVision` | `samples/IdrakVision` | P5 |
+| 13 | CRNN line recognizer (conv + BiLSTM + CTC) | `Idrak.Vision.Plugins` | `Idrak.Vision.Plugins.Crnn` | `samples/Idrak.Samples.ArabicOcr/Recognizer.cs` | P5 |
+| 14 | Whisper | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.Whisper` | `samples/WhisperSpeech` | P4 |
+| 15 | VITS / MMS-TTS, with the uroman Arabic romanizer | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.Vits` | `samples/VitsSpeech`, `src/Idrak.Audio/SpeechText/UromanArabicRomanizer.cs` | P4 |
+| 16 | OpenVoice | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.OpenVoice` | `samples/OpenVoice` | P4 |
+| 17 | IdrakAudio | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.IdrakAudio` | `samples/IdrakAudio` | P4 |
+| 18 | espeak-ng phonemizer (runs an outside program) | `Idrak.Audio.Plugins` | `Idrak.Audio.Plugins.EspeakNg` | `src/Idrak.Audio/SpeechText` | P4 |
 
 Text and vision both have a `.Gemma` and a `.Qwen`: one per package, so the names need no version number.
 
@@ -133,6 +177,28 @@ Text and vision both have a `.Gemma` and a `.Qwen`: one per package, so the name
   two plug-ins share (a CLIP or SigLIP tower moves to the library only when a second family needs it).
 - **The CLI** is an app: it references the three plug-in packages and registers them, so `idrak chat`, `run`,
   `transcribe` and `speak` keep working with nothing added; `-P` stays for outside plug-ins.
+
+## Generic components into the library (contracts first)
+
+Each moves into the library behind a contract (new ones marked), its default registered there, and the samples and
+plug-ins that held a copy use it (decision 9):
+
+| # | Component | Copies or need today | Contract | Library default | Cut from | Phase |
+|---|---|---|---|---|---|---|
+| G1 | A tensor store that renames tensors and folds weight-norm | Qwen-VL, Gemma 3 (twice), OpenVoice | `ITensorStore` (exists) | a public renaming store | the three plug-ins | P2 |
+| G2 | Time per operation (by shape) and per layer type | Chat's `ProfileRecorder` | `ProfileProbes` (exists) | probe `timings` | Chat | P2 |
+| G3 | A tokenizer of whole code points | GptTraining's `RuneTokenizer` | `ITokenizer` (exists) | `CharTokenizer` reads code points (surrogate pairs whole), an unknown-character setting | GptTraining | P2 |
+| G4 | A live progress line | `ProgressLine` (the CLI, internal), ArabicOcr's `LiveLine`, LegalOcr's `StartupLoad` | **new**: `IProgressReporter`, registry `ProgressReporters` (`Idrak.Abstraction.Diagnostics`) | `console` (redrawn in place: what, how far, speed, time left), `plain` (a line a minute when redirected), `json`, `quiet`; `IDRAK_PROGRESS` | the CLI's copy, ArabicOcr, LegalOcr | P2 |
+| G5 | A keyword index | ReRanker's `Bm25`; `Bm25Index` is a concrete class | **new**: `IKeywordIndex`, registry `KeywordIndexes` (`Idrak.Text.Abstractions`) | `bm25`; retrieval and `idrak rag` use the registry | ReRanker | P2 |
+| G6 | Ready-made network recipes | Shared `CharGpt` builds its own causal transformer; `Architectures` is a static class | **new**: registry `NetworkRecipes` | the existing recipes (`gpt`, …) registered by name | `samples/Shared/Gpt` (GptApi, GptTraining, TextGeneration) | P2 |
+| G7 | Non-finite numbers in JSON (NaN, infinity → null) | LegalOcr's `FiniteNumbers`; the profile writers privately | a public helper (a `JsonConverter`), not a registry: one fixed meaning | the helper, used by the profile writers too | LegalOcr | P2 |
+| G8 | Image-block attention | IdrakVision, Gemma 3 (`ImageBlockRule` twice) | `ImageAttentionRules` (exists) | rule `image-blocks` beside `causal` and `grid` | the two plug-ins | P3 |
+| G9 | Pixel noise | ArabicOcr's `LineNoise` | `Augmentations` (exists) | augmentation `noise` (`std`, `p`) | ArabicOcr | P3 |
+| G10 | PGM read and write | the Ocr sample's `Pgm` | `ImageCodecs` (exists, Netpbm) | the library's codec and encoder | Ocr | P3 |
+| G11 | Page → text lines | ArabicOcr's `LineSegmenter` | **new**: `ITextLineSegmenter`, registry `TextLineSegmenters` (`Idrak.Vision`) | `projection` (binarize, deskew, row bands, marks joined to their line) | ArabicOcr | P3 |
+| G12 | Approximate text matching | ArabicOcr's `TextAlignment` | **new**: `ITextMatcher`, registry `TextMatchers` (`Idrak.Text.Abstractions`) | `semi-global` (Sellers' edit distance, word-boundary ends) | ArabicOcr | P3 |
+| G13 | A line's visual (column) order | ArabicOcr's `ReadingOrder` | **new**: registry `ReadingOrders` over the library's `Bidi` (`Idrak.Imaging`) | `bidi` (UAX #9 levels) | ArabicOcr | P3 |
+| G14 | Line recognition as an image task | ArabicOcr's `Recognizer` has no family contract to plug into | **extended**: `IImageModelFamily` gains a line-recognition task (image → label sequence, CTC decoding through `CtcDecoders`) | the task; the CRNN family itself is plug-in #13 | ArabicOcr | P3 |
 
 ---
 
@@ -191,38 +257,74 @@ the rename reaches every package.
 **Done when:** the three packages build empty, the registration contract suite (`Register` twice, `Unregister`,
 `RegisterAll`, `-P` on the package) passes, and the inventory and API dump list them.
 
-## Phase P2: the plug-ins that already live outside the library
+## Phase P2: generic components, core part (G1-G7)
 
-- **Audio (one agent):** Whisper, VITS, OpenVoice, IdrakAudio from `samples/` into `Idrak.Audio.Plugins`, code moved as it
-  is, namespaces changed. The scripts that use them (`samples/WhisperSpeech/transcribe.cs`, `samples/OpenVoice/voice.cs`)
-  stay in `samples/` as apps referencing the package.
-- **Vision (one agent):** Qwen-VL and IdrakVision from `samples/`, LLaVA from `tests/Idrak.PluginTests/Llava.cs`, into
-  `Idrak.Vision.Plugins`. `Idrak.PluginTests` keeps its test families; LLaVA's place there (proving the vision contracts
-  from outside) is taken by the package itself, which has no internals either.
-- The tests reference the packages instead of the sample projects; the `-P Idrak.VitsSpeech.dll`-style examples in the CLI
-  help and READMEs become the built-in registrations (or `-P Idrak.Audio.Plugins.dll` where an app opts out).
-- Plans 16, 19 and 21's paths are updated in their "as built" notes.
+- New contracts first (G4 progress, G5 keyword index, G6 network recipes), each with its `SlotTable` registry, contract
+  suite, "not registered" message and inventory line; then the defaults; then the existing code moved onto them (the
+  CLI's `ProgressLine` becomes the `console` reporter; retrieval reads `KeywordIndexes`).
+- G1, G2, G3, G7 as the table says.
+- The samples drop their copies in the same phase: Chat, GptTraining, ReRanker, `samples/Shared/Gpt`, ArabicOcr's
+  `LiveLine`, LegalOcr's `StartupLoad` progress and `FiniteNumbers`.
+- Settings (CLAUDE.md): the progress reporter by option and `IDRAK_PROGRESS`; the keyword index's `k1` and `b` stay
+  options.
 
-**Done when:** every listed group of "What exists" passes unchanged (same counts), and `samples/` holds only apps.
+**Done when:** each new contract's suite passes; the moved code gives the same results (retrieval rankings, CLI output
+byte for byte on the CLI's own tests, the tokenizer's ids for BMP text unchanged); the samples' tests pass with the
+library's versions.
 
-## Phase P3: Gemma
+## Phase P3: generic components, vision part (G8-G14)
+
+- New contracts first (G11 line segmentation, G12 text matching, G13 reading order, and G14's extension of
+  `IImageModelFamily`), then the defaults, then ArabicOcr and the Ocr sample on them.
+- G8 lands before P5 and P6 (IdrakVision and Gemma 3 use it); G14 lands before P5 (the CRNN family needs it).
+
+**Done when:** the suites pass; ArabicOcr's tests (`samples/Idrak.Samples.ArabicOcr.Tests`) give the same lines, matches
+and readings; the vision tuning and Gemma groups pass unchanged.
+
+## Phase P4: the audio plug-ins
+
+- Whisper, VITS (with uroman, moved from `src/Idrak.Audio/SpeechText`), OpenVoice and IdrakAudio from `samples/` into
+  `Idrak.Audio.Plugins`, code moved as it is, namespaces changed, their own tensor stores replaced by G1.
+- espeak-ng moves to `Idrak.Audio.Plugins.EspeakNg` with its `IDRAK_*` variable; the library's `TextPhonemizers` keeps
+  no default that runs an outside program (rule 70); a family that needs it registers it.
+- The scripts that use them (`samples/WhisperSpeech/transcribe.cs`, `samples/OpenVoice/voice.cs`) stay in `samples/` as
+  apps referencing the package; the CLI help's `-P Idrak.VitsSpeech.dll`-style examples become the built-in
+  registrations.
+
+**Done when:** `audio asr`, `audio cli`, `audio tts`, `audio voices`, `audio voice train`, `audio language`,
+`audio seq2seq`, `audio train`, `audio tts train` pass unchanged (same counts), and no library file starts an outside
+program for text.
+
+## Phase P5: the vision plug-ins
+
+- Qwen-VL and IdrakVision from `samples/`, LLaVA from `tests/Idrak.PluginTests/Llava.cs`, into `Idrak.Vision.Plugins`,
+  on G1 and G8. `Idrak.PluginTests` keeps its proof families; LLaVA's place there is taken by the package itself, which
+  has no internals either.
+- The CRNN line recognizer from ArabicOcr's `Recognizer` into `Idrak.Vision.Plugins.Crnn`, on G14; ArabicOcr becomes an
+  app that references it.
+- Plans 16 and 19's paths are updated in their "as built" notes.
+
+**Done when:** `qwen vl:`, `vision contracts`, `vision tuning contracts`, `vision tuning reference`, IdrakVision's groups
+and ArabicOcr's tests pass unchanged, and `samples/` holds only apps.
+
+## Phase P6: Gemma
 
 - Gemma 1, 2, 3 (`GemmaForCausalLM`, `Gemma2ForCausalLM`, `Gemma3ForCausalLM`) and the text decoder of
   `Gemma3ForConditionalGeneration` with its three checkpoint layouts move from `src/Idrak/Models/Architectures.cs` to
   `Idrak.Text.Plugins.Gemma` (plan 16 step 4, done here).
-- Gemma 3 vision (SigLIP, projector) from `samples/Gemma3Vision` to `Idrak.Vision.Plugins.Gemma`, which registers the text
-  decoder through `Idrak.Text.Plugins.Gemma`.
+- Gemma 3 vision (SigLIP, projector) from `samples/Gemma3Vision` to `Idrak.Vision.Plugins.Gemma`, on G1 and G8, which
+  registers the text decoder through `Idrak.Text.Plugins.Gemma`.
 - The internal helpers they use (`GemmaSpec`, `Gemma3Spec`, `CommonSpec`, the tensor-name maps) either move with them or,
   where generic, become public helpers of the decoder (named for what they do, not for a family).
 
-**Done when:** `pretrained:`, the Gemma 3 vision groups and the GGUF groups pass unchanged; a library user without the
-package gets "not registered" naming `Idrak.Text.Plugins`.
+**Done when:** `pretrained:`, the Gemma 3 vision groups and `gguf:` pass unchanged; a library user without the package
+gets "not registered" naming `Idrak.Text.Plugins`.
 
-## Phase P4: the other text families
+## Phase P7: the other text families
 
 - Llama, Mistral and Mixtral, Qwen2/Qwen3 and their MoE, from `PretrainedFamilies.BuiltIns`; their GGUF mappings and
-  pre-tokenizer patterns from `GgufBuiltIns` (registered through the public `GgufArchitectures.Register` and
-  `GgufPreTokenizers.Register`); DeepSeek's patterns.
+  every pre-tokenizer name of the candidates table from `GgufBuiltIns` (registered through the public
+  `GgufArchitectures.Register` and `GgufPreTokenizers.Register`).
 - The tool-call formats `qwen3-coder`, `mistral`, `deepseek`, `harmony` move to their families; `MarkedToolCallParser`
   (the shared base, internal today) becomes a public generic base, since four plug-ins need it.
 - RoPE `llama3` moves to `Idrak.Text.Plugins.Llama`.
@@ -235,14 +337,7 @@ package gets "not registered" naming `Idrak.Text.Plugins`.
 `cli run:`, `cli serve:` and Plan 24's BPE baseline pass unchanged through the plug-ins, and `idrak chat` loads a model
 with nothing added.
 
-## Phase P5: espeak-ng
-
-- `EspeakNgPhonemizer` moves to `Idrak.Audio.Plugins.EspeakNg`, with its `IDRAK_*` variable. The library's
-  `TextPhonemizers` keeps no default that runs an outside program (rule 70); a family that needs espeak-ng registers it.
-
-**Done when:** the speech groups pass unchanged and no library file starts an outside program for text.
-
-## Phase P6: the engine for encoders and encoder-decoders
+## Phase P8: the engine for encoders and encoder-decoders
 
 Generic, no family in it; each part is a contract and a registry or a setting:
 - **An encoder contract and registry** (`PretrainedEncoders`): a configuration and checkpoint → a network from ids,
@@ -259,9 +354,9 @@ Generic, no family in it; each part is a contract and a registry or a setting:
 **Done when:** the suites pass on the CPU, the toy families run batched with padding equal to one by one, and existing
 decoder results are unchanged (`pretrained:`, `decoder:`, `sampler:`).
 
-## Phase P7: BERT (`Idrak.Text.Plugins.Bert`)
+## Phase P9: BERT (`Idrak.Text.Plugins.Bert`)
 
-- `BertModel` on P6's encoder contract: word, position and token-type embeddings, post-norm blocks with GELU, the
+- `BertModel` on P8's encoder contract: word, position and token-type embeddings, post-norm blocks with GELU, the
   pooler; `BertForMaskedLM`, `BertForSequenceClassification`, and sentence embeddings (mean or first-token pooling) through
   `TextEncoder`. The tokenizer is Plan 24's WordPiece (`tokenizer.json` or `vocab.txt`).
 - Fixtures: a tiny random BERT and its outputs from transformers (pinned, a script under `tools/`), committed small;
@@ -270,49 +365,52 @@ decoder results are unchanged (`pretrained:`, `decoder:`, `sampler:`).
 **Done when:** hidden states, pooled vectors and logits equal transformers' within float tolerance, batched with padding
 equal to one by one.
 
-## Phase P8: T5 (`Idrak.Text.Plugins.T5`)
+## Phase P10: T5 (`Idrak.Text.Plugins.T5`)
 
-- `T5ForConditionalGeneration` on P6's encoder-decoder contract: RMS norms, the bucketed relative position bias of the
+- `T5ForConditionalGeneration` on P8's encoder-decoder contract: RMS norms, the bucketed relative position bias of the
   first layer shared by the rest, no score scaling, ReLU (T5 v1.0) or gated GELU (v1.1, mT5) feed-forward, tied or untied
   head. The tokenizer is Plan 24's Unigram (`tokenizer.json` or `spiece.model`).
-- Fixtures as P7's; real models (`google-t5/t5-small`, `google/mt5-small`) are the owner's run.
+- Fixtures as P9's; real models (`google-t5/t5-small`, `google/mt5-small`) are the owner's run.
 
 **Done when:** encoder states and greedy generations equal transformers' on the fixtures, and the KV-cached decode equals
 the uncached one.
 
 ## Order and parallelism
 
-At most two agents at a time (CLAUDE.md), each in its own worktree; a merge is built and its filters run before the push.
-The longest chain is P0 → P6 → P7 / P8, so the engine (lane B) starts right after the rename, and the moves (lane A) run
-beside it (the owner, 2026-10-19):
+At most two agents at a time (decision 10), each in its own worktree; a merge is built and its filters run before the
+push. The longest chain is P0 → P8 → P9 → P10, so the engine (lane B) starts right after the rename, and the moves
+(lane A) run beside it:
 
-| Step | Lane A: moves | Lane B: engine and new families |
+| Step | Lane A: contracts, defaults and moves | Lane B: engine and new families |
 |---|---|---|
 | 1 | P0, the rename (alone: it touches every package) | none |
-| 2 | P1, the three package skeletons | P6, the engine, starts |
-| 3 | P2, audio (Whisper, VITS, OpenVoice, IdrakAudio) | P6, continued |
-| 4 | P2, vision (Qwen-VL, LLaVA, IdrakVision) | P6, continued |
-| 5 | P3, Gemma | P7, BERT (after P6) |
-| 6 | P4, Llama, Mistral, Qwen, DeepSeek, Harmony | P8, T5 |
-| 7 | P5, espeak-ng | none |
+| 2 | P1, the three package skeletons | P8, the engine, starts |
+| 3 | P2, generic components, core | P8, continued |
+| 4 | P3, generic components, vision | P8, continued |
+| 5 | P4, audio plug-ins | P9, BERT (after P8) |
+| 6 | P5, vision plug-ins (after P3) | P10, T5 |
+| 7 | P6, Gemma (after P3) | the next ready step of lane A, if any |
+| 8 | P7, the other text families (after P6: both edit `Architectures.cs`) | none |
 
 Why the lanes do not collide:
-- P1 and P2 add packages and move sample code; P6 works in layers, contracts and generation and touches no family.
-- P3 and P4 both edit `src/Idrak/Models/Architectures.cs`, so they share lane A, one after the other.
-- P7 and P8 add to `Idrak.Text.Plugins`; P3 and P4 remove from core and add other namespaces there: separate files.
-- P5 can take any free slot after P1.
+- P1-P5 add packages, contracts and defaults and move sample code; P8 works in the attention layers, the encoder and
+  seq2seq contracts and generation, and touches no family. Where both touch one file (G6's recipes and P8's attention
+  options in `src/Idrak/Layers/NetworkBuilder.cs`), the later merge takes the earlier one's change first.
+- P6 and P7 both edit `src/Idrak/Models/Architectures.cs`, so they stay in lane A, one after the other.
+- P9 and P10 add to `Idrak.Text.Plugins` in their own namespaces; P6 and P7 add other namespaces there.
 - Files both lanes touch (`api/*.txt`, the abstraction inventory, the test list in `tests/Idrak.Tests/Program.cs`,
   `src/Idrak.Cli/Shared/EnvironmentVariables.cs`) are merged one lane at a time; the generated dumps are regenerated,
   never merged by hand.
 
-A step is a dependency order, not a barrier: when a lane finishes, it takes its next step without waiting for the other.
-No step starts until the owner has asked for this plan to go on.
+A step is a dependency order, not a barrier: when a lane finishes, it takes its next ready step without waiting for the
+other; when lane B is done early, it takes lane A's next step whose inputs are merged. No step starts until the owner
+has asked for this plan to go on.
 
 ## The owner's runs
 
 Each phase's as-built note gives the exact PowerShell list (from `D:\Projects\Idrak`): one
-`dotnet build -c Release tests\Idrak.Tests`, the phase's CPU filters, then its CUDA filters with `--no-build`. P0 and P4
-also ask for the full suite, because they reach every package. P7 and P8 add the real models' references.
+`dotnet build -c Release tests\Idrak.Tests`, the phase's CPU filters, then its CUDA filters with `--no-build`. P0 and P7
+also ask for the full suite, because they reach every package. P9 and P10 add the real models' references.
 
 ## Risks
 
@@ -324,7 +422,9 @@ also ask for the full suite, because they reach every package. P7 and P8 add the
 - **Silent loss of registrations** in the rename (the library defaults list, `DynamicDependency`): checked by the
   inventory test and by `pretrained:` in P0.
 - **Plug-ins that depend on each other** (vision on text): one way only; a cycle is refused at review.
-- **Encoder and seq2seq engine scope (P6)** is the largest new work; BERT and T5 wait for it.
+- **Encoder and seq2seq engine scope (P8)** is the largest new work; BERT and T5 wait for it.
+- **New contracts grow the public API** (G4, G5, G6, G11, G12, G13, G14's extension): each with its suite and inventory
+  line; the samples' copies are removed in the same phase, so no copy outlives its contract.
 
 ## Runs
 

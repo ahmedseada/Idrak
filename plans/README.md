@@ -52,8 +52,10 @@ library-owned Unicode normalization, the T3 callers, the T4 leftovers and two sp
 
 Model families as plug-in packages: every family leaves the library for its parent's plug-in package, one namespace per
 family (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`; for example `Idrak.Vision.Plugins.Qwen`),
-the library keeping only defaults and fallbacks; `Idrak.Nlp` renamed `Idrak.Text`; the engine for encoders and
-encoder-decoders, then BERT and T5 (planned 2026-10-19, nothing built): [26-plugin-packages.md](26-plugin-packages.md).
+the library keeping only defaults and fallbacks, every reusable piece outside the library behind a contract with its
+default in the library (samples and plug-ins keep no copies); `Idrak.Nlp` renamed `Idrak.Text`; the engine for
+encoders and encoder-decoders, then BERT and T5; eleven phases in two lanes (planned 2026-10-19, widened 2026-10-20,
+nothing built): [26-plugin-packages.md](26-plugin-packages.md).
 
 ## Not supported yet
 
