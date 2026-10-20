@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Diagnostics;
-using System.Globalization;
 using Idrak.Diagnostics;
 using Idrak.Training;
 using Idrak.Training.Abstractions;
@@ -11,288 +9,125 @@ namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// A progress line for downloads, loading, training and long benchmarks (plans/idrak-cli.md, "Helpers every command
-/// shares"): the label, the share done, the amount, the rate and the time left, redrawn in place on the error output
-/// (so the standard output stays clean for pipes). Nothing is drawn when the error output is not a terminal, or with
-/// <c>--quiet</c>, <c>--json</c> or <c>--plain</c>.
+/// shares"): the label, the share done, the amount, the rate and the time left, shown by the library's progress
+/// reporters (<see cref="ProgressReporters"/>) on the error output (so the standard output stays clean for pipes). The
+/// reporter: none with <c>--quiet</c>; the one <c>IDRAK_PROGRESS</c> names when set ("console", "plain", "json",
+/// "quiet" or a plug-in's); none with <c>--json</c> or <c>--plain</c> or when the error output is not a terminal; else
+/// "console", the line redrawn in place.
 /// </summary>
 /// <example><code>
 /// using var progress = new ProgressLine(context, "pull model.gguf", total: length, unit: ProgressUnit.Bytes);
 /// progress.Report(done);   // as often as convenient: redrawn at most 10 times a second
 /// </code></example>
-internal sealed class ProgressLine : IProgress<long>, IDisposable
+internal sealed class ProgressLine : IProgressReporter
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan NeverDrawn = TimeSpan.FromSeconds(-1);                // not MinValue: now - MinValue overflows
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<ProgressLine, byte> Drawn = new();   // the lines on a screen now
-    private readonly TextWriter _writer;
-    private readonly Stopwatch _watch = Stopwatch.StartNew();
-    private TimeSpan _lastDraw = NeverDrawn;
-    private int _lastWidth;
-    private long _done;
-    private bool _finished;
-    private Timer? _clock;
+    private readonly IProgressReporter _reporter;
 
     /// <param name="context">The command (its <c>--quiet</c>, <c>--json</c> and error output).</param>
     /// <param name="label">What is in progress ("pull Qwen/Qwen3-0.6B").</param>
     /// <param name="total">The amount when known; null shows the amount and rate without a share or time left.</param>
     /// <param name="unit">How amounts are shown.</param>
-    /// <param name="enabled">Tests: draw (true) or not (false) whatever the terminal; null decides as described above.</param>
+    /// <param name="enabled">Tests: draw in place (true) or not (false) whatever the terminal; null decides as described above.</param>
+    /// <exception cref="UsageException"><c>IDRAK_PROGRESS</c> names no registered reporter.</exception>
     public ProgressLine(CommandContext context, string label, long? total = null, ProgressUnit unit = ProgressUnit.Items, bool? enabled = null)
     {
-        Label = label;
-        Total = total;
-        Unit = unit;
-        _writer = context.ErrorOutput;
-        Enabled = enabled ?? (!context.Quiet && !context.Json && !context.Plain && Terminal.IsTerminal(_writer));
-        if (Enabled)
-        {
-            Drawn[this] = 0;
-        }
+        var writer = context.ErrorOutput;
+        string reporter = enabled is { } on ? on ? ProgressReporters.ConsoleReporter : ProgressReporters.QuietReporter
+            : context.Quiet ? ProgressReporters.QuietReporter
+            : Chosen() ?? (!context.Json && !context.Plain && Terminal.IsTerminal(writer) ? ProgressReporters.ConsoleReporter : ProgressReporters.QuietReporter);
+        _reporter = ProgressReporters.Get(reporter)(new ProgressRequest(label, total, unit, writer, null));
+    }
 
-        if (Enabled && unit == ProgressUnit.Elapsed)
+    /// <summary>The reporter <c>IDRAK_PROGRESS</c> names, or null when it is not set.</summary>
+    /// <exception cref="UsageException">It names no registered reporter.</exception>
+    public static string? Chosen()
+    {
+        try
         {
-            // Work without amounts (loading a model): the time so far, redrawn twice a second.
-            _clock = new Timer(_ => Draw(force: true), null, TimeSpan.Zero, TimeSpan.FromMilliseconds(500));
+            return ProgressReporters.FromEnvironment();
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
         }
     }
 
-    public string Label { get; set; }
+    public string Label
+    {
+        get => _reporter.Label;
+        set => _reporter.Label = value;
+    }
 
-    public long? Total { get; set; }
+    public long? Total
+    {
+        get => _reporter.Total;
+        set => _reporter.Total = value;
+    }
 
     /// <summary>What the counts are (a stage may change it: bytes read, then items made).</summary>
-    public ProgressUnit Unit { get; set; }
+    public ProgressUnit Unit
+    {
+        get => _reporter.Unit;
+        set => _reporter.Unit = value;
+    }
 
-    /// <summary>Whether the line is drawn.</summary>
-    public bool Enabled { get; }
+    /// <summary>Whether the line is shown.</summary>
+    public bool Enabled => _reporter.Enabled;
 
     /// <summary>The amount done so far.</summary>
-    public long Done => Interlocked.Read(ref _done);
+    public long Done => _reporter.Done;
+
+    /// <inheritdoc />
+    public Func<string>? Detail
+    {
+        get => _reporter.Detail;
+        set => _reporter.Detail = value;
+    }
 
     /// <summary>Sets the amount done and redraws when the last drawing is more than a tenth of a second old.</summary>
-    public void Report(long value)
-    {
-        Interlocked.Exchange(ref _done, value);
-        Draw(force: false);
-    }
+    public void Report(long value) => _reporter.Report(value);
 
     /// <summary>Adds <paramref name="amount"/> to the amount done.</summary>
-    public void Advance(long amount = 1)
-    {
-        Interlocked.Add(ref _done, amount);
-        Draw(force: false);
-    }
+    public void Advance(long amount = 1) => _reporter.Advance(amount);
+
+    /// <inheritdoc />
+    public void Show() => _reporter.Show();
 
     /// <summary>
     /// Ends the current stage (its line stays as it stands, or <paramref name="message"/> in its place) and starts the next
     /// on a new line, with its own label, amount, rate and time left.
     /// </summary>
-    public void NextStage(string label, long? total, ProgressUnit unit, string? message = null)
-    {
-        if (Enabled && !_finished)
-        {
-            lock (_writer)
-            {
-                string text = message ?? Format(Label, Done, Total, _watch.Elapsed, Unit);
-                _writer.Write("\r" + text.PadRight(_lastWidth) + "\n");
-                _writer.Flush();
-                _lastWidth = 0;
-                _lastDraw = NeverDrawn;
-            }
-        }
-
-        Label = label;
-        Total = total;
-        Unit = unit;
-        Interlocked.Exchange(ref _done, 0);
-        _watch.Restart();
-    }
+    public void NextStage(string label, long? total, ProgressUnit unit, string? message = null, bool keepLine = true) =>
+        _reporter.NextStage(label, total, unit, message, keepLine);
 
     /// <summary>Draws the final state and ends the line (with <paramref name="message"/> in place of the progress, when given).</summary>
-    public void Finish(string? message = null)
-    {
-        if (_finished)
-        {
-            return;
-        }
-
-        _finished = true;
-        Drawn.TryRemove(this, out _);
-        _clock?.Dispose();
-        if (!Enabled)
-        {
-            return;
-        }
-
-        lock (_writer)
-        {
-            string text = message ?? Format(Label, Done, Total, _watch.Elapsed, Unit);
-            _writer.Write("\r" + text.PadRight(_lastWidth) + "\n");
-            _writer.Flush();
-        }
-    }
+    public void Finish(string? message = null) => _reporter.Finish(message);
 
     /// <summary>Removes the line (nothing stays on the screen), for work whose result is reported elsewhere.</summary>
-    public void Clear()
-    {
-        if (_finished)
-        {
-            return;
-        }
-
-        _finished = true;
-        Drawn.TryRemove(this, out _);
-        _clock?.Dispose();
-        if (!Enabled)
-        {
-            return;
-        }
-
-        lock (_writer)
-        {
-            _writer.Write("\r" + new string(' ', _lastWidth) + "\r");
-            _writer.Flush();
-        }
-    }
+    public void Clear() => _reporter.Clear();
 
     /// <summary>
     /// Takes the line off the screen for a moment, so a line of output can be written; the next report draws it again
     /// below that output.
     /// </summary>
-    public void Erase()
-    {
-        if (!Enabled || _finished)
-        {
-            return;
-        }
+    public void Erase() => _reporter.Erase();
 
-        lock (_writer)
-        {
-            _writer.Write("\r" + new string(' ', _lastWidth) + "\r");
-            _writer.Flush();
-            _lastWidth = 0;
-            _lastDraw = NeverDrawn;
-        }
-    }
-
-    public void Dispose() => Finish();
+    public void Dispose() => _reporter.Dispose();
 
     /// <summary>
     /// Takes every progress line drawn on <paramref name="writer"/> off the screen for a moment (<see cref="Erase"/>), so
     /// a line another part of the command writes (a suggestion the library published) does not land inside one.
     /// </summary>
-    public static void EraseOn(TextWriter writer)
-    {
-        foreach (var line in Drawn.Keys)
-        {
-            if (ReferenceEquals(line._writer, writer))
-            {
-                line.Erase();
-            }
-        }
-    }
+    public static void EraseOn(TextWriter writer) => ProgressReporters.EraseOn(writer);
 
-    /// <summary>
-    /// The line's text: "label  45%  12.3 MB / 27.0 MB  3.1 MB/s  4s left" (without a total: "label  12.3 MB  3.1 MB/s");
-    /// slow items read "88 / 8,000  3.6 s each  7h 48m left".
-    /// </summary>
-    public static string Format(string label, long done, long? total, TimeSpan elapsed, ProgressUnit unit)
-    {
-        if (unit == ProgressUnit.Elapsed)
-        {
-            return $"{label}  {Units.Duration(elapsed)}";
-        }
+    /// <summary>The line's text (<see cref="ProgressText.Format"/>).</summary>
+    public static string Format(string label, long done, long? total, TimeSpan elapsed, ProgressUnit unit) => ProgressText.Format(label, done, total, elapsed, unit);
 
-        double seconds = elapsed.TotalSeconds;
-        double rate = seconds > 0 ? done / seconds : 0;
-        var parts = new List<string> { label };
-        if (total is long t && t > 0)
-        {
-            parts.Add($"{Math.Min(100, done * 100 / t),3}%");
-            parts.Add($"{Amount(done, unit)} / {Amount(t, unit)}");
-        }
-        else
-        {
-            parts.Add(Amount(done, unit));
-        }
+    /// <summary>A rate as the unit shows it (<see cref="ProgressText.Rate"/>).</summary>
+    public static string Rate(double perSecond, ProgressUnit unit) => ProgressText.Rate(perSecond, unit);
 
-        if (seconds >= 0.2 && rate > 0)
-        {
-            parts.Add(Rate(rate, unit));
-            if (total is long all && all > done)
-            {
-                parts.Add($"{Units.Duration(TimeSpan.FromSeconds((all - done) / rate))} left");
-            }
-        }
-
-        return string.Join("  ", parts);
-    }
-
-    /// <summary>
-    /// A rate as the unit shows it: bytes as "3.1 MB/s"; items as "1,234/s", "2.6/s" under ten a second, and "3.6 s each"
-    /// under one (a slow step would otherwise read "0/s").
-    /// </summary>
-    public static string Rate(double perSecond, ProgressUnit unit) => unit switch
-    {
-        ProgressUnit.Bytes => $"{Units.Bytes((long)perSecond)}/s",
-        _ when perSecond < 1 => string.Create(CultureInfo.InvariantCulture, $"{1 / perSecond:0.0} s each"),
-        _ when perSecond < 10 => string.Create(CultureInfo.InvariantCulture, $"{perSecond:0.0}/s"),
-        _ => $"{Amount((long)perSecond, unit)}/s",
-    };
-
-    /// <summary>An amount as the unit shows it (bytes as "12.3 MB", items as "1,234").</summary>
-    public static string Amount(long value, ProgressUnit unit) => unit switch
-    {
-        ProgressUnit.Bytes => Units.Bytes(value),
-        _ => value.ToString("N0", CultureInfo.InvariantCulture),
-    };
-
-    // The terminal's columns, or 0 where there is no terminal to ask (the line is not drawn then anyway).
-    private static int TerminalWidth()
-    {
-        try
-        {
-            return Console.IsErrorRedirected && Console.IsOutputRedirected ? 0 : Console.WindowWidth;
-        }
-        catch (IOException)
-        {
-            return 0;
-        }
-    }
-
-    private void Draw(bool force)
-    {
-        if (!Enabled || _finished)
-        {
-            return;
-        }
-
-        var now = _watch.Elapsed;
-        if (!force && now - _lastDraw < Interval)
-        {
-            return;
-        }
-
-        lock (_writer)
-        {
-            if (_finished)
-            {
-                return;                                                          // finished while the clock was drawing
-            }
-
-            _lastDraw = now;
-            string text = Format(Label, Done, Total, now, Unit);
-            int width = TerminalWidth();
-            if (width > 0 && text.Length >= width)
-            {
-                text = text[..(width - 1)];                                      // one line: a wrapped one cannot be redrawn in place
-            }
-
-            _writer.Write("\r" + text.PadRight(_lastWidth));
-            _lastWidth = text.Length;
-            _writer.Flush();
-        }
-    }
+    /// <summary>An amount as the unit shows it (<see cref="ProgressText.Amount"/>).</summary>
+    public static string Amount(long value, ProgressUnit unit) => ProgressText.Amount(value, unit);
 }
 
 /// <summary>
@@ -319,17 +154,4 @@ internal sealed class TrainingProgress(ProgressLine line, int epochs, int before
     }
 
     public void OnTrainEnd(TrainerContext context, TrainingHistory history) => line.Clear();
-}
-
-/// <summary>How a <see cref="ProgressLine"/> shows amounts.</summary>
-internal enum ProgressUnit
-{
-    /// <summary>Counted items ("1,234").</summary>
-    Items,
-
-    /// <summary>Bytes ("12.3 MB").</summary>
-    Bytes,
-
-    /// <summary>No amounts: the time so far, redrawn while the work runs (loading a model).</summary>
-    Elapsed,
 }

@@ -296,18 +296,8 @@ public static class ProfileWriters
             w.WriteEndArray();
         }
 
-        // JSON has no NaN or infinity: those are written as null.
-        private static void Number(Utf8JsonWriter w, string name, double value)
-        {
-            if (double.IsFinite(value))
-            {
-                w.WriteNumber(name, value);
-            }
-            else
-            {
-                w.WriteNull(name);
-            }
-        }
+        // JSON has no NaN or infinity: those are written as null (FiniteJsonNumbers).
+        private static void Number(Utf8JsonWriter w, string name, double value) => FiniteJsonNumbers.WriteNumber(w, name, value);
 
         private static void Optional(Utf8JsonWriter w, string name, double? value)
         {

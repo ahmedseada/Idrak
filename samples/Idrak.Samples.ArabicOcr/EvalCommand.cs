@@ -53,8 +53,8 @@ internal static class EvalCommand
         TuningScore totalCer = default, totalWer = default;
         int skipped = 0, limit = a.Integer("--limit", int.MaxValue, 1), done = 0;
         int? total = Pages.Count(a.Words) is { } count ? Math.Min(count, limit) : null;
-        var live = new LiveLine(context.Error);
-        var clock = Stopwatch.StartNew();
+        using var live = ProgressReporters.Start("reading pages", total, ProgressUnit.Items, new ProgressOptions { Output = context.Error });
+        live.Detail = () => FormattableString.Invariant($"CER {totalCer.Value:P2}, WER {totalWer.Value:P2} so far");
         foreach (var chunk in Pages.Read(a.Words, images).Take(limit).Chunk(reader.PagesAtOnce))
         {
             var known = new List<(Page Page, string Expected)>(chunk.Length);
@@ -67,7 +67,7 @@ internal static class EvalCommand
                 }
 
                 skipped++;
-                live.Clear();
+                live.Erase();
                 context.Say($"{page.Source}: no expected text, skipped");
             }
 
@@ -79,8 +79,7 @@ internal static class EvalCommand
             }
 
             done += chunk.Length;
-            live.Show(() => Progress("reading", done, total, clock.Elapsed)
-                            + FormattableString.Invariant($" | CER {totalCer.Value:P2}, WER {totalWer.Value:P2} so far"));
+            live.Report(done);
         }
 
         live.Clear();
@@ -154,16 +153,6 @@ internal static class EvalCommand
             : Directory.Exists(truth) ? Path.Combine(truth, page.Name + ".txt")
             : truth;
         return file is not null && File.Exists(file) && OcrText.ReadTranscription(file) is { Length: > 0 } text ? text : null;
-    }
-
-    /// <summary>A live progress line: what, pages done (of the total when known), pages a second, elapsed and left.</summary>
-    public static string Progress(string what, int done, int? total, TimeSpan elapsed)
-    {
-        double rate = done / Math.Max(1e-9, elapsed.TotalSeconds);
-        return total is { } all
-            ? FormattableString.Invariant($"{what} {LiveLine.Bar(done / (double)Math.Max(1, all), 10)} {done:N0}/{all:N0} pages | {rate:F1} pages/s")
-              + $" | {LiveLine.Time(elapsed)}, {LiveLine.Time(TimeSpan.FromSeconds(Math.Max(0, all - done) / Math.Max(1e-9, rate)))} left"
-            : FormattableString.Invariant($"{what} {done:N0} pages | {rate:F1} pages/s | ") + LiveLine.Time(elapsed);
     }
 
     private static string Shorten(string text, int width) => text.Length <= width ? text : "…" + text[^(width - 1)..];

@@ -42,8 +42,7 @@ internal static class ReadCommand
         bool stream = !context.Json && outPath is null;
         int limit = context.Args.Integer("--limit", int.MaxValue, 1), done = 0;
         int? total = Pages.Count(inputs) is { } count ? Math.Min(count, limit) : null;
-        var live = new LiveLine(context.Error);
-        var clock = Stopwatch.StartNew();
+        using var live = ProgressReporters.Start("reading pages", total, ProgressUnit.Items, new ProgressOptions { Output = context.Error });
 
         // Streamed to the console a page at a time (the text as it is produced); to files, a reader's batch of pages at once.
         foreach (var chunk in Pages.Read(inputs, context.Args.Option("--images")).Take(limit).Chunk(stream ? 1 : reader.PagesAtOnce))
@@ -57,7 +56,7 @@ internal static class ReadCommand
             done += chunk.Length;
             if (!stream)
             {
-                live.Show(() => EvalCommand.Progress("reading", done, total, clock.Elapsed));
+                live.Report(done);
             }
         }
 
@@ -89,7 +88,7 @@ internal static class ReadCommand
             {
                 string file = Path.Combine(outPath, page.Name + (context.Json ? ".json" : ".txt"));
                 OcrText.Write(file, (context.Json ? json.ToJsonString(Json.Indented) : reading.Text) + "\n");
-                live.Clear();
+                live.Erase();
                 context.Say($"{page.Source}: {file}");
             }
             else if (toFile)

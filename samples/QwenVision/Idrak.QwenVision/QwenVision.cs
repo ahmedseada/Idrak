@@ -223,7 +223,7 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     }
 
     /// <summary>Opens the checkpoint's vision tensors under the names of <see cref="Tensors"/> (as stored): dispose it when done.</summary>
-    public ITensorStore OpenTensors() => new RenamedTensorStore(_open(), Tensors.ToDictionary(t => t.Key, t => t.Value.Stored, StringComparer.Ordinal));
+    public ITensorStore OpenTensors() => new Models.RenamedTensorStore(_open(), Tensors.ToDictionary(t => t.Key, t => t.Value.Stored, StringComparer.Ordinal));
 
     /// <summary>The merger (<see cref="VisionTuningParts.Projector"/>) and the tower train; LoRA runs usually train the merger alone or neither.</summary>
     public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector, VisionTuningParts.Tower];

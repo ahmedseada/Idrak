@@ -4,8 +4,10 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 
 namespace Idrak.Samples.Gpt;
 
@@ -107,23 +109,17 @@ public sealed class CharGpt : IDisposable
 
     public Device Device { get; private set; }
 
-    /// <summary>Builds an untrained model.</summary>
+    /// <summary>
+    /// Builds an untrained model: the library's "gpt" recipe (<see cref="NetworkRecipes"/>) with a feed-forward of 4 · dim
+    /// and dropout 0.1, every layer's weights drawn in order from <paramref name="random"/> (a <c>new Random(2)</c> by default).
+    /// </summary>
     public static CharGpt Create(GptConfig config, Device device, Random? random = null)
     {
-        random ??= new Random(2);
-        var model = new Sequential
+        var model = NetworkRecipes.Build("gpt", new JsonObject
         {
-            new Embedding(config.Vocabulary.Length, config.Dim, device, random),
-            new PositionalEncoding(config.Context, config.Dim, device),
-        };
-        for (int layer = 0; layer < config.Layers; layer++)
-        {
-            model.Add(new TransformerEncoderLayer(config.Dim, config.Heads, ffDim: 4 * config.Dim, dropout: 0.1f, causal: true, device: device, random: random));
-        }
-
-        model.Add(new LayerNorm(config.Dim, device: device));
-        model.Add(new Linear(config.Dim, config.Vocabulary.Length, device: device, random: random));
-        model.Name = "char-gpt";
+            ["vocabulary"] = config.Vocabulary.Length, ["context"] = config.Context, ["dim"] = config.Dim, ["heads"] = config.Heads,
+            ["layers"] = config.Layers, ["ffDim"] = 4 * config.Dim, ["dropout"] = 0.1f,
+        }).OnDevice(device).WithRandom(random ?? new Random(2)).Named("char-gpt").Build();
         return new CharGpt(config, model, device);
     }
 

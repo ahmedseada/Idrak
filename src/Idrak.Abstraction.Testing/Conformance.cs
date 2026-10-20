@@ -126,6 +126,47 @@ public static class Conformance
         Check(method ?? RopeScalings.Get(type), new RopeScalingSuite(type), options);
 
     /// <summary>
+    /// Checks the progress reporter registered as <paramref name="name"/> (or <paramref name="factory"/>, when given;
+    /// <see cref="ProgressReporterSuite"/>): it starts as asked, reports and advances (from several threads too) add up,
+    /// a report between showings allocates nothing and does not ask for the detail, the next stage starts afresh, and
+    /// nothing is written after the end. Eight random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckProgressReporter(string name, Func<ProgressRequest, IProgressReporter>? factory = null, ContractCheckOptions? options = null) =>
+        Check(factory ?? ProgressReporters.Get(name), new ProgressReporterSuite(), options ?? new ContractCheckOptions { RandomCases = 8 });
+
+    /// <summary>
+    /// Checks a keyword index (Idrak.Text's <c>KeywordIndexes</c>, given as <see cref="KeywordIndexUnderTest"/>;
+    /// <see cref="KeywordIndexSuite"/>): hits within the count asked for, ids in range and each once, finite positive
+    /// scores best first with ties by id, nothing for absent words, the same hits again and from several threads, and,
+    /// given a <paramref name="reference"/> (the library's index it replaces), the same ids and scores.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// static KeywordIndexUnderTest Of(string name) => new(texts =&gt; KeywordIndexes.Create(name, texts).Search);
+    /// Conformance.CheckKeywordIndex(Of("mine"), Of("bm25")).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    public static ConformanceReport CheckKeywordIndex(KeywordIndexUnderTest index, KeywordIndexUnderTest? reference = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(index);
+        return Check(index, new KeywordIndexSuite(reference), options);
+    }
+
+    /// <summary>
+    /// Checks a network recipe (Idrak's <c>NetworkRecipes</c>, given as <see cref="NetworkRecipeUnderTest"/>;
+    /// <see cref="NetworkRecipeSuite"/>): the same seed gives the same weights and predictions, the predictions are finite
+    /// and keep the batch, and, given a <paramref name="reference"/> (the library's recipe of that name), the same
+    /// parameters, weights and predictions. A library recipe has samples of its own; give <paramref name="samples"/> for
+    /// one of your own. Four random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckNetworkRecipe(string recipe, NetworkRecipeUnderTest builder, NetworkRecipeUnderTest? reference = null,
+        IReadOnlyList<NetworkRecipeSample>? samples = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        return Check(builder, new NetworkRecipeSuite(recipe, samples, reference), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>
     /// Checks a vision family's encoder (<see cref="VisionEncoderSuite"/>) on images of many sizes and channels: the same
     /// features every time, one features per block it says each image becomes, as many tokens as each block's layout says
     /// (width, grid, position ids), an image the same alone and in a batch, and, given <paramref name="cpu"/> (the same

@@ -24,6 +24,7 @@ internal static partial class Tests
         ("plugins: packages: Idrak.Text.Plugins, Idrak.Vision.Plugins and Idrak.Audio.Plugins load, each root class has All, RegisterAll, UnregisterAll and the -P entry RegisterIdrakPlugin, each family in a namespace of its own; RegisterAll twice leaves every registry the tool lists as once, and UnregisterAll leaves them as found", PluginPackagesRegisterAll),
         ("plugins: packages: an IdrakPlugin registers its parts once however often Register is called (from several threads too), Unregister leaves the registries as found, a failing part takes back the parts before it, Requires registers a needed plug-in only when missing; IdrakPlugins registers a plug-in once, replaces one of the same name (unregistering the earlier, which comes back when the new one fails) and names the packages when none is registered", PluginContract),
         ("plugins: packages: the tool registers the three packages at startup (text first), and -P on each package's DLL loads it through the tool's loader (RegisterIdrakPlugin runs) adding nothing twice", PluginPackagesCli),
+        ("plugins: packages: IDRAK_PLUGIN_PACKAGES chooses the packages the tool registers at startup (all when unset, none, or a list taken in the tool's order) and is refused naming the variable when it names no package", PluginPackagesSetting),
         ("plugins: packages: no library assembly nor the tool grants a plug-in package its internals, the plug-in packages grant none, and they are not library defaults", PluginPackagesNoInternals),
         ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures and ToolCallFormats name the plug-in package to reference and its RegisterAll", PluginPackagesMessages),
     ];
@@ -243,6 +244,25 @@ internal static partial class Tests
             Check(added.All(c => c.Value!["added"]!.AsArray().Count == 0), $"-P {package.Name}.dll adds nothing the tool registered already: {output}");
             Check(PluginPackages.SelectMany(p => p.All).All(p => p.IsRegistered), $"-P {package.Name}.dll leaves every family registered");
         }
+    }
+
+    private static void PluginPackagesSetting(Device device)
+    {
+        _ = device;
+        static string[] Chosen(string? value) => [.. CommandLine.ChosenPluginPackages(value).Select(p => p.Name)];
+        Check(Chosen(null).SequenceEqual(["text", "vision", "audio"]) && Chosen("").Length == 3 && Chosen(" All ").Length == 3, "all three when unset, empty or all");
+        Check(Chosen("none").Length == 0 && Chosen(" NONE ").Length == 0, "none");
+        Check(Chosen("audio, text").SequenceEqual(["text", "audio"]) && Chosen("Vision").SequenceEqual(["vision"]), "a list, in the tool's order (text first)");
+        Check(CommandLine.ChosenPluginPackages("vision").Single().Package == VisionPlugins.Package, "each name is its package");
+        ThrowsNaming<UsageException>(() => CommandLine.ChosenPluginPackages("text,speech"), "an unknown package", ["IDRAK_PLUGIN_PACKAGES=text,speech", "'speech'", "text, vision, audio"]);
+        Check(Idrak.Cli.Shared.EnvironmentVariables.All.Any(v => v.Name == CommandLine.PluginPackagesVariable), "the variable is in the tool's table");
+        WithEnvironment(new Dictionary<string, string?> { [CommandLine.PluginPackagesVariable] = "speech" }, () =>
+        {
+            var (exit, _, error) = Cli("plugins", "list");
+            Check(exit == 2 && error.Contains("IDRAK_PLUGIN_PACKAGES=speech", StringComparison.Ordinal), $"the tool refuses it naming the variable: {exit} {error}");
+        });
+        WithEnvironment(new Dictionary<string, string?> { [CommandLine.PluginPackagesVariable] = "none" }, () =>
+            Check(Cli("plugins", "list", "-j").Exit == 0, "none: the tool runs with no package registered by it"));
     }
 
     private static void PluginPackagesNoInternals(Device device)

@@ -546,6 +546,12 @@ public interface Idrak.Layers.Abstractions.INetworkBuilder
   public Idrak.Layers.Abstractions.INetworkBuilder Op(string name, System.Text.Json.Nodes.JsonObject? arguments = null)
   public System.Collections.Generic.IReadOnlyList<int> CurrentShape { get; }
 
+public interface Idrak.Layers.Abstractions.INetworkRecipe
+  public Idrak.Layers.NetworkBuilder Build(Idrak.Layers.Abstractions.NetworkRecipeArguments arguments)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Layers.Abstractions.NetworkRecipeParameter> Parameters { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
 public static class Idrak.Layers.Abstractions.LayerTypes
   public static Idrak.Abstraction.Module Create(System.Text.Json.Nodes.JsonObject description, Idrak.Abstraction.Device? device = null)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
@@ -579,6 +585,37 @@ public static class Idrak.Layers.Abstractions.NetworkOps
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(string name, Idrak.Layers.Abstractions.NetworkOp op)
+
+public sealed class Idrak.Layers.Abstractions.NetworkRecipeArguments
+  public NetworkRecipeArguments(string recipe, System.Text.Json.Nodes.JsonObject json)
+  public System.Text.Json.Nodes.JsonObject Json { get; }
+  public T Choice<T>(string key, T fallback) where T : struct, System.Enum
+  public bool Has(string key)
+  public float Float(string key)
+  public float Float(string key, float fallback)
+  public int Int(string key)
+  public int Int(string key, int fallback)
+  public int[] Ints(string key)
+  public string Recipe { get; }
+  public string Text(string key, string fallback)
+
+public sealed record Idrak.Layers.Abstractions.NetworkRecipeParameter : System.IEquatable<Idrak.Layers.Abstractions.NetworkRecipeParameter>
+  public NetworkRecipeParameter(string Name, string Meaning, string? Default = null)
+  public string Meaning { get; init; }
+  public string Name { get; init; }
+  public string? Default { get; init; }
+
+public static class Idrak.Layers.Abstractions.NetworkRecipes
+  public static Idrak.Layers.Abstractions.INetworkRecipe Get(string name)
+  public static Idrak.Layers.Abstractions.INetworkRecipe? Default(string name)
+  public static Idrak.Layers.Abstractions.INetworkRecipe? Find(string name)
+  public static Idrak.Layers.NetworkBuilder Build(string name, System.Text.Json.Nodes.JsonObject arguments)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Layers.Abstractions.INetworkRecipe recipe)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public abstract class Idrak.Layers.Abstractions.RecurrentModule : Idrak.Abstraction.Module
   protected RecurrentModule(int inputSize, int hiddenSize, int gates, bool returnSequences, Idrak.Abstraction.Device? device, System.Random? random)
@@ -2059,6 +2096,21 @@ public sealed class Idrak.Models.PyTorchCheckpointReader : Idrak.Abstraction.For
   public static bool IsCheckpoint(string path)
   public string Path { get; }
   public string? Root { get; }
+  public void Dispose()
+
+public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
+  public Idrak.Abstraction.Formats.ITensorStore Inner { get; }
+  public Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
+  public RenamedTensorStore(Idrak.Abstraction.Formats.ITensorStore inner, System.Collections.Generic.IReadOnlyDictionary<string, string> names, bool foldWeightNorm = false, bool ownsInner = true)
+  public RenamedTensorStore(Idrak.Abstraction.Formats.ITensorStore inner, System.Func<string, string> rename, bool foldWeightNorm = false, bool ownsInner = true)
+  public System.Collections.Generic.IEnumerable<string> Names { get; }
+  public System.TimeSpan? ReadTime { get; }
+  public bool Contains(string name)
+  public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public float[] Read(string name)
+  public float[] ReadTransposed(string name)
+  public int[] ShapeOf(string name)
+  public long? BytesRead { get; }
   public void Dispose()
 
 public sealed record Idrak.Models.SafeTensorInfo : System.IEquatable<Idrak.Models.SafeTensorInfo>

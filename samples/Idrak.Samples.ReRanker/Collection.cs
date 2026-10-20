@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.InteropServices;
 using Idrak.Generation;
 
 namespace Idrak.Samples.ReRanker;
@@ -74,61 +73,4 @@ public sealed class Collection
             new Query(text.Replace("{e}", Towns[t]), t, q.Key, Passages.First(p => p.Entity == t && p.Aspect == q.Key).Id))))];
 
     private void Add(int town, string? aspect, string text) => Passages.Add(new Passage(Passages.Count, town, aspect, text));
-}
-
-/// <summary>Okapi BM25: the standard word-matching ranking function used as the first stage of search.</summary>
-public sealed class Bm25
-{
-    private readonly List<string[]> _documents;
-    private readonly Dictionary<string, int>[] _counts;                                    // each document's term counts, made once
-    private readonly Dictionary<string, double> _idf = [];
-    private readonly double _averageLength;
-
-    public Bm25(IEnumerable<string> documents, double k1 = 1.2, double b = 0.75)
-    {
-        K1 = k1;
-        B = b;
-        _documents = [.. documents.Select(d => WordTokenizer.Split(d).ToArray())];
-        _averageLength = _documents.Average(d => d.Length);
-        _counts = new Dictionary<string, int>[_documents.Count];
-        for (int d = 0; d < _documents.Count; d++)
-        {
-            var counts = _counts[d] = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (string word in _documents[d])
-            {
-                CollectionsMarshal.GetValueRefOrAddDefault(counts, word, out _)++;
-            }
-        }
-
-        foreach (var group in _documents.SelectMany(d => d.Distinct()).GroupBy(w => w))
-        {
-            int n = group.Count();
-            _idf[group.Key] = Math.Log(1 + (_documents.Count - n + 0.5) / (n + 0.5));
-        }
-    }
-
-    public double K1 { get; }
-
-    public double B { get; }
-
-    /// <summary>The ids of the <paramref name="k"/> best-scoring documents for <paramref name="query"/>, best first.</summary>
-    public int[] Search(string query, int k)
-    {
-        var terms = WordTokenizer.Split(query).Where(_idf.ContainsKey).Distinct().ToArray();
-        var scores = new double[_documents.Count];
-        for (int d = 0; d < _documents.Count; d++)
-        {
-            var doc = _documents[d];
-            foreach (var term in terms)
-            {
-                int tf = _counts[d].GetValueOrDefault(term);
-                if (tf > 0)
-                {
-                    scores[d] += _idf[term] * tf * (K1 + 1) / (tf + K1 * (1 - B + B * doc.Length / _averageLength));
-                }
-            }
-        }
-
-        return [.. Enumerable.Range(0, scores.Length).OrderByDescending(d => scores[d]).ThenBy(d => d).Take(k)];
-    }
 }
