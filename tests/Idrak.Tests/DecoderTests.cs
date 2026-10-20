@@ -9,6 +9,7 @@ using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
+using Idrak.Text.Plugins.Llama;
 
 // Decoder-only language models described by DecoderSpec, checked against a plain-loop reference implementation.
 internal static partial class Tests
@@ -686,7 +687,7 @@ internal static partial class Tests
             ("post-norms, GELU, llama3 rope scaling", SmallSpec with
             {
                 PostNorms = true, Activation = FeedForwardActivation.Gelu,
-                Rope = new RopeSettings(500f, Scaling: RopeScaling.Llama3(8, 1, 4, 8)),
+                Rope = new RopeSettings(500f, Scaling: LlamaRopeScaling.Create(8, 1, 4, 8)),
             }),
             ("parallel, layer norm, plain feed-forward, all biases", SmallSpec with
             {

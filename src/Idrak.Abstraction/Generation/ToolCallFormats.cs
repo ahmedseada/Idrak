@@ -79,14 +79,12 @@ public sealed record ToolCallProbe(string? Source, string? Call)
 /// registered format first and "json" last. Registered:
 /// <list type="bullet">
 /// <item>"json": JSON calls in the template's <see cref="ToolCallFormat"/> (tags, a bare answer, a list); asked last, it takes any template.</item>
-/// <item>"pythonic": a Python list of calls, <c>[get_weather(city="Paris"), now()]</c> (Llama 3.2 and 4 pythonic templates).</item>
-/// <item>"qwen3-coder": <c>&lt;tool_call&gt;&lt;function=name&gt;&lt;parameter=key&gt;value&lt;/parameter&gt;&lt;/function&gt;&lt;/tool_call&gt;</c>.</item>
-/// <item>"mistral": <c>[TOOL_CALLS]</c> followed by a JSON list of calls or by <c>name[ARGS]{…}</c> per call.</item>
-/// <item>"harmony": GPT-OSS channels, calls as <c>&lt;|channel|&gt;commentary to=functions.name … &lt;|message|&gt;{…}&lt;|call|&gt;</c>, reasoning in the analysis channel.</item>
-/// <item>"deepseek": <c>&lt;｜tool▁calls▁begin｜&gt;&lt;｜tool▁call▁begin｜&gt;…&lt;｜tool▁sep｜&gt;…&lt;｜tool▁call▁end｜&gt;…</c> (V3 and R1 with a fenced JSON block, V3.1 with bare JSON).</item>
+/// <item>"pythonic": a Python list of calls, <c>[get_weather(city="Paris"), now()]</c>.</item>
 /// </list>
-/// Register another with <see cref="Register"/>; registering a built-in name overrides the built-in, which stays behind
-/// it until the app unregisters it.
+/// A family's own format is its plug-in's (Idrak.Text.Plugins registers "qwen3-coder", "mistral", "harmony" and
+/// "deepseek", each with its family, on <see cref="MarkedToolCallParser"/> and <see cref="ToolCallText"/>). Register
+/// another with <see cref="Register"/>; registering a built-in name overrides the built-in, which stays behind it until
+/// the app unregisters it.
 /// </summary>
 public static class ToolCallFormats
 {
@@ -95,18 +93,6 @@ public static class ToolCallFormats
 
     /// <summary>A Python list of calls.</summary>
     public const string Pythonic = "pythonic";
-
-    /// <summary>Qwen3-Coder's XML calls with one element per parameter.</summary>
-    public const string Qwen3Coder = "qwen3-coder";
-
-    /// <summary>Mistral's [TOOL_CALLS] calls.</summary>
-    public const string Mistral = "mistral";
-
-    /// <summary>GPT-OSS's harmony channels.</summary>
-    public const string Harmony = "harmony";
-
-    /// <summary>DeepSeek's special-token calls.</summary>
-    public const string DeepSeek = "deepseek";
 
     private sealed record Entry(string Name, Func<ToolCallProbe, bool> Detect, Func<ToolCallContext, IToolCallParser> Create);
 
@@ -118,11 +104,6 @@ public static class ToolCallFormats
         var table = new SlotTable<string, Entry>(nameof(ToolCallFormats), Guard, StringComparer.Ordinal, newestFirst: true);
         Entry[] builtIn =
         [
-            new(DeepSeek, p => p.Shows(DeepSeekToolCallParser.CallBegin), c => new DeepSeekToolCallParser(c)),
-            new(Harmony, p => p.Shows("to=functions."), _ => new HarmonyToolCallParser()),
-            new(Mistral, p => p.Shows(MistralToolCallParser.Marker), c => new MistralToolCallParser(c)),
-            new(Qwen3Coder, p => p.Call is { } call ? call.Contains("<function=" + ToolCallProbe.FunctionName + ">", StringComparison.Ordinal)
-                : p.Shows("<function=") && p.Shows("<parameter="), c => new Qwen3CoderToolCallParser(c)),
             new(Pythonic, p => p.Call?.Contains(ToolCallProbe.FunctionName + "(" + ToolCallProbe.ArgumentName + "=", StringComparison.Ordinal) ?? false,
                 c => new PythonicToolCallParser(c)),
             new(Json, _ => true, c => new JsonToolCallParser(c)),

@@ -1499,9 +1499,11 @@ public static class Idrak.Models.Abstractions.EncoderHeads
 
 public sealed class Idrak.Models.Abstractions.GgufArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufArchitecture()
+  public System.Action<Idrak.Models.GgufFile, System.Text.Json.Nodes.JsonObject, System.Collections.Generic.List<string>>? Configure { get; init; }
   public bool InterleavedQueryKeys { get; init; }
   public bool? NormalizeTopK { get; init; }
   public required string HuggingFace { get; init; }
+  public string ExpertCountKey { get; init; }
   public string? WithExperts { get; init; }
 
 public static class Idrak.Models.Abstractions.GgufArchitectures
@@ -1520,6 +1522,7 @@ public static class Idrak.Models.Abstractions.GgufPreTokenizers
   public static bool TryGet(string name, out string? pattern)
   public static bool Unregister(string name)
   public static string? Default(string name)
+  public static string? Fallback { get; set; }
   public static string? Origin(string name)
   public static void Register(string name, string? pattern)
 
@@ -2009,14 +2012,15 @@ public sealed record Idrak.Models.PretrainedEncoderOptions : System.IEquatable<I
   public string? Pooler { get; init; }
 
 public static class Idrak.Models.PretrainedFamilies
+  [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")] public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
+  [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")] public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
+  [Obsolete("Renamed CommonTensorName: the checkpoint names are the common ones, whichever family uses them.")] public static string? LlamaTensorName(string name)
   public static Idrak.Abstraction.Generation.DecoderSpec CommonSpec(System.Text.Json.Nodes.JsonObject c, System.Collections.Generic.List<string> notes)
   public static Idrak.Abstraction.Generation.DecoderSpec ExpertSpec(System.Text.Json.Nodes.JsonObject c, System.Collections.Generic.List<string> notes, bool normalizeTopK)
-  public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
-  public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
+  public static Idrak.Models.Abstractions.PretrainedArchitecture CommonArchitecture(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
+  public static Idrak.Models.Abstractions.PretrainedArchitecture CommonArchitecture(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
   public static System.Text.Json.Nodes.JsonObject CommonConfig(Idrak.Abstraction.Generation.DecoderSpec spec, string modelType)
-  public static string? LlamaTensorName(string name)
-  public static string? MixtralTensorName(string name)
-  public static string? QwenMoeTensorName(string name)
+  public static string? CommonTensorName(string name)
 
 public sealed record Idrak.Models.PretrainedLoadTimes : System.IEquatable<Idrak.Models.PretrainedLoadTimes>
   public PretrainedLoadTimes(System.TimeSpan Open, System.TimeSpan Read, System.TimeSpan Convert, System.TimeSpan Merge, System.TimeSpan Upload, System.TimeSpan Build, System.TimeSpan Vision, System.TimeSpan Tokenizer, System.TimeSpan Total)

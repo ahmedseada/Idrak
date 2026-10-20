@@ -8,7 +8,7 @@ namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// How rotary position embeddings stretch their frequencies for contexts longer than the model was trained on: the name
-/// of a method registered in <see cref="RopeScalings"/> ("linear", "llama3", "yarn", "dynamic", or one of your own) and
+/// of a method registered in <see cref="RopeScalings"/> ("linear", "yarn", "dynamic", a plug-in's, or one of your own) and
 /// its parameters, as Hugging Face's <c>rope_scaling</c> holds them (for example <c>{"factor": 4,
 /// "original_max_position_embeddings": 32768}</c>). Two scalings are equal when their types (ignoring case) and parameters are.
 /// </summary>
@@ -32,14 +32,6 @@ public sealed record RopeScaling
 
     /// <summary>Positions divided by <paramref name="factor"/> (every frequency divided by it).</summary>
     public static RopeScaling Linear(double factor) => new("linear", new JsonObject { ["factor"] = factor });
-
-    /// <summary>Llama 3's scaling: wavelengths longer than original / low stretched by the factor, shorter than original / high kept, a smooth blend between.</summary>
-    public static RopeScaling Llama3(double factor, double lowFrequencyFactor = 1, double highFrequencyFactor = 4, int originalMaxPositions = 8192) =>
-        new("llama3", new JsonObject
-        {
-            ["factor"] = factor, ["low_freq_factor"] = lowFrequencyFactor, ["high_freq_factor"] = highFrequencyFactor,
-            ["original_max_position_embeddings"] = originalMaxPositions,
-        });
 
     /// <summary>
     /// YaRN: frequencies that turn fewer than <paramref name="betaSlow"/> times over the original context are divided by the
@@ -77,8 +69,12 @@ public sealed record RopeScaling
     /// <inheritdoc />
     public override string ToString() => $"RopeScaling({Type}, {_parameters.ToJsonString()})";
 
-    /// <summary>A number parameter, or <paramref name="fallback"/> when it is missing or null.</summary>
-    internal static double Number(JsonObject parameters, string key, double? fallback = null) =>
+    /// <summary>
+    /// A number parameter of <paramref name="parameters"/> (whatever number type it holds), or <paramref name="fallback"/>
+    /// when it is missing or null; for scaling methods reading their parameters. Without a fallback a missing parameter
+    /// throws <see cref="ArgumentException"/> naming it.
+    /// </summary>
+    public static double Number(JsonObject parameters, string key, double? fallback = null) =>
         parameters[key] is JsonValue value && value.GetValueKind() == System.Text.Json.JsonValueKind.Number
             ? double.Parse(value.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture)   // whatever number type it holds
             : fallback ?? throw new ArgumentException($"RoPE scaling needs the parameter '{key}'.");
@@ -111,14 +107,13 @@ public delegate RopeScalingResult RopeScalingMethod(RopeScalingInput input);
 
 /// <summary>
 /// The RoPE scaling methods by name (<see cref="RopeScaling.Type"/>, ignoring case), as Hugging Face's
-/// <c>rope_scaling.rope_type</c> names them: "linear", "llama3", "yarn" and "dynamic" are registered; add your own with
-/// <see cref="Register"/>, and configurations or GGUF files naming it are read with it. A method registered under a
-/// built-in name overrides the library's, which stays behind it as the fallback (<see cref="SlotPolicy"/>).
+/// <c>rope_scaling.rope_type</c> names them: "linear", "yarn" and "dynamic" are the library's; a family's own scaling is
+/// its plug-in's (Idrak.Text.Plugins registers "llama3"); add your own with <see cref="Register"/>, and configurations or
+/// GGUF files naming it are read with it. A method registered under a built-in name overrides the library's, which stays
+/// behind it as the fallback (<see cref="SlotPolicy"/>).
 /// <para>
 /// The built-ins follow transformers' <c>modeling_rope_utils.py</c>: "linear" divides every frequency by <c>factor</c>;
-/// "llama3" divides frequencies whose wavelength exceeds original / <c>low_freq_factor</c> by the factor, keeps those
-/// under original / <c>high_freq_factor</c>, and blends between; "yarn" and "dynamic" are described at their methods
-/// below. "dynamic" depends on the sequence length: transformers computes one set of frequencies per forward pass from the
+/// "yarn" and "dynamic" are described at their methods below. "dynamic" depends on the sequence length: transformers computes one set of frequencies per forward pass from the
 /// longest position in it, so a prompt longer than <c>max_position_embeddings</c> run in one pass rotates all its tokens
 /// with the frequencies of its last position. Idrak rotates each token with the frequencies of its own position (what
 /// transformers does when decoding one token at a time), so the two agree within <c>max_position_embeddings</c> and when
@@ -133,7 +128,6 @@ public static class RopeScalings
     {
         var table = new SlotTable<string, RopeScalingMethod>(nameof(RopeScalings), Guard, StringComparer.OrdinalIgnoreCase);
         table.RegisterDefault("linear", Linear);
-        table.RegisterDefault("llama3", Llama3);
         table.RegisterDefault("yarn", Yarn);
         table.RegisterDefault("dynamic", Dynamic);
         return table;
@@ -165,7 +159,8 @@ public static class RopeScalings
     /// <summary>The method registered as <paramref name="type"/> (any case); an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     public static RopeScalingMethod Get(string type) =>
         Table.TryGet(type, out var method) ? method
-            : throw new NotSupportedException($"No RoPE scaling '{type}' is registered ({string.Join(", ", Table.Keys)}); add it with RopeScalings.Register.");
+            : throw new NotSupportedException($"No RoPE scaling '{type}' is registered ({string.Join(", ", Table.Keys)}); add it with RopeScalings.Register, "
+                + "or reference Idrak.Text.Plugins (a family's own scaling) and call TextPlugins.RegisterAll().");
 
     /// <summary>The library's method <paramref name="type"/>, whatever an app registered over it (for an app's method to delegate to); null when the library has none.</summary>
     public static RopeScalingMethod? Default(string type) => Table.Default(type);
@@ -223,32 +218,6 @@ public static class RopeScalings
         for (int i = 0; i < frequencies.Length; i++)
         {
             frequencies[i] /= factor;
-        }
-
-        return new(frequencies);
-    }
-
-    // transformers _compute_llama3_parameters: wavelength = 2π / f; f / factor above original / low_freq_factor, f below
-    // original / high_freq_factor, else (1 - s) · f / factor + s · f with s = (original / wavelength - low) / (high - low).
-    private static RopeScalingResult Llama3(RopeScalingInput input)
-    {
-        var p = input.Parameters;
-        double factor = RopeScaling.Number(p, "factor"), low = RopeScaling.Number(p, "low_freq_factor", 1), high = RopeScaling.Number(p, "high_freq_factor", 4);
-        double original = RopeScaling.Number(p, "original_max_position_embeddings", 8192);
-        double lowWavelength = original / low, highWavelength = original / high;
-        var frequencies = input.Frequencies;
-        for (int i = 0; i < frequencies.Length; i++)
-        {
-            double wavelength = 2 * Math.PI / frequencies[i];
-            if (wavelength > lowWavelength)
-            {
-                frequencies[i] /= factor;
-            }
-            else if (wavelength >= highWavelength)
-            {
-                double smooth = (original / wavelength - low) / (high - low);
-                frequencies[i] = (1 - smooth) * frequencies[i] / factor + smooth * frequencies[i];
-            }
         }
 
         return new(frequencies);

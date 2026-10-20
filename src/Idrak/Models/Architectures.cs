@@ -9,45 +9,36 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 /// <summary>
-/// The model families this assembly reads (registered in <see cref="PretrainedArchitectures"/>, Idrak.Abstraction, when
-/// the registry is first used), and the pieces they are made of, for families of your own:
-/// <see cref="LlamaStyle(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/> for those sharing the Llama naming, the specs read from the common configuration keys
-/// (<see cref="CommonSpec"/>, <see cref="ExpertSpec"/>) and the checkpoint names of each family.
+/// The pieces model families are made of, for the families of plug-ins and apps (the library registers none in
+/// <see cref="PretrainedArchitectures"/>; Idrak.Text.Plugins and Idrak.Vision.Plugins do):
+/// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/> for those sharing
+/// the common configuration keys and checkpoint names, the specs read from the common configuration keys
+/// (<see cref="CommonSpec"/>, <see cref="ExpertSpec"/>), the configuration of a spec (<see cref="CommonConfig"/>) and the
+/// common checkpoint names (<see cref="CommonTensorName"/>).
 /// </summary>
 public static class PretrainedFamilies
 {
-    // Llama, Mistral, Qwen2, Qwen3, and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE.
-    internal static IEnumerable<(string Name, PretrainedArchitecture Architecture)> BuiltIns() =>
-    [
-        ("LlamaForCausalLM", LlamaStyle((config, spec, _) => spec, "llama")),
-        ("MistralForCausalLM", LlamaStyle((config, spec, _) => spec, "mistral")),
-        ("Qwen2ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkvBias = true }, "qwen2")),
-        ("Qwen3ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkNorm = true }, "qwen3")),
-        ("MixtralForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: true), TensorName = MixtralTensorName }),
-        ("Qwen2MoeForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkvBias = true }, TensorName = QwenMoeTensorName }),
-        ("Qwen3MoeForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, TensorName = QwenMoeTensorName }),
-    ];
-
     /// <summary>
-    /// An architecture with the Llama configuration keys and weight names (model.embed_tokens, model.layers.i.self_attn.q_proj,
-    /// input_layernorm, post_attention_layernorm, mlp.gate_proj/up_proj/down_proj, model.norm, lm_head), which many
-    /// families share. <paramref name="adjust"/> changes the spec read from the common keys (for example biases or q/k norm).
+    /// An architecture with the common configuration keys (<see cref="CommonSpec"/>) and weight names
+    /// (<see cref="CommonTensorName"/>: model.embed_tokens, model.layers.i.self_attn.q_proj, input_layernorm,
+    /// post_attention_layernorm, mlp.gate_proj/up_proj/down_proj, model.norm, lm_head), which many families share.
+    /// <paramref name="adjust"/> changes the spec read from the common keys (for example biases or q/k norm).
     /// </summary>
-    public static PretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => new()
+    public static PretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => new()
     {
         Spec = (config, notes) => adjust(config, CommonSpec(config, notes), notes),
-        TensorName = LlamaTensorName,
+        TensorName = CommonTensorName,
     };
 
     /// <summary>
-    /// <see cref="LlamaStyle(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/> that can also write a spec as
-    /// config.json (<see cref="PretrainedArchitecture.Config"/>, through <see cref="CommonConfig"/> with
+    /// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/> that can also write a
+    /// spec as config.json (<see cref="PretrainedArchitecture.Config"/>, through <see cref="CommonConfig"/> with
     /// <paramref name="modelType"/>), so models of the family can be made from a spec.
     /// </summary>
-    public static PretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
+    public static PretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(modelType);
-        var architecture = LlamaStyle(adjust);
+        var architecture = CommonArchitecture(adjust);
         return new PretrainedArchitecture
         {
             Spec = architecture.Spec,
@@ -55,6 +46,15 @@ public static class PretrainedFamilies
             Config = spec => CheckedConfig(spec, CommonConfig(spec, modelType), architecture.Spec, modelType),
         };
     }
+
+    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/>, kept for one release.</summary>
+    [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
+    public static PretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => CommonArchitecture(adjust);
+
+    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/>, kept for one release.</summary>
+    [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
+    public static PretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType) =>
+        CommonArchitecture(adjust, modelType);
 
     /// <summary>
     /// A spec as the common configuration keys (the inverse of <see cref="CommonSpec"/>): hidden_size,
@@ -170,7 +170,7 @@ public static class PretrainedFamilies
         if (c["num_local_experts"] is not null || (int?)c["num_experts"] is > 0)
         {
             throw new NotSupportedException("This configuration has experts, which this family does not read; mixture-of-experts families "
-                + "(MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or one registered with PretrainedFamilies.ExpertSpec) do.");
+                + "(Idrak.Text.Plugins' MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or one registered with PretrainedFamilies.ExpertSpec) do.");
         }
 
         return Common(c, notes);
@@ -231,7 +231,7 @@ public static class PretrainedFamilies
                 if (!RopeScalings.Contains(type))
                 {
                     throw new NotSupportedException($"RoPE scaling '{type}' is not registered ({string.Join(", ", RopeScalings.Names)}); add it with RopeScalings.Register, "
-                        + "or remove rope_scaling to use the model within its original context.");
+                        + "reference Idrak.Text.Plugins (a family's own scaling) and call TextPlugins.RegisterAll(), or remove rope_scaling to use the model within its original context.");
                 }
 
                 // The parameters as the configuration gives them, plus the model's context length, which several methods
@@ -291,59 +291,10 @@ public static class PretrainedFamilies
     }
 
     /// <summary>
-    /// Idrak weight names → Mixtral checkpoint names: the Llama names, with each layer's experts under block_sparse_moe
-    /// (the router "gate", and experts.j.w1 / w3 / w2 for each expert's gate, up and down projections).
+    /// Idrak weight names → the common checkpoint names (model.embed_tokens, model.layers.i.self_attn.q_proj, …, model.norm,
+    /// lm_head); null for a weight they do not name.
     /// </summary>
-    public static string? MixtralTensorName(string name)
-    {
-        var parts = name.Split('.');
-        if (parts.Length >= 5 && parts[0] == "layers" && parts[2] == "mlp")
-        {
-            string layer = $"model.layers.{parts[1]}.block_sparse_moe";
-            if (parts is [_, _, _, "router", var kind])
-            {
-                return $"{layer}.gate.{kind}";
-            }
-
-            if (parts is [_, _, _, "experts", var expert, var projection, var kind2])
-            {
-                string? stored = projection switch { "gate" => "w1", "up" => "w3", "down" => "w2", _ => null };
-                return stored is null ? null : $"{layer}.experts.{expert}.{stored}.{kind2}";
-            }
-        }
-
-        return LlamaTensorName(name);
-    }
-
-    /// <summary>
-    /// Idrak weight names → Qwen2-MoE / Qwen3-MoE checkpoint names: the Llama names, with the router as mlp.gate, the
-    /// experts as mlp.experts.j.gate_proj / up_proj / down_proj, the shared expert as mlp.shared_expert.*_proj and its
-    /// gate as mlp.shared_expert_gate.
-    /// </summary>
-    public static string? QwenMoeTensorName(string name)
-    {
-        var parts = name.Split('.');
-        if (parts.Length >= 5 && parts[0] == "layers" && parts[2] == "mlp")
-        {
-            string layer = $"model.layers.{parts[1]}.mlp";
-            switch (parts)
-            {
-                case [_, _, _, "router", var kind]:
-                    return $"{layer}.gate.{kind}";
-                case [_, _, _, "shared_gate", var kind]:
-                    return $"{layer}.shared_expert_gate.{kind}";
-                case [_, _, _, "shared", var projection, var kind]:
-                    return $"{layer}.shared_expert.{projection}_proj.{kind}";
-                case [_, _, _, "experts", var expert, var projection, var kind]:
-                    return $"{layer}.experts.{expert}.{projection}_proj.{kind}";
-            }
-        }
-
-        return LlamaTensorName(name);
-    }
-
-    /// <summary>Idrak weight names → Llama-style checkpoint names.</summary>
-    public static string? LlamaTensorName(string name)
+    public static string? CommonTensorName(string name)
     {
         if (name == "embed.weight")
         {
@@ -379,6 +330,10 @@ public static class PretrainedFamilies
             _ => null,
         };
     }
+
+    /// <summary>The former name of <see cref="CommonTensorName"/>, kept for one release.</summary>
+    [Obsolete("Renamed CommonTensorName: the checkpoint names are the common ones, whichever family uses them.")]
+    public static string? LlamaTensorName(string name) => CommonTensorName(name);
 }
 
 /// <summary>

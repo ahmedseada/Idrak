@@ -10,6 +10,7 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Text;
+using Idrak.Text.Plugins;
 
 // Chat with a language model in the Hugging Face layout (Llama, Qwen, Mistral, Gemma …), run by Idrak's own engine
 // (CPU, CUDA or any Vulkan GPU):
@@ -31,6 +32,8 @@ using Idrak.Text;
 //          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 (int8 weights), --int4 (4-bit weights), --bf16 (bfloat16 weights), --kv8 (int8 KV cache), --kv16 (bfloat16 KV cache), --context N (default 4096),
 //          --folder F (check: read the model from F instead of the folder named in the reference), --no-think,
 //          --matmul fp32|bf16|fp8 (precision of the larger matrix products: bf16 tensor cores by default, fp32 for check).
+TextPlugins.RegisterAll();                          // the model families (Llama, Qwen, Mistral, Gemma, …) are Idrak.Text.Plugins'
+
 var positional = new List<string>();
 bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false;
 int context = 4096;

@@ -10,6 +10,8 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
+using Idrak.Text.Plugins.Mistral;
+using Idrak.Text.Plugins.Qwen;
 
 // Mixture of experts (Mixtral, Qwen2-MoE, Qwen3-MoE): the routing, decoders against the loop reference (prompt, training,
 // cached decoding, batches, packed experts), gradients, fine-tuning, and checkpoints in each family's names (safetensors
@@ -477,16 +479,16 @@ internal static partial class Tests
         }
 
         // Tensor names.
-        Check(PretrainedFamilies.MixtralTensorName("layers.3.mlp.router.weight") == "model.layers.3.block_sparse_moe.gate.weight"
-              && PretrainedFamilies.MixtralTensorName("layers.3.mlp.experts.5.gate.weight") == "model.layers.3.block_sparse_moe.experts.5.w1.weight"
-              && PretrainedFamilies.MixtralTensorName("layers.3.mlp.experts.5.up.weight") == "model.layers.3.block_sparse_moe.experts.5.w3.weight"
-              && PretrainedFamilies.MixtralTensorName("layers.3.mlp.experts.5.down.weight") == "model.layers.3.block_sparse_moe.experts.5.w2.weight"
-              && PretrainedFamilies.MixtralTensorName("layers.3.attn.q.weight") == "model.layers.3.self_attn.q_proj.weight", "Mixtral names");
-        Check(PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.router.weight") == "model.layers.0.mlp.gate.weight"
-              && PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.experts.12.down.weight") == "model.layers.0.mlp.experts.12.down_proj.weight"
-              && PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.shared.up.weight") == "model.layers.0.mlp.shared_expert.up_proj.weight"
-              && PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.shared_gate.weight") == "model.layers.0.mlp.shared_expert_gate.weight"
-              && PretrainedFamilies.QwenMoeTensorName("layers.1.mlp.gate.weight") == "model.layers.1.mlp.gate_proj.weight", "Qwen MoE names");
+        Check(MistralArchitectures.MixtralTensorName("layers.3.mlp.router.weight") == "model.layers.3.block_sparse_moe.gate.weight"
+              && MistralArchitectures.MixtralTensorName("layers.3.mlp.experts.5.gate.weight") == "model.layers.3.block_sparse_moe.experts.5.w1.weight"
+              && MistralArchitectures.MixtralTensorName("layers.3.mlp.experts.5.up.weight") == "model.layers.3.block_sparse_moe.experts.5.w3.weight"
+              && MistralArchitectures.MixtralTensorName("layers.3.mlp.experts.5.down.weight") == "model.layers.3.block_sparse_moe.experts.5.w2.weight"
+              && MistralArchitectures.MixtralTensorName("layers.3.attn.q.weight") == "model.layers.3.self_attn.q_proj.weight", "Mixtral names");
+        Check(QwenArchitectures.MoeTensorName("layers.0.mlp.router.weight") == "model.layers.0.mlp.gate.weight"
+              && QwenArchitectures.MoeTensorName("layers.0.mlp.experts.12.down.weight") == "model.layers.0.mlp.experts.12.down_proj.weight"
+              && QwenArchitectures.MoeTensorName("layers.0.mlp.shared.up.weight") == "model.layers.0.mlp.shared_expert.up_proj.weight"
+              && QwenArchitectures.MoeTensorName("layers.0.mlp.shared_gate.weight") == "model.layers.0.mlp.shared_expert_gate.weight"
+              && QwenArchitectures.MoeTensorName("layers.1.mlp.gate.weight") == "model.layers.1.mlp.gate_proj.weight", "Qwen MoE names");
 
         // Checkpoints in each family's names load and match the reference.
         int[] ids = [2, 9, 14, 3, 7, 1, 20];

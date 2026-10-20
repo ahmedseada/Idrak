@@ -2668,6 +2668,14 @@ public sealed class Idrak.Abstraction.Generation.BucketedPositionBias : Idrak.Ab
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
   public override string ToString()
 
+public sealed class Idrak.Abstraction.Generation.CharBuffer
+  public CharBuffer()
+  public System.ReadOnlySpan<char> Span { get; }
+  public int Length { get; }
+  public void Append(System.ReadOnlySpan<char> text)
+  public void Clear()
+  public void Remove(int count)
+
 public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstraction.Generation.ITokenizer
   public CharTokenizer(System.Collections.Generic.IEnumerable<string> characters, Idrak.Abstraction.Generation.CharTokenizerOptions options)
   public CharTokenizer(string vocabulary, Idrak.Abstraction.Generation.CharTokenizerOptions options)
@@ -3370,6 +3378,16 @@ public static class Idrak.Abstraction.Generation.KeyValueLayouts
   public static string? Origin(string name)
   public static void Register(string name, Idrak.Abstraction.Generation.KeyValueLayout layout)
 
+public abstract class Idrak.Abstraction.Generation.MarkedToolCallParser : Idrak.Abstraction.Generation.IToolCallParser
+  protected Idrak.Abstraction.Generation.ToolCallContext Context { get; }
+  protected MarkedToolCallParser(Idrak.Abstraction.Generation.ToolCallContext context)
+  protected abstract System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? Parse(string body)
+  protected abstract string Close { get; }
+  protected abstract string Open { get; }
+  protected virtual int Decide(System.ReadOnlySpan<char> start)
+  public Idrak.Abstraction.Generation.ChatDelta Feed(string text)
+  public Idrak.Abstraction.Generation.ChatDelta Finish()
+
 public sealed record Idrak.Abstraction.Generation.ModelPartCheckpoint : System.IEquatable<Idrak.Abstraction.Generation.ModelPartCheckpoint>
   public Idrak.Abstraction.Formats.ITensorStore Tensors { get; init; }
   public ModelPartCheckpoint(string Architecture, System.Text.Json.Nodes.JsonObject Config, Idrak.Abstraction.Formats.ITensorStore Tensors, string? Folder, System.Func<Idrak.Abstraction.Formats.ITensorStore> Open, System.Collections.Generic.List<string> Notes)
@@ -3479,8 +3497,8 @@ public sealed record Idrak.Abstraction.Generation.RopeScaling : System.IEquatabl
   public override string ToString()
   public static Idrak.Abstraction.Generation.RopeScaling Dynamic(double factor, int maxPositions)
   public static Idrak.Abstraction.Generation.RopeScaling Linear(double factor)
-  public static Idrak.Abstraction.Generation.RopeScaling Llama3(double factor, double lowFrequencyFactor = 1, double highFrequencyFactor = 4, int originalMaxPositions = 8192)
   public static Idrak.Abstraction.Generation.RopeScaling Yarn(double factor, int originalMaxPositions, double? attentionFactor = null, double betaFast = 32, double betaSlow = 1)
+  public static double Number(System.Text.Json.Nodes.JsonObject parameters, string key, double? fallback = null)
   public string Type { get; }
 
 public sealed record Idrak.Abstraction.Generation.RopeScalingInput : System.IEquatable<Idrak.Abstraction.Generation.RopeScalingInput>
@@ -3656,12 +3674,8 @@ public sealed record Idrak.Abstraction.Generation.ToolCallFormat : System.IEquat
   public string Open { get; init; }
 
 public static class Idrak.Abstraction.Generation.ToolCallFormats
-  public const string DeepSeek = "deepseek"
-  public const string Harmony = "harmony"
   public const string Json = "json"
-  public const string Mistral = "mistral"
   public const string Pythonic = "pythonic"
-  public const string Qwen3Coder = "qwen3-coder"
   public static Idrak.Abstraction.Generation.IToolCallParser Create(string name, Idrak.Abstraction.Generation.ToolCallContext context)
   public static Idrak.Abstraction.Generation.IToolCallParser? Default(string name, Idrak.Abstraction.Generation.ToolCallContext context)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
@@ -3679,6 +3693,15 @@ public sealed record Idrak.Abstraction.Generation.ToolCallProbe : System.IEquata
   public const string FunctionName = "ns_probe_function"
   public string? Call { get; init; }
   public string? Source { get; init; }
+
+public static class Idrak.Abstraction.Generation.ToolCallText
+  public const string PythonTag = "<|python_tag|>"
+  public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? JsonCallSequence(string text, string argumentsKey, Idrak.Abstraction.Generation.ToolCallContext? names)
+  public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? JsonCalls(string json, string argumentsKey, Idrak.Abstraction.Generation.ToolCallContext? names)
+  public static System.Text.Json.Nodes.JsonNode? TryParse(string text)
+  public static System.Text.Json.Nodes.JsonObject? Arguments(System.Text.Json.Nodes.JsonNode? node)
+  public static int JsonValueEnd(string text, int start)
+  public static int SafeLength(System.ReadOnlySpan<char> text, string tag)
 
 public sealed record Idrak.Abstraction.Generation.ToolDefinition : System.IEquatable<Idrak.Abstraction.Generation.ToolDefinition>
   public System.Text.Json.Nodes.JsonNode? Parameters { get; init; }
