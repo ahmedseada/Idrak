@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Layers;
-using Idrak.Nlp.Retrieval;
+using Idrak.Text.Retrieval;
 
 namespace Idrak.Cli.Commands.Run;
 

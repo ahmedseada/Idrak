@@ -8,9 +8,9 @@ using Idrak.Cluster;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
 using Idrak.Training;
 
 // Plan 23, phase C7: pipeline parallelism. The plan cutting a model into stages, the boundary module (its forward sends

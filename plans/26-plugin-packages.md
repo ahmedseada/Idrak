@@ -7,7 +7,7 @@ built. No phase starts until the owner names it.
 
 | Phase | What | Lane | State |
 |---|---|---|---|
-| P0 | `Idrak.Nlp` renamed `Idrak.Text` (project, assembly, package, namespaces, every reference) | A, alone | Not started |
+| P0 | `Idrak.Nlp` renamed `Idrak.Text` (project, assembly, package, namespaces, every reference) | A, alone | Done 2026-10-20; CPU pass |
 | P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | A | Not started |
 | P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Not started |
 | P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Not started |
@@ -235,6 +235,26 @@ json repair:|conversation tuning:|cli health|cli arabic:|cli polish|cli run:|cli
 every group whose test file names `Idrak.Nlp` (listed in the phase's as-built note). **Owner:** the full suite once, as
 the rename reaches every package.
 
+**P0 as built (2026-10-20).** As planned, with these specifics:
+- `git mv` of `src/Idrak.Nlp` to `src/Idrak.Text`, its project file and `api/Idrak.Nlp.txt` (regenerated); `Idrak.Nlp`
+  replaced by `Idrak.Text` in 213 files (code, projects, the solution, `build/IdrakFromSource.targets`' package list,
+  `LibraryDefaults`' package list and `DynamicDependency`, `InternalsVisibleTo`, `internals-justified.txt`, samples,
+  tools' comments, READMEs); the plans and `CHANGELOG.md` keep their history. One short reference
+  (`typeof(Nlp.ChatTranscriptEncoder)` in `src/Idrak.Cli/Commands/Health/Machine.cs`) and two comments by hand.
+- The README's history note says `Idrak.Nlp` (renamed `Idrak.Text` in 2026-10).
+- **The naming check:** the existing former-names test scans every file, plans and changelog included, so a renamed
+  package (whose history the plans must keep) gets its own test: `naming: no code, project, build file, API dump or test
+  list names a renamed package` (code and data kinds; Markdown and `plans/` skipped).
+- No `Idrak.Text` namespace existed; `Idrak.Abstraction.Text` (Unicode normalization) stays as it is.
+- **Run (CPU):** one build, 15 changed sample projects built; the API dump and inventory regenerated; `naming:`,
+  `public API`, `abstraction inventory`, `override loop:`, `plugins:`, `conformance kit:`, `retrieval:`,
+  `cli retrieval:`, `fine-tuning:`, `chat templates:`, `conversation tuning:`, `answer texts:`, `json repair:`,
+  `random text:`, `synthetic data:`, `coding agent:`, `tool contracts:`, `distillation:`, `pretrain:`,
+  `audio language:`, `cli serve:`, `cli health`, `cli polish`, `cli arabic:`, `evaluation:`, `model host:`: 158 passed,
+  1 failed (the new naming test matched its own description); after one rebuild `naming:` 3 of 3. Sample tests:
+  Override 4, ArabicOcr 14, LegalOcr 12, all passed.
+- **Owner:** the full suite once (the rename reaches every package), commands in "The owner's runs".
+
 ## Phase P1: the three plug-in packages
 
 - `src/Idrak.Text.Plugins` (references `Idrak.Text`, `Idrak`), `src/Idrak.Vision.Plugins` (references `Idrak.Vision`,
@@ -430,3 +450,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 
 | Date | Phase | Machine | What | Result |
 |---|---|---|---|---|
+| 2026-10-20 | P0 | CPU (cloud, 4 threads) | the P0 filters above, the three sample test projects | 158 passed, 1 failed (naming test matched itself), then 3 of 3; samples 4, 14, 12 passed |

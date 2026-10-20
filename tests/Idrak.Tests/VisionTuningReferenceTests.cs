@@ -8,7 +8,7 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
+using Idrak.Text;
 
 // Plan 12, phase 0: the tiny vision fine-tune of tools/vlm/make_tiny_tuning.py (tests/Idrak.Tests/data/vlm-tuning)
 // checked with what the library has today, before the tuner takes images: the records' rendering, image expansion, token

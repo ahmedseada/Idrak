@@ -196,7 +196,7 @@ internal static partial class Tests
         }
     }
 
-    // An ITokenSampler factory (the token-sampler contract of Idrak.Nlp) as the kit's sampler checks drive it.
+    // An ITokenSampler factory (the token-sampler contract of Idrak.Text) as the kit's sampler checks drive it.
     internal static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, ITokenSampler> create) => settings =>
     {
         var sampler = create(new SamplerRequest(settings.Device, settings.Rows, settings.Vocabulary, settings.Steps, settings.HistoryCapacity, new GenerationOptions

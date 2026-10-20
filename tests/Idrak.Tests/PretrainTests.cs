@@ -5,8 +5,8 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Generation;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Plan 19: language models made from scratch (phase A1: a model from a spec, saved as a folder; A3: the pretraining loop).
 internal static partial class Tests

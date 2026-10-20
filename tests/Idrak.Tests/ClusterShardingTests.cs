@@ -12,7 +12,7 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Networking.Abstractions;
 using Idrak.Networking.Training;
-using Idrak.Nlp;
+using Idrak.Text;
 using Idrak.Training;
 using Idrak.Training.Abstractions;
 

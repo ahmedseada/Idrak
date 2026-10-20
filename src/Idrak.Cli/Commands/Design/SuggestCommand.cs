@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
-using Idrak.Nlp;
+using Idrak.Text;
 
 namespace Idrak.Cli.Commands.Design;
 

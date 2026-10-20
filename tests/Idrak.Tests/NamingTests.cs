@@ -11,6 +11,7 @@ internal static partial class Tests
     [
         ("naming: no file in the repository uses the library's former name or its tool names", FormerNamesGone),
         ("naming: no public type, member or parameter of an Idrak assembly is named after a provider", NoProviderNamesInPublicApi),
+        ("naming: no code, project, build file, API dump or test list names a renamed package (Idrak.Text's former name); the plans and the changelog keep their history", RenamedPackagesGone),
     ];
 
     // Names of model servers and model providers; public names describe what an API does, not whose it resembles.
@@ -26,7 +27,7 @@ internal static partial class Tests
             .Where(n => n is not ("Idrak.Tests" or "Idrak.PluginTests"))
             .Select(n => System.Reflection.Assembly.Load(n!))
             .ToList();
-        Check(assemblies.Any(a => a.GetName().Name == "Idrak.AspNetCore") && assemblies.Any(a => a.GetName().Name == "Idrak.Nlp"),
+        Check(assemblies.Any(a => a.GetName().Name == "Idrak.AspNetCore") && assemblies.Any(a => a.GetName().Name == "Idrak.Text"),
             $"assemblies scanned: {string.Join(", ", assemblies.Select(a => a.GetName().Name))}");
 
         static bool Obsolete(System.Reflection.MemberInfo member) => member.IsDefined(typeof(ObsoleteAttribute), inherit: false);
@@ -107,6 +108,36 @@ internal static partial class Tests
         }
 
         Check(found.Count == 0, $"former names left: {string.Join(", ", found.Take(10))}");
+    }
+
+    // Packages renamed (plan 26, P0): their old names stay only in history (the plans, the changelog and other Markdown).
+    private static void RenamedPackagesGone(Device device)
+    {
+        _ = device;
+        string root = RepositoryRoot();
+        string[] renamed = ["Idrak." + "Nlp"];                                  // split so this file does not match
+        string[] skipped = ["bin", "obj", ".git", ".vs", ".idea", "__pycache__", "plans"];
+        string[] checkedKinds = [".cs", ".csproj", ".props", ".targets", ".slnx", ".sln", ".json", ".txt", ".py", ".ps1", ".sh", ".yml", ".yaml", ".jinja"];
+        var found = new List<string>();
+        int files = 0;
+        foreach (string path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            string relative = Path.GetRelativePath(root, path);
+            if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Any(skipped.Contains)
+                || !checkedKinds.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            files++;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            string text = relative + "\n" + reader.ReadToEnd();
+            found.AddRange(renamed.Where(n => text.Contains(n, StringComparison.Ordinal)).Select(n => $"{relative}: {n}"));
+        }
+
+        Check(files > 500, $"the scan read the repository ({files} files)");
+        Check(found.Count == 0, $"renamed package names left: {string.Join(", ", found.Take(10))}");
     }
 
     // The folder holding Idrak.slnx, found from the build output folder.

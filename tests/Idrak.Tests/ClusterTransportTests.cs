@@ -14,7 +14,7 @@ using Idrak.Cluster;
 using Idrak.Networking.Abstractions;
 using Idrak.Networking.Bench;
 using Idrak.Networking.Transports;
-using Idrak.Nlp;
+using Idrak.Text;
 
 // Plan 23, phase C5: the real transports (shared-memory, tcp with its rendezvous and keyed hello, direct-link, pcie-host,
 // nvlink), one group over several transports, Backend.CopyTo, the localhost cluster of child processes with its throttle,

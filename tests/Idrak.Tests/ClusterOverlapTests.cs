@@ -11,8 +11,8 @@ using Idrak.Datasets.Abstractions;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Networking.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 using Idrak.Training;
 
 // Plan 23, phase C4: gradient buckets reduced while the backward pass continues (a hook per parameter), the bucket size

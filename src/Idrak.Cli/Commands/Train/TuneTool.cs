@@ -12,8 +12,8 @@ using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 using Idrak.Abstraction.Generation;
 
 namespace Idrak.Cli.Commands.Train;

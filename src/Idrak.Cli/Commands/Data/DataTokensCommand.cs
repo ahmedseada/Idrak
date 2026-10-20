@@ -103,7 +103,7 @@ internal sealed class DataTokensCommand : Command
         {
             ["format"] = "idrak-tokens/1", ["tokens"] = result.Tokens, ["documents"] = result.Documents, ["type"] = type.ToString(),
             ["separator"] = separator, ["tokenizer"] = Path.GetFullPath(tokenizerPath), ["vocabulary"] = tokenizer.VocabularySize,
-            ["vocabulary_fingerprint"] = Idrak.Nlp.Abstractions.DistillationTeacher.VocabularyFingerprint(tokenizer),
+            ["vocabulary_fingerprint"] = Idrak.Text.Abstractions.DistillationTeacher.VocabularyFingerprint(tokenizer),
             ["files"] = new JsonArray([.. files.Select(f => (JsonNode)Path.GetFullPath(f))]),
         };
         File.WriteAllText(output + ".json", described.ToJsonString(CommandContext.JsonOutput) + "\n");

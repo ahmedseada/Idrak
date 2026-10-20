@@ -9,8 +9,8 @@ using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Cli.Commands.Train;
 

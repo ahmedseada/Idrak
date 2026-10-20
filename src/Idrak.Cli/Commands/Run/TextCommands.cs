@@ -7,7 +7,7 @@ using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
+using Idrak.Text;
 
 namespace Idrak.Cli.Commands.Run;
 

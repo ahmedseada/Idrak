@@ -7,7 +7,7 @@ namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// The readers of a model folder's own chat template, which loading a pretrained model asks (Idrak's
-/// <c>PretrainedModel.Load</c>). Idrak.Nlp registers "jinja": the Jinja template of tokenizer_config.json,
+/// <c>PretrainedModel.Load</c>). Idrak.Text registers "jinja": the Jinja template of tokenizer_config.json,
 /// chat_template.jinja or chat_template.json, rendered as Hugging Face renders it. Without a reader, a loaded model has no
 /// chat template. Add a reader of your own with <see cref="Register"/>.
 /// </summary>

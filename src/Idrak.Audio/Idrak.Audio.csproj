@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
-    <ProjectReference Include="..\Idrak.Nlp\Idrak.Nlp.csproj" />
+    <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
   </ItemGroup>
 
   <ItemGroup>

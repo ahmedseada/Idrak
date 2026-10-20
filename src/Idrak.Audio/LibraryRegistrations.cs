@@ -4,7 +4,7 @@
 namespace Idrak.Audio;
 
 /// <summary>
-/// What this assembly adds to the registries of Idrak.Abstraction and Idrak.Nlp, which cannot name it (plan 21: the
+/// What this assembly adds to the registries of Idrak.Abstraction and Idrak.Text, which cannot name it (plan 21: the
 /// "audio" chat part of S3; the "audio" model part, the sources and data formats of S6). The registries of this assembly (the codecs, the
 /// encoders) hold their own built-ins, as Idrak.Vision's do. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction)
 /// calls <see cref="RegisterFor"/> once per registry, before that registry is first used.

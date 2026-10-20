@@ -6,7 +6,7 @@ using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text.Generation;
 
 namespace Idrak.Cli.Shared;
 

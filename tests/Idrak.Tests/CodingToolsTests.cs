@@ -4,8 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
-using Idrak.Nlp;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Generation;
 
 // Coding tools: the workspace sandbox, reading, searching, exact edits, writes and allowlisted commands.
 internal static partial class Tests

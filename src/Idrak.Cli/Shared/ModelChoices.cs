@@ -3,7 +3,7 @@
 
 using System.Diagnostics;
 using Idrak.Models;
-using Idrak.Nlp;
+using Idrak.Text;
 
 namespace Idrak.Cli.Shared;
 
@@ -307,7 +307,7 @@ internal static class ModelChoices
         model.CreateGenerator(CacheLayout(choice), ContextLength(choice, model));
 
     /// <summary>A chat generator for <paramref name="model"/> (its own chat template) with the chosen KV cache format and context window.</summary>
-    public static Idrak.Nlp.Generation.ChatGenerator CreateChat(PretrainedModel model, ModelChoice choice) =>
+    public static Idrak.Text.Generation.ChatGenerator CreateChat(PretrainedModel model, ModelChoice choice) =>
         model.ChatTemplate is null
             ? throw new InvalidOperationException($"{choice.Model} has no chat template (tokenizer_config.json); use 'idrak complete' for raw completion.")
             : model.CreateChat(CacheLayout(choice), ContextLength(choice, model));

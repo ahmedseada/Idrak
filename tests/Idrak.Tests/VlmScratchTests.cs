@@ -9,9 +9,9 @@ using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
 
 // Plan 19, phases B1 and B2: vision-language models made from scratch, IdrakVision as the plug-in that makes and reads them.
 internal static partial class Tests

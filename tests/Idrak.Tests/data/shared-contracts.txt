@@ -8,9 +8,9 @@ Idrak.Abstraction.Generation.TokenSamplers | the sampler every token-generating 
 Idrak.Abstraction.Retrieval.IVectorStore | embeddings of any kind (text, images, audio) are stored and searched the same way
 Idrak.Abstraction.Generation.IImagePositionRule | how a vision-language family's image tokens sit on a multi-axis rotary embedding: the decoder (core) applies it, a family plug-in or an app may give its own, and a tuner or server placing tokens itself reads it
 Idrak.Abstraction.Generation.ImagePositionRules | the position rules by name, beside ImageAttentionRules, overridable once for every package that places image tokens
-Idrak.Abstraction.Data.IOutlineRasterizer | how glyph and shape outlines become pixels, for every package that draws text or shapes (Imaging, Nlp's synthetic pages, Vision's synthetic samples)
+Idrak.Abstraction.Data.IOutlineRasterizer | how glyph and shape outlines become pixels, for every package that draws text or shapes (Imaging, Text's synthetic pages, Vision's synthetic samples)
 Idrak.Abstraction.Data.OutlineRasterizers | the outline rasterizers by name, overridable once for every package that draws outlines
-Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per script, for every package that draws text (Imaging draws, Nlp's synthetic pages lay out, Vision makes text samples); a script's shaper is registered once for all of them
+Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per script, for every package that draws text (Imaging draws, Text's synthetic pages lay out, Vision makes text samples); a script's shaper is registered once for all of them
 Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for every package that draws text
 Idrak.Abstraction.Generation.CtcDecoders | CTC decoding reads any recognizer's per-step classes the same way, whatever they stand for: speech (Audio's CTC trainer and recognizers) and text lines (OCR readers, Vision's sequence heads); a lexicon or language-model decoder is registered once for all of them
 Idrak.Abstraction.Cluster.IFailureModel | which faults a run injects (slow, dropped, lost links, partitions, late joins), for every package that runs ranks: the simulator (Idrak.Cluster) and, from C5, Idrak.Network's real transports under test, so a seeded fault plan replays the same on both

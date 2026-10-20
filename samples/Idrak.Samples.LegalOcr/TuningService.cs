@@ -5,8 +5,8 @@ using System.Diagnostics;
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 using Idrak.Abstraction.Generation;
 
 namespace Idrak.Samples.LegalOcr;

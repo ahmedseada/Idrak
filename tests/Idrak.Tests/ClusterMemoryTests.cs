@@ -9,8 +9,8 @@ using Idrak.Cluster;
 using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Models;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 using Idrak.Training;
 
 // Plan 23, phase C8b: memory and speed. A pipeline stage and a parameter shard read only their own tensors from the

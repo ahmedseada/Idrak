@@ -6,8 +6,8 @@ using Idrak;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Generation;
 using Idrak.QwenVision;
 
 // Plan 16: Qwen-VL as a plug-in (samples/QwenVision) on the library's multi-axis rotary positions, checked against

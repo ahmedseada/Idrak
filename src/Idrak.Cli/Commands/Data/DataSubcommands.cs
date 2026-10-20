@@ -8,7 +8,7 @@ using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Generation;
 using Idrak.Models;
-using Idrak.Nlp;
+using Idrak.Text;
 
 namespace Idrak.Cli.Commands.Data;
 

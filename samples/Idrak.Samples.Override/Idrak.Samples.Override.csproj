@@ -8,7 +8,7 @@
        set in samples/Directory.Build.props), so a change to the library is in this app on its next build. -->
   <ItemGroup>
     <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
-    <PackageReference Include="Idrak.Nlp" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Text" Version="$(IdrakVersion)" />
   </ItemGroup>
 
 </Project>

@@ -10,8 +10,8 @@ using Idrak.Cli.Commands.Data;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Retrieval;
+using Idrak.Text;
+using Idrak.Text.Retrieval;
 
 // --bench-text [text] [tokenizers] [trainers]: the library's text paths, CPU only, no model or download needed (default:
 // every section).

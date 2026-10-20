@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Text</RootNamespace>
+    <AssemblyName>Idrak.Text</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageId>Idrak.Text</PackageId>
+    <Description>Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Data): text generation and chat with tools, the models' own Jinja chat templates, an inference engine's text and chat models, LLM fine-tuning (LoRA, QLoRA, DoRA, distillation) and evaluation, retrieval and RAG, and a coding agent.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
+    <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The built-in random text sources' word pools (RandomTextSources); not cultures, whatever their names' ".ar." says. -->
+    <EmbeddedResource Include="Resources\random-text.ar.json" LogicalName="Idrak.Text.random-text.ar.json" WithCulture="false" />
+    <EmbeddedResource Include="Resources\random-text.en.json" LogicalName="Idrak.Text.random-text.en.json" WithCulture="false" />
+  </ItemGroup>
+
+</Project>

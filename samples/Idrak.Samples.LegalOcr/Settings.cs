@@ -320,7 +320,7 @@ public sealed record TuningDefaults
 }
 
 /// <summary>
-/// How the Fine-tune tab makes training pages from the training records' text (Idrak.Nlp's SyntheticPages): every record's
+/// How the Fine-tune tab makes training pages from the training records' text (Idrak.Text's SyntheticPages): every record's
 /// answer text drawn as new pages in the fonts given, with header, subject, signature and footer parts, made to look
 /// scanned; each one written back as a record with its page and the drawn text as its answer's full text. Relative paths
 /// are from the app's folder.
@@ -366,7 +366,7 @@ public sealed record SyntheticSettings
     /// <summary>These settings with the library's layouts and scans where none are given.</summary>
     public SyntheticSettings Effective()
     {
-        var library = new Idrak.Nlp.SyntheticPageOptions { Style = new PageStyle { Fonts = [] } };
+        var library = new Idrak.Text.SyntheticPageOptions { Style = new PageStyle { Fonts = [] } };
         return this with { Layouts = Layouts.Count > 0 ? Layouts : [.. library.Layouts], Scans = Scans.Count > 0 ? Scans : [.. library.Scans] };
     }
 }

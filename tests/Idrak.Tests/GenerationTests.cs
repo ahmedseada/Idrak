@@ -8,7 +8,7 @@ using Idrak.Datasets.Abstractions;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp.Generation;
+using Idrak.Text.Generation;
 
 internal static partial class Tests
 {

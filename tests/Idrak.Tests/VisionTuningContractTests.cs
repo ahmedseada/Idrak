@@ -7,8 +7,8 @@ using Idrak.Abstraction.Testing;
 using Idrak.Gemma3Vision;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 using Idrak.Abstraction.Generation;
 
 // Plan 12, phase 1: the contracts and registries of vision-language fine-tuning (no family in the library): tuning data

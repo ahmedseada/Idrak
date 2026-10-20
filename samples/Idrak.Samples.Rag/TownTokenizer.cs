@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Generation;
-using Idrak.Nlp.Retrieval;
+using Idrak.Text.Retrieval;
 
 namespace Idrak.Samples.Rag;
 

@@ -29,7 +29,7 @@ internal static class LibraryDefaults
     // Idrak.Network's (Idrak.Networking: a namespace Idrak.Network would hide the Idrak.Network builder from code in
     // Idrak.* namespaces). Planned packages are listed so they work the day they appear.
     private static readonly (string Assembly, string Namespace)[] Assemblies =
-        [("Idrak", "Idrak"), ("Idrak.Gpu", "Idrak.Gpu"), ("Idrak.Imaging", "Idrak.Imaging"), ("Idrak.Data", "Idrak.Data"), ("Idrak.Nlp", "Idrak.Nlp"),
+        [("Idrak", "Idrak"), ("Idrak.Gpu", "Idrak.Gpu"), ("Idrak.Imaging", "Idrak.Imaging"), ("Idrak.Data", "Idrak.Data"), ("Idrak.Text", "Idrak.Text"),
             ("Idrak.Vision", "Idrak.Vision"), ("Idrak.Diffusion", "Idrak.Diffusion"), ("Idrak.Audio", "Idrak.Audio"), ("Idrak.Cluster", "Idrak.Cluster"),
             ("Idrak.Network", "Idrak.Networking")];
 
@@ -41,7 +41,7 @@ internal static class LibraryDefaults
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Gpu.LibraryRegistrations", "Idrak.Gpu")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Imaging.LibraryRegistrations", "Idrak.Imaging")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Data.LibraryRegistrations", "Idrak.Data")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Nlp.LibraryRegistrations", "Idrak.Nlp")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Text.LibraryRegistrations", "Idrak.Text")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]

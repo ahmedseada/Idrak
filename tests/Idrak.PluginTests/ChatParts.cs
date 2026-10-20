@@ -4,8 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
-using Idrak.Nlp;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Generation;
 
 namespace Idrak.PluginTests;
 

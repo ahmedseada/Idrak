@@ -38,7 +38,7 @@ public sealed record EngineStats(long Requests, long Rejected, long Failed, Time
 /// telemetry — each off unless set when the model is added. A kind (<see cref="EngineModel{TCopy}"/>) says how to load
 /// one copy and answers its requests with the copies the engine lends it; callers reach a model through the contract
 /// its kind implements (<see cref="Model{T}"/>): predictors (<see cref="IPredictor{TIn, TOut}"/>, built in), text and
-/// chat models (<see cref="ITextModel"/>, <see cref="IChatModel"/>; Idrak.Nlp's <c>GenerativeModels</c>), and the kinds
+/// chat models (<see cref="ITextModel"/>, <see cref="IChatModel"/>; Idrak.Text's <c>GenerativeModels</c>), and the kinds
 /// of other domain packages.
 /// </summary>
 /// <example>
@@ -205,7 +205,7 @@ public sealed class InferenceEngine : IModelCatalog, IAsyncDisposable
 
 /// <summary>
 /// Configures an <see cref="InferenceEngine"/>. Every model has a name and a kind (<see cref="Add{TCopy}"/>; predictors
-/// with <c>Predictor</c>, text and chat models with Idrak.Nlp's <c>GenerativeModels</c>); everything else is set per model
+/// with <c>Predictor</c>, text and chat models with Idrak.Text's <c>GenerativeModels</c>); everything else is set per model
 /// (see <see cref="PredictorBuilder{TIn, TOut}"/> and <see cref="EngineHosting"/>) and is off unless set.
 /// </summary>
 public sealed class InferenceEngineBuilder

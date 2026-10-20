@@ -6,8 +6,8 @@ using Idrak.IdrakVision;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Plan 19, phase B5: distillation from a vision-language teacher: the teacher reads the student's images itself.
 internal static partial class Tests

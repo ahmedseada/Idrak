@@ -5,8 +5,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Cli.Commands.Data;
 

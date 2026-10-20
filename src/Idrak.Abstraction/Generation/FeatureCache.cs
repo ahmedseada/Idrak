@@ -11,9 +11,9 @@ namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// What a cached feature depends on, all of it: the part's bytes (their SHA-256, as <see cref="ChatImage.Hash"/> gives an
-/// image's), the transforms and the options it was prepared with (Idrak.Nlp's <c>TuningImages</c> for an image), and the
+/// image's), the transforms and the options it was prepared with (Idrak.Text's <c>TuningImages</c> for an image), and the
 /// encoder that made it (its family, a hash of its checkpoint, the precision of its weights), and which stage's output
-/// it is. Change any and the cache misses: a cached feature is never one of another part, preparation or encoder. Idrak.Nlp
+/// it is. Change any and the cache misses: a cached feature is never one of another part, preparation or encoder. Idrak.Text
 /// keys an image's (<c>FeatureCacheKey.For</c>), Idrak.Audio a sound's.
 /// </summary>
 /// <param name="Image">The SHA-256 of the part's encoded bytes, as <see cref="ChatImage.Hash"/> gives an image's.</param>
@@ -99,7 +99,7 @@ public interface IFeatureCache : IDisposable
 }
 
 /// <summary>
-/// The kinds of feature cache, by name (ignoring case). The library's (Idrak.Nlp registers them):
+/// The kinds of feature cache, by name (ignoring case). The library's (Idrak.Text registers them):
 /// <list type="bullet">
 /// <item><see cref="Memory"/>: in this process's memory, least recently used entries evicted to stay within a byte
 /// budget (<see cref="FeatureCacheOptions.Budget"/>, or half of the system memory available when it is made).</item>

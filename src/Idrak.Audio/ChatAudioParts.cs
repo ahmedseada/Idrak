@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Concurrent;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Audio;
 

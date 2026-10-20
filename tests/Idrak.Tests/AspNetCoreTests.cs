@@ -11,7 +11,7 @@ using Idrak.Datasets;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
-using Idrak.Nlp.Inference;
+using Idrak.Text.Inference;
 using Idrak.Optimizers;
 using Idrak.Training;
 using Microsoft.AspNetCore.Builder;

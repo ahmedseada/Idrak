@@ -6,8 +6,8 @@ using Idrak.Abstraction.Testing;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Nlp;
-using Idrak.Nlp.Generation;
+using Idrak.Text;
+using Idrak.Text.Generation;
 
 namespace Idrak.PluginTests;
 

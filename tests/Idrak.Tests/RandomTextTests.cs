@@ -4,8 +4,8 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Data;
-using Idrak.Nlp;
-using Idrak.Nlp.Abstractions;
+using Idrak.Text;
+using Idrak.Text.Abstractions;
 
 // Plan 18: random text in a language for drawing training pages when there is no text to draw (idrak data text).
 internal static partial class Tests
