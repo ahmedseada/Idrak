@@ -472,10 +472,14 @@ public sealed class PretrainedEncoderModel : IDisposable
 /// </summary>
 public sealed class PretrainedSeq2SeqModel : IDisposable
 {
-    private PretrainedSeq2SeqModel(string folder, JsonObject config, string architecture, ISeq2SeqModel model, IPretrainedTokenizer? tokenizer, IReadOnlyList<string> notes)
+    private PretrainedSeq2SeqModel(string folder, JsonObject config, string architecture, ISeq2SeqModel model, IPretrainedTokenizer? tokenizer, IReadOnlyList<string> notes,
+        bool endsSource)
     {
-        (Folder, Config, Architecture, Model, Tokenizer, Notes) = (folder, config, architecture, model, tokenizer, notes);
+        (Folder, Config, Architecture, Model, Tokenizer, Notes, EndsSource) = (folder, config, architecture, model, tokenizer, notes, endsSource);
     }
+
+    /// <summary>Whether the family's sources end with its end token (<see cref="IPretrainedSeq2SeqFamily.EndsSource"/>; the generators' <c>EndSource</c>).</summary>
+    public bool EndsSource { get; }
 
     /// <summary>The model folder.</summary>
     public string Folder { get; }
@@ -515,13 +519,22 @@ public sealed class PretrainedSeq2SeqModel : IDisposable
         }
 
         var tokenizer = PretrainedTokenizers.TryLoad(prepared, options.Tokenizer);
-        return new PretrainedSeq2SeqModel(prepared, config, name, model, tokenizer, notes);
+        tokenizer?.PadVocabulary(model.Vocabulary);                           // ids past the tokenizer's (alignment rows) decode to nothing
+        return new PretrainedSeq2SeqModel(prepared, config, name, model, tokenizer, notes, family.EndsSource(config));
     }
 
-    /// <summary>A generator of text with this model, with <paramref name="tokenizer"/> or the folder's.</summary>
+    /// <summary>
+    /// A generator of text with this model, with <paramref name="tokenizer"/> or the folder's, its cache in
+    /// <paramref name="cacheLayout"/> (float32 when null); the source ends with the end token when the family says so
+    /// (<see cref="EndsSource"/>).
+    /// </summary>
     /// <exception cref="InvalidOperationException">No tokenizer is given and the folder has none.</exception>
-    public Seq2SeqGenerator CreateGenerator(ITokenizer? tokenizer = null) =>
-        new(Model, tokenizer ?? Tokenizer ?? throw new InvalidOperationException($"The model in {Folder} has no tokenizer: pass one."));
+    public Seq2SeqGenerator CreateGenerator(ITokenizer? tokenizer = null, KeyValueLayout? cacheLayout = null) =>
+        new(Model, tokenizer ?? Tokenizer ?? throw new InvalidOperationException($"The model in {Folder} has no tokenizer: pass one."))
+        {
+            CacheLayout = cacheLayout,
+            EndSource = EndsSource,
+        };
 
     /// <inheritdoc />
     public void Dispose() => Model.Dispose();

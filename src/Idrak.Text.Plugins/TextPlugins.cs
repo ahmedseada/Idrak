@@ -17,8 +17,11 @@ public static class TextPlugins
     /// <summary>The package's name, as the library's "not registered" messages name it: "Idrak.Text.Plugins".</summary>
     public const string Package = "Idrak.Text.Plugins";
 
-    /// <summary>Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: BERT (<see cref="Bert.BertPlugin"/>).</summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Bert.BertPlugin.Plugin];
+    /// <summary>
+    /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: BERT
+    /// (<see cref="Bert.BertPlugin"/>), T5 (<see cref="T5.T5Plugin"/>).
+    /// </summary>
+    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Bert.BertPlugin.Plugin, T5.T5Plugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

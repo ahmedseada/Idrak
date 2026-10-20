@@ -25,6 +25,9 @@ internal sealed class RunCommand : Command
         device's memory went (weights by part, image encoder, KV cache, activations at the peak; with --json, a "memory" object).
         --image gives a vision-language model (Gemma 3 4B and larger) images, before the prompt's text; --audio gives an
         audio-language model sounds (its audio family a plug-in, -P), after the images.
+        An encoder-decoder (a folder whose architecture a plug-in registers as one) answers its source text
+        directly, without a chat template: the generation settings sample its answer (--temperature 0: greedy), or
+        --beams N searches N beams; images, sounds, --system, --tools, --mcp and --schema are for chat models.
 
         Options:
           -i, --input FILE       read (more of) the prompt from FILE (repeatable)
@@ -46,7 +49,7 @@ internal sealed class RunCommand : Command
                                  (idrak tune) brings its trained projector and image preparation too
               --schema FILE      ask for JSON matching this JSON schema and check the answer (exit 1 when it is not)
               --mcp SERVER       let the model call an MCP server's tools (an http(s) URL or a command; repeatable)
-        """ + "\n" + GenerationSettings.Help + """
+        """ + "\n" + GenerationSettings.Help + Seq2SeqRun.Help + """
 
         Examples:
           idrak run Qwen/Qwen3-0.6B "Why is the sky blue?"
@@ -55,13 +58,15 @@ internal sealed class RunCommand : Command
           idrak run qwen "Extract the name and age: Sara is 31." --schema person.json
           idrak run google/gemma-3-4b-it --image scan.jpg --grayscale "Extract the text of this page." -j -o page.json
           idrak run -P Idrak.Gemma3Vision.dll ocr --image scan.jpg --image-transform grayscale,max_width=1024,contrast=1.5 -j
+          idrak run ./encoder-decoder "translate English to German: The house is wonderful." --beams 4
 
         Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/plug-in.md gap 13), so
         --schema gives the schema to the model as an instruction and checks the answer afterwards (it is JSON, has the
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
+        Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
@@ -76,6 +81,20 @@ internal sealed class RunCommand : Command
         var images = ImageInputs.Read(context.Options("--image"));
         var sounds = AudioInputs.Read(context.Options("--audio"));
         var settings = GenerationSettings.From(context);
+
+        // An encoder-decoder (its architecture registered in PretrainedSeq2Seq) answers its source text; anything else is a chat model.
+        var choice = ModelChoices.Choose(context, name);
+        string folder = ModelChoices.Resolve(context, choice.Model);
+        if (Seq2SeqRun.Architecture(folder) is { } architecture)
+        {
+            return Seq2SeqRun.Run(context, choice, folder, architecture, prompt, settings, outFile);
+        }
+
+        if (Seq2SeqRun.Beams(context).Beams > 1)
+        {
+            throw new UsageException($"{Seq2SeqRun.BeamsOption}: {choice.Model} is a decoder; beam search is for encoder-decoder models; a decoder samples its answer.");
+        }
+
         JsonObject? schema = null;
         if (context.Option("--schema") is { } schemaPath)
         {
@@ -84,7 +103,7 @@ internal sealed class RunCommand : Command
             context.Detail("--schema: the schema is an instruction and the answer is checked afterwards (no constrained sampling in the library yet)");
         }
 
-        using var loaded = LoadedChat.Load(context, name, settings);
+        using var loaded = LoadedChat.Load(context, name, settings, choice);
         if (images.Count > 0)
         {
             loaded.RequireImages("--image");
@@ -199,7 +218,7 @@ internal sealed class RunCommand : Command
 
     // --out FILE: the answer's text (or, with --json, the document printed) as UTF-8 without a BOM, so a shell that
     // decodes the console's output in a legacy code page (PowerShell's [Console]::OutputEncoding) cannot garble it.
-    private static void WriteOut(CommandContext context, string? path, string text, JsonObject json)
+    internal static void WriteOut(CommandContext context, string? path, string text, JsonObject json)
     {
         if (path is null)
         {
