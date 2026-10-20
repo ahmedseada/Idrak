@@ -61,8 +61,8 @@ public sealed record CreatedVision(JsonObject Config, IReadOnlyList<(string Name
 /// <summary>
 /// The vision-language families, by architecture name (config.json's "architectures"). The library registers none: a
 /// family (its configuration, tensor names, encoder, preprocessing, prompt format, token ids and attention rule) is an
-/// application of these contracts, registered by the app or plug-in that brings it (Qwen-VL, LLaVA and IdrakVision by the
-/// plug-in package Idrak.Vision.Plugins, Gemma 3 by <c>samples/Gemma3Vision</c>). A checkpoint is matched to its
+/// application of these contracts, registered by the app or plug-in that brings it (Qwen-VL, LLaVA, IdrakVision and Gemma 3 by the
+/// plug-in package Idrak.Vision.Plugins). A checkpoint is matched to its
 /// own family by that exact name; a checkpoint with a vision part (a <c>vision_config</c>) whose name has no family is
 /// refused, naming this registry: nothing falls back to another family, since families are not interchangeable. Register
 /// one with <see cref="Register"/> (and its text decoder with <see cref="PretrainedArchitectures.Register"/>).

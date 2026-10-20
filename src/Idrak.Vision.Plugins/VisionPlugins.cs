@@ -19,11 +19,12 @@ public static class VisionPlugins
 
     /// <summary>
     /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: Qwen-VL
-    /// (<see cref="Qwen.QwenVisionPlugin"/>), LLaVA (<see cref="Llava.LlavaPlugin"/>), IdrakVision
-    /// (<see cref="IdrakVision.IdrakVisionPlugin"/>), the CRNN line recognizer (<see cref="Crnn.CrnnPlugin"/>).
+    /// (<see cref="IdrakVision.IdrakVisionPlugin"/>), the CRNN line recognizer (<see cref="Crnn.CrnnPlugin"/>), Gemma 3 vision
+    /// (<see cref="Gemma.Gemma3VisionPlugin"/>).
     /// </summary>
     public static IReadOnlyList<IIdrakPlugin> All { get; } =
-        [Qwen.QwenVisionPlugin.Plugin, Llava.LlavaPlugin.Plugin, IdrakVision.IdrakVisionPlugin.Plugin, Crnn.CrnnPlugin.Plugin];
+        [Qwen.QwenVisionPlugin.Plugin, Llava.LlavaPlugin.Plugin, IdrakVision.IdrakVisionPlugin.Plugin, Crnn.CrnnPlugin.Plugin,
+         Gemma.Gemma3VisionPlugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

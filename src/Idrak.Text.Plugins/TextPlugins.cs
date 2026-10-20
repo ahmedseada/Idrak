@@ -19,9 +19,9 @@ public static class TextPlugins
 
     /// <summary>
     /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: BERT
-    /// (<see cref="Bert.BertPlugin"/>), T5 (<see cref="T5.T5Plugin"/>).
+    /// (<see cref="Bert.BertPlugin"/>), T5 (<see cref="T5.T5Plugin"/>), Gemma (<see cref="Gemma.GemmaPlugin"/>).
     /// </summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Bert.BertPlugin.Plugin, T5.T5Plugin.Plugin];
+    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Bert.BertPlugin.Plugin, T5.T5Plugin.Plugin, Gemma.GemmaPlugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

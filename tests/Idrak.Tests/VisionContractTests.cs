@@ -2,16 +2,17 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Generation;
+using Idrak.Text.Plugins.Gemma;
 
 // Plan 11, "Vision contracts (families are applications)": the library registers no vision family. Gemma 3's is a
-// registration from outside it (samples/Gemma3Vision), registered by the tests that use it; without it a Gemma 3
+// registration from outside it (Idrak.Vision.Plugins), registered by the tests that use it; without it a Gemma 3
 // vision checkpoint is refused, naming the registry.
 internal static partial class Tests
 {
@@ -266,8 +267,26 @@ internal static partial class Tests
 
         RegisterGemma3Vision();
     }
-    /// <summary>Registers the Gemma 3 vision family (the sample plug-in's entry point), as an app or <c>-P</c> does.</summary>
+    /// <summary>Registers the Gemma 3 vision family (Idrak.Vision.Plugins' plug-in, with its text decoder), as an app or <c>-P</c> does.</summary>
     private static void RegisterGemma3Vision() => Gemma3VisionPlugin.Register();
+
+    /// <summary>
+    /// Takes the Gemma 3 vision family away and keeps its text decoder (Idrak.Text.Plugins' Gemma family) registered, as for
+    /// an app that registers the text plug-ins only; <see cref="RegisterGemma3Vision"/> puts it back.
+    /// </summary>
+    private static void UnregisterGemma3Vision()
+    {
+        Gemma3VisionPlugin.Unregister();
+        GemmaPlugin.Register();
+    }
+
+    /// <summary>Runs the idrak tool's in-process <paramref name="run"/> with none of its plug-in packages registered at startup (a family the test took away stays away).</summary>
+    private static T WithoutPluginPackages<T>(Func<T> run)
+    {
+        T result = default!;
+        WithEnvironment(new Dictionary<string, string?> { [Idrak.Cli.CommandLine.PluginPackagesVariable] = "none" }, () => result = run());
+        return result;
+    }
 
     /// <summary>
     /// Removes the Gemma 3 vision family and its attention rule, and checks that the tiny Gemma 3 vision checkpoint then
@@ -275,7 +294,7 @@ internal static partial class Tests
     /// </summary>
     private static void Gemma3VisionNotRegistered(Device device)
     {
-        VisionFamilies.Unregister(Gemma3VisionFamily.Architecture);
+        UnregisterGemma3Vision();
         ImageAttentionRules.Unregister(Gemma3VisionPlugin.ImageBlocks);
         Check(VisionFamilies.Find(Gemma3VisionFamily.Architecture) is null && VisionFamilies.Default(Gemma3VisionFamily.Architecture) is null
               && ImageAttentionRules.Origin(Gemma3VisionPlugin.ImageBlocks) == Overrides.Library

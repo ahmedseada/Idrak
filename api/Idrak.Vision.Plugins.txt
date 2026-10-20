@@ -60,6 +60,127 @@ public sealed class Idrak.Vision.Plugins.Crnn.MeasuredLineBatches
   public int Largest { get; }
   public void Run(int count, System.Func<int, int> steps, System.Action<int, int> run)
 
+public sealed class Idrak.Vision.Plugins.Gemma.Gemma3ImageEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.ImageTokenLayout BlockLayout { get; }
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Data.ImageData image)
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Generation.ChatImage image)
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor pixelValues)
+  public Idrak.Abstraction.Tensor Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
+  public Idrak.Abstraction.Tensor Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatImage> images)
+  public Idrak.Abstraction.Tensor Encode(string path)
+  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Tensor pixelValues)
+  public Idrak.Abstraction.Tensor PixelValues(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
+  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Tensor pixelValues)
+  public Idrak.Imaging.ImagePreprocessor Preprocessor { get; }
+  public Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan PanAndScan { get; }
+  public Idrak.Vision.Plugins.Gemma.Gemma3Projector Projector { get; }
+  public Idrak.Vision.Plugins.Gemma.Gemma3Vision Vision { get; }
+  public Idrak.Vision.VisionTransformerEncoder Encoder { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> Views(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
+  public int Width { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public override void Dispose()
+
+public sealed record Idrak.Vision.Plugins.Gemma.Gemma3ImageTokens : System.IEquatable<Idrak.Vision.Plugins.Gemma.Gemma3ImageTokens>
+  public Gemma3ImageTokens(int BeginImage, int EndImage, int ImageToken, int TokensPerImage)
+  public int BeginImage { get; init; }
+  public int EndImage { get; init; }
+  public int ImageToken { get; init; }
+  public int TokensPerImage { get; init; }
+
+public sealed record Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan : System.IEquatable<Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan>
+  public Gemma3PanAndScan()
+  public Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan With(Idrak.Abstraction.Generation.VisionOptions? options)
+  public System.Collections.Generic.IReadOnlyList<(int, int, int, int)> Crops(int height, int width)
+  public bool Enabled { get; init; }
+  public const string EnableKey = "do_pan_and_scan"
+  public const string MaxCropsKey = "pan_and_scan_max_num_crops"
+  public const string MinCropSizeKey = "pan_and_scan_min_crop_size"
+  public const string MinRatioKey = "pan_and_scan_min_ratio_to_activate"
+  public const string ShortEnableKey = "pan_and_scan"
+  public double MinRatio { get; init; }
+  public int MaxCrops { get; init; }
+  public int MinCropSize { get; init; }
+  public override string ToString()
+  public static Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan Default { get; }
+  public static Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan FromConfig(string json)
+  public static System.Collections.Generic.IReadOnlyList<string> Keys { get; }
+
+public sealed class Idrak.Vision.Plugins.Gemma.Gemma3Projector : Idrak.Abstraction.Module
+  public int PoolSize { get; }
+  public int TextDim { get; }
+  public int VisionDim { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+  public static Idrak.Vision.Plugins.Gemma.Gemma3Projector FromTensors(Idrak.Abstraction.Formats.ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Generation.EncoderWeights weights = (Idrak.Abstraction.Generation.EncoderWeights)0)
+
+public sealed class Idrak.Vision.Plugins.Gemma.Gemma3Vision : Idrak.Abstraction.Generation.PretrainedVision, Idrak.Abstraction.Generation.IVisionTuningPart
+  public Idrak.Abstraction.Formats.ITensorStore OpenTensors()
+  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
+  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
+  public Idrak.Imaging.ImagePreprocessor Preprocessor(bool grayscale = false)
+  public Idrak.Vision.Plugins.Gemma.Gemma3ImageEncoder CreateEncoder(Idrak.Abstraction.Device? device, Idrak.Imaging.ImagePreprocessor? preprocessor = null, Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan? panAndScan = null, Idrak.Abstraction.Generation.EncoderWeights weights = (Idrak.Abstraction.Generation.EncoderWeights)0)
+  public Idrak.Vision.Plugins.Gemma.Gemma3ImageTokens ImageTokens { get; }
+  public Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan PanAndScan { get; }
+  public Idrak.Vision.Plugins.Gemma.SiglipVisionConfig Encoder { get; }
+  public System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
+  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> Export(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
+  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Vision.Plugins.Gemma.VisionTensor> Tensors { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
+  public System.Collections.Generic.IReadOnlyList<string> PartsOf(System.Collections.Generic.IEnumerable<string> names)
+  public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
+  public float ProjectorNormEpsilon { get; }
+  public int PoolSize { get; }
+  public int TextDim { get; }
+  public override Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
+  public override Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
+  public override Idrak.Abstraction.Generation.IVisionEncoder CreateEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
+  public override System.Collections.Generic.IReadOnlyCollection<string> StoredTensors { get; }
+  public override System.Collections.Generic.IReadOnlyCollection<string> VisionOptionKeys { get; }
+  public override int Width { get; }
+  public override string Describe()
+  public override string Family { get; }
+  public string Layout { get; }
+
+public sealed class Idrak.Vision.Plugins.Gemma.Gemma3VisionFamily : Idrak.Models.Abstractions.IVisionFamily
+  public Gemma3VisionFamily()
+  public Idrak.Abstraction.Generation.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
+  public const string Architecture = "Gemma3ForConditionalGeneration"
+  public string Name { get; }
+
+public static class Idrak.Vision.Plugins.Gemma.Gemma3VisionPlugin
+  public const string ImageBlocks = "image-blocks"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
+public sealed record Idrak.Vision.Plugins.Gemma.SiglipVisionConfig : System.IEquatable<Idrak.Vision.Plugins.Gemma.SiglipVisionConfig>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public SiglipVisionConfig()
+  public Idrak.Vision.VisionTransformerConfig ToTransformer()
+  public bool UseHead { get; init; }
+  public int HeadDim { get; }
+  public int Patches { get; }
+  public int PatchesPerSide { get; }
+  public required float LayerNormEpsilon { get; init; }
+  public required int Channels { get; init; }
+  public required int Dim { get; init; }
+  public required int FfDim { get; init; }
+  public required int Heads { get; init; }
+  public required int ImageSize { get; init; }
+  public required int Layers { get; init; }
+  public required int PatchSize { get; init; }
+  public required string Activation { get; init; }
+  public static Idrak.Vision.Plugins.Gemma.SiglipVisionConfig FromJson(System.Text.Json.Nodes.JsonObject? config)
+
+public sealed record Idrak.Vision.Plugins.Gemma.VisionTensor : System.IEquatable<Idrak.Vision.Plugins.Gemma.VisionTensor>
+  public System.Collections.Generic.IReadOnlyList<int> Shape { get; init; }
+  public VisionTensor(string Stored, System.Collections.Generic.IReadOnlyList<int> Shape)
+  public string Stored { get; init; }
+
 public sealed record Idrak.Vision.Plugins.IdrakVision.IdrakVisionConfig : System.IEquatable<Idrak.Vision.Plugins.IdrakVision.IdrakVisionConfig>
   public Idrak.Vision.Plugins.IdrakVision.IdrakVisionConfig Checked()
   public Idrak.Vision.VisionTransformerConfig ToTransformer()

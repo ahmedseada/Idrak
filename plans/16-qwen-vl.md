@@ -6,7 +6,8 @@ and a family is a plug-in. Qwen's text models (Qwen2, Qwen3) already load; an OC
 to add is **Qwen-VL**: Qwen2.5-VL first (3B and 7B Instruct), Qwen2-VL on the same plug-in.
 
 **Status (2026-10-13):** steps 0, 1, 2, 3, 5, 6 and 8 built and checked on the CPU against transformers 5.19 (see "Built,
-2026-10-13"); step 4 (Gemma 3's text decoder into its plug-in) not done; steps 7 and 9 are the owner's runs on the card.
+2026-10-13"); step 4 (Gemma 3's text decoder into its plug-in) done 2026-10-20 by plan 26's phase P6; steps 7 and 9 are
+the owner's runs on the card.
 
 ## The principle
 
@@ -121,7 +122,7 @@ of Qwen: it can go first or beside 1-3), 5, 6, 7 beside 5 on the owner's card, 8
 | 1 | Done | `IImagePositionRule`, `ImageRun`, `ImagePositionRules` (SlotTable) with `grid` (transformers' `get_rope_index` for images) in `Idrak.Abstraction.Generation`; recorded in `shared-contracts.txt`. "Sequential" is images without axis positions, as before. `ImageFeatures.Positions` are relative to the image's start |
 | 2 | Done | `RopeSettings.Sections` (`RotarySections`, value-compared, kept in the spec's JSON). A prompt whose images carry axis positions gets per-token cos and sin rows built on the host once per pass and setting, read through an identity index by every existing rotary kernel (fused ones step aside for that pass); text tokens' rows equal the plain table's. `DecodingContext.RotaryOffsets` (per row, set by `ImagePrefill.ForwardCached`), `RotaryPositions` computed on the device from `Position` plus a device copy of a uniform offset, so recorded decode steps stay valid; per-row offsets fall back to host positions and are not recordable (`DecodingContext.Recordable`, which `TextGenerator` now checks). `Truncate` restores the offsets before a pass's images and refuses a cut inside them |
 | 3 | Done | `IVisionEncoder.AxisPositions(layout)` (default null) carried by `TrainingImage.AxisPositions` into the step's `PromptImage`s; packed rows place each sequence from 0; `ImagePrefillInputs` keeps fixed rotary buffers for recorded passes. `TuningVision` no longer refuses multi-axis families (its prefetch now also covers the first step) |
-| 4 | Not done | Gemma 3's text decoder still is a library built-in; independent of Qwen |
+| 4 | Done 2026-10-20 (plan 26, P6) | Gemma 3's text decoder (its two namings) is `Idrak.Text.Plugins.Gemma`'s, with Gemma 1 to 3 text; the vision part moved from `samples/Gemma3Vision` to `Idrak.Vision.Plugins.Gemma`, whose `Gemma3VisionPlugin.Register()` registers the text decoder when missing; the library keeps no Gemma family (plan 26's "P6 as built") |
 | 5, 6 | Done | `src/Idrak.Vision.Plugins/Qwen`, namespace `Idrak.Vision.Plugins.Qwen` (moved from `samples/QwenVision/Idrak.QwenVision` by plan 26 P5, 2026-10-20; README there): both families, both config layouts, `visual.` and `model.visual.` tensors, the processor, the tower on span attention, the merger, the encoder with axis positions, tuning parts (merger, tower) with export and import under the checkpoint's names, the text decoder |
 | 7 | Owner | Speed and memory of a real page on the card |
 | 8 | Done | The legal OCR app registers the plug-in; Qwen2.5-VL 3B and 7B in the switch (`MaxPixels` 1,003,520 each, the page's "Most pixels" field per read); a read sends only the vision options the loaded family takes (Gemma's pan and scan is no longer sent to other families) |
@@ -145,7 +146,9 @@ generation, pretrained, decoder, image reader, the API guard and inventory).
   model without the Gemma 3 plug-in (images then fail with "not registered"). Once the text decoder moves into the
   plug-in, the checkpoint needs the plug-in to load at all. Default: accept it (the apps and the command line's `-P`
   already register it); the alternative keeps the text decoders of known VL checkpoints in the library, which breaks
-  "one registration per family".
+  "one registration per family". **Taken (plan 26, P6, 2026-10-20):** the default; without `Idrak.Text.Plugins` the
+  checkpoint is refused as "not registered" naming the package, and with the text plug-in but not the vision one it is
+  refused naming the vision family (as before); the idrak tool registers both packages at startup.
 
 ## Rules that apply
 
