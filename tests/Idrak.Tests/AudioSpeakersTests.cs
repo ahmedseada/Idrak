@@ -4,7 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.VitsSpeech;
+using Idrak.Audio.Plugins.Vits;
 
 // Plan 21, S9 route A: a multi-speaker VITS checkpoint (VCTK's shape) speaks each recorded speaker by its embedding,
 // against transformers' VitsModel on tiny-vits-speakers/ (the stochastic duration predictor) and tiny-vits-speakers-det/
@@ -21,7 +21,7 @@ internal static partial class Tests
 
     private static void AudioSpeakersFixture(Device device)
     {
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             foreach (string name in (string[])["tiny-vits-speakers", "tiny-vits-speakers-det"])
@@ -56,14 +56,14 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
         }
     }
 
     private static void AudioSpeakersNames()
     {
         string root = TempFolder("vits-speakers");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             string folder = Path.Combine(root, "model");
@@ -113,18 +113,18 @@ internal static partial class Tests
                 expected = model.Synthesize(ids, new SpeechSynthesisOptions { NoiseScale = 0, DurationNoiseScale = 0, Voice = "p226" }).Audio.Samples;
             }
 
-            VitsSpeechPlugin.Unregister();                                       // the commands register it through -P
+            VitsPlugin.Unregister();                                       // the commands register it through -P
             string text = (string)JsonNode.Parse(File.ReadAllText(AudioData("tiny-vits-speakers/reference/input.json")))!["text"]!;
-            var spoken = AudioCli("speak", "-P", VitsPlugin, folder, text, "--voice", "p226", "--noise", "0", "--duration-noise", "0", "--bits", "float",
+            var spoken = AudioCli("speak", "-P", VitsPluginPath, folder, text, "--voice", "p226", "--noise", "0", "--duration-noise", "0", "--bits", "float",
                 "--voices", store, "-o", wav, "-d", "cpu");
             Check(spoken.Code == 0, $"speak --voice p226: {spoken.Code} {spoken.Out} {spoken.Err}");
             AssertClose(expected, AudioCodecs.Decode(wav).Samples, 0f, "speak --voice p226's WAV against the library's samples");
-            var listed = AudioCliJson("speak", "-P", VitsPlugin, folder, "--list-voices", "--voices", store);
+            var listed = AudioCliJson("speak", "-P", VitsPluginPath, folder, "--list-voices", "--voices", store);
             Check(listed["speakers"]!.AsArray().Select(v => (string?)v).SequenceEqual(FixtureSpeakers), $"--list-voices names the speakers: {listed}");
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }

@@ -11,7 +11,7 @@ built. No phase starts until the owner names it.
 | P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | A | Done 2026-10-20; CPU pass (2 leftovers, see its note) |
 | P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Done 2026-10-20; CPU pass |
 | P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Done 2026-10-20; CPU pass |
-| P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Not started |
+| P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Done 2026-10-20; CPU pass |
 | P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Not started |
 | P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Not started |
 | P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
@@ -418,6 +418,42 @@ and readings; the vision tuning and Gemma groups pass unchanged.
 `audio seq2seq`, `audio train`, `audio tts train` pass unchanged (same counts), and no library file starts an outside
 program for text.
 
+**P4 as built (2026-10-20).** The five plug-ins in `src/Idrak.Audio.Plugins`, one namespace each:
+- **Moved as they were** (`git mv`; no computation changed: the `namespace` lines, two names' constants, one internal
+  interface's namespace, usings and comments, so the outputs are the same code's, rule 71, and the nine groups below give
+  the same counts): `samples/WhisperSpeech` → `Idrak.Audio.Plugins.Whisper`,
+  `samples/VitsSpeech` and `src/Idrak.Audio/SpeechText/UromanArabic*.cs` → `Idrak.Audio.Plugins.Vits`, `samples/OpenVoice`
+  → `Idrak.Audio.Plugins.OpenVoice`, `samples/IdrakAudio` → `Idrak.Audio.Plugins.IdrakAudio`,
+  `src/Idrak.Audio/SpeechText/EspeakNgPhonemizer.cs` → `Idrak.Audio.Plugins.EspeakNg` (its `IDRAK_ESPEAK` and
+  `IDRAK_ESPEAK_VOICE` with it, the tool's table updated). The four sample projects are gone from `Idrak.slnx`, the test
+  project and the benches (which reference the package). Each family's README moved into its folder.
+- **G1:** no own tensor store was left: OpenVoice's names already went through the library's `RenamedTensorStore` (P2);
+  `WhisperWeights` and `IdrakAudioWeights` are weight readers (shape checks, seeded draws, the saved layout), not stores.
+- **Registration** in P1's pattern: `WhisperPlugin` ("whisper"), `EspeakNgPlugin` ("espeak-ng"), `VitsPlugin` ("vits":
+  the family, uroman's romanizer as `VitsPlugin.UromanArabic`, and `Requires(EspeakNgPlugin.Plugin)`), `OpenVoicePlugin`
+  ("openvoice"), `IdrakAudioPlugin` ("idrak-audio": its four registrations as parts); `AudioPlugins.All` lists them in that
+  order. The entry classes `WhisperSpeechPlugin` and `VitsSpeechPlugin` are now `WhisperPlugin` and `VitsPlugin`; the
+  families' own `RegisterIdrakPlugin` are gone (the package's root has the one `-P` entry).
+- **Rule 70:** `TextPhonemizers` and `TextRomanizers` register nothing in the library (their constants `EspeakNg` and
+  `UromanArabic` moved to the plug-ins); `TextPhonemizers.First()` with none registered refuses naming the registry and
+  the package. No library file starts an outside program for text (the espeak-ng plug-in is the only one).
+- **The CLI:** the tool registers the audio package at startup, so `transcribe`, `speak`, `voice add|train`, `create`,
+  `pretrain`, `resume` and `data audio --align` need no `-P`: the help's `-P Idrak.*.dll` examples, the hints and
+  `idrak help audio` say so. `samples/WhisperSpeech/transcribe.cs` and `samples/OpenVoice/voice.cs` stay as apps on the
+  package (`#:project` on it; both build).
+- **Tests:** the moved tests keep their names. Their three CLI refusals "without the plug-in" run with
+  `IDRAK_PLUGIN_PACKAGES=none` (the tool registers the package otherwise); the VITS tokenizer test registers the family
+  for uroman and checks the library registers no phonemizer or romanizer; `plugins: packages`' internals check allows
+  the test runner only. VITS's internal `IVitsDurationPredictor` moved to `Idrak.Audio.Plugins.Vits.Abstractions` (the
+  inventory's rule; its two predictors unchanged). API dumps and the inventory regenerated.
+- **For the owner to confirm:** `Idrak.Audio.Plugins` grants its internals to `Idrak.Tests` (as every library package
+  does), so the moved code stays internal where it was (VITS's training passes and draws, IdrakAudio's weights and
+  exports, OpenVoice's name map); P1's guard said "grant none". The other way is to make those members public.
+- **Run (CPU, the agent):** before: the nine groups 64 passed (asr 8, cli 10, language 7, seq2seq 3, train 10, tts 5,
+  tts train 6, voice train 9, voices 6); guards and touched groups 95 passed. After one build: 157 passed, 2 failed (the
+  inventory's allow list named `IVitsDurationPredictor`; the `create` refusal ran after `create init` had registered the
+  package again); after one rebuild `abstraction inventory|audio cli|public API` 16 of 16. The nine groups: the same 64.
+
 ## Phase P5: the vision plug-ins
 
 - Qwen-VL and IdrakVision from `samples/`, LLaVA from `tests/Idrak.PluginTests/Llava.cs`, into `Idrak.Vision.Plugins`,
@@ -626,3 +662,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P2 merged (on P8) | CPU (cloud, 4 threads) | the P2 filters with engine, decoder, sampler; ArabicOcr and LegalOcr tests | 249 passed, 0 failed; 14 and 12 passed |
 | 2026-10-20 | P9 merged (on P2) | CPU (cloud, 4 threads) | the P9 filters with the guards | 150 passed, 0 failed |
 | 2026-10-20 | P3 merged (on P9) | CPU (cloud, 4 threads) | the P3 filters with engine; ArabicOcr tests | 190 passed, 0 failed; 14 passed |
+| 2026-10-20 | P4 | CPU (cloud, 4 threads) | the nine audio groups, the guards, engine, cli health, generic components, pytorch checkpoint, audio cleaning | 157 passed, 2 failed, then 16 of 16; the nine audio groups 64 before and after |

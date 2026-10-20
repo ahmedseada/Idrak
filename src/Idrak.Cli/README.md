@@ -166,8 +166,8 @@ idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
 idrak tokenize qwen --chat "Hello" --count
 idrak tokenize ./bert-base-uncased "Hello, World!" --pair "Second" --special --offsets   # type ids, offsets
 idrak agent qwen "Add a test for Parse" --workspace ./src
-idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav -o talk.srt   # -j: segments and stage times
-idrak speak -P Idrak.VitsSpeech.dll ./mms-tts-eng "Hello." -o hello.wav            # -o hello.mp3 writes MP3
+idrak transcribe ./whisper-small talk.wav -o talk.srt   # -j: segments and stage times
+idrak speak ./mms-tts-eng "Hello." -o hello.wav            # -o hello.mp3 writes MP3
 idrak run -P MyAudioFamily.dll ./audio-model --audio clip.wav "What is said?"      # an audio-language model
 ```
 
@@ -300,9 +300,9 @@ A person's voice, installed by name from a few clips with their consent, for `id
 | `idrak voice import` | Install a voice from a zip idrak voice export wrote, or from a voice folder |
 
 ```bash
-idrak voice add ahmed --from clips/ --converter ./openvoice-v2 -P Idrak.OpenVoice.dll -l ar --consent "I, Ahmed, agree."
+idrak voice add ahmed --from clips/ --converter ./openvoice-v2 -l ar --consent "I, Ahmed, agree."
 idrak voice show ahmed                                   # each clip's agreement; a clip far below the others is flagged
-idrak speak -P Idrak.VitsSpeech.dll -P Idrak.OpenVoice.dll ./mms-tts-eng "Hi" --voice ahmed -o ahmed.wav
+idrak speak ./mms-tts-eng "Hi" --voice ahmed -o ahmed.wav
 idrak voice export ahmed -o ahmed-voice.zip              # idrak voice import ahmed-voice.zip on another machine
 ```
 

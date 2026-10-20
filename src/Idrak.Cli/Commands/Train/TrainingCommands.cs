@@ -284,7 +284,7 @@ internal sealed class ResumeCommand : Command
           idrak resume 20261003-101500-houses
           idrak resume ./runs/houses --epochs 50 -d cuda:0
           idrak resume run --steps 1000
-          idrak resume runs/sara --steps 500 -P Idrak.VitsSpeech.dll   (a voice run: trains on and installs the voice again)
+          idrak resume runs/sara --steps 500   (a voice run: trains on and installs the voice again)
           idrak resume run --cluster lan.json
         """;
 

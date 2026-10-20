@@ -39,10 +39,6 @@
     <ProjectReference Include="..\..\samples\Gemma3Vision\Idrak.Gemma3Vision\Idrak.Gemma3Vision.csproj" />
     <ProjectReference Include="..\..\samples\QwenVision\Idrak.QwenVision\Idrak.QwenVision.csproj" />
     <ProjectReference Include="..\..\samples\IdrakVision\Idrak.IdrakVision\Idrak.IdrakVision.csproj" />
-    <ProjectReference Include="..\..\samples\VitsSpeech\Idrak.VitsSpeech\Idrak.VitsSpeech.csproj" />
-    <ProjectReference Include="..\..\samples\OpenVoice\Idrak.OpenVoice\Idrak.OpenVoice.csproj" />
-    <ProjectReference Include="..\..\samples\WhisperSpeech\Idrak.WhisperSpeech\Idrak.WhisperSpeech.csproj" />
-    <ProjectReference Include="..\..\samples\IdrakAudio\Idrak.IdrakAudio\Idrak.IdrakAudio.csproj" />
   </ItemGroup>
 
 </Project>

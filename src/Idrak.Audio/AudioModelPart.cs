@@ -24,7 +24,7 @@ internal sealed class AudioModelPart : IModelPart
         ArgumentNullException.ThrowIfNull(checkpoint);
         if (AudioFamilies.Find(checkpoint.Architecture) is null)
         {
-            checkpoint.Notes.Add($"the audio part is not read: no audio family is registered as '{checkpoint.Architecture}' (AudioFamilies.Register; a plug-in such as Idrak.IdrakAudio brings one).");
+            checkpoint.Notes.Add($"the audio part is not read: no audio family is registered as '{checkpoint.Architecture}' (AudioFamilies.Register; a plug-in package such as Idrak.Audio.Plugins brings one: AudioPlugins.RegisterAll()).");
             return new HashSet<string>();
         }
 

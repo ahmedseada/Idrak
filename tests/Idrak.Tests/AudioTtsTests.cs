@@ -4,7 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.VitsSpeech;
+using Idrak.Audio.Plugins.EspeakNg;
+using Idrak.Audio.Plugins.Vits;
 
 // Plan 21, phase S5: the inverse STFT, the Griffin-Lim vocoder, the synthesis contracts and the VITS plug-in. The
 // fixture comes from tools/audio/make_tiny_audio.py (tiny-vits/).
@@ -135,9 +136,9 @@ internal static partial class Tests
         var ids = input["ids"]!.AsArray().Select(v => (int)v!).ToArray();
         var expected = ReadNpyFloat32(Path.Combine(folder, "reference", "waveform.npy"));
         var loadOptions = new SpeechSynthesisLoadOptions { Device = device };
-        VitsSpeechPlugin.Unregister();
+        VitsPlugin.Unregister();
         Check(ThrowsSaying<NotSupportedException>(() => SpeechSynthesisModels.Load(folder, loadOptions), "is not registered"), "without the plug-in the VitsModel family is refused naming the registry");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             Check(SpeechSynthesisFamilies.Names.Contains(VitsSpeechFamily.Architecture) && SpeechSynthesisFamilies.Origin(VitsSpeechFamily.Architecture) != Overrides.Library,
@@ -192,7 +193,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
         }
     }
 
@@ -219,6 +220,23 @@ internal static partial class Tests
             return;                                                              // host only: once
         }
 
+        // The romanizer and the phonemizer are the VITS family's (Idrak.Audio.Plugins), registered with it: the library
+        // has none of its own (it starts no outside program for text).
+        Check(TextPhonemizers.Names.All(n => TextPhonemizers.Origin(n) != Overrides.Library) && TextRomanizers.Names.All(n => TextRomanizers.Origin(n) != Overrides.Library)
+              && TextRomanizers.Default(VitsPlugin.UromanArabic) is null, "the library registers no phonemizer and no romanizer");
+        VitsPlugin.Register();
+        try
+        {
+            AudioTtsVitsTokenizerRegistered();
+        }
+        finally
+        {
+            VitsPlugin.Unregister();
+        }
+    }
+
+    private static void AudioTtsVitsTokenizerRegistered()
+    {
         var tokenizer = VitsTokenizer.Read(TinyVits);
         Check(!tokenizer.AddBlank && tokenizer.Normalize && !tokenizer.Phonemize && !tokenizer.IsUroman && tokenizer.Size == 20, "the fixture's tokenizer: no tokenizer_config.json, so no blanks");
         Check(tokenizer.Encode("abc ab").SequenceEqual([2, 3, 4, 1, 2, 3]), $"'abc ab' gives [{string.Join(", ", tokenizer.Encode("abc ab"))}]");
@@ -239,7 +257,7 @@ internal static partial class Tests
             tokenizer.Phonemize = true;
             tokenizer.Phonemizer = "no-such-phonemizer";
             Check(ThrowsSaying<NotSupportedException>(() => tokenizer.Encode("ab"), "TextPhonemizers.Register"), "an unregistered phonemizer is refused naming the registry");
-            tokenizer.Phonemizer = TextPhonemizers.EspeakNg;
+            tokenizer.Phonemizer = EspeakNgPlugin.Phonemizer;
         }
         finally
         {
@@ -264,7 +282,7 @@ internal static partial class Tests
 
         // uroman's own output on the tool's cases (sentences, diacritics, digits, presentation forms, decomposed marks, random strings).
         var cases = JsonNode.Parse(File.ReadAllText(AudioData("uroman/arabic.json")))!.AsObject();
-        var arabic = TextRomanizers.Get(TextRomanizers.UromanArabic);
+        var arabic = TextRomanizers.Get(VitsPlugin.UromanArabic);
         int wrong = 0;
         string first = "";
         foreach (var row in cases["cases"]!.AsArray())
@@ -277,8 +295,8 @@ internal static partial class Tests
         }
 
         Check(wrong == 0, $"{wrong} of {cases["cases"]!.AsArray().Count} cases differ from uroman {cases["uroman"]} (first: {first})");
-        Check(UromanArabicRomanizer.Version == (string)cases["uroman"]! && TextRomanizers.Origin(TextRomanizers.UromanArabic) == Overrides.Library && TextRomanizers.For("مرحبا") == arabic && TextRomanizers.For("hello") is null,
-            "the table is from the cases' uroman; the registry picks it for Arabic, none for Latin");
+        Check(UromanArabicRomanizer.Version == (string)cases["uroman"]! && TextRomanizers.Origin(VitsPlugin.UromanArabic) == typeof(VitsPlugin).Assembly.GetName().Name && TextRomanizers.For("مرحبا") == arabic && TextRomanizers.For("hello") is null,
+            "the table is from the cases' uroman; registered by the VITS plug-in, the registry picks it for Arabic, none for Latin");
         var upper = new UpperRomanizer();
         TextRomanizers.Register(upper);
         try
@@ -308,7 +326,7 @@ internal static partial class Tests
 
     private static void AudioTtsDecoderPieces(Device device)
     {
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         using var model = (VitsSynthesizer)SpeechSynthesisModels.Load(TinyVits, new SpeechSynthesisLoadOptions { Device = device });
         int flow = model.Config.FlowSize, hop = model.Config.HopLength, rate = model.Config.SamplingRate;
         var random = new Random(77);

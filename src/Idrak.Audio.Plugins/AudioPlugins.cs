@@ -17,8 +17,14 @@ public static class AudioPlugins
     /// <summary>The package's name, as the library's "not registered" messages name it: "Idrak.Audio.Plugins".</summary>
     public const string Package = "Idrak.Audio.Plugins";
 
-    /// <summary>Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them (none yet: plan 26 moves the families in).</summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [];
+    /// <summary>
+    /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: Whisper
+    /// (<see cref="Whisper.WhisperPlugin"/>), the espeak-ng phonemizer (<see cref="EspeakNg.EspeakNgPlugin"/>, before the
+    /// VITS family that needs it), VITS with uroman's Arabic romanizer (<see cref="Vits.VitsPlugin"/>), OpenVoice
+    /// (<see cref="OpenVoice.OpenVoicePlugin"/>) and IdrakAudio (<see cref="IdrakAudio.IdrakAudioPlugin"/>).
+    /// </summary>
+    public static IReadOnlyList<IIdrakPlugin> All { get; } =
+        [Whisper.WhisperPlugin.Plugin, EspeakNg.EspeakNgPlugin.Plugin, Vits.VitsPlugin.Plugin, OpenVoice.OpenVoicePlugin.Plugin, IdrakAudio.IdrakAudioPlugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

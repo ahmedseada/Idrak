@@ -13,7 +13,7 @@ namespace Idrak.Audio.Abstractions;
 /// </summary>
 public interface ITextRomanizer
 {
-    /// <summary>The name it is registered under ("uroman-arabic").</summary>
+    /// <summary>The name it is registered under (Idrak.Audio.Plugins' VITS family registers uroman's Arabic as "uroman-arabic").</summary>
     string Name { get; }
 
     /// <summary>Whether it romanises <paramref name="rune"/> (a character of its script).</summary>
@@ -24,23 +24,14 @@ public interface ITextRomanizer
 }
 
 /// <summary>
-/// The romanizers, by name (ordinal). Built in: <see cref="UromanArabic"/> (uroman's romanisation of the Arabic
-/// script). <see cref="For"/> picks the one that covers a text's script; register one for another script with
-/// <see cref="Register"/> (one under a built-in name shadows it, which stays behind it).
+/// The romanizers, by name (ordinal). None is built in: a romanizer belongs to the family whose checkpoints read its
+/// letters, and that family's plug-in registers it (Idrak.Audio.Plugins' VITS family registers uroman's romanisation of
+/// the Arabic script). <see cref="For"/> picks the one that covers a text's script; register one for another script with
+/// <see cref="Register"/>.
 /// </summary>
 public static class TextRomanizers
 {
-    /// <summary>uroman's romanisation of Arabic script (<see cref="UromanArabicRomanizer"/>).</summary>
-    public const string UromanArabic = "uroman-arabic";
-
-    private static readonly SlotTable<string, ITextRomanizer> Table = BuiltIn();
-
-    private static SlotTable<string, ITextRomanizer> BuiltIn()
-    {
-        var table = new SlotTable<string, ITextRomanizer>(nameof(TextRomanizers), comparer: StringComparer.Ordinal, newestFirst: true);
-        table.RegisterDefault(UromanArabic, new UromanArabicRomanizer());
-        return table;
-    }
+    private static readonly SlotTable<string, ITextRomanizer> Table = new(nameof(TextRomanizers), comparer: StringComparer.Ordinal, newestFirst: true);
 
     /// <summary>Registers <paramref name="romanizer"/> under its <see cref="ITextRomanizer.Name"/> (asked before the earlier ones by <see cref="For"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
@@ -106,7 +97,7 @@ public static class TextRomanizers
 /// </summary>
 public interface ITextPhonemizer
 {
-    /// <summary>The name it is registered under ("espeak-ng").</summary>
+    /// <summary>The name it is registered under (Idrak.Audio.Plugins' espeak-ng phonemizer registers "espeak-ng").</summary>
     string Name { get; }
 
     /// <summary>
@@ -118,26 +109,17 @@ public interface ITextPhonemizer
 }
 
 /// <summary>
-/// The phonemizers, by name (ordinal). Built in: <see cref="EspeakNg"/> (the espeak-ng program, which the user
-/// installs: the library runs it and carries none). Register another (a pure .NET G2P, a service) with
-/// <see cref="Register"/>; one under a built-in name shadows it.
+/// The phonemizers, by name (ordinal). None is built in: the library starts no outside program (rule 70), so a
+/// phonemizer is a plug-in's (Idrak.Audio.Plugins' "espeak-ng" runs the espeak-ng program the user installs; the VITS
+/// family registers it, as its phonemize checkpoints read espeak's IPA). Register one (a pure .NET G2P, a service) with
+/// <see cref="Register"/>.
 /// </summary>
 public static class TextPhonemizers
 {
-    /// <summary>The espeak-ng program (<see cref="EspeakNgPhonemizer"/>).</summary>
-    public const string EspeakNg = "espeak-ng";
-
     /// <summary>The punctuation a phonemizer keeps in place (the phonemizer package's default marks).</summary>
     public const string Marks = ";:,.!?¡¿—…\"«»“”(){}[]";
 
-    private static readonly SlotTable<string, ITextPhonemizer> Table = BuiltIn();
-
-    private static SlotTable<string, ITextPhonemizer> BuiltIn()
-    {
-        var table = new SlotTable<string, ITextPhonemizer>(nameof(TextPhonemizers), comparer: StringComparer.Ordinal, newestFirst: true);
-        table.RegisterDefault(EspeakNg, new EspeakNgPhonemizer());
-        return table;
-    }
+    private static readonly SlotTable<string, ITextPhonemizer> Table = new(nameof(TextPhonemizers), comparer: StringComparer.Ordinal, newestFirst: true);
 
     /// <summary>Registers <paramref name="phonemizer"/> under its <see cref="ITextPhonemizer.Name"/> (asked before the earlier ones by <see cref="First"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
@@ -159,8 +141,12 @@ public static class TextPhonemizers
     public static ITextPhonemizer Get(string name) => Table.Find(name)
         ?? throw new NotSupportedException($"Phonemizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextPhonemizers.Register.");
 
-    /// <summary>The most recently registered phonemizer (the built-in espeak-ng when an app registered none).</summary>
-    public static ITextPhonemizer First() => Get(Table.Keys[0]);
+    /// <summary>The most recently registered phonemizer.</summary>
+    /// <exception cref="NotSupportedException">None is registered: the message names the registry and the plug-in package.</exception>
+    public static ITextPhonemizer First() => Table.Keys is { Count: > 0 } names
+        ? Get(names[0])
+        : throw new NotSupportedException("No phonemizer is registered; add one with TextPhonemizers.Register, or reference Idrak.Audio.Plugins and call "
+                                          + "AudioPlugins.RegisterAll() (its espeak-ng phonemizer runs the espeak-ng program).");
 
     /// <summary>Who registered the phonemizer <paramref name="name"/>: <see cref="Overrides.Library"/> for the built-in or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Table.Origin(name);

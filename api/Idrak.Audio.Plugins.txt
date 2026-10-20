@@ -6,3 +6,461 @@ public static class Idrak.Audio.Plugins.AudioPlugins
   public static void RegisterAll()
   public static void RegisterIdrakPlugin()
   public static void UnregisterAll()
+
+public sealed class Idrak.Audio.Plugins.EspeakNg.EspeakNgPhonemizer : Idrak.Audio.Abstractions.ITextPhonemizer
+  public EspeakNgPhonemizer()
+  public System.TimeSpan Timeout { get; init; }
+  public const string ExecutableVariable = "IDRAK_ESPEAK"
+  public const string VoiceVariable = "IDRAK_ESPEAK_VOICE"
+  public string Executable { get; init; }
+  public string Name { get; }
+  public string Phonemize(string text, string language)
+
+public static class Idrak.Audio.Plugins.EspeakNg.EspeakNgPlugin
+  public const string Phonemizer = "espeak-ng"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioBlock : Idrak.Abstraction.Module
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override string ToString()
+
+public sealed record Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig : System.IEquatable<Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig>
+  public Idrak.Audio.Abstractions.AudioFeatureOptions Features { get; init; }
+  public IdrakAudioConfig()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public bool ConvolutionModule { get; init; }
+  public bool Sequence { get; }
+  public bool Synthesis { get; }
+  public bool TieEmbeddings { get; init; }
+  public double MaxSeconds { get; init; }
+  public float Dropout { get; init; }
+  public float DurationOffset { get; init; }
+  public float InitScale { get; init; }
+  public float NormEpsilon { get; init; }
+  public int BlankId { get; init; }
+  public int Classes { get; init; }
+  public int ConvolutionKernel { get; init; }
+  public int DecoderDim { get; init; }
+  public int DecoderFfnDim { get; init; }
+  public int DecoderHeads { get; init; }
+  public int DecoderLayers { get; init; }
+  public int Dim { get; init; }
+  public int DurationFilters { get; init; }
+  public int DurationKernel { get; init; }
+  public int EndToken { get; init; }
+  public int FfnDim { get; init; }
+  public int Heads { get; init; }
+  public int Layers { get; init; }
+  public int MaxTargetPositions { get; init; }
+  public int Mels { get; init; }
+  public int StartToken { get; init; }
+  public int StepsFor(int frames)
+  public int SubsampleKernel { get; init; }
+  public int SubsampleLayers { get; init; }
+  public override string ToString()
+  public static Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig FromJson(System.Text.Json.Nodes.JsonObject json, int? vocabulary = null)
+  public string Activation { get; init; }
+  public string FeatureExtractor { get; init; }
+  public string Positions { get; init; }
+  public string Task { get; init; }
+  public string? Vocoder { get; init; }
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioCtcModel : Idrak.Audio.Abstractions.ICtcSpeechModel, Idrak.Audio.Abstractions.ISpeechRecognizer, Idrak.Audio.Abstractions.ITrainableSpeechModel, System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Logits(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
+  public Idrak.Audio.Abstractions.Transcription Transcribe(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.IProgress<Idrak.Audio.Abstractions.TranscriptionProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig Config { get; }
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioEncoder Encoder { get; }
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.TranscriptSegment> TranscribeStream(System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> chunks, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlySet<string> Languages { get; }
+  public int Blank { get; }
+  public int Classes { get; }
+  public int StepsFor(int frames)
+  public int[] Labels(string text)
+  public override string ToString()
+  public string Architecture { get; }
+  public string Text(System.ReadOnlySpan<int> labels)
+  public void Dispose()
+  public void Save(string folder)
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioEncoder : Idrak.Abstraction.Module
+  public Idrak.Abstraction.Tensor Run(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int>? frames, bool checkpointing)
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig Config { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
+  public override string ToString()
+  public override void Dispose()
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioFamily : Idrak.Audio.Abstractions.ISpeechFamily
+  public Idrak.Audio.Abstractions.CreatedSpeechModel Create(System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
+  public Idrak.Audio.Abstractions.ISpeechRecognizer Read(Idrak.Audio.Abstractions.SpeechCheckpoint checkpoint)
+  public IdrakAudioFamily()
+  public const string Architecture = "IdrakAudio"
+  public const string AudioLanguageTask = "audio-language"
+  public const string CtcTask = "ctc"
+  public const string Seq2SeqTask = "seq2seq"
+  public const string TtsTask = "tts"
+  public string Name { get; }
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguageEncoder : Idrak.Audio.Abstractions.IAudioLanguageEncoder, System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioEncoder Tower { get; }
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjector Projector { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Audio.Abstractions.AudioData audio)
+  public int Width { get; }
+  public void Dispose()
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguageFamily : Idrak.Audio.Abstractions.IAudioFamily
+  public Idrak.Audio.Abstractions.CreatedAudio Create(System.Text.Json.Nodes.JsonObject audio, int textDim, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
+  public Idrak.Audio.Abstractions.PretrainedAudio? Read(Idrak.Audio.Abstractions.AudioCheckpoint checkpoint)
+  public IdrakAudioLanguageFamily()
+  public const string Architecture = "IdrakAudioForConditionalGeneration"
+  public const string EncoderPart = "audio-encoder"
+  public const string ProjectorPart = "audio-projector"
+  public const string ProjectorPrefix = "audio_projector."
+  public const string TowerPrefix = "audio_tower."
+  public string Name { get; }
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguagePart : Idrak.Audio.Abstractions.PretrainedAudio, Idrak.Audio.Abstractions.IAudioTuningPart
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig Encoder { get; }
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjectorConfig Projector { get; }
+  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios, bool checkpointing)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Train(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
+  public override Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
+  public override Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
+  public override Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
+  public override Idrak.Audio.Abstractions.IAudioLanguageEncoder CreateEncoder(Idrak.Audio.Abstractions.AudioEncoderOptions? options = null)
+  public override System.Collections.Generic.IReadOnlySet<string> StoredTensors { get; }
+  public override int Width { get; }
+  public override string Family { get; }
+  public void SetTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, bool training)
+
+public static class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioPlugin
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjector : Idrak.Abstraction.Module
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjectorConfig Config { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+
+public sealed record Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjectorConfig : System.IEquatable<Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjectorConfig>
+  public IdrakAudioProjectorConfig()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public int Stack { get; init; }
+  public int TextDim { get; init; }
+  public int TokensFor(int steps)
+  public static Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjectorConfig FromJson(System.Text.Json.Nodes.JsonObject? json, int? textDim = null)
+  public string Type { get; init; }
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioSeq2SeqModel : Idrak.Audio.Abstractions.ISequenceSpeechModel, Idrak.Audio.Abstractions.ISpeechRecognizer, Idrak.Audio.Abstractions.ITrainableSpeechModel, System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Abstraction.Tensor Head(Idrak.Abstraction.Tensor hidden)
+  public Idrak.Abstraction.Tensor Hidden(Idrak.Abstraction.Tensor tokens, Idrak.Abstraction.Tensor memory, System.Collections.Generic.IReadOnlyList<int> steps)
+  public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
+  public Idrak.Audio.Abstractions.Transcription Transcribe(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.IProgress<Idrak.Audio.Abstractions.TranscriptionProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig Config { get; }
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioEncoder Encoder { get; }
+  public Idrak.Layers.Sequential Decoder { get; }
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.TranscriptSegment> TranscribeStream(System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> chunks, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlySet<string> Languages { get; }
+  public int EndToken { get; }
+  public int MaxPositions { get; }
+  public int StartToken { get; }
+  public int StepsFor(int frames)
+  public int Vocabulary { get; }
+  public int[] Generate(Idrak.Abstraction.Tensor memory, int beams, System.Threading.CancellationToken cancellationToken = default)
+  public int[] Labels(string text)
+  public override string ToString()
+  public string Architecture { get; }
+  public string Text(System.ReadOnlySpan<int> labels)
+  public void Dispose()
+  public void Save(string folder)
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioSynthesisFamily : Idrak.Audio.Abstractions.ISpeechSynthesisFamily
+  public Idrak.Audio.Abstractions.CreatedSpeechModel Create(System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
+  public Idrak.Audio.Abstractions.ISpeechSynthesizer Read(Idrak.Audio.Abstractions.SpeechSynthesisCheckpoint checkpoint, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions options)
+  public IdrakAudioSynthesisFamily()
+  public string Name { get; }
+
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioTtsModel : Idrak.Audio.Abstractions.ISpeechSynthesizer, Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer, System.IDisposable
+  public (Idrak.Audio.Abstractions.AudioData, Idrak.Audio.Abstractions.SynthesisStats) Speak(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public (float[], int, int[]) Spectrogram(System.ReadOnlySpan<int> labels, float rate = 1f, int[]? durations = null)
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Decode(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int> lengths, System.Collections.Generic.IReadOnlyList<int[]> durations, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor labels, System.Collections.Generic.IReadOnlyList<int> lengths, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Abstraction.Tensor LogDurations(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int> lengths)
+  public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
+  public Idrak.Audio.Abstractions.IVocoder? Vocoder { get; set; }
+  public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig Config { get; }
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> SpeakStream(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<string> Voices { get; }
+  public bool DropUnknownCharacters { get; set; }
+  public float DurationOffset { get; }
+  public int SampleRate { get; }
+  public int[] Labels(string text)
+  public override string ToString()
+  public string Architecture { get; }
+  public void Dispose()
+  public void Save(string folder)
+
+public sealed record Idrak.Audio.Plugins.OpenVoice.OpenVoiceConfig : System.IEquatable<Idrak.Audio.Plugins.OpenVoice.OpenVoiceConfig>
+  public OpenVoiceConfig()
+  public bool ZeroG { get; init; }
+  public float FinalLeakyReluSlope { get; init; }
+  public float LeakyReluSlope { get; init; }
+  public int Bins { get; }
+  public int FilterLength { get; init; }
+  public int FlowLayers { get; init; }
+  public int Flows { get; init; }
+  public int GinChannels { get; init; }
+  public int HiddenChannels { get; init; }
+  public int HopLength { get; init; }
+  public int InterChannels { get; init; }
+  public int PosteriorLayers { get; init; }
+  public int SamplingRate { get; init; }
+  public int UpsampleInitialChannel { get; init; }
+  public int WaveNetKernelSize { get; init; }
+  public int WinLength { get; init; }
+  public int[] ReferenceFilters { get; init; }
+  public int[] ResblockKernelSizes { get; init; }
+  public int[] UpsampleKernelSizes { get; init; }
+  public int[] UpsampleRates { get; init; }
+  public int[][] ResblockDilationSizes { get; init; }
+  public static Idrak.Audio.Plugins.OpenVoice.OpenVoiceConfig FromJson(System.Text.Json.Nodes.JsonObject config)
+  public static bool Recognizes(System.Text.Json.Nodes.JsonObject config)
+  public string Resblock { get; init; }
+  public string Version { get; init; }
+
+public sealed class Idrak.Audio.Plugins.OpenVoice.OpenVoiceConverter : Idrak.Audio.Abstractions.ISpeakerEncoder, Idrak.Audio.Abstractions.IVoiceConverter, System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Tensor Spectrogram(System.ReadOnlySpan<float> samples)
+  public Idrak.Audio.Abstractions.AudioData Convert(Idrak.Audio.Abstractions.AudioData speech, System.ReadOnlySpan<float> target, Idrak.Audio.Abstractions.VoiceConversionOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Audio.Plugins.OpenVoice.OpenVoiceConfig Config { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
+  public double DecoderChunkSeconds { get; set; }
+  public double EmbedSeconds { get; set; }
+  public float[] Embed(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> clips, System.Threading.CancellationToken cancellationToken = default)
+  public int EmbeddingSize { get; }
+  public int SampleRate { get; }
+  public string Name { get; }
+  public string? Folder { get; }
+  public void Dispose()
+
+public sealed class Idrak.Audio.Plugins.OpenVoice.OpenVoiceFamily : Idrak.Audio.Abstractions.IVoiceConverterFamily
+  public Idrak.Audio.Abstractions.IVoiceConverter Read(Idrak.Audio.Abstractions.VoiceConverterCheckpoint checkpoint, Idrak.Audio.Abstractions.VoiceConverterLoadOptions options)
+  public OpenVoiceFamily()
+  public bool Recognizes(System.Text.Json.Nodes.JsonObject config)
+  public const string FamilyName = "openvoice"
+  public string Name { get; }
+
+public static class Idrak.Audio.Plugins.OpenVoice.OpenVoicePlugin
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
+public sealed class Idrak.Audio.Plugins.Vits.UromanArabicRomanizer : Idrak.Audio.Abstractions.ITextRomanizer
+  public UromanArabicRomanizer()
+  public bool Covers(System.Text.Rune rune)
+  public static string Version { get; }
+  public string Name { get; }
+  public string Romanize(string text)
+
+public sealed record Idrak.Audio.Plugins.Vits.VitsConfig : System.IEquatable<Idrak.Audio.Plugins.Vits.VitsConfig>
+  public VitsConfig()
+  public bool StochasticDurations { get; init; }
+  public bool UseBias { get; init; }
+  public float DurationTailBound { get; init; }
+  public float FinalLeakyReluSlope { get; init; }
+  public float LayerNormEps { get; init; }
+  public float LeakyReluSlope { get; init; }
+  public float NoiseScale { get; init; }
+  public float NoiseScaleDuration { get; init; }
+  public float SpeakingRate { get; init; }
+  public int DepthSeparableChannels { get; init; }
+  public int DepthSeparableLayers { get; init; }
+  public int DurationFilterChannels { get; init; }
+  public int DurationFlowBins { get; init; }
+  public int DurationFlows { get; init; }
+  public int DurationKernelSize { get; init; }
+  public int FfnDim { get; init; }
+  public int FfnKernelSize { get; init; }
+  public int FlowSize { get; init; }
+  public int Heads { get; init; }
+  public int HiddenSize { get; init; }
+  public int HopLength { get; }
+  public int Layers { get; init; }
+  public int PosteriorWaveNetLayers { get; init; }
+  public int PriorFlows { get; init; }
+  public int PriorWaveNetLayers { get; init; }
+  public int SamplingRate { get; init; }
+  public int SpeakerEmbeddingSize { get; init; }
+  public int Speakers { get; init; }
+  public int SpectrogramBins { get; init; }
+  public int UpsampleInitialChannel { get; init; }
+  public int VocabSize { get; init; }
+  public int WaveNetDilationRate { get; init; }
+  public int WaveNetKernelSize { get; init; }
+  public int WindowSize { get; init; }
+  public int[] ResblockKernelSizes { get; init; }
+  public int[] UpsampleKernelSizes { get; init; }
+  public int[] UpsampleRates { get; init; }
+  public int[][] ResblockDilationSizes { get; init; }
+  public static Idrak.Audio.Plugins.Vits.VitsConfig FromJson(System.Text.Json.Nodes.JsonObject config)
+  public string HiddenAct { get; init; }
+
+public static class Idrak.Audio.Plugins.Vits.VitsPlugin
+  public const string UromanArabic = "uroman-arabic"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
+public sealed class Idrak.Audio.Plugins.Vits.VitsSpeechFamily : Idrak.Audio.Abstractions.ISpeechSynthesisFamily
+  public Idrak.Audio.Abstractions.ISpeechSynthesizer Read(Idrak.Audio.Abstractions.SpeechSynthesisCheckpoint checkpoint, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions options)
+  public VitsSpeechFamily()
+  public const string Architecture = "VitsModel"
+  public string Name { get; }
+
+public sealed class Idrak.Audio.Plugins.Vits.VitsSynthesizer : Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer, Idrak.Audio.Abstractions.ISpeechSynthesizer, System.IDisposable
+  public (Idrak.Audio.Abstractions.AudioData, Idrak.Audio.Abstractions.SynthesisStats) Speak(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public (Idrak.Audio.Abstractions.AudioData, int[]) Synthesize(System.ReadOnlySpan<int> ids, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null)
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Module Discriminators(Idrak.Audio.Abstractions.AdversarialSynthesisOptions options, int seed)
+  public Idrak.Abstraction.Module Generator { get; }
+  public Idrak.Audio.Abstractions.IAdversarialSynthesisStep Begin(Idrak.Audio.Abstractions.AdversarialSynthesisBatch batch, Idrak.Audio.Abstractions.AdversarialSynthesisOptions options, bool keep)
+  public Idrak.Audio.Abstractions.IVocoder Vocoder { get; }
+  public Idrak.Audio.Plugins.Vits.VitsConfig Config { get; }
+  public Idrak.Audio.Plugins.Vits.VitsTokenizer Tokenizer { get; }
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> SpeakStream(string text, Idrak.Audio.Abstractions.SpeechSynthesisOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Parts { get; }
+  public System.Collections.Generic.IReadOnlyList<string> TrainingFiles { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Voices { get; }
+  public bool Accepts(int frames, int[] labels, Idrak.Audio.Abstractions.AdversarialSynthesisOptions options)
+  public bool Trainable { get; }
+  public const string SpeakersFile = "speakers.json"
+  public double DecoderChunkSeconds { get; set; }
+  public float MelError(Idrak.Audio.Abstractions.AdversarialSynthesisBatch batch, Idrak.Audio.Abstractions.AdversarialSynthesisOptions options)
+  public int FeatureWidth { get; }
+  public int SampleRate { get; }
+  public int SpeakerIndex(string voice)
+  public int[] Labels(string text)
+  public static System.Collections.Generic.IReadOnlyList<string> SplitText(string text, int maxCharacters)
+  public string Architecture { get; }
+  public string Refused { get; }
+  public string? Folder { get; }
+  public void Dispose()
+  public void Freeze(System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public void Save(string folder)
+
+public sealed class Idrak.Audio.Plugins.Vits.VitsTokenizer
+  public System.Collections.Generic.IReadOnlyList<string?> Symbols { get; }
+  public VitsTokenizer(System.Collections.Generic.IReadOnlyDictionary<string, int> vocabulary)
+  public bool AddBlank { get; set; }
+  public bool IsUroman { get; set; }
+  public bool Normalize { get; set; }
+  public bool Phonemize { get; set; }
+  public int BlankId { get; set; }
+  public int Size { get; }
+  public int[] Encode(string text)
+  public static Idrak.Audio.Plugins.Vits.VitsTokenizer Read(string folder)
+  public string PhonemeLanguage { get; set; }
+  public string Phonemes(string text)
+  public string Romanize(string text)
+  public string? Phonemizer { get; set; }
+  public string? Romanizer { get; set; }
+
+public sealed record Idrak.Audio.Plugins.Whisper.WhisperConfig : System.IEquatable<Idrak.Audio.Plugins.Whisper.WhisperConfig>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public WhisperConfig()
+  public System.Collections.Generic.IReadOnlyList<int> BeginSuppressTokens { get; init; }
+  public System.Collections.Generic.IReadOnlyList<int> SuppressTokens { get; init; }
+  public bool ScaleEmbedding { get; init; }
+  public double TimePrecision { get; init; }
+  public float NormEpsilon { get; init; }
+  public int DecoderHeadDim { get; }
+  public int EncoderHeadDim { get; }
+  public int TimestampBegin { get; }
+  public int? MaxInitialTimestampIndex { get; init; }
+  public int? PrevToken { get; init; }
+  public required System.Collections.Generic.IReadOnlyDictionary<string, int> Languages { get; init; }
+  public required System.Collections.Generic.IReadOnlyDictionary<string, int> Tasks { get; init; }
+  public required int DecoderFfDim { get; init; }
+  public required int DecoderHeads { get; init; }
+  public required int DecoderLayers { get; init; }
+  public required int Dim { get; init; }
+  public required int EncoderFfDim { get; init; }
+  public required int EncoderHeads { get; init; }
+  public required int EncoderLayers { get; init; }
+  public required int EndToken { get; init; }
+  public required int MaxSourcePositions { get; init; }
+  public required int MaxTargetPositions { get; init; }
+  public required int Mels { get; init; }
+  public required int NoSpeechToken { get; init; }
+  public required int NoTimestampsToken { get; init; }
+  public required int StartToken { get; init; }
+  public required int Vocabulary { get; init; }
+  public static Idrak.Audio.Plugins.Whisper.WhisperConfig Read(System.Text.Json.Nodes.JsonObject config, System.Text.Json.Nodes.JsonObject? generation, System.Collections.Generic.IReadOnlyDictionary<string, int> addedTokens)
+  public static System.Collections.Generic.IReadOnlyDictionary<string, int> AddedTokens(string tokenizerFile)
+  public string Activation { get; init; }
+
+public static class Idrak.Audio.Plugins.Whisper.WhisperDecoder
+  public static Idrak.Layers.Sequential Read(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Audio.Plugins.Whisper.WhisperConfig config, Idrak.Abstraction.Generation.EncoderWeights weights, Idrak.Abstraction.Device device, string prefix = "model.decoder.")
+
+public sealed class Idrak.Audio.Plugins.Whisper.WhisperEncoder : Idrak.Abstraction.Module
+  public Idrak.Audio.Plugins.Whisper.WhisperConfig Config { get; }
+  public int Dim { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
+  public override string ToString()
+  public override void Dispose()
+  public static Idrak.Audio.Plugins.Whisper.WhisperEncoder Read(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Audio.Plugins.Whisper.WhisperConfig config, Idrak.Abstraction.Generation.EncoderWeights weights, Idrak.Abstraction.Device device, string prefix = "model.encoder.")
+
+public sealed class Idrak.Audio.Plugins.Whisper.WhisperFamily : Idrak.Audio.Abstractions.ISpeechFamily
+  public Idrak.Audio.Abstractions.ISpeechRecognizer Read(Idrak.Audio.Abstractions.SpeechCheckpoint checkpoint)
+  public WhisperFamily()
+  public const string Architecture = "WhisperForConditionalGeneration"
+  public string Name { get; }
+
+public static class Idrak.Audio.Plugins.Whisper.WhisperPlugin
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
+public sealed class Idrak.Audio.Plugins.Whisper.WhisperRecognizer : Idrak.Audio.Abstractions.ISpeechRecognizer, System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; }
+  public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; }
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor features)
+  public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
+  public Idrak.Audio.Abstractions.Transcription Transcribe(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.IProgress<Idrak.Audio.Abstractions.TranscriptionProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Audio.Plugins.Whisper.WhisperConfig Config { get; }
+  public Idrak.Audio.Plugins.Whisper.WhisperEncoder Encoder { get; }
+  public Idrak.Layers.Sequential Decoder { get; }
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.TranscriptSegment> TranscribeStream(System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> chunks, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Generation.BeamHypothesis> Decode(Idrak.Abstraction.Tensor encoded, System.Collections.Generic.IReadOnlyList<int> prompt, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.Threading.CancellationToken cancellationToken = default, System.Random? random = null)
+  public System.Collections.Generic.IReadOnlyList<int> Prompt(string? language, string task = "transcribe", bool timestamps = false, string? previous = null)
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
+  public System.Collections.Generic.IReadOnlySet<string> Languages { get; }
+  public float NoSpeechProbability(Idrak.Abstraction.Tensor encoded, System.Collections.Generic.IReadOnlyList<int> prompt)
+  public float[] Logits(Idrak.Abstraction.Tensor encoded, System.Collections.Generic.IReadOnlyList<int> prompt)
+  public static double CompressionRatio(string text)
+  public string? DetectLanguage(Idrak.Abstraction.Tensor encoded)
+  public void Dispose()

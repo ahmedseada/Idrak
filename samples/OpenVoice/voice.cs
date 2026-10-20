@@ -1,5 +1,4 @@
-#:project Idrak.OpenVoice/Idrak.OpenVoice.csproj
-#:project ../VitsSpeech/Idrak.VitsSpeech/Idrak.VitsSpeech.csproj
+#:project ../../src/Idrak.Audio.Plugins/Idrak.Audio.Plugins.csproj
 #:project ../../src/Idrak.Gpu/Idrak.Gpu.csproj
 #:property PublishAot=false
 
@@ -7,8 +6,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 //
 // voice.cs: install a person's voice and speak with it (plan 21, S9 route B). The command line does the same now and is
-// the way to use it: `idrak voice add|list|show|remove|export|import` and `idrak speak MODEL TEXT --voice NAME` (with
-// -P Idrak.OpenVoice.dll, -P Idrak.VitsSpeech.dll; idrak help audio). This script stays as the prototype they match.
+// the way to use it: `idrak voice add|list|show|remove|export|import` and `idrak speak MODEL TEXT --voice NAME` (the
+// OpenVoice and VITS families of Idrak.Audio.Plugins are built in; idrak help audio). This script stays as the prototype
+// they match, an app on the plug-in package.
 //   dotnet run samples/OpenVoice/voice.cs -- add NAME --converter DIR --consent TEXT [--speaker WHO] [--language ar]... [--keep-clips] [--device cuda] CLIP...
 //   dotnet run samples/OpenVoice/voice.cs -- list | show NAME | remove NAME | export NAME ZIP | import ZIP|DIR
 //   dotnet run samples/OpenVoice/voice.cs -- speak MODEL TEXT --voice NAME [--tau 0.3] [--conversion auto|off|NAME] [--decoder-seconds 10] [--device cuda] [-o out.wav]
@@ -17,11 +17,11 @@ using System.Diagnostics;
 using Idrak.Abstraction;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.OpenVoice;
-using Idrak.VitsSpeech;
+using Idrak.Audio.Plugins.OpenVoice;
+using Idrak.Audio.Plugins.Vits;
 
 OpenVoicePlugin.Register();
-VitsSpeechPlugin.Register();
+VitsPlugin.Register();
 var store = VoiceStores.Get();
 if (args.Length == 0)
 {

@@ -3,10 +3,6 @@
     <Project Path="samples/Gemma3Vision/Idrak.Gemma3Vision/Idrak.Gemma3Vision.csproj" />
     <Project Path="samples/QwenVision/Idrak.QwenVision/Idrak.QwenVision.csproj" />
     <Project Path="samples/IdrakVision/Idrak.IdrakVision/Idrak.IdrakVision.csproj" />
-    <Project Path="samples/IdrakAudio/Idrak.IdrakAudio/Idrak.IdrakAudio.csproj" />
-    <Project Path="samples/OpenVoice/Idrak.OpenVoice/Idrak.OpenVoice.csproj" />
-    <Project Path="samples/VitsSpeech/Idrak.VitsSpeech/Idrak.VitsSpeech.csproj" />
-    <Project Path="samples/WhisperSpeech/Idrak.WhisperSpeech/Idrak.WhisperSpeech.csproj" />
     <Project Path="samples/Idrak.Samples.ArabicOcr/Idrak.Samples.ArabicOcr.csproj" />
     <Project Path="samples/Idrak.Samples.ArabicOcr.Tests/Idrak.Samples.ArabicOcr.Tests.csproj" />
     <Project Path="samples/Idrak.Samples.LegalOcr/Idrak.Samples.LegalOcr.csproj" />

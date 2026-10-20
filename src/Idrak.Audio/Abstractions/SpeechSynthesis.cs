@@ -138,7 +138,7 @@ public interface ISpeechSynthesisFamily
 /// <summary>
 /// The text-to-speech families, by architecture name (config.json's "architectures"). The library registers none: a
 /// family (its configuration, tokenizer, layers and decoder) is an application of these contracts, registered by the
-/// app or plug-in that brings it (<c>samples/VitsSpeech</c> is one). A checkpoint whose name has no family is refused
+/// app or plug-in that brings it (Idrak.Audio.Plugins' VITS family is one). A checkpoint whose name has no family is refused
 /// naming this registry: nothing falls back to another family, since families are not interchangeable.
 /// </summary>
 public static class SpeechSynthesisFamilies

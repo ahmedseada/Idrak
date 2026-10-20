@@ -27,13 +27,13 @@ internal sealed class TranscribeCommand : Command
     public override string Usage => """
         MODEL AUDIO... [options]
 
-        Transcribes each sound file with the model's family (a plug-in given with -P: the library registers none), in the
-        order given; a progress line shows the file, the stage and the segment. Sound of any rate and channels is mixed
-        to one and resampled to the model's. Without -o the result is printed; with -o it is written: a file for one
-        input, else a folder of NAME.txt, .json, .srt or .vtt. -j prints one JSON document (every file's text, language,
-        segments and stage times). -v adds each file's stage times (the first file cold, the others warm; one file is
-        transcribed again for its warm times) and the device's peak memory. Subtitles take the segments' times, so
-        --format srt and vtt ask the model for timestamps.
+        Transcribes each sound file with the model's family (the tool registers Idrak.Audio.Plugins' families, Whisper
+        among them; another plug-in with -P), in the order given; a progress line shows the file, the stage and the
+        segment. Sound of any rate and channels is mixed to one and resampled to the model's. Without -o the result is
+        printed; with -o it is written: a file for one input, else a folder of NAME.txt, .json, .srt or .vtt. -j prints
+        one JSON document (every file's text, language, segments and stage times). -v adds each file's stage times (the
+        first file cold, the others warm; one file is transcribed again for its warm times) and the device's peak memory.
+        Subtitles take the segments' times, so --format srt and vtt ask the model for timestamps.
 
         Arguments:
           MODEL                  a model folder (config.json, weights, tokenizer, preprocessor_config.json), a hub id
@@ -75,11 +75,11 @@ internal sealed class TranscribeCommand : Command
               --no-warm          with -v, report the cold times only (one file is not transcribed again)
 
         Examples:
-          idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav
-          idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small lecture.flac -l ar --timestamps -o lecture.srt
-          idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small recordings/ -o texts/ --format vtt -d cuda
-          idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small talk.wav --beam 4 -j -v
-          cat talk.wav | idrak transcribe -P Idrak.WhisperSpeech.dll ./whisper-small -
+          idrak transcribe ./whisper-small talk.wav
+          idrak transcribe ./whisper-small lecture.flac -l ar --timestamps -o lecture.srt
+          idrak transcribe ./whisper-small recordings/ -o texts/ --format vtt -d cuda
+          idrak transcribe ./whisper-small talk.wav --beam 4 -j -v
+          cat talk.wav | idrak transcribe ./whisper-small -
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =

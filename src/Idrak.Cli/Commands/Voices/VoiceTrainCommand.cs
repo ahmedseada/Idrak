@@ -32,7 +32,7 @@ internal sealed class VoiceTrainCommand : Command
         NAME --from DATA --base MODEL --consent TEXT|--consent-file F [options]
         --resume RUN [options]
 
-        Fine-tunes the synthesizer MODEL (a VITS checkpoint, its plug-in given with -P) on one person's speech, 30 to 60
+        Fine-tunes the synthesizer MODEL (a VITS checkpoint, Idrak.Audio.Plugins' family) on one person's speech, 30 to 60
         minutes for a natural voice, against discriminators (VITS's losses: mel, KL, duration, adversarial, feature
         matching), then installs the last checkpoint as the voice NAME (kind checkpoint) for idrak speak --voice NAME. The
         decoder trains on random segments, so memory follows the batch, not an utterance's length; a batch the device has
@@ -100,11 +100,11 @@ internal sealed class VoiceTrainCommand : Command
         """ + "\n" + VoiceText.StoreHelp + "\n" + """
 
         Examples:
-          idrak voice train ahmed --from rec/transcripts.jsonl --base facebook/mms-tts-ara -P Idrak.VitsSpeech.dll -l ar
+          idrak voice train ahmed --from rec/transcripts.jsonl --base facebook/mms-tts-ara -l ar
             --consent "I, Ahmed, agree that this voice is trained for speech made with Idrak." -d cuda
-          idrak voice train sara --from clips/ --base ./mms-tts-eng -P Idrak.VitsSpeech.dll --consent-file sara.txt -o runs/sara
-          idrak voice train --resume runs/sara --steps 1000 -P Idrak.VitsSpeech.dll -d cuda
-          idrak speak facebook/mms-tts-ara "مرحبا" --voice ahmed -P Idrak.VitsSpeech.dll -o ahmed.wav
+          idrak voice train sara --from clips/ --base ./mms-tts-eng --consent-file sara.txt -o runs/sara
+          idrak voice train --resume runs/sara --steps 1000 -d cuda
+          idrak speak facebook/mms-tts-ara "مرحبا" --voice ahmed -o ahmed.wav
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
@@ -138,7 +138,7 @@ internal sealed class VoiceTrainCommand : Command
         }
 
         string statement = Consent(context);
-        string baseArgument = context.Option("--base") ?? throw new UsageException("Missing --base MODEL (the synthesizer to fine-tune; its plug-in given with -P).");
+        string baseArgument = context.Option("--base") ?? throw new UsageException("Missing --base MODEL (the synthesizer to fine-tune; its family a registered plug-in's).");
         string baseFolder = Directory.Exists(baseArgument) ? Path.GetFullPath(baseArgument) : ModelChoices.Resolve(context, baseArgument);
         var store = AudioFiles.VoiceStore(context);
         if (store.Find(name) is { } existing && !context.Flag("--overwrite") && !context.Flag("--no-install") && !context.Flag("--profile"))
@@ -342,7 +342,7 @@ internal sealed class VoiceTrainCommand : Command
 
         synthesizer.Dispose();
         throw new UsageException($"{folder} holds a {synthesizer.GetType().Name}, which its family does not train against discriminators (no IAdversarialSpeechSynthesizer); "
-            + "voice train fine-tunes a VITS checkpoint (-P Idrak.VitsSpeech.dll).");
+            + "voice train fine-tunes a VITS checkpoint (Idrak.Audio.Plugins' VITS family).");
     }
 
     // --profile: steps until the second pass over the recordings (the first takes every clip's training rows), then 3 timed
@@ -510,7 +510,7 @@ internal sealed class VoiceTrainCommand : Command
             context.Write(text);
         }
 
-        context.Write($"next: idrak speak \"{settings["base"]}\" \"...\" --voice {voice.Name} -P <the model's plug-in> -o {voice.Name}.wav");
+        context.Write($"next: idrak speak \"{settings["base"]}\" \"...\" --voice {voice.Name} -o {voice.Name}.wav");
         output["voice"] = VoiceText.Json(voice, VoiceText.WarnAgreement);
         context.WriteJson(output);
         return ExitCodes.Ok;
