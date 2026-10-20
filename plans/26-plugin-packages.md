@@ -601,6 +601,24 @@ the uncached one.
   then the inventory guard's `ISeq2SeqModel` line; final 6 of 6. **Merged on P3 (2026-10-20, 4b2ea6a):** one build; the
   P10 filters with the generic, override and guard groups: 178 passed, 0 failed.
 
+## Leftovers for the owner (noted 2026-10-20, not worked on)
+
+The owner takes these after this plan is finished; no agent starts them before.
+- **ArabicOcr's left-to-right reading order (P3).** The recognizer now passes its direction to `runs`: right-to-left
+  results are identical; a left-to-right model's order changes (the old code reversed Latin runs, which did not match
+  its labels). Keep it, or restore the old order (one argument).
+- **`idrak serve` for an encoder-decoder (P10).** `ServeHost.AddModels` registers every model as a chat model; a
+  seq2seq model needs finding through `PretrainedSeq2Seq.Find`, registering as `engine.Seq2SeqModel`, the chat routes
+  (`MapChatApi`, `/api/chat`, the chat UI, `/v1/chat/completions`) skipping it, the announcement and status lines, and a
+  `cli serve:` test. `/v1/completions` and MCP generate already work through `ITextModel` once it is registered.
+- **Slowness found, not fixed (P8, P10):** a cached decoding step rebuilds the bucketed bias index on the host and
+  uploads it; attention with a bias builds the full score matrix over every cache slot; beam search reads all beams x
+  vocabulary logits back every step; a tied checkpoint that also holds `lm_head.weight` is compared value by value on
+  the host at load.
+- **ONNX bug, existing (found in P10):** exporting a `TransformerEncoderLayer` built with a custom activation casts the
+  activation to `Linear` and throws an invalid cast.
+- Later phases add theirs here.
+
 ## Order and parallelism
 
 At most two agents at a time (decision 10), each in its own worktree; a merge is built and its filters run before the
