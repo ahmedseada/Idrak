@@ -923,6 +923,24 @@ In the phases' words:
   a file format, not family logic.
 - **P7 on P6's GGUF leftover:** `GgufArchitecture.Configure` now gives a plug-in the hook a Gemma GGUF mapping needs.
 
+## Leftover rounds (after the plan)
+
+The owner names the rows of "Leftovers for the owner" to work on; each round's agent writes its as-built note here.
+
+### Round L1 (2026-10-20): the T5 and GGUF rows
+
+The owner: "work on all related t5 and gguf, max 2 agents". Lane A takes the T5 rows (10, 11, 13, 17), lane B the GGUF
+rows (15, 18). Row 9 (the ONNX export bug, found in P10) is not T5's path (ONNX export refuses RMS blocks) and is left
+for the owner.
+
+#### L1-T5 (rows 10, 11, 13, 17)
+
+Not started.
+
+#### L1-GGUF (rows 15, 18)
+
+Not started.
+
 ## Order and parallelism
 
 At most two agents at a time (decision 10), each in its own worktree; a merge is built and its filters run before the
