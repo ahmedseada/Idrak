@@ -2639,6 +2639,17 @@ public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstract
   public static Idrak.Abstraction.Generation.BFloat16Weight? FromBits(int rows, int columns, Idrak.Abstraction.Device device, System.Func<System.Span<ushort>, int, bool> write)
   public static void CopyStoredBits(System.ReadOnlySpan<ushort> stored, System.Span<ushort> destination)
 
+public sealed class Idrak.Abstraction.Generation.BucketedPositionBias : Idrak.Abstraction.Generation.AttentionPositionBias
+  public BucketedPositionBias(int heads, int buckets, int maxDistance, bool bidirectional, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public Idrak.Abstraction.Tensor Table { get; }
+  public bool Bidirectional { get; }
+  public const string KindName = "bucketed"
+  public int Bucket(int relative)
+  public int Buckets { get; }
+  public int MaxDistance { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override string ToString()
+
 public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstraction.Generation.ITokenizer
   public CharTokenizer(System.Collections.Generic.IEnumerable<string> characters, Idrak.Abstraction.Generation.CharTokenizerOptions options)
   public CharTokenizer(string vocabulary, Idrak.Abstraction.Generation.CharTokenizerOptions options)
@@ -2997,15 +3008,18 @@ public static class Idrak.Abstraction.Generation.GenerationModelExtensions
 public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEquatable<Idrak.Abstraction.Generation.GenerationOptions>
   public GenerationOptions()
   public System.Collections.Generic.IReadOnlyList<string> Stop { get; init; }
+  public bool EarlyStopping { get; init; }
   public bool UseCache { get; init; }
   public bool UseGraph { get; init; }
   public float FrequencyPenalty { get; init; }
+  public float LengthPenalty { get; init; }
   public float MinP { get; init; }
   public float PresencePenalty { get; init; }
   public float RepeatPenalty { get; init; }
   public float Temperature { get; init; }
   public float TopP { get; init; }
   public int ChunkSize { get; init; }
+  public int NumBeams { get; init; }
   public int NumCtx { get; init; }
   public int NumPredict { get; init; }
   public int RepeatLastN { get; init; }

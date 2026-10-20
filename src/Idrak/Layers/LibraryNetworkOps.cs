@@ -55,6 +55,12 @@ internal static class LibraryNetworkOps
                 null or "before" => NormPlacement.Before,
                 "after" => NormPlacement.After,
                 var other => throw new InvalidDataException($"The network step 'transformer' takes norms \"before\" or \"after\"; got \"{other}\"."),
+            },
+            (string?)a.Json["norm"] switch
+            {
+                null or "layer" => BlockNormalization.LayerNorm,
+                "rms" => BlockNormalization.RmsNorm,
+                var other => throw new InvalidDataException($"The network step 'transformer' takes norm \"layer\" or \"rms\"; got \"{other}\"."),
             }));
         NetworkOps.Register("attention", (b, a) => Of(b).MultiHeadAttention(a.Int("heads"), a.Bool("causal"), a.Float("dropout")));
         NetworkOps.Register("lstm", (b, a) => a.Has("bidirectional")

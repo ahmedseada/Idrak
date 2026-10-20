@@ -300,8 +300,12 @@ public sealed class Idrak.Generation.Seq2SeqGenerator : Idrak.Abstraction.Genera
   public Seq2SeqGenerator(Idrak.Abstraction.Generation.ISeq2SeqModel model, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.GenerationChunk> Stream(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Generation.BeamHypothesis> GenerateBeams(System.Collections.Generic.IReadOnlyList<int> source, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyList<int> GenerateIds(System.Collections.Generic.IReadOnlyList<int> source, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> CreateSampler { get; set; }
+  public bool AddSpecialTokens { get; init; }
+  public bool EndSource { get; init; }
+  public bool SkipSpecialTokens { get; init; }
 
 public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
   public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
@@ -704,6 +708,10 @@ public sealed class Idrak.Layers.BatchNorm : Idrak.Abstraction.Module
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
   public override string ToString()
+
+public enum Idrak.Layers.BlockNormalization : int
+  LayerNorm = 0
+  RmsNorm = 1
 
 public static class Idrak.Layers.Blocks
   public static Idrak.Layers.Sequential Repeat(int count, System.Func<Idrak.Abstraction.Module> factory)
@@ -1204,7 +1212,7 @@ public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INet
   public Idrak.Layers.NetworkBuilder Sigmoid()
   public Idrak.Layers.NetworkBuilder Softmax()
   public Idrak.Layers.NetworkBuilder Tanh()
-  public Idrak.Layers.NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, Idrak.Layers.NormPlacement placement = (Idrak.Layers.NormPlacement)0)
+  public Idrak.Layers.NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, Idrak.Layers.NormPlacement placement = (Idrak.Layers.NormPlacement)0, Idrak.Layers.BlockNormalization normalization = (Idrak.Layers.BlockNormalization)0)
   public Idrak.Layers.NetworkBuilder Upsample((float, float) scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
   public Idrak.Layers.NetworkBuilder Upsample(float scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
   public Idrak.Layers.NetworkBuilder UpsampleToSize((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
@@ -1387,11 +1395,14 @@ public sealed class Idrak.Layers.Tanh : Idrak.Abstraction.Module
 
 public sealed class Idrak.Layers.TransformerEncoderLayer : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
+  public Idrak.Layers.BlockNormalization Normalization { get; init; }
+  public Idrak.Layers.FeedForward? FeedForwardBlock { get; }
   public Idrak.Layers.NormPlacement Placement { get; init; }
   public TransformerEncoderLayer(int dim, int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public int Dim { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
   public override string ToString()
+  public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Abstraction.Module norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Abstraction.Module norm2, Idrak.Layers.FeedForward feedForward, Idrak.Layers.NormPlacement placement = (Idrak.Layers.NormPlacement)0)
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2)
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2, Idrak.Abstraction.Module activation)
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2, Idrak.Abstraction.Module? activation, Idrak.Layers.NormPlacement placement)
@@ -1552,6 +1563,7 @@ public interface Idrak.Models.Abstractions.IPretrainedEncoderFamily
   public string Name { get; }
 
 public interface Idrak.Models.Abstractions.IPretrainedSeq2SeqFamily
+  public (default) bool EndsSource(System.Text.Json.Nodes.JsonObject config)
   public Idrak.Abstraction.Generation.ISeq2SeqModel Build(Idrak.Models.Abstractions.PretrainedCheckpoint checkpoint)
   public string Name { get; }
 
@@ -2077,9 +2089,10 @@ public sealed class Idrak.Models.PretrainedSeq2SeqModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Generation.IPretrainedTokenizer? Tokenizer { get; }
   public Idrak.Abstraction.Generation.ISeq2SeqModel Model { get; }
-  public Idrak.Generation.Seq2SeqGenerator CreateGenerator(Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)
+  public Idrak.Generation.Seq2SeqGenerator CreateGenerator(Idrak.Abstraction.Generation.ITokenizer? tokenizer = null, Idrak.Abstraction.Generation.KeyValueLayout? cacheLayout = null)
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Text.Json.Nodes.JsonObject Config { get; }
+  public bool EndsSource { get; }
   public static Idrak.Models.PretrainedSeq2SeqModel Load(string folder, Idrak.Models.PretrainedEncoderOptions? options = null)
   public string Architecture { get; }
   public string Folder { get; }

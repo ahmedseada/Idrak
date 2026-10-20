@@ -55,4 +55,32 @@ The heads read the first token (the family's pooler, `PretrainedEncoderModel.Poo
 pooling on `TextEncoder`, not with `PretrainedEncoderOptions.Pooler`, which the classifier reads too. Relative position
 embeddings (`position_embedding_type` other than `absolute`) and decoder checkpoints (`is_decoder`) are refused.
 
+### T5 (`Idrak.Text.Plugins.T5`)
+
+`T5Plugin.Register()` registers `T5ForConditionalGeneration` and `MT5ForConditionalGeneration` in `PretrainedSeq2Seq`,
+and `T5EncoderModel` and `MT5EncoderModel` in `PretrainedEncoders`. `PretrainedSeq2SeqModel.Load` then reads a Hugging
+Face folder: the shared token embedding (the encoder's input, the decoder's input and, tied, the head's table, one copy),
+pre-norm blocks with RMS norms (`TransformerEncoderLayer` with RMS norms; `DecoderBlock` with cross-attention), attention
+without score scaling, the library's `bucketed` relative position bias of each stack's first block shared by the
+others, the ReLU feed-forward (T5 v1.0) or the gated GELU one (`feed_forward_proj` `gated-gelu`: v1.1, mT5), and the
+head: the shared embedding with the decoder's output scaled by `d_model^-0.5` (tied, v1.0) or `lm_head.weight`
+(`tie_word_embeddings` false). Decoding starts from `decoder_start_token_id` and ends at `eos_token_id`; the longest
+target is `n_positions` (512 when not given). The tokenizer is the folder's Unigram (`tokenizer.json`, or
+`spiece.model`, whose missing `</s>` the generator appends).
+
+```csharp
+using Idrak.Models;
+using Idrak.Text.Plugins.T5;
+
+T5Plugin.Register();
+using var t5 = PretrainedSeq2SeqModel.Load(folder);
+var generator = t5.CreateGenerator();
+var (text, reason, stats) = generator.Generate("translate English to German: The house is wonderful.",
+    new GenerationOptions { NumBeams = 4, NumPredict = 64 });          // greedy: TopK = 1, RepeatPenalty = 1
+```
+
+In the inference engine, an encoder-decoder is the `seq2seq` kind (`engine.Seq2SeqModel(name, folder)`, reached as
+`ITextModel`); `idrak run FOLDER "prompt"` answers with it (`--beams N` for beam search). Other `feed_forward_proj`
+values, bucket settings that do not fit and checkpoints without a tensor the configuration names are refused naming them.
+
 License: Apache 2.0.

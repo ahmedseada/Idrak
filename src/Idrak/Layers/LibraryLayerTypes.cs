@@ -49,9 +49,9 @@ internal static class LibraryLayerTypes
                 : throw new NotSupportedException("an attention layer with a score scale, a position bias or an inner width of its own cannot be described"),
             (d, device) => new MultiHeadAttention(I(d, "dim"), I(d, "heads"), B(d, "causal"), 0f, device));
         LayerTypes.Register<TransformerEncoderLayer>("transformer", t => t.Children().ToList() is [_, MultiHeadAttention a, _, Linear ff, ..] && Plain(a)
-            ? Placed(new() { ["dim"] = t.Dim, ["heads"] = a.Heads, ["ffDim"] = ff.OutFeatures, ["causal"] = a.Causal }, t.Placement)
+            ? Normalized(Placed(new() { ["dim"] = t.Dim, ["heads"] = a.Heads, ["ffDim"] = ff.OutFeatures, ["causal"] = a.Causal }, t.Placement), t.Normalization)
             : throw new NotSupportedException("a transformer layer without its standard sublayers cannot be described"),
-            (d, device) => new TransformerEncoderLayer(I(d, "dim"), I(d, "heads"), I(d, "ffDim"), 0f, B(d, "causal"), device) { Placement = NormsOf(d) });
+            (d, device) => new TransformerEncoderLayer(I(d, "dim"), I(d, "heads"), I(d, "ffDim"), 0f, B(d, "causal"), device) { Placement = NormsOf(d), Normalization = NormOf(d) });
         LayerTypes.Register<LSTM>("lstm", r => Recurrent(r, false),
             (d, device) => new LSTM(I(d, "in"), I(d, "hidden"), B(d, "sequences"), d["bidirectional"] is not null && B(d, "bidirectional"), d["layers"] is null ? 1 : I(d, "layers"), device));
         LayerTypes.Register<GRU>("gru", r => Recurrent(r, r.CandidateBias),
@@ -134,6 +134,24 @@ internal static class LibraryLayerTypes
         null or "before" => NormPlacement.Before,
         "after" => NormPlacement.After,
         var other => throw new InvalidDataException($"A transformer layer's norms are \"before\" or \"after\"; got \"{other}\"."),
+    };
+
+    // A block of RMS norms says so ("norm": "rms"); one of LayerNorms is described as before.
+    private static JsonObject Normalized(JsonObject d, BlockNormalization normalization)
+    {
+        if (normalization == BlockNormalization.RmsNorm)
+        {
+            d["norm"] = "rms";
+        }
+
+        return d;
+    }
+
+    private static BlockNormalization NormOf(JsonObject d) => (string?)d["norm"] switch
+    {
+        null or "layer" => BlockNormalization.LayerNorm,
+        "rms" => BlockNormalization.RmsNorm,
+        var other => throw new InvalidDataException($"A transformer layer's norm is \"layer\" or \"rms\"; got \"{other}\"."),
     };
 
     // An attention layer a description ("dim", "heads", "causal") rebuilds: the default score scale, no position bias, the
