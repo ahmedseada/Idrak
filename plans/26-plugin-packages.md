@@ -15,7 +15,7 @@ built. No phase starts until the owner names it.
 | P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Not started |
 | P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Not started |
 | P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
-| P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Not started |
+| P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Done 2026-10-20 (core); CLI `run`/server for seq2seq and a beam setting go with P10 |
 | P9 | BERT (`Idrak.Text.Plugins.Bert`) | B | Not started |
 | P10 | T5 (`Idrak.Text.Plugins.T5`) | B | Not started |
 
@@ -302,6 +302,8 @@ the rename reaches every package.
   and its check in `QwenVisionTests.cs:321` wait for P8's merge (P8 owns that file), then name `Idrak.Text.Plugins` /
   `Idrak.Vision.Plugins`; `ImageModelFamilies`' message goes with P3. **A setting for the CLI's startup registration**
   (CLAUDE.md: nothing fixed) goes with P2: `IDRAK_PLUGIN_PACKAGES` (all by default; `none` or a list).
+  `PretrainedArchitectures`' message: done in P8's merge (it names `Idrak.Text.Plugins` and `Idrak.Vision.Plugins`;
+  `qwen vl:` checks it).
 - **Run (CPU, the agent):** 126 passed, 1 failed (a GGUF message in `GgufModel.cs`), then `plugins:` 23 of 23.
   **Merged (2026-10-20, on c023893):** one build; `plugins:`, `public API`, `abstraction inventory`, `naming:`,
   `override loop:`, `cli health`, `cli polish`, `cli arabic:`, `cli run:`, `pretrained:`, `gguf:`, `vision contracts`,
@@ -404,6 +406,42 @@ Generic, no family in it; each part is a contract and a registry or a setting:
 **Done when:** the suites pass on the CPU, the toy families run batched with padding equal to one by one, and existing
 decoder results are unchanged (`pretrained:`, `decoder:`, `sampler:`).
 
+**P8 as built (2026-10-20).** The core of the phase; families register only:
+- **Contracts in `Idrak.Abstraction.Generation`:** `IAttentionPositionBias` (`Heads`, `For(queries, keys, queryStart,
+  device)` → `[heads, q, k]`) with the base `AttentionPositionBias` (computed once per shape while nothing trains) and the
+  registry `AttentionPositionBiases` (default `relative`: a learned value per head and distance, `max_distance`,
+  `bidirectional`); `ISequenceEncoder` (`Width`, `Vocabulary`, `TypeVocabulary`, `MaxPositions`, `Device`, `Network`,
+  `Encode(ids, lengths, tokenTypes)` → `[batch, time, width]`); `ISequencePooler` with `SequencePoolers` (`first`,
+  `mean`, `max`); `ISeq2SeqModel` (`Encoder`, `Vocabulary`, `DecoderStartToken`, `EndToken`, `MaxTargetPositions`,
+  `Decode`, `SetMemory(memory, context, lengths)`, `DecodeCached`); `DecodingContext.SetMemory(…, lengths)` and
+  `MemoryLengthsOf`. `IAttentionPositionBias` and `ISeq2SeqModel` stay in `Idrak.Abstraction` with reasons in
+  `tests/Idrak.Tests/data/shared-contracts.txt` (only `Idrak` uses them today).
+- **Contracts in `Idrak.Models.Abstractions`:** `PretrainedCheckpoint`; `IPretrainedEncoderFamily` (`Build`, `Heads`,
+  `Pooler`) with `PretrainedEncoders`; `IPretrainedSeq2SeqFamily` with `PretrainedSeq2Seq` (no library family in either;
+  "not registered" names `Idrak.Text.Plugins`); `EncoderHeads` (`sequence-classification`, `masked-lm`).
+- **Implementations:** `MultiHeadAttention`, `CausalSelfAttention` and `CrossAttention` take the score scale, a padding
+  mask and a position bias as settings (nothing set: bit for bit as before, tested); `SequenceEncoder`,
+  `Seq2SeqNetwork`, `EncoderHead`, `PretrainedEncoderModel.Load`, `PretrainedSeq2SeqModel.Load`, `Seq2SeqGenerator`
+  (an `ITextModel`); `TextEncoder` takes an encoder and a `Pooler` setting (existing vectors bit for bit). Suites:
+  `PositionBiasSuite`, `SequencePoolerSuite`, `SequenceEncoderSuite`, `Seq2SeqModelSuite`; toy families from
+  `tests/Idrak.PluginTests/EncoderFamilyPlugin.cs` (public API only). Groups `engine: attention options` (4),
+  `engine: encoders` (3), `engine: seq2seq` (2). No new kernels: padding takes the per-range attention path, the bias
+  basic operations every backend has.
+- **Left, and where it goes:** the CLI's `run` and the server with an encoder-decoder (a new inference-engine kind beside
+  the text one) and a beam setting (`GenerationOptions` has none; `BeamSearch.Decode` already works through
+  `DecodeCached`) go with P10; the post-norm (BERT) and RMS-norm (T5) encoder blocks are generic blocks P9 and P10 add
+  to the library; the padding scope is not kept open through a checkpointed backward recompute (as `EncoderMemory`
+  today).
+- **Measured, not taken** (listed for the owner, not chased): with a bias, attention builds the full `[batch·heads, t, t]`
+  scores, and cached decoding does so over every cache slot each step; `relative` builds its index on the host and
+  uploads it each decoding step, and a shared bias that trains is recomputed by every layer; padded encoder attention
+  passes no mask, so on a device without a per-range kernel for the head size it runs on the host; the training path
+  with dropout builds its padding mask on the host; `Seq2SeqGenerator` reads one token back each step and has no
+  recorded-graph replay.
+- **Run (CPU, the agent):** 205 passed, 6 failed (dumps, inventory placement, two bugs in its own suites), then
+  `engine:|abstraction inventory|public API` 18 of 18. **Merged with P1 (2026-10-20, on 064be4c):** one build; the P1 and
+  P8 filters together: 287 passed, 0 failed.
+
 ## Phase P9: BERT (`Idrak.Text.Plugins.Bert`)
 
 - `BertModel` on P8's encoder contract: word, position and token-type embeddings, post-norm blocks with GELU, the
@@ -482,3 +520,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 |---|---|---|---|---|
 | 2026-10-20 | P0 | CPU (cloud, 4 threads) | the P0 filters above, the three sample test projects | 158 passed, 1 failed (naming test matched itself), then 3 of 3; samples 4, 14, 12 passed |
 | 2026-10-20 | P1 merged | CPU (cloud, 4 threads) | the P1 filters (merge on c023893) | 133 passed, 0 failed |
+| 2026-10-20 | P8 merged (with P1's leftover message) | CPU (cloud, 4 threads) | the P1 and P8 filters together | 287 passed, 0 failed |

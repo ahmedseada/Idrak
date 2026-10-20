@@ -2521,6 +2521,25 @@ public static class Idrak.Abstraction.ForwardHooks
   public static System.IDisposable? Enter(Idrak.Abstraction.Module module)
   public static bool Listening { get; }
 
+public abstract class Idrak.Abstraction.Generation.AttentionPositionBias : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.IAttentionPositionBias
+  protected AttentionPositionBias(int heads)
+  protected abstract Idrak.Abstraction.Tensor Compute(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
+  protected override Idrak.Abstraction.Tensor ForwardCore(Idrak.Abstraction.Tensor input)
+  protected override void MoveTo(Idrak.Abstraction.Device device)
+  public Idrak.Abstraction.Tensor For(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
+  public int Heads { get; }
+  public override void Dispose()
+  public void Invalidate()
+
+public static class Idrak.Abstraction.Generation.AttentionPositionBiases
+  public static Idrak.Abstraction.Generation.IAttentionPositionBias Create(string name, Idrak.Abstraction.Generation.PositionBiasRequest request)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Abstraction.Generation.PositionBiasRequest, Idrak.Abstraction.Generation.IAttentionPositionBias> Get(string name)
+  public static System.Func<Idrak.Abstraction.Generation.PositionBiasRequest, Idrak.Abstraction.Generation.IAttentionPositionBias>? Default(string name)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<Idrak.Abstraction.Generation.PositionBiasRequest, Idrak.Abstraction.Generation.IAttentionPositionBias> create)
+
 public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstraction.Generation.PackedWeight
   public Idrak.Abstraction.Tensor Packed { get; }
   public override Idrak.Abstraction.Device Device { get; }
@@ -2782,6 +2801,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public Idrak.Abstraction.Tensor? RotaryPositions { get; }
   public Idrak.Abstraction.Tensor? TokenPositions { get; }
   public Idrak.Abstraction.Tensor? TokenStarts { get; }
+  public System.Collections.Generic.IReadOnlyList<int>? MemoryLengthsOf(object owner)
   public System.Collections.Generic.IReadOnlyList<int>? RotaryOffsets { get; }
   public System.Collections.Generic.IReadOnlyList<int>? RowStarts { get; }
   public System.Threading.CancellationToken Cancellation { get; set; }
@@ -2804,6 +2824,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public void ReplayStep(Idrak.Abstraction.ComputeGraph graph, int steps = 1)
   public void Reset()
   public void SetMemory(object owner, Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values)
+  public void SetMemory(object owner, Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values, System.Collections.Generic.IReadOnlyList<int>? lengths)
   public void SetRotaryOffsets(System.Collections.Generic.IReadOnlyList<int>? offsets, int from)
   public void SetRowStarts(System.Collections.Generic.IReadOnlyList<int>? starts)
   public void Truncate(int length)
@@ -2919,6 +2940,10 @@ public sealed record Idrak.Abstraction.Generation.GenerationStats : System.IEqua
   public int GeneratedTokens { get; init; }
   public int PromptTokens { get; init; }
 
+public interface Idrak.Abstraction.Generation.IAttentionPositionBias
+  public Idrak.Abstraction.Tensor For(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
+  public int Heads { get; }
+
 public interface Idrak.Abstraction.Generation.IBinaryPartKind : Idrak.Abstraction.Generation.IChatPartKind
   public Idrak.Abstraction.Generation.ChatPart FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
 
@@ -2973,6 +2998,31 @@ public interface Idrak.Abstraction.Generation.IPretrainedTokenizer : Idrak.Abstr
   public void PadVocabulary(int size)
   public void Save(string path)
   public void WriteTo(System.IO.Stream stream)
+
+public interface Idrak.Abstraction.Generation.ISeq2SeqModel : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.ISequenceEncoder Encoder { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Decode(Idrak.Abstraction.Tensor ids, Idrak.Abstraction.Tensor memory, System.Collections.Generic.IReadOnlyList<int>? memoryLengths = null)
+  public Idrak.Abstraction.Tensor DecodeCached(Idrak.Abstraction.Tensor ids, Idrak.Abstraction.Generation.DecodingContext context)
+  public int DecoderStartToken { get; }
+  public int EndToken { get; }
+  public int MaxTargetPositions { get; }
+  public int Vocabulary { get; }
+  public void SetMemory(Idrak.Abstraction.Tensor memory, Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int>? memoryLengths = null)
+
+public interface Idrak.Abstraction.Generation.ISequenceEncoder : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Module Network { get; }
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<int>? lengths = null, Idrak.Abstraction.Tensor? tokenTypes = null)
+  public int MaxPositions { get; }
+  public int TypeVocabulary { get; }
+  public int Vocabulary { get; }
+  public int Width { get; }
+
+public interface Idrak.Abstraction.Generation.ISequencePooler
+  public Idrak.Abstraction.Tensor Pool(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int>? lengths)
+  public string Name { get; }
 
 public interface Idrak.Abstraction.Generation.ISoftPartSource
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
@@ -3273,6 +3323,14 @@ public abstract class Idrak.Abstraction.Generation.PackedWeight : System.IDispos
 
 public delegate Idrak.Abstraction.Generation.PackedWeight Idrak.Abstraction.Generation.PackedWeightFactory(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
 
+public sealed record Idrak.Abstraction.Generation.PositionBiasRequest : System.IEquatable<Idrak.Abstraction.Generation.PositionBiasRequest>
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public PositionBiasRequest(int Heads, System.Text.Json.Nodes.JsonObject Settings, Idrak.Abstraction.Device? Device = null, int Seed = 0, System.Func<string, System.Collections.Generic.IReadOnlyList<int>, float[]?>? Weights = null)
+  public System.Func<string, System.Collections.Generic.IReadOnlyList<int>, float[]?>? Weights { get; init; }
+  public System.Text.Json.Nodes.JsonObject Settings { get; init; }
+  public int Heads { get; init; }
+  public int Seed { get; init; }
+
 public abstract class Idrak.Abstraction.Generation.PretrainedVision
   protected PretrainedVision()
   public abstract Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
@@ -3284,6 +3342,17 @@ public abstract class Idrak.Abstraction.Generation.PretrainedVision
   public override string ToString()
   public virtual System.Collections.Generic.IReadOnlyCollection<string> VisionOptionKeys { get; }
   public virtual string Describe()
+
+public sealed class Idrak.Abstraction.Generation.RelativePositionBias : Idrak.Abstraction.Generation.AttentionPositionBias
+  public Idrak.Abstraction.Tensor Table { get; }
+  public RelativePositionBias(int heads, int maxDistance, bool bidirectional, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public bool Bidirectional { get; }
+  public const string KindName = "relative"
+  public int Bucket(int relative)
+  public int Buckets { get; }
+  public int MaxDistance { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override string ToString()
 
 public sealed record Idrak.Abstraction.Generation.RopeScaling : System.IEquatable<Idrak.Abstraction.Generation.RopeScaling>
   public RopeScaling(string type, System.Text.Json.Nodes.JsonObject? parameters = null)
@@ -3358,6 +3427,18 @@ public sealed record Idrak.Abstraction.Generation.SamplerRequest : System.IEquat
   public int MaxSteps { get; init; }
   public int Rows { get; init; }
   public int Vocabulary { get; init; }
+
+public static class Idrak.Abstraction.Generation.SequencePoolers
+  public const string First = "first"
+  public const string Max = "max"
+  public const string Mean = "mean"
+  public static (int, int, int) Check(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int>? lengths)
+  public static Idrak.Abstraction.Generation.ISequencePooler Get(string name)
+  public static Idrak.Abstraction.Generation.ISequencePooler? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Generation.ISequencePooler pooler)
 
 public sealed class Idrak.Abstraction.Generation.TokenSampler : Idrak.Abstraction.Generation.ITokenSampler, System.IDisposable
   public Idrak.Abstraction.Generation.SampledToken[][] Read(int fromStep, int toStep)
