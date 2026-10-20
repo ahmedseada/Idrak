@@ -17,7 +17,7 @@ built. No phase starts until the owner names it.
 | P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
 | P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Done 2026-10-20 (core); CLI `run`/server for seq2seq and a beam setting go with P10 |
 | P9 | BERT (`Idrak.Text.Plugins.Bert`) | B | Done 2026-10-20; CPU pass (real models: the owner) |
-| P10 | T5 (`Idrak.Text.Plugins.T5`) | B | Not started |
+| P10 | T5 (`Idrak.Text.Plugins.T5`) | B | Done 2026-10-20; CPU pass (`idrak serve` not yet) |
 
 ## Goal
 
@@ -565,6 +565,42 @@ equal to one by one.
 **Done when:** encoder states and greedy generations equal transformers' on the fixtures, and the KV-cached decode equals
 the uncached one.
 
+**P10 as built (2026-10-20).**
+- **Plug-in** `Idrak.Text.Plugins.T5` (`T5Family`, `T5Plugin`, in `TextPlugins.All`; public API only):
+  `T5ForConditionalGeneration` and `MT5ForConditionalGeneration` as encoder-decoders, `T5EncoderModel` and
+  `MT5EncoderModel` as encoders (mean pooler). One embedding table shared in place by the decoder and a tied head;
+  pre-norm RMS blocks; score scale 1; each stack's first-layer bias shared by the rest; ReLU, gated GELU or gated SiLU;
+  tied head with the `d_model^-0.5` rescale (or `scale_decoder_outputs`), else `lm_head.weight`; start and end tokens
+  from config.json; longest target `n_positions` (512 when absent). Other `feed_forward_proj` values, bucket settings
+  that do not fit, untied checkpoints without a head and wrong shapes are refused naming the setting.
+- **Library (no family name):** `BucketedPositionBias` (kind `bucketed`, beside `relative`; buckets equal
+  transformers' over -700..700, computed once per shape and shared); `TransformerEncoderLayer` takes RMS norms and its
+  own `FeedForward` (`BlockNormalization`, a `FromLayers` overload, `FeedForwardBlock`; the description's `"norm":
+  "rms"`; ONNX export refuses it; LayerNorm stays the default on the old paths); `GenerationOptions.NumBeams`,
+  `LengthPenalty`, `EarlyStopping` (refused when invalid); `Seq2SeqGenerator` beams through `BeamSearch.Decode` with one
+  encoder memory, `GenerateBeams`, `AddSpecialTokens`, `SkipSpecialTokens`, `EndSource`;
+  `IPretrainedSeq2SeqFamily.EndsSource` (`</s>` appended for a bare `spiece.model`); the tokenizer padded to the model's
+  vocabulary; the engine kind `seq2seq` (`engine.Seq2SeqModel`, an `ITextModel`). `TextGenerator` ignores `NumBeams`.
+- **CLI:** `idrak run` answers a registered encoder-decoder directly (`--beams`, `--length-penalty`); options that do
+  not apply are refused naming the option; `--beams` on a decoder model is refused.
+- **Not done: `idrak serve`.** `ServeHost.AddModels` registers every model as a chat model; serving a seq2seq model
+  needs it found through `PretrainedSeq2Seq.Find` and registered as `engine.Seq2SeqModel`, the chat routes skipping it,
+  the announcement and status lines, and a `cli serve:` test. For the owner to decide.
+- **Fixtures** (`tools/t5/make_tiny_t5.py`, pinned `requirements.txt`; a rerun writes the same bytes):
+  `tests/Idrak.Tests/data/plugins/t5/` `tiny-t5` (v1.0) and `tiny-t5-gated` (v1.1, its `</s>` row aimed so some
+  generations end early), 3 encoder and 2 decoder layers, with `reference.safetensors` and `reference.json`. Tolerance
+  1e-4; largest measured: encoder states 6.4e-6, logits 8.4e-6; greedy and beam outputs equal transformers' token for
+  token; cached decode equals uncached.
+- **Tests:** `engine: bucketed position bias`, `engine: rms-norm block`, `engine: beam setting`, `plugins: t5` (5),
+  `cli run: encoder-decoder`, `t5 real:` (the owner's).
+- **Slowness noticed, not fixed:** each cached step rebuilds the bucket index on the host and uploads it, and attention
+  with a bias builds the full score matrix over every cache slot (as P8); beam search reads all beams x vocabulary logits
+  back each step; a tied checkpoint that also holds `lm_head.weight` is compared value by value on the host at load. An
+  existing ONNX bug: exporting a `TransformerEncoderLayer` with a custom activation casts it to `Linear` and throws.
+- **Run (CPU, the agent):** 150 passed, 1 failed (its own expectation named `wi` where the family reads `wo` first),
+  then the inventory guard's `ISeq2SeqModel` line; final 6 of 6. **Merged on P3 (2026-10-20, 4b2ea6a):** one build; the
+  P10 filters with the generic, override and guard groups: 178 passed, 0 failed.
+
 ## Order and parallelism
 
 At most two agents at a time (decision 10), each in its own worktree; a merge is built and its filters run before the
@@ -626,3 +662,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P2 merged (on P8) | CPU (cloud, 4 threads) | the P2 filters with engine, decoder, sampler; ArabicOcr and LegalOcr tests | 249 passed, 0 failed; 14 and 12 passed |
 | 2026-10-20 | P9 merged (on P2) | CPU (cloud, 4 threads) | the P9 filters with the guards | 150 passed, 0 failed |
 | 2026-10-20 | P3 merged (on P9) | CPU (cloud, 4 threads) | the P3 filters with engine; ArabicOcr tests | 190 passed, 0 failed; 14 passed |
+| 2026-10-20 | P10 merged (on P3) | CPU (cloud, 4 threads) | the P10 filters with generic components, override loop and the guards | 178 passed, 0 failed |

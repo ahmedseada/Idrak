@@ -1,0 +1,36 @@
+{
+ "files": {
+  "reference.json": {
+   "bytes": 62611,
+   "sha256": "527c66b937866e0ce900c328fca8d0f2053d8ff6b2e3bb447edd2ec3d206e269"
+  },
+  "reference.safetensors": {
+   "bytes": 290848,
+   "sha256": "32fa0f9a137d05f1882e2d26b77cc20653c1a62f8a4c8110f5f74dc314f56152"
+  },
+  "tiny-t5-gated/config.json": {
+   "bytes": 548,
+   "sha256": "9fb7aeaf2e53da7733b52604518868e31515d1c56f04d3af15b190bc5fae8bd8"
+  },
+  "tiny-t5-gated/model.safetensors": {
+   "bytes": 444216,
+   "sha256": "3c3f2753f457a3398bf27f080a4d7d7a51f193f4acd847488df54a9d9f208a39"
+  },
+  "tiny-t5/config.json": {
+   "bytes": 541,
+   "sha256": "d146fab066b61058762a8110e14b5c2b323c2b65a81b91ed091119040c1a151c"
+  },
+  "tiny-t5/model.safetensors": {
+   "bytes": 284560,
+   "sha256": "5b372426f955fbf991da6adf0b4920c767d1d6af2e3d0072de993f95ee2c1828"
+  }
+ },
+ "seed": 26010,
+ "versions": {
+  "python": "3.13.16",
+  "safetensors": "0.8.0",
+  "tokenizers": "0.23.3",
+  "torch": "2.14.1+cu130",
+  "transformers": "5.18.0"
+ }
+}

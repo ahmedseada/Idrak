@@ -64,4 +64,41 @@ public sealed record GenerationOptions
 
     /// <summary>The shortest run <see cref="RepeatStop"/> counts (shorter ones, such as a row of dots or a table's rule, are text).</summary>
     public int RepeatStopMinTokens { get; init; } = 4;
+
+    /// <summary>
+    /// Beam search: 1 (the default) chooses each token with the sampler (the settings above); above 1, an encoder-decoder's
+    /// generation (Idrak's <c>Seq2SeqGenerator</c>) keeps this many hypotheses at every step, as transformers'
+    /// <c>num_beams</c>, and answers with the best (ranked by <see cref="LengthPenalty"/>), the sampling settings unread.
+    /// Decoder-only generation samples and does not read it.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1.</exception>
+    public int NumBeams
+    {
+        get => _numBeams;
+        init => _numBeams = value >= 1 ? value
+            : throw new ArgumentOutOfRangeException(nameof(NumBeams), value, "The generation setting NumBeams is 1 (no beam search) or more.");
+    }
+
+    private readonly int _numBeams = 1;
+
+    /// <summary>
+    /// Beam search: a finished hypothesis's log-probability sum is divided by its length to this power before the
+    /// hypotheses are ranked (1, the default: the mean; 0: the sum, favouring short answers; above 1: longer ones), as
+    /// transformers' <c>length_penalty</c>.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not finite.</exception>
+    public float LengthPenalty
+    {
+        get => _lengthPenalty;
+        init => _lengthPenalty = float.IsFinite(value) ? value
+            : throw new ArgumentOutOfRangeException(nameof(LengthPenalty), value, "The generation setting LengthPenalty is a finite number (1: the mean log-probability).");
+    }
+
+    private readonly float _lengthPenalty = 1f;
+
+    /// <summary>
+    /// Beam search: stop as soon as <see cref="NumBeams"/> hypotheses have ended (true, the default, transformers'
+    /// <c>early_stopping=True</c>), or go on while a live beam could still beat the worst finished one (false).
+    /// </summary>
+    public bool EarlyStopping { get; init; } = true;
 }

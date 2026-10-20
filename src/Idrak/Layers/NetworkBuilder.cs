@@ -544,10 +544,13 @@ public sealed class NetworkBuilder : INetworkBuilder
     }
 
     /// <summary>
-    /// <c>new Layers.TransformerEncoderLayer(dim, heads, ffDim, dropout, causal) { Placement = placement }</c>; <c>dim</c> is
-    /// the last dimension; <paramref name="placement"/> puts the norms before each sublayer (the default) or after each sum.
+    /// <c>new Layers.TransformerEncoderLayer(dim, heads, ffDim, dropout, causal) { Placement = placement, Normalization =
+    /// normalization }</c>; <c>dim</c> is the last dimension; <paramref name="placement"/> puts the norms before each
+    /// sublayer (the default) or after each sum, <paramref name="normalization"/> makes them LayerNorms (the default) or RMS
+    /// norms.
     /// </summary>
-    public NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, NormPlacement placement = NormPlacement.Before)
+    public NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, NormPlacement placement = NormPlacement.Before,
+        BlockNormalization normalization = BlockNormalization.LayerNorm)
     {
         var (_, d) = Sequence("TransformerEncoderLayer");
         var step = Step("transformer", ("heads", heads), ("dropout", dropout), ("causal", causal));
@@ -561,7 +564,12 @@ public sealed class NetworkBuilder : INetworkBuilder
             step["norms"] = "after";
         }
 
-        return Push(r => new Layers.TransformerEncoderLayer(d, heads, ffDim, dropout, causal, _device, r) { Placement = placement }, _shape, step);
+        if (normalization == BlockNormalization.RmsNorm)
+        {
+            step["norm"] = "rms";
+        }
+
+        return Push(r => new Layers.TransformerEncoderLayer(d, heads, ffDim, dropout, causal, _device, r) { Placement = placement, Normalization = normalization }, _shape, step);
     }
 
     /// <summary><c>new Layers.MultiHeadAttention(dim, heads, causal, dropout)</c>; <c>dim</c> is the last dimension.</summary>

@@ -8,9 +8,10 @@ using Idrak.Text.Generation;
 namespace Idrak.Text.Inference;
 
 /// <summary>
-/// Text and chat models in the <see cref="InferenceEngine"/>: each copy is a <see cref="TextGenerator"/> and runs one
-/// generation at a time, because it owns its KV cache. Callers reach them through <see cref="ITextModel"/> (both kinds)
-/// and <see cref="IChatModel"/> (chat models): <c>engine.Model&lt;IChatModel&gt;("my-gpt")</c>.
+/// Text, chat and encoder-decoder models in the <see cref="InferenceEngine"/>: each copy is a <see cref="TextGenerator"/>
+/// (an encoder-decoder's: a <see cref="Seq2SeqGenerator"/>) and runs one generation at a time, because it owns its KV
+/// cache. Callers reach them through <see cref="ITextModel"/> (every kind) and <see cref="IChatModel"/> (chat models):
+/// <c>engine.Model&lt;IChatModel&gt;("my-gpt")</c>.
 /// </summary>
 public static class GenerativeModels
 {
@@ -47,6 +48,51 @@ public static class GenerativeModels
     public static InferenceEngineBuilder ChatModel(this InferenceEngineBuilder engine, string name, TextGenerator generator,
         Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure = null) =>
         AddChat(engine, name, configure, _ => generator, reloadable: false, owns: false);
+
+    // ------------------------------------------------------------------ encoder-decoder models
+
+    /// <summary>
+    /// An encoder-decoder (sequence to sequence) model read from <paramref name="folder"/> by the family its architecture
+    /// is registered under (<c>PretrainedSeq2Seq</c>, a plug-in's), with the folder's tokenizer: the engine's "seq2seq"
+    /// kind, reached through <see cref="ITextModel"/> (<c>engine.Model&lt;ITextModel&gt;("translator")</c>). Each copy is a
+    /// <see cref="Seq2SeqGenerator"/> on the builder's device; the engine disposes it on unload.
+    /// </summary>
+    public static InferenceEngineBuilder Seq2SeqModel(this InferenceEngineBuilder engine, string name, string folder,
+        Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+        return AddSeq2Seq(engine, name, configure, device => Idrak.Models.PretrainedSeq2SeqModel.Load(folder, new Idrak.Models.PretrainedEncoderOptions { Device = device }).CreateGenerator(),
+            reloadable: true, owns: true);
+    }
+
+    /// <summary>An encoder-decoder model whose generator is made by <paramref name="load"/> (called once per copy; the engine disposes its model on unload).</summary>
+    public static InferenceEngineBuilder Seq2SeqModel(this InferenceEngineBuilder engine, string name, Func<Seq2SeqGenerator> load,
+        Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(load);
+        return AddSeq2Seq(engine, name, configure, _ => load(), reloadable: true, owns: true);
+    }
+
+    /// <summary>An encoder-decoder generator you already created (one copy; never unloaded or disposed by the engine).</summary>
+    public static InferenceEngineBuilder Seq2SeqModel(this InferenceEngineBuilder engine, string name, Seq2SeqGenerator generator,
+        Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(generator);
+        return AddSeq2Seq(engine, name, configure, _ => generator, reloadable: false, owns: false);
+    }
+
+    private static InferenceEngineBuilder AddSeq2Seq(InferenceEngineBuilder engine, string name, Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure,
+        Func<Device?, Seq2SeqGenerator> load, bool reloadable, bool owns)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        var settings = Configure(name, configure, reloadable);
+        if (settings.ChatTemplate is not null || settings.ToolRegistry is not null || settings.ImageReader is not null || settings.PartReader is not null)
+        {
+            throw new InvalidOperationException($"'{name}' is an encoder-decoder model; Template, Tools, Images and Parts apply to chat models.");
+        }
+
+        return engine.Add(name, new Seq2SeqEngineModel(settings, load, owns, reloadable));
+    }
 
     private static InferenceEngineBuilder AddText(InferenceEngineBuilder engine, string name, Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure,
         Func<Device?, TextGenerator> load, bool reloadable, bool owns)
