@@ -75,7 +75,7 @@ internal static partial class Tests
     private static void AudioVoiceOpenVoiceFixture(Device device)
     {
         OpenVoicePlugin.Unregister();
-        ThrowsNaming<NotSupportedException>(() => LoadOpenVoice(TinyOpenVoice, device).Dispose(), "without the plug-in", "is not registered", "VoiceConverters.Register");
+        ThrowsNaming<NotSupportedException>(() => LoadOpenVoice(TinyOpenVoice, device).Dispose(), "without the plug-in", "is not registered", "VoiceConverters.Register", "Idrak.Audio.Plugins");
         OpenVoicePlugin.Register();
         string root = TempFolder("openvoice");
         try

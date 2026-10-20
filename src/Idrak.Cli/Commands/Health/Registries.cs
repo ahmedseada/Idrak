@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Plugins;
 using Idrak.Audio.Abstractions;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
@@ -51,6 +52,7 @@ internal static class Registries
             new("vocoders", "Vocoders", false, Sorted(Vocoders.Names)),
             new("converters", "Voice converter families", false, Sorted(VoiceConverters.Names)),
             new("splitters", "Audio splitters", false, Sorted(AudioSplitters.Names)),
+            new("plugins", "Plug-ins (model families)", false, Sorted(IdrakPlugins.Names)),
             new("devices", "Device kinds", false, Sorted(DeviceListing.Backends.Select(b => b.Kind).Prepend("cpu"))),
         ];
     }

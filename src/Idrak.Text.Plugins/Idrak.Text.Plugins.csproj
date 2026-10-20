@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Text.Plugins</RootNamespace>
+    <AssemblyName>Idrak.Text.Plugins</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Text.Plugins</PackageId>
+    <Description>The text model families for Idrak, as plug-ins on the library's public API (one namespace per family): reference it and call TextPlugins.RegisterAll(), or register one family with its own Register().</Description>
+  </PropertyGroup>
+
+  <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
+  </ItemGroup>
+
+</Project>

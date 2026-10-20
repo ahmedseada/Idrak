@@ -90,7 +90,8 @@ public static class GgufModel
         var notes = new List<string>();
         string arch = file.Get("general.architecture", "");
         var architecture = GgufArchitectures.Find(arch)
-            ?? throw new NotSupportedException($"{path}: GGUF architecture '{arch}' is not supported yet (supported: {string.Join(", ", GgufArchitectures.Names)}); add it with GgufArchitectures.Register.");
+            ?? throw new NotSupportedException($"{path}: GGUF architecture '{arch}' is not registered (registered: {string.Join(", ", GgufArchitectures.Names)}); "
+                                              + "add it with GgufArchitectures.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
 
         string temp = folder + ".tmp";
         if (Directory.Exists(temp))
