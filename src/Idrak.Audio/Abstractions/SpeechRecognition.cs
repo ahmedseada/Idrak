@@ -184,7 +184,7 @@ public sealed record CreatedSpeechModel(JsonObject Config, IReadOnlyList<(string
 /// <summary>
 /// A speech recognition family: how its checkpoints are read into a recognizer. Registered in <see cref="SpeechFamilies"/>
 /// under the architecture name its checkpoints give (config.json's "architectures"). The library registers none: a family
-/// is a plug-in or the app's (<c>samples/WhisperSpeech</c> is one).
+/// is a plug-in or the app's (Idrak.Audio.Plugins' Whisper family is one).
 /// </summary>
 public interface ISpeechFamily
 {

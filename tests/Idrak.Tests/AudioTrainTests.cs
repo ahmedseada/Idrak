@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.IdrakAudio;
+using Idrak.Audio.Plugins.IdrakAudio;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 

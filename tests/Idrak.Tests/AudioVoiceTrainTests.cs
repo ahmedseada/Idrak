@@ -7,7 +7,7 @@ using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Cli;
 using Idrak.Models;
-using Idrak.VitsSpeech;
+using Idrak.Audio.Plugins.Vits;
 
 // Plan 21, phase S9 route C: a voice trained on a person's recordings by fine-tuning a VITS checkpoint against
 // discriminators (AdversarialSynthesisTrainer, the VITS plug-in's training, the "checkpoint" voice kind and idrak voice
@@ -80,7 +80,7 @@ internal static partial class Tests
 
     private static void AudioVoiceTrainFixture(Device device)
     {
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var reference = VitsTrainReference;
@@ -155,13 +155,13 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
         }
     }
 
     private static void AudioVoiceTrainUnits(Device device)
     {
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var reference = VitsTrainReference;
@@ -262,13 +262,13 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
         }
     }
 
     private static void AudioVoiceTrainDurationFlows(Device device)
     {
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             using var model = LoadVitsTrain(device);
@@ -287,7 +287,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
         }
     }
 
@@ -301,7 +301,7 @@ internal static partial class Tests
     private static void AudioVoiceTrainResume(Device device)
     {
         string root = TempFolder("vits-resume");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 8, 31, maxLetters: 4);
@@ -359,7 +359,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -367,7 +367,7 @@ internal static partial class Tests
     private static void AudioVoiceTrainDiscriminatorWeights(Device device)
     {
         string root = TempFolder("vits-disc-weights");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 37, maxLetters: 4);
@@ -431,7 +431,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -439,7 +439,7 @@ internal static partial class Tests
     private static void AudioVoiceTrainFrozen(Device device)
     {
         string root = TempFolder("vits-frozen");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 37, maxLetters: 4);
@@ -484,7 +484,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -492,7 +492,7 @@ internal static partial class Tests
     private static void AudioVoiceTrainSmoke(Device device)
     {
         string root = TempFolder("vits-smoke");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 16, 37, maxLetters: 4);
@@ -510,7 +510,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -518,7 +518,7 @@ internal static partial class Tests
     private static void AudioVoiceTrainInstall(Device device)
     {
         string root = TempFolder("vits-voice");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var store = new FolderVoiceStore(Path.Combine(root, "voices"), "test-checkpoint-store");
@@ -567,7 +567,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -603,7 +603,7 @@ internal static partial class Tests
             var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 41, maxLetters: 4);
             string store = Path.Combine(root, "voices"), run = Path.Combine(root, "run");
             const string Consent = "I agree that this test voice is trained and installed.";
-            string[] train = ["voice", "train", "tester", "--from", transcripts, "--base", VitsTrainData("model"), "-P", VitsPlugin, "--steps", "2", "--batch-seconds", "2",
+            string[] train = ["voice", "train", "tester", "--from", transcripts, "--base", VitsTrainData("model"), "-P", VitsPluginPath, "--steps", "2", "--batch-seconds", "2",
                 "--segment-frames", "8", "--mels", "16", "--save-every", "1", "--log-every", "1", "--feature-cache", "none", "-o", run, "--voices", store, "-d", d];
             var noConsent = AudioCli(train);
             Check(noConsent.Code == 2 && noConsent.Err.Contains("--consent", StringComparison.Ordinal), $"no consent: {noConsent.Err}");
@@ -620,9 +620,9 @@ internal static partial class Tests
                 && !runShown.Out.Contains("task auto", StringComparison.Ordinal), $"runs show of a voice run names its voice, base and steps: {runShown.Out}");
 
             string wav = Path.Combine(root, "tester.wav");
-            var spoken = AudioCli("speak", "-P", VitsPlugin, AudioData("tiny-vits"), "abc ab", "--voice", "tester", "--voices", store, "--noise", "0", "--duration-noise", "0", "-o", wav, "-d", d);
+            var spoken = AudioCli("speak", "-P", VitsPluginPath, AudioData("tiny-vits"), "abc ab", "--voice", "tester", "--voices", store, "--noise", "0", "--duration-noise", "0", "-o", wav, "-d", d);
             Check(spoken.Code == 0, $"speak --voice tester: {spoken.Err}");
-            VitsSpeechPlugin.Register();
+            VitsPlugin.Register();
             try
             {
                 using var own = SpeechSynthesisModels.Load(Path.Combine(store, "tester", "model"), new SpeechSynthesisLoadOptions { Device = device });
@@ -632,12 +632,12 @@ internal static partial class Tests
             }
             finally
             {
-                VitsSpeechPlugin.Unregister();
+                VitsPlugin.Unregister();
             }
 
-            var resumed = AudioCliJson("voice", "train", "--resume", run, "--steps", "1", "-P", VitsPlugin, "--voices", store, "-d", d);
+            var resumed = AudioCliJson("voice", "train", "--resume", run, "--steps", "1", "-P", VitsPluginPath, "--voices", store, "-d", d);
             Check((int?)resumed["steps"] == 3 && (string?)resumed["voice"]!["name"] == "tester" && (int?)resumed["voice"]!["training"]!["steps"] == 3, $"--resume: {resumed}");
-            var again = AudioCliJson("resume", run, "--steps", "1", "-P", VitsPlugin, "--voices", store, "-d", d);
+            var again = AudioCliJson("resume", run, "--steps", "1", "-P", VitsPluginPath, "--voices", store, "-d", d);
             Check((int?)again["steps"] == 4 && Directory.Exists(Path.Combine(run, "checkpoint-4")), $"idrak resume: {again}");
 
             // --profile times steps instead of training (kernel times only where the device times them) and installs nothing.

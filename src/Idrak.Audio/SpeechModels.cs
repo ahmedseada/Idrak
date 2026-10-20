@@ -31,7 +31,7 @@ public sealed record SpeechCreateOptions
 /// </summary>
 /// <remarks>
 /// <code>
-/// SpeechFamilies.Register(new WhisperFamily());                       // a plug-in or the app brings the family
+/// AudioPlugins.RegisterAll();                                         // Idrak.Audio.Plugins (or the app) brings the family
 /// using var recognizer = SpeechModels.Load("models/whisper-tiny");    // config.json, model.safetensors, tokenizer.json, preprocessor_config.json
 /// var text = recognizer.Transcribe(AudioCodecs.Decode("talk.wav")).Text;
 /// </code>

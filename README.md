@@ -124,11 +124,11 @@ and `Idrak.Gpu` along; the others are added by domain.
   MPEG-2 Layer III, constant bit rate). Decoded audio is held as 16-bit until its floats are read.
 - Features: resampling, STFT and inverse STFT, mel filterbanks, log-mel features, Griffin-Lim; a feature cache for
   training.
-- Recognition: the Whisper plug-in (`samples/WhisperSpeech`) matching transformers' encoder output and logits within
+- Recognition: the Whisper plug-in (`Idrak.Audio.Plugins.Whisper`) matching transformers' encoder output and logits within
   1e-4 and its greedy, beam and timestamp ids exactly; CTC models trained from scratch; `idrak transcribe`.
-- Synthesis: the VITS plug-in (`samples/VitsSpeech`; MMS voices, Arabic romanisation matching uroman exactly), the
-  OpenVoice tone-colour converter (`samples/OpenVoice`), voices installed by name (`idrak voice add|pull|import|export|
-  list|show|remove`), `idrak speak`.
+- Synthesis: the VITS plug-in (`Idrak.Audio.Plugins.Vits`; MMS voices, Arabic romanisation matching uroman exactly),
+  the OpenVoice tone-colour converter (`Idrak.Audio.Plugins.OpenVoice`), voices installed by name (`idrak voice
+  add|pull|import|export|list|show|remove`), `idrak speak`.
 - Speech training (`SpeechTrainer`, one loop for every objective): CTC, sequence-to-sequence, audio-language and TTS
   from scratch, and adversarial fine-tuning of a VITS voice from a few minutes of a speaker (`idrak voice train`:
   the losses, pace and device memory on one live line, checkpoints resumed, held-out scoring).
@@ -265,7 +265,7 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | `src/` | the 13 packages |
 | `tests/Idrak.Tests`, `tests/Idrak.PluginTests` | the test program (824 tests, filtered by group) and the plug-in tests |
 | `benches/Idrak.Benches` | the benches above |
-| `samples/` | plug-ins (Gemma3Vision, QwenVision, IdrakVision, WhisperSpeech, VitsSpeech, OpenVoice, IdrakAudio) and 24 sample apps (chat, coding agent, GPT API and training, house prices, OCR and legal OCR, quantization, RAG, re-ranker, sentiment, shape recognition, summarizer, text generation, ONNX import, ...) |
+| `samples/` | plug-ins (Gemma3Vision, QwenVision, IdrakVision) and 24 sample apps (chat, coding agent, GPT API and training, house prices, OCR and legal OCR, quantization, RAG, re-ranker, sentiment, shape recognition, summarizer, text generation, ONNX import, ...) |
 | `api/` | the public API dumps the guard test checks |
 | `plans/` | one plan per area with its status and dated runs; `plug-in.md` the extensibility survey; `idrak-cli.md` the CLI design; `gpu-checks.md` the GPU check list |
 | `docs/` | `optimization.md` and the longer guides |

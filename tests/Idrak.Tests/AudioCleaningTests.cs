@@ -4,7 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.VitsSpeech;
+using Idrak.Audio.Plugins.Vits;
 
 
 // The cleaning stages (AudioCleaners: highpass, denoise, trim, normalize) on made signals, through the trainer's options
@@ -189,7 +189,7 @@ internal static partial class Tests
         Check(SpeechTrainingOptions.FromJson(new JsonObject()).Cleaning.Count == 0, "no cleaning by default");
 
         string root = TempFolder("audio-cleaning");
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         try
         {
             var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 41, maxLetters: 4);
@@ -240,7 +240,7 @@ internal static partial class Tests
         }
         finally
         {
-            VitsSpeechPlugin.Unregister();
+            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }

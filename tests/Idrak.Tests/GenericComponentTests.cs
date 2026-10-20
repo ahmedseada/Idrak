@@ -12,7 +12,7 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 using Idrak.Models;
-using Idrak.OpenVoice;
+using Idrak.Audio.Plugins.OpenVoice;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Retrieval;
 using Idrak.Text.Retrieval.Abstractions;

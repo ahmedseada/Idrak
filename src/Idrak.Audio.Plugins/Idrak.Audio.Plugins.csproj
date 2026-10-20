@@ -6,12 +6,23 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Audio.Plugins</PackageId>
-    <Description>The speech and voice model families for Idrak, as plug-ins on the library's public API (one namespace per family): reference it and call AudioPlugins.RegisterAll(), or register one family with its own Register().</Description>
+    <Description>The speech and voice model families for Idrak, as plug-ins on the library's public API (one namespace per family): Whisper, VITS (with uroman's Arabic romanizer), OpenVoice, IdrakAudio and the espeak-ng phonemizer. Reference it and call AudioPlugins.RegisterAll(), or register one family with its own Register().</Description>
   </PropertyGroup>
 
   <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. -->
   <ItemGroup>
     <ProjectReference Include="..\Idrak.Audio\Idrak.Audio.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Devices" />
+    <Using Include="Idrak.Audio.Abstractions" />
+  </ItemGroup>
+
+  <!-- The test runner reaches the families' internals (their training passes and weights), as it does every library
+       package's; no other assembly does. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
   </ItemGroup>
 
 </Project>

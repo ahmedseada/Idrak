@@ -164,8 +164,8 @@ public interface IAudioFamily
 
 /// <summary>
 /// The audio-language families, by architecture name (config.json's "architectures"). The library registers none: a
-/// family is an application of these contracts, registered by the app or plug-in that brings it (plan 21's
-/// <c>samples/WhisperSpeech</c> and <c>samples/IdrakAudio</c>). A checkpoint is matched to its own family by that exact
+/// family is an application of these contracts, registered by the app or plug-in that brings it (Idrak.Audio.Plugins'
+/// IdrakAudio family is one). A checkpoint is matched to its own family by that exact
 /// name; a checkpoint with an audio part (an <c>audio_config</c>) whose name has no family is refused, naming this
 /// registry: nothing falls back to another family. Register one with <see cref="Register"/>.
 /// </summary>

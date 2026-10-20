@@ -563,7 +563,7 @@ def write_whisper(out, extractor):
 
 
 # The IdrakAudio plug-in's "ctc" task in torch (plan 21, S6): the same layers, names and order as
-# samples/IdrakAudio/Idrak.IdrakAudio builds, written here from torch's own modules so the references do not come from
+# src/Idrak.Audio.Plugins/IdrakAudio builds, written here from torch's own modules so the references do not come from
 # Idrak. Features [N, T, mels] padded with zeros; two Conv2d (1, k) stride (1, 2) over time with the mels as channels
 # (each output past an utterance's frames set to zero, so a batch gives each utterance what it gives alone), sinusoidal
 # positions, pre-norm blocks whose attention sees each utterance's own steps (key padding), optionally a Conformer-style

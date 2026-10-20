@@ -68,7 +68,7 @@ internal sealed class DataAudioCommand : Command
                                  (or "transcript", "sentence"), or lines of NAME<tab>TEXT or NAME|TEXT; matched by file
                                  name, then by name without extension
               --stats            print the lengths, rates and channels (without -o: of the inputs, nothing is written)
-              --align MODEL      write alignments.jsonl from a CTC speech model (its plug-in given with -P)
+              --align MODEL      write alignments.jsonl from a CTC speech model (IdrakAudio's, or a -P plug-in's)
               --align-seconds S  audio seconds in one pass of the model while aligning (default 60)
               --audio DIR|ZIP    where the sounds of transcripts files given to --align are (default: beside each file)
               --source KIND      the speech data's kind for --align (transcripts or audio-folder; told from the paths)
@@ -79,9 +79,9 @@ internal sealed class DataAudioCommand : Command
           idrak data audio talk.flac -o pieces --split seconds --max-seconds 30 --transcripts texts.jsonl
           idrak data audio podcasts/*.mp3 -o wav --rate 16000 --mono --bits 16
           idrak data audio corpus/ --stats
-          idrak data audio rec/ -o clips --rate 16000 --mono --transcripts texts.tsv --align my-ctc -P Idrak.IdrakAudio.dll
-          idrak data audio train.jsonl --audio clips.zip --align my-ctc -o aligned -P Idrak.IdrakAudio.dll
-          idrak data audio pieces/ --align my-ctc -P Idrak.IdrakAudio.dll
+          idrak data audio rec/ -o clips --rate 16000 --mono --transcripts texts.tsv --align my-ctc
+          idrak data audio train.jsonl --audio clips.zip --align my-ctc -o aligned
+          idrak data audio pieces/ --align my-ctc
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =

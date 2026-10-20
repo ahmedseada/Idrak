@@ -9,7 +9,7 @@ using Idrak.Audio.Abstractions;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
-using Idrak.WhisperSpeech;
+using Idrak.Audio.Plugins.Whisper;
 
 // Plan 21, phase S4: speech recognition. The Whisper plug-in on the fixture tests/Idrak.Tests/data/audio/tiny-whisper (a
 // seeded tiny model whose references came from transformers: tools/audio/make_tiny_audio.py), the core's CrossAttention
@@ -30,7 +30,7 @@ internal static partial class Tests
 
     private static WhisperRecognizer TinyWhisper(Device device, KeyValueFormat cache = KeyValueFormat.Float32)
     {
-        WhisperSpeechPlugin.Register();
+        WhisperPlugin.Register();
         return (WhisperRecognizer)SpeechModels.Load(AudioData("tiny-whisper"), new SpeechModelOptions { Device = device, Cache = cache });
     }
 
@@ -74,7 +74,7 @@ internal static partial class Tests
         Check(recognizer.DetectLanguage(encoded) == (string)language["detected"]!, $"detected {recognizer.DetectLanguage(encoded)}, transformers' {language["detected"]}");
         ThrowsNaming<NotSupportedException>(() => recognizer.Prompt("fr"), "an unknown language", "'fr'", "ar, en");
 
-        WhisperSpeechPlugin.Unregister();
+        WhisperPlugin.Unregister();
         ThrowsNaming<NotSupportedException>(() => SpeechModels.Load(AudioData("tiny-whisper"), new SpeechModelOptions { Device = device }),
             "the family without the plug-in", "WhisperForConditionalGeneration", "not registered", "SpeechFamilies.Register", "Idrak.Audio.Plugins", "AudioPlugins.RegisterAll()");
     }

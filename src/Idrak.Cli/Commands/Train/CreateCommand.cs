@@ -196,7 +196,7 @@ internal sealed class CreateCommand : Command
     {
         string folder = Path.GetDirectoryName(Path.GetFullPath(specPath))!;
         string architecture = context.Option("--architecture") ?? (string?)file["architecture"] ?? (string?)speech["architecture"]
-            ?? throw new UsageException($"{specPath}: give the speech family's \"architecture\" (IdrakAudio, from -P Idrak.IdrakAudio.dll).");
+            ?? throw new UsageException($"{specPath}: give the speech family's \"architecture\" (IdrakAudio, from Idrak.Audio.Plugins).");
         string tokenizerPath = context.Option("--tokenizer") ?? ((string?)file["tokenizer"] is { } t ? Path.Combine(folder, t) : null)
             ?? throw new UsageException("Give --tokenizer FILE (idrak data tokenizer learns one from the transcripts), or \"tokenizer\" in the spec file.");
         var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath} (readers: {string.Join(", ", TokenizerFiles.Names)}).");
@@ -342,7 +342,7 @@ internal sealed class CreateInitCommand : Command
         {
           // idrak create's spec of a speech recognizer (plan 21, S6). Paths are read from this file's folder.
           "format": "idrak-create/1",
-          // The speech family (load its plug-in: idrak create ... -P Idrak.IdrakAudio.dll).
+          // The speech family (Idrak.Audio.Plugins' IdrakAudio, which the tool registers).
           "architecture": "IdrakAudio",
           // The tokenizer (idrak data tokenizer transcripts.txt --vocab N -o tokenizer.json learns one from the texts).
           "tokenizer": "tokenizer.json",
@@ -369,7 +369,7 @@ internal sealed class CreateInitCommand : Command
         Writes a spec file for idrak create: the family, the network's sizes (small ones to change: nothing in Idrak
         prefers a size), the tokenizer and the special tokens, every key with a comment. With --vision, a
         vision-language model of the IdrakVision family (its plug-in, samples/IdrakVision, with -P). With --audio, an
-        IdrakAudio model (samples/IdrakAudio, with -P): audio-language (a chat model that hears), ctc or seq2seq (a
+        IdrakAudio model (Idrak.Audio.Plugins, built in): audio-language (a chat model that hears), ctc or seq2seq (a
         speech recognizer) or tts (a synthesizer). Comments and trailing commas are allowed in the file.
 
         Options:
@@ -429,7 +429,7 @@ internal sealed class CreateInitCommand : Command
             }
 
             File.WriteAllText(output, text);
-            context.Write($"wrote {output}; next: idrak create {output} -o {(audio == "tts" ? "my-tts" : "my-asr")} -P Idrak.IdrakAudio.dll");
+            context.Write($"wrote {output}; next: idrak create {output} -o {(audio == "tts" ? "my-tts" : "my-asr")}");
             context.WriteJson(new JsonObject { ["path"] = Path.GetFullPath(output) });
             return ExitCodes.Ok;
         }
@@ -472,7 +472,7 @@ internal sealed class CreateInitCommand : Command
 
             """.ReplaceLineEndings("\n").Replace("\"architecture\": \"LlamaForCausalLM\",", context.Flag("--vision")
                 ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // load its plug-in: idrak create ... -P Idrak.IdrakVision.dll"
-                : audio is not null ? "\"architecture\": \"IdrakAudioForConditionalGeneration\",   // load its plug-in: idrak create ... -P Idrak.IdrakAudio.dll"
+                : audio is not null ? "\"architecture\": \"IdrakAudioForConditionalGeneration\",   // Idrak.Audio.Plugins' IdrakAudio, which the tool registers"
                 : "\"architecture\": \"LlamaForCausalLM\",", StringComparison.Ordinal)
             .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart.ReplaceLineEndings("\n")
                 : audio is not null ? AudioPart.ReplaceLineEndings("\n") : "  \"seed\": 0\n}", StringComparison.Ordinal));
