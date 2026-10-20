@@ -23,6 +23,86 @@ public enum ImageTask
 
     /// <summary>Features of the image (a backbone without a head): the network's outputs as they are.</summary>
     Features,
+
+    /// <summary>
+    /// A label sequence along the image's width (a line of text): [N, steps, classes] scores, a step per
+    /// <see cref="LineRecognitionSettings.Stride"/> columns, CTC's blank among the classes, read by a CTC decoder
+    /// (<c>CtcDecoders</c>). The model's <see cref="ImageModel.Lines"/> say how a line becomes the network's input.
+    /// </summary>
+    LineRecognition,
+}
+
+/// <summary>
+/// How a line-recognition model (<see cref="ImageTask.LineRecognition"/>) reads a line: the line scaled to
+/// <see cref="Height"/> keeping its aspect (at least <see cref="Stride"/> columns), its ink made high on a background of 0
+/// and its contrast stretched to [0, 1] (<see cref="InkHigh"/>), flipped for a right-to-left line, then batched padded with
+/// 0 on the right; the network's [N, steps, classes] scores decoded by CTC (blank <see cref="Blank"/>), the labels' text
+/// turned from column order to logical order by <see cref="ReadingOrder"/>.
+/// </summary>
+public sealed record LineRecognitionSettings
+{
+    /// <summary>The height lines are scaled to (their width follows, keeping the aspect).</summary>
+    public required int Height { get; init; }
+
+    /// <summary>The image columns one step of the network's output stands for (its pooling along the width). Default 1.</summary>
+    public int Stride { get; init; } = 1;
+
+    /// <summary>The blank class of CTC (its label is empty). Default 0.</summary>
+    public int Blank { get; init; }
+
+    /// <summary>Whether lines read right to left: each line is flipped horizontally first, so its columns run in reading order.</summary>
+    public bool RightToLeft { get; init; }
+
+    /// <summary>
+    /// The reading order (a <c>ReadingOrders</c> name, "runs" or "bidi") that turns a reading from column order to logical
+    /// order and a transcription to column order for training; null: the labels' text as it is.
+    /// </summary>
+    public string? ReadingOrder { get; init; }
+
+    /// <summary>
+    /// Whether ink is made high on a background of 0 (a mostly light line inverted) and the contrast stretched to [0, 1]
+    /// before scaling (default true); false keeps the grey values as decoded.
+    /// </summary>
+    public bool InkHigh { get; init; } = true;
+
+    /// <summary>Whether the network's scores are log-probabilities already (else a log-softmax is taken over the classes).</summary>
+    public bool LogProbabilities { get; init; }
+
+    /// <summary>The settings as JSON (a package's training entry, <c>idrak train</c>'s output).</summary>
+    public JsonObject ToJson() => new()
+    {
+        ["height"] = Height,
+        ["stride"] = Stride,
+        ["blank"] = Blank,
+        ["direction"] = RightToLeft ? "rtl" : "ltr",
+        ["reading_order"] = ReadingOrder,
+        ["ink_high"] = InkHigh,
+        ["log_probabilities"] = LogProbabilities,
+    };
+
+    /// <summary>Settings from <see cref="ToJson"/>'s form (absent keys take the defaults; "height" is required).</summary>
+    /// <exception cref="InvalidDataException">"height" is missing.</exception>
+    public static LineRecognitionSettings FromJson(JsonObject json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        return new LineRecognitionSettings
+        {
+            Height = (int?)json["height"] ?? throw new InvalidDataException("Line recognition settings need a \"height\"."),
+            Stride = (int?)json["stride"] ?? 1,
+            Blank = (int?)json["blank"] ?? 0,
+            RightToLeft = (string?)json["direction"] == "rtl",
+            ReadingOrder = (string?)json["reading_order"],
+            InkHigh = (bool?)json["ink_high"] ?? true,
+            LogProbabilities = (bool?)json["log_probabilities"] ?? false,
+        };
+    }
+
+    /// <summary>Why these settings cannot read lines with <paramref name="classes"/> classes, or null when they can.</summary>
+    public string? Problem(int classes) =>
+        Height <= 0 ? $"line height {Height}"
+        : Stride <= 0 ? $"stride {Stride}"
+        : Blank < 0 || Blank >= classes ? $"blank {Blank} outside the {classes} classes"
+        : null;
 }
 
 /// <summary>Settings for <see cref="ImageModels.Load"/>.</summary>
@@ -136,8 +216,14 @@ public sealed record ImageModel : IDisposable
     /// <summary>The network's input channels (3 unless the family says otherwise).</summary>
     public int Channels { get; init; } = 3;
 
-    /// <summary>The class names in output order (classifiers, detectors, segmenters), or null when the checkpoint gives none.</summary>
+    /// <summary>
+    /// The class names in output order (classifiers, detectors, segmenters), or null when the checkpoint gives none. A line
+    /// recognizer's are its labels' texts, one per class, the blank's empty.
+    /// </summary>
     public IReadOnlyList<string>? Labels { get; init; }
+
+    /// <summary>For <see cref="ImageTask.LineRecognition"/>: how a line becomes the network's input and its output text.</summary>
+    public LineRecognitionSettings? Lines { get; init; }
 
     /// <summary>
     /// For <see cref="ImageTask.Detection"/>: the name of the decoder that reads the network's outputs (registered in
@@ -153,10 +239,12 @@ public sealed record ImageModel : IDisposable
 
     /// <summary>
     /// The network's input size, [channels, height, width], when every image becomes the same size (a resize to a height
-    /// and width, or a center crop); null when the size follows the image (a resize by its shortest edge alone).
+    /// and width, or a center crop); null when the size follows the image (a resize by its shortest edge alone, or a line
+    /// recognizer's lines, whose width follows each line).
     /// </summary>
     public IReadOnlyList<int>? InputShape =>
-        Preprocessor.CenterCrop ? [Channels, Preprocessor.CropHeight, Preprocessor.CropWidth]
+        Task == ImageTask.LineRecognition ? null
+        : Preprocessor.CenterCrop ? [Channels, Preprocessor.CropHeight, Preprocessor.CropWidth]
         : Preprocessor.Resize && Preprocessor.ShortestEdge <= 0 ? [Channels, Preprocessor.Height, Preprocessor.Width]
         : null;
 
@@ -180,7 +268,7 @@ public interface IImageModelFamily
 }
 
 /// <summary>
-/// The image model families (classifiers, detectors, segmenters, backbones), by architecture name (config.json's
+/// The image model families (classifiers, detectors, segmenters, backbones, line recognizers), by architecture name (config.json's
 /// "architectures", or an ONNX file's "architecture" metadata). The library registers none: a family (its configuration,
 /// tensor names, layers, preprocessing defaults and decoder) is an application of these contracts, registered by the
 /// plug-in or app that brings it (the test plug-ins in <c>tests/Idrak.PluginTests</c> register a small ResNet-style
@@ -222,5 +310,6 @@ public static class ImageModelFamilies
 
     internal static NotSupportedException NotRegistered(string name) =>
         new($"Image model family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "register it with ImageModelFamilies.Register (a plug-in or the app that brings the family; the library registers none).");
+            + "register it with ImageModelFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
+            + "or reference Idrak.Vision.Plugins and call VisionPlugins.RegisterAll().");
 }

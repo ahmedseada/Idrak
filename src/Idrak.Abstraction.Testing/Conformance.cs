@@ -153,6 +153,41 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks a text line segmenter (Idrak.Vision's <c>TextLineSegmenters</c>, given as its cutting: a page in, its lines
+    /// out; <see cref="TextLineSegmenterSuite"/>) on pages drawn by the suite: no lines on a blank page, boxes on the page
+    /// top to bottom with images their size, a line per drawn line (dots joined to it), no skew on a straight page, the same
+    /// lines again and from several threads, and, given a <paramref name="reference"/> (the library's segmenter it
+    /// replaces), the same lines. Six random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckTextLineSegmenter(Func<Data.ImageData, SegmentedPage> segmenter, Func<Data.ImageData, SegmentedPage>? reference = null,
+        ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(segmenter);
+        return Check(segmenter, new TextLineSegmenterSuite(reference), options ?? new ContractCheckOptions { RandomCases = 6 });
+    }
+
+    /// <summary>
+    /// Checks an approximate text matcher (Idrak.Text's <c>TextMatchers</c>, given as its search; <see cref="TextMatcherSuite"/>):
+    /// nothing for nothing to match, a span within the text, the least edit distance of any span, runs of the text found
+    /// exactly, spans at word boundaries (unless <paramref name="wordBoundaries"/> is false), the same span again and from
+    /// several threads, and, given a <paramref name="reference"/> (the library's matcher it replaces), the same spans.
+    /// </summary>
+    public static ConformanceReport CheckTextMatcher(TextMatchSearch matcher, TextMatchSearch? reference = null, bool wordBoundaries = true, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(matcher);
+        return Check(matcher, new TextMatcherSuite(reference, wordBoundaries), options);
+    }
+
+    /// <summary>
+    /// Checks the reading order registered as <paramref name="name"/> (or <paramref name="order"/>, when given;
+    /// <see cref="ReadingOrderSuite"/>): its columns reorder the line's characters, a line of its own direction keeps its
+    /// order, a reading turned back gives the same columns (and the text itself when <paramref name="invertible"/>), the
+    /// same again and from several threads, and agrees with the library's order of that name when there is one.
+    /// </summary>
+    public static ConformanceReport CheckReadingOrder(string name, IReadingOrder? order = null, bool invertible = false, ContractCheckOptions? options = null) =>
+        Check(order ?? ReadingOrders.Get(name), new ReadingOrderSuite(order is null ? null : ReadingOrders.Default(name), invertible), options);
+
+    /// <summary>
     /// Checks a network recipe (Idrak's <c>NetworkRecipes</c>, given as <see cref="NetworkRecipeUnderTest"/>;
     /// <see cref="NetworkRecipeSuite"/>): the same seed gives the same weights and predictions, the predictions are finite
     /// and keep the batch, and, given a <paramref name="reference"/> (the library's recipe of that name), the same

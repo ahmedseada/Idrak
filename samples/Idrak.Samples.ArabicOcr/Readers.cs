@@ -58,7 +58,7 @@ internal static class Readers
 }
 
 /// <summary>
-/// The line reader: the page cut into lines (<see cref="LineSegmenter"/>), each line read by the trained recognizer and
+/// The line reader: the page cut into lines (the library's <see cref="TextLineSegmenters"/>), each line read by the trained recognizer and
 /// decoded by a <see cref="CtcDecoders"/> decoder; the page's text is its lines, top to bottom, one per line.
 /// </summary>
 internal sealed class LinesReader : IPageReader
@@ -67,7 +67,7 @@ internal sealed class LinesReader : IPageReader
     private readonly string _decoder;
     private readonly CtcDecodeOptions _options;
     private readonly bool _singleLine;
-    private readonly SegmentationSettings _segmentation;
+    private readonly LineSegmentationOptions _segmentation;
     private readonly MeasuredBatches _batches;
 
     public LinesReader(OcrContext context, string folder)
@@ -82,7 +82,7 @@ internal sealed class LinesReader : IPageReader
 
         _options = new CtcDecodeOptions { BeamWidth = args.Integer("--beam-width", 10, 1) };
         _singleLine = args.Flag("--single-line");
-        _segmentation = new SegmentationSettings { MaxSkew = args.Number("--max-skew", 3, 0) };
+        _segmentation = new LineSegmentationOptions { MaxSkew = args.Number("--max-skew", 3, 0) };
         _batches = new MeasuredBatches(context.Device, args.Option("--batch") is null ? null : args.Integer("--batch", 1, 1));
         Alphabet = _recognizer.Settings.Alphabet;
     }
@@ -117,11 +117,11 @@ internal sealed class LinesReader : IPageReader
     public IReadOnlyList<PageReading> ReadMany(IReadOnlyList<Page> pages)
     {
         var clock = Stopwatch.StartNew();
-        var found = new (IReadOnlyList<TextLine> Lines, double Skew)[pages.Count];
+        var found = new PageLines[pages.Count];
         Parallel.For(0, pages.Count, i =>
         {
             var image = pages[i].Decode();
-            found[i] = _singleLine ? ([new TextLine(1, 0, 0, image.Width, image.Height, image)], 0.0) : LineSegmenter.Find(image, _segmentation);
+            found[i] = _singleLine ? new PageLines([new PageLine(1, 0, 0, image.Width, image.Height, image)], 0) : TextLineSegmenters.Segment(image, _segmentation);
         });
 
         var all = found.SelectMany(f => f.Lines.Select(l => l.Image)).ToArray();
@@ -139,7 +139,7 @@ internal sealed class LinesReader : IPageReader
         return result;
     }
 
-    private PageReading Reading(IReadOnlyList<TextLine> lines, IReadOnlyList<LineReading> readings, double skew, double seconds)
+    private PageReading Reading(IReadOnlyList<PageLine> lines, IReadOnlyList<LineReading> readings, double skew, double seconds)
     {
         string text = string.Join("\n", readings.Select(r => r.Text));
         var details = new JsonObject

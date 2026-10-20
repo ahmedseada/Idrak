@@ -695,3 +695,48 @@ public sealed class MixUp(double alpha = 32, double probability = 1) : IAugmenta
         static IEnumerable<byte[]> Masks(AnnotatedImage s) => s.Masks ?? s.Boxes.Select(b => AnnotatedImage.Fill(b, s.Width, s.Height));
     }
 }
+
+/// <summary>
+/// Normal noise on every pixel value ("noise" in <see cref="Augmentations"/>, options <c>std</c> and <c>p</c>): each value
+/// gets its own draw of a normal distribution with standard deviation <see cref="StandardDeviation"/> (Box-Muller from two
+/// uniform draws of the context's random, in pixel order), the result clamped to [0, 1]. The objects, masks and pixel
+/// classes stay as they are. Scanned and photographed text lines are the usual use (sensor and paper grain).
+/// </summary>
+/// <param name="standardDeviation">The noise's standard deviation, in pixel values (0 to 1).</param>
+/// <param name="probability">The chance a sample gets noise.</param>
+public sealed class PixelNoise(double standardDeviation = 0.05, double probability = 1) : IAugmentation
+{
+    /// <summary>The noise's standard deviation, in pixel values.</summary>
+    public double StandardDeviation { get; } = standardDeviation >= 0 && double.IsFinite(standardDeviation) ? standardDeviation : throw new ArgumentOutOfRangeException(nameof(standardDeviation));
+
+    /// <summary>The chance a sample gets noise.</summary>
+    public double Probability { get; } = probability is >= 0 and <= 1 ? probability : throw new ArgumentOutOfRangeException(nameof(probability));
+
+    /// <inheritdoc />
+    public string Name => "noise";
+
+    /// <inheritdoc />
+    public AnnotatedImage Apply(AnnotatedImage sample, AugmentationContext context)
+    {
+        ArgumentNullException.ThrowIfNull(sample);
+        ArgumentNullException.ThrowIfNull(context);
+        var random = context.Random;
+        if (random.NextDouble() >= Probability)
+        {
+            return sample;
+        }
+
+        // One sweep in pixel order: the draws must come in this order for a seed to give the same pixels.
+        var image = sample.Image;
+        var pixels = (float[])image.Pixels.Clone();
+        double deviation = StandardDeviation;
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            double u = 1 - random.NextDouble(), v = random.NextDouble();
+            double normal = Math.Sqrt(-2 * Math.Log(u)) * Math.Cos(2 * Math.PI * v);
+            pixels[i] = Math.Clamp(pixels[i] + (float)(normal * deviation), 0f, 1f);
+        }
+
+        return sample.WithImage(new ImageData(pixels, image.Channels, image.Height, image.Width));
+    }
+}

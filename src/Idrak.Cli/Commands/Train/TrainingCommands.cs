@@ -42,8 +42,10 @@ internal sealed class TrainCommand : Command
               --eval PATH        image models: evaluation data, read as --data (instead of holding out --validation)
           -t, --target COL       the target column (repeatable; default: the last column)
               --ignore A,B       columns that are not features (an id, ...)
-              --task T           regression or classify; for images classify, segment or detect (default: from the
-                                 network's output: [classes] classifies, [classes, h, w] segments, --decoder detects)
+              --task T           regression or classify; for images classify, segment, detect or line-recognition
+                                 (default: from the network's output: [classes] classifies, [classes, h, w] segments,
+                                 --decoder detects; a line recognizer's model says so, a builder network ending in
+                                 [steps, classes] needs --task line-recognition)
               --augment P        image models: an augmentation pipeline (Augmentations), as text, run off the training
                                  thread: "flip, rotation(degrees=10), resized-crop(width=64, height=64, scale=0.5:1)"
               --loss NAME        image models: a VisionLosses name (focal, dice, giou, ...); default cross-entropy for
@@ -53,6 +55,10 @@ internal sealed class TrainCommand : Command
                                  VisionMetrics name (miou for segmentation, coco, voc or voc07 for detection; the defaults)
               --decoder NAME     detection: the decoder (DetectionDecoders) whose head (DetectionHeads) trains the network;
                                  default the model's
+              --direction D      line recognition, a builder network: ltr (default) or rtl (lines flipped first)
+              --reading-order R  line recognition, a builder network: the ReadingOrders name that turns a transcription to
+                                 its column order (runs, the default for rtl, or bidi); line images train with their
+                                 NAME.txt transcriptions beside them, by the CTC loss, scored by cer and wer
               --epochs N         at most N epochs (default 100); --patience N: stop after N epochs without a better
                                  validation loss (default 20, 0: never)
               --lr F, --batch N  learning rate (default 0.001) and batch size (default 32); a batch the device has no room
@@ -85,13 +91,14 @@ internal sealed class TrainCommand : Command
           idrak train cnn.json --data ./shapes --augment "flip, rotation(degrees=10)" --eval ./shapes-test
           idrak train unet.json --data ./scans --data-format masks --loss dice -o scans.ikm
           idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --metric coco -o tuned.ikw
+          idrak train crnn.json --task line-recognition --data ./lines --eval ./lines-test --direction rtl -o lines.ikm
           idrak train network.json --data houses.csv --run run --cluster lan.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--data", "--target", "--ignore", "--task", "--epochs", "--lr", "--batch", "--patience", "--validation", "--optimizer", "--weight-decay", "--out", "--run",
-        "--data-format", "--eval", "--augment", "--loss", "--matcher", "--metric", "--decoder", "--rank", .. ClusterJoin.Options,
+        "--data-format", "--eval", "--augment", "--loss", "--matcher", "--metric", "--decoder", "--direction", "--reading-order", "--rank", .. ClusterJoin.Options,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--no-scale"];
@@ -174,7 +181,7 @@ internal sealed class TrainCommand : Command
         var image = new ImageRunOptions
         {
             Model = checkpoint ? Path.GetFullPath(specPath) : null,
-            Task = Value("--task") is { } t && t is not ("regression" or "regress") ? ImageRunOptions.ParseTask(t)?.ToString().ToLowerInvariant() : null,
+            Task = Value("--task") is { } t && t is not ("regression" or "regress") && ImageRunOptions.ParseTask(t) is { } parsed ? ImagePredict.Task(parsed) : null,
             DataFormat = Value("--data-format", "data_format") ?? "auto",
             Augment = Value("--augment"),
             Loss = Value("--loss"),
@@ -182,6 +189,8 @@ internal sealed class TrainCommand : Command
             Metric = Value("--metric"),
             Eval = Value("--eval") is { } eval ? Path.GetFullPath(eval) : null,
             Decoder = Value("--decoder"),
+            Direction = Value("--direction")?.ToLowerInvariant(),
+            ReadingOrder = Value("--reading-order", "reading_order"),
         };
         bool imageRun = checkpoint || ImageRun(network, image, Path.GetFullPath(data));
         var settings = new RunSettings
@@ -217,11 +226,12 @@ internal sealed class TrainCommand : Command
     private static bool ImageRun(JsonObject network, ImageRunOptions image, string data)
     {
         bool options = image.Augment is not null || image.Loss is not null || image.Matcher is not null || image.Metric is not null || image.Eval is not null
-                       || image.Decoder is not null || image.DataFormat != "auto" || image.Task is "segmentation" or "detection";
+                       || image.Decoder is not null || image.DataFormat != "auto" || image.Task is "segmentation" or "detection" or "line-recognition"
+                       || image.Direction is not null || image.ReadingOrder is not null;
         var builder = Network.FromJson(network);
         if (builder.InputKind != InputKind.Image)
         {
-            return options ? throw new UsageException("The image options (--augment, --loss, --matcher, --metric, --eval, --decoder, --data-format) need a network with an image input.") : false;
+            return options ? throw new UsageException("The image options (--augment, --loss, --matcher, --metric, --eval, --decoder, --data-format, --direction, --reading-order) need a network with an image input.") : false;
         }
 
         return options || builder.CurrentShape.Count == 3
@@ -597,7 +607,8 @@ internal sealed class PredictCommand : Command
                              segmenter a folder of mask PNGs (one per image, its grey level the class), for a backbone a
                              folder of .npy feature files
               --top N        classification: the N most likely classes (default 1 for a package, 5 for an image model)
-              --decoder NAME detection: the decoder (a DetectionDecoders name) instead of the one the model names
+              --decoder NAME detection: the decoder (a DetectionDecoders name) instead of the one the model names; a
+                             line recognizer: the CTC decoder (greedy, the default, or beam)
               --threshold F  detection: the lowest score kept (default 0.25)
               --iou F        detection: a box overlapping a better one of its class by more is dropped (default 0.5)
               --max N        detection: the most boxes per image (default 100)
@@ -659,9 +670,9 @@ internal sealed class PredictCommand : Command
 
         using var package = ModelPackage.Open(modelPath);
         var meta = package.Contains(PackageEntryKind.Json, "training") ? package.Json("training") as JsonObject : null;
-        if ((string?)meta?["task"] is "detection" or "segmentation" or "features")
+        if ((string?)meta?["task"] is "detection" or "segmentation" or "features" or "line-recognition")
         {
-            // A detector, segmenter or backbone idrak train wrote: the image path, with the package's resize.
+            // A detector, segmenter, backbone or line recognizer idrak train wrote: the image path, with the package's resize.
             try
             {
                 using var imageModel = ImageModelFiles.FromPackage(package, meta!, context.Device);

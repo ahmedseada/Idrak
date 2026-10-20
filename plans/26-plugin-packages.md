@@ -10,7 +10,7 @@ built. No phase starts until the owner names it.
 | P0 | `Idrak.Nlp` renamed `Idrak.Text` (project, assembly, package, namespaces, every reference) | A, alone | Done 2026-10-20; CPU pass |
 | P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | A | Done 2026-10-20; CPU pass (2 leftovers, see its note) |
 | P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Done 2026-10-20; CPU pass |
-| P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Not started |
+| P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Done 2026-10-20; CPU pass |
 | P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Not started |
 | P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Not started |
 | P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Not started |
@@ -368,6 +368,42 @@ library's versions.
 **Done when:** the suites pass; ArabicOcr's tests (`samples/Idrak.Samples.ArabicOcr.Tests`) give the same lines, matches
 and readings; the vision tuning and Gemma groups pass unchanged.
 
+**P3 as built (2026-10-20).** G8-G14 and the leftovers:
+- **G8** `ImageAttentionRules.ImageBlocks` (`image-blocks`), a library default: the two copies did not differ (both pass
+  the window to `KeySpans.ImageBlocks`); IdrakVision's rule name `idrak-image-blocks` became `image-blocks` (its config
+  value maps the same). Both `ImageBlockRule` classes are gone.
+- **G9** augmentation `noise` (`PixelNoise`: `std` 0.05, `p` 1, clamped, objects kept); `LineNoise.cs` gone.
+- **G10** the Ocr sample reads and writes through `ImageCodecs` and `ImageEncoders`; `Pgm.cs` gone.
+- **G11** `ITextLineSegmenter` + `TextLineSegmenters` (guarded, `Idrak.Vision.Abstractions`; `PageLine`, `PageLines`,
+  `LineSegmentationOptions` with the sample's hidden constants as options); default `projection`. ArabicOcr's cut
+  command and line reader use it; `LineSegmenter.cs` gone.
+- **G12** `ITextMatcher` + `TextMatchers` (guarded, `Idrak.Text.Abstractions`; `TextMatch`, `AlignedText`,
+  `TextMatchOptions`); default `semi-global`. ArabicOcr's `TextAlignment` gone; an uninitialized pooled-slot read on a
+  span past the last character fixed on the way.
+- **G13** `IReadingOrder` + `ReadingOrders` in `Idrak.Abstraction.Data` (beside `TextShapers`: Imaging implements it and
+  Vision uses it, so decision 10 puts it there); defaults `bidi` (UAX #9) and `runs` (the app's order). **`bidi`
+  differs from ArabicOcr's order** (in a right-to-left line "abc 123" and "123 abc" give the same columns; "abc ١٢";
+  punctuation inside Latin text): 9,518 of 20,000 random mixed lines, 0 of 5,000 of ArabicOcr's own; ArabicOcr keeps
+  `runs`. ArabicOcr's recognizer now passes its direction to `runs`: right-to-left results identical; a left-to-right
+  model's order changes (the old code reversed Latin runs there, which did not match its labels) — **for the owner to
+  confirm**.
+- **G14** `ImageTask.LineRecognition`, `LineRecognitionSettings` (height, stride, blank, direction, reading order, ink,
+  log-probabilities), `ImageModel.Lines`; `ModelLineReader` (ArabicOcr's preparation, batches, CTC decoding through
+  `CtcDecoders`) and `model.LineReader()`; `idrak predict` reads lines (`--decoder greedy|beam`), `idrak train --task
+  line-recognition` trains or fine-tunes on line images with `NAME.txt` (CTC loss; cer, wer; `--direction`,
+  `--reading-order`). ArabicOcr's line preparation calls the library's. The CRNN family is P5.
+- **Leftovers done:** GptTraining's progress line on `ProgressReporters` (in place, or plain every N steps with
+  `--log-every`); `plugins list` shows progress, keyword indexes, recipes, line segmenters, text matchers and reading
+  orders; `ImageModelFamilies`' message names `Idrak.Vision.Plugins`; `CtcDecoders` left `shared-contracts.txt` (Audio
+  and Vision use it).
+- **Proven unchanged** (a scratch program, the removed code against the library's): segmentation on 480 pages, 23,000
+  matches, `runs` on 20,000 lines, noise on 300 images, line preparation on 400, PGM training files on 300, all identical
+  (the Ocr demo's `--save-image` dark-ink PGM: 1 of 300 differs by one level, the inversion now before rounding).
+  Segmentation speed equal in Release (2.67 against 2.64 ms a page).
+- **Run (CPU, the agent):** 172 passed, 1 failed (`CtcDecoders` in `shared-contracts.txt`), then 4 of 4; ArabicOcr 14.
+  **Merged on P9 (2026-10-20, 135716e):** one build, 3 changed samples built; the P3 filters with `engine:`: 190 passed,
+  0 failed; ArabicOcr 14 passed.
+
 ## Phase P4: the audio plug-ins
 
 - Whisper, VITS (with uroman, moved from `src/Idrak.Audio/SpeechText`), OpenVoice and IdrakAudio from `samples/` into
@@ -589,3 +625,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P8 merged (with P1's leftover message) | CPU (cloud, 4 threads) | the P1 and P8 filters together | 287 passed, 0 failed |
 | 2026-10-20 | P2 merged (on P8) | CPU (cloud, 4 threads) | the P2 filters with engine, decoder, sampler; ArabicOcr and LegalOcr tests | 249 passed, 0 failed; 14 and 12 passed |
 | 2026-10-20 | P9 merged (on P2) | CPU (cloud, 4 threads) | the P9 filters with the guards | 150 passed, 0 failed |
+| 2026-10-20 | P3 merged (on P9) | CPU (cloud, 4 threads) | the P3 filters with engine; ArabicOcr tests | 190 passed, 0 failed; 14 passed |

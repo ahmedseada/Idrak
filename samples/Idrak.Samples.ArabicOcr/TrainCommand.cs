@@ -16,7 +16,7 @@ namespace Idrak.Samples.ArabicOcr;
 /// <c>train</c>: the line recognizer from a folder of line images and their transcriptions. The alphabet is the data's
 /// characters (saved with the model). Lines are scaled to one height and keep their width; a batch is padded to its
 /// widest line and each line's steps go to the CTC loss. Augmentations come from the library's registry
-/// (<see cref="Augmentations"/>, plus the app's "noise"), seeded per line and epoch, run in parallel off the step. A step
+/// (<see cref="Augmentations"/>, "noise" among them), seeded per line and epoch, run in parallel off the step. A step
 /// the device has no room for is split into micro-batches whose gradients add up (halved again as needed), as the library's
 /// image training does. Each epoch reports the loss and, on <c>--eval</c>, CER and WER (<see cref="TuningMetrics"/>);
 /// the best epoch is kept. On the console a live line shows the epoch's progress (steps, loss, lines a second, data and

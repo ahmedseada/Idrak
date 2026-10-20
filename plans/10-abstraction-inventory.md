@@ -11,13 +11,13 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 77 | 15 | 42 | 133 | 0 |
+| `Idrak.Abstraction` | 78 | 15 | 43 | 135 | 0 |
 | `Idrak` | 17 | 4 | 19 | 40 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Text` | 11 | 2 | 8 | 21 | 0 |
+| `Idrak.Text` | 12 | 2 | 9 | 23 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
-| `Idrak.Vision` | 7 | 0 | 6 | 13 | 0 |
+| `Idrak.Vision` | 8 | 0 | 7 | 15 | 0 |
 | `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
 | `Idrak.Cluster` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Network` | 2 | 4 | 1 | 7 | 0 |
@@ -65,9 +65,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.PipelineSchedules` | registry | public | — |  | gpipe | Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | fastest | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | direct-link, nvlink, p2p, pcie-host, shared-memory, sim, tcp | Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, resize, resized-crop, +2 | Imaging, Vision | Abstraction |
+| `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, noise, resize, +3 | Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, RandomAffine, +4 |  | Abstraction, Imaging, Vision | Abstraction |
+| `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, PixelNoise, +5 |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFace` | interface | public | — | OpenTypeFace |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Abstraction, Imaging, Text | Abstraction |
@@ -76,6 +76,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IImageTransform` | interface | public | — | ImageTransforms.GuardedTransform, LibraryImageTransforms.Transform |  | Abstraction, AspNetCore, Audio, Idrak, Imaging, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Data.IOutlineRasterizer` | interface | public | — | CoverageRasterizer, OutlineRasterizers.GuardedRasterizer |  | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IPageLayout` | interface | public | — | LetterLayout, PageLayouts.GuardedLayout, PlainLayout |  | Abstraction, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.IReadingOrder` | interface | public | — | BidiReadingOrder, ReadingOrders.GuardedOrder, RunsReadingOrder |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleReader` | interface | public | — | CsvSource.Reader, TableSamples.Reader |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | Abstraction, Data, Idrak, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | Data, Idrak | Abstraction |
@@ -87,6 +88,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.ImageTransforms` | registry | public | — |  | autocontrast, banding, binarize, bleed, blot, blur, brightness, burn, +70 | Abstraction, AspNetCore, Audio, Idrak, Imaging, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Data.OutlineRasterizers` | registry | public | — |  | coverage | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.PageLayouts` | registry | public | — |  | letter, plain | Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.ReadingOrders` | registry | public | — |  | bidi, runs | Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.ScanProfiles` | registry | public | — |  | aged, clean, copied, damaged, fax, handled, marked, mixed, +7 | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.TextShapers` | registry | public | — |  | — | Imaging | Abstraction |
@@ -118,14 +120,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | audio, image, text | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio | Abstraction |
+| `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.FeatureCaches` | registry | public | — |  | disk, memory | Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IAttentionPositionBias` | interface | public | Device, Tensor | RelativePositionBias |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.IBinaryPartKind` | interface | public | — | AudioPartKind |  | AspNetCore, Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatPartKind` | interface | public | — | AudioPartKind, ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IFeatureCache` | interface | public | Device, Tensor | DiskFeatureCache, MemoryFeatureCache |  | Abstraction, Audio, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule |  | Abstraction, Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.IImageAttentionRule` | interface | public | — | ImageAttentionRules.CausalRule, ImageAttentionRules.GuardedRule, ImageAttentionRules.ImageBlocksRule |  | Abstraction, Audio, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IImagePositionRule` | interface | public | — | ImagePositionRules.GridRule, ImagePositionRules.GuardedRule |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.IImagePromptFormat` | interface | public | — | ImageTokenFormat |  | Abstraction, Audio, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IModelPart` | interface | public | — | AudioModelPart |  | Abstraction, Audio, Idrak | Abstraction |
@@ -145,7 +147,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | ModelImages.LazyEncoder |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | — |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | — |  | Abstraction, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal | — | Abstraction |
+| `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal, image-blocks | — | Abstraction |
 | `Idrak.Abstraction.Generation.ImagePositionRules` | registry | public | — |  | grid | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
@@ -236,6 +238,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.IPretrainingSource` | interface | public | — | RecordPretrainingSource, TokenPretrainingSource |  | Text | Text |
 | `Idrak.Text.Abstractions.IRandomTextSource` | interface | public | — | PooledTextSource |  | Text | Text |
 | `Idrak.Text.Abstractions.ISyntheticRecordFormat` | interface | public | — | MessagesSyntheticRecords, ShareGptSyntheticRecords, TextSyntheticRecords |  | Text | Text |
+| `Idrak.Text.Abstractions.ITextMatcher` | interface | public | — | SemiGlobalMatcher, TextMatchers.GuardedMatcher |  | Text | Text |
 | `Idrak.Text.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat, TranscriptsDataFormat |  | Text | Text |
 | `Idrak.Text.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Text | Text |
 | `Idrak.Text.Abstractions.KeywordIndexes` | registry | public | — |  | bm25 | Text | Text |
@@ -244,6 +247,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.RandomTextSources` | registry | public | — |  | ar, en | — | Text |
 | `Idrak.Text.Abstractions.SyntheticRecordFormats` | registry | public | — |  | messages, sharegpt, text | Text | Text |
 | `Idrak.Text.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Text | Text |
+| `Idrak.Text.Abstractions.TextMatchers` | registry | public | — |  | semi-global | — | Text |
 | `Idrak.Text.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt, transcripts | Text | Text |
 | `Idrak.Text.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Text | Text |
 | `Idrak.Text.Retrieval.Abstractions.IRetriever` | interface | public | — | RetrievalIndex |  | Text | Text |
@@ -276,8 +280,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Vision.Abstractions.IRegionProposer` | interface | public | — | ComponentProposer |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmentationMetric` | interface | public | — | SegmentationMetrics, VisionMetrics.GuardedSegmentation |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmenter` | interface | public | — | ModelSegmenter |  | Vision | Vision |
+| `Idrak.Vision.Abstractions.ITextLineSegmenter` | interface | public | — | ProjectionLineSegmenter, TextLineSegmenters.GuardedSegmenter |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IVisionMetric` | interface | public | — | CocoAveragePrecision, SegmentationMetrics, VisionMetrics.GuardedDetection, VisionMetrics.GuardedSegmentation, VocAveragePrecision |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ImageModelFamilies` | registry | public | — |  | — | Vision | Vision |
+| `Idrak.Vision.Abstractions.TextLineSegmenters` | registry | public | — |  | projection | — | Vision |
 | `Idrak.Vision.Abstractions.VisionLosses` | registry | public | Tensor |  | ciou, dice, diou, focal, giou, iou, l1, smooth-l1 | Vision | Vision |
 | `Idrak.Vision.Abstractions.VisionMetrics` | registry | public | — |  | coco, miou, voc, voc07 | — | Vision |
 

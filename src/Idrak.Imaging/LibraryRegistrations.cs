@@ -8,7 +8,7 @@ namespace Idrak.Imaging;
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
 /// netpbm) and encoders (png, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
-/// the "images" sample source, the "opentype" font format and the "coverage" outline rasterizer. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
+/// the "images" sample source, the "opentype" font format, the "coverage" outline rasterizer and the reading orders (bidi, runs). <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used.
 /// </summary>
 internal static class LibraryRegistrations
@@ -32,6 +32,11 @@ internal static class LibraryRegistrations
         [typeof(FontFormats)] = () => FontFormats.Register(new OpenTypeFormat()),            // TrueType outlines, single fonts and collections
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),
         [typeof(TextShapers)] = RegisterShapers,                                 // general for every script, arabic for the joining scripts
+        [typeof(ReadingOrders)] = () =>                                          // bidi (UAX #9), runs
+        {
+            ReadingOrders.Register(new Shaping.BidiReadingOrder());
+            ReadingOrders.Register(new Shaping.RunsReadingOrder());
+        },
         [typeof(PageLayouts)] = () =>                                            // letter, plain
         {
             PageLayouts.Register(new LetterLayout());

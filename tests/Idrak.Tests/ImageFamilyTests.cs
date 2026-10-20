@@ -65,6 +65,7 @@ internal static partial class Tests
             File.WriteAllText(Path.Combine(folder, "config.json"), """{"architectures": ["NobodysNet"]}""");
             ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder), "Image model family 'NobodysNet' is not registered (registered: ", "unregistered");
             ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder), "register it with ImageModelFamilies.Register (a plug-in or the app that brings the family; the library registers none)", "the remedy");
+            ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder), "or reference Idrak.Vision.Plugins and call VisionPlugins.RegisterAll()", "the plug-in package named");
             ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder, new ImageModelOptions { Architecture = "AlsoNobody" }), "'AlsoNobody' is not registered", "the options' architecture");
             File.WriteAllText(Path.Combine(folder, "config.json"), """{"model_type": "mystery"}""");
             ExpectRefusal<InvalidDataException>(() => ImageModels.Load(folder), "names no architecture", "a config without an architecture");

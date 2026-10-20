@@ -11,7 +11,8 @@
 //                    --save-every 1000 --seed 42 --resume <out>/last.ikw --grad-checkpoint --optim8bit
 //                    Idrak only: --fp32 (no bfloat16 tensor cores), --fp8 (FP8 tensor-core products, compute
 //                    capability 8.9+: faster, coarser; compare the loss curve), --cpu, --gpu-memory GiB, --offload,
-//                    --log-every N (a new progress line every N steps; default: one line redrawn in place),
+//                    --log-every N (a new progress line every N steps; default: the library's progress reporter, one
+//                    line redrawn in place on a console, IDRAK_PROGRESS to choose another),
 //                    --profile (time every kernel of one step, after three warm-up steps, and exit; without a corpus
 //                    it times random tokens), --loss-log file.csv (step, loss, lr and, at evaluations, val per step),
 //                    --no-save (no checkpoints: comparison runs)
@@ -279,8 +280,25 @@ int Train()
         lossLog.WriteLine("step,loss,lr,val");
     }
 
-    var progress = new ProgressLine(startStep, steps, logEvery);
+    // The library's progress reporter: a line redrawn in place on a console (what, how far, speed, time left and the step's
+    // numbers), or with --log-every N a plain line every N steps; IDRAK_PROGRESS chooses another.
     double lossSum = 0, lastVal = double.IsFinite(best) ? best : double.NaN;
+    float lastLoss = float.NaN, lastLr = 0;
+    double lastAverage = double.NaN, lastTokens = 0;
+    using var progress = ProgressReporters.Start($"training to step {steps}", steps - startStep, ProgressUnit.Items, new ProgressOptions
+    {
+        Output = Console.Out,
+        Reporter = logEvery > 0 ? ProgressReporters.PlainReporter : null,
+        Interval = logEvery > 0 ? TimeSpan.FromDays(1) : null,                     // a line every N steps, shown below
+    });
+    progress.Detail = () => $"loss={lastLoss:F4}, avg={lastAverage:F4}, lr={lastLr:0.00e+00}, tok/s={lastTokens:N0}"
+                            + (double.IsNaN(lastVal) ? "" : $", val={lastVal:F4}") + $", {ComputeResources.GetMemoryUsage(device)}";
+    void Say(string message)
+    {
+        progress.Erase();
+        Console.WriteLine(message);
+    }
+
     var watch = Stopwatch.StartNew();
     var stepWatch = new Stopwatch();
     for (int step = startStep + 1; step <= steps; step++)
@@ -288,7 +306,7 @@ int Train()
         if (profiling && step - startStep == 4)
         {
             device.Synchronize();
-            progress.Write($"last step {stepWatch.Elapsed.TotalMilliseconds:F0} ms wall; profiling the next one (every kernel waited for)…");
+            Say($"last step {stepWatch.Elapsed.TotalMilliseconds:F0} ms wall; profiling the next one (every kernel waited for)…");
             GpuProfiler.Start(device);
         }
 
@@ -314,13 +332,17 @@ int Train()
         if (profiling && done == 4)
         {
             var entries = GpuProfiler.Stop(device);
-            progress.Write(GpuProfiler.Format(entries, rows: 60));
+            Say(GpuProfiler.Format(entries, rows: 60));
             return 0;
         }
 
-        double tokPerSecond = done * (double)tokensPerStep / Math.Max(watch.Elapsed.TotalSeconds, 1e-6);
-        progress.Update(step, $"loss={loss:F4}, avg={lossSum / done:F4}, lr={lr:0.00e+00}, tok/s={tokPerSecond:N0}"
-            + (double.IsNaN(lastVal) ? "" : $", val={lastVal:F4}") + $", {ComputeResources.GetMemoryUsage(device)}");
+        (lastLoss, lastAverage, lastLr) = (loss, lossSum / done, lr);
+        lastTokens = done * (double)tokensPerStep / Math.Max(watch.Elapsed.TotalSeconds, 1e-6);
+        progress.Report(done);
+        if (logEvery > 0 && (step % logEvery == 0 || step == steps))
+        {
+            progress.Show();
+        }
 
         bool stopping = Volatile.Read(ref stopRequests) > 0;
         double? evaluated = null;
@@ -338,7 +360,7 @@ int Train()
                 tag = "  best";
             }
 
-            progress.Write($"  val {v:F4}  ppl {Math.Exp(Math.Min(v, 20)):F2}  lr {lr:0.00e+00}{tag}");
+            Say($"  val {v:F4}  ppl {Math.Exp(Math.Min(v, 20)):F2}  lr {lr:0.00e+00}{tag}");
         }
         else if (step % saveEvery == 0 || stopping)
         {
@@ -357,12 +379,14 @@ int Train()
 
         if (stopping)
         {
-            progress.Write($"stopped at step {step}; saved {Path.Combine(outDir, "last.ikw")} (resume with --resume)");
+            progress.Finish();
+            Console.WriteLine($"stopped at step {step}; saved {Path.Combine(outDir, "last.ikw")} (resume with --resume)");
             return 0;
         }
     }
 
-    progress.Write($"done. best val={best:F4}  dir={outDir}");
+    progress.Finish();
+    Console.WriteLine($"done. best val={best:F4}  dir={outDir}");
     return 0;
 }
 
@@ -688,59 +712,4 @@ internal sealed unsafe class TokenFile : IDisposable
         _view.Dispose();
         _file.Dispose();
     }
-}
-
-// A tqdm-like progress line: redrawn in place on a console, or a new line every `every` steps (always when redirected).
-internal sealed class ProgressLine(int start, int total, int every)
-{
-    private readonly Stopwatch _watch = Stopwatch.StartNew();
-    private readonly bool _inPlace = every <= 0 && !Console.IsOutputRedirected;
-    private readonly int _every = every > 0 ? every : 10;
-    private double _lastDraw = double.NegativeInfinity;             // milliseconds
-    private int _width;
-
-    public void Update(int step, string stats)
-    {
-        if (!_inPlace && step % _every != 0 && step != total)
-        {
-            return;
-        }
-
-        if (_inPlace && _watch.Elapsed.TotalMilliseconds - _lastDraw < 200 && step != total)
-        {
-            return;
-        }
-
-        _lastDraw = _watch.Elapsed.TotalMilliseconds;
-        int done = step - start;
-        double rate = done / Math.Max(_watch.Elapsed.TotalSeconds, 1e-6);
-        var remaining = TimeSpan.FromSeconds(rate > 0 ? (total - step) / rate : 0);
-        double fraction = total > 0 ? step / (double)total : 1;
-        const int BarWidth = 30;
-        int filled = (int)(fraction * BarWidth);
-        string line = $"{fraction * 100,5:F1}%|{new string('█', filled)}{new string(' ', BarWidth - filled)}| {step}/{total} "
-                      + $"[{Format(_watch.Elapsed)}<{Format(remaining)}, {rate:F2}step/s, {stats}]";
-        if (_inPlace)
-        {
-            Console.Write("\r" + line.PadRight(_width));
-            _width = line.Length;
-        }
-        else
-        {
-            Console.WriteLine(line);
-        }
-    }
-
-    public void Write(string message)
-    {
-        if (_inPlace && _width > 0)
-        {
-            Console.Write("\r" + new string(' ', _width) + "\r");
-            _width = 0;
-        }
-
-        Console.WriteLine(message);
-    }
-
-    private static string Format(TimeSpan t) => t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes:00}:{t.Seconds:00}";
 }

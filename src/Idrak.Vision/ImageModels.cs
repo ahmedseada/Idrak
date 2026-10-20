@@ -9,9 +9,9 @@ using Idrak.Vision.Abstractions;
 namespace Idrak.Vision;
 
 /// <summary>
-/// Loads image models (classifiers, detectors, segmenters, backbones) through their registered family
+/// Loads image models (classifiers, detectors, segmenters, backbones, line recognizers) through their registered family
 /// (<see cref="ImageModelFamilies"/>). Idrak.Vision turns the result into a predictor ready for images
-/// (<c>model.Classifier()</c>, <c>model.Detector()</c>, <c>model.Segmenter()</c>).
+/// (<c>model.Classifier()</c>, <c>model.Detector()</c>, <c>model.Segmenter()</c>, <c>model.LineReader()</c>).
 /// </summary>
 /// <remarks>
 /// <code>
@@ -120,6 +120,9 @@ public static class ImageModels
             : model.Preprocessor is null ? "no preprocessing"
             : model.Channels <= 0 ? $"{model.Channels} input channels"
             : model.Task == ImageTask.Detection && string.IsNullOrEmpty(model.Decoder) ? "a detector without a decoder name"
+            : model.Task == ImageTask.LineRecognition && model.Lines is null ? "a line recognizer without line settings"
+            : model.Task == ImageTask.LineRecognition && model.Labels is not { Count: > 1 } ? "a line recognizer without its labels (one per class, the blank's empty)"
+            : model.Task == ImageTask.LineRecognition && model.Lines!.Problem(model.Labels!.Count) is { } lines ? lines
             : model.Labels is { Count: 0 } ? "an empty list of labels"
             : !Enum.IsDefined(model.Task) ? $"task {model.Task}"
             : null;

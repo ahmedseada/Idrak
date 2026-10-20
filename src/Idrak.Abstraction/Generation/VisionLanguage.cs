@@ -337,16 +337,24 @@ public interface IImageAttentionRule
 }
 
 /// <summary>
-/// The attention rules for image tokens, by name. The library has one, <see cref="Causal"/>: image rows attend as the
-/// decoder's text rows do, which is the decoder's own behaviour rather than a family's choice. A family whose image tokens
-/// attend otherwise registers its rule here (Gemma 3's registration adds "image-blocks", each image's rows seeing their
-/// whole image through <see cref="KeySpans.ImageBlocks"/>) and names it in its vision part; an app can then take that
-/// name's place. Nothing falls back to another rule: an unknown name is an error naming this registry.
+/// The attention rules for image tokens, by name. The library has two: <see cref="Causal"/> (image rows attend as the
+/// decoder's text rows do, the decoder's own behaviour) and <see cref="ImageBlocks"/> (each image's rows see their whole
+/// image, through <see cref="KeySpans.ImageBlocks"/>, causal elsewhere; within the window on sliding-window layers). A
+/// family names the rule its image tokens attend by in its vision part; a family whose tokens attend otherwise registers
+/// its own rule here, and an app can take any name's place. Nothing falls back to another rule: an unknown name is an
+/// error naming this registry.
 /// </summary>
 public static class ImageAttentionRules
 {
     /// <summary>Image tokens attend as text does: causal (and windowed on sliding-window layers). LLaVA's rule.</summary>
     public const string Causal = "causal";
+
+    /// <summary>
+    /// Each image's tokens see their whole image (both directions), the rest causal, and on sliding-window layers only the
+    /// keys within the window (<see cref="KeySpans.ImageBlocks"/>): a key is seen when it is not after the row or shares the
+    /// row's image, and lies within the window. Gemma 3's mask (transformers' <c>token_type_ids</c>) and IdrakVision's.
+    /// </summary>
+    public const string ImageBlocks = "image-blocks";
 
     private static readonly SlotTable<string, IImageAttentionRule> Table = BuiltIn();
 
@@ -354,6 +362,7 @@ public static class ImageAttentionRules
     {
         var table = new SlotTable<string, IImageAttentionRule>(nameof(ImageAttentionRules), Guard, StringComparer.Ordinal);
         table.RegisterDefault(Causal, new CausalRule());
+        table.RegisterDefault(ImageBlocks, new ImageBlocksRule());
         return table;
     }
 
@@ -401,6 +410,17 @@ public static class ImageAttentionRules
         public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.Causal(rows, window);
 
         public override string ToString() => "causal image tokens";
+    }
+
+    private sealed class ImageBlocksRule : IImageAttentionRule
+    {
+        public string Name => ImageAttentionRules.ImageBlocks;
+
+        public bool Causal => false;
+
+        public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.ImageBlocks(rows, blocks, window);
+
+        public override string ToString() => "image blocks seen whole";
     }
 
     private sealed class GuardedRule(Slot slot, IImageAttentionRule app, IImageAttentionRule library) : IImageAttentionRule
