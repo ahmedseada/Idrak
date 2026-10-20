@@ -8,7 +8,7 @@ built. No phase starts until the owner names it.
 | Phase | What | Lane | State |
 |---|---|---|---|
 | P0 | `Idrak.Nlp` renamed `Idrak.Text` (project, assembly, package, namespaces, every reference) | A, alone | Done 2026-10-20; CPU pass |
-| P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | A | Not started |
+| P1 | The three plug-in packages: `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` (skeletons, registration, the CLI) | A | Done 2026-10-20; CPU pass (2 leftovers, see its note) |
 | P2 | Generic components into the library, core part (contracts first): tensor store, timing probe, character tokenizer, progress, keyword index, network recipes, JSON numbers | A | Not started |
 | P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Not started |
 | P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Not started |
@@ -277,6 +277,36 @@ the rename reaches every package.
 **Done when:** the three packages build empty, the registration contract suite (`Register` twice, `Unregister`,
 `RegisterAll`, `-P` on the package) passes, and the inventory and API dump list them.
 
+**P1 as built (2026-10-20).** As planned, with these specifics:
+- **The plug-in contract** (`Idrak.Abstraction.Plugins`, since the three packages use it): `IIdrakPlugin` (`Name`,
+  `IsRegistered`, `Register()` once however often called, `Unregister()` restoring the registries); `IdrakPlugin`, the
+  base a family derives from (`RegisterParts()` with `Part(register, unregister)` per part; registered once under a lock;
+  a failing part takes back the ones before it; `Requires(plugin)` registers a needed plug-in only when missing and
+  removes it only if it added it, for vision on text); `IdrakPlugins`, the registry (`SlotTable`, unguarded: a second
+  `Register` does nothing, one under a taken name replaces the earlier one, restored if the new one fails; `RegisterAll`,
+  `UnregisterAll`, `Names`, `Find`, `Get` whose "not registered" names the three packages).
+- **The packages** `src/Idrak.Text.Plugins`, `src/Idrak.Vision.Plugins`, `src/Idrak.Audio.Plugins`, each with a README
+  and a root class (`TextPlugins`, `VisionPlugins`, `AudioPlugins`: `Package`, `All` — empty until P4 —, `RegisterAll()`,
+  `UnregisterAll()`, `RegisterIdrakPlugin()`); none has internals access either way (a test). Listed in `Idrak.slnx`,
+  `build/IdrakFromSource.targets`, the READMEs, the API guard and the inventory; not in `LibraryDefaults` (a test).
+- **The CLI** references them and registers text, vision, audio before every command (`CommandLine.PluginPackages`),
+  before `plugins list`'s snapshot (so they count as the tool's own) and before `-P` plug-ins (which can still override).
+- **Messages:** `VisionFamilies`, `SpeechFamilies`, `SpeechSynthesisFamilies`, `VoiceConverters`, `GgufArchitectures`,
+  `ToolCallFormats` and `GgufModel`'s architecture message name the package to reference.
+- **The inventory's registry rule:** a type counts as a registry only when its static `Register` takes arguments, so a
+  family's parameterless `…Plugin.Register()` is not one; no existing registry dropped out.
+- **Tests:** `plugins: packages` (5: load and register twice, the contract with threads, a failing part, `Requires` and
+  replacement, the CLI's order and `-P` on each package, no internals, every message); the message checks of five
+  existing test files extended.
+- **Leftovers:** `PretrainedArchitectures`' message (`src/Idrak/Models/Abstractions/PretrainedArchitectures.cs:107`)
+  and its check in `QwenVisionTests.cs:321` wait for P8's merge (P8 owns that file), then name `Idrak.Text.Plugins` /
+  `Idrak.Vision.Plugins`; `ImageModelFamilies`' message goes with P3. **A setting for the CLI's startup registration**
+  (CLAUDE.md: nothing fixed) goes with P2: `IDRAK_PLUGIN_PACKAGES` (all by default; `none` or a list).
+- **Run (CPU, the agent):** 126 passed, 1 failed (a GGUF message in `GgufModel.cs`), then `plugins:` 23 of 23.
+  **Merged (2026-10-20, on c023893):** one build; `plugins:`, `public API`, `abstraction inventory`, `naming:`,
+  `override loop:`, `cli health`, `cli polish`, `cli arabic:`, `cli run:`, `pretrained:`, `gguf:`, `vision contracts`,
+  `audio asr`, `audio tts`, `audio voices`, `tool calls`, `chat templates:`, `qwen vl`: 133 passed, 0 failed.
+
 ## Phase P2: generic components, core part (G1-G7)
 
 - New contracts first (G4 progress, G5 keyword index, G6 network recipes), each with its `SlotTable` registry, contract
@@ -451,3 +481,4 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | Date | Phase | Machine | What | Result |
 |---|---|---|---|---|
 | 2026-10-20 | P0 | CPU (cloud, 4 threads) | the P0 filters above, the three sample test projects | 158 passed, 1 failed (naming test matched itself), then 3 of 3; samples 4, 14, 12 passed |
+| 2026-10-20 | P1 merged | CPU (cloud, 4 threads) | the P1 filters (merge on c023893) | 133 passed, 0 failed |
