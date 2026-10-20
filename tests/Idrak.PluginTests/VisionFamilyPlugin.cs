@@ -8,6 +8,7 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Generation;
+using Idrak.Vision.Plugins.Llava;
 
 namespace Idrak.PluginTests;
 
@@ -15,7 +16,7 @@ namespace Idrak.PluginTests;
 /// A vision family of its own, registered from outside the library (plan 11, "Vision contracts"): a trivial encoder (each
 /// image's mean colour per band of rows, through a fixed matrix: one token per band, the bands one per 16 rows, so the
 /// count depends on the image: dynamic resolution), its own prompt format and its own attention rule (its image tokens
-/// see each other). Its text decoder is LLaVA's tiny one (this assembly's <see cref="LlavaPlugin"/>), under its own
+/// see each other). Its text decoder is LLaVA's tiny one (Idrak.Vision.Plugins' <see cref="LlavaPlugin"/>), under its own
 /// architecture name. With its vision option <c>halves=true</c> an image becomes two blocks of image tokens (its top
 /// half and its bottom half, " and " between them in the prompt): one image as several blocks with text between, as a
 /// family that adds views of an image does. No library change was needed for it.

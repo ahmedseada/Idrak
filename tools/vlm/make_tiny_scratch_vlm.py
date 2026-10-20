@@ -2,7 +2,7 @@
 
     vlm/bin/python tools/vlm/make_tiny_scratch_vlm.py tests/Idrak.Tests/data/vlm-scratch
 
-IdrakVision is Idrak's own family (samples/IdrakVision): a SigLIP-style tower (a patch convolution with a bias, learned
+IdrakVision is Idrak's own family (src/Idrak.Vision.Plugins/IdrakVision): a SigLIP-style tower (a patch convolution with a bias, learned
 positions, pre-LayerNorm encoder layers with biased attention and a GELU-tanh MLP, a final LayerNorm), the patches
 average-pooled pool_size x pool_size, a projector of linear layers with GELU-tanh between them, and a Llama decoder.
 Each image becomes <start_of_image>, mm_tokens_per_image soft tokens (their embeddings the projected features,

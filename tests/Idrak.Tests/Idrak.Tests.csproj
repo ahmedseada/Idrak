@@ -35,10 +35,8 @@
     <ProjectReference Include="..\..\src\Idrak.Cli\Idrak.Cli.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
     <ProjectReference Include="..\Idrak.PluginTests\Idrak.PluginTests.csproj" />
-    <!-- The vision families, registrations from outside the library (plan 11, "Vision contracts"). -->
+    <!-- The families still in samples, registrations from outside the library (plan 11, "Vision contracts"). -->
     <ProjectReference Include="..\..\samples\Gemma3Vision\Idrak.Gemma3Vision\Idrak.Gemma3Vision.csproj" />
-    <ProjectReference Include="..\..\samples\QwenVision\Idrak.QwenVision\Idrak.QwenVision.csproj" />
-    <ProjectReference Include="..\..\samples\IdrakVision\Idrak.IdrakVision\Idrak.IdrakVision.csproj" />
     <ProjectReference Include="..\..\samples\VitsSpeech\Idrak.VitsSpeech\Idrak.VitsSpeech.csproj" />
     <ProjectReference Include="..\..\samples\OpenVoice\Idrak.OpenVoice\Idrak.OpenVoice.csproj" />
     <ProjectReference Include="..\..\samples\WhisperSpeech\Idrak.WhisperSpeech\Idrak.WhisperSpeech.csproj" />

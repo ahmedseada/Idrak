@@ -3,7 +3,7 @@
 
 using System.Buffers;
 
-namespace Idrak.QwenVision;
+namespace Idrak.Vision.Plugins.Qwen;
 
 /// <summary>
 /// Qwen-VL's image side: images become the embeddings of their image tokens, which replace the

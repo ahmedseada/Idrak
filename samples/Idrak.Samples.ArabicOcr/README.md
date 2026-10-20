@@ -8,7 +8,7 @@ Text from document images, Arabic first (any script works the same way). An appl
 | Reader | What it is | Use it for |
 |---|---|---|
 | `--reader vlm` | A Gemma 3 vision-language checkpoint (for example `bakrianoo/arabic-legal-documents-ocr-1.0`), through the Gemma 3 plug-in in `samples/Gemma3Vision`, which this app registers itself (no `-P`). Optionally with a LoRA adapter from `idrak tune` (plan 12), whose saved image preparation (`tuning_images.json`) is applied. Greedy decoding; the text streams as it is generated. | Reading whole pages now, with no training of your own; structured answers (the legal-documents fine-tune answers in JSON); drafting the transcriptions you train the line reader on. Needs a GPU for speed (4B parameters). |
-| `--reader lines` | The app's own line recognizer: the page cut into lines (horizontal projection on the binarized page, small skew undone), each line read by a small CNN whose pooling ends at height 1, a bidirectional LSTM and CTC, decoded by the library's `CtcDecoders` ("greedy" or "beam"). Trained here, on your lines. | Fast, small, offline reading of one kind of document once you have a few thousand transcribed lines; runs well on the CPU. |
+| `--reader lines` | The CRNN line recognizer of `Idrak.Vision.Plugins.Crnn` (registered by this app), trained here: the page cut into lines (horizontal projection on the binarized page, small skew undone), each line read by a small CNN whose pooling ends at height 1, a bidirectional LSTM and CTC, decoded by the library's `CtcDecoders` ("greedy" or "beam") through its line-recognition task (`ModelLineReader`). Trained here, on your lines. | Fast, small, offline reading of one kind of document once you have a few thousand transcribed lines; runs well on the CPU. |
 
 ## Build and run
 
@@ -178,9 +178,11 @@ runs are reversed in the labels for training and back after decoding, and the ou
   line and each line's length goes to `Losses.Ctc`.
 - Augmentations through the library's `Augmentations` registry, mild by default (`--augment`; `none` for none):
   `shift(pixels=2), affine(degrees=1, translate=0.01, scale=0.95:1.05, shear=3), color-jitter(brightness=0.2, contrast=0.3), noise(std=0.03)`
-  (`noise` is the app's own registration: the registry has none).
-- The model folder: `recognizer.ikm` (the network's description and the best epoch's weights) and `recognizer.json`
-  (alphabet, height, direction, sizes, preprocessing, and the run: every epoch's loss, CER and WER).
+  (`noise` is the library's).
+- The model folder: `config.json` (the architecture `CrnnForLineRecognition`; alphabet, height, direction, reading order,
+  sizes, preprocessing, and the run: every epoch's loss, CER and WER) and `model.safetensors` (the best epoch's weights),
+  which the CRNN family reads, so `idrak predict MODEL LINES` reads lines with it too. A folder of the earlier layout
+  (`recognizer.ikm` and `recognizer.json`) still loads.
 
 ## Tests
 

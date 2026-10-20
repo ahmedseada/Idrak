@@ -4,7 +4,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 
-namespace Idrak.IdrakVision;
+namespace Idrak.Vision.Plugins.IdrakVision;
 
 /// <summary>
 /// An IdrakVision vision part's shape, every value a setting (config.json's <c>vision_config</c> and
