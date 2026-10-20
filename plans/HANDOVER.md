@@ -122,7 +122,8 @@ standing rules; they win over anything here), then the plan you are asked to wor
   read the code a failing test touches before changing its expectation, and do not build in parallel with agents when
   it can be avoided.
 - **A stuck compiler server** (`VBCSCompiler` at 140% CPU with no build running) skewed timings for an hour; check
-  `ps` before measuring and run `dotnet build-server shutdown` when one lingers. Measure speed in a scratch Release
+  `ps` before a speed measurement; only a server burning CPU with no build running is shut down, and only before
+  measuring, never as a habit before builds (it makes the next build cold). Measure speed in a scratch Release
   program with `DOTNET_TieredCompilation=0` and medians, not in the shared test run (±50% there).
 - **One `Regex` shared by threads** builds a matcher per match on every other thread (allocations and lost
   scaling); tokenizer patterns are `TokenizerRegex` with a per-thread copy. Use it for any new pattern.
