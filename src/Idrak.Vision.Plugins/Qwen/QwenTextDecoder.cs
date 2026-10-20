@@ -30,7 +30,7 @@ public static class QwenTextDecoder
     private static PretrainedArchitecture For(bool nested) => new()
     {
         Spec = Spec,
-        TensorName = name => PretrainedFamilies.LlamaTensorName(name) switch
+        TensorName = name => PretrainedFamilies.CommonTensorName(name) switch
         {
             string stored when nested && stored.StartsWith("model.", StringComparison.Ordinal) => Nested + stored["model.".Length..],
             var stored => stored,

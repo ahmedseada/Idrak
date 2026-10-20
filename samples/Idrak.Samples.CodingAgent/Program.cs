@@ -12,6 +12,7 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Text;
 using Idrak.Text.Generation;
+using Idrak.Text.Plugins;
 
 // A coding agent: a language model (any family Idrak loads, in its own chat template) reads, searches, edits and writes
 // files and runs allowlisted commands (dotnet, npm …) in a workspace, run by Idrak's own engine (CPU or CUDA):
@@ -31,6 +32,8 @@ using Idrak.Text.Generation;
 //
 // Options: --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 | --int4 | --bf16 (base weights), --kv8 | --kv16 (KV cache), --context N (default
 //          4096), --adapter <dir> (load a PEFT adapter), --no-think, --offload, --gpu-memory GiB, --matmul fp32|bf16|fp8.
+TextPlugins.RegisterAll();                          // the model families (Llama, Qwen, Mistral, Gemma, …) are Idrak.Text.Plugins'
+
 var positional = new List<string>();
 bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false;
 int context = 4096;

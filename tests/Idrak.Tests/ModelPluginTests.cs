@@ -18,10 +18,10 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ModelPluginGroup =
     [
-        ("plugins: the built-in checkpoint formats, GGUF types and architectures, model sources, chat-template readers and tokenizer components are in their registries", BuiltInModelPlugins),
+        ("plugins: the built-in checkpoint formats, GGUF types, model sources, chat-template readers and tokenizer components are in their registries; the GGUF architectures are Idrak.Text.Plugins', none the library's", BuiltInModelPlugins),
         ("plugins: a registered checkpoint format (weights in a JSON file) loads a model whose loss matches the safetensors copy", CustomCheckpointFormat),
         ("plugins: a registered GGUF type dequantizes (whole tensors and blocks), and a registered GGUF architecture name loads like llama", CustomGgufTypeAndArchitecture),
-        ("plugins: GGUF pre-tokenizers by name: the built-ins (llama3, qwen2, tekken, gpt2 families) are registered; an unregistered name uses Llama 3's rule with a note; a registered name gives its pattern and the original tokens", CustomGgufPreTokenizer),
+        ("plugins: GGUF pre-tokenizers by name: gpt2's are the library's, the families' (llama3, qwen2, tekken) Idrak.Text.Plugins'; an unregistered name uses the fallback (Llama 3's rule, set by the plug-in) with a note, and is refused naming the registry when no fallback is set; a registered name gives its pattern and the original tokens", CustomGgufPreTokenizer),
         ("plugins: a registered model source ('test:' names → a local folder) is asked before the built-ins, without the network", CustomModelSource),
         ("plugins: registered normalizer, pre-tokenizer and decoder types used from tokenizer JSON; a registered built-in name replaces it until removed", CustomTokenizerComponents),
     ];
@@ -47,8 +47,12 @@ internal static partial class Tests
         var q8 = GgufTypes.Get(8);
         Check(q8.Name == "Q8_0" && q8.BlockValues == 32 && q8.BlockBytes == 34 && GgufFile.BlockSize(14) == (256, 210) && GgufFile.TypeName(15) == "Q8_K",
             "Q8_0 and Q6_K blocks; names of types not registered");
-        Check(GgufArchitectures.Names.ToHashSet().SetEquals(["llama", "qwen2", "qwen3", "qwen2moe", "qwen3moe"]) && GgufArchitectures.Get("llama") is { InterleavedQueryKeys: true, WithExperts: "MixtralForCausalLM" }
-              && GgufArchitectures.Get("qwen3") is { HuggingFace: "Qwen3ForCausalLM", InterleavedQueryKeys: false }, "GGUF architectures");
+        // The GGUF families are Idrak.Text.Plugins' (the runner registers them, as the tool does); the library has none.
+        string[] ggufFamilies = ["llama", "qwen2", "qwen3", "qwen2moe", "qwen3moe"];
+        Check(GgufArchitectures.Names.ToHashSet().SetEquals(ggufFamilies) && GgufArchitectures.Get("llama") is { InterleavedQueryKeys: true, WithExperts: "MixtralForCausalLM", ExpertCountKey: "num_local_experts" }
+              && GgufArchitectures.Get("qwen3") is { HuggingFace: "Qwen3ForCausalLM", InterleavedQueryKeys: false, ExpertCountKey: "num_experts" }, "GGUF architectures");
+        Check(ggufFamilies.All(n => GgufArchitectures.Default(n) is null && GgufArchitectures.Origin(n) == "Idrak.Text.Plugins"),
+            $"GGUF architectures come from Idrak.Text.Plugins, none from the library: {string.Join(", ", ggufFamilies.Select(n => $"{n}={GgufArchitectures.Origin(n)}"))}");
         // Idrak.Data registers the Hugging Face source after Idrak's own, so it is asked first; it leaves them their names.
         Check(ModelSources.Names.SequenceEqual(["huggingface", "folder", "store", "gguf"]), $"sources: {string.Join(", ", ModelSources.Names)}");
         Check(ModelSources.For("store:user/model:q8")?.Name == "store" && ModelSources.For("Qwen/Qwen3-0.6B")?.Name == "huggingface",
@@ -496,8 +500,13 @@ internal static partial class Tests
         _ = device;
         foreach (string name in new[] { "llama3", "llama-bpe", "qwen2", "tekken", "gpt2", "default" })
         {
-            Check(GgufPreTokenizers.TryGet(name, out _), $"built-in pre-tokenizer {name}");
+            Check(GgufPreTokenizers.TryGet(name, out _), $"registered pre-tokenizer {name}");
         }
+
+        Check(new[] { "gpt2", "gpt-2", "default" }.All(n => GgufPreTokenizers.Origin(n) == Overrides.Library)
+              && new[] { "llama3", "llama-bpe", "qwen2", "tekken", "deepseek-r1-qwen" }.All(n => GgufPreTokenizers.Origin(n) == "Idrak.Text.Plugins" && GgufPreTokenizers.Default(n) is null)
+              && GgufPreTokenizers.Fallback == "llama3",
+            $"GPT-2's rule is the library's, the families' patterns and the fallback ({GgufPreTokenizers.Fallback}) Idrak.Text.Plugins'");
 
         bool known = GgufPreTokenizers.TryGet("gpt2", out string? gpt2);
         Check(known && gpt2 is null, "gpt2: GPT-2's own rule (no split pattern)");
@@ -537,6 +546,24 @@ internal static partial class Tests
             Check(SplitPattern(unknown) == llama3, "an unregistered name splits with Llama 3's pattern");
             Check(NotesOf(unknown).Any(n => n.Contains("'testsplit' is not registered", StringComparison.Ordinal) && n.Contains("GgufPreTokenizers.Register", StringComparison.Ordinal)),
                 $"and the model notes it ({string.Join(" | ", NotesOf(unknown))})");
+
+            // With no fallback set (the library sets none), such a file is refused naming the registry and the package.
+            string? fallback = GgufPreTokenizers.Fallback;
+            GgufPreTokenizers.Fallback = null;
+            try
+            {
+                GgufModel.Prepare(renamed, Path.Combine(folder, "refused"));
+                Check(false, "an unregistered pre-tokenizer without a fallback should be refused");
+            }
+            catch (NotSupportedException ex)
+            {
+                Check(ex.Message.Contains("'testsplit' is not registered", StringComparison.Ordinal) && ex.Message.Contains("GgufPreTokenizers", StringComparison.Ordinal)
+                      && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), ex.Message);
+            }
+            finally
+            {
+                GgufPreTokenizers.Fallback = fallback;
+            }
 
             GgufPreTokenizers.Register("testsplit", qwen2);
             try

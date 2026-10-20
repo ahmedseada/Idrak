@@ -51,7 +51,7 @@ internal static partial class Tests
                 "Gemma writes its configuration; Gemma 3 reads checkpoints only; Gemma 3 with images fits each checkpoint's naming");
             Check(GemmaArchitectures.TensorName("layers.3.post_mlp_norm.weight") == "model.layers.3.post_feedforward_layernorm.weight"
                   && GemmaArchitectures.TensorName("layers.0.mlp_norm.weight") == "model.layers.0.pre_feedforward_layernorm.weight"
-                  && GemmaArchitectures.TensorName("layers.1.attn.q.weight") == PretrainedFamilies.LlamaTensorName("layers.1.attn.q.weight"),
+                  && GemmaArchitectures.TensorName("layers.1.attn.q.weight") == PretrainedFamilies.CommonTensorName("layers.1.attn.q.weight"),
                 "the four norms under Gemma's names, the rest under the Llama names");
             GemmaPlugin.Unregister();
             Check(!GemmaPlugin.IsRegistered && IdrakPlugins.Find("gemma") is null && !PretrainedArchitectures.Names.Any(GemmaPlugin.Architectures.Contains),

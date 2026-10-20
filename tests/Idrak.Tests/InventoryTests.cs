@@ -795,7 +795,8 @@ internal static partial class Tests
         };
     }
 
-    // A registry's built-in names, read from its static Names property when it has one.
+    // A registry's built-in names, read from its static Names property when it has one; by its static Origin when it has
+    // one, the plug-in packages' names (which the runner registers at startup) are left out.
     private static string RegisteredNames(Type type)
     {
         var names = type.GetProperty("Names", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
@@ -804,7 +805,14 @@ internal static partial class Tests
             return "—";
         }
 
-        var list = ((IEnumerable<string>)names.GetValue(null)!).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var origin = type.GetMethod("Origin", BindingFlags.Public | BindingFlags.Static, [typeof(string)]);
+        var all = (IEnumerable<string>)names.GetValue(null)!;
+        if (origin is not null && origin.ReturnType == typeof(string))
+        {
+            all = all.Where(n => !PluginPackageNames.Contains((string?)origin.Invoke(null, [n]), StringComparer.Ordinal));
+        }
+
+        var list = all.Order(StringComparer.OrdinalIgnoreCase).ToList();
         return list.Count == 0 ? "—" : list.Count <= 8 ? string.Join(", ", list) : string.Join(", ", list.Take(8)) + $", +{list.Count - 8}";
     }
 

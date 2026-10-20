@@ -5,6 +5,10 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Text;
+using Idrak.Text.Plugins.DeepSeek;
+using Idrak.Text.Plugins.Harmony;
+using Idrak.Text.Plugins.Mistral;
+using Idrak.Text.Plugins.Qwen;
 using Formats = Idrak.Abstraction.Generation.ToolCallFormats;
 
 // Tool-call formats: each built-in format detected from a family's published chat template (cut to the parts that
@@ -36,8 +40,8 @@ internal static partial class Tests
         foreach (var (name, template, expected) in new[]
         {
             ("qwen", qwen, Formats.Json), ("llama", llama, Formats.Json), ("pythonic", pythonic, Formats.Pythonic),
-            ("qwen3-coder", qwenCoder, Formats.Qwen3Coder), ("mistral v3", mistralV3, Formats.Mistral), ("mistral", mistral, Formats.Mistral),
-            ("harmony", harmony, Formats.Harmony), ("deepseek v3.1", deepSeek31, Formats.DeepSeek), ("deepseek r1", deepSeekR1, Formats.DeepSeek),
+            ("qwen3-coder", qwenCoder, QwenPlugin.ToolCallFormat), ("mistral v3", mistralV3, MistralPlugin.ToolCallFormat), ("mistral", mistral, MistralPlugin.ToolCallFormat),
+            ("harmony", harmony, HarmonyPlugin.ToolCallFormat), ("deepseek v3.1", deepSeek31, DeepSeekPlugin.ToolCallFormat), ("deepseek r1", deepSeekR1, DeepSeekPlugin.ToolCallFormat),
         })
         {
             Check(template.ToolCallFormatName == expected, $"{name}: detected '{template.ToolCallFormatName}', expected '{expected}'");
@@ -130,8 +134,12 @@ internal static partial class Tests
     private static void ToolCallFormatsRegistry(Device device)
     {
         _ = device;
-        string[] builtIn = [Formats.DeepSeek, Formats.Harmony, Formats.Mistral, Formats.Qwen3Coder, Formats.Pythonic, Formats.Json];
-        Check(Formats.Names.SequenceEqual(builtIn), $"built-in formats in the order asked: {string.Join(", ", Formats.Names)}");
+        // The library's formats are asked last, "json" last of all; the families' (Idrak.Text.Plugins') before them.
+        string[] families = [DeepSeekPlugin.ToolCallFormat, HarmonyPlugin.ToolCallFormat, MistralPlugin.ToolCallFormat, QwenPlugin.ToolCallFormat];
+        string[] builtIn = [.. Formats.Names];
+        Check(builtIn.TakeLast(2).SequenceEqual([Formats.Pythonic, Formats.Json]) && builtIn.Take(builtIn.Length - 2).ToHashSet().SetEquals(families)
+              && families.All(f => Formats.Origin(f) == "Idrak.Text.Plugins") && Formats.Origin(Formats.Pythonic) == Overrides.Library && Formats.Origin(Formats.Json) == Overrides.Library,
+            $"the families' formats, then the library's in the order asked: {string.Join(", ", Formats.Names)}");
 
         // A format of its own: <<name|{json}>>, detected from the template's rendered probe call.
         const string Template = """
@@ -171,7 +179,7 @@ internal static partial class Tests
         }
         catch (NotSupportedException ex)
         {
-            Check(ex.Message.Contains("'nope'", StringComparison.Ordinal) && ex.Message.Contains("qwen3-coder, pythonic", StringComparison.Ordinal)
+            Check(ex.Message.Contains("'nope'", StringComparison.Ordinal) && ex.Message.Contains("pythonic, json", StringComparison.Ordinal)
                   && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), ex.Message);
         }
 

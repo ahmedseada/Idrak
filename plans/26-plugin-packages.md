@@ -2,8 +2,10 @@
 
 **Status (2026-10-20, `abstraction`):** planned 2026-10-19 from the owner's decisions in the Plan 24 session, against the
 code at 63f8893, and widened 2026-10-20 to every reusable piece outside the library (a read of the code of every
-package, sample and test project, not of the plans: every "Comes from" below was found in the source). Nothing is
-built. No phase starts until the owner names it.
+package, sample and test project, not of the plans: every "Comes from" below was found in the source). **Finished
+2026-10-20:** every phase built, merged and pushed (CPU passes, each merge's run in "Runs"); the owner's CUDA and real-model
+runs are in each phase's note; P7 asks for the full suite. What is left is "Leftovers for the owner", to be discussed
+with the owner before any of it starts.
 
 | Phase | What | Lane | State |
 |---|---|---|---|
@@ -14,7 +16,7 @@ built. No phase starts until the owner names it.
 | P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Done 2026-10-20; CPU pass |
 | P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Done 2026-10-20; CPU pass |
 | P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Done 2026-10-20; CPU pass |
-| P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
+| P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Done 2026-10-20; CPU pass |
 | P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Done 2026-10-20 (core); CLI `run`/server for seq2seq and a beam setting go with P10 |
 | P9 | BERT (`Idrak.Text.Plugins.Bert`) | B | Done 2026-10-20; CPU pass (real models: the owner) |
 | P10 | T5 (`Idrak.Text.Plugins.T5`) | B | Done 2026-10-20; CPU pass (`idrak serve` not yet) |
@@ -580,6 +582,89 @@ gets "not registered" naming `Idrak.Text.Plugins`.
 `cli run:`, `cli serve:` and Plan 24's BPE baseline pass unchanged through the plug-ins, and `idrak chat` loads a model
 with nothing added.
 
+**P7 as built (2026-10-20).** Llama, Mistral and Mixtral, Qwen2/Qwen3 and their MoE, and the DeepSeek and harmony
+tool-call formats leave the library for `Idrak.Text.Plugins`, one namespace each, public API only:
+- **The plug-ins** (each an `IdrakPlugin`; `TextPlugins.All` is now BERT, T5, Gemma, Llama, Qwen, Mistral, harmony,
+  DeepSeek, an order that keeps the tool-call formats asked as before: deepseek, harmony, mistral, qwen3-coder, then the
+  library's pythonic and json):
+  - `Idrak.Text.Plugins.Llama` ("llama"): `LlamaForCausalLM` (`LlamaArchitectures.Llama()`), the GGUF mapping `llama`
+    (`LlamaArchitectures.Gguf()`: interleaved q/k rows, experts as `MixtralForCausalLM`, Llama 3's `rope_freqs.weight`
+    read back as the llama3 scaling), the pre-tokenizer names `llama3`, `llama-bpe`, `llama-v3`, `smaug-bpe`, `falcon3`,
+    `pixtral` (`LlamaArchitectures.SplitPattern`), RoPE `llama3` (`LlamaRopeScaling`: `Name`, `Create`, `Scale`), and the
+    pre-tokenizer fallback `llama3` when none is set (taken back only if it set it).
+  - `Idrak.Text.Plugins.Qwen` ("qwen"): `Qwen2ForCausalLM`, `Qwen3ForCausalLM`, `Qwen2MoeForCausalLM`,
+    `Qwen3MoeForCausalLM` (`QwenArchitectures`, `MoeTensorName`), the GGUF mappings `qwen2`, `qwen3`, `qwen2moe`,
+    `qwen3moe`, the pre-tokenizer names `qwen2`, `qwen35`, `megrez`, `hunyuan`, the tool-call format `qwen3-coder`.
+  - `Idrak.Text.Plugins.Mistral` ("mistral"): `MistralForCausalLM`, `MixtralForCausalLM` (`MistralArchitectures`,
+    `MixtralTensorName`), the pre-tokenizer `tekken`, the tool-call format `mistral`; `Requires(LlamaPlugin)` (its GGUF
+    files are llama.cpp's `llama`).
+  - `Idrak.Text.Plugins.DeepSeek` ("deepseek"): the tool-call format `deepseek` and the pre-tokenizer
+    `deepseek-r1-qwen` (Qwen2's pattern, `QwenArchitectures.SplitPattern`); `Idrak.Text.Plugins.Harmony` ("harmony"): the
+    tool-call format `harmony` (the namespaces the candidates table gives).
+- **Moved as they were** (rule 71, a scratch diff of each block against the removed one): the four parsers byte for byte;
+  `MixtralTensorName`, `QwenMoeTensorName` (now `MoeTensorName`), Llama 3's GGUF scaling and the llama3 method with
+  only their names and the call to `PretrainedFamilies.CommonTensorName` changed (the method gained an argument check);
+  the three split patterns and the GGUF mappings' values identical; the detectors' lambdas as they were.
+- **The library keeps no family:** `PretrainedFamilies.BuiltIns` and the static registrations of
+  `PretrainedArchitectures` and `GgufArchitectures` are gone (empty tables); `GgufPreTokenizers` keeps GPT-2's rule
+  (`gpt2`, `gpt-2`, `default`); `RopeScalings` keeps `linear`, `yarn`, `dynamic`; `ToolCallFormats` keeps `json`,
+  `pythonic`. `PretrainedModel.Load` of an architecture nobody registered is refused with
+  "No architecture 'X' is registered (…); … reference Idrak.Text.Plugins …" (P8's text); `GgufModel.Prepare` of a
+  family nobody registered with "GGUF architecture 'x' is not registered … Idrak.Text.Plugins"; an unknown RoPE scaling
+  now names the package too.
+- **Contracts:** no new registry. Where the GGUF converter held family code it now asks the mapping:
+  `GgufArchitecture.ExpertCountKey` (the expert count's config key: `num_experts` unless set; Llama's mapping sets
+  Mixtral's `num_local_experts`) and `GgufArchitecture.Configure` (the family's own keys, run before the generic RoPE
+  keys, which are skipped when it sets `rope_scaling`: Llama 3's `rope_freqs.weight`). The pre-tokenizer of a name
+  nobody registered was Llama 3's, fixed in the library: now the setting `GgufPreTokenizers.Fallback` (null in the
+  library: such a file is refused naming the registry and the package; the Llama plug-in sets `llama3` when unset, so
+  behaviour with the package is as before).
+- **Public members:** `MarkedToolCallParser` is a public abstract base (protected constructor, `Context`, `Open`,
+  `Close`, `Parse`, `Decide`); `ToolCallText` (its JSON and marker helpers) and `CharBuffer` (harmony's held text) are
+  public; `RopeScaling.Number` is public (the llama3 method reads its parameters with it).
+- **Renamed or removed (for the owner to confirm):** `PretrainedFamilies.LlamaStyle` → `CommonArchitecture` and
+  `LlamaTensorName` → `CommonTensorName` (both old names kept one release, `[Obsolete]`; the plug-ins and the vision and
+  audio plug-ins use the new ones); `PretrainedFamilies.MixtralTensorName` → `MistralArchitectures.MixtralTensorName`,
+  `QwenMoeTensorName` → `QwenArchitectures.MoeTensorName`, `RopeScaling.Llama3` → `LlamaRopeScaling.Create`,
+  `ToolCallFormats.Qwen3Coder`, `Mistral`, `Harmony`, `DeepSeek` → each plug-in's `ToolCallFormat` (removed from the
+  library, no obsolete copy: a forwarder would keep family code there). `DecoderSpec`'s reader of Idrak's earlier
+  JSON form of a llama3 scaling builds the same scaling data itself. The conformance kit's `RopeScalingSuite` has no
+  built-in llama3 parameters (a plug-in's scaling is checked with its own).
+- **Users moved on:** LLaVA (`Idrak.Vision.Plugins.Llava`) `Requires` Llama, Mistral and Qwen (its text_config's
+  families); Gemma, IdrakAudio, IdrakVision and Qwen-VL's text decoder use the renamed helpers. The samples Chat and
+  CodingAgent (they loaded any family the library had) reference `Idrak.Text.Plugins` and call
+  `TextPlugins.RegisterAll()`; no bench loads these families. The tool registers the package at startup (P1), so
+  `idrak chat` and `run` need no `-P`: checked in the tool's own process (`plugins: llama`).
+- **Tests:** the runner registers `TextPlugins.RegisterAll()` at startup, as an app and the tool do (some hundred tests
+  in forty files, the cluster ranks' child processes among them, build Llama or Qwen models; P6's per-test
+  `GemmaPlugin.Register()` calls stay and do nothing) — **for the owner to confirm** (the other way is a registration
+  in each test and in the cluster child entry). New: `plugins: llama`, `plugins: qwen`, `plugins: mistral`,
+  `plugins: deepseek`, `plugins: harmony` (the library's empty tables, not registered naming the package, Register
+  twice, Unregister as found, Mistral's `Requires`, the fallback, the tool's own process). Changed expectations, each
+  naming the cause: the GGUF architectures and pre-tokenizers come from `Idrak.Text.Plugins`, none from the library
+  (`plugins:`), an unregistered pre-tokenizer without a fallback is refused, the tool-call formats' order (the families'
+  then the library's), the override report's RoPE rows (a plug-in's added scaling has no default), the conformance
+  kit's llama3 check with its parameters, `LlamaRopeScaling.Create` and the moved name maps in `rope scaling:`,
+  `decoder:` and `mixture of experts:`. The inventory's registered-names column lists the library's own names (by each
+  registry's `Origin`), since the runner now registers the package before it runs.
+- **Left as they were (listed for the owner):** `GgufModel.WriteTokenizer`'s fallback chat templates for a GGUF file
+  without one (ChatML by `<|im_start|>`, Llama 3's by `<|start_header_id|>`) stay in the library: a template fallback
+  needs a contract of its own. `DecoderSpec` reads Idrak's own earlier llama3 JSON form (a file format, not a family).
+- **Run (CPU, the agent):** before, the phase's groups 178 passed (`pretrained:` 9, `gguf:` 3, `decoder:` 12,
+  `rope scaling:` 2, `chat templates:` 5 (the tool-call formats), `fine-tuning:` 16, `cli run:` 9, `cli serve:` 7,
+  `tokenizers:` 53 (Plan 24's BPE baseline among them), `plugins:` 25 with the op, packed and kv plug-ins 4, 5, 3,
+  `mixture of experts:` 3, `generation:` 13, `coding tools:` 3, `cli models:` 6). After one build (the two changed
+  samples built too): those groups the same counts, `plugins:` 30 (the five new), and with the guards (`public API`,
+  `abstraction inventory`, `naming:`, `conformance kit:`, `override loop:`, `engine:`, `generic components`) and every
+  group whose tests load a moved family (pretrain, vlm scratch, audio chat, language, asr, cli and train, distillation,
+  fine-tuning options, cli measure, design, polish, health, pretrain, vision, images, arabic, tool contracts, mcp, the
+  vision contracts and tuning groups, qwen vl, image prefill, pan and scan, image families and transforms, the image
+  reader, conversation tuning, tokenizer training, pytorch checkpoint, four cluster tests through rank processes):
+  467 passed, 0 failed. The inventory's names column fixed after (one rebuild): `abstraction inventory|public API` 6
+  of 6.
+- **Owner:** the full suite once (P7 reaches every package), the CUDA filters, and the real models: `idrak chat` and
+  `idrak run` on Llama, Mistral, Mixtral, Qwen2, Qwen3 folders and a GGUF file with no `-P`.
+
 ## Phase P8: the engine for encoders and encoder-decoders
 
 Generic, no family in it; each part is a contract and a registry or a setting:
@@ -784,7 +869,23 @@ The owner takes these after this plan is finished; no agent starts them before.
   (the 4B config test in `VisionLanguageModelTests`, a "0.83 GB less" comment in `Gemma3Vision.cs`).
 - **P6, local folders:** `samples/Gemma3Vision/Idrak.Gemma3Vision/{obj,bin}` and an old `Idrak.Gemma3Vision.dll` in the
   test output on machines that built them.
-- Later phases add theirs here.
+- **P7, to confirm:** `tests/Idrak.Tests/Program.cs` calls `TextPlugins.RegisterAll()` once at startup, as an app does
+  (about 100 tests in 40 files build Llama or Qwen models, and the cluster tests' child processes need them); tests of
+  "not registered" take a family away and put it back. The other way is a register call in each test and in the cluster
+  child entry.
+- **P7, renamed or removed public names:** `PretrainedFamilies.LlamaStyle` → `CommonArchitecture` and `LlamaTensorName`
+  → `CommonTensorName` (old names kept one release, obsolete); removed with no forwarder: `MixtralTensorName` →
+  `MistralArchitectures.MixtralTensorName`, `QwenMoeTensorName` → `QwenArchitectures.MoeTensorName`,
+  `RopeScaling.Llama3` → `LlamaRopeScaling.Create`, `ToolCallFormats.Qwen3Coder`/`Mistral`/`Harmony`/`DeepSeek` → each
+  plug-in's `ToolCallFormat`; `RopeScalingSuite` has no built-in llama3 parameters; LLaVA registers Llama, Mistral and
+  Qwen when missing; a GGUF pre-tokenizer name nobody registered is refused unless a plug-in sets
+  `GgufPreTokenizers.Fallback` (the Llama plug-in sets `llama3`, as before).
+- **P7, fallback chat templates for a GGUF file without one** (`src/Idrak/Models/GgufModel.cs`, `WriteTokenizer`): Llama
+  3's template and ChatML are still chosen in the library by their tokens; moving them needs a template-fallback
+  contract.
+- **P7, `DecoderSpec` still reads Idrak's earlier llama3 spec JSON** (`src/Idrak.Abstraction/Generation/DecoderSpec.cs`):
+  a file format, not family logic.
+- **P7 on P6's GGUF leftover:** `GgufArchitecture.Configure` now gives a plug-in the hook a Gemma GGUF mapping needs.
 
 ## Order and parallelism
 
@@ -854,3 +955,5 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P5 merged (on P4) | CPU (cloud, 4 threads) | the P5 and P4 filters with the guards, engine, cli run, cli models, pretrained; ArabicOcr and LegalOcr tests | 278 passed, 0 failed; 14 and 12 passed |
 | 2026-10-20 | P6 | CPU (cloud, 4 threads) | the Gemma groups: pretrained, gguf, plugins, chat templates, cli run, cli models, the guards, engine, generic components, vision, tuning, image, CLI image and serve, decoder, pretrain, tokenizers; ArabicOcr and LegalOcr tests | 316 passed, 0 failed (315 before, + `plugins: gemma`); 14 and 12 passed, as before |
 | 2026-10-20 | P6 merged (on P5) | CPU (cloud, 4 threads) | the P6 and P5 filters with the guards; ArabicOcr and LegalOcr tests | 282 passed, 1 failed (P5's `plugins: vision` expected four plug-ins; Gemma 3 vision is the fifth), fixed: `plugins:` and the guards 43 passed, 0 failed; 14 and 12 passed |
+| 2026-10-20 | P7 | CPU (cloud, 4 threads) | the P7 groups (pretrained, gguf, decoder, rope scaling, chat templates, fine-tuning, cli run, cli serve, tokenizers with the BPE baseline, plugins, mixture of experts, generation, coding tools, cli models), the guards and every group loading a moved family | 178 before; after one build 467 passed, 0 failed (the P7 groups the same counts, plugins 25 → 30 with the five new); inventory column fix, then 6 of 6 |
+| 2026-10-20 | P7 merged (on P6, no conflicts) | CPU (cloud, 4 threads) | one build, Chat and CodingAgent built; the P7 filters with the guards, pretrain, vlm scratch, audio language, vision contracts, qwen vl, a cluster child-process test | 284 passed, 0 failed |

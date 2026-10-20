@@ -30,11 +30,25 @@ public sealed class GgufArchitecture
     /// as llama.cpp decides per family; null leaves it to the Hugging Face family's default.
     /// </summary>
     public bool? NormalizeTopK { get; init; }
+
+    /// <summary>
+    /// The config.json key a file's expert count ({name}.expert_count) is written under, as the Hugging Face family with
+    /// experts names it: "num_experts" unless set (a family may call it "num_local_experts").
+    /// </summary>
+    public string ExpertCountKey { get; init; } = "num_experts";
+
+    /// <summary>
+    /// Adds the family's own keys to the config.json written for a file (the file, the config with the common keys, the
+    /// notes of what was assumed), for what the family stores its own way; null (the default) for none. It runs before
+    /// the file's generic RoPE scaling keys ({name}.rope.scaling.*) are read, which are left out when it sets
+    /// "rope_scaling" itself.
+    /// </summary>
+    public Action<GgufFile, System.Text.Json.Nodes.JsonObject, List<string>>? Configure { get; init; }
 }
 
 /// <summary>
-/// The model families GGUF files are read as, by GGUF architecture name. Idrak registers llama (Llama,
-/// Mistral, and Mixtral when the file has experts), qwen2, qwen3, qwen2moe and qwen3moe; add others with
+/// The model families GGUF files are read as, by GGUF architecture name. The library registers none: the families are
+/// plug-ins' (Idrak.Text.Plugins registers llama, qwen2, qwen3, qwen2moe and qwen3moe); add others with
 /// <see cref="Register"/>.
 /// </summary>
 public static class GgufArchitectures
@@ -42,9 +56,7 @@ public static class GgufArchitectures
     private static readonly SlotTable<string, GgufArchitecture> Registry = new(nameof(GgufArchitectures), comparer: StringComparer.Ordinal,
         unguarded: "an architecture is a description read once, not a call");
 
-    static GgufArchitectures() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterGgufArchitectures);   // the built-in families, on first use
-
-    /// <summary>Registers how to read the GGUF architecture <paramref name="name"/>; under a built-in name it overrides the library's until <see cref="Unregister"/>.</summary>
+    /// <summary>Registers how to read the GGUF architecture <paramref name="name"/>, until <see cref="Unregister"/>.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, GgufArchitecture architecture)
     {
@@ -52,7 +64,7 @@ public static class GgufArchitectures
         Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly(), architecture.HuggingFace);
     }
 
-    /// <summary>Removes the app's architecture <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    /// <summary>Removes the architecture <paramref name="name"/> an app or plug-in registered; false when none did.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered architecture names.</summary>

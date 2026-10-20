@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
+using Idrak.Text.Plugins.Llama;
 
 // Plan 10, phases 5 and 6c: the testing kit (Idrak.Abstraction.Testing) is the one source of the per-device operation
 // checks. The device check runs on every device of the run; the contract checks, stress runs and saved cases once.
@@ -150,10 +151,14 @@ internal static partial class Tests
         exact.ThrowIfFailed();
         Check(!Conformance.Check(new CharTokenizer("ab"), new TokenizerSuite { ExactRoundTrip = true }).Passed, "dropping characters breaks an exact round trip");
 
-        foreach (string type in new[] { "linear", "llama3", "yarn", "dynamic" })
+        foreach (string type in new[] { "linear", "yarn", "dynamic" })
         {
             Conformance.CheckRopeScaling(type).ThrowIfFailed();
         }
+
+        // A plug-in's scaling (Idrak.Text.Plugins' llama3, which the library has none of) is checked with its own parameters.
+        Conformance.Check(RopeScalings.Get(LlamaRopeScaling.Name), new RopeScalingSuite(LlamaRopeScaling.Name,
+            [LlamaRopeScaling.Create(8).Parameters, LlamaRopeScaling.Create(32, 1, 4, 8192).Parameters, LlamaRopeScaling.Create(4, 2, 8, 4096).Parameters])).ThrowIfFailed();
 
         // A YaRN that forgets its attention factor differs from the library's.
         RopeScalingMethod noFactor = input => RopeScalings.Default("yarn")!(input) with { AttentionFactor = 1.0 };

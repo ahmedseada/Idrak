@@ -19,9 +19,17 @@ public static class TextPlugins
 
     /// <summary>
     /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: BERT
-    /// (<see cref="Bert.BertPlugin"/>), T5 (<see cref="T5.T5Plugin"/>), Gemma (<see cref="Gemma.GemmaPlugin"/>).
+    /// (<see cref="Bert.BertPlugin"/>), T5 (<see cref="T5.T5Plugin"/>), Gemma (<see cref="Gemma.GemmaPlugin"/>), Llama
+    /// (<see cref="Llama.LlamaPlugin"/>), Qwen (<see cref="Qwen.QwenPlugin"/>), Mistral (<see cref="Mistral.MistralPlugin"/>),
+    /// harmony (<see cref="Harmony.HarmonyPlugin"/>), DeepSeek (<see cref="DeepSeek.DeepSeekPlugin"/>). The tool-call
+    /// formats are asked the last registered first, so detection asks "deepseek", "harmony", "mistral", "qwen3-coder",
+    /// then the library's.
     /// </summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Bert.BertPlugin.Plugin, T5.T5Plugin.Plugin, Gemma.GemmaPlugin.Plugin];
+    public static IReadOnlyList<IIdrakPlugin> All { get; } =
+    [
+        Bert.BertPlugin.Plugin, T5.T5Plugin.Plugin, Gemma.GemmaPlugin.Plugin, Llama.LlamaPlugin.Plugin, Qwen.QwenPlugin.Plugin, Mistral.MistralPlugin.Plugin,
+        Harmony.HarmonyPlugin.Plugin, DeepSeek.DeepSeekPlugin.Plugin,
+    ];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

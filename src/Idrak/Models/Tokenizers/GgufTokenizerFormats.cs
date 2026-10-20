@@ -16,7 +16,7 @@ namespace Idrak.Models;
 internal static class GgufTokenizerFormats
 {
     // Byte-level BPE: the vocabulary and merges, token types 3 and 4 as added tokens (3 special), the pre-tokenizer's split
-    // pattern by tokenizer.ggml.pre (GgufPreTokenizers), the ByteLevel decoder.
+    // pattern by tokenizer.ggml.pre (GgufPreTokenizers, or its fallback for a name nobody registered), the ByteLevel decoder.
     public static TokenizerDefinition Gpt2(GgufFile file, IReadOnlyList<string> tokens, List<string> notes)
     {
         var types = file.Get<long[]>("tokenizer.ggml.token_type", []);
@@ -37,8 +37,14 @@ internal static class GgufTokenizerFormats
         string pre = file.Get("tokenizer.ggml.pre", "default");
         if (!GgufPreTokenizers.TryGet(pre, out string? pattern))
         {
-            pattern = GgufBuiltIns.Llama3Pattern;
-            notes.Add($"pre-tokenizer '{pre}' is not registered; Llama 3's splitting rule is used (tokens may differ slightly from the original; " +
+            if (GgufPreTokenizers.Fallback is not { } fallback || !GgufPreTokenizers.TryGet(fallback, out pattern))
+            {
+                throw new NotSupportedException($"{file.Path}: GGUF pre-tokenizer '{pre}' is not registered (registered: {string.Join(", ", GgufPreTokenizers.Names)}), "
+                    + "and no registered fallback is set (GgufPreTokenizers.Fallback); register the family's pattern with GgufPreTokenizers.Register, "
+                    + "or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
+            }
+
+            notes.Add($"pre-tokenizer '{pre}' is not registered; the splitting rule of '{fallback}' (GgufPreTokenizers.Fallback) is used (tokens may differ slightly from the original; " +
                 "register the family's pattern with GgufPreTokenizers.Register).");
         }
 

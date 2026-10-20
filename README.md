@@ -81,10 +81,10 @@ and `Idrak.Gpu` along; the others are added by domain.
 
 ### Language models
 
-- Families registered: Llama, Mistral, Mixtral, Qwen2, Qwen2-MoE, Qwen3, Qwen3-MoE; GGUF architectures llama, qwen2,
-  qwen2moe, qwen3, qwen3moe. Gemma, Gemma 2 and Gemma 3 (text and conditional generation) are the plug-in package
-  `Idrak.Text.Plugins` (`Idrak.Text.Plugins.Gemma`). Any other family fails loudly with "not registered" and is added
-  as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
+- Families: the plug-in package `Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`; the `idrak` tool registers it):
+  Llama, Mistral, Mixtral, Qwen2, Qwen2-MoE, Qwen3, Qwen3-MoE (GGUF architectures llama, qwen2, qwen2moe, qwen3,
+  qwen3moe), Gemma, Gemma 2 and Gemma 3, BERT and T5, one namespace each; the library registers none. A family nobody
+  registered fails loudly with "not registered" and is added as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
 - Checkpoints: safetensors, GGUF (every ggml quantization dequantized or run packed), PyTorch zip read without running
   it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; packed weights bfloat16, int8, int4; KV caches in
   bfloat16, float32 or int8.
