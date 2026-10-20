@@ -810,36 +810,39 @@ the uncached one.
 
 The owner takes these after this plan is finished; no agent starts them before.
 
-**Sorted for the discussion (2026-10-20, after P7).** Severity: 🔴 wrong or unprovable results, 🟡 a bug, a missing
-piece, speed or memory, or a decision to confirm, 🟢 small. The details of each row are in the phase notes below.
+**By priority, for the discussion (2026-10-20, after P7).** The owner's decisions first (answers, not code; the
+renames settle the public API before anything builds on it), then wrong or unprovable results, bugs, speed and memory
+(the library's main goal), missing contracts and pieces, and the small ones. Severity: 🔴 wrong or unprovable results,
+🟡 a bug, a missing piece, speed or memory, or a decision to confirm, 🟢 small. The details of each row are in the phase
+notes below.
 
-| # | Sev | Leftover | From |
-|---|---|---|---|
-| 1 | 🔴 | The CRNN's backward LSTM reads a batch's right padding: a line's reading depends on the batch it is in | P5 |
-| 2 | 🔴 | ArabicOcr training is not reproducible with one seed: training cannot be proven unchanged (rules 71, 86) | P5 |
-| 3 | 🟡 | `idrak tune init` writes the text example for a Gemma 3 vision checkpoint unless `-P` is given | P6 |
-| 4 | 🟡 | ONNX export of a `TransformerEncoderLayer` with a custom activation throws an invalid cast (existing) | P10 |
-| 5 | 🟡 | `idrak serve` cannot serve an encoder-decoder (`idrak run` can) | P10 |
-| 6 | 🟡 | No GGUF mapping for Gemma (`GgufArchitecture.Configure` is now the hook) | P6, P7 |
-| 7 | 🟡 | Speed: the bucketed bias index rebuilt on the host each cached step; attention with a bias scores every cache slot | P8, P10 |
-| 8 | 🟡 | Speed: beam search reads all beams x vocabulary logits back every step | P10 |
-| 9 | 🟡 | Speed: the CRNN prepares lines one after another, and builds random weights before overwriting them all | P5 |
-| 10 | 🟡 | Memory: the public `SafeTensorsWriter.Write` holds every tensor's values at once | P5 |
-| 11 | 🟡 | Memory: a tied checkpoint that also holds `lm_head.weight` is compared value by value on the host at load | P10 |
-| 12 | 🟡 | GGUF fallback chat templates (Llama 3's, ChatML) still chosen in the library; needs a template-fallback contract | P7 |
-| 13 | 🟡 | Batch measuring twice: `MeasuredLineBatches` (plug-in) and the CLI's in `ImageModelSupport` | P5 |
-| 14 | 🟡 | To confirm: ArabicOcr's left-to-right reading order | P3 |
-| 15 | 🟡 | To confirm: renamed and removed public names (Whisper and VITS plug-ins, Gemma tensor names, `LlamaStyle` → `CommonArchitecture`, the tool-call formats, …) | P4, P6, P7 |
-| 16 | 🟡 | To confirm: plug-in packages let `Idrak.Tests` see their internals | P4 |
-| 17 | 🟡 | To confirm: the tests register every text plug-in once at startup | P7 |
-| 18 | 🟡 | To confirm: ArabicOcr's model folder is `config.json` + `model.safetensors`; LLaVA ships; `Register()` runs once | P5 |
-| 19 | 🟢 | The CRNN's tensor names are positional: checkpoints from other tools cannot map to it | P5 |
-| 20 | 🟢 | `PretrainedArchitectures`' refusal says "No architecture 'X' is registered", unlike the other registries | P6 |
-| 21 | 🟢 | The coding agent's shell tool still starts processes in a library package | P4 |
-| 22 | 🟢 | No test of `TextPhonemizers.First()` refusing when empty | P4 |
-| 23 | 🟢 | Model names kept in the moved Gemma code's comments and test strings | P6 |
-| 24 | 🟢 | `DecoderSpec` still reads Idrak's earlier llama3 spec JSON | P7 |
-| 25 | 🟢 | The owner's machine: old sample `bin`/`obj` folders to delete | P4, P5, P6 |
+| # | Kind | Sev | Leftover | From |
+|---|---|---|---|---|
+| 1 | decide | 🟡 | To confirm: ArabicOcr's left-to-right reading order | P3 |
+| 2 | decide | 🟡 | To confirm: renamed and removed public names (Whisper and VITS plug-ins, Gemma tensor names, `LlamaStyle` → `CommonArchitecture`, the tool-call formats, …) | P4, P6, P7 |
+| 3 | decide | 🟡 | To confirm: plug-in packages let `Idrak.Tests` see their internals | P4 |
+| 4 | decide | 🟡 | To confirm: the tests register every text plug-in once at startup | P7 |
+| 5 | decide | 🟡 | To confirm: ArabicOcr's model folder is `config.json` + `model.safetensors`; LLaVA ships; `Register()` runs once | P5 |
+| 6 | results | 🔴 | The CRNN's backward LSTM reads a batch's right padding: a line's reading depends on the batch it is in | P5 |
+| 7 | results | 🔴 | ArabicOcr training is not reproducible with one seed: training cannot be proven unchanged (rules 71, 86) | P5 |
+| 8 | bug | 🟡 | `idrak tune init` writes the text example for a Gemma 3 vision checkpoint unless `-P` is given | P6 |
+| 9 | bug | 🟡 | ONNX export of a `TransformerEncoderLayer` with a custom activation throws an invalid cast (existing) | P10 |
+| 10 | speed | 🟡 | Speed: the bucketed bias index rebuilt on the host each cached step; attention with a bias scores every cache slot | P8, P10 |
+| 11 | speed | 🟡 | Speed: beam search reads all beams x vocabulary logits back every step | P10 |
+| 12 | speed | 🟡 | Speed: the CRNN prepares lines one after another, and builds random weights before overwriting them all | P5 |
+| 13 | memory | 🟡 | Memory: a tied checkpoint that also holds `lm_head.weight` is compared value by value on the host at load | P10 |
+| 14 | memory | 🟡 | Memory: the public `SafeTensorsWriter.Write` holds every tensor's values at once | P5 |
+| 15 | contract | 🟡 | GGUF fallback chat templates (Llama 3's, ChatML) still chosen in the library; needs a template-fallback contract | P7 |
+| 16 | contract | 🟡 | Batch measuring twice: `MeasuredLineBatches` (plug-in) and the CLI's in `ImageModelSupport` | P5 |
+| 17 | feature | 🟡 | `idrak serve` cannot serve an encoder-decoder (`idrak run` can) | P10 |
+| 18 | feature | 🟡 | No GGUF mapping for Gemma (`GgufArchitecture.Configure` is now the hook) | P6, P7 |
+| 19 | small | 🟢 | `PretrainedArchitectures`' refusal says "No architecture 'X' is registered", unlike the other registries | P6 |
+| 20 | small | 🟢 | No test of `TextPhonemizers.First()` refusing when empty | P4 |
+| 21 | small | 🟢 | The coding agent's shell tool still starts processes in a library package | P4 |
+| 22 | small | 🟢 | The CRNN's tensor names are positional: checkpoints from other tools cannot map to it | P5 |
+| 23 | small | 🟢 | `DecoderSpec` still reads Idrak's earlier llama3 spec JSON | P7 |
+| 24 | small | 🟢 | Model names kept in the moved Gemma code's comments and test strings | P6 |
+| 25 | small | 🟢 | The owner's machine: old sample `bin`/`obj` folders to delete | P4, P5, P6 |
 
 In the phases' words:
 - **ArabicOcr's left-to-right reading order (P3).** The recognizer now passes its direction to `runs`: right-to-left
