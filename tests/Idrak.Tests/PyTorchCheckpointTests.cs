@@ -6,7 +6,7 @@ using Idrak.Audio.Abstractions;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Models;
-using Idrak.OpenVoice;
+using Idrak.Audio.Plugins.OpenVoice;
 
 // PyTorch checkpoints read without running them (PyTorchCheckpointReader, the "pytorch" checkpoint format) and pulls of
 // a model kept in a repository's subfolder. The fixture comes from tools/pytorch/checkpoint_reference.py

@@ -8,7 +8,7 @@ using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Cli.Shared;
 using Idrak.Data;
-using Idrak.IdrakAudio;
+using Idrak.Audio.Plugins.IdrakAudio;
 using Idrak.Models;
 
 // Plan 21, S7's training commands: create, pretrain, resume and runs show of speech models, data audio --align, tune and
@@ -66,7 +66,8 @@ internal static partial class Tests
             tokenizer.Save(tokenizerFile);
             string ctcSpec = SpeechSpecFile(root, "ctc.json", ToneSpec(), tokenizerFile), ttsSpec = SpeechSpecFile(root, "tts.json", ToneTtsSpec(), tokenizerFile);
 
-            var unregistered = AudioCli("create", ctcSpec, "-o", Path.Combine(root, "none"));
+            IdrakAudioPlugin.Unregister();                                       // the runs above registered the tool's packages
+            var unregistered = AudioCliWithoutPackages("create", ctcSpec, "-o", Path.Combine(root, "none"));
             Check(unregistered.Code == 1 && unregistered.Err.Contains("not registered", StringComparison.Ordinal) && unregistered.Err.Contains("-P", StringComparison.Ordinal),
                 $"create without the plug-in: {unregistered.Code} {unregistered.Err}");
 

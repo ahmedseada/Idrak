@@ -19,6 +19,20 @@ AudioPlugins.RegisterAll();      // every family of the package; calling it agai
 - The `idrak` tool registers this package at startup, before any `-P` plug-in (which can still take a family's place);
   `RegisterIdrakPlugin()` is the `-P` entry, for a host that loads `Idrak.Audio.Plugins.dll` itself.
 
+## The families
+
+| Namespace | Plug-in (`IdrakPlugins` name) | Registers | Came from |
+|---|---|---|---|
+| `Idrak.Audio.Plugins.Whisper` | `WhisperPlugin` ("whisper") | `SpeechFamilies`: `WhisperForConditionalGeneration` | `samples/WhisperSpeech` |
+| `Idrak.Audio.Plugins.EspeakNg` | `EspeakNgPlugin` ("espeak-ng") | `TextPhonemizers`: "espeak-ng", which runs the espeak-ng program the user installs (`IDRAK_ESPEAK`, `IDRAK_ESPEAK_VOICE`) | `src/Idrak.Audio` |
+| `Idrak.Audio.Plugins.Vits` | `VitsPlugin` ("vits") | `SpeechSynthesisFamilies`: `VitsModel`; `TextRomanizers`: "uroman-arabic"; the espeak-ng plug-in when missing | `samples/VitsSpeech`, uroman's romanizer from `src/Idrak.Audio` |
+| `Idrak.Audio.Plugins.OpenVoice` | `OpenVoicePlugin` ("openvoice") | `VoiceConverters`: "openvoice" (its tensor names through the library's `RenamedTensorStore`) | `samples/OpenVoice` |
+| `Idrak.Audio.Plugins.IdrakAudio` | `IdrakAudioPlugin` ("idrak-audio") | `SpeechFamilies` and `SpeechSynthesisFamilies`: `IdrakAudio`; `PretrainedArchitectures` and `AudioFamilies`: `IdrakAudioForConditionalGeneration` | `samples/IdrakAudio` |
+
+Each family's folder has its README. The library itself registers no speech family, no voice converter, no romanizer
+and no phonemizer, and starts no outside program for text: the espeak-ng phonemizer is this package's only one.
+`samples/WhisperSpeech/transcribe.cs` and `samples/OpenVoice/voice.cs` are apps on this package.
+
 A model whose family is not registered is refused with "not registered", naming this package.
 
 License: Apache 2.0.

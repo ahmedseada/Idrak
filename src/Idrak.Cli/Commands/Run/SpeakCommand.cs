@@ -24,12 +24,13 @@ internal sealed class SpeakCommand : Command
     public override string Usage => """
         MODEL TEXT|-|--input FILE -o OUT [options]
 
-        Speaks the text with the model's family (a plug-in given with -P: the library registers none) and writes the
-        sound with the encoder of OUT's extension: .wav and .mp3 are built in (IDRAK_MP3_* set the MP3 encoder's bit
-        rate, rate, channels and quality). --voice names a speaker of the checkpoint or a voice installed with idrak voice add; an
-        embedding voice speaks in the model's voice and is converted to the voice's timbre by the converter it was made
-        with (its plug-in with -P too). -v adds the stage times, cold (the first call compiles and loads) and warm (a
-        second call), and the device's peak memory. The library plays no sound: open the file in any player.
+        Speaks the text with the model's family (the tool registers Idrak.Audio.Plugins' families, VITS among them;
+        another plug-in with -P) and writes the sound with the encoder of OUT's extension: .wav and .mp3 are built in
+        (IDRAK_MP3_* set the MP3 encoder's bit rate, rate, channels and quality). --voice names a speaker of the
+        checkpoint or a voice installed with idrak voice add; an embedding voice speaks in the model's voice and is
+        converted to the voice's timbre by the converter it was made with (OpenVoice is built in too). -v adds the stage
+        times, cold (the first call compiles and loads) and warm (a second call), and the device's peak memory. The
+        library plays no sound: open the file in any player.
 
         Arguments:
           MODEL                  a model folder (config.json and its weights), a hub id in the cache or an alias
@@ -59,11 +60,11 @@ internal sealed class SpeakCommand : Command
               --seed N           the seed of the noise (the same text and seed give the same sound)
 
         Examples:
-          idrak speak -P Idrak.VitsSpeech.dll facebook/mms-tts-eng "Hello, world." -o hello.wav
-          idrak speak -P Idrak.VitsSpeech.dll ./mms-tts-ara "مرحبا" -o hello.mp3 -d cuda
-          idrak speak -P Idrak.VitsSpeech.dll -P Idrak.OpenVoice.dll ./mms-tts-eng "Hi" --voice ahmed -o ahmed.wav -v
-          cat chapter.txt | idrak speak -P Idrak.VitsSpeech.dll ./mms-tts-eng - --split 400 -o chapter.wav
-          idrak speak -P Idrak.VitsSpeech.dll ./vits-vctk --list-voices
+          idrak speak facebook/mms-tts-eng "Hello, world." -o hello.wav
+          idrak speak ./mms-tts-ara "مرحبا" -o hello.mp3 -d cuda
+          idrak speak ./mms-tts-eng "Hi" --voice ahmed -o ahmed.wav -v
+          cat chapter.txt | idrak speak ./mms-tts-eng - --split 400 -o chapter.wav
+          idrak speak ./vits-vctk --list-voices
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =

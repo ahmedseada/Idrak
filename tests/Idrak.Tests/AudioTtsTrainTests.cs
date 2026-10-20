@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
-using Idrak.IdrakAudio;
+using Idrak.Audio.Plugins.IdrakAudio;
 using Idrak.Models;
 
 // Plan 21, phase S6: the IdrakAudio plug-in's "tts" task, the "durations" synthesis objective, length regulation, the

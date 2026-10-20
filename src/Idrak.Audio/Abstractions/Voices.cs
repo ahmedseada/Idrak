@@ -159,7 +159,7 @@ public interface IVoiceConverterFamily
 
 /// <summary>
 /// The voice converter families, by name (ordinal). The library registers none: a family is an application of these
-/// contracts, registered by the plug-in that brings it (<c>samples/OpenVoice</c> is one). A checkpoint no family reads is
+/// contracts, registered by the plug-in that brings it (Idrak.Audio.Plugins' OpenVoice family is one). A checkpoint no family reads is
 /// refused naming this registry; nothing falls back to another family.
 /// </summary>
 public static class VoiceConverters

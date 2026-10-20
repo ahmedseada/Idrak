@@ -7,8 +7,8 @@ using Idrak.Abstraction.Testing;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Models;
-using Idrak.OpenVoice;
-using Idrak.VitsSpeech;
+using Idrak.Audio.Plugins.OpenVoice;
+using Idrak.Audio.Plugins.Vits;
 
 // Plan 21, phase S9 route B: voices from a person's clips and voice conversion. The fixture comes from
 // tools/audio/make_tiny_audio.py --sections voices (tiny-openvoice/: a random OpenVoice converter from OpenVoice's own
@@ -283,7 +283,7 @@ internal static partial class Tests
 
     private static void AudioVoiceResolution(Device device)
     {
-        VitsSpeechPlugin.Register();
+        VitsPlugin.Register();
         OpenVoicePlugin.Register();
         string root = TempFolder("voiced");
         try
