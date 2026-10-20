@@ -93,8 +93,39 @@ public sealed class EncoderHead : Module
                 Tensor.Persistent(shift, [request.Width], device, requiresGrad: true), epsilon));
         }
 
-        layers.Add(Layer(request, "out", request.Width, request.Outputs, device, random));
+        if (request.TiedTo is { } table)
+        {
+            // A tied output: the token embedding read in place (transposed), its bias the checkpoint's.
+            if (table.Vocabulary != request.Outputs || table.Dim != request.Width)
+            {
+                throw new ArgumentException($"The head setting TiedTo is a [{request.Outputs}, {request.Width}] embedding (outputs, width); got [{table.Vocabulary}, {table.Dim}].",
+                    nameof(request));
+            }
+
+            var bias = Read(request, "out.bias", [request.Outputs]) ?? new float[request.Outputs];
+            var tied = Linear.Tied(table, Tensor.Persistent(bias, [request.Outputs], device, requiresGrad: true));
+            tied.Name = "out";
+            layers.Add(tied);
+        }
+        else
+        {
+            layers.Add(Layer(request, "out", request.Width, request.Outputs, device, random));
+        }
+
         return new EncoderHead(EncoderHeads.MaskedLanguageModel, pooled: false, request.Outputs, new Sequential(layers));
+    }
+
+    // "pooler": dense, activation over the pooled vector (its outputs the width).
+    internal static EncoderHead Pooler(EncoderHeadRequest request)
+    {
+        var (device, random) = Begin(request);
+        if (request.Outputs != request.Width)
+        {
+            throw new ArgumentException($"The head setting outputs of a pooler is its width ({request.Width}); got {request.Outputs}.", nameof(request));
+        }
+
+        var layers = new List<Module> { Layer(request, "dense", request.Width, request.Width, device, random), Activation(request, "tanh") };
+        return new EncoderHead(EncoderHeads.Pooler, pooled: true, request.Outputs, new Sequential(layers));
     }
 
     private static (Device Device, Random Random) Begin(EncoderHeadRequest request)

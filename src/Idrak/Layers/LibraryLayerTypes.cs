@@ -49,9 +49,9 @@ internal static class LibraryLayerTypes
                 : throw new NotSupportedException("an attention layer with a score scale, a position bias or an inner width of its own cannot be described"),
             (d, device) => new MultiHeadAttention(I(d, "dim"), I(d, "heads"), B(d, "causal"), 0f, device));
         LayerTypes.Register<TransformerEncoderLayer>("transformer", t => t.Children().ToList() is [_, MultiHeadAttention a, _, Linear ff, ..] && Plain(a)
-            ? new() { ["dim"] = t.Dim, ["heads"] = a.Heads, ["ffDim"] = ff.OutFeatures, ["causal"] = a.Causal }
+            ? Placed(new() { ["dim"] = t.Dim, ["heads"] = a.Heads, ["ffDim"] = ff.OutFeatures, ["causal"] = a.Causal }, t.Placement)
             : throw new NotSupportedException("a transformer layer without its standard sublayers cannot be described"),
-            (d, device) => new TransformerEncoderLayer(I(d, "dim"), I(d, "heads"), I(d, "ffDim"), 0f, B(d, "causal"), device));
+            (d, device) => new TransformerEncoderLayer(I(d, "dim"), I(d, "heads"), I(d, "ffDim"), 0f, B(d, "causal"), device) { Placement = NormsOf(d) });
         LayerTypes.Register<LSTM>("lstm", r => Recurrent(r, false),
             (d, device) => new LSTM(I(d, "in"), I(d, "hidden"), B(d, "sequences"), d["bidirectional"] is not null && B(d, "bidirectional"), d["layers"] is null ? 1 : I(d, "layers"), device));
         LayerTypes.Register<GRU>("gru", r => Recurrent(r, r.CandidateBias),
@@ -117,6 +117,24 @@ internal static class LibraryLayerTypes
     }
 
     private static int I(JsonObject d, string key) => (int)d[key]!;
+
+    // A post-norm block says so ("norms": "after"); a pre-norm one is described as before.
+    private static JsonObject Placed(JsonObject d, NormPlacement placement)
+    {
+        if (placement == NormPlacement.After)
+        {
+            d["norms"] = "after";
+        }
+
+        return d;
+    }
+
+    private static NormPlacement NormsOf(JsonObject d) => (string?)d["norms"] switch
+    {
+        null or "before" => NormPlacement.Before,
+        "after" => NormPlacement.After,
+        var other => throw new InvalidDataException($"A transformer layer's norms are \"before\" or \"after\"; got \"{other}\"."),
+    };
 
     // An attention layer a description ("dim", "heads", "causal") rebuilds: the default score scale, no position bias, the
     // heads as wide as the model.
