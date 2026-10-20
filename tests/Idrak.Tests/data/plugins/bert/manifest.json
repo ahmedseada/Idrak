@@ -1,0 +1,28 @@
+{
+ "files": {
+  "reference.json": {
+   "bytes": 5631,
+   "sha256": "5e5c8f776225a9e471566a2a69728c17e6ffccdec596107a5fd173d6a36743d6"
+  },
+  "reference.safetensors": {
+   "bytes": 109832,
+   "sha256": "6627068ba9bef7a28c1109ce489671beb129c348e402a39eecf7318346ce39e0"
+  },
+  "tiny-bert/config.json": {
+   "bytes": 801,
+   "sha256": "7f765d4da35a138c57a9bc371d996cb297815789ecf8dc57e6303de0117c3a6e"
+  },
+  "tiny-bert/model.safetensors": {
+   "bytes": 336688,
+   "sha256": "9329895e0fa299fe1c5ecbdc24b0623d184ae0b15664f7020486cfebc91d69a9"
+  }
+ },
+ "seed": 26009,
+ "versions": {
+  "python": "3.13.16",
+  "safetensors": "0.8.0",
+  "tokenizers": "0.23.3",
+  "torch": "2.14.1+cu130",
+  "transformers": "5.18.0"
+ }
+}

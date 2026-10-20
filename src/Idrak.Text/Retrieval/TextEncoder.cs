@@ -38,8 +38,9 @@ public sealed class TextEncoder : IEmbedder
         Tokenizer = tokenizer;
         MaxLength = maxLength;
         PadId = padId;
-        // A pretrained tokenizer's batch encode, giving Encode's ids cut to the first MaxLength: no special tokens, cut from
-        // the right, not padded (the pad ids are written below), ids only (offsets cost time and memory the encoder never uses).
+        // A pretrained tokenizer's batch encode, giving Encode's ids cut to the first MaxLength: no special tokens (unless
+        // SpecialTokens), cut from the right, not padded (the pad ids are written below), ids only (offsets cost time and
+        // memory the encoder never uses).
         _batchOptions = new TokenizerEncodeOptions
         {
             AddSpecialTokens = false, MaxLength = maxLength, Truncation = "longest_first", TruncationDirection = "right", Padding = "none",
@@ -82,6 +83,20 @@ public sealed class TextEncoder : IEmbedder
     {
         get => _pooler.Name;
         init => _pooler = SequencePoolers.Get(value);
+    }
+
+    /// <summary>
+    /// Whether each text is given its tokenizer's special tokens (the post-processor's, such as <c>[CLS] … [SEP]</c>), within
+    /// <see cref="MaxLength"/>, as a pretrained encoder saw its texts in training (its first token then the one a "first"
+    /// pooler reads): false by default, the text's own tokens alone. Needs an <see cref="IPretrainedTokenizer"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">Set with a tokenizer that is not an <see cref="IPretrainedTokenizer"/>.</exception>
+    public bool SpecialTokens
+    {
+        get => _batchOptions.AddSpecialTokens;
+        init => _batchOptions = !value || Tokenizer is IPretrainedTokenizer ? _batchOptions with { AddSpecialTokens = value }
+            : throw new ArgumentException($"The setting SpecialTokens needs a pretrained tokenizer (an IPretrainedTokenizer, whose post-processor adds them); got {Tokenizer.GetType().Name}.",
+                nameof(SpecialTokens));
     }
 
     /// <summary>The tokenizer.</summary>

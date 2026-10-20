@@ -543,8 +543,11 @@ public sealed class NetworkBuilder : INetworkBuilder
         return Push(_ => new Layers.PositionalEncoding(length, d, _device), _shape, step);
     }
 
-    /// <summary><c>new Layers.TransformerEncoderLayer(dim, heads, ffDim, dropout, causal)</c>; <c>dim</c> is the last dimension.</summary>
-    public NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false)
+    /// <summary>
+    /// <c>new Layers.TransformerEncoderLayer(dim, heads, ffDim, dropout, causal) { Placement = placement }</c>; <c>dim</c> is
+    /// the last dimension; <paramref name="placement"/> puts the norms before each sublayer (the default) or after each sum.
+    /// </summary>
+    public NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false, NormPlacement placement = NormPlacement.Before)
     {
         var (_, d) = Sequence("TransformerEncoderLayer");
         var step = Step("transformer", ("heads", heads), ("dropout", dropout), ("causal", causal));
@@ -553,7 +556,12 @@ public sealed class NetworkBuilder : INetworkBuilder
             step["ffDim"] = ff;
         }
 
-        return Push(r => new Layers.TransformerEncoderLayer(d, heads, ffDim, dropout, causal, _device, r), _shape, step);
+        if (placement == NormPlacement.After)
+        {
+            step["norms"] = "after";
+        }
+
+        return Push(r => new Layers.TransformerEncoderLayer(d, heads, ffDim, dropout, causal, _device, r) { Placement = placement }, _shape, step);
     }
 
     /// <summary><c>new Layers.MultiHeadAttention(dim, heads, causal, dropout)</c>; <c>dim</c> is the last dimension.</summary>
