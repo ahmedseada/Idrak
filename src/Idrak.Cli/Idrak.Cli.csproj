@@ -27,6 +27,10 @@
     <ProjectReference Include="..\Idrak.Vision\Idrak.Vision.csproj" />
     <!-- transcribe, speak, voice, data audio, data mel and the audio option of run and chat: sound files, features, speech and voices (plan 21). -->
     <ProjectReference Include="..\Idrak.Audio\Idrak.Audio.csproj" />
+    <!-- The model families as plug-ins (plan 26), registered at startup before the -P plug-ins load. -->
+    <ProjectReference Include="..\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
+    <ProjectReference Include="..\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
+    <ProjectReference Include="..\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
     <ProjectReference Include="..\Idrak.Cluster\Idrak.Cluster.csproj" />
     <ProjectReference Include="..\Idrak.Network\Idrak.Network.csproj" />
     <ProjectReference Include="..\Idrak.Mcp\Idrak.Mcp.csproj" />

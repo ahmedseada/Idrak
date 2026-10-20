@@ -7,7 +7,7 @@ namespace Idrak.Cli.Commands.Health;
 
 /// <summary>
 /// <c>idrak plugins list</c>: everything registered (formats, families, RoPE scalings, tool-call formats, graph ops,
-/// layer types, ONNX ops, devices); with <c>--plugin</c>, what each loaded assembly added.
+/// layer types, ONNX ops, plug-ins, devices); with <c>--plugin</c>, what each loaded assembly added.
 /// </summary>
 internal sealed class PluginsListCommand : Command
 {

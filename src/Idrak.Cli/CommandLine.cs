@@ -1,7 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Audio.Plugins;
 using Idrak.Cli.Shared;
+using Idrak.Text.Plugins;
+using Idrak.Vision.Plugins;
 
 namespace Idrak.Cli;
 
@@ -12,6 +15,28 @@ namespace Idrak.Cli;
 /// </summary>
 internal static class CommandLine
 {
+    /// <summary>
+    /// The plug-in packages the tool ships with (plan 26), in the order they are registered (text first: a vision or audio
+    /// family may build on a text one). Registered before every command: before <c>plugins list</c> takes its snapshot (they
+    /// are the tool's own, not added) and before the <c>--plugin</c> assemblies load (which can still take a family's
+    /// place). Registering is idempotent and loads no model: only the families' names.
+    /// </summary>
+    internal static readonly (string Package, Action RegisterAll)[] PluginPackages =
+    [
+        (TextPlugins.Package, TextPlugins.RegisterAll),
+        (VisionPlugins.Package, VisionPlugins.RegisterAll),
+        (AudioPlugins.Package, AudioPlugins.RegisterAll),
+    ];
+
+    /// <summary>Registers every family of <see cref="PluginPackages"/> (once: again changes nothing).</summary>
+    internal static void RegisterPluginPackages()
+    {
+        foreach (var (_, registerAll) in PluginPackages)
+        {
+            registerAll();
+        }
+    }
+
     /// <summary>Runs the tool with <paramref name="args"/>; returns the exit code. Used by Main and by the tests.</summary>
     public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error)
     {
@@ -94,6 +119,7 @@ internal static class CommandLine
             }
 
             context = new CommandContext(command, positional, options, flags, output, error);
+            RegisterPluginPackages();
             command.BeforePlugins(context);
             context.LoadPlugins();
             return command.Run(context);

@@ -4372,6 +4372,33 @@ public enum Idrak.Abstraction.PaddingMode : int
   Replicate = 2
   Zeros = 0
 
+public interface Idrak.Abstraction.Plugins.IIdrakPlugin
+  public bool IsRegistered { get; }
+  public string Name { get; }
+  public void Register()
+  public void Unregister()
+
+public abstract class Idrak.Abstraction.Plugins.IdrakPlugin : Idrak.Abstraction.Plugins.IIdrakPlugin
+  protected IdrakPlugin(string name)
+  protected abstract void RegisterParts()
+  protected void Part(System.Action register, System.Action unregister)
+  protected void Requires(Idrak.Abstraction.Plugins.IIdrakPlugin plugin)
+  public bool IsRegistered { get; }
+  public string Name { get; }
+  public void Register()
+  public void Unregister()
+
+public static class Idrak.Abstraction.Plugins.IdrakPlugins
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Get(string name)
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(Idrak.Abstraction.Plugins.IIdrakPlugin plugin)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Plugins.IIdrakPlugin plugin)
+  public static void RegisterAll(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Plugins.IIdrakPlugin> plugins)
+  public static void UnregisterAll(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Plugins.IIdrakPlugin> plugins)
+
 public static class Idrak.Abstraction.RandomDraws
   public static double NextGaussian(this System.Random random)
 

@@ -329,7 +329,7 @@ internal static partial class Tests
             }
             catch (NotSupportedException ex)
             {
-                Check(ex.Message.Contains("GgufArchitectures.Register", StringComparison.Ordinal), ex.Message);
+                Check(ex.Message.Contains("GgufArchitectures.Register", StringComparison.Ordinal) && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), ex.Message);
             }
 
             GgufArchitectures.Register("testllama", new GgufArchitecture { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true });

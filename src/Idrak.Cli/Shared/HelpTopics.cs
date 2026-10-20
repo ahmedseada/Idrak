@@ -177,6 +177,9 @@ internal static class HelpTopics
         types, ONNX ops or device kinds through the libraries' public Register methods. Everything it adds is then
         available to every command (e.g. -w MYFORMAT).
 
+        The tool itself registers the model families of Idrak.Text.Plugins, Idrak.Vision.Plugins and
+        Idrak.Audio.Plugins first, so a -P plug-in can still take a family's place.
+
         Commands: idrak plugins list (with -P: what the assembly added, marked "+"), idrak formats, idrak new plugin.
         """;
 

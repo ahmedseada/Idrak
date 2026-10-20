@@ -76,7 +76,7 @@ internal static partial class Tests
 
         WhisperSpeechPlugin.Unregister();
         ThrowsNaming<NotSupportedException>(() => SpeechModels.Load(AudioData("tiny-whisper"), new SpeechModelOptions { Device = device }),
-            "the family without the plug-in", "WhisperForConditionalGeneration", "not registered", "SpeechFamilies.Register");
+            "the family without the plug-in", "WhisperForConditionalGeneration", "not registered", "SpeechFamilies.Register", "Idrak.Audio.Plugins", "AudioPlugins.RegisterAll()");
     }
 
     private static void AudioAsrDecoding(Device device)

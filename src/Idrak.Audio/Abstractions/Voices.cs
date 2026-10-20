@@ -251,7 +251,8 @@ public static class VoiceConverters
 
     internal static NotSupportedException NotRegistered(string name) =>
         new($"Voice converter family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "register it with VoiceConverters.Register (a plug-in or the app that brings the family; the library registers none).");
+            + "register it with VoiceConverters.Register (a plug-in or the app that brings the family; the library registers none), "
+            + "or reference Idrak.Audio.Plugins and call AudioPlugins.RegisterAll().");
 }
 
 /// <summary>How a voice is installed from clips (<see cref="IVoiceStore.Add"/>).</summary>
