@@ -46,6 +46,9 @@ the first new families, once the engine can run encoders and encoder-decoders.
 9. **No own implementations (2026-10-20):** no plug-in or sample writes its own implementation of something the library
    does, unless it exists to test the plug-in and override abilities.
 10. **At most two agents in parallel** (CLAUDE.md), in two lanes (see "Order and parallelism").
+11. **Plug-in packages consume the library's contracts, they do not own them (2026-10-20):** the inventory counts
+    `Idrak.Text.Plugins`, `Idrak.Vision.Plugins` and `Idrak.Audio.Plugins` as apps, not as users, when it decides where a
+    contract lives.
 
 ## Rules that hold for every phase
 
@@ -505,9 +508,9 @@ equal to one by one.
   each real mistake it guards against (LayerNorm epsilon, tanh GELU, pre-norm, a transposed weight) moves outputs by
   1e-3 or more. Real models 2e-3.
 - **Tests:** `plugins: bert` (5), `engine: post-norm block` (1), `bert real:` (the owner's).
-- **To confirm by the owner:** `InventoryTests` no longer counts the three plug-in packages as users when it decides
-  where a contract lives (they count as apps, like the CLI); otherwise the first plug-in demanded the library's
-  `EncoderHeads` move into a plug-in package. This reads decision 10 for plug-in packages.
+- **Confirmed by the owner (2026-10-20):** `InventoryTests` does not count the three plug-in packages as users when it
+  decides where a contract lives (they count as apps, like the CLI); otherwise the first plug-in demanded the library's
+  `EncoderHeads` move into a plug-in package. This is decision 11.
 - **Measured, not taken** (from the code): `TextEncoder` pads each batch to `MaxLength`, not its longest text;
   `PretrainedEncoderModel.Hidden`/`Pooled`/`Logits` leave gradients on when the caller forgets `NoGrad`; exact-erf GELU
   is not fused into the first projection; the masked-LM head scores every position; the pooler weights exist twice
