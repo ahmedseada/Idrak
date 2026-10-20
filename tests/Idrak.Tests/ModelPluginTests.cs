@@ -48,9 +48,11 @@ internal static partial class Tests
         Check(q8.Name == "Q8_0" && q8.BlockValues == 32 && q8.BlockBytes == 34 && GgufFile.BlockSize(14) == (256, 210) && GgufFile.TypeName(15) == "Q8_K",
             "Q8_0 and Q6_K blocks; names of types not registered");
         // The GGUF families are Idrak.Text.Plugins' (the runner registers them, as the tool does); the library has none.
-        string[] ggufFamilies = ["llama", "qwen2", "qwen3", "qwen2moe", "qwen3moe"];
+        // Gemma's (gemma, gemma2, gemma3) are its plug-in's since plan 26's leftover round L1.
+        string[] ggufFamilies = ["llama", "qwen2", "qwen3", "qwen2moe", "qwen3moe", "gemma", "gemma2", "gemma3"];
         Check(GgufArchitectures.Names.ToHashSet().SetEquals(ggufFamilies) && GgufArchitectures.Get("llama") is { InterleavedQueryKeys: true, WithExperts: "MixtralForCausalLM", ExpertCountKey: "num_local_experts" }
-              && GgufArchitectures.Get("qwen3") is { HuggingFace: "Qwen3ForCausalLM", InterleavedQueryKeys: false, ExpertCountKey: "num_experts" }, "GGUF architectures");
+              && GgufArchitectures.Get("qwen3") is { HuggingFace: "Qwen3ForCausalLM", InterleavedQueryKeys: false, ExpertCountKey: "num_experts" },
+            $"GGUF architectures: Llama's, Qwen's and Gemma's, from their plug-ins ({string.Join(", ", GgufArchitectures.Names)})");
         Check(ggufFamilies.All(n => GgufArchitectures.Default(n) is null && GgufArchitectures.Origin(n) == "Idrak.Text.Plugins"),
             $"GGUF architectures come from Idrak.Text.Plugins, none from the library: {string.Join(", ", ggufFamilies.Select(n => $"{n}={GgufArchitectures.Origin(n)}"))}");
         // Idrak.Data registers the Hugging Face source after Idrak's own, so it is asked first; it leaves them their names.

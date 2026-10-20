@@ -83,7 +83,8 @@ and `Idrak.Gpu` along; the others are added by domain.
 
 - Families: the plug-in package `Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`; the `idrak` tool registers it):
   Llama, Mistral, Mixtral, Qwen2, Qwen2-MoE, Qwen3, Qwen3-MoE (GGUF architectures llama, qwen2, qwen2moe, qwen3,
-  qwen3moe), Gemma, Gemma 2 and Gemma 3, BERT and T5, one namespace each; the library registers none. A family nobody
+  qwen3moe), Gemma, Gemma 2 and Gemma 3 (GGUF gemma, gemma2, gemma3), BERT and T5, one namespace each; the library
+  registers none. A family nobody
   registered fails loudly with "not registered" and is added as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
 - Checkpoints: safetensors, GGUF (every ggml quantization dequantized or run packed), PyTorch zip read without running
   it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; packed weights bfloat16, int8, int4; KV caches in
@@ -161,7 +162,7 @@ the config's `plugins`. `idrak plugins list` prints what is registered:
 | Dataset sources | file, folder, github, hf, http, kaggle, zenodo |
 | Tool-call formats | deepseek, harmony, json, mistral, pythonic, qwen3-coder |
 | Model families | 11 (above) |
-| GGUF architectures | 5 (above) |
+| GGUF architectures | 8 (above) |
 | RoPE scalings | dynamic, linear, llama3, yarn |
 | Graph operations | 36 |
 | Layer types | 31 |
