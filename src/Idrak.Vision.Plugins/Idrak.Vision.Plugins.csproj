@@ -12,6 +12,8 @@
   <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. -->
   <ItemGroup>
     <ProjectReference Include="..\Idrak.Vision\Idrak.Vision.csproj" />
+    <!-- Vision-language families register their text decoders through the text plug-ins (one way: vision on text). -->
+    <ProjectReference Include="..\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
   </ItemGroup>
 
 </Project>

@@ -10,6 +10,7 @@ using Idrak.Vision;
 using Idrak.Vision.Abstractions;
 using Idrak.Vision.Plugins;
 using Idrak.Vision.Plugins.Crnn;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Vision.Plugins.IdrakVision;
 using Idrak.Vision.Plugins.Llava;
 using Idrak.Vision.Plugins.Qwen;
@@ -21,7 +22,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] VisionPluginGroup =
     [
-        ("plugins: vision: QwenVisionPlugin (\"qwen-vl\"), LlavaPlugin (\"llava\"), IdrakVisionPlugin (\"idrak-vision\") and CrnnPlugin (\"crnn\") are VisionPlugins.All, each in its family's namespace; Register twice registers their architectures once, from Idrak.Vision.Plugins; Unregister leaves VisionFamilies, PretrainedArchitectures and ImageModelFamilies as found", VisionPluginRegistration),
+        ("plugins: vision: QwenVisionPlugin (\"qwen-vl\"), LlavaPlugin (\"llava\"), IdrakVisionPlugin (\"idrak-vision\") and CrnnPlugin (\"crnn\") are VisionPlugins.All, in that order before Gemma3VisionPlugin (plugins: gemma), each in its family's namespace; Register twice registers their architectures once, from Idrak.Vision.Plugins; Unregister leaves VisionFamilies, PretrainedArchitectures and ImageModelFamilies as found", VisionPluginRegistration),
         ("plugins: crnn: a recognizer saved by CrnnRecognizer loads through ImageModels as CrnnForLineRecognition and reads lines as the recognizer does (texts, labels, scores), passes the image model family suite (a line at a time: its backward LSTM reads a batch's padding); a folder of the earlier package layout loads with the same readings; a missing or misshapen tensor and bad settings are refused naming them; unregistered, the folder is refused naming Idrak.Vision.Plugins", CrnnFamilyRoundTrip),
     ];
 
@@ -36,7 +37,8 @@ internal static partial class Tests
     private static void VisionPluginRegistration(Device device)
     {
         _ = device;
-        Check(VisionPlugins.All.SequenceEqual(VisionFamilyPlugins.Select(p => p.Plugin)), "VisionPlugins.All lists the four, in order");
+        Check(VisionPlugins.All.SequenceEqual([.. VisionFamilyPlugins.Select(p => p.Plugin), Gemma3VisionPlugin.Plugin]),
+            $"VisionPlugins.All lists the four, in order, then Gemma 3 vision ({string.Join(", ", VisionPlugins.All.Select(p => p.Name))})");
         foreach (var (plugin, name, ns) in VisionFamilyPlugins)
         {
             Check(plugin.Name == name && plugin.GetType().Namespace == ns, $"{name}: named so, in {ns} ({plugin.Name}, {plugin.GetType().Namespace})");

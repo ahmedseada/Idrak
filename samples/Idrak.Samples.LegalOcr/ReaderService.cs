@@ -8,7 +8,7 @@ using System.Threading.Channels;
 using Idrak.Abstraction.Generation;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Generation;
 using Idrak.Imaging;
 using Idrak.Models;

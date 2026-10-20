@@ -4,7 +4,7 @@
 using System.IO.Compression;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;

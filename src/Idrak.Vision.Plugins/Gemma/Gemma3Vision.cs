@@ -2,19 +2,22 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Plugins;
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
+using Idrak.Text.Plugins.Gemma;
 using Idrak.Vision;
 
-namespace Idrak.Gemma3Vision;
+namespace Idrak.Vision.Plugins.Gemma;
 
 /// <summary>
 /// The Gemma 3 vision family as a registration of Idrak's vision contracts (plan 11, "Vision contracts"): the library
-/// knows no family; this assembly brings one. <see cref="Register"/> adds Gemma 3's vision part
-/// (<see cref="Gemma3VisionFamily"/>, under <c>Gemma3ForConditionalGeneration</c> in <see cref="VisionFamilies"/>); its
-/// image tokens attend by the library's rule <see cref="ImageBlocks"/> (<see cref="ImageAttentionRules.ImageBlocks"/>).
-/// The text decoder of <c>Gemma3ForConditionalGeneration</c> is one of the library's text families. Load it in the command
-/// line with <c>idrak -P Idrak.Gemma3Vision.dll ...</c> (or the config's "plugins"), or call <see cref="Register"/> in an app.
+/// knows no family; this package brings one. <see cref="Register"/> adds Gemma 3's vision part
+/// (<see cref="Gemma3VisionFamily"/>, under <c>Gemma3ForConditionalGeneration</c> in <see cref="VisionFamilies"/>) and,
+/// when it is missing, the text decoder of <c>Gemma3ForConditionalGeneration</c> through Idrak.Text.Plugins'
+/// <see cref="GemmaPlugin"/> (taken back with this family only then); its image tokens attend by the library's rule
+/// <see cref="ImageBlocks"/> (<see cref="ImageAttentionRules.ImageBlocks"/>). The idrak tool registers it at startup
+/// (<see cref="VisionPlugins.RegisterAll"/>); an app calls <see cref="Register"/>.
 /// </summary>
 public static class Gemma3VisionPlugin
 {
@@ -24,11 +27,27 @@ public static class Gemma3VisionPlugin
     /// </summary>
     public const string ImageBlocks = ImageAttentionRules.ImageBlocks;
 
-    /// <summary>Registers the Gemma 3 vision family (again: the same registration).</summary>
-    public static void Register() => VisionFamilies.Register(new Gemma3VisionFamily());
+    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("gemma3-vision"; listed in <see cref="VisionPlugins.All"/>).</summary>
+    public static IIdrakPlugin Plugin { get; } = new Gemma3VisionRegistration();
 
-    /// <summary>The command line's plug-in entry (<c>-P</c>): <see cref="Register"/>.</summary>
-    public static void RegisterIdrakPlugin() => Register();
+    /// <summary>Whether the family is registered.</summary>
+    public static bool IsRegistered => Plugin.IsRegistered;
+
+    /// <summary>Registers the Gemma 3 vision family and the text decoder it needs (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
+    public static void Register() => IdrakPlugins.Register(Plugin);
+
+    /// <summary>Unregisters the family (and the text decoder, when <see cref="Register"/> added it), leaving the registries as <see cref="Register"/> found them.</summary>
+    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
+
+    // The text decoder it needs, then the vision family.
+    private sealed class Gemma3VisionRegistration() : IdrakPlugin("gemma3-vision")
+    {
+        protected override void RegisterParts()
+        {
+            Requires(GemmaPlugin.Plugin);
+            Part(() => VisionFamilies.Register(new Gemma3VisionFamily()), () => VisionFamilies.Unregister(Gemma3VisionFamily.Architecture));
+        }
+    }
 }
 
 /// <summary>

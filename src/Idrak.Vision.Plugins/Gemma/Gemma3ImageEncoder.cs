@@ -5,7 +5,7 @@ using Idrak.Imaging;
 using Idrak.Models.Abstractions;
 using Idrak.Vision;
 
-namespace Idrak.Gemma3Vision;
+namespace Idrak.Vision.Plugins.Gemma;
 
 /// <summary>
 /// Gemma 3's image side: images become the embeddings of their soft tokens, [images, <see cref="Gemma3ImageTokens.TokensPerImage"/>,

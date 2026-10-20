@@ -4,7 +4,7 @@
 using System.Diagnostics;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Imaging;
 
 namespace Idrak.Samples.LegalOcr;

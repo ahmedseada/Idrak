@@ -13,7 +13,7 @@ built. No phase starts until the owner names it.
 | P3 | Generic components into the library, vision part (contracts first): image-block rule, noise augmentation, PGM, line segmentation, text matching, reading order, the line-recognition task | A | Done 2026-10-20; CPU pass |
 | P4 | Audio plug-ins move in: Whisper, VITS (with uroman), OpenVoice, IdrakAudio, espeak-ng | A | Done 2026-10-20; CPU pass |
 | P5 | Vision plug-ins move in: Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer | A | Done 2026-10-20; CPU pass |
-| P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Not started |
+| P6 | Gemma out of the library (text, the vision-language text decoder, the Gemma 3 vision plug-in) | A | Done 2026-10-20; CPU pass |
 | P7 | The other text families out of the library: Llama, Mistral, Qwen, DeepSeek, Harmony | A | Not started |
 | P8 | The engine for encoders and encoder-decoders (contracts, attention options), with no family in it | B | Done 2026-10-20 (core); CLI `run`/server for seq2seq and a beam setting go with P10 |
 | P9 | BERT (`Idrak.Text.Plugins.Bert`) | B | Done 2026-10-20; CPU pass (real models: the owner) |
@@ -519,6 +519,50 @@ and ArabicOcr's tests pass unchanged, and `samples/` holds only apps.
 **Done when:** `pretrained:`, the Gemma 3 vision groups and `gguf:` pass unchanged; a library user without the package
 gets "not registered" naming `Idrak.Text.Plugins`.
 
+**P6 as built (2026-10-20).** Gemma leaves the library; plan 16's step 4 is done:
+- **Text** (`src/Idrak.Text.Plugins/Gemma/`): `GemmaPlugin` ("gemma", in `TextPlugins.All` after T5) registers
+  `GemmaForCausalLM`, `Gemma2ForCausalLM`, `Gemma3ForCausalLM` and the text decoder of `Gemma3ForConditionalGeneration`
+  in `PretrainedArchitectures`, one part each; `GemmaArchitectures` holds them (`Gemma()`, `Gemma2()`, `Gemma3()`,
+  `Gemma3VisionLanguage()`, `TensorName`). The code moved from `src/Idrak/Models/Architectures.cs` as it was
+  (`GemmaSpec`, `Gemma3Spec`, `Gemma3Keys`, the two text layouts, `Gemma3TextConfig` with its defaults, `InType`); only
+  calls to the library's public helpers are qualified (`PretrainedFamilies.CommonSpec`, `LlamaStyle`,
+  `LlamaTensorName`, all public already) and `PretrainedFamilies.GemmaTensorName` became `GemmaArchitectures.TensorName`.
+  No internal was opened and the package grants none. `Architectures.cs` lost only the Gemma lines (P7 edits it next).
+- **Vision** (`src/Idrak.Vision.Plugins/Gemma/`): `samples/Gemma3Vision`'s four files by `git mv`, only the namespace
+  changed (`Idrak.Gemma3Vision` → `Idrak.Vision.Plugins.Gemma`); already on G1 (`RenamedTensorStore`) and G8
+  (`image-blocks`). `Gemma3VisionPlugin` ("gemma3-vision", `VisionPlugins.All`) is now an `IdrakPlugin`:
+  `Requires(GemmaPlugin.Plugin)`, then `VisionFamilies`; `Register()` registers once, `Unregister()` added, its own
+  `RegisterIdrakPlugin` gone (the package root keeps the `-P` entry). `Idrak.Vision.Plugins` references
+  `Idrak.Text.Plugins` (one way). The sample project is gone from `Idrak.slnx` and the test project; ArabicOcr and
+  LegalOcr reference the package; ArabicOcr's `tune-vlm` prints `idrak tune` without `-P` (the tool registers the
+  family), its test expects that; the CLI help's `-P Idrak.Gemma3Vision.dll` examples dropped the option.
+- **Contracts:** none new. The registries the move needed exist (`PretrainedArchitectures`, `VisionFamilies`,
+  `IdrakPlugins`). **GGUF:** `GgufBuiltIns` never mapped a Gemma architecture (`gemma`, `gemma2`, `gemma3` files are
+  refused as not registered, before and after), so nothing was routed; `GgufArchitectures.Register` is the contract a
+  mapping would use (a leftover).
+- **Not registered:** without the package, `PretrainedArchitectures.Get` and `PretrainedModel.Load` refuse with "No
+  architecture 'Gemma3ForConditionalGeneration' is registered (…); … or reference Idrak.Text.Plugins (text models) or
+  Idrak.Vision.Plugins (vision-language models) and call its RegisterAll()" (P8's text, unchanged); with the text
+  plug-in and not the vision one, the vision family's message, as before. The library keeps no Gemma default
+  (`PretrainedArchitectures.Default` is null for all four, tested).
+- **Tests:** new `plugins: gemma` (1). The tests that read Gemma text configurations register `GemmaPlugin`
+  (`pretrained:`'s family configs, `pretrain:`'s round trip and refusals); the tests that take the vision family away
+  use `Gemma3VisionPlugin.Unregister()` and keep the text family (`UnregisterGemma3Vision`), and their in-process tool
+  runs use `IDRAK_PLUGIN_PACKAGES=none` (the tool registers the family again otherwise), as P4's did.
+- **Proven unchanged (rule 71):** the moved code diffed against the removed one (above); the groups below give the same
+  counts, among them the tiny Gemma 3's logits against transformers' in its three layouts, a Gemma 2 checkpoint against
+  the reference decoder, and every vision, tuning, CLI and serve group of the tiny Gemma 3.
+- **Run (CPU, the agent):** before, 315 passed over `pretrained:`, `gguf:`, `plugins:`, `chat templates`, `cli run:`,
+  `cli models:`, the guards, `engine:`, `generic components`, the vision, tuning, image, CLI image and serve groups,
+  `decoder:`, `pretrain:`, tokenizers and the rest that touch Gemma; ArabicOcr 14, LegalOcr 12. After one build (one
+  cref fix, then the build again): 316 passed, 0 failed (every group the same count, `plugins:` 22 → 23); ArabicOcr 14,
+  LegalOcr 12.
+- **For the owner to confirm:** a library user needs `Idrak.Text.Plugins` for any Gemma model (and
+  `Idrak.Vision.Plugins` for Gemma 3 with images); `PretrainedFamilies.GemmaTensorName` → `GemmaArchitectures.TensorName`;
+  `Idrak.Gemma3Vision` (assembly and namespace) → `Idrak.Vision.Plugins.Gemma`; `Gemma3VisionPlugin.Register()`
+  registers once (it re-registered before) and brings the text family; an app that registers over a Gemma name and
+  unregisters it gets nothing back (there is no library default to return to).
+
 ## Phase P7: the other text families
 
 - Llama, Mistral and Mixtral, Qwen2/Qwen3 and their MoE, from `PretrainedFamilies.BuiltIns`; their GGUF mappings and
@@ -724,6 +768,22 @@ The owner takes these after this plan is finished; no agent starts them before.
 - **P5, format question:** the CRNN's tensor names are positional, so checkpoints from other tools cannot map to it.
 - **P5, local folders:** `samples/QwenVision/Idrak.QwenVision` and `samples/IdrakVision/Idrak.IdrakVision` hold only
   ignored `bin`/`obj` on clones that built them.
+- **P6, to confirm:** a library user needs `Idrak.Text.Plugins` for any Gemma model (and `Idrak.Vision.Plugins` for
+  Gemma 3 with images); `PretrainedFamilies.GemmaTensorName` → `GemmaArchitectures.TensorName`; the `Idrak.Gemma3Vision`
+  assembly → `Idrak.Vision.Plugins.Gemma`; `Gemma3VisionPlugin.Register()` registers once and also the text family when
+  missing; the tool registers Gemma 3 vision at startup; an app that registers over a Gemma name and unregisters gets
+  nothing back (no library default).
+- **P6, no GGUF mapping for Gemma** (`src/Idrak/Models/GgufModel.cs`): `gemma`, `gemma2`, `gemma3` GGUF files were and
+  are refused; a mapping goes through `GgufArchitectures.Register` from the plug-in (llama.cpp's names for the post-norms,
+  whether its norm weights already include the +1, a fixture).
+- **P6, `idrak tune init` picks the vision example only with `-P`** (`src/Idrak.Cli/Commands/Train/TuneCommand.cs`, near
+  line 340): with Gemma 3 vision built in, `tune init -b <a Gemma 3 vision checkpoint>` without `-P` writes the text one.
+- **P6, message wording:** `PretrainedArchitectures`' refusal says "No architecture 'X' is registered", not "not
+  registered" like the other registries (`src/Idrak/Models/Abstractions/PretrainedArchitectures.cs`).
+- **P6, model names in moved code:** the moved Gemma code keeps the model names already in its comments and test strings
+  (the 4B config test in `VisionLanguageModelTests`, a "0.83 GB less" comment in `Gemma3Vision.cs`).
+- **P6, local folders:** `samples/Gemma3Vision/Idrak.Gemma3Vision/{obj,bin}` and an old `Idrak.Gemma3Vision.dll` in the
+  test output on machines that built them.
 - Later phases add theirs here.
 
 ## Order and parallelism
@@ -792,3 +852,5 @@ also ask for the full suite, because they reach every package. P9 and P10 add th
 | 2026-10-20 | P4 merged (on P10) | CPU (cloud, 4 threads) | the nine audio groups, audio cleaning, the guards, engine, cli health, cli run, generic components, pytorch checkpoint | 176 passed, 0 failed |
 | 2026-10-20 | P5 | CPU (cloud, 4 threads) | the P5 filters (qwen vl, vision contracts and tuning, image families, cli vision and images, plugins, vlm scratch, pretrain and distill vision, generic components, image prefill, outside plug-in, the guards, cli health, models, run, pretrained); ArabicOcr and LegalOcr tests | 192 passed, 2 failed, then 2 of 2; final 194 passed, 0 failed; 14 and 12 passed |
 | 2026-10-20 | P5 merged (on P4) | CPU (cloud, 4 threads) | the P5 and P4 filters with the guards, engine, cli run, cli models, pretrained; ArabicOcr and LegalOcr tests | 278 passed, 0 failed; 14 and 12 passed |
+| 2026-10-20 | P6 | CPU (cloud, 4 threads) | the Gemma groups: pretrained, gguf, plugins, chat templates, cli run, cli models, the guards, engine, generic components, vision, tuning, image, CLI image and serve, decoder, pretrain, tokenizers; ArabicOcr and LegalOcr tests | 316 passed, 0 failed (315 before, + `plugins: gemma`); 14 and 12 passed, as before |
+| 2026-10-20 | P6 merged (on P5) | CPU (cloud, 4 threads) | the P6 and P5 filters with the guards; ArabicOcr and LegalOcr tests | 282 passed, 1 failed (P5's `plugins: vision` expected four plug-ins; Gemma 3 vision is the fifth), fixed: `plugins:` and the guards 43 passed, 0 failed; 14 and 12 passed |

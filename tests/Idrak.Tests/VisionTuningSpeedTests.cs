@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data.Abstractions;
 using Idrak.Datasets.Abstractions;
-using Idrak.Gemma3Vision;
+using Idrak.Vision.Plugins.Gemma;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
