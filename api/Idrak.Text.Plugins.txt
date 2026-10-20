@@ -10,6 +10,18 @@ public static class Idrak.Text.Plugins.Bert.BertPlugin
   public static void Register()
   public static void Unregister()
 
+public static class Idrak.Text.Plugins.T5.T5Plugin
+  public const string MT5EncoderModel = "MT5EncoderModel"
+  public const string MT5ForConditionalGeneration = "MT5ForConditionalGeneration"
+  public const string T5EncoderModel = "T5EncoderModel"
+  public const string T5ForConditionalGeneration = "T5ForConditionalGeneration"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> EncoderArchitectures { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> Seq2SeqArchitectures { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
 public static class Idrak.Text.Plugins.TextPlugins
   public const string Package = "Idrak.Text.Plugins"
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Plugins.IIdrakPlugin> All { get; }

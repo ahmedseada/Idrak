@@ -284,6 +284,11 @@ internal static class OnnxBuiltIns
 
     private static OnnxValue EncoderLayer(OnnxGraph g, TransformerEncoderLayer layer, OnnxValue x, IReadOnlyList<int>? shape)
     {
+        if (layer.Normalization != BlockNormalization.LayerNorm || layer.FeedForwardBlock is not null)
+        {
+            throw new NotSupportedException("A TransformerEncoderLayer of RMS norms (Normalization) or with a feed-forward block of its own has no ONNX export.");
+        }
+
         var c = layer.Children().ToList();
         var (norm1, attention, norm2, ff1, ff2) = ((LayerNorm)c[0], (MultiHeadAttention)c[1], (LayerNorm)c[2], (Layers.Linear)c[3], (Layers.Linear)c[4]);
         if (layer.Placement == NormPlacement.After)

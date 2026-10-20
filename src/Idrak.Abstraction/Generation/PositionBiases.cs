@@ -221,13 +221,151 @@ public sealed class RelativePositionBias : AttentionPositionBias
     public override string ToString() => $"RelativePositionBias({Heads} heads, max distance {MaxDistance}{(Bidirectional ? "" : ", one-way")})";
 }
 
+/// <summary>
+/// The library's position bias "bucketed": a learned value per head for each bucket of distances, key position minus
+/// query position, the buckets exact for near keys and log-spaced for far ones up to <see cref="MaxDistance"/> (farther
+/// keys share the last bucket), as Mesh TensorFlow's relative attention has them (several encoder-decoder families use
+/// it). <see cref="Bidirectional"/> (an encoder's layer) gives keys after the query half of the buckets; one way (a causal
+/// layer), every bucket is for keys at or before the query. Its table is [buckets, heads] ("table"). The buckets are
+/// those transformers' <c>_relative_position_bucket</c> gives, its float32 logarithm included, worked out once per bias for
+/// the distances up to <see cref="MaxDistance"/>; a bias of a shape is then an index into them, computed once per shape
+/// (<see cref="AttentionPositionBias"/>).
+/// </summary>
+public sealed class BucketedPositionBias : AttentionPositionBias
+{
+    /// <summary>Its name in <see cref="AttentionPositionBiases"/>: "bucketed".</summary>
+    public const string KindName = "bucketed";
+
+    private readonly int[] _buckets;                                    // the bucket of key - query = d at [d + MaxDistance], |d| at most MaxDistance
+
+    /// <summary>A bias of random values (uniform in ±0.02) drawn from <paramref name="random"/>.</summary>
+    /// <param name="heads">The attention layer's query heads.</param>
+    /// <param name="buckets">The table's rows (num_buckets): at least 2 one way; at least 4, and even, both ways.</param>
+    /// <param name="maxDistance">The distance from which keys share the last bucket of their side (max_distance): beyond the exact buckets' reach.</param>
+    /// <param name="bidirectional">Whether keys after the query have buckets of their own (an encoder's layer).</param>
+    /// <param name="device">Where the table lives (the default device when null).</param>
+    /// <param name="random">The random source (seed 0 when null).</param>
+    /// <exception cref="ArgumentOutOfRangeException">A count does not fit; the message names the setting.</exception>
+    public BucketedPositionBias(int heads, int buckets, int maxDistance, bool bidirectional, Device? device = null, Random? random = null)
+        : base(heads)
+    {
+        if (buckets < (bidirectional ? 4 : 2) || bidirectional && buckets % 2 != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(buckets), buckets,
+                $"The position bias setting num_buckets is {(bidirectional ? "even and at least 4 both ways" : "at least 2 one way")}.");
+        }
+
+        int exact = (bidirectional ? buckets / 2 : buckets) / 2;
+        if (maxDistance <= exact)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxDistance), maxDistance,
+                $"The position bias setting max_distance is above {exact}, the distances the exact buckets of {buckets} cover.");
+        }
+
+        Buckets = buckets;
+        MaxDistance = maxDistance;
+        Bidirectional = bidirectional;
+        _buckets = new int[2 * maxDistance + 1];
+        for (int d = -maxDistance; d <= maxDistance; d++)
+        {
+            _buckets[d + maxDistance] = BucketOf(d, buckets, maxDistance, bidirectional);
+        }
+
+        random ??= new Random(0);
+        Table = CreateParameter(UniformValues(buckets * heads, 0.02f, random), [buckets, heads], device ?? Device.Default);
+    }
+
+    /// <summary>The table's rows.</summary>
+    public int Buckets { get; }
+
+    /// <summary>The distance from which keys share the last bucket of their side.</summary>
+    public int MaxDistance { get; }
+
+    /// <summary>Whether keys after the query have buckets of their own.</summary>
+    public bool Bidirectional { get; }
+
+    /// <summary>The values, [buckets, heads] ("table"): row <see cref="Bucket"/> of a distance holds each head's value.</summary>
+    public Tensor Table { get; private set; }
+
+    /// <summary>The table row of key position minus query position <paramref name="relative"/>.</summary>
+    public int Bucket(int relative) => _buckets[Math.Clamp(relative, -MaxDistance, MaxDistance) + MaxDistance];
+
+    // transformers' _relative_position_bucket of one distance, in its arithmetic: the far buckets from a float32 logarithm of
+    // distance / exact, divided by the float32 of the double log(max distance / exact), times the far buckets, truncated.
+    // From max_distance on a side's distances are all in its last bucket (the scaled value reaches the far buckets' count
+    // there, within a rounding, and is clamped).
+    private static int BucketOf(int relative, int buckets, int maxDistance, bool bidirectional)
+    {
+        int result = 0;
+        if (bidirectional)
+        {
+            buckets /= 2;
+            if (relative > 0)
+            {
+                result = buckets;
+            }
+
+            relative = Math.Abs(relative);
+        }
+        else
+        {
+            relative = Math.Max(-relative, 0);
+        }
+
+        int exact = buckets / 2;
+        if (relative < exact)
+        {
+            return result + relative;
+        }
+
+        float scaled = MathF.Log((float)relative / exact) / (float)Math.Log((double)maxDistance / exact) * (buckets - exact);
+        return result + Math.Min(exact + (int)scaled, buckets - 1);
+    }
+
+    /// <inheritdoc />
+    protected override Tensor Compute(int queries, int keys, int queryStart, Device device)
+    {
+        if (Table.Device != device)
+        {
+            throw new ArgumentException($"The position bias's table is on {Table.Device}; its bias was asked for on {device}.", nameof(device));
+        }
+
+        var index = new float[queries * keys];
+        for (int i = 0; i < queries; i++)
+        {
+            int query = queryStart + i;
+            var row = index.AsSpan(i * keys, keys);
+            for (int j = 0; j < keys; j++)
+            {
+                row[j] = Bucket(j - query);
+            }
+        }
+
+        var indices = Tensor.From(index, [queries * keys], device);
+        return Table.EmbeddingLookup(indices).Reshape(queries, keys, Heads).Permute(2, 0, 1);   // [heads, queries, keys]
+    }
+
+    /// <inheritdoc />
+    public override IEnumerable<Tensor> Parameters() => [Table];
+
+    /// <inheritdoc />
+    protected override void MoveTo(Device device)
+    {
+        base.MoveTo(device);
+        Table = MoveTensor(Table, device);
+    }
+
+    /// <inheritdoc />
+    public override string ToString() => $"BucketedPositionBias({Heads} heads, {Buckets} buckets, max distance {MaxDistance}{(Bidirectional ? "" : ", one-way")})";
+}
+
 /// <summary>What <see cref="AttentionPositionBiases.Create"/> gives a kind to make a position bias from.</summary>
 /// <param name="Heads">The attention layer's query heads.</param>
-/// <param name="Settings">The kind's own settings (for "relative": <c>max_distance</c>, <c>bidirectional</c>).</param>
+/// <param name="Settings">The kind's own settings (for "relative": <c>max_distance</c>, <c>bidirectional</c>; for "bucketed" also <c>num_buckets</c>).</param>
 /// <param name="Device">Where its parameters live (the default device when null).</param>
 /// <param name="Seed">The seed of random initial values.</param>
 /// <param name="Weights">
-/// Reads the kind's trained tensors by their names in the kind (for "relative": "table", [buckets, heads]) and shapes, or
+/// Reads the kind's trained tensors by their names in the kind (for "relative" and "bucketed": "table", [buckets, heads]) and shapes, or
 /// null for random values; it returns null for a tensor it does not hold.
 /// </param>
 public sealed record PositionBiasRequest(int Heads, JsonObject Settings, Device? Device = null, int Seed = 0,
@@ -235,9 +373,11 @@ public sealed record PositionBiasRequest(int Heads, JsonObject Settings, Device?
 
 /// <summary>
 /// The kinds of attention position bias, by name. The library registers "relative" (<see cref="RelativePositionBias"/>:
-/// settings <c>max_distance</c>, default 128, and <c>bidirectional</c>, default true); a family that needs another (a
-/// bucketed bias, for example) registers its own from its plug-in. A kind is made once per model and its tensors
-/// trained with it, so an app's kind and the library's are never mixed in one model: the registry has no fallback.
+/// settings <c>max_distance</c>, default 128, and <c>bidirectional</c>, default true) and "bucketed"
+/// (<see cref="BucketedPositionBias"/>: settings <c>num_buckets</c>, default 32, <c>max_distance</c>, default 128, and
+/// <c>bidirectional</c>, default true); a family that needs another registers its own from its plug-in. A kind is made
+/// once per model and its tensors trained with it, so an app's kind and the library's are never mixed in one model: the
+/// registry has no fallback.
 /// </summary>
 public static class AttentionPositionBiases
 {
@@ -248,6 +388,7 @@ public static class AttentionPositionBiases
         var table = new SlotTable<string, Func<PositionBiasRequest, IAttentionPositionBias>>(nameof(AttentionPositionBiases), comparer: StringComparer.Ordinal,
             unguarded: "a bias is made once per model and its tensors trained with it, so an app's kind and the library's cannot be mixed in one model");
         table.RegisterDefault(RelativePositionBias.KindName, Relative);
+        table.RegisterDefault(BucketedPositionBias.KindName, Bucketed);
         return table;
     }
 
@@ -321,4 +462,36 @@ public static class AttentionPositionBiases
 
         return bias;
     }
+
+    // "bucketed": num_buckets (default 32), max_distance (default 128), both positive whole numbers, and bidirectional
+    // (default true); the counts that do not fit together are refused by the bias, naming the setting.
+    private static BucketedPositionBias Bucketed(PositionBiasRequest request)
+    {
+        var settings = request.Settings ?? [];
+        int buckets = Whole(settings, "num_buckets", 32), distance = Whole(settings, "max_distance", 128);
+        bool bidirectional = true;
+        if (settings["bidirectional"] is { } flag)
+        {
+            bidirectional = flag.GetValueKind() is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False ? flag.GetValue<bool>()
+                : throw new ArgumentException($"The position bias setting bidirectional is true or false; got {flag.ToJsonString()}.", nameof(request));
+        }
+
+        var bias = new BucketedPositionBias(request.Heads, buckets, distance, bidirectional, request.Device, new Random(request.Seed));
+        if (request.Weights?.Invoke("table", [bias.Buckets, request.Heads]) is { } table)
+        {
+            if (table.Length != bias.Table.Size)
+            {
+                bias.Dispose();
+                throw new InvalidDataException($"The position bias's table has {table.Length} values; [{bias.Buckets}, {request.Heads}] is {bias.Table.Size}.");
+            }
+
+            bias.Table.CopyFrom(table);
+        }
+
+        return bias;
+    }
+
+    private static int Whole(JsonObject settings, string name, int fallback) => settings[name] is not { } node ? fallback
+        : node.GetValueKind() == System.Text.Json.JsonValueKind.Number && node.AsValue().TryGetValue(out int whole) && whole > 0 ? whole
+        : throw new ArgumentException($"The position bias setting {name} is a positive whole number; got {node.ToJsonString()}.", nameof(settings));
 }

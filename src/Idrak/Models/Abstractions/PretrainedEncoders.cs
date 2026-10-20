@@ -103,6 +103,12 @@ public interface IPretrainedSeq2SeqFamily
     /// </summary>
     /// <exception cref="InvalidDataException">A tensor is missing or its shape disagrees with the configuration.</exception>
     ISeq2SeqModel Build(PretrainedCheckpoint checkpoint);
+
+    /// <summary>
+    /// Whether the family's sources end with its end token (the model was trained so): generation then appends it when the
+    /// tokenizer's encoding does not end with it (a tokenizer read from a SentencePiece model file adds none). False by default.
+    /// </summary>
+    bool EndsSource(JsonObject config) => false;
 }
 
 /// <summary>
