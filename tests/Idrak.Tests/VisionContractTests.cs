@@ -278,8 +278,9 @@ internal static partial class Tests
         VisionFamilies.Unregister(Gemma3VisionFamily.Architecture);
         ImageAttentionRules.Unregister(Gemma3VisionPlugin.ImageBlocks);
         Check(VisionFamilies.Find(Gemma3VisionFamily.Architecture) is null && VisionFamilies.Default(Gemma3VisionFamily.Architecture) is null
-              && ImageAttentionRules.Find(Gemma3VisionPlugin.ImageBlocks) is null && ImageAttentionRules.Names.SequenceEqual([ImageAttentionRules.Causal]),
-            "the library registers no vision family and no image attention rule but the causal one");
+              && ImageAttentionRules.Origin(Gemma3VisionPlugin.ImageBlocks) == Overrides.Library
+              && ImageAttentionRules.Names.SequenceEqual([ImageAttentionRules.Causal, ImageAttentionRules.ImageBlocks]),
+            "the library registers no vision family; its image attention rules are causal and image-blocks (the plug-in uses the library's)");
         try
         {
             using var _ = PretrainedModel.Load(TestData("vlm/tiny-gemma3-v5"), new PretrainedOptions { Device = device });

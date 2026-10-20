@@ -98,7 +98,7 @@ else
 // ---------------------------------------------------------------- demo
 if (options.Get("image") is { } imagePath)
 {
-    var (pixels, width, height) = Pgm.ReadImage(imagePath);
+    var (pixels, width, height) = ReadImage(imagePath);
     Console.WriteLine($"\n{imagePath} ({width}x{height}):");
     Preview(pixels, width, height);
     Console.WriteLine($"Text: {Read(pixels, width, height)}");
@@ -112,12 +112,41 @@ else
     Console.WriteLine($"Recognized: {Read(pixels, width, Cell)}");
     if (options.Get("save-image") is { } savePath)
     {
-        Pgm.Write(savePath, pixels, width, Cell);
+        ImageEncoders.Save(savePath, Page(pixels, width, Cell));                                // the library's Netpbm (or PNG) encoder
         Console.WriteLine($"Saved the line to {savePath}; read it back with --image {savePath}");
     }
 }
 
 return 0;
+
+// Loads an image (any format the library decodes: PNG, JPEG, BMP, PGM, PPM) as ink intensities in [0, 1] (colour averaged
+// to grey); light backgrounds are inverted, so ink is bright.
+static (float[] Pixels, int Width, int Height) ReadImage(string path)
+{
+    var image = ImageCodecs.Decode(path);
+    var pixels = image.Resize(1, image.Height, image.Width);
+    if (pixels.Average() > 0.5f)
+    {
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = 1f - pixels[i];
+        }
+    }
+
+    return (pixels, image.Width, image.Height);
+}
+
+// Bright ink as a grey image of dark ink on a white page (what a saved line looks like).
+static ImageData Page(float[] ink, int width, int height)
+{
+    var page = new float[ink.Length];
+    for (int i = 0; i < page.Length; i++)
+    {
+        page[i] = 1f - ink[i];
+    }
+
+    return new ImageData(page, 1, height, width);
+}
 
 // Reads 40 random rendered text lines and reports character accuracy (edit distance) and exact-line rate.
 void MeasureLines()
@@ -160,7 +189,7 @@ string Characters(int perClass, int seed, string root)
         Renderer.RenderCharacter(label, image, rng);
         string classFolder = Path.Combine(root, alphabet[label].ToString());
         Directory.CreateDirectory(classFolder);
-        Pgm.Write(Path.Combine(classFolder, $"{s:D5}.pgm"), image, Cell, Cell, inkIsDark: false);
+        ImageEncoders.Save(Path.Combine(classFolder, $"{s:D5}.pgm"), new ImageData(image, 1, Cell, Cell));   // bright ink, as trained
     }
 
     return root;

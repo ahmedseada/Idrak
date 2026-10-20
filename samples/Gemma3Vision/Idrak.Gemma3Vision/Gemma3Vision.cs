@@ -11,38 +11,24 @@ namespace Idrak.Gemma3Vision;
 /// <summary>
 /// The Gemma 3 vision family as a registration of Idrak's vision contracts (plan 11, "Vision contracts"): the library
 /// knows no family; this assembly brings one. <see cref="Register"/> adds Gemma 3's vision part
-/// (<see cref="Gemma3VisionFamily"/>, under <c>Gemma3ForConditionalGeneration</c> in <see cref="VisionFamilies"/>) and
-/// its attention rule (<see cref="ImageBlocks"/> in <see cref="ImageAttentionRules"/>). The text decoder of
-/// <c>Gemma3ForConditionalGeneration</c> is one of the library's text families. Load it in the command line with
-/// <c>idrak -P Idrak.Gemma3Vision.dll ...</c> (or the config's "plugins"), or call <see cref="Register"/> in an app.
+/// (<see cref="Gemma3VisionFamily"/>, under <c>Gemma3ForConditionalGeneration</c> in <see cref="VisionFamilies"/>); its
+/// image tokens attend by the library's rule <see cref="ImageBlocks"/> (<see cref="ImageAttentionRules.ImageBlocks"/>).
+/// The text decoder of <c>Gemma3ForConditionalGeneration</c> is one of the library's text families. Load it in the command
+/// line with <c>idrak -P Idrak.Gemma3Vision.dll ...</c> (or the config's "plugins"), or call <see cref="Register"/> in an app.
 /// </summary>
 public static class Gemma3VisionPlugin
 {
-    /// <summary>The attention rule Gemma 3's image tokens use: each image's tokens see their whole image, causal elsewhere.</summary>
-    public const string ImageBlocks = "image-blocks";
+    /// <summary>
+    /// The attention rule Gemma 3's image tokens use (the library's): each image's tokens see their whole image, causal
+    /// elsewhere, within the window on sliding-window layers (transformers' <c>token_type_ids</c> mask).
+    /// </summary>
+    public const string ImageBlocks = ImageAttentionRules.ImageBlocks;
 
-    /// <summary>Registers the Gemma 3 vision family and its attention rule (again: the same registrations).</summary>
-    public static void Register()
-    {
-        ImageAttentionRules.Register(new ImageBlockRule());
-        VisionFamilies.Register(new Gemma3VisionFamily());
-    }
+    /// <summary>Registers the Gemma 3 vision family (again: the same registration).</summary>
+    public static void Register() => VisionFamilies.Register(new Gemma3VisionFamily());
 
     /// <summary>The command line's plug-in entry (<c>-P</c>): <see cref="Register"/>.</summary>
     public static void RegisterIdrakPlugin() => Register();
-
-    // Gemma 3's mask (transformers' token_type_ids): a row in an image block sees its whole block, causal elsewhere, within
-    // the window on sliding-window layers (KeySpans.ImageBlocks, which the conformance kit checks on every device).
-    private sealed class ImageBlockRule : IImageAttentionRule
-    {
-        public string Name => ImageBlocks;
-
-        public bool Causal => false;
-
-        public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.ImageBlocks(rows, blocks, window);
-
-        public override string ToString() => "image blocks seen whole";
-    }
 }
 
 /// <summary>

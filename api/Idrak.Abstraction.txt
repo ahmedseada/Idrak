@@ -874,6 +874,11 @@ public interface Idrak.Abstraction.Data.IPageLayout
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Abstraction.Data.IReadingOrder
+  public string FromColumns(string columns, bool rightToLeft)
+  public string Name { get; }
+  public string ToColumns(string logical, bool rightToLeft)
+
 public interface Idrak.Abstraction.Data.ISampleReader : System.IDisposable
   public bool Read(System.Span<float> features, System.Span<float> targets)
 
@@ -1122,6 +1127,19 @@ public readonly record struct Idrak.Abstraction.Data.PixelBox : System.IEquatabl
   public int Width { get; init; }
   public int X { get; init; }
   public int Y { get; init; }
+
+public static class Idrak.Abstraction.Data.ReadingOrders
+  public const string Bidi = "bidi"
+  public const string Runs = "runs"
+  public static Idrak.Abstraction.Data.IReadingOrder Get(string name)
+  public static Idrak.Abstraction.Data.IReadingOrder? Default(string name)
+  public static Idrak.Abstraction.Data.IReadingOrder? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IReadingOrder order)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Data.RenderedPage : System.IEquatable<Idrak.Abstraction.Data.RenderedPage>
   public Idrak.Abstraction.Data.ImageData Image { get; init; }
@@ -3187,6 +3205,7 @@ public interface Idrak.Abstraction.Generation.IVisionTuningPart
 
 public static class Idrak.Abstraction.Generation.ImageAttentionRules
   public const string Causal = "causal"
+  public const string ImageBlocks = "image-blocks"
   public static Idrak.Abstraction.Generation.IImageAttentionRule Get(string name)
   public static Idrak.Abstraction.Generation.IImageAttentionRule? Default(string name)
   public static Idrak.Abstraction.Generation.IImageAttentionRule? Find(string name)

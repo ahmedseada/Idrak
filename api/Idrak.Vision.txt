@@ -108,6 +108,10 @@ public interface Idrak.Vision.Abstractions.ISegmentationMetric : Idrak.Vision.Ab
 public interface Idrak.Vision.Abstractions.ISegmenter
   public Idrak.Vision.Abstractions.SegmentationMask Segment(Idrak.Abstraction.Data.ImageData image)
 
+public interface Idrak.Vision.Abstractions.ITextLineSegmenter
+  public Idrak.Vision.Abstractions.PageLines Find(Idrak.Abstraction.Data.ImageData page, Idrak.Vision.Abstractions.LineSegmentationOptions options)
+  public string Name { get; }
+
 public interface Idrak.Vision.Abstractions.IVisionMetric
   public System.Collections.Generic.IReadOnlyDictionary<string, double> Compute()
   public string Name { get; }
@@ -131,6 +135,7 @@ public sealed record Idrak.Vision.Abstractions.ImageCheckpoint : System.IEquatab
 
 public sealed record Idrak.Vision.Abstractions.ImageModel : System.IDisposable, System.IEquatable<Idrak.Vision.Abstractions.ImageModel>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public ImageModel()
+  public Idrak.Vision.Abstractions.LineRecognitionSettings? Lines { get; init; }
   public System.Collections.Generic.IReadOnlyList<int>? InputShape { get; }
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? Labels { get; init; }
@@ -162,7 +167,48 @@ public enum Idrak.Vision.Abstractions.ImageTask : int
   Classification = 0
   Detection = 1
   Features = 3
+  LineRecognition = 4
   Segmentation = 2
+
+public sealed record Idrak.Vision.Abstractions.LineRecognitionSettings : System.IEquatable<Idrak.Vision.Abstractions.LineRecognitionSettings>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public LineRecognitionSettings()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public bool InkHigh { get; init; }
+  public bool LogProbabilities { get; init; }
+  public bool RightToLeft { get; init; }
+  public int Blank { get; init; }
+  public int Stride { get; init; }
+  public required int Height { get; init; }
+  public static Idrak.Vision.Abstractions.LineRecognitionSettings FromJson(System.Text.Json.Nodes.JsonObject json)
+  public string? Problem(int classes)
+  public string? ReadingOrder { get; init; }
+
+public sealed record Idrak.Vision.Abstractions.LineSegmentationOptions : System.IEquatable<Idrak.Vision.Abstractions.LineSegmentationOptions>
+  public LineSegmentationOptions()
+  public System.Collections.Generic.IReadOnlyDictionary<string, double> Parameters { get; init; }
+  public double MarkShare { get; init; }
+  public double MaxSkew { get; init; }
+  public double MinSkewGain { get; init; }
+  public double Padding { get; init; }
+  public double RowInk { get; init; }
+  public double SkewStep { get; init; }
+  public double SpeckShare { get; init; }
+  public int MaxSkewSamples { get; init; }
+  public int MinPadding { get; init; }
+
+public sealed record Idrak.Vision.Abstractions.PageLine : System.IEquatable<Idrak.Vision.Abstractions.PageLine>
+  public Idrak.Abstraction.Data.ImageData Image { get; init; }
+  public PageLine(int Index, int X, int Y, int Width, int Height, Idrak.Abstraction.Data.ImageData Image)
+  public int Height { get; init; }
+  public int Index { get; init; }
+  public int Width { get; init; }
+  public int X { get; init; }
+  public int Y { get; init; }
+
+public sealed record Idrak.Vision.Abstractions.PageLines : System.IEquatable<Idrak.Vision.Abstractions.PageLines>
+  public PageLines(System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.PageLine> Lines, double Skew)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.PageLine> Lines { get; init; }
+  public double Skew { get; init; }
 
 public sealed class Idrak.Vision.Abstractions.SegmentationMask
   public Idrak.Vision.Abstractions.SegmentationMask Resize(int width, int height)
@@ -175,6 +221,19 @@ public sealed class Idrak.Vision.Abstractions.SegmentationMask
   public int[] Counts()
   public static Idrak.Vision.Abstractions.SegmentationMask FromLogits(System.ReadOnlySpan<float> logits, int classes, int height, int width)
   public static Idrak.Vision.Abstractions.SegmentationMask[] FromLogits(Idrak.Abstraction.Tensor logits)
+
+public static class Idrak.Vision.Abstractions.TextLineSegmenters
+  public const string Projection = "projection"
+  public static Idrak.Vision.Abstractions.ITextLineSegmenter Get(string name)
+  public static Idrak.Vision.Abstractions.ITextLineSegmenter? Default(string name)
+  public static Idrak.Vision.Abstractions.ITextLineSegmenter? Find(string name)
+  public static Idrak.Vision.Abstractions.PageLines Segment(Idrak.Abstraction.Data.ImageData page, Idrak.Vision.Abstractions.LineSegmentationOptions? options = null, string name = "projection")
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Vision.Abstractions.ITextLineSegmenter segmenter)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public delegate Idrak.Abstraction.Tensor Idrak.Vision.Abstractions.VisionLoss(Idrak.Abstraction.Tensor predicted, Idrak.Abstraction.Tensor target, Idrak.Vision.Abstractions.VisionLossOptions options)
 
@@ -345,7 +404,9 @@ public static class Idrak.Vision.ImageModelPredictors
   public static Idrak.Inference.PredictorBuilder<Idrak.Abstraction.Data.ImageData, Idrak.Inference.ClassPrediction> Classifier(this Idrak.Vision.Abstractions.ImageModel model, System.Collections.Generic.IReadOnlyList<string>? labels = null)
   public static Idrak.Inference.PredictorBuilder<Idrak.Abstraction.Data.ImageData, float[]> Outputs(this Idrak.Vision.Abstractions.ImageModel model)
   public static Idrak.Vision.ModelDetector Detector(this Idrak.Vision.Abstractions.ImageModel model, Idrak.Vision.DetectorOptions? options = null, Idrak.Abstraction.Device? device = null)
+  public static Idrak.Vision.ModelLineReader LineReader(this Idrak.Vision.Abstractions.ImageModel model, string decoder = "greedy", Idrak.Abstraction.Generation.CtcDecodeOptions? options = null, Idrak.Abstraction.Device? device = null)
   public static Idrak.Vision.ModelSegmenter Segmenter(this Idrak.Vision.Abstractions.ImageModel model, Idrak.Abstraction.Device? device = null)
+  public static string TaskName(Idrak.Vision.Abstractions.ImageTask task)
 
 public static class Idrak.Vision.ImageModels
   public static Idrak.Vision.Abstractions.ImageModel Load(string path, Idrak.Vision.Abstractions.ImageModelOptions? options = null)
@@ -364,6 +425,23 @@ public sealed class Idrak.Vision.ModelDetector : Idrak.Vision.Abstractions.IObje
   public ModelDetector(Idrak.Abstraction.Module model, int channels, int height, int width, string decoder, System.Text.Json.Nodes.JsonObject? settings = null, Idrak.Vision.DetectorOptions? options = null, Idrak.Abstraction.Device? device = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.Detection> Detect(Idrak.Abstraction.Data.ImageData image)
   public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.Detection>> Detect(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
+
+public sealed class Idrak.Vision.ModelLineReader
+  public (Idrak.Abstraction.Tensor, int[]) Batch(System.Collections.Generic.IReadOnlyList<Idrak.Vision.PreparedLine> lines)
+  public (int[], System.Collections.Generic.IReadOnlyList<string>) Encode(string text)
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.CtcDecodeOptions Options { get; }
+  public Idrak.Abstraction.Tensor LogProbabilities(Idrak.Abstraction.Tensor scores)
+  public Idrak.Vision.Abstractions.LineRecognitionSettings Settings { get; }
+  public Idrak.Vision.PreparedLine Prepare(Idrak.Abstraction.Data.ImageData line)
+  public ModelLineReader(Idrak.Abstraction.Module network, System.Collections.Generic.IReadOnlyList<string> labels, Idrak.Vision.Abstractions.LineRecognitionSettings settings, int channels = 1, string decoder = "greedy", Idrak.Abstraction.Generation.CtcDecodeOptions? options = null, Idrak.Abstraction.Device? device = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Vision.RecognizedLine> Read(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> lines)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Vision.RecognizedLine> Read(System.Collections.Generic.IReadOnlyList<Idrak.Vision.PreparedLine> lines)
+  public System.Collections.Generic.IReadOnlyList<string> Labels { get; }
+  public int Channels { get; }
+  public static Idrak.Vision.PreparedLine Prepare(Idrak.Abstraction.Data.ImageData line, Idrak.Vision.Abstractions.LineRecognitionSettings settings)
+  public string Decoder { get; }
+  public string Text(System.Collections.Generic.IEnumerable<int> labels)
 
 public sealed class Idrak.Vision.ModelSegmenter : Idrak.Vision.Abstractions.ISegmenter
   public Idrak.Vision.Abstractions.SegmentationMask Segment(Idrak.Abstraction.Data.ImageData image)
@@ -387,10 +465,30 @@ public static class Idrak.Vision.NonMaxSuppression
 public static class Idrak.Vision.PatchGrid
   public static Idrak.Abstraction.Tensor AveragePool(Idrak.Abstraction.Tensor x, int poolSize)
 
+public sealed class Idrak.Vision.PixelNoise : Idrak.Abstraction.Data.IAugmentation
+  public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
+  public PixelNoise(double standardDeviation = 0.05, double probability = 1)
+  public double Probability { get; }
+  public double StandardDeviation { get; }
+  public string Name { get; }
+
 public enum Idrak.Vision.Polarity : int
   Auto = 0
   DarkOnLight = 1
   LightOnDark = 2
+
+public sealed record Idrak.Vision.PreparedLine : System.IEquatable<Idrak.Vision.PreparedLine>
+  public PreparedLine(float[] Pixels, int Height, int Width)
+  public float[] Pixels { get; init; }
+  public int Height { get; init; }
+  public int Steps(int stride)
+  public int Width { get; init; }
+
+public sealed class Idrak.Vision.ProjectionLineSegmenter : Idrak.Vision.Abstractions.ITextLineSegmenter
+  public Idrak.Vision.Abstractions.PageLines Find(Idrak.Abstraction.Data.ImageData page, Idrak.Vision.Abstractions.LineSegmentationOptions options)
+  public ProjectionLineSegmenter()
+  public override string ToString()
+  public string Name { get; }
 
 public sealed class Idrak.Vision.RandomAffine : Idrak.Abstraction.Data.IAugmentation
   public (double, double) Degrees { get; }
@@ -414,6 +512,13 @@ public sealed class Idrak.Vision.RandomResizedCrop : Idrak.Abstraction.Data.IAug
   public int Height { get; }
   public int Width { get; }
   public string Name { get; }
+
+public sealed record Idrak.Vision.RecognizedLine : System.IEquatable<Idrak.Vision.RecognizedLine>
+  public RecognizedLine(string Text, int[] Labels, double LogProbability, double Confidence)
+  public double Confidence { get; init; }
+  public double LogProbability { get; init; }
+  public int[] Labels { get; init; }
+  public string Text { get; init; }
 
 public sealed record Idrak.Vision.Region : System.IEquatable<Idrak.Vision.Region>
   public Idrak.Abstraction.Data.PixelBox Box { get; init; }

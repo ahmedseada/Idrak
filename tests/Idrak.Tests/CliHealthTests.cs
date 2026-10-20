@@ -447,6 +447,13 @@ internal static partial class Tests
         var plugins = CliJson("plugins", "list", "-j");
         Check(plugins["weights"]!["names"]!.AsArray().Any(n => (string?)n == "int8") && plugins["devices"]!["names"]!.AsArray().Any(n => (string?)n == "cpu"), $"plugins list: {plugins}");
         Check(plugins["weights"]!["added"]!.AsArray().Count == 0, "plugins list: something added without --plugin");
+        // The generic components' registries (plan 26, P2 and P3) are listed with their built-ins.
+        foreach (var (key, name) in new[] { ("progress", "console"), ("keywordindexes", "bm25"), ("recipes", "gpt"), ("linesegmenters", "projection"),
+                     ("textmatchers", "semi-global"), ("readingorders", "bidi"), ("readingorders", "runs") })
+        {
+            Check(plugins[key]?["names"]?.AsArray().Any(n => (string?)n == name) == true, $"plugins list: {key} lists {name}: {plugins[key]?.ToJsonString()}");
+        }
+
         var (fexit, csv, _) = Cli("formats", "--format", "csv");
         Check(fexit == 0 && csv.StartsWith("Kind,Formats", StringComparison.Ordinal) && csv.Contains("int8"), $"formats csv: {csv}");
 

@@ -10,7 +10,7 @@ namespace Idrak.Vision;
 /// <summary>
 /// An image model loaded through its family (<c>ImageModels.Load</c> in Idrak) as a predictor ready for images, with the
 /// family's preprocessing: a classifier (Idrak's <see cref="Predictor"/>), a <see cref="ModelDetector"/> with the family's
-/// decoder, a <see cref="ModelSegmenter"/>, or the raw outputs. They use the model's network without owning it: dispose the
+/// decoder, a <see cref="ModelSegmenter"/>, a <see cref="ModelLineReader"/>, or the raw outputs. They use the model's network without owning it: dispose the
 /// <see cref="ImageModel"/> when done.
 /// </summary>
 /// <remarks>
@@ -75,12 +75,27 @@ public static class ImageModelPredictors
         return new ModelSegmenter(model.Network, model.Preprocessor, device);
     }
 
+    /// <summary>
+    /// A line reader over the model (<see cref="ImageTask.LineRecognition"/>): its line settings, labels and channels, the
+    /// CTC decoder <paramref name="decoder"/> (<see cref="CtcDecoders"/>) with <paramref name="options"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The model is not a line recognizer.</exception>
+    /// <exception cref="NotSupportedException">The decoder or the model's reading order is not registered.</exception>
+    public static ModelLineReader LineReader(this ImageModel model, string decoder = CtcDecoders.Greedy, CtcDecodeOptions? options = null, Device? device = null)
+    {
+        Require(model, ImageTask.LineRecognition);
+        return new ModelLineReader(model.Network, model.Labels!, model.Lines!, model.Channels, decoder, options, device);
+    }
+
     private static void Require(ImageModel model, ImageTask task)
     {
         ArgumentNullException.ThrowIfNull(model);
         if (model.Task != task)
         {
-            throw new InvalidOperationException($"The {model.Architecture} model is a {model.Task.ToString().ToLowerInvariant()} model, not a {task.ToString().ToLowerInvariant()} one.");
+            throw new InvalidOperationException($"The {model.Architecture} model is a {TaskName(model.Task)} model, not a {TaskName(task)} one.");
         }
     }
+
+    /// <summary>The task's name in messages and output: classification, detection, segmentation, features or line-recognition.</summary>
+    public static string TaskName(ImageTask task) => task == ImageTask.LineRecognition ? "line-recognition" : task.ToString().ToLowerInvariant();
 }
