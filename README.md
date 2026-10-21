@@ -34,7 +34,7 @@ Idrak is a neural network library for **.NET 10**, written entirely in C#.
   device or a kernel is added from a plug-in without touching the library.
 
 This file is the library's map: what it can do today, on which hardware that was verified, how it is laid out, what
-the next version should be, and what is planned. The plans under `plans/` hold the detail and the dated run records.
+the next version should be, and what is planned.
 
 ---
 
@@ -48,8 +48,8 @@ and `Idrak.Gpu` along; the others are added by domain.
 | `Idrak.Abstraction` | The contracts the library is built on, each with its default implementation: `Tensor`, `Autograd`, `Module`, devices and the CPU device (the host fallback of every other device), optimizers and schedules, telemetry, tokenizers, chat and tools, serving contracts, sample sources, the `SlotTable` registries. Reference it alone to write a plug-in. |
 | `Idrak` | Layers and networks, training (`Trainer`, callbacks, mixed precision, activation checkpointing), datasets and loaders, model loading (safetensors, GGUF, PyTorch zip, PEFT adapters), packed weights (bfloat16, int8, int4), ONNX export and import, the inference engine, model packages (`.ikm`). |
 | `Idrak.Gpu` | The GPU devices: CUDA (driver API, PTX generated in C#), Vulkan (SPIR-V generated in C#), HIP (hipRTC). Loads the driver installed on the machine; no native files of its own. Kernel tuning per size class with a persisted cache. |
-| `Idrak.Network` | The real transports and collectives of a cluster (plan 23): shared memory, TCP with a keyed rendezvous, a direct cable, host-staged and peer copies between the GPUs of one process; naive, ring and hierarchical all-reduce, all-gather, reduce-scatter and broadcast over any transport; the fastest-first transport selector and the `network` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts. |
-| `Idrak.Cluster` | A cluster of GPUs and machines simulated on one machine (plan 23): devices carved from a physical one with hard memory caps, the `sim` transport charged on a virtual clock from link profiles, the built-in link profiles, the topology builder and the `cluster` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts; `Idrak.Network` holds the real transports. |
+| `Idrak.Network` | The real transports and collectives of a cluster: shared memory, TCP with a keyed rendezvous, a direct cable, host-staged and peer copies between the GPUs of one process; naive, ring and hierarchical all-reduce, all-gather, reduce-scatter and broadcast over any transport; the fastest-first transport selector and the `network` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts. |
+| `Idrak.Cluster` | A cluster of GPUs and machines simulated on one machine: devices carved from a physical one with hard memory caps, the `sim` transport charged on a virtual clock from link profiles, the built-in link profiles, the topology builder and the `cluster` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts; `Idrak.Network` holds the real transports. |
 | `Idrak.Data` | Row datasets: JSON Lines, JSON, CSV, TSV, text, code and Parquet; archives and compressed files; sources file, folder, http, Hugging Face, GitHub, Kaggle, Zenodo; filter, map, shuffle, deduplicate, split, mix; chat transcripts for fine-tuning; the Hugging Face model downloader. |
 | `Idrak.Text` | Text generation and chat with tools, the models' own Jinja chat templates, tool-call formats, LLM fine-tuning (LoRA, QLoRA, DoRA, full), distillation, evaluation, retrieval and RAG, synthetic training pages, the coding agent, the engine's text and chat models. |
 | `Idrak.Imaging` | PNG, JPEG, BMP and Netpbm codecs; Pillow's resampling, filters and enhancements byte for byte; model preprocessors on the device; a font engine (TrueType, CFF, OpenType shaping, bidi) for rendering text; image transforms and augmentations; image-folder datasets. |
@@ -213,14 +213,13 @@ memory growth) and saved regression cases. `idrak check` runs the device kit; `i
 | Device | State | Verified on |
 |---|---|---|
 | CPU | supported everywhere .NET 10 runs | Windows 11 (4 to 24 threads), Ubuntu; the full CPU test list |
-| NVIDIA, CUDA | supported from compute 5.0 | compute 12.0 and 8.6 GPUs (plan 1); the kit, the benches and training runs, 2026-10 |
+| NVIDIA, CUDA | supported from compute 5.0 | compute 12.0 and 8.6 GPUs; the kit, the benches and training runs, 2026-10 |
 | Any Vulkan 1.1 GPU | supported | the same NVIDIA GPUs through Vulkan, and lavapipe (software) on Linux; the kit passes on both |
-| AMD, HIP | built, inert where ROCm is absent | not yet run on real hardware (plan 8) |
-| AMD, Intel, Apple GPUs | run on the CPU today | plans 3, 4, 5 not started; Vulkan is the planned route for AMD and Intel |
+| AMD, HIP | built, inert where ROCm is absent | not yet run on real hardware |
+| AMD, Intel, Apple GPUs | run on the CPU today | not started; Vulkan is the planned route for AMD and Intel |
 
 The GPUs are named here as the record of what has been run, not as targets: nothing in the code or the tuning refers to
-a card. The records with numbers are in `plans/22-performance-and-library.md` (benches), `plans/1-nvidia.md`,
-`plans/17-vision-ocr-speed.md` and `plans/21-audio.md`.
+a card.
 
 Measured this month on the owner's card (CUDA unless said), from the benches in `benches/Idrak.Benches`:
 
@@ -274,7 +273,7 @@ $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "sampler"; dotnet run -c Releas
 ```
 
 `IDRAK_UPDATE_API=1` regenerates the public API dumps in `api/` (the guard test fails on an unreviewed change);
-`IDRAK_UPDATE_INVENTORY=1` regenerates `plans/10-abstraction-inventory.md`. The benches:
+`IDRAK_UPDATE_INVENTORY=1` regenerates the abstraction inventory. The benches:
 
 ```powershell
 dotnet run -c Release --project benches\Idrak.Benches -- ops matmul launch train-decoder infer-decoder train-speech memory
@@ -294,7 +293,6 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | `benches/Idrak.Benches` | the benches above |
 | `samples/` | plug-ins (QwenVision, IdrakVision) and 24 sample apps (chat, coding agent, GPT API and training, house prices, OCR and legal OCR, quantization, RAG, re-ranker, sentiment, shape recognition, summarizer, text generation, ONNX import, ...) |
 | `api/` | the public API dumps the guard test checks |
-| `plans/` | one plan per area with its status and dated runs; `plug-in.md` the extensibility survey; `idrak-cli.md` the CLI design; `gpu-checks.md` the GPU check list |
 | `docs/` | `optimization.md` and the longer guides |
 | `tools/` | fixture makers (Python references the tests compare against: uroman, HarfBuzz, torch losses, ffmpeg) |
 
@@ -312,47 +310,44 @@ The branch holds one breaking release, and it should ship as **0.4.0**, not as a
   calls.
 - MP3 is now built into `Idrak.Audio`; the `Idrak.Mp3Audio` sample plug-in is gone.
 
-Not 1.0 yet: the HIP device is untested on hardware, only NVIDIA GPUs have run the GPU paths, and plan 10's inventory
-still lists contracts whose only implementation is the built-in one. `VersionPrefix` stays `0.3.1` until the owner
+Not 1.0 yet: the HIP device is untested on hardware, only NVIDIA GPUs have run the GPU paths, and some contracts still
+have the built-in implementation as their only one. `VersionPrefix` stays `0.3.1` until the owner
 tags; the `CHANGELOG.md` section "Unreleased (0.4.0)" is the release note.
 
 Before the tag: the owner's GPU runs of the targeted groups that changed (`tuning`, `sampler`, `audio`, the kit), the
-S8 route C result recorded in plan 21, and a `dotnet pack` of the 13 packages.
+result of the speech voice trained with the fixed trainer, and a `dotnet pack` of the packages.
 
 ---
 
 ## Planned features
 
-Ordered by how soon they are likely to matter; each has a plan with the detail.
+Ordered by how soon they are likely to matter.
 
 **Near (in progress or next)**
 
-- **Speech (plan 21):** close S8 with the route C voice from the fixed trainer (the run is under way); sampling with
+- **Speech:** finish the voice trained with the fixed trainer (the run is under way); sampling with
   the temperature fallback and segment batches in Whisper's `Transcribe`; the hiss in pauses of the fine-tuned voice.
-- **Performance (plan 22):** a training step recorded as a device graph and replayed, with batches padded to size
+- **Performance:** a training step recorded as a device graph and replayed, with batches padded to size
   classes so shapes repeat (the only way below the driver's cost per launch); CPU `exp` and `erf` kernels; the
   remaining fixed policy constants reviewed.
-- **Vision-language (plans 11, 12, 16, 19):** phase 6 of plan 11 (the owner's choice to stop); the owner's runs of the
-  real models and the from-scratch IdrakVision family on the card (plan 19 A5 and B6).
-- **Extensibility gaps still open from `plans/plug-in.md`:** 7 (model packages storing custom architectures, scalers
-  and tokenizers), 11 (tokenizer models beyond BPE: WordPiece, Unigram/SentencePiece), 12 (GGUF families unlike
-  Llama), 13 (generation hooks: stopping criteria, logits processors, speculative decoding, structured output), 15
-  (full metrics, optimizer state in checkpoints), 16 (evaluation metrics as a registry), 17 (more engine model kinds
-  and options), 18 (retrieval pooling, chunking, indexes and fusion as registries), 19 (registered dataset formats
-  when picking hub files; compression and archives), 20 (safetensors FP8 and int8 dtypes), 21 (checkpoint export for
-  every module and format), 22 (first-class packed-weight plug-ins), 23 (Jinja filters and tests), 24 (initializers,
-  activations and precisions), 25 (structured and image tool results).
+- **Vision-language:** runs of the real models and of the from-scratch IdrakVision family on a GPU.
+- **Extensibility gaps still open:** model packages storing custom architectures, scalers and tokenizers; generation
+  hooks (stopping criteria, logits processors, speculative decoding, structured output); full metrics and optimizer
+  state in checkpoints; evaluation metrics as a registry; more engine model kinds and options; retrieval pooling,
+  chunking, indexes and fusion as registries; registered dataset formats when picking hub files, compression and
+  archives; safetensors FP8 and int8 dtypes; checkpoint export for every module and format; first-class packed-weight
+  plug-ins; Jinja filters and tests; initializers, activations and precisions; structured and image tool results.
 
 **Later**
 
-- **Diffusion (plan 20):** the package `Idrak.Diffusion` is reserved and nothing is built: UNet and DiT denoisers,
+- **Diffusion:** the package `Idrak.Diffusion` is reserved and nothing is built: UNet and DiT denoisers,
   schedulers, VAE, text conditioning, image and audio generation.
-- **AMD GPUs (plans 3 and 8):** the HIP device on real hardware, and the Vulkan device verified on Radeon.
-- **Intel GPUs and NPUs (plan 4):** Vulkan on Iris Xe and Arc; the NPU after.
-- **Apple silicon (plan 5):** a Metal device; macOS CPU runs first.
-- **More than one device (plan 6):** a model or a training job over several GPUs and machines; a serving tier over
+- **AMD GPUs:** the HIP device on real hardware, and the Vulkan device verified on Radeon.
+- **Intel GPUs and NPUs:** Vulkan on Iris Xe and Arc; the NPU after.
+- **Apple silicon:** a Metal device; macOS CPU runs first.
+- **More than one device:** a model or a training job over several GPUs and machines; a serving tier over
   several hosts.
-- **Operations (plan 9):** phases 0 and 2 to 5 of the descriptor-driven kernel dispatcher (fusion, scheduling).
+- **Operations:** the rest of the descriptor-driven kernel dispatcher (fusion, scheduling).
 
 ---
 
