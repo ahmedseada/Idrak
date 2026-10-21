@@ -32,9 +32,6 @@ Idrak is a neural network library for **.NET 10**, written entirely in C#.
 This file is the library's map: what it can do today, on which hardware that was verified, how it is laid out, what
 the next version should be, and what is planned. The plans under `plans/` hold the detail and the dated run records.
 
-**State (2026-10-18):** version `0.3.1` on NuGet; the `abstraction` branch (this one) carries the unreleased `0.4.0`
-work described below and in `CHANGELOG.md`. 13 packages, 824 registered tests, 18 plug-in registry kinds.
-
 ---
 
 ## Packages
