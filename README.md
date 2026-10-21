@@ -1,11 +1,33 @@
-# Idrak
+<p align="center"><img src="assets/icon.svg" width="128" alt="Idrak"></p>
 
-Idrak is a neural network library for .NET 10, written in C# with no native dependencies: tensors, autograd, layers,
-optimizers and data loaders; CUDA, Vulkan and HIP devices whose kernels are generated at run time; language, vision,
-vision-language and speech models loaded from Hugging Face or GGUF checkpoints; fine-tuning, distillation and
-evaluation; an inference engine with HTTP, OpenAI-compatible and MCP front ends; and one command-line tool, `idrak`,
-over all of it. Every behaviour goes through a contract with a registry, so a model family, a file format, a device or a
-kernel can be added from a plug-in without touching the library.
+<h1 align="center">Idrak</h1>
+
+<p align="center"><b>Deep learning in pure .NET. Every GPU. No native dependencies.</b></p>
+
+> **Idrak** (Arabic: **إدراك**, pronounced *id-RAAK*) means **perception, comprehension, awareness**: taking in the world
+> and coming to understand it. The name fits a library whose models learn to perceive patterns in data, to see images,
+> to hear speech and to understand language.
+>
+> <p dir="rtl" lang="ar"><b>إدراك</b>: الفهم والوعي، والقدرة على استيعاب الأشياء ومعرفة حقيقتها. اخترنا هذا الاسم لأن المكتبة تُعلِّم النماذج أن تُدرِك الأنماط في البيانات، وأن ترى الصور، وتسمع الأصوات، وتفهم اللغة.</p>
+
+Idrak is a neural network library for **.NET 10**, written entirely in C#.
+
+- **Nothing native to install.** No PyTorch, no CUDA Toolkit, no cuBLAS or cuDNN, no shader compiler. Its GPU kernels
+  are generated in C# (PTX for NVIDIA, SPIR-V for Vulkan, HIP source for AMD) and compiled by the GPU's own driver on
+  the user's machine.
+- **Every GPU, one code base.** CUDA, Vulkan and HIP devices beside SIMD CPU kernels on x64 and ARM64 (Windows, Linux,
+  macOS, Android). Kernel choices are measured on the device at run time, never looked up by a card's name.
+- **Build and train.** Tensors with automatic differentiation; dense, convolutional, recurrent, attention and
+  transformer layers; losses, optimizers and schedules; trainers, mixed precision and data loaders for data that does
+  not fit in memory.
+- **Run real models.** Language, vision-language, speech, encoder and encoder-decoder models from Hugging Face folders
+  or GGUF files, with their own tokenizers and chat templates. The model families live in three plug-in packages
+  (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`) that the `idrak` tool registers for you.
+- **Tune, serve and ship.** LoRA, QLoRA and DoRA fine-tuning, distillation and evaluation; an inference engine with
+  batching, OpenAI-compatible and MCP front ends; retrieval and RAG; ONNX export and import; and one command-line tool,
+  `idrak`, over all of it.
+- **Open by contract.** Every behaviour goes through a contract with a registry, so a model family, a file format, a
+  device or a kernel is added from a plug-in without touching the library.
 
 This file is the library's map: what it can do today, on which hardware that was verified, how it is laid out, what
 the next version should be, and what is planned. The plans under `plans/` hold the detail and the dated run records.
