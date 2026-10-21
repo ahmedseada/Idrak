@@ -1,8 +1,12 @@
-<p align="center"><img src="assets/icon.svg" width="128" alt="Idrak"></p>
+<div align="center">
+
+<img src="assets/icon.svg" width="128" alt="Idrak">
 
 <h1 align="center">Idrak</h1>
 
-<p align="center"><b>Deep learning in pure .NET. Every GPU. No native dependencies.</b></p>
+<b>Deep learning in pure .NET. Every GPU. No native dependencies.</b>
+
+</div>
 
 > **Idrak** (Arabic: **إدراك**, pronounced *id-RAAK*) means **perception, comprehension, awareness**: taking in the world
 > and coming to understand it. The name fits a library whose models learn to perceive patterns in data, to see images,
