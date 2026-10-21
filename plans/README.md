@@ -57,6 +57,14 @@ default in the library (samples and plug-ins keep no copies); `Idrak.Nlp` rename
 encoders and encoder-decoders, then BERT and T5; eleven phases in two lanes (planned 2026-10-19, widened 2026-10-20,
 nothing built): [26-plugin-packages.md](26-plugin-packages.md).
 
+Reinforcement learning as a general part of the library (`Idrak.Reinforcement`: contracts in
+`Idrak.Abstraction.Reinforcement` for environments, policies, rewards, advantage estimators, policy losses and command
+sandboxes; rollouts, GAE, group-relative and leave-one-out advantages, REINFORCE, PPO and GRPO; the language-model policy
+in `Idrak.Text` on a fine-tuning session with the sampled tokens recorded), environments as plug-ins in
+`Idrak.Reinforcement.Plugins` like `Idrak.Vision.Plugins` (agentic coding first: the coding task layer moves out of
+`Idrak.Text`), optimizers, schedules and answer metrics out of `Idrak.Text` into registries, `idrak reinforce`; seven
+phases in two lanes (planned 2026-10-21, nothing built): [27-reinforcement.md](27-reinforcement.md).
+
 ## Not supported yet
 
 What the `architecture` branch cannot do today, with an example of each. "High" marks what comes next.
