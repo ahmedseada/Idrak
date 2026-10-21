@@ -26,6 +26,11 @@ standing rules; they win over anything here), then the plan you are asked to wor
 - **Leftover round L1 (2026-10-20):** rows 9, 10, 11, 13, 15, 17, 18 done and pushed (T5 and GGUF). The owner stopped
   there: every other row of "Leftovers for the owner" (now 1-38, with the rounds' finds) waits for the owner. **Row 32 is a
   failing test on the branch** (`operations:`, from Plan 23), to raise first.
+- **Plan 27 (reinforcement learning)** — [27-reinforcement.md](27-reinforcement.md): written 2026-10-21 from the owner's
+  decisions (a separate general package `Idrak.Reinforcement`, agentic coding as its first application,
+  `Idrak.Reinforcement.Plugins` laid out like `Idrak.Vision.Plugins`, what belongs elsewhere moves out of `Idrak.Text`).
+  Phases R0-R6 (R6 optional); **nothing is built**. Its "Questions for the owner" (decisions 6-8, where the coding task
+  layer lives, the default sandbox, R6, the variable names) come first; no phase starts before the owner names it.
 - **Scope:** Plan 24's owner runs, and Plan 26 only when the owner names a phase (the owner dropped Plan 25,
   Idrak.Extensions.AI).
 - **No new work until the owner says so.** Report status and wait for the owner to name the next item.
