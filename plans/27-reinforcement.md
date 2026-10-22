@@ -2,7 +2,12 @@
 
 **Status (2026-10-22, `abstraction`):** planned 2026-10-21 from the owner's decisions, against the code at acfc83b (every
 "Comes from" below was found in the source). The owner answered the open questions and started the plan on 2026-10-22
-("go with recommendation", at most two agents): R0 and R1 run side by side.
+("go with recommendation", at most two agents). **Finished 2026-10-22:** R0-R6 with R3b, R3c and R4b built, merged and pushed
+(CPU passes; each merge's run in its as-built note); the owner's runs are collected in "The owner's runs". Left, not
+started (none asked for): on-policy distillation on a cluster (the distiller on R3b's shards), ranks agreeing on a stop
+(`tune` has the same gap), the dashboard steering `reinforce`, a real multi-machine run, `idrak reinforce` for the classic
+environments and DQN, and R6's measured candidate (exact-size replay arrays: 5.37 MB held for 4.1 MB at 100,000
+transitions).
 
 | Phase | What | Lane | State |
 |---|---|---|---|
@@ -1650,6 +1655,14 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 ```powershell
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
+
+# R6 (merged): no GPU kernel; the CUDA line runs the same tensors on the card against bars measured on the CPU (a miss is
+# a finding); on Windows the Gymnasium comparison checks the 1e-5 tolerance against Windows' own sine and cosine
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "plugins: classic|reinforcement:|reinforcement contracts|plugins:|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|conformance kit:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "plugins: classic: PPO|plugins: classic: DQN|reinforcement: off-policy"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
 
 # R3c (merged): CPU, CUDA, then idrak reinforce under idrak cluster sim on one card split in two, against one process
 # (the first iteration's reward line must match: a difference on the card is a finding), resume, and localhost mode

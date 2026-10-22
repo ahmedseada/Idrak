@@ -26,15 +26,10 @@ standing rules; they win over anything here), then the plan you are asked to wor
 - **Leftover round L1 (2026-10-20):** rows 9, 10, 11, 13, 15, 17, 18 done and pushed (T5 and GGUF). The owner stopped
   there: every other row of "Leftovers for the owner" (now 1-38, with the rounds' finds) waits for the owner. **Row 32 is a
   failing test on the branch** (`operations:`, from Plan 23), to raise first.
-- **Plan 27 (reinforcement learning)** — [27-reinforcement.md](27-reinforcement.md): written 2026-10-21 from the owner's
-  decisions (a separate general package `Idrak.Reinforcement`, agentic coding as its first application,
-  `Idrak.Reinforcement.Plugins` laid out like `Idrak.Vision.Plugins`, what belongs elsewhere moves out of `Idrak.Text`).
-  Phases R0-R6 (R6 later). The owner answered its questions and started it 2026-10-22 ("go with recommendation", at
-  most two agents): R0 and R1 run side by side in worktrees `/home/user/Idrak-r0` and `/home/user/Idrak-r1`; then R2
-  and R3, then R4, then R5 (see its "Order and parallelism"). **R0 merged and pushed (d1e1d6f); row 32 fixed (e9a09ef); R1 merged
-  and pushed (6dd4e01, 160 + 1 passed on the merged tree); R2 merged (ba2f720); R3 merged (9cbb9d4, 259 passed on the merged tree; left: rollouts on a cluster); R4, R5 and R4b merged (R4b with f3864ba: tune, distill and reinforce skip the languages' folders; 145 passed on the merged tree); R3b merged (81 passed on the merged tree); R3c merged (`idrak reinforce` under `idrak cluster sim`, 54 passed; on-policy distillation on a cluster refused until the distiller uses R3b's shards; agreed stops across ranks and a real TCP run not done); R6 (classic environments, DQN) runs in `/home/user/Idrak-r6`, started by the owner 2026-10-22 since it waits on nothing.**
-  The owner (2026-10-22): go on with the next phase whenever a slot is free and its inputs are merged, without waiting
-  for the owner's runs; the owner tests everything later from the list in Plan 27's "The owner's runs".
+- **Plan 27 (reinforcement learning)** — [27-reinforcement.md](27-reinforcement.md): **finished 2026-10-22.** R0-R6 with
+  R3b, R3c and R4b built, merged and pushed (CPU passes); no agent runs, no worktree is left. The owner tests later from
+  the plan's "The owner's runs" (the owner, 2026-10-22: "I will test all later"). Its status line lists what is left;
+  none of it starts without the owner.
 - **Plan 28 (documents)** — [28-documents.md](28-documents.md): written 2026-10-22 from the owner's decisions (PDF as a
   library default on a format-neutral document contract, Office later as a plug-in on it, nothing language-specific in
   the library). Phases D0-D5; **nothing is built**. The owner asked for planning only: its "Questions for the owner"
