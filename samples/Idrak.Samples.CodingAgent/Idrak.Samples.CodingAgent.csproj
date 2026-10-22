@@ -9,6 +9,8 @@
     <ProjectReference Include="..\..\src\Idrak.Data\Idrak.Data.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Text\Idrak.Text.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
+    <!-- The coding task layer (tasks, suites, workspaces, verification) and the container sandbox: Idrak.Reinforcement.Plugins' coding plug-in. -->
+    <ProjectReference Include="..\..\src\Idrak.Reinforcement.Plugins\Idrak.Reinforcement.Plugins.csproj" />
   </ItemGroup>
 
 </Project>

@@ -18,5 +18,5 @@ Idrak.Abstraction.Generation.IAttentionPositionBias | how an attention layer add
 Idrak.Abstraction.Diagnostics.IProgressReporter | the live progress of any long work (a download, a load, a training run, a rollout), shown the same way by every package that reports it; made through ProgressReporters
 Idrak.Abstraction.Reinforcement.AdvantageEstimators | the estimators by name, overridable once for every package that trains a policy
 Idrak.Abstraction.Reinforcement.PolicyLosses | the policy losses by name, overridable once for every package whose policy trains with them
-Idrak.Abstraction.Reinforcement.IRewardFunction | Idrak.Text's text rewards (R3) and the plug-ins' rewards, for every environment that scores text
 Idrak.Abstraction.Reinforcement.RewardFunctions | the rewards by name for every package that scores text (Idrak.Text's, R3; the coding plug-in's, R4)
+Idrak.Abstraction.CommandSandboxes | the sandboxes by name, chosen once (IDRAK_SANDBOX) for every package that runs a command a model asked for

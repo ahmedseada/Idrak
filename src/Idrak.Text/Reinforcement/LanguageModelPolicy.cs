@@ -52,9 +52,6 @@ public sealed record LanguageModelPolicyOptions
     /// <summary>Where the behaviour log-probabilities come from: <see cref="Recompute"/> (the default) or <see cref="Sampler"/> (<see cref="BehaviorVariable"/>).</summary>
     public string Behavior { get; init; } = Setting(BehaviorVariable) ?? Recompute;
 
-    /// <summary>Give the policy loss the reference's log-probabilities (the model with its adapters off; a KL penalty reads them). True by default.</summary>
-    public bool Reference { get; init; } = true;
-
     /// <summary>
     /// The weight of a teacher term added to the policy loss (on-policy distillation beside the reward,
     /// <see cref="FineTuningLosses.OnPolicyDistillation"/>; the teacher is the session's <see cref="FineTuningOptions.Teacher"/>);
@@ -85,7 +82,8 @@ public sealed record LanguageModelPolicyOptions
 /// on the session's live adapters with the token ids recorded (<see cref="GenerationOptions.ReturnTokens"/>), and updates
 /// through <see cref="FineTuningSession.Step"/> with the policy loss (<see cref="FineTuningLosses.Policy"/>) on exactly the
 /// ids sampled: each episode laid out by <see cref="EpisodeTurns"/> (only the replies trained), each token's advantage its
-/// turn's, the reference the base model (adapters off), the behaviour log-probabilities recomputed once per rollout batch
+/// turn's, the reference the base model (adapters off; computed only for a loss that reads it,
+/// <see cref="IPolicyLoss.NeedsReference"/>), the behaviour log-probabilities recomputed once per rollout batch
 /// by the training forward or taken from the sampler (<see cref="LanguageModelPolicyOptions.Behavior"/>), and a teacher
 /// term beside the policy loss when asked (<see cref="LanguageModelPolicyOptions.TeacherWeight"/>). Idrak.Text does not
 /// reference Idrak.Reinforcement: the policy meets its trainer and losses through Idrak.Abstraction's contracts.
@@ -98,6 +96,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
     private object? _batch;                                  // the rollout batch laid out
     private List<TrainingSequence>[] _sequences = [];        // its episodes' sequences, with their values and log-probabilities
     private EpisodeLayout[] _layouts = [];
+    private bool _hasReference;                              // its sequences carry the reference's log-probabilities
     private bool _disposed;
 
     /// <summary>A policy over <paramref name="session"/>'s model and adapters.</summary>
@@ -223,7 +222,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(batch);
         ArgumentNullException.ThrowIfNull(loss);
-        Prepare(batch);
+        Prepare(batch, loss.NeedsReference(lossOptions));
         IReadOnlyList<int> chosen = episodes ?? [.. Enumerable.Range(0, batch.Episodes)];
         if (chosen.Count == 0 || chosen.Any(e => (uint)e >= (uint)batch.Episodes))
         {
@@ -231,7 +230,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
         }
 
         var sequences = chosen.SelectMany(e => _sequences[e]).ToList();
-        var objective = FineTuningLosses.Policy(loss, lossOptions, Options.Reference);
+        var objective = FineTuningLosses.Policy(loss, lossOptions);
         if (_teacher is not null)
         {
             objective = FineTuningLosses.Add(objective, _teacher, Options.TeacherWeight);
@@ -250,12 +249,28 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
     }
 
     // Lays out every episode of a batch once (the first update on it): its sequences, each trained token's advantage (its
-    // turn's), the reference's log-probabilities, and the behaviour's (recomputed by the training forward before any step
-    // on the batch, or as sampled).
-    private void Prepare(RolloutBatch<ChatObservation, ChatMessage> batch)
+    // turn's), the reference's log-probabilities when the loss reads them, and the behaviour's (recomputed by the training
+    // forward before any step on the batch, or as sampled). The reference (the adapters off) does not move with the steps,
+    // so a later update whose loss reads it adds it then.
+    private void Prepare(RolloutBatch<ChatObservation, ChatMessage> batch, bool needsReference)
     {
         if (ReferenceEquals(batch, _batch))
         {
+            if (needsReference && !_hasReference)
+            {
+                var laid = _sequences.SelectMany(s => s).ToList();
+                var values = Session.LogProbabilities(laid, adapters: false);
+                for (int e = 0, k = 0; e < _sequences.Length; e++)
+                {
+                    for (int i = 0; i < _sequences[e].Count; i++, k++)
+                    {
+                        _sequences[e][i] = _sequences[e][i] with { ReferenceLogProbabilities = values[k] };
+                    }
+                }
+
+                _hasReference = true;
+            }
+
             return;
         }
 
@@ -269,7 +284,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
 
         bool recompute = Options.Behavior.Equals(LanguageModelPolicyOptions.Recompute, StringComparison.OrdinalIgnoreCase);
         var behavior = recompute ? Session.LogProbabilities(all, adapters: true) : null;
-        var reference = Options.Reference ? Session.LogProbabilities(all, adapters: false) : null;
+        var reference = needsReference ? Session.LogProbabilities(all, adapters: false) : null;
         var advantages = batch.Advantages;
         var offsets = batch.Offsets;
         var sequences = new List<TrainingSequence>[batch.Episodes];
@@ -316,7 +331,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
             }
         }
 
-        (_batch, _layouts, _sequences) = (batch, layouts, sequences);
+        (_batch, _layouts, _sequences, _hasReference) = (batch, layouts, sequences, needsReference);
     }
 
     /// <summary>Writes the adapters, the optimizer's state and the steps done (<see cref="FineTuningSession.Checkpoint"/>).</summary>

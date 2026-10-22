@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
+using Idrak.Reinforcement.Plugins.Coding;
 using Idrak.Text;
 using Idrak.Text.Generation;
 
@@ -134,8 +135,8 @@ internal static partial class Tests
                 FakeChatModel.Answer("a.txt says alpha."));
             var results = new List<ToolResult>();
             var agent = new CodingAgent(fake) { OnToolResult = results.Add };
-            var run = agent.RunAsync(new AgentTask("typed", "What does a.txt say?"), new CodingTools(root)).GetAwaiter().GetResult();
-            Check(run is { Outcome: AgentOutcome.Passed, Rounds: 6, ToolCalls: 5, ToolErrors: 2 }, $"counts {run.Outcome} {run.Rounds} {run.ToolCalls} {run.ToolErrors}");
+            var run = agent.RunAsync("What does a.txt say?", new CodingTools(root)).GetAwaiter().GetResult();
+            Check(run is { End: CodingAgentEnd.Answered, Rounds: 6, ToolCalls: 5, ToolErrors: 2 }, $"counts {run.End} {run.Rounds} {run.ToolCalls} {run.ToolErrors}");
             Check(results.Select(r => r.Succeeded).SequenceEqual([true, false, false, true, true]), "run, skipped, skipped, run, run");
             Check(results[1].Error!.StartsWith("Not run again", StringComparison.Ordinal), $"the note: {results[1].Error}");
             Check(fake.Requests[2].Messages[^1] is { Role: "tool", ToolName: "read_file" } note && note.Content.Contains("Not run again", StringComparison.Ordinal),
@@ -181,7 +182,7 @@ internal static partial class Tests
         File.WriteAllText(Path.Combine(task, "verify", "GreeterTests.cs"), "// hidden test\n");
         try
         {
-            var suite = AgentTask.LoadSuite(Path.Combine(root, "suite"));
+            var suite = CodingSuite.Load(Path.Combine(root, "suite"));
             Check(suite is [{ Id: "csharp/fix-greeting", Language: "csharp", Verify: ["git grep -q Hello -- Greeter.cs"] }], $"suite: {string.Join(",", suite.Select(t => t.Id))}");
             var fake = FakeChatModel.Script(
                 FakeChatModel.ToolCall("read_file", new JsonObject { ["path"] = "Greeter.cs" }),
@@ -190,9 +191,10 @@ internal static partial class Tests
                 FakeChatModel.Answer("Greet now returns Hello.", thinking: "Done."));
             var tools = new List<string>();
             var agent = new CodingAgent(fake, new AgentOptions { Think = true }) { OnToolResult = r => tools.Add(r.Call.Name) };
-            var run = agent.RunAsync(suite[0], Path.Combine(root, "run1")).GetAwaiter().GetResult();
-            Check(run.Outcome == AgentOutcome.Passed, $"passed: {run.Outcome} {run.VerifyOutput}");
-            Check(run is { Rounds: 4, ToolCalls: 3, ToolErrors: 1 } && tools.Count == 3, $"counts {run.Rounds} {run.ToolCalls} {run.ToolErrors}");
+            var verifier = new CodingVerifier();
+            var run = verifier.RunAsync(agent, suite[0], Path.Combine(root, "run1")).GetAwaiter().GetResult();
+            Check(run.Outcome == CodingOutcome.Passed, $"passed: {run.Outcome} {run.VerifyOutput}");
+            Check(run.Agent is { Rounds: 4, ToolCalls: 3, ToolErrors: 1 } && tools.Count == 3, $"counts {run.Agent.Rounds} {run.Agent.ToolCalls} {run.Agent.ToolErrors}");
             Check(!Directory.Exists(Path.Combine(root, "run1", "bin")) && File.Exists(Path.Combine(root, "run1", "GreeterTests.cs")), "build output skipped, hidden files copied");
             Check(fake.Requests[0].Messages is [{ Role: "system" }, { Role: "user", Content: "Make Greet say Hello." }] && fake.Requests[0].Tools!.Count == 6, "first request");
             Check(fake.Requests[1].Messages[^1] is { Role: "tool", ToolName: "read_file" } m && m.Content.Contains("\"Bye\"", StringComparison.Ordinal), "tool results reach the model");
@@ -203,12 +205,12 @@ internal static partial class Tests
             Check(transcript.Messages.Count == 9 && transcript.Tools.Count == 6 && transcript.Messages[^1].Content == "Greet now returns Hello.", "transcript reads back");
 
             var lazy = FakeChatModel.Script(FakeChatModel.Answer("Done!"));
-            var failed = new CodingAgent(lazy).RunAsync(suite[0], Path.Combine(root, "run2")).GetAwaiter().GetResult();
-            Check(failed.Outcome == AgentOutcome.Failed && failed.VerifyOutput.Contains("exit code 1", StringComparison.Ordinal), $"verification fails: {failed.VerifyOutput}");
+            var failed = verifier.RunAsync(new CodingAgent(lazy), suite[0], Path.Combine(root, "run2")).GetAwaiter().GetResult();
+            Check(failed.Outcome == CodingOutcome.Failed && failed.VerifyOutput.Contains("exit code 1", StringComparison.Ordinal), $"verification fails: {failed.VerifyOutput}");
 
             var looping = FakeChatModel.Script([.. Enumerable.Repeat(FakeChatModel.ToolCall("list_files", []), 5)]);
-            var budget = new CodingAgent(looping, new AgentOptions { MaxRounds = 3 }).RunAsync(suite[0], Path.Combine(root, "run3")).GetAwaiter().GetResult();
-            Check(budget.Outcome == AgentOutcome.OutOfBudget && budget.Rounds == 3, "round limit");
+            var budget = verifier.RunAsync(new CodingAgent(looping, new AgentOptions { MaxRounds = 3 }), suite[0], Path.Combine(root, "run3")).GetAwaiter().GetResult();
+            Check(budget.Outcome == CodingOutcome.OutOfBudget && budget.Agent.Rounds == 3, "round limit");
         }
         finally
         {
