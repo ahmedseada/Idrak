@@ -10,6 +10,14 @@ public static class Idrak.Text.Plugins.Bert.BertPlugin
   public static void Register()
   public static void Unregister()
 
+public static class Idrak.Text.Plugins.CSharp.CSharpLanguagePlugin
+  public const string LanguageName = "csharp"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static Idrak.Text.Abstractions.ICodingLanguage Language { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
 public static class Idrak.Text.Plugins.DeepSeek.DeepSeekPlugin
   public const string PreTokenizer = "deepseek-r1-qwen"
   public const string ToolCallFormat = "deepseek"
@@ -92,6 +100,14 @@ public static class Idrak.Text.Plugins.Mistral.MistralPlugin
   public static void Register()
   public static void Unregister()
 
+public static class Idrak.Text.Plugins.Python.PythonLanguagePlugin
+  public const string LanguageName = "python"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static Idrak.Text.Abstractions.ICodingLanguage Language { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
 public static class Idrak.Text.Plugins.Qwen.QwenArchitectures
   public const string SplitPattern = "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
   public static Idrak.Models.Abstractions.PretrainedArchitecture Qwen2()
@@ -132,3 +148,13 @@ public static class Idrak.Text.Plugins.TextPlugins
   public static void RegisterAll()
   public static void RegisterIdrakPlugin()
   public static void UnregisterAll()
+
+public static class Idrak.Text.Plugins.TypeScript.TypeScriptLanguagePlugin
+  public const string AngularName = "angular"
+  public const string TypeScriptName = "typescript"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static Idrak.Text.Abstractions.ICodingLanguage Angular { get; }
+  public static Idrak.Text.Abstractions.ICodingLanguage TypeScript { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()

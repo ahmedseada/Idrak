@@ -66,6 +66,7 @@ internal static class Registries
             new("advantages", "Advantage estimators", false, Sorted(AdvantageEstimators.Names)),
             new("policylosses", "Policy losses", false, Sorted(PolicyLosses.Names)),
             new("sandboxes", "Command sandboxes", false, Sorted(CommandSandboxes.Names)),
+            new("languages", "Coding languages", false, Sorted(CodingLanguages.Names)),
             new("plugins", "Plug-ins (model families)", false, Sorted(IdrakPlugins.Names)),
             new("devices", "Device kinds", false, Sorted(DeviceListing.Backends.Select(b => b.Kind).Prepend("cpu"))),
         ];

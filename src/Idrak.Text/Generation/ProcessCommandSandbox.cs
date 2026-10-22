@@ -146,7 +146,7 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
         return new CommandResult(stopped ? null : process.ExitCode, timedOut, text, watch.Elapsed, false) { OutOfMemory = outOfMemory };
     }
 
-    /// <summary>The program <paramref name="name"/> found on the PATH (with the Windows executable extensions: npm is npm.cmd there), or null.</summary>
+    /// <summary>The program <paramref name="name"/> found on the PATH (with the Windows executable extensions: a program installed as a .cmd script is found there), or null.</summary>
     public static string? FindProgram(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);

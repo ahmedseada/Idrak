@@ -158,7 +158,7 @@ internal sealed class DataTool(ToolConsole console)
                 {
                     var spec = DatasetSpec.Parse(text);
                     _out.WriteLine(spec.ToString());
-                    var rows = console.Track(spec.Open(downloads), "reading").Take((int)Math.Min(take, int.MaxValue)).ToList();
+                    var rows = console.Track(spec.Open(downloads, CodeFolders.Skipped), "reading").Take((int)Math.Min(take, int.MaxValue)).ToList();
                     _out.WriteLine($"  columns: {string.Join(", ", rows.SelectMany(r => r.Select(p => p.Key)).Distinct())}");
                     _out.WriteLine($"  layout:  {(rows.Count == 0 ? "no rows" : spec.Mapping is not null ? "mapped with user= / assistant=" : ChatRows.Describe(rows[0]) ?? "not recognized (map columns with user=…&assistant=…)")}");
                     if (rows.Count == 0)
@@ -183,7 +183,7 @@ internal sealed class DataTool(ToolConsole console)
                 {
                     var watch = Stopwatch.StartNew();
                     var spec = DatasetSpec.Parse(text);
-                    long rows = console.Track(spec.Open(downloads), "counting").LongCount();
+                    long rows = console.Track(spec.Open(downloads, CodeFolders.Skipped), "counting").LongCount();
                     _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{spec}: {rows:N0} rows ({watch.Elapsed.TotalSeconds:F1} s)"));
                 }
 
@@ -194,7 +194,7 @@ internal sealed class DataTool(ToolConsole console)
                 {
                     var watch = Stopwatch.StartNew();
                     var spec = DatasetSpec.Parse(text);
-                    var files = spec.Download(downloads);
+                    var files = spec.Download(downloads, CodeFolders.Skipped);
                     _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{spec}: {files.Count} file{(files.Count == 1 ? "" : "s")}, {Downloader.Size(files.Sum(f => new FileInfo(f).Length))} ({watch.Elapsed.TotalSeconds:F1} s)"));
                     foreach (var file in files)
                     {
@@ -233,6 +233,7 @@ internal sealed class DataTool(ToolConsole console)
                                + $"{(recipe.MixByWeight ?? recipe.Sources.Any(x => x.Options.ContainsKey("weight")) ? "mixed by weight" : "one source after another")}, "
                                + $"{(recipe.Deduplicate ? "duplicates removed" : "duplicates kept")}, {(recipe.Shuffle ? $"shuffled (seed {recipe.Seed})" : "in order")}"
                                + (recipe.EvaluationFraction > 0 ? string.Create(CultureInfo.InvariantCulture, $", {recipe.EvaluationFraction:P1} held out for evaluation") : ""));
+                recipe = recipe with { SkippedFolders = recipe.SkippedFolders ?? CodeFolders.Skipped };
                 var (train, evaluation) = recipe.Build(downloads);
                 var buildWatch = Stopwatch.StartNew();
                 long written = new DatasetRows(() => console.Track(train, "writing")).WriteJsonLines(output!);

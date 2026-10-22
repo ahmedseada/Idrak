@@ -14,6 +14,9 @@
     <ProjectReference Include="..\Idrak.Reinforcement\Idrak.Reinforcement.csproj" />
     <!-- Environments that are conversations (a coding task) run on the chat models and tools of Idrak.Text (one way: the plug-ins on the packages). -->
     <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
+    <!-- An environment for one coding language builds on that language's profile (the C# plug-in on csharp-language), as
+         Idrak.Vision.Plugins builds on Idrak.Text.Plugins' text families. -->
+    <ProjectReference Include="..\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
   </ItemGroup>
 
 </Project>

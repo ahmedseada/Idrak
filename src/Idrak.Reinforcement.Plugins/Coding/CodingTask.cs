@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Reinforcement.Plugins.Coding;
 
@@ -54,16 +55,39 @@ public sealed record CodingTask(string Id, string Prompt, string? Language = nul
 public static class CodingSuite
 {
     /// <summary>
-    /// Every task under <paramref name="folder"/>, ordered by id (its folder's path in the suite, with '/'); folders named
-    /// <c>node_modules</c> are not searched. With <paramref name="filter"/>, only the tasks whose id holds it (ignoring case).
+    /// Every task under <paramref name="folder"/>, ordered by id (its folder's path in the suite, with '/'); <c>.git</c> and
+    /// the coding languages' build output and dependency folders (every registered language's when
+    /// <paramref name="languages"/> is null) are not searched. With <paramref name="filter"/>, only the tasks whose id holds
+    /// it (ignoring case).
     /// </summary>
-    public static IReadOnlyList<CodingTask> Load(string folder, string? filter = null)
+    public static IReadOnlyList<CodingTask> Load(string folder, string? filter = null, IReadOnlyList<ICodingLanguage>? languages = null)
     {
         ArgumentNullException.ThrowIfNull(folder);
         folder = Path.GetFullPath(folder);
-        return [.. Directory.EnumerateFiles(folder, "task.json", SearchOption.AllDirectories)
-            .Where(f => !f.Split(Path.DirectorySeparatorChar).Contains("node_modules"))
-            .Select(f => CodingTask.Load(Path.GetDirectoryName(f)!, Path.GetRelativePath(folder, Path.GetDirectoryName(f)!).Replace('\\', '/')))
+        var skipped = new HashSet<string>([".git", .. (languages ?? CodingLanguages.Registered).SelectMany(l => l.IgnoredDirectories.Concat(l.LinkedDirectories))],
+            StringComparer.OrdinalIgnoreCase);
+        var found = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(folder);
+        while (pending.Count > 0)
+        {
+            string current = pending.Pop();
+            if (File.Exists(Path.Combine(current, "task.json")))
+            {
+                found.Add(current);
+            }
+
+            foreach (var child in Directory.EnumerateDirectories(current))
+            {
+                if (!skipped.Contains(Path.GetFileName(child)))
+                {
+                    pending.Push(child);
+                }
+            }
+        }
+
+        return [.. found
+            .Select(f => CodingTask.Load(f, Path.GetRelativePath(folder, f).Replace('\\', '/')))
             .Where(t => filter is null || t.Id.Contains(filter, StringComparison.OrdinalIgnoreCase))
             .OrderBy(t => t.Id, StringComparer.Ordinal)];
     }

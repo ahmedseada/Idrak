@@ -155,4 +155,21 @@ QwenPlugin.Register();
 using var model = PretrainedModel.Load(folder);              // or GgufModel.Prepare("model.gguf") first
 ```
 
+## Coding languages
+
+The library's coding agent and tools (`CodingAgent`, `CodingTools`, Idrak.Text) name no programming language: they
+compose their defaults from the coding languages registered in `CodingLanguages` (`ICodingLanguage`:
+`Idrak.Text.Abstractions`). This package has the library's own, each a plug-in in a namespace of its own:
+
+| Namespace | Plug-in | Languages | What they add |
+|---|---|---|---|
+| `Idrak.Text.Plugins.CSharp` | `CSharpLanguagePlugin` ("csharp-language") | `csharp` (a `*.sln`, `*.slnx` or `*.csproj`) | `dotnet`; checked with `dotnet build`, `dotnet test`; `bin`, `obj`, `.vs` skipped; tasks without commands run `dotnet restore`, `dotnet build --no-restore`, `dotnet test --no-build` |
+| `Idrak.Text.Plugins.TypeScript` | `TypeScriptLanguagePlugin` ("typescript-language") | `typescript` (`package.json`, `tsconfig.json`), `angular` (`angular.json`) | `npm`, `npx`, `node`, `tsc` (and `ng`); checked with `npx tsc --noEmit`, `npm test` (`npx ng build`, `npx ng test --watch=false`); `node_modules` linked into a task's workspace, `dist` and `.angular` skipped |
+| `Idrak.Text.Plugins.Python` | `PythonLanguagePlugin` ("python-language") | `python` (`pyproject.toml`, `setup.py`, `requirements.txt`, …) | `__pycache__` and `.venv` skipped (no commands) |
+
+With all three registered and every language chosen (`CodingToolOptions.Languages`, `IDRAK_CODING_LANGUAGES`: `all`, the
+default), the agent's prompt, its programs and the tools' descriptions are what the library had before the languages
+moved out; `detected` keeps those the workspace shows. A workspace no chosen language detects gets a notice
+(`CodingTools.LanguageNotice`) naming the plug-in to register.
+
 License: Apache 2.0.
