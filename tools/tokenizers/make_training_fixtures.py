@@ -13,7 +13,7 @@ README.md kept):
   (one thread, no shuffling, the identity normalization unless the configuration names a built-in rule, the Arabic marks
   removed by a user rule where the configuration says so, no line skipped for length unless it gives
   max_sentence_length). The C# trainer is held to these by overlap of the learned (normal) pieces, above a threshold
-  measured here and recorded in plans/24-tokenizers.md: the two sum in different orders, so equal is not expected. Some
+  measured here and recorded in plans/done/24-tokenizers.md: the two sum in different orders, so equal is not expected. Some
   configurations also hold the ids sentencepiece's own model gives each line of data/tokenizers/corpus.txt
   ("encodings"), for the C# reader to give from the same pieces and switches.
 - whitespace-corpus.txt: made here (a fixed seed): lines of code whose indentation is runs of the literal ▁, the text
