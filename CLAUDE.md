@@ -2,8 +2,6 @@
 
 These are the owner's standing rules. They hold in every session, after every compaction, and for every agent.
 
-- **Start here.** A new session (or a new account taking the project over) reads `plans/HANDOVER.md` first: where the
-  work stands, what is left, how the owner works, and the pitfalls already met. Keep it current when work stops.
 - **Ambiguous instructions are asked, not guessed.** When the owner's wording could mean start or stop, now or later,
   this or that, ask in one line before acting; never start new work (a phase, an agent, a side fix) the owner did not
   ask for.
