@@ -261,7 +261,7 @@ internal static partial class Tests
             FineTuner.Train(model, [sequence], null, new FineTuningOptions
             {
                 Rank = 2, Alpha = 4f, Targets = ["q", "k", "v", "o"], Epochs = 3, BatchTokens = 512, Vision = tuningVision,
-                Optimizer = ps => new Idrak.Abstraction.Training.Sgd(ps, 0.05f), Scheduler = FineTuningSchedules.Constant(), MaxGradientNorm = 0f,
+                Optimizer = ps => new Idrak.Abstraction.Training.Sgd(ps, 0.05f), Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings(0f)), MaxGradientNorm = 0f,
             }, folder, new SynchronousProgress<FineTuningProgress>(p => losses.Add(p.Loss)));
             Check(losses.Count == 3 && losses.All(float.IsFinite) && losses[^1] < losses[0], $"losses {string.Join(", ", losses)}");
             using var saved = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));

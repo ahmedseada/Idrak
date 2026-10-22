@@ -58,10 +58,10 @@ public sealed record SpeechTrainingOptions
     /// <summary>The rate the schedule decays to.</summary>
     public float MinLearningRate { get; init; }
 
-    /// <summary>The rate over the steps: a <see cref="FineTuningSchedules"/> name.</summary>
+    /// <summary>The rate over the steps: a <see cref="LearningRateSchedules"/> name ("cosine", "linear", "constant", "wsd").</summary>
     public string Schedule { get; init; } = "cosine";
 
-    /// <summary>The optimizer: a <see cref="FineTuningOptimizers"/> name ("adamw", "adam", "adamw8bit", "sgd").</summary>
+    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "adamw8bit", "sgd").</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>Weight decay (decoupled for AdamW).</summary>
@@ -241,14 +241,14 @@ public sealed record SpeechTrainingOptions
                 + "DistillationAlpha 0 to 1 and DistillationTemperature positive.");
         }
 
-        if (!FineTuningOptimizers.Names.Contains(Optimizer, StringComparer.OrdinalIgnoreCase))
+        if (OptimizerKinds.Find(Optimizer) is null)
         {
-            throw new ArgumentException($"Optimizer '{Optimizer}' is not one of {string.Join(", ", FineTuningOptimizers.Names)}.");
+            throw new ArgumentException($"Optimizer '{Optimizer}' is not registered in OptimizerKinds (registered: {string.Join(", ", OptimizerKinds.Names)}).");
         }
 
-        if (!FineTuningSchedules.Names.Contains(Schedule, StringComparer.OrdinalIgnoreCase))
+        if (LearningRateSchedules.Find(Schedule) is null)
         {
-            throw new ArgumentException($"Schedule '{Schedule}' is not one of {string.Join(", ", FineTuningSchedules.Names)}.");
+            throw new ArgumentException($"Schedule '{Schedule}' is not registered in LearningRateSchedules (registered: {string.Join(", ", LearningRateSchedules.Names)}).");
         }
 
         _ = TuningMetrics.Get(Metric);
@@ -455,7 +455,7 @@ public static class SpeechTrainer
             optimizer.LoadState(ReadOptimizerState(resume.Folder));
         }
 
-        var schedule = FineTuningSchedules.Create(options.Schedule, options.WarmupFraction, options.MinLearningRate)(optimizer, options.Steps);
+        var schedule = LearningRateSchedules.Factory(options.Schedule, new LearningRateScheduleSettings(options.WarmupFraction, options.MinLearningRate))(optimizer, options.Steps);
         for (int i = 0; i < step; i++)
         {
             schedule.Step();                                                    // the resumed run's rate where it was
@@ -829,7 +829,7 @@ public static class SpeechTrainer
     // The optimizer over `parameters` the options name (on the host with HostOptimizer).
     internal static Optimizer CreateOptimizer(List<Tensor> parameters, SpeechTrainingOptions options)
     {
-        var make = FineTuningOptimizers.Create(options.Optimizer, options.LearningRate, options.WeightDecay, options.Momentum);
+        var make = OptimizerKinds.Factory(options.Optimizer, new OptimizerSettings(options.LearningRate, options.WeightDecay, options.Momentum));
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
 

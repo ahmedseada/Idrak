@@ -52,7 +52,7 @@ internal static partial class Tests
             var explicitRun = TrainTiny(folder, device, sequences, options with
             {
                 Optimizer = ps => new AdamW(ps, options.LearningRate, weightDecay: options.WeightDecay),
-                Scheduler = FineTuningSchedules.Cosine(options.WarmupFraction, options.MinLearningRate),
+                Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Cosine, new LearningRateScheduleSettings(options.WarmupFraction, options.MinLearningRate)),
             });
             Check(builtIn.Losses.Count >= 6 && builtIn.Losses.Count == explicitRun.Losses.Count, $"steps {builtIn.Losses.Count} and {explicitRun.Losses.Count}");
             CloseByNorm([.. builtIn.Losses], [.. explicitRun.Losses], 1e-5f, "explicit AdamW and cosine: losses");
@@ -61,7 +61,7 @@ internal static partial class Tests
             Check(recorded == explicitRun.Trace.Contains("recorded one training step as a graph"), "an explicit AdamW is recorded as the default is");
 
             // An optimizer of one's own: recorded steps (where the device records them) give what ordinary steps give.
-            var sgd = options with { Optimizer = ps => new Sgd(ps, 0.05f, momentum: 0.9f), Scheduler = FineTuningSchedules.WarmupStableDecay(0.1f, 0.3f) };
+            var sgd = options with { Optimizer = ps => new Sgd(ps, 0.05f, momentum: 0.9f), Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.WarmupStableDecay, new LearningRateScheduleSettings(0.1f, 0f, 0.3f)) };
             var sgdGraphs = TrainTiny(folder, device, sequences, sgd);
             var sgdOrdinary = TrainTiny(folder, device, sequences, sgd with { CudaGraphs = false });
             Check(recorded == sgdGraphs.Trace.Contains("recorded one training step as a graph") && (!recorded || sgdGraphs.Trace.Contains("replayed")),
@@ -101,10 +101,10 @@ internal static partial class Tests
                 return rates;
             }
 
-            AssertClose([1 / 3f, 2 / 3f, 1f, 0.875f, 0.75f, 0.625f, 0.5f, 0.375f, 0.25f, 0.125f], Rates(FineTuningSchedules.Linear(0.2f)), 1e-6f, "linear schedule");
-            AssertClose([1 / 3f, 2 / 3f, 1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f], Rates(FineTuningSchedules.Constant(0.2f)), 1e-6f, "constant schedule");
-            AssertClose([1 / 3f, 2 / 3f, 1f, 1f, 1f, 1f, 1f, 2 / 3f, 1 / 3f, 0f], Rates(FineTuningSchedules.WarmupStableDecay(0.2f, 0.3f)), 1e-6f, "warm-up, stable, decay");
-            Check(FineTuningOptimizers.Names.All(n => FineTuningOptimizers.Create(n, 1e-3f) is not null), "every named optimizer");
+            AssertClose([1 / 3f, 2 / 3f, 1f, 0.875f, 0.75f, 0.625f, 0.5f, 0.375f, 0.25f, 0.125f], Rates(LearningRateSchedules.Factory(LearningRateSchedules.Linear, new LearningRateScheduleSettings(0.2f))), 1e-6f, "linear schedule");
+            AssertClose([1 / 3f, 2 / 3f, 1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f], Rates(LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings(0.2f))), 1e-6f, "constant schedule");
+            AssertClose([1 / 3f, 2 / 3f, 1f, 1f, 1f, 1f, 1f, 2 / 3f, 1 / 3f, 0f], Rates(LearningRateSchedules.Factory(LearningRateSchedules.WarmupStableDecay, new LearningRateScheduleSettings(0.2f, 0f, 0.3f))), 1e-6f, "warm-up, stable, decay");
+            Check(OptimizerKinds.Names.All(n => OptimizerKinds.Factory(n, new OptimizerSettings(1e-3f)) is not null), "every named optimizer");
         }
         finally
         {
@@ -246,7 +246,7 @@ internal static partial class Tests
         using (var scope = new TensorScope())
         {
             var x = Tensor.From([0f, -100f, 100f, 1.5f], [4], Device.Cpu, requiresGrad: true);
-            var y = FineTuningLosses.LogSigmoid(x);
+            var y = Losses.LogSigmoid(x);
             y.Sum().Backward();
             AssertClose([MathF.Log(0.5f), -100f, 0f, (float)LogSigmoid(1.5)], y.ToArray(), 1e-5f, "log-sigmoid values (no overflow)");
             AssertClose([0.5f, 1f, 0f, (float)(1 / (1 + Math.Exp(1.5)))], x.Grad!.ToArray(), 1e-5f, "log-sigmoid gradient (½ at 0)");

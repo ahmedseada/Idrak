@@ -79,8 +79,10 @@ internal sealed class TuneTool(ToolConsole console)
                    (a transcript's prompt after the sound; "Transcribe."), --parts audio-projector (or audio-encoder: the
                    model's audio part trains beside the adapters and is saved with them; frozen otherwise)
         Scores:    --metric cer|wer (answers generated on the evaluation data and scored against the references; any metric a
-                   plug-in registers), --metric-every N (steps; default: each epoch), --metric-samples K (the first K; 0: all)
-        Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1|cer|wer, --out F.jsonl,
+                   plug-in registers in TuningMetrics), --metric-every N (steps; default: each epoch), --metric-samples K (the first
+                   K; 0: all)
+        Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1|cer|wer
+                   (auto: number for "#### n" references, else f1; or any registered metric), --out F.jsonl,
                    --choices a,b,c | auto (the answer is one of these: each is scored as the model's answer, the most likely one
                    taken, nothing generated; auto: the distinct answers in the data; accuracy and recall per answer)
         Chat:      --system S, --max-new N, --temperature T (0: greedy)
@@ -124,7 +126,10 @@ internal sealed class TuneTool(ToolConsole console)
     private double evalFraction;
     private string? output, evalFile, adapterFolder, systemPrompt, choices;
     private float? temperature;
-    private AnswerMetric metric = AnswerMetric.Auto;
+    private string metric = ChatEvaluation.Auto;
+
+    // The library's answer metrics: with auto, what --metric names for the answers of held-out rows (ChatEvaluation).
+    private static readonly string[] AnswerMetrics = [TuningMetrics.NumberMatch, TuningMetrics.ExactMatch, TuningMetrics.ContainsMatch, TuningMetrics.WordF1];
     private RowKind rowKind = RowKind.Auto;
     private MatMulPrecision? matmul;
     private FineTuningOptions tuning = new();
@@ -249,15 +254,20 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--batch": evaluationBatch = NextInt(); break;
                 case "--max-new": maxNew = NextInt(); break;
                 case "--metric":
+                    // auto and the answer metrics score the answers of held-out rows (ChatEvaluation); any other registered
+                    // metric scores generated text on conversation files, while training and in evaluate.
                     string metricName = Next();
-                    if (Enum.TryParse<AnswerMetric>(metricName, ignoreCase: true, out var answerMetric) && !char.IsAsciiDigit(metricName[0]))
+                    string named = metricName.Equals(ChatEvaluation.Auto, StringComparison.OrdinalIgnoreCase) ? ChatEvaluation.Auto
+                        : TuningMetrics.Find(metricName)?.Name ?? throw new ArgumentException(
+                            $"--metric {metricName}: use auto or a registered metric: {string.Join(", ", TuningMetrics.Names)} ({string.Join(", ", AnswerMetrics)} "
+                            + "score answers to questions, the others generated text against the reference).");
+                    if (named == ChatEvaluation.Auto || AnswerMetrics.Contains(named, StringComparer.Ordinal))
                     {
-                        metric = answerMetric;
+                        metric = named;
                     }
                     else
                     {
-                        tuningMetric = TuningMetrics.Find(metricName)?.Name ?? throw new ArgumentException(
-                            $"--metric {metricName}: use auto, number, exact, contains or f1 (answers to questions), or {string.Join(", ", TuningMetrics.Names)} (generated text against the reference).");
+                        tuningMetric = named;
                     }
 
                     break;
@@ -299,12 +309,12 @@ internal sealed class TuneTool(ToolConsole console)
         tuning = tuning with
         {
             WeightDecay = weightDecay,
-            Optimizer = optimizerName == "adamw" ? null : FineTuningOptimizers.Names.Contains(optimizerName)
-                ? FineTuningOptimizers.Create(optimizerName, tuning.LearningRate, weightDecay, momentum)
-                : throw new ArgumentException($"--optimizer {optimizerName}: use {string.Join(", ", FineTuningOptimizers.Names)}."),
-            Scheduler = scheduleName == "cosine" ? null : FineTuningSchedules.Names.Contains(scheduleName)
-                ? FineTuningSchedules.Create(scheduleName, tuning.WarmupFraction, tuning.MinLearningRate, decayFraction)
-                : throw new ArgumentException($"--schedule {scheduleName}: use {string.Join(", ", FineTuningSchedules.Names)}."),
+            Optimizer = optimizerName == "adamw" ? null : OptimizerKinds.Find(optimizerName) is not null
+                ? OptimizerKinds.Factory(optimizerName, new OptimizerSettings(tuning.LearningRate, weightDecay, momentum))
+                : throw new ArgumentException($"--optimizer {optimizerName}: use {string.Join(", ", OptimizerKinds.Names)}."),
+            Scheduler = scheduleName == "cosine" ? null : LearningRateSchedules.Find(scheduleName) is not null
+                ? LearningRateSchedules.Factory(scheduleName, new LearningRateScheduleSettings(tuning.WarmupFraction, tuning.MinLearningRate, decayFraction))
+                : throw new ArgumentException($"--schedule {scheduleName}: use {string.Join(", ", LearningRateSchedules.Names)}."),
             Loss = lossName switch
             {
                 "sft" => null,
@@ -698,7 +708,7 @@ internal sealed class TuneTool(ToolConsole console)
         {
             return files ? true : throw new ArgumentException(
                 "Conversations with images or sounds (--images, --image-transform, --vision, --train-projector, --audio, --audio-prompt, --parts, --data-format, --metric "
-                + $"{string.Join("|", TuningMetrics.Names)}) are read from local .json or .jsonl files ({TuningDataFormats.Describe().Replace("\n", "; ", StringComparison.Ordinal)}); "
+                + $"{string.Join("|", TuningMetrics.Names.Except(AnswerMetrics))}) are read from local .json or .jsonl files ({TuningDataFormats.Describe().Replace("\n", "; ", StringComparison.Ordinal)}); "
                 + $"not {string.Join(", ", specs.Where(s => !File.Exists(s)).DefaultIfEmpty(string.Join(", ", specs)))}.");
         }
 
@@ -1090,7 +1100,7 @@ internal sealed class TuneTool(ToolConsole console)
             console.Finish();
             report = report with { Loss = loss };
             reports.Add((name, report));
-            _out.WriteLine($"  loss {report.Loss:F4}, {report.Metric.ToString().ToLowerInvariant()} score {report.Score:P1} on {report.Answers.Count} answers, "
+            _out.WriteLine($"  loss {report.Loss:F4}, {report.Metric} score {report.Score:P1} on {report.Answers.Count} answers, "
                            + $"{report.MeanTokens:F0} tokens per answer, {report.TokensPerSecond:F0} tok/s ({report.Duration.TotalSeconds:F0} s)");
         }
 

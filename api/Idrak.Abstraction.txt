@@ -3751,13 +3751,19 @@ public sealed record Idrak.Abstraction.Generation.ToolResult : System.IEquatable
 
 public static class Idrak.Abstraction.Generation.TuningMetrics
   public const string CharacterErrorRate = "cer"
+  public const string ContainsMatch = "contains"
+  public const string ExactMatch = "exact"
+  public const string NumberMatch = "number"
   public const string WordErrorRate = "wer"
+  public const string WordF1 = "f1"
   public static Idrak.Abstraction.Generation.ITuningMetric Get(string name)
   public static Idrak.Abstraction.Generation.ITuningMetric? Default(string name)
   public static Idrak.Abstraction.Generation.ITuningMetric? Find(string name)
   public static Idrak.Abstraction.Generation.TuningScore Score(string name, System.Collections.Generic.IEnumerable<(string, string)> pairs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool HasFinalAnswer(string text)
   public static bool Unregister(string name)
+  public static decimal? FinalNumber(string text)
   public static int EditDistance<T>(System.ReadOnlySpan<T> a, System.ReadOnlySpan<T> b) where T : System.IEquatable<T>
   public static string Describe()
   public static string? Origin(string name)
@@ -5068,8 +5074,24 @@ public sealed class Idrak.Abstraction.Training.CosineAnnealing : Idrak.Abstracti
 public sealed class Idrak.Abstraction.Training.ExponentialDecay : Idrak.Abstraction.Training.LearningRateScheduler
   public ExponentialDecay(Idrak.Abstraction.Training.Optimizer optimizer, float gamma)
 
+public interface Idrak.Abstraction.Training.ILearningRateSchedule
+  public System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Create(Idrak.Abstraction.Training.LearningRateScheduleSettings settings)
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Training.IOptimizerKind
+  public Idrak.Abstraction.Training.Optimizer Create(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> parameters, Idrak.Abstraction.Training.OptimizerSettings settings)
+  public string Name { get; }
+  public string Summary { get; }
+
 public sealed class Idrak.Abstraction.Training.LambdaSchedule : Idrak.Abstraction.Training.LearningRateScheduler
   public LambdaSchedule(Idrak.Abstraction.Training.Optimizer optimizer, System.Func<int, float, float> schedule)
+
+public sealed record Idrak.Abstraction.Training.LearningRateScheduleSettings : System.IEquatable<Idrak.Abstraction.Training.LearningRateScheduleSettings>
+  public LearningRateScheduleSettings(float WarmupFraction = 0.03f, float MinLearningRate = 0f, float DecayFraction = 0.2f)
+  public float DecayFraction { get; init; }
+  public float MinLearningRate { get; init; }
+  public float WarmupFraction { get; init; }
 
 public abstract class Idrak.Abstraction.Training.LearningRateScheduler
   protected LearningRateScheduler(Idrak.Abstraction.Training.Optimizer optimizer)
@@ -5079,6 +5101,21 @@ public abstract class Idrak.Abstraction.Training.LearningRateScheduler
   public float BaseLearningRate { get; }
   public int Epoch { get; }
   public void Step()
+
+public static class Idrak.Abstraction.Training.LearningRateSchedules
+  public const string Constant = "constant"
+  public const string Cosine = "cosine"
+  public const string Linear = "linear"
+  public const string WarmupStableDecay = "wsd"
+  public static Idrak.Abstraction.Training.ILearningRateSchedule Get(string name)
+  public static Idrak.Abstraction.Training.ILearningRateSchedule? Default(string name)
+  public static Idrak.Abstraction.Training.ILearningRateSchedule? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Factory(string name, Idrak.Abstraction.Training.LearningRateScheduleSettings? settings = null)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Training.ILearningRateSchedule schedule)
 
 public abstract class Idrak.Abstraction.Training.Optimizer : System.IDisposable
   protected Optimizer(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, float learningRate)
@@ -5105,6 +5142,26 @@ public abstract class Idrak.Abstraction.Training.Optimizer : System.IDisposable
   public virtual void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public void ClipGradientNormOnDevice(float maxNorm)
   public void ZeroGrad()
+
+public static class Idrak.Abstraction.Training.OptimizerKinds
+  public static Idrak.Abstraction.Training.IOptimizerKind Get(string name)
+  public static Idrak.Abstraction.Training.IOptimizerKind? Default(string name)
+  public static Idrak.Abstraction.Training.IOptimizerKind? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> Factory(string name, Idrak.Abstraction.Training.OptimizerSettings settings)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Training.IOptimizerKind kind)
+
+public sealed record Idrak.Abstraction.Training.OptimizerSettings : System.IEquatable<Idrak.Abstraction.Training.OptimizerSettings>
+  public OptimizerSettings(float LearningRate, float WeightDecay = 0f, float Momentum = 0.9f)
+  public float LearningRate { get; init; }
+  public float Momentum { get; init; }
+  public float WeightDecay { get; init; }
+  public float? Beta1 { get; init; }
+  public float? Beta2 { get; init; }
+  public float? Epsilon { get; init; }
 
 public sealed record Idrak.Abstraction.Training.OptimizerStateValue : System.IEquatable<Idrak.Abstraction.Training.OptimizerStateValue>
   public OptimizerStateValue(int[] Shape, float[] Values)

@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 78 | 16 | 43 | 136 | 0 |
+| `Idrak.Abstraction` | 80 | 16 | 45 | 140 | 0 |
 | `Idrak` | 17 | 4 | 20 | 41 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -144,7 +144,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | AspNetCore, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITrainableSoftParts` | interface | public | Tensor | ChatAudioParts |  | Abstraction, Audio, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Generation.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Abstraction, Audio, Text | Abstraction |
+| `Idrak.Abstraction.Generation.ITuningMetric` | interface | public | — | AnswerMatchMetric, ErrorRateMetric, TuningMetrics.GuardedMetric |  | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | Gemma3ImageEncoder, IdrakVisionEncoder, LlavaImageEncoder, ModelImages.LazyEncoder, QwenImageEncoder |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | Gemma3ImageEncoder, IdrakVisionEncoder, LlavaImageEncoder, QwenImageEncoder |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | Gemma3Vision, IdrakVisionPart, LlavaVision, QwenVision |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
@@ -160,7 +160,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.SequencePoolers` | registry | public | Tensor |  | first, max, mean | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.TokenSamplers` | registry | public | — |  | default | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | json, pythonic | Abstraction, Idrak, Text, Text.Plugins | Abstraction |
-| `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, wer | Abstraction, Audio, Text | Abstraction |
+| `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, contains, exact, f1, number, wer | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +73 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Text, Vision | Abstraction |
@@ -177,8 +177,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Serving.IEngineLease<TCopy>` | interface | public | — | HostedModel.Lease<TCopy> |  | Abstraction, AspNetCore, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | Idrak, Mcp | Abstraction |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | AspNetCore, Idrak | Abstraction |
-| `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Training.ILearningRateSchedule` | interface | public | — | LearningRateSchedules.BuiltInSchedule |  | Abstraction, Audio, Text | Abstraction |
+| `Idrak.Abstraction.Training.IOptimizerKind` | interface | public | Tensor | AdamW8BitKind, OptimizerKinds.BuiltInKind |  | Abstraction, Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Abstraction, Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Training.LearningRateSchedules` | registry | public | — |  | constant, cosine, linear, wsd | Audio, Text | Abstraction |
 | `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Training.OptimizerKinds` | registry | public | Tensor |  | adam, adamw, adamw8bit, sgd | Audio, Idrak, Text | Abstraction |
 
 ### Idrak
 

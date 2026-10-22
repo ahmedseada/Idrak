@@ -39,7 +39,7 @@ public sealed record PretrainingStage(string Name)
     /// <summary>The share of the stage's steps spent warming up.</summary>
     public float WarmupFraction { get; init; } = 0.03f;
 
-    /// <summary>The rate over the stage's steps: a <see cref="FineTuningSchedules"/> name.</summary>
+    /// <summary>The rate over the stage's steps: a <see cref="LearningRateSchedules"/> name ("cosine", "linear", "constant", "wsd").</summary>
     public string Schedule { get; init; } = "cosine";
 
     /// <summary>The stage as JSON.</summary>
@@ -101,7 +101,7 @@ public sealed record PretrainingOptions
     /// <summary>Weight decay (decoupled, for the AdamW kinds).</summary>
     public float WeightDecay { get; init; } = 0.1f;
 
-    /// <summary>The optimizer: a <see cref="FineTuningOptimizers"/> name ("adamw", "adam", "adamw8bit", "sgd").</summary>
+    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "adamw8bit", "sgd"), made with <see cref="Beta1"/> and <see cref="Beta2"/>.</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>The optimizer's first moment decay (AdamW kinds).</summary>
@@ -457,7 +457,7 @@ public static partial class Pretrainer
 
                 sync?.Start();
 
-                var schedule = FineTuningSchedules.Create(stage.Schedule, stage.WarmupFraction, stage.MinLearningRate)(optimizer, stage.Steps);
+                var schedule = LearningRateSchedules.Factory(stage.Schedule, new LearningRateScheduleSettings(stage.WarmupFraction, stage.MinLearningRate))(optimizer, stage.Steps);
                 for (int i = 0; i < stageStep; i++)
                 {
                     schedule.Step();                                         // the resumed stage's rate where it was
@@ -806,9 +806,9 @@ public static partial class Pretrainer
             throw new ArgumentException($"MaxLength ({options.MaxLength}), BatchTokens ({options.BatchTokens}) and GradientAccumulation ({options.GradientAccumulation}) must be positive.", nameof(options));
         }
 
-        if (!FineTuningOptimizers.Names.Contains(options.Optimizer, StringComparer.OrdinalIgnoreCase))
+        if (OptimizerKinds.Find(options.Optimizer) is null)
         {
-            throw new ArgumentException($"Optimizer '{options.Optimizer}' is not one of {string.Join(", ", FineTuningOptimizers.Names)}.", nameof(options));
+            throw new ArgumentException($"Optimizer '{options.Optimizer}' is not registered in OptimizerKinds (registered: {string.Join(", ", OptimizerKinds.Names)}).", nameof(options));
         }
 
         // Names outside these are the model's parts' (ModelParts: "audio-encoder", say), checked when the stage opens them.
@@ -835,9 +835,9 @@ public static partial class Pretrainer
                 throw new ArgumentException($"Stage {stage.Name}: every source's weight must be positive.", nameof(options));
             }
 
-            if (!FineTuningSchedules.Names.Contains(stage.Schedule, StringComparer.OrdinalIgnoreCase))
+            if (LearningRateSchedules.Find(stage.Schedule) is null)
             {
-                throw new ArgumentException($"Stage {stage.Name}: schedule '{stage.Schedule}' is not one of {string.Join(", ", FineTuningSchedules.Names)}.", nameof(options));
+                throw new ArgumentException($"Stage {stage.Name}: schedule '{stage.Schedule}' is not registered in LearningRateSchedules (registered: {string.Join(", ", LearningRateSchedules.Names)}).", nameof(options));
             }
         }
     }
@@ -885,15 +885,11 @@ public static partial class Pretrainer
         return chosen.Count > 0 ? chosen : throw new ArgumentException($"Stage {stage.Name} trains nothing of this model ({string.Join(", ", stage.Trained)}).");
     }
 
+    // The optimizer the options name, at the stage's rate with the options' betas (the Adam kinds; epsilon 1e-8) or momentum (SGD).
     private static Optimizer CreateOptimizer(List<Tensor> parameters, PretrainingOptions options, PretrainingStage stage)
     {
-        Func<IReadOnlyList<Tensor>, Optimizer> make = options.Optimizer.ToLowerInvariant() switch
-        {
-            "adamw" => ps => new AdamW(ps, stage.LearningRate, options.Beta1, options.Beta2, 1e-8f, options.WeightDecay),
-            "adam" => ps => new Adam(ps, stage.LearningRate, options.Beta1, options.Beta2, 1e-8f, options.WeightDecay),
-            "adamw8bit" => ps => new AdamW8Bit(ps, stage.LearningRate, options.Beta1, options.Beta2, 1e-8f, options.WeightDecay),
-            _ => FineTuningOptimizers.Create(options.Optimizer, stage.LearningRate, options.WeightDecay, options.Momentum),
-        };
+        var make = OptimizerKinds.Factory(options.Optimizer,
+            new OptimizerSettings(stage.LearningRate, options.WeightDecay, options.Momentum) { Beta1 = options.Beta1, Beta2 = options.Beta2, Epsilon = 1e-8f });
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
 

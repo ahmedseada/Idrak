@@ -6,7 +6,7 @@
 
 | Phase | What | Lane | State |
 |---|---|---|---|
-| R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | In progress (2026-10-22) |
+| R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | Done 2026-10-22; CPU pass |
 | R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | In progress (2026-10-22) |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Planned |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Planned |
@@ -207,6 +207,79 @@ the existing cases); the inventory, API and naming guards pass; nothing names `F
 **Tests (CPU here):** one build; `fine-tuning:|pretrain:|evaluation:|tuning metrics|audio train|audio tts train|
 cli tune|cli eval|gguf:|optimizers|schedules|public API|abstraction inventory|cli health: every environment variable|
 naming:`.
+
+**R0 as built (2026-10-22).** M1-M4 in one change, results unchanged.
+- **M1, optimizers by name:** `IOptimizerKind` (`Name`, `Summary`, `Create(parameters, OptimizerSettings)`) and the
+  registry **`OptimizerKinds`** in `Idrak.Abstraction.Training` (`Register`, `Unregister`, `Names`, `Find`, `Get`,
+  `Default`, `Origin`, `Describe`, and `Factory(name, settings)`, which gives the `Func<IReadOnlyList<Tensor>, Optimizer>`
+  that `FineTuningOptions.Optimizer` and `HostOptimizer` take and fails on an unknown name at once). `OptimizerSettings`:
+  learning rate, weight decay (default 0), momentum (default 0.9) and `Beta1`, `Beta2`, `Epsilon`, null for the kind's own
+  (Adam's 0.9, 0.999, 1e-8), so the old `Create(name, rate, decay, momentum)` and Pretraining's betas are both one call.
+  adamw, adam and sgd are registered by Idrak.Abstraction itself; adamw8bit (in core) by core's `LibraryRegistrations`
+  through `LibraryDefaults.Ensure`, called between adam and sgd so the names keep their old order (adamw, adam, adamw8bit,
+  sgd). **Deviation: the registry is `OptimizerKinds`, not `Optimizers`:** a class `Optimizers` would be hidden by the
+  namespace `Idrak.Optimizers` in all code under `Idrak.*` (C# finds the namespace first), so every user, R2's included,
+  would have to spell `Idrak.Abstraction.Training.Optimizers`; the repository met the same with `Idrak.Network`
+  (`LibraryDefaults`' note). The contract is named to match (`IOptimizerKind`, as R-C2's `IEnvironmentKind`).
+- **M2, schedules by name:** `ILearningRateSchedule` (`Name`, `Summary`, `Create(LearningRateScheduleSettings)` returning
+  the `Func<Optimizer, int, LearningRateScheduler>` that `FineTuningOptions.Scheduler` takes, so wsd still refuses a decay
+  share outside [0, 1] when made) and **`LearningRateSchedules`** (the same members, `Factory(name, settings)`, the names
+  as constants `Cosine`, `Linear`, `Constant`, `WarmupStableDecay`). `LearningRateScheduleSettings(WarmupFraction = 0.03,
+  MinLearningRate = 0, DecayFraction = 0.2)` are the old `Create`'s parameters and defaults; the four schedules are the old
+  code, moved. The fine-tuner's default schedule is the registry's "cosine".
+- Both registries are **unguarded** (`unguarded:` with the reason; no `SetPolicy`): an optimizer holds its moments from the
+  first step to the last and a checkpoint saves them under its own names, and a schedule sets the rate at every step from
+  where it is, so neither can fall back half-way (as `AttentionPositionBiases`). Contract suites in the testing kit:
+  `OptimizerKindSuite` (the parameters given, the rate asked for, the first step and the steps lower a squared loss, a
+  parameter the loss does not reach is left alone, the same case gives the same values, a reference agrees) and
+  `LearningRateScheduleSuite` (the optimizer and its rate as the base, every rate finite, not negative and not above the
+  optimizer's, the same rates again, a reference agrees), with `Conformance.CheckOptimizerKind` and
+  `CheckLearningRateSchedule`, which compare with the library's of that name. `FineTuningOptimizers` and
+  `FineTuningSchedules` are removed; their users read the registries: `FineTuner`, `Pretraining` (its own switch for the
+  Adam kinds' betas became one `Factory` call with the betas in the settings), `PipelinePretraining`, `SpeechTrainer`,
+  `AdversarialSynthesisTrainer` (Adam and AdamW still take the adversarial betas and epsilon, the others the speech
+  trainer's, as before), `TuneTool`, the ArabicOcr sample's `train`. An app's kind or schedule under a library name is now
+  used by these trainers; the CLI's `tune` keeps its default AdamW and cosine when none is named, as before.
+- `tests/Idrak.PluginTests/Lion.cs` adds `LionKind`: registered into `OptimizerKinds` from the outside assembly, made by name
+  ("LION", any case) it makes the reference first step, passes the optimizer suite and unregisters.
+- **M3, the answer metrics:** "number", "exact", "contains" and "f1" are `ITuningMetric`s in `TuningMetrics` after "cer"
+  and "wer" (constants `NumberMatch`, `ExactMatch`, `ContainsMatch`, `WordF1`), higher is better, each answer out of 1, no
+  options (an option is refused naming the metric). The code is `ChatEvaluation`'s, moved unchanged
+  (`TuningMetricImplementations.cs`: the span-based normalization in a stack or pooled buffer, F1 counted by span through
+  an alternate lookup, the source-generated patterns), so the scores are the same; no Unicode normalization was added
+  (the error rates keep theirs). `TuningMetrics.FinalNumber` and `HasFinalAnswer` replace `ChatEvaluation.FinalNumber`.
+  The enum is removed: `ChatEvaluation.Run` and `Score` take a metric name, `ChatEvaluation.Auto` ("auto", any case) stays
+  its own choice (number when the first reference holds "#### n", else f1), `EvaluationReport.Metric` is the name chosen.
+  `idrak eval --metric` takes auto or any registered metric and lists the registry (help and error); with an error rate it
+  shows the answers that are not 0 under `-v`. `idrak tune --metric` lists the registry; auto and the four answer metrics
+  score held-out rows (`ChatEvaluation`) and any other registered metric generated text on conversation files, as before.
+- **M4:** `Losses.LogSigmoid` in core (the same code); DPO, conservative DPO, ORPO and SimPO call it; the
+  `FineTuningLosses` member is removed.
+- No new environment variable. `api/Idrak.Abstraction.txt`, `Idrak.Abstraction.Testing.txt`, `Idrak.Text.txt`,
+  `Idrak.txt` and `plans/10-abstraction-inventory.md` regenerated. The tests whose code moved keep their expectations
+  (`fine-tuning options:` schedules' rates, `evaluation:` scores, preference formulas and log-sigmoid); only the calls
+  changed. One expectation changed with the cause: `vision tuning contracts: cer and wer` registered an app metric "exact"
+  and expected nothing after `Unregister`; the library has an "exact" now, so the test checks that the library's comes
+  back. New group (`TrainingRegistryTests.cs`): `optimizers:` (each name makes its constructor's updates bit for bit, betas
+  too, on 5,000 elements so adamw8bit's 8-bit moments run; every kind passes the suite; an app's sgd without momentum takes
+  the library's place and fails the suite on the reference alone; unknown names refused naming the registered ones),
+  `schedules:` (the four formulas' rates, the suite, an app's constant, wsd's decay share, unknown names) and `tuning
+  metrics:` (21 known answers against their scores, options refused, corpus sums, auto, unknown names).
+- **The run (CPU, one build):** `fine-tuning options:|evaluation:|optimizers|schedules:|tuning metrics:|vision tuning
+  contracts: cer and wer|pretrain:|distillation: the fine-tuning loss|qwen vl: a tuning example|vision tuning
+  trainer|audio train|audio tts train|cli measure: eval|cli train data|cli vision tuning|a Lion optimizer|public
+  API|abstraction inventory|naming:|cli health: every environment variable|override loop:|conformance kit:`: **87 passed,
+  0 failed**; the ArabicOcr sample's `ocr train`: 2 passed, 0 failed. (The plan's `cli tune`, `cli eval`, `gguf:` and
+  `fine-tuning:` name no test of the changed code as such: `cli eval` is `cli measure: eval`, the tuning CLI's are `cli
+  train data` and `cli vision tuning`, the GGUF file's metric test is `evaluation:`, and `fine-tuning:`'s tests use none of
+  the moved members.)
+- **The owner's commands** (repo at `D:\Projects\Idrak`):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "fine-tuning options:|optimizers|schedules:|tuning metrics:|pretrain:|distillation: the fine-tuning loss|vision tuning trainer|audio train|audio tts train|a Lion optimizer|conformance kit:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase R1: the contracts and the two package skeletons
 

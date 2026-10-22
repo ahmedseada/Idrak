@@ -47,7 +47,7 @@ public readonly record struct TuningScore(double Numerator, double Denominator)
 /// </summary>
 public interface ITuningMetric
 {
-    /// <summary>The metric's name in <see cref="TuningMetrics"/> ("cer", "wer").</summary>
+    /// <summary>The metric's name in <see cref="TuningMetrics"/> ("cer", "wer", "f1").</summary>
     string Name { get; }
 
     /// <summary>One line for help and listings.</summary>
@@ -68,9 +68,10 @@ public interface ITuningMetric
 }
 
 /// <summary>
-/// The metrics a fine-tune's evaluation can score generated text with, by name (ignoring case). The library's, Unicode-aware
-/// (both texts NFC-normalized first, so a letter written precomposed or as a base and its marks counts the same; Arabic
-/// letters and their marks are characters like any other):
+/// The metrics a fine-tune's evaluation, a chat evaluation or a reward can score generated text with, by name (ignoring
+/// case). The library's error rates, lower is better, are Unicode-aware (both texts NFC-normalized first, so a letter
+/// written precomposed or as a base and its marks counts the same; Arabic letters and their marks are characters like any
+/// other):
 /// <list type="bullet">
 /// <item><see cref="CharacterErrorRate"/> ("cer"): the edit distance between the texts' characters (Unicode scalar
 /// values, so a character outside the basic plane is one) over the reference's characters.</item>
@@ -79,8 +80,18 @@ public interface ITuningMetric
 /// </list>
 /// Both take the options <c>strip_diacritics</c> (true: marks that combine with a letter, Unicode's nonspacing marks such
 /// as Arabic's harakat and Latin accents, are removed from both texts first; false by default: a missing or wrong mark is
-/// an error) and <c>ignore_case</c> (false by default). Register another with <see cref="Register"/>; one under a library
-/// name shadows the library's, which <see cref="Unregister"/> brings back.
+/// an error) and <c>ignore_case</c> (false by default). The library's answer metrics, higher is better, score each answer
+/// out of 1 and take no options:
+/// <list type="bullet">
+/// <item><see cref="NumberMatch"/> ("number"): 1 when the final number of each (<see cref="FinalNumber"/>) is the same.</item>
+/// <item><see cref="ExactMatch"/> ("exact"): 1 when the whole answer equals the reference, both in invariant lower case
+/// with runs of white space as one space and a final '.', '!' or '?' dropped.</item>
+/// <item><see cref="ContainsMatch"/> ("contains"): 1 when the reference appears in the answer, both so normalized.</item>
+/// <item><see cref="WordF1"/> ("f1"): the word overlap of answer and reference (SQuAD's F1 of their lowered runs of
+/// letters and digits), from 0 to 1; 1 when neither has a word.</item>
+/// </list>
+/// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
+/// <see cref="Unregister"/> brings back.
 /// </summary>
 public static class TuningMetrics
 {
@@ -90,6 +101,18 @@ public static class TuningMetrics
     /// <summary>The word error rate's name: "wer".</summary>
     public const string WordErrorRate = "wer";
 
+    /// <summary>The final numbers' match: "number" (gsm8k's answers, "#### n").</summary>
+    public const string NumberMatch = "number";
+
+    /// <summary>The whole answer's match: "exact".</summary>
+    public const string ExactMatch = "exact";
+
+    /// <summary>The reference found in the answer: "contains".</summary>
+    public const string ContainsMatch = "contains";
+
+    /// <summary>The words' F1: "f1".</summary>
+    public const string WordF1 = "f1";
+
     private static readonly SlotTable<string, ITuningMetric> Table = BuiltIn();
 
     private static SlotTable<string, ITuningMetric> BuiltIn()
@@ -97,6 +120,11 @@ public static class TuningMetrics
         var table = new SlotTable<string, ITuningMetric>(nameof(TuningMetrics), (slot, app, library) => new GuardedMetric(slot, app, library), StringComparer.OrdinalIgnoreCase);
         table.RegisterDefault(CharacterErrorRate, new ErrorRateMetric(words: false));
         table.RegisterDefault(WordErrorRate, new ErrorRateMetric(words: true));
+        foreach (string name in new[] { NumberMatch, ExactMatch, ContainsMatch, WordF1 })
+        {
+            table.RegisterDefault(name, new AnswerMatchMetric(name));
+        }
+
         return table;
     }
 
@@ -145,6 +173,24 @@ public static class TuningMetrics
         ArgumentNullException.ThrowIfNull(pairs);
         var metric = Get(name);
         return TuningScore.Sum(pairs.Select(p => metric.Score(p.Answer, p.Reference, options)));
+    }
+
+    /// <summary>
+    /// The number <paramref name="text"/> ends with, as <see cref="NumberMatch"/> reads it: the first number after "####"
+    /// when the text holds that marker (gsm8k's layout), else its last number; thousands separators (",") are dropped. Null
+    /// when it holds none.
+    /// </summary>
+    public static decimal? FinalNumber(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return AnswerMatchMetric.FinalNumber(text);
+    }
+
+    /// <summary>Whether <paramref name="text"/> holds gsm8k's final-answer marker: "####", then the answer on its line.</summary>
+    public static bool HasFinalAnswer(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return AnswerMatchMetric.HasFinalAnswer(text);
     }
 
     /// <summary>
