@@ -24,7 +24,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Reinforcement` | 1 | 0 | 0 | 1 | 0 |
+| `Idrak.Reinforcement` | 2 | 0 | 1 | 3 | 0 |
 | `Idrak.Text.Plugins` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Vision.Plugins` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Audio.Plugins` | 1 | 0 | 0 | 1 | 0 |
@@ -170,15 +170,15 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Text, Vision | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, DeepSeekPlugin.DeepSeekRegistration, +17 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, DeepSeekPlugin.DeepSeekRegistration, +17 |  | Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +18 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +18 |  | Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IdrakPlugins` | registry | public | — |  | — | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Reinforcement.AdvantageEstimators` | registry | public | — |  | gae, group, leave-one-out, returns | Reinforcement | Abstraction |
 | `Idrak.Abstraction.Reinforcement.EnvironmentKinds` | registry | public | — |  | prompts | Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IAdvantageEstimator` | interface | public | — | AdvantageEstimators.GuardedEstimator, GeneralizedAdvantageEstimator, GroupAdvantageEstimator, LeaveOneOutEstimator, ReturnsEstimator |  | Abstraction, Reinforcement, Text | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IEnvironment` | interface | public | — | CodingEnvironment, PromptsEnvironment |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction>` | interface | public | — | CodingEnvironment, PromptsEnvironment |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IEnvironmentKind` | interface | public | — | CodingEnvironmentKind, PromptsEnvironmentKind |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IEnvironment` | interface | public | — | BanditEnvironment, CartPoleEnvironment, CodingEnvironment, MountainCarEnvironment, PendulumEnvironment, PromptsEnvironment |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction>` | interface | public | — | BanditEnvironment, CartPoleEnvironment, CodingEnvironment, MountainCarEnvironment, PendulumEnvironment, PromptsEnvironment |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IEnvironmentKind` | interface | public | — | ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, PromptsEnvironmentKind |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction>` | interface | public | — | LanguageModelPolicy, ModulePolicy<TAction> |  | Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IPolicyLoss` | interface | public | Tensor | ClippedRatioLoss, PolicyLosses.GuardedLoss, ReinforceLoss |  | Abstraction, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IRewardFunction` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, CodingRewards.ToolErrorsReward, CodingRewards.VerifyFractionReward, +7 |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
@@ -382,7 +382,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Reinforcement.Abstractions.IQLoss` | interface | public | Tensor | DqnLoss, QLosses.GuardedLoss |  | Reinforcement | Reinforcement |
 | `Idrak.Reinforcement.Abstractions.IScheduledPolicy` | interface | public | Device | ModulePolicy<TAction> |  | Reinforcement | Reinforcement |
+| `Idrak.Reinforcement.Abstractions.QLosses` | registry | public | — |  | dqn | Reinforcement | Reinforcement |
 
 ### Idrak.Audio.Plugins
 
