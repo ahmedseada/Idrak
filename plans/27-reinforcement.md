@@ -499,6 +499,10 @@ model.
 
 ## Phase R4: `Idrak.Reinforcement.Plugins.Coding`
 
+- **First, R2 and R3 together** (they were built side by side, so neither could run the other): GRPO and PPO from R2's
+  `ReinforcementTrainer` driving R3's `LanguageModelPolicy` on the `prompts` environment with a `metric:exact` reward, on
+  the tiny decoder of R3's tests, raise the pass rate within a seeded number of iterations; on-policy distillation as a
+  teacher term beside `grpo`; R3's test-local fakes stay only where they test something R2's code does not.
 - **M5:** the task layer moves out of `CodingAgent` into the plug-in as `CodingTask` (the `task.json` layout unchanged),
   `CodingSuite` (`LoadSuite`), `CodingWorkspace` (copy of base, workspace and hidden files; the starting commit;
   setup), `CodingVerifier` (`VerifyAsync`, `CheckTaskAsync`) and `CodingOutcome`; `CodingAgent` keeps the loop on a
@@ -728,6 +732,11 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 ```powershell
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
+
+# R1 (merged 6dd4e01): no GPU code; its CPU filters on the owner's machine
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement contracts|plugins:|public API|abstraction inventory|naming:|override loop:|cli health|conformance kit:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
 
 # R0 (merged d1e1d6f) and row 32 (e9a09ef)
 $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "fine-tuning options:|optimizers|schedules:|tuning metrics:|pretrain:|distillation: the fine-tuning loss|vision tuning trainer|audio train|audio tts train|a Lion optimizer|conformance kit:|operations:"
