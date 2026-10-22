@@ -1,17 +1,18 @@
 # Plan 27: reinforcement learning (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`)
 
-**Status (2026-10-21, `abstraction`):** planned 2026-10-21 from the owner's decisions, against the code at acfc83b (every
-"Comes from" below was found in the source). **Nothing is built.** No phase starts before the owner names it.
+**Status (2026-10-22, `abstraction`):** planned 2026-10-21 from the owner's decisions, against the code at acfc83b (every
+"Comes from" below was found in the source). The owner answered the open questions and started the plan on 2026-10-22
+("go with recommendation", at most two agents): R0 and R1 run side by side.
 
 | Phase | What | Lane | State |
 |---|---|---|---|
-| R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | Planned |
-| R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | A | Planned |
+| R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | In progress (2026-10-22) |
+| R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | In progress (2026-10-22) |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Planned |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards | B | Planned |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
-| R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Planned, not asked yet |
+| R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Later (the owner, 2026-10-22): not started with the rest |
 
 ## Goal
 
@@ -33,7 +34,7 @@ coding agent's tools, rewarded by the tests.
    `Idrak.Text`".
 5. **Plan first:** this file is written before any code.
 
-**Proposed in the same session (2026-10-21), for the owner to confirm** (the plan is written on them):
+**Proposed in the same session (2026-10-21), confirmed by the owner 2026-10-22** ("go with recommendation"):
 
 6. **`Idrak.Reinforcement` does not reference `Idrak.Text`.** A user training a game agent or a vision policy must not pull in
    chat templates, retrieval and the coding agent. The contracts live in `Idrak.Abstraction.Reinforcement`; `Idrak.Text`
@@ -378,25 +379,24 @@ At most two agents at a time, each in its own worktree; a merge is built and its
 
 | Step | Lane A | Lane B |
 |---|---|---|
-| 1 | R0, the moves (they touch `FineTuner`, Audio's trainers, the CLI) | none (R3 touches `FineTuner` too) |
-| 2 | R1, the contracts and skeletons | none (R3 needs R1's contracts) |
-| 3 | R2, the general part | R3, the language-model policy |
-| 4 | R6, if the owner asks for it | R4, the coding plug-in (after R2 and R3) |
-| 5 | R5, the CLI and samples (after R4) | the next ready step, if any |
+| 1 | R0, the moves (they touch `FineTuner`, Audio's trainers, the CLI's tune and eval) | R1, the contracts and skeletons (new files, the CLI's plug-in registration; none of R0's files) |
+| 2 | R2, the general part (after R1) | R3, the language-model policy (after R0 and R1) |
+| 3 | R6, only when the owner asks for it | R4, the coding plug-in (after R2 and R3) |
+| 4 | R5, the CLI and samples (after R4) | the next ready step, if any |
 
 Files both lanes touch (`api/*.txt`, the abstraction inventory, `tests/Idrak.Tests/Program.cs`'s test list,
 `EnvironmentVariables.cs`) are merged one lane at a time; the generated dumps are regenerated, never merged by hand. A
 step is a dependency order, not a barrier.
 
-## Questions for the owner
+## Questions for the owner (answered 2026-10-22: "go with recommendation")
 
-1. Decisions 6-8 (dependency direction, DPO stays, the agent loop stays): confirm or change.
+1. Decisions 6-8 (dependency direction, DPO stays, the agent loop stays): **confirmed**.
 2. M5 moves the coding task layer into the plug-in, so evaluating a model on a coding suite (`agent-run`) needs
-   `Idrak.Reinforcement.Plugins`. The other way: the task layer stays in `Idrak.Text` and the environment wraps it.
-3. The coding environment's default sandbox: `process` (works everywhere, network allowed, as `CodingTools` today) or
-   `container` (isolated, network off, needs Docker or Podman).
-4. R6: start it after R2, or drop it.
-5. The variable names in R5.
+   `Idrak.Reinforcement.Plugins`: **moves** (no second copy of the task layer).
+3. The coding environment's default sandbox: **`process`** (works everywhere with no outside program, rule 70; network
+   allowed, as `CodingTools` today); `container` (isolated, network off, Docker or Podman) is the opt-in plug-in sandbox.
+4. R6: **later**, not started with the rest; it stays in the plan as optional.
+5. The variable names in R5: **as proposed**.
 
 ## The owner's runs
 
