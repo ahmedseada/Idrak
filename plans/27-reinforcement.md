@@ -1741,6 +1741,13 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R8 (merged dcb2d9c): CPU and CUDA
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement: off-policy|plugins: classic|public API|abstraction inventory"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "plugins: classic: DQN|reinforcement: off-policy"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+
 # ---- Leftover 6: a real multi-machine run (two machines, one GPU each, on one LAN) ----
 # Fill these four once, the same on both machines (A runs rank 0 and is the coordinator):
 $A = "desk"; $B = "mini"            # each machine's host name, exactly as `hostname` prints it there
