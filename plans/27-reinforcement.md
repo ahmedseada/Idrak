@@ -1966,6 +1966,23 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R7 (merged; 230 passed on the merged tree): CPU, CUDA, then --mode localhost runs stopped with one Ctrl+C after a few
+# iterations or steps: the launcher prints "stopping: the ranks agree...", both ranks end with no 120 s timeout, rank 0 alone
+# prints the stop line, one iteration-N / checkpoint-N is written, and the resumed run starts at N + 1 (put the step the stop
+# line names in place of N)
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cluster stop:|cluster:|cli cluster|cli reinforce|reinforcement:|fine-tuning:|fine-tuning options:|pretrain:|cli train|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|conformance kit:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cluster stop:|cluster: 2 ranks equal one process|reinforcement cluster:|cli reinforce: cluster sim"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+$idrak = "src\Idrak.Cli\bin\Release\net10.0\Idrak.Cli.exe"
+& $idrak cluster init -y --nodes 1 --devices cuda:0,cuda:0 -o runs\two-cuda.json
+& $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-stop
+& $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-stop --resume
+& $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 20 -o runs\tune-stop
+& $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 20 -o runs\tune-stop --resume-from runs\tune-stop\checkpoint-N
+& $idrak cluster sim --topology runs\two-cuda.json -- tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 20 -o runs\tune-stop-sim
+
 # R9 (merged): CPU, CUDA, then real runs in the classic environments (no model to download)
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli train data|plugins: classic|reinforcement:|cli health|cli polish|public API|abstraction inventory|naming:"
 dotnet run -c Release --no-build --project tests\Idrak.Tests
