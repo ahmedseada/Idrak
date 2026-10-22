@@ -17,7 +17,7 @@ namespace Idrak.Gpu.Cuda;
 //   shared memory for every 4·rt multiply-adds), then the outputs of the same rows and the columns tc + 8j.
 //   Shared memory (dynamic): Qᵀ [D][rows] (scaled by `scale` as it is staged), Kᵀ [D][32] (the same space then holds V
 //   [32][D]), P [rows][36] and the block's key range. The old attention_spans_f32 (one warp per 8 rows, a shared-memory
-//   read per multiply-add: four times slower than the composed path where it was measured, plans/11-vision-language.md)
+//   read per multiply-add: four times slower than the composed path where it was measured, plans/done/11-vision-language.md)
 //   stays for head sizes this one does not take (not a multiple of 4) and devices whose shared memory per block cannot
 //   hold this one's.
 //

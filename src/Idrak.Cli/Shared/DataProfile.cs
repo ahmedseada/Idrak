@@ -229,7 +229,7 @@ internal sealed class ColumnProfile(string name)
 internal readonly record struct ImageItem(string Path, int Class, ImageFiles.ImageInfo Info);
 
 /// <summary>
-/// Step 1 of <c>idrak suggest</c> (plans/idrak-cli.md, "Design a model"): reads the data and describes it. Tables come
+/// Step 1 of <c>idrak suggest</c> (plans/done/idrak-cli.md, "Design a model"): reads the data and describes it. Tables come
 /// from the readers of Idrak.Data (CSV, TSV, JSON Lines, JSON, Parquet, also compressed or in a folder); a folder
 /// whose sub-folders hold images is an image set (one class per folder); rows the chat readers recognize are
 /// conversations, or preference pairs when they have chosen and rejected answers.

@@ -7,7 +7,7 @@ namespace Idrak.Cli;
 
 /// <summary>
 /// Every command, gathered from the groups under Commands/ (each group adds its own; this list names the groups, with
-/// the titles and in the order of plans/idrak-cli.md, which is how <c>idrak help</c> lists them).
+/// the titles and in the order of plans/done/idrak-cli.md, which is how <c>idrak help</c> lists them).
 /// </summary>
 internal static class CommandTable
 {

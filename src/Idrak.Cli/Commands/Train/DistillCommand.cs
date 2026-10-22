@@ -18,7 +18,7 @@ using Idrak.Text.Reinforcement;
 namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
-/// <c>idrak distill --teacher A --student B --data FILE</c>: knowledge distillation (plans/plug-in.md, "Teacher pattern").
+/// <c>idrak distill --teacher A --student B --data FILE</c>: knowledge distillation (plans/done/plug-in.md, "Teacher pattern").
 /// The student's adapter trains on the teacher's token distributions (computed on the fly, or read from a file written
 /// with <c>--precompute</c>), or, with <c>--generate</c>, on answers the teacher writes. The training itself is
 /// idrak tune's (the same data reading, options and adapter folder).

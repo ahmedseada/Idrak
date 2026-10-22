@@ -124,6 +124,6 @@ unchanged.
 
 Preview, while the version is 0.y.z. A test counts the library packages that use each contract and keeps it here only
 while Abstraction or more than one package uses it (plan 10, decision 10). Plan:
-[plans/10-abstraction.md](https://github.com/ahmedseada/Idrak/blob/main/plans/10-abstraction.md).
+[plans/done/10-abstraction.md](https://github.com/ahmedseada/Idrak/blob/main/plans/10-abstraction.md).
 
 Licensed under the Apache License 2.0.

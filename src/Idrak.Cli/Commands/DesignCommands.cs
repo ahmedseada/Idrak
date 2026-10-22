@@ -5,7 +5,7 @@ using Idrak.Cli.Commands.Design;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>The suggest, explain and viz commands (plans/idrak-cli.md, "Design a model").</summary>
+/// <summary>The suggest, explain and viz commands (plans/done/idrak-cli.md, "Design a model").</summary>
 internal static class DesignCommands
 {
     public static IReadOnlyList<Command> All { get; } = [new SuggestCommand(), new ExplainCommand(), new VizCommand()];

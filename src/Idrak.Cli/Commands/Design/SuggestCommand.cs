@@ -12,7 +12,7 @@ namespace Idrak.Cli.Commands.Design;
 
 /// <summary>
 /// <c>idrak suggest DATA</c> (<c>sg</c>): reads the data, picks the task and writes a network and its training setup
-/// (plans/idrak-cli.md, "Design a model"). The rules live in <see cref="DesignRules"/>, the optional measuring in
+/// (plans/done/idrak-cli.md, "Design a model"). The rules live in <see cref="DesignRules"/>, the optional measuring in
 /// <see cref="DesignSearch"/>.
 /// </summary>
 internal sealed class SuggestCommand : Command

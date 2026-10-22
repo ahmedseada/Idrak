@@ -1,6 +1,6 @@
 # HIP (ROCm on Linux, the HIP SDK on Windows)
 
-**Untested on real hardware.** The HIP backend (`hip:0`, `hip:1`, …; [plan 8](../plans/8-hip.md)) has not run on an AMD
+**Untested on real hardware.** The HIP backend (`hip:0`, `hip:1`, …; [plan 8](../plans/done/8-hip.md)) has not run on an AMD
 GPU yet: these are the steps a first run should follow, and what to send back. On a machine without HIP nothing
 changes: the device list shows `hip:-` with the reason, and every other backend works as before.
 

@@ -60,7 +60,7 @@ internal sealed class RunCommand : Command
           idrak run ocr --image scan.jpg --image-transform grayscale,max_width=1024,contrast=1.5 -j
           idrak run ./encoder-decoder "translate English to German: The house is wonderful." --beams 4
 
-        Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/plug-in.md gap 13), so
+        Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/done/plug-in.md gap 13), so
         --schema gives the schema to the model as an instruction and checks the answer afterwards (it is JSON, has the
         required properties and their types) instead of guaranteeing it while generating.
         """;

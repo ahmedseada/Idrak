@@ -7,7 +7,7 @@ using Idrak.Cli.Shared;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>The serve, server, api, ui and mcp serve commands (plans/idrak-cli.md, "Serve").</summary>
+/// <summary>The serve, server, api, ui and mcp serve commands (plans/done/idrak-cli.md, "Serve").</summary>
 internal static class ServeCommands
 {
     public static IReadOnlyList<Command> All { get; } =

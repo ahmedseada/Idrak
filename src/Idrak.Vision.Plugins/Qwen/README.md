@@ -1,7 +1,7 @@
 # Idrak.Vision.Plugins.Qwen: the Qwen-VL families as a plug-in
 
 Qwen2.5-VL (`Qwen2_5_VLForConditionalGeneration`) and Qwen2-VL (`Qwen2VLForConditionalGeneration`) as one registration
-each of Idrak's vision-language contracts, outside the library ([plans/16-qwen-vl.md](../../../plans/16-qwen-vl.md)), in
+each of Idrak's vision-language contracts, outside the library ([plans/done/16-qwen-vl.md](../../../plans/done/16-qwen-vl.md)), in
 the package Idrak.Vision.Plugins. `QwenVisionPlugin.Register()` (or `VisionPlugins.RegisterAll()`) adds, for both, the
 vision part (`VisionFamilies`) and the text decoder (`PretrainedArchitectures`); without it a Qwen-VL checkpoint is not
 registered.

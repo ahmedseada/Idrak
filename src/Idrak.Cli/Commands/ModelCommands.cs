@@ -4,7 +4,7 @@
 namespace Idrak.Cli.Commands;
 
 /// <summary>
-/// The model commands (plans/idrak-cli.md, "Models"): pull, list, rm, show, search, alias, memory, quantize, merge,
+/// The model commands (plans/done/idrak-cli.md, "Models"): pull, list, rm, show, search, alias, memory, quantize, merge,
 /// inspect, verify, convert, diff, families. Each is a class under Commands/Models/; the cache layout is in
 /// Shared/ModelCache.cs.
 /// </summary>

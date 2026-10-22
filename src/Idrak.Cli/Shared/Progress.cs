@@ -8,7 +8,7 @@ using Idrak.Training.Abstractions;
 namespace Idrak.Cli.Shared;
 
 /// <summary>
-/// A progress line for downloads, loading, training and long benchmarks (plans/idrak-cli.md, "Helpers every command
+/// A progress line for downloads, loading, training and long benchmarks (plans/done/idrak-cli.md, "Helpers every command
 /// shares"): the label, the share done, the amount, the rate and the time left, shown by the library's progress
 /// reporters (<see cref="ProgressReporters"/>) on the error output (so the standard output stays clean for pipes). The
 /// reporter: none with <c>--quiet</c>; the one <c>IDRAK_PROGRESS</c> names when set ("console", "plain", "json",

@@ -280,7 +280,7 @@ internal static class CommandLine
 internal static class Help
 {
     /// <summary>
-    /// <c>idrak help</c>: the commands by group (plans/idrak-cli.md: setup and health, run models, serve, ...), each with
+    /// <c>idrak help</c>: the commands by group (plans/done/idrak-cli.md: setup and health, run models, serve, ...), each with
     /// its aliases and summary, then the common options.
     /// </summary>
     public static string Overview(IReadOnlyList<Command> commands)

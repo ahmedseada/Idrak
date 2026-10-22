@@ -4,7 +4,7 @@
 the model cache, benchmark, fine-tune and train, prepare data, build retrieval indexes and design networks. It needs
 nothing beyond the Idrak packages, reports what the devices report (nothing is chosen by a card's or vendor's name),
 prints text by default and one JSON document with `--json`, and exits with 0 on success, 1 when the operation fails
-and 2 on a usage error. The design and the full command list are in [plans/idrak-cli.md](https://github.com/ahmedseada/Idrak/blob/main/plans/idrak-cli.md).
+and 2 on a usage error. The design and the full command list are in [plans/done/idrak-cli.md](https://github.com/ahmedseada/Idrak/blob/main/plans/idrak-cli.md).
 
 ## Install
 

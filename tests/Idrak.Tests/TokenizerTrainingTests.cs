@@ -31,7 +31,7 @@ internal static partial class Tests
         ("tokenizer training: sentencepiece's own models with the nmt_nfkc rule and with whitespace as a suffix, rebuilt from their pieces with the library's charsmap, encode the corpus to sentencepiece's ids", TokenizerTrainingSentencePieceEncodings),
     ];
 
-    // Measured 2026-10-19 (plans/24-tokenizers.md, T4 as built): the share of SentencePiece's learned pieces the unigram
+    // Measured 2026-10-19 (plans/done/24-tokenizers.md, T4 as built): the share of SentencePiece's learned pieces the unigram
     // trainer learns, and of Hugging Face's WordPiece run the frequency trainer learns, each with some room below.
     private const double UnigramOverlapFloor = 0.98;
     private const double WordPieceOverlapFloor = 0.95;

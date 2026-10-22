@@ -131,7 +131,7 @@ outside the library that passes the device check.
 
 ## Status
 
-Preview, while the version is 0.y.z. Plan: [plans/10-abstraction.md](https://github.com/ahmedseada/Idrak/blob/main/plans/10-abstraction.md)
+Preview, while the version is 0.y.z. Plan: [plans/done/10-abstraction.md](https://github.com/ahmedseada/Idrak/blob/main/plans/10-abstraction.md)
 ("The testing kit as the app's stress harness").
 
 Licensed under the Apache License 2.0.

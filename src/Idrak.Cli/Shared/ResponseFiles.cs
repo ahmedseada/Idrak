@@ -4,7 +4,7 @@
 namespace Idrak.Cli.Shared;
 
 /// <summary>
-/// <c>@file</c> arguments (plans/idrak-cli.md, "Helpers every command shares"): an argument <c>@args.txt</c> is replaced
+/// <c>@file</c> arguments (plans/done/idrak-cli.md, "Helpers every command shares"): an argument <c>@args.txt</c> is replaced
 /// by the file's lines, one argument per line (long option lists in scripts). Blank lines and lines starting with '#'
 /// are skipped, spaces around a line are trimmed, a file may name further <c>@file</c>s, and <c>@@text</c> stands for
 /// the literal argument <c>@text</c>. Arguments after <c>--</c> are left as they are.

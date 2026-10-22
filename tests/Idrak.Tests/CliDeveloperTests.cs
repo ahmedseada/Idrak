@@ -10,7 +10,7 @@ using Idrak.Cli.Commands.Developer;
 using Idrak.Inference;
 using Idrak.Layers;
 
-// The idrak tool's developer commands (plans/idrak-cli.md, "Developers"): new, test, onnx import/export/check, kernels
+// The idrak tool's developer commands (plans/done/idrak-cli.md, "Developers"): new, test, onnx import/export/check, kernels
 // dump, trace, demo and shell, run in-process through CommandLine.Run with captured output.
 internal static partial class Tests
 {

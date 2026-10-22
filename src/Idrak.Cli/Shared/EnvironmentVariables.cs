@@ -6,7 +6,7 @@ using System.Text;
 namespace Idrak.Cli.Shared;
 
 /// <summary>
-/// Every environment variable the Idrak libraries and the tool read (plans/idrak-cli.md, "Environment variables"): the
+/// Every environment variable the Idrak libraries and the tool read (plans/done/idrak-cli.md, "Environment variables"): the
 /// one table <c>idrak env</c>, <c>idrak help env</c> and the end of each command's help are made from. A test scans the
 /// sources for variable names read and fails when one is missing here. Each meaning is taken from the code that reads
 /// the variable.

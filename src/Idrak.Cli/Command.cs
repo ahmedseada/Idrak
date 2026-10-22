@@ -9,7 +9,7 @@ internal abstract class Command
     /// <summary>The words that select it after <c>idrak</c>, e.g. "doctor" or "cache info".</summary>
     public abstract string Name { get; }
 
-    /// <summary>Other names that select it, e.g. "ls" for "list" (plans/idrak-cli.md, "Short forms").</summary>
+    /// <summary>Other names that select it, e.g. "ls" for "list" (plans/done/idrak-cli.md, "Short forms").</summary>
     public virtual IReadOnlyCollection<string> Aliases => [];
 
     /// <summary>One line for <c>idrak help</c>.</summary>

@@ -21,7 +21,7 @@ using Idrak.Training;
 // its faults (a slow worker, a late joiner, a replay's end) with the right group and token weighting.
 internal static partial class Tests
 {
-    // Measured on the CPU (2026-10-18, see plans/23-cluster.md "C4 as built"): top-k 10% with error feedback against the
+    // Measured on the CPU (2026-10-18, see plans/done/23-cluster.md "C4 as built"): top-k 10% with error feedback against the
     // full gradient on the Spirals sample, the last epoch's training loss.
     private const float TopKLossGap = 0.02f;                           // measured 0.0167
 
