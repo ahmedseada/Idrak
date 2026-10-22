@@ -630,6 +630,20 @@ step is a dependency order, not a barrier.
 
 ## The owner's runs
 
+**Collected for later (the owner, 2026-10-22: "I will test all later"):** phases go on as their inputs merge, without
+waiting for the owner's runs; each merged phase adds its commands here, and the owner runs the list at the end.
+
+```powershell
+# once, after the last merge you want to test
+dotnet build -c Release tests\Idrak.Tests
+
+# R0 (merged d1e1d6f) and row 32 (e9a09ef)
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "fine-tuning options:|optimizers|schedules:|tuning metrics:|pretrain:|distillation: the fine-tuning loss|vision tuning trainer|audio train|audio tts train|a Lion optimizer|conformance kit:|operations:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+```
+
+
 Each phase's as-built note gives the exact PowerShell list (from `D:\Projects\Idrak`): one
 `dotnet build -c Release tests\Idrak.Tests`, the phase's CPU filters, then its CUDA filters with `--no-build`. The pattern:
 

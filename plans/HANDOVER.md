@@ -31,7 +31,9 @@ standing rules; they win over anything here), then the plan you are asked to wor
   `Idrak.Reinforcement.Plugins` laid out like `Idrak.Vision.Plugins`, what belongs elsewhere moves out of `Idrak.Text`).
   Phases R0-R6 (R6 later). The owner answered its questions and started it 2026-10-22 ("go with recommendation", at
   most two agents): R0 and R1 run side by side in worktrees `/home/user/Idrak-r0` and `/home/user/Idrak-r1`; then R2
-  and R3, then R4, then R5 (see its "Order and parallelism").
+  and R3, then R4, then R5 (see its "Order and parallelism"). **R0 merged and pushed (d1e1d6f); row 32 fixed (e9a09ef).**
+  The owner (2026-10-22): go on with the next phase whenever a slot is free and its inputs are merged, without waiting
+  for the owner's runs; the owner tests everything later from the list in Plan 27's "The owner's runs".
 - **Plan 28 (documents)** — [28-documents.md](28-documents.md): written 2026-10-22 from the owner's decisions (PDF as a
   library default on a format-neutral document contract, Office later as a plug-in on it, nothing language-specific in
   the library). Phases D0-D5; **nothing is built**. The owner asked for planning only: its "Questions for the owner"
