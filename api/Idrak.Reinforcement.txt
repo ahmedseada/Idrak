@@ -300,13 +300,3 @@ public sealed class Idrak.Reinforcement.RolloutCollector<TObservation, TAction> 
   public int Shards { get; }
   public string Spread { get; }
   public void Dispose()
-
-public static class Idrak.Reinforcement.RolloutSpread
-  public const string Blocks = "blocks"
-  public const string Interleaved = "interleaved"
-  public const string ShardsVariable = "IDRAK_RL_SHARDS"
-  public const string SpreadVariable = "IDRAK_RL_SPREAD"
-  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
-  public static int Rank(int shard, int shards, int worldSize)
-  public static int[] Shards(System.ReadOnlySpan<int> indices, int shards, string spread = "blocks")
-  public static string Parse(string? spread)

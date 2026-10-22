@@ -19,7 +19,7 @@ environments and DQN; R6's measured candidate (exact-size replay arrays) is done
 | R7 | Leftover 1 (the owner, 2026-10-22): ranks agree on a stop (Ctrl+C, a timeout, a stop request) at the same step, for `reinforce` and `tune` and every trainer that runs on a cluster, then one checkpoint | A | Done 2026-10-22; CPU pass |
 | R8 | Leftover 2 (the owner, 2026-10-22): the replay buffer in exact-size arrays (5.37 MB held for 4.1 MB at 100,000 transitions) | B | Done 2026-10-22; CPU pass |
 | R9 | Leftover 4 (the owner, 2026-10-22: "finish all in order"): `idrak reinforce` for the classic environments (module policy) and DQN (the off-policy trainer) | A | Done 2026-10-22; CPU pass |
-| R10 | Leftover 3: on-policy distillation on a cluster (the distiller on R3b's shards and exchange, stopping by R7's agreed stop) | A or B | In progress (2026-10-22) |
+| R10 | Leftover 3: on-policy distillation on a cluster (the distiller on R3b's shards and exchange, stopping by R7's agreed stop) | A or B | Done 2026-10-22; CPU pass |
 | R11 | Leftover 5: the dashboard steers `reinforce` (stop with a checkpoint, through R7's agreed stop) | A or B | In progress (2026-10-22) |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Done 2026-10-22; CPU pass |
@@ -1930,6 +1930,110 @@ left them; no R1 contract changed; `TrainSession.cs` and the cluster commands un
   updates, so give `--lr 0.001 --minibatch 4` and `IDRAK_RL_NORMALIZE_ADVANTAGES=true` to repeat it); the DQN zoo run's
   evaluation reaching 490 (R6: 22,000 to 52,000 steps); the resumed PPO run starting at iteration 51; `runs\cartpole` holding the
   policy, `idrak-reinforce.json` and `checkpoints\`.
+
+**R10 as built (2026-10-22).** Leftover 3: on-policy distillation on a cluster. `OnPolicyDistiller` runs on a session opened
+with a cluster on R3b's shards and exchange and stops by R7's agreed stop; `cluster sim -- distill --on-policy`, `distill
+--on-policy --cluster FILE` and `reinforce --algorithm distill` on a cluster run (the R3c refusals are gone).
+- **The distiller on a cluster** (`src/Idrak.Text/Reinforcement/OnPolicyDistiller.cs`): every rank draws each step's prompts
+  and the mix's draws from the run's seed alike (no message); the prompts, numbered 0 to `PromptsPerStep` − 1, are cut into
+  shards by R3b's rule (`RolloutSpread.Shards`, computed once for the run; shard s on rank ⌊s·W/S⌋ by `RolloutSpread.Rank`).
+  Each rank, for each of its shards in order, encodes the shard's data answers (λ splits by the same shards) and answers the
+  shard's other prompts in one `ChatBatch`, rows in prompt order, from the shard's seed; the numbered sequences go to every
+  rank through R3b's byte all-gather; every rank sorts them alike, **the data's answers then the samples, each by prompt
+  number** (the order one process always trained in) and calls `session.Step`: the session's data-parallel step, each rank
+  training its share of the step's batches, **the teacher's distributions computed inside the step on that share** (the
+  distillation loss reads the session's teacher on the rank's batches; no pass of its own to spread), the gradients summed.
+  `Shards = 0` (the default) is one per rank, so one process keeps one shard and samples exactly as before.
+- **Shared pieces, not copies.** `RolloutSpread` **moved from `Idrak.Reinforcement` to `Idrak.Abstraction.Reinforcement`**
+  (public, unchanged members): `Idrak.Text` references no `Idrak.Reinforcement` (decision 6) and now cuts by it too; the
+  collector, `ReinforcementOptions` and the CLI use it from there (one `using` each). It gained `ShardSeed(seed, shard)`:
+  shard 0 keeps the call's seed (`Seed + step`, R3's), another shard a SplitMix64 mix of the two (the collector keeps its own
+  `Seeds.Derive`, so R3b's episodes are unchanged). `RolloutExchange` (internal) gained `WriteSequences`/`ReadSequences`:
+  numbered training sequences as bytes (each one's number, its ids, its trained flags eight to a byte, a format tag of its
+  own; a sequence with images or other parts is refused), sent by R3b's `Gather(collectives, bytes)`.
+- **Stop (R7):** on a cluster the distiller resets the session's agreement, watches its token (a cancellation asks), calls
+  `Agree(step)` at every step boundary and throws `agreement.Stopped(step)` (`ClusterRunStoppedException`, `Agreed`) on
+  every rank at the same boundary, as `FineTuner` does; the step's sampling, exchange and update get the give-up token. In
+  one process the token stops it before the next step as before (a plain cancellation). `distill --on-policy` (and so
+  `reinforce --algorithm distill`) catches an agreed stop as its Ctrl+C, then every rank calls `SaveOnce` (rank 0 writes the
+  adapter so far; rank 0 alone shows the progress line and says "adapter written", the others "written by rank 0").
+- **Settings:** `OnPolicyDistillationOptions.Shards` (`IDRAK_RL_SHARDS`) and `Spread` (`IDRAK_RL_SPREAD`), R3b's variables
+  (no new variable; a bad value names its variable); `distill --shards N --spread NAME` (with `--on-policy`; usage errors
+  name them); `reinforce --algorithm distill` passes its own `--shards`/`--spread`. The two rows of `EnvironmentVariables.cs`
+  now list `reinforce` and `distill`. `OnPolicyDistillationProgress` gained `SampledHere` (this rank's share) and `Sequences`
+  (what the step trained, the same on every rank). The start line names the shards when there are several.
+- **The CLI:** `cluster sim` runs `distill` with `--on-policy` (`-o DIR`, rank 0 writes; no event log in the adapter folder,
+  as tune's and reinforce's). **What `cluster sim -- distill` did before:** it was refused whole (R3c). Its other ways are not
+  asked here and stay refused there, with the reason: `--generate` and `--precompute` write the teacher's answers or logits
+  files, which every rank would write, and the logits way was never tried on a simulated cluster. (`distill --cluster FILE`
+  without `--on-policy` ran before R3c and still runs as it did; not touched.) Help: distill's usage (the cluster paragraph,
+  `--shards`, `--spread`, an example), cluster sim's (the command list, a sentence, an example), reinforce's cluster
+  paragraph, `idrak help reinforcement`'s distill line.
+- **What is bit-identical across rank counts (CPU, tested: 4 shards, 1, 2 and 4 ranks, blocks; interleaved on 1 and 4):**
+  every step's sequences (the prompts' and replies' ids, the data answers' encodings, the trained flags, the order), all 4
+  steps; on every rank of one run the losses and the adapters. Why: a shard's sampled prompts act together in one call from
+  the shard's seed wherever it is played (R3b's reason), the draws of prompts and mix come from the run's seed on every rank,
+  encoding is deterministic, the exchange copies ids exactly, and the order is fixed by prompt number. **One process with its
+  default shard is R3's loop bit for bit** (rule 71): the test writes the old loop out on the session's public members and
+  compares every step's sequences, the losses and the adapters, the same bits. **Not bit-identical, and why:** each step's
+  divergence and the adapters against one process differ by float rounding (largest gaps 2.4e-7 and 4.8e-7 over 4 steps),
+  because a step's gradient (and loss) is summed per rank over its batches, then across the ranks in the collective's order;
+  so after the first step the ranks sample from weights a rounding apart. The test's later samples stayed the same; a later
+  token can differ where the rounding meets a near-tie of the sampler (then the runs part, each valid). Without a fixed shard
+  count (the default, one per rank) runs on different rank counts sample differently by design.
+- **Tests** (`tests/Idrak.Tests/DistillationClusterTests.cs`, group `distillation cluster:`, 3, in-process clusters only):
+  the sequences' exchange (no flag, 1, 9 and 17 flags, large ids) and a part refused; the old-loop oracle; the student (R3's
+  tiny decoder) and a teacher of the same tokenizer (`TinyTeacherSpec`), 5 prompts, 8 a step, λ = 0.25, 4 steps, on 1, 2 and
+  4 ranks (and interleaved, 2 steps): the checks above, each rank sampling at most its shards' prompts and the ranks' shares
+  summing to the step's, every rank sampling, held device memory after step 2 not growing by the last; a stop asked on rank 1
+  after step 2 on 2 ranks under both agreements: every rank leaves with an agreed stop before the same step (all-reduce
+  before step index 3, shared 2 or 3), the sessions at that step, `SaveOnce` written by rank 0 alone; one process cancelled
+  throws a plain cancellation; the CLI: `cluster sim -- distill --on-policy --shards 4` on 2 ranks against one process with
+  `--shards 4`: exit 0 both, rank 0's lines once, the output folder holding what one process's holds (adapter, manifest, no
+  event log), the first divergence equal, the adapters within 1e-4 (largest gap 4.8e-7); `cluster sim -- reinforce
+  --algorithm distill` runs and writes the adapter; `cluster sim -- distill` without `--on-policy` refused naming why; a bad
+  `--spread` and a negative `--shards` usage errors. `cli reinforce: cluster sim ...` updated: its distill refusals were R3c's
+  (it now checks the refusal without `--on-policy`). `api/Idrak.Abstraction.txt`, `Idrak.Reinforcement.txt` and `Idrak.Text.txt`
+  regenerated; the inventory did not change (`RolloutSpread` is not a contract).
+- **The run (CPU, this agent):** three builds of `tests/Idrak.Tests` (two compile errors: an interpolated string handler
+  joined by `+` in the CLI, a missing `using` in the test; no warnings); `IDRAK_UPDATE_API=1` (`public API`) and
+  `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`, unchanged); then once, split to fit the 10-minute limit:
+  `distillation cluster:` 4 passed (the three new and `cli reinforce: cluster sim`, whose name now says it);
+  `distillation:|reinforcement cluster:|public API|abstraction inventory|cli health: every environment variable|cli
+  polish|naming:` 28 passed; `reinforcement text:|cli distill|cli reinforce|cluster stop:|cli cluster|fine-tuning:` 49
+  passed; `reinforcement:|reinforcement contracts|plugins: coding|cluster: 2 ranks equal one process` 30 passed. **111
+  passed, 0 failed**, no rerun.
+- **Left:** (1) The speed on a real model (rule 79: the sampling is spread, each rank answers S/W shards; the tests' tiny
+  models measure nothing worth printing): the owner's runs below compare the wall time of the 2-rank run with one process's.
+  (2) `cluster sim --mode localhost -- distill --on-policy` and `distill --on-policy --cluster FILE` are wired through
+  `ClusterJoin` as reinforce's are, not run here (child processes loading a model). (3) The dashboard does not steer distill
+  (as before). (4) A real multi-machine run, as R3b, R3c and R7 left it.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; CUDA runs the same in-process clusters carved from one card; the real
+  run splits one card in two, the student Qwen3-0.6B and the teacher Qwen3-1.7B of the same tokenizer, the teacher in int4 so
+  each rank's pair stays small):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "distillation cluster:|distillation:|reinforcement cluster:|reinforcement text:|reinforcement:|reinforcement contracts|cli distill|cli reinforce|cluster stop:|cli cluster|fine-tuning:|plugins: coding|cluster: 2 ranks equal one process|public API|abstraction inventory|cli health: every environment variable|cli polish|naming:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "distillation cluster:|reinforcement cluster:|reinforcement text: on-policy|cli reinforce: cluster sim"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  # on-policy distillation on a simulated cluster of two ranks carved from the card, against one process with the same 4 shards
+  $idrak = "src\Idrak.Cli\bin\Release\net10.0\Idrak.Cli.exe"
+  New-Item -ItemType Directory -Force runs | Out-Null
+  1..32 | ForEach-Object { '{"question": "What is ' + $_ + ' plus ' + $_ + '? Answer with the number.", "answer": "' + (2 * $_) + '"}' } | Set-Content runs\sums.jsonl
+  & $idrak cluster init -y --nodes 1 --devices cuda:0,cuda:0 -o runs\two-cuda.json
+  & $idrak cluster sim --topology runs\two-cuda.json -- distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data runs\sums.jsonl --on-policy --mix 0.25 --steps 6 --batch-size 8 --max-new 64 --shards 4 --seed 1 -o runs\opd-cluster
+  & $idrak distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data runs\sums.jsonl --on-policy --mix 0.25 --steps 6 --batch-size 8 --max-new 64 --shards 4 --seed 1 -d cuda:0 -o runs\opd-one
+  # the same through reinforce, and on localhost processes (each rank a process of the tool; press Ctrl+C once after a few steps)
+  & $idrak cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --algorithm distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --episodes 8 --iterations 4 --shards 4 --max-new 64 --seed 1 -o runs\opd-reinforce
+  & $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data runs\sums.jsonl --on-policy --steps 50 --batch-size 8 --max-new 64 --shards 4 --seed 1 -o runs\opd-stop
+  ```
+  What to look at: the "distilled in 6 steps, divergence A → B" lines of `opd-cluster` and `opd-one` with A equal (the first
+  step samples the same on any rank count with the same shards; a miss on the card is a finding: a kernel whose result
+  depends on its batch), B close; the start line naming "4 shards (blocks)"; `runs\opd-cluster` holding one adapter and
+  `idrak-tuning.json`, no event log; the cluster's wall time against one process's (the virtual-clock line and the wall);
+  the localhost run's one Ctrl+C ending both processes with "stopped after N steps" from rank 0 and one adapter.
 
 ## Order and parallelism
 

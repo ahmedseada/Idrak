@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Cluster;
 using Idrak.Abstraction.Reinforcement;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Text.Reinforcement;
 
@@ -12,9 +13,13 @@ namespace Idrak.Text.Reinforcement;
 // bytes gathered on every rank in rank order (an all-gather of each rank's count, then of the values padded to the longest
 // rank's), and the codec of text episodes sent as bytes. Gathered values arrive as sent: an all-gather copies them (no
 // sum, no wire narrowing), and bytes travel three to a value as an integer below 2^24, which every float holds exactly.
+// R10 adds the codec of numbered training sequences (on-policy distillation's sampled replies and data answers).
 internal static class RolloutExchange
 {
     private const int Version = 1;
+
+    // The numbered sequences' format (a tag of its own, so a rank that sent episodes is not read as sequences).
+    private const int SequencesVersion = 0x5345_5101;
 
     // Every rank's `mine`, in rank order (a collective: every rank calls it at the same point).
     public static float[][] Gather(ICollectives collectives, ReadOnlySpan<float> mine)
@@ -343,6 +348,74 @@ internal static class RolloutExchange
         }
 
         return trajectories;
+    }
+
+    // Numbered training sequences as bytes (Plan 27, R10): each one's number, its token ids and which of them train, eight
+    // flags to a byte. Text only: a sequence with images or parts of other kinds is not sent between ranks.
+    public static byte[] WriteSequences(IReadOnlyList<(int Number, TrainingSequence Sequence)> sequences)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(SequencesVersion);
+            writer.Write(sequences.Count);
+            foreach (var (number, sequence) in sequences)
+            {
+                if (sequence.Images.Count > 0 || sequence.Parts.Count > 0)
+                {
+                    throw new NotSupportedException($"Sequence {number} holds images or other parts: sequences spread over a cluster's ranks are sent as text ids only.");
+                }
+
+                writer.Write(number);
+                Ints(writer, sequence.Tokens);
+                var trained = sequence.Trained;
+                writer.Write(trained.Length);
+                for (int at = 0; at < trained.Length; at += 8)
+                {
+                    int bits = 0;
+                    for (int b = 0, end = Math.Min(8, trained.Length - at); b < end; b++)
+                    {
+                        bits |= trained[at + b] ? 1 << b : 0;
+                    }
+
+                    writer.Write((byte)bits);
+                }
+            }
+        }
+
+        return stream.ToArray();
+    }
+
+    // The numbered sequences WriteSequences wrote.
+    public static List<(int Number, TrainingSequence Sequence)> ReadSequences(byte[] data)
+    {
+        using var reader = new BinaryReader(new MemoryStream(data, writable: false), System.Text.Encoding.UTF8);
+        int version = reader.ReadInt32();
+        if (version != SequencesVersion)
+        {
+            throw new InvalidDataException($"A rank sent sequences in exchange format {version:X}; this one reads {SequencesVersion:X} (every rank runs the same Idrak).");
+        }
+
+        int count = reader.ReadInt32();
+        var result = new List<(int, TrainingSequence)>(count);
+        for (int i = 0; i < count; i++)
+        {
+            int number = reader.ReadInt32();
+            int[] tokens = Ints(reader) ?? [];
+            var trained = new bool[reader.ReadInt32()];
+            for (int at = 0; at < trained.Length; at += 8)
+            {
+                int bits = reader.ReadByte();
+                for (int b = 0, end = Math.Min(8, trained.Length - at); b < end; b++)
+                {
+                    trained[at + b] = (bits & (1 << b)) != 0;
+                }
+            }
+
+            result.Add((number, new TrainingSequence(tokens, trained)));
+        }
+
+        return result;
     }
 
     private static void WriteMessage(BinaryWriter writer, ChatMessage message)

@@ -1142,15 +1142,19 @@ public sealed record Idrak.Text.Reinforcement.OnPolicyDistillationOptions : Syst
   public int MaxNewTokens { get; init; }
   public int PromptsPerStep { get; init; }
   public int Seed { get; init; }
+  public int Shards { get; init; }
   public int Steps { get; init; }
   public string Divergence { get; init; }
+  public string Spread { get; init; }
 
 public sealed record Idrak.Text.Reinforcement.OnPolicyDistillationProgress : System.IEquatable<Idrak.Text.Reinforcement.OnPolicyDistillationProgress>
   public OnPolicyDistillationProgress(int Step, int Steps, float Loss, float LearningRate, int Sampled, int FromData)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> Sequences { get; init; }
   public float LearningRate { get; init; }
   public float Loss { get; init; }
   public int FromData { get; init; }
   public int Sampled { get; init; }
+  public int SampledHere { get; init; }
   public int Step { get; init; }
   public int Steps { get; init; }
 
