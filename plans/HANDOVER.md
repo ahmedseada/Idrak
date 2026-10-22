@@ -31,6 +31,10 @@ standing rules; they win over anything here), then the plan you are asked to wor
   `Idrak.Reinforcement.Plugins` laid out like `Idrak.Vision.Plugins`, what belongs elsewhere moves out of `Idrak.Text`).
   Phases R0-R6 (R6 optional); **nothing is built**. Its "Questions for the owner" (decisions 6-8, where the coding task
   layer lives, the default sandbox, R6, the variable names) come first; no phase starts before the owner names it.
+- **Plan 28 (documents)** — [28-documents.md](28-documents.md): written 2026-10-22 from the owner's decisions (PDF as a
+  library default on a format-neutral document contract, Office later as a plug-in on it, nothing language-specific in
+  the library). Phases D0-D5; **nothing is built**. The owner asked for planning only: its "Questions for the owner"
+  come first, and no phase starts before the owner names it.
 - **Scope:** Plan 24's owner runs, and Plan 26 only when the owner names a phase (the owner dropped Plan 25,
   Idrak.Extensions.AI).
 - **No new work until the owner says so.** Report status and wait for the owner to name the next item.

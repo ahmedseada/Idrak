@@ -65,6 +65,12 @@ in `Idrak.Text` on a fine-tuning session with the sampled tokens recorded), envi
 `Idrak.Text`), optimizers, schedules and answer metrics out of `Idrak.Text` into registries, `idrak reinforce`; seven
 phases in two lanes (planned 2026-10-21, nothing built): [27-reinforcement.md](27-reinforcement.md).
 
+Documents through one contract, as images are through `ImageCodecs` (`IDocumentFormat` and `DocumentFormats` in
+`Idrak.Abstraction.Data`: pages with positioned text runs, images and embedded files; text layouts as a registry, logical
+order through `ReadingOrders`, nothing language-specific), PDF as the library's default in `Idrak.Data` (objects,
+cross-references and repair, filters, encryption, fonts to Unicode, images), Office later as a plug-in on the same
+contract; six phases in two lanes (planned 2026-10-22, nothing built): [28-documents.md](28-documents.md).
+
 ## Not supported yet
 
 What the `architecture` branch cannot do today, with an example of each. "High" marks what comes next.
