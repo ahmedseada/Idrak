@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 89 | 16 | 50 | 154 | 0 |
+| `Idrak.Abstraction` | 91 | 17 | 51 | 158 | 0 |
 | `Idrak` | 17 | 4 | 20 | 41 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -48,8 +48,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, live, mixed, none, partition, slow-worker | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce, local-sgd, sharded | Idrak, Network, Text | Abstraction |
-| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology, SubsetTopology |  | Abstraction, Cluster, Idrak, Network, Text | Abstraction |
-| `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology, SubsetTopology |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | HierarchicalProvider, NaiveProvider, RingProvider |  | Abstraction, Cluster, Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IDeviceTransport` | interface | public | Storage | NvlinkTransport, PciHostTransport |  | Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | LiveFailures, NoFailures, SeededFailures |  | Cluster | Abstraction |
@@ -57,14 +57,18 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider, LocalSgdProvider, ShardedSyncProvider |  | Abstraction, Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostGradients` | interface | public | — | HostOptimizer |  | Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network, Text | Abstraction |
-| `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IPipelineSchedule` | interface | public | — | GPipeSchedule |  | Abstraction, Idrak, Network, Text | Abstraction |
-| `Idrak.Abstraction.Cluster.IStepGroup` | interface | public | — | SimStepper |  | Abstraction, Cluster, Idrak, Network, Text | Abstraction |
-| `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | NvlinkTransport, PciHostTransport, RoutedTransport, SharedMemoryTransport, SimTransport, SubsetTransport, +2 |  | Abstraction, Cluster, Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IStepGroup` | interface | public | — | SimStepper |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IStopAgreement` | interface | public | — | AllReduceStopAgreement, SharedStopAgreement |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IStopAgreementProvider` | interface | public | — | AllReduceStopAgreementProvider, SharedStopAgreementProvider |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.ITransport` | interface | public | — | NvlinkTransport, PciHostTransport, RoutedTransport, SharedMemoryTransport, SimTransport, SubsetTransport, +2 |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportProvider` | interface | public | — | DirectLinkProvider, NvlinkProvider, PciHostProvider, SharedMemoryProvider, SimTransportProvider, TcpProvider |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | FastestSelector |  | Abstraction, Cluster, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | direct-link, ethernet, ethernet-100g, ethernet-10g, ethernet-1g, ethernet-2.5g, infiniband, nvlink, +7 | Abstraction, Cluster, Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | direct-link, ethernet, ethernet-100g, ethernet-10g, ethernet-1g, ethernet-2.5g, infiniband, nvlink, +7 | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.PipelineSchedules` | registry | public | — |  | gpipe | Idrak, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.StopAgreement` | abstract class | public | — | AllReduceStopAgreement, SharedStopAgreement |  | Cluster, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.StopAgreements` | registry | public | — |  | all-reduce, shared | Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | fastest | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | direct-link, nvlink, p2p, pcie-host, shared-memory, sim, tcp | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.CommandSandboxes` | registry | public | — |  | process | Reinforcement.Plugins, Text | Abstraction |

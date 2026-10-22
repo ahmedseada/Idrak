@@ -179,6 +179,27 @@ public sealed record ClusterOptions
     public int Retries { get; init; } = 3;
 
     /// <summary>
+    /// How the ranks agree on a stop one of them asks for (Plan 27, R7: Ctrl+C, a timeout, a stop request), a
+    /// <see cref="StopAgreements"/> name ("all-reduce", "shared", or a plug-in's), or "auto": "shared" for an in-process
+    /// simulated cluster's ranks, else "all-reduce" (<c>IDRAK_CLUSTER_STOP</c>).
+    /// </summary>
+    public string StopAgreement { get; init; } = StopAgreements.Automatic;
+
+    /// <summary>
+    /// The step boundaries between the stop agreement's own one-value all-reduces when no collective of the step carried the
+    /// flag (the gradient reduction carries it every step): 1 checks at every boundary, N every N-th, so a stop may wait up to
+    /// N boundaries (<c>IDRAK_CLUSTER_STOP_EVERY</c>).
+    /// </summary>
+    public int StopEvery { get; init; } = 1;
+
+    /// <summary>
+    /// How long a rank that asked for a stop waits for the ranks to agree on it before it gives up and leaves its step on its
+    /// own, saying why (the others then wait until <see cref="Timeout"/>); zero waits as long as the step takes
+    /// (<c>IDRAK_CLUSTER_STOP_WAIT</c>, seconds).
+    /// </summary>
+    public TimeSpan StopWait { get; init; } = TimeSpan.Zero;
+
+    /// <summary>
     /// The bytes of a chunk in flight, or null: measured at the first collective over a real transport (once per transport,
     /// kept in the tuning cache, <see cref="ClusterCache"/>; on the simulator's virtual clock one message a piece, so a
     /// prediction and a replay stay exact) (<c>IDRAK_CLUSTER_CHUNK_BYTES</c>).
@@ -474,7 +495,7 @@ public sealed record ClusterOptions
     [
         "IDRAK_CLUSTER_TOPOLOGY", "IDRAK_CLUSTER_NODE", "IDRAK_RANK", "IDRAK_WORLD_SIZE", "IDRAK_COORDINATOR", "IDRAK_CLUSTER_TRANSPORT",
         "IDRAK_CLUSTER_SELECTOR", "IDRAK_CLUSTER_COLLECTIVE", "IDRAK_CLUSTER_KEY", "IDRAK_CLUSTER_PORT", "IDRAK_CLUSTER_TIMEOUT",
-        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_CHUNK_PROBE", "IDRAK_CLUSTER_TUNING_FILE", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_RECEIVE_BYTES", "IDRAK_CLUSTER_SOCKET_BUFFER",
+        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_STOP", "IDRAK_CLUSTER_STOP_EVERY", "IDRAK_CLUSTER_STOP_WAIT", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_CHUNK_PROBE", "IDRAK_CLUSTER_TUNING_FILE", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_RECEIVE_BYTES", "IDRAK_CLUSTER_SOCKET_BUFFER",
         "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_MESSAGE_COST", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
@@ -516,6 +537,9 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_PORT") is { } port) o = o with { ListenPort = Whole("IDRAK_CLUSTER_PORT", port, 0, 65535) };
         if (Read(variable, "IDRAK_CLUSTER_TIMEOUT") is { } timeout) o = o with { Timeout = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_TIMEOUT", timeout, "a number of seconds above 0", v => v > 0)) };
         if (Read(variable, "IDRAK_CLUSTER_RETRIES") is { } retries) o = o with { Retries = Whole("IDRAK_CLUSTER_RETRIES", retries, 1) };
+        if (Read(variable, "IDRAK_CLUSTER_STOP") is { } stop) o = o with { StopAgreement = stop };
+        if (Read(variable, "IDRAK_CLUSTER_STOP_EVERY") is { } stopEvery) o = o with { StopEvery = Whole("IDRAK_CLUSTER_STOP_EVERY", stopEvery, 1) };
+        if (Read(variable, "IDRAK_CLUSTER_STOP_WAIT") is { } stopWait) o = o with { StopWait = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_STOP_WAIT", stopWait, "a number of seconds, 0 or more", v => v >= 0)) };
         if (Read(variable, "IDRAK_CLUSTER_CHUNK_BYTES") is { } chunk) o = o with { ChunkBytes = Size("IDRAK_CLUSTER_CHUNK_BYTES", chunk) };
         if (Read(variable, "IDRAK_CLUSTER_CHUNK_PROBE") is { } chunkProbe) o = o with { ChunkProbeBytes = Size("IDRAK_CLUSTER_CHUNK_PROBE", chunkProbe) };
         if (variable("IDRAK_CLUSTER_TUNING_FILE") is { } tuningFile) o = o with { TuningFile = tuningFile.Trim() };

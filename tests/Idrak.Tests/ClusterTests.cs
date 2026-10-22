@@ -127,6 +127,8 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_CHUNK_PROBE"] = "1MB", ["IDRAK_CLUSTER_TUNING_FILE"] = "sizes.txt", ["IDRAK_CLUSTER_EVENT_LOG_FLUSH"] = "4",
             // C8c: the cluster advisor's measurement on or off, the warm steps it measures and its bf16 slice.
             ["IDRAK_CLUSTER_SUGGEST"] = "0", ["IDRAK_CLUSTER_SUGGEST_STEPS"] = "5", ["IDRAK_CLUSTER_SUGGEST_SLICE"] = "1024",
+            // Plan 27, R7: how the ranks agree on a stop, how often the boundary's own exchange runs, how long an asker waits.
+            ["IDRAK_CLUSTER_STOP"] = "all-reduce", ["IDRAK_CLUSTER_STOP_EVERY"] = "4", ["IDRAK_CLUSTER_STOP_WAIT"] = "30",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();

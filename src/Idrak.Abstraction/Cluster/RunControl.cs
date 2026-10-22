@@ -37,6 +37,13 @@ public sealed class ClusterRunStoppedException : OperationCanceledException
 
     /// <summary>The step the ranks did not begin (the run finished the steps before it), or -1 when unknown.</summary>
     public long Step { get; }
+
+    /// <summary>
+    /// Whether the ranks agreed on the stop one of them asked for (Plan 27, R7: a cancelled token, a timeout, a stop request;
+    /// <see cref="IStopAgreement"/>), rather than a launcher's control or the dashboard. A command ends such a run as it ends
+    /// one stopped by Ctrl+C in one process.
+    /// </summary>
+    public bool Agreed { get; init; }
 }
 
 /// <summary>What a launcher tells the ranks of a run through its control file (<see cref="ClusterControlFile"/>).</summary>

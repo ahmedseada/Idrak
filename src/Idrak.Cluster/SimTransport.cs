@@ -101,6 +101,9 @@ internal sealed class SimWorld
     // The control steering this run (pause, resume, stop, live faults), or null.
     public ClusterRunControl? Control { get; }
 
+    // Where the ranks agree on a stop one of them asks for (Plan 27, R7: the "shared" stop agreement).
+    public SharedStops Stops { get; } = new();
+
     public EventLogWriter Log { get; }
 
     public SimHub Root { get; }
