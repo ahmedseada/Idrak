@@ -29,7 +29,8 @@ standing rules; they win over anything here), then the plan you are asked to wor
 - **Plan 27 (reinforcement learning)** — [27-reinforcement.md](27-reinforcement.md): **finished 2026-10-22.** R0-R6 with
   R3b, R3c and R4b built, merged and pushed (CPU passes); no agent runs, no worktree is left. The owner tests later from
   the plan's "The owner's runs" (the owner, 2026-10-22: "I will test all later"). Its status line lists what is left;
-  none of it starts without the owner.
+  none of it starts without the owner. The owner ordered it by priority and started items 1 and 2 (2026-10-22): R7 (ranks
+  agree on a stop) in `/home/user/Idrak-r7`, R8 (exact-size replay arrays) in `/home/user/Idrak-r8`.
 - **Plan 28 (documents)** — [28-documents.md](28-documents.md): written 2026-10-22 from the owner's decisions (PDF as a
   library default on a format-neutral document contract, Office later as a plug-in on it, nothing language-specific in
   the library). Phases D0-D5; **nothing is built**. The owner asked for planning only: its "Questions for the owner"
