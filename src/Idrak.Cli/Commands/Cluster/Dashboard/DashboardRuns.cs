@@ -57,7 +57,22 @@ internal sealed class DashboardRun
         Seed = seed;
         Failures = failures;
         State = kind == RunKind.Followed ? "following" : "starting";
+        if (Command.Count > 0 && Command[0] == "reinforce" && OptionOf(Command, "-o", "--out") is { } output)
+        {
+            // A reinforce run (Plan 27, R11): its -o is the adapter's folder; its iterations come from its JSON log there (or
+            // where IDRAK_RL_LOG puts it), from this run's first line on.
+            OutputFolder = Path.GetFullPath(output);
+            Figures = new ReinforceFigures(Environment.GetEnvironmentVariable("IDRAK_RL_LOG") is { Length: > 0 } log ? Path.GetFullPath(log.Trim())
+                : Path.Combine(OutputFolder, ReinforceCommandLog));
+        }
+
+        _control = Path.Combine(Folder ?? Path.GetTempPath(), Folder is null ? $"idrak-cluster-control-{Guid.NewGuid():N}" : "cluster-control");
     }
+
+    // The JSON log idrak reinforce writes in its folder (ReinforceCommand.LogFile).
+    private const string ReinforceCommandLog = Commands.Train.ReinforceCommand.LogFile;
+
+    private readonly string _control;
 
     public string Id { get; }
 
@@ -74,6 +89,15 @@ internal sealed class DashboardRun
     public int Seed { get; }
 
     public string Failures { get; }
+
+    /// <summary>The folder a reinforce run writes (its -o: the adapter, the checkpoints, the log), or null for another command.</summary>
+    public string? OutputFolder { get; }
+
+    /// <summary>A reinforce run's iterations, rewards and pass rate, read from its JSON log; null for another command.</summary>
+    public ReinforceFigures? Figures { get; }
+
+    /// <summary>What the run counts: a reinforce run's iterations, another's steps.</summary>
+    public string Unit => Figures is null ? "step" : "iteration";
 
     public DateTimeOffset Started { get; } = DateTimeOffset.UtcNow;
 
@@ -98,8 +122,8 @@ internal sealed class DashboardRun
     /// <summary>The event log of an in-process run, in its run folder.</summary>
     public string? EventLogPath => Folder is null ? null : Path.Combine(Folder, ClusterSimCommand.EventLogFile);
 
-    /// <summary>The control file of a localhost run, in its run folder.</summary>
-    public string ControlPath => Path.Combine(Folder ?? Path.GetTempPath(), "cluster-control");
+    /// <summary>The control file of a localhost run, in its run folder (a file of its own in the temporary folder for a run without one: reinforce's -o is an adapter's).</summary>
+    public string ControlPath => _control;
 
     /// <summary>Why <paramref name="action"/> (pause, resume, stop, faults) is refused on this run, or null when it is taken.</summary>
     public string? Refusal(string action)
@@ -137,6 +161,8 @@ internal sealed class DashboardRun
         ["world"] = World,
         ["seed"] = Seed,
         ["failures"] = Failures,
+        ["unit"] = Unit,
+        ["figures"] = Figures?.Read(),
         ["started"] = Started.ToString("O", CultureInfo.InvariantCulture),
         ["controls"] = new JsonObject
         {
@@ -205,7 +231,8 @@ internal sealed class DashboardRun
         }
         else if (control?.StopAfter is { } after)
         {
-            SetState("stopped", after < 0 ? "stopped before the first step" : string.Create(inv, $"stopped after step {after}; its checkpoint is in {Folder}"));
+            SetState("stopped", Figures is not null ? Stopped()
+                : after < 0 ? "stopped before the first step" : string.Create(inv, $"stopped after step {after}; its checkpoint is in {Folder}"));
         }
         else
         {
@@ -220,8 +247,13 @@ internal sealed class DashboardRun
         bool stopped = Localhost?.Reported is ("stopped", _);
         SetState(!result.Succeeded ? "failed" : stopped ? "stopped" : "finished",
             !result.Succeeded ? result.Failure ?? string.Join("; ", result.Ranks.Where(r => r.ExitCode != 0).Select(r => $"rank {r.Rank}: {r.Errors.LastOrDefault(l => l.Length > 0) ?? "ended"}"))
-            : string.Create(CultureInfo.InvariantCulture, $"wall {result.Wall.TotalSeconds:F1} s"));
+            : (stopped && Figures is not null ? Stopped() + "; " : "") + string.Create(CultureInfo.InvariantCulture, $"wall {result.Wall.TotalSeconds:F1} s"));
     }
+
+    // A reinforce run that stopped: the iterations its log holds (the ranks agreed on the last), and where its checkpoint is.
+    private string Stopped() => Figures!.Read()["iteration"] is { } done && (int)done > 0
+        ? string.Create(CultureInfo.InvariantCulture, $"stopped after iteration {(int)done}; its checkpoint is in {Path.Combine(OutputFolder!, "checkpoints")}, the adapter so far in {OutputFolder}")
+        : "stopped before the first iteration";
 
     /// <summary>A localhost run: what rank 0 reported through the control file, as a record when it changed.</summary>
     public void PollState()
@@ -419,6 +451,28 @@ internal sealed class DashboardRun
         }
 
         Record(new JsonObject { ["event"] = "run", ["id"] = Id, ["state"] = state, ["step"] = step ?? Step, ["detail"] = detail });
+    }
+
+    // The value of an option of `command` (NAME VALUE, or --NAME=VALUE), or null.
+    private static string? OptionOf(IReadOnlyList<string> command, params string[] names)
+    {
+        for (int i = 1; i < command.Count; i++)
+        {
+            foreach (string name in names)
+            {
+                if (command[i] == name && i + 1 < command.Count)
+                {
+                    return command[i + 1];
+                }
+
+                if (name.StartsWith("--", StringComparison.Ordinal) && command[i].StartsWith(name + "=", StringComparison.Ordinal))
+                {
+                    return command[i][(name.Length + 1)..];
+                }
+            }
+        }
+
+        return null;
     }
 
     private readonly record struct LinkTotals(long Count, long Bytes, double Simulated, double Wall);
@@ -719,16 +773,25 @@ internal sealed class DashboardRuns : IDisposable
 }
 
 /// <summary>
-/// Reads the new lines of a run folder's files as a listener waits (a followed or localhost run): rank 0's log.jsonl and
-/// cluster start's ranks.jsonl, from where the last read stopped, as bytes (rule 74), a partial last line kept for the next.
+/// Reads the new lines of a run's files as a listener waits (a followed or localhost run's folder: rank 0's log.jsonl and
+/// cluster start's ranks.jsonl; a reinforce run's JSON log), from where the last read stopped, as bytes (rule 74), a partial
+/// last line kept for the next.
 /// </summary>
-internal sealed class DashboardTail(string folder)
+internal sealed class DashboardTail
 {
     /// <summary>The file <c>cluster start</c> writes its ranks' lines to in the run folder.</summary>
     public const string RanksFile = "ranks.jsonl";
 
-    private readonly (string Path, long Offset, byte[] Leftover)[] _files =
-        [(Path.Combine(folder, "log.jsonl"), 0, []), (Path.Combine(folder, RanksFile), 0, [])];
+    private readonly (string Path, long Offset, byte[] Leftover)[] _files;
+
+    /// <summary>The run folder's log.jsonl and ranks.jsonl, from their start.</summary>
+    public DashboardTail(string folder)
+        : this([(Path.Combine(folder, "log.jsonl"), 0), (Path.Combine(folder, RanksFile), 0)])
+    {
+    }
+
+    /// <summary>These files, each from its offset (the bytes before it were another run's).</summary>
+    public DashboardTail(IReadOnlyList<(string Path, long Offset)> files) => _files = [.. files.Select(f => (f.Path, f.Offset, Array.Empty<byte>()))];
 
     /// <summary>The complete lines written since the last read, each a JSON object.</summary>
     public List<string> Read()
@@ -771,5 +834,79 @@ internal sealed class DashboardTail(string folder)
         }
 
         return lines;
+    }
+}
+
+/// <summary>
+/// A reinforce run's figures for the dashboard (Plan 27, R11), from its JSON log (a line per iteration, the trainer's): the
+/// iterations done of the run's, the mean reward (and the first one's), its spread, the pass rate, the loss and the last
+/// evaluation. The log is read as bytes from where the last read stopped (rule 74), from this run's first line on (lines
+/// already there when the run was attached were another run's, or the run it resumes).
+/// </summary>
+internal sealed class ReinforceFigures
+{
+    private static readonly string[] Kept = ["iteration", "iterations", "episodes", "reward_mean", "reward_spread", "reward_min", "reward_max", "pass_rate", "loss", "evaluation_reward"];
+
+    private readonly Lock _gate = new();
+    private readonly DashboardTail _tail;
+    private JsonObject _figures;
+
+    public ReinforceFigures(string log)
+    {
+        Log = log;
+        try
+        {
+            Start = File.Exists(log) ? new FileInfo(log).Length : 0;
+        }
+        catch (IOException)
+        {
+            Start = 0;
+        }
+
+        _tail = new DashboardTail([(log, Start)]);
+        _figures = new JsonObject { ["log"] = log, ["iteration"] = 0 };
+    }
+
+    /// <summary>The run's JSON log.</summary>
+    public string Log { get; }
+
+    /// <summary>Where this run's lines begin in it.</summary>
+    public long Start { get; }
+
+    /// <summary>A reader of this run's lines as they come (each listener its own).</summary>
+    public DashboardTail Tail() => new([(Log, Start)]);
+
+    /// <summary>The figures after the lines written so far (a copy).</summary>
+    public JsonObject Read()
+    {
+        lock (_gate)
+        {
+            foreach (string line in _tail.Read())
+            {
+                if (JsonNode.Parse(line) is not JsonObject record || (string?)record["event"] is not "iteration")
+                {
+                    continue;
+                }
+
+                var figures = new JsonObject { ["log"] = Log };
+                foreach (string key in Kept)
+                {
+                    if (record[key] is JsonValue value)
+                    {
+                        figures[key] = value.DeepClone();
+                    }
+                }
+
+                figures["first_reward_mean"] = _figures["first_reward_mean"]?.DeepClone() ?? record["reward_mean"]?.DeepClone();
+                if (record["evaluation_reward"] is null && _figures["evaluation_reward"] is { } evaluation)
+                {
+                    figures["evaluation_reward"] = evaluation.DeepClone();            // the last evaluation stays shown between them
+                }
+
+                _figures = figures;
+            }
+
+            return (JsonObject)_figures.DeepClone();
+        }
     }
 }

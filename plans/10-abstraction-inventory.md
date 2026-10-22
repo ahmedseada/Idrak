@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 91 | 17 | 51 | 158 | 0 |
+| `Idrak.Abstraction` | 93 | 17 | 52 | 161 | 0 |
 | `Idrak` | 17 | 4 | 20 | 41 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -59,6 +59,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.IHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IPipelineSchedule` | interface | public | — | GPipeSchedule |  | Abstraction, Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IRunSteering` | interface | public | — | ControlFileSteering, InProcessSteering |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
+| `Idrak.Abstraction.Cluster.IRunSteeringProvider` | interface | public | — | ControlFileSteeringProvider, InProcessSteeringProvider |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
 | `Idrak.Abstraction.Cluster.IStepGroup` | interface | public | — | SimStepper |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IStopAgreement` | interface | public | — | AllReduceStopAgreement, SharedStopAgreement |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IStopAgreementProvider` | interface | public | — | AllReduceStopAgreementProvider, SharedStopAgreementProvider |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
@@ -67,6 +69,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.ITransportSelector` | interface | public | — | FastestSelector |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.LinkProfiles` | registry | public | — |  | direct-link, ethernet, ethernet-100g, ethernet-10g, ethernet-1g, ethernet-2.5g, infiniband, nvlink, +7 | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.PipelineSchedules` | registry | public | — |  | gpipe | Idrak, Network | Abstraction |
+| `Idrak.Abstraction.Cluster.RunSteerings` | registry | public | — |  | control-file, in-process | Cluster, Network, Reinforcement | Abstraction |
 | `Idrak.Abstraction.Cluster.StopAgreement` | abstract class | public | — | AllReduceStopAgreement, SharedStopAgreement |  | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.StopAgreements` | registry | public | — |  | all-reduce, shared | Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.TransportSelectors` | registry | public | — |  | fastest | Cluster, Network | Abstraction |

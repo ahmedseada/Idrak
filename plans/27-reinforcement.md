@@ -20,7 +20,7 @@ environments and DQN; R6's measured candidate (exact-size replay arrays) is done
 | R8 | Leftover 2 (the owner, 2026-10-22): the replay buffer in exact-size arrays (5.37 MB held for 4.1 MB at 100,000 transitions) | B | Done 2026-10-22; CPU pass |
 | R9 | Leftover 4 (the owner, 2026-10-22: "finish all in order"): `idrak reinforce` for the classic environments (module policy) and DQN (the off-policy trainer) | A | Done 2026-10-22; CPU pass |
 | R10 | Leftover 3: on-policy distillation on a cluster (the distiller on R3b's shards and exchange, stopping by R7's agreed stop) | A or B | In progress (2026-10-22) |
-| R11 | Leftover 5: the dashboard steers `reinforce` (stop with a checkpoint, through R7's agreed stop) | A or B | In progress (2026-10-22) |
+| R11 | Leftover 5: the dashboard steers `reinforce` (stop with a checkpoint, through R7's agreed stop) | A or B | Done 2026-10-22; CPU pass (a language-model run resumed from a checkpoint is within 1e-4 of the uninterrupted one, not bit for bit: found, see "R11 as built") |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Done 2026-10-22; CPU pass |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Done 2026-10-22; CPU pass (left: the demo suite through R4b's `--env csharp` after its merge; see "R5 as built") |
@@ -1930,6 +1930,147 @@ left them; no R1 contract changed; `TrainSession.cs` and the cluster commands un
   updates, so give `--lr 0.001 --minibatch 4` and `IDRAK_RL_NORMALIZE_ADVANTAGES=true` to repeat it); the DQN zoo run's
   evaluation reaching 490 (R6: 22,000 to 52,000 steps); the resumed PPO run starting at iteration 51; `runs\cartpole` holding the
   policy, `idrak-reinforce.json` and `checkpoints\`.
+
+**R11 as built (2026-10-22).** Leftover 5: the cluster dashboard steers `reinforce`. An iteration (an off-policy round) is the
+control point: the dashboard's in-process control, or a launcher's control file, holds every rank at the same iteration
+boundary while paused and stops every rank there through R7's agreement, with one checkpoint and the adapter so far.
+- **The contract (`src/Idrak.Abstraction/Cluster/RunControl.cs`):** `IRunSteering` (`Name`; `Boundary(step, ct)`: every rank
+  calls it at each of its trainer's boundaries, at the same point; it holds the rank while paused and answers `Run` or `Stop`,
+  the same on every rank), `IRunSteeringProvider` and the registry `RunSteerings` (SlotTable, unguarded; `Register`, `Find`,
+  `Get` with "is not registered", `Default`, `Origin`, `Describe`). `For(collectives, options)` asks the registered ways in
+  order and gives the first that steers the run, one per rank's collectives (a `ConditionalWeakTable`), or null when nothing
+  steers it. `Steered(collectives)` says a trainer took the run's control over: the collectives' step gates then let every
+  gradient step through. `Stops(steering, step, agreement, ct)` is a trainer's boundary: `Boundary`, then a stop taken as the
+  run's own. In one process it returns true (the trainer stops as on a cancelled token). On a cluster every rank asks the
+  agreement at this same boundary (`StopReason`) and hands it the sum it knows without a message (`Carried(WorldSize)`), so
+  the trainer's `Agree` right after stops every rank there, under `all-reduce` too.
+- **The two library ways.** `in-process` (`Idrak.Cluster`, `InProcessSteering`) serves a simulated rank whose run has a
+  `ClusterRunControl` (the dashboard's in-process run). `ClusterRunControl.Gate` became `Hold` (wait while paused; return the
+  stop's last step instead of throwing) plus a `Gate` that throws as before, so the pause and stop rules are one code. The
+  boundaries count as the control's steps (`Pause` returns the iteration every rank waits before; `StopAfter` is the last
+  iteration let finish). `control-file` (`Idrak.Network`, `ControlFileSteering`) serves any collectives, or one process, when
+  `SimulationOptions.Control` (`IDRAK_CLUSTER_CONTROL`) is set. On a cluster rank 0 reads the file at each boundary and
+  broadcasts one value (`HostValues`), so every rank goes on, waits or stops at that boundary; while paused rank 0 reads it
+  again every `ControlPoll` and reports "paused N", "running N" or "stopped N" in the state file; a cancellation while paused
+  ends the pause as a stop. The read-broadcast-poll loop is `SyncCore.Steer`'s, moved into `ControlFileSteering.Hold` and
+  called by both, not copied. In one process the file is read at the first boundary, then at most every `ControlPoll`
+  (an off-policy round can last microseconds).
+- **The step gates step aside.** `SimStepper.BeginStep` calls the control's gate, and `SyncCore.BeginStep` of a group of
+  processes calls `Steer`, only while `RunSteerings.Steered` is false. A reinforce run's gradient steps (several in an
+  iteration: epochs times mini-batches) are therefore never paused or stopped in the middle of an iteration; `tune`,
+  `pretrain` and `train` take no steering and keep their step gates unchanged (the `cluster: ui` and `cluster stop:` tests
+  pass as before). Live faults are still drawn at gradient steps.
+- **The trainers.** `ReinforcementTrainer.Steering` and `OffPolicyTrainer.Steering` (init, null by default) are the control
+  points. The on-policy trainer calls `Steering.Stops(iteration, agreement, ct)` before its `Agree` at every iteration
+  boundary; the off-policy one calls it before every round (its step is the environment steps done), in one process. No
+  copy of the other trainers' code: they get their gate through their gradient synchronisation; the reinforcement trainer
+  gets it through this one call. Also in `ReinforcementTrainer`: the JSON log's lines start with `"event":"iteration"` and
+  carry `"iterations"`, and the log's folder is made before the first line; the off-policy trainer makes its log's folder
+  too. **Pass rate (new setting):** `ReinforcementOptions.PassReturn` (`IDRAK_RL_PASS_RETURN`, 1 by default, `none` for
+  none): an iteration's `pass-rate` metric (the log's `pass_rate`, the telemetry's epoch metrics) is the share of its
+  episodes whose return reaches it. A bad value is refused naming the variable.
+- **The commands.** `ReinforceCommand.Steering()` gives `RunSteerings.For(the cluster rank's collectives and options, or
+  ClusterOptions.FromEnvironment in one process)`. The language-model path, the numeric on-policy path and DQN set it, so
+  `IDRAK_CLUSTER_CONTROL` steers a one-process `reinforce` too: that is new, since one-process runs did not read the file
+  before. `reinforce` now writes its JSON log to `DIR/log.jsonl` by default (`IDRAK_RL_LOG` names another file), on both
+  paths and for DQN: this is "the run's JSON log" the dashboard reads. `ClusterSimCommand.Steerable` takes `reinforce`; the
+  refusal "... reinforce does not write one on a stop" is gone, and its wording and `cluster sim`'s usage say every command
+  is steered. This is a three-line edit in R10's file, away from its distill lines.
+- **The dashboard.** A reinforce run's listing (`GET /api/runs`) has `"unit":"iteration"` and `"figures"`: the iteration and
+  the run's total, episodes, reward mean, spread, min and max, the first iteration's mean, the pass rate, the loss and the
+  last evaluation. They are read by `ReinforceFigures` from the run's log as bytes, from where the last read stopped (rule
+  74), and only from this run's lines (the offset at attach). The events stream tails the same log (`DashboardTail` now
+  takes files with offsets), so the page gets `iteration` records. Where a step run shows its steps and loss, the page shows
+  iteration N of M, the reward (from the first, with the last evaluation), the pass rate, iterations a second and the reward
+  curve, plus "Pause at next iteration", all in Arabic too; it ignores a reinforce run's per-update batch records. A stopped
+  reinforce run ends "stopped after iteration N; its checkpoint is in DIR/checkpoints, the adapter so far in DIR". A run
+  without a run folder (reinforce's `-o` is an adapter's) gets a control file of its own in the temporary folder, where
+  every such run shared one before.
+- **Help:** `cluster ui`'s usage, `cluster sim`'s, `reinforce`'s (iterations as control points, `DIR/log.jsonl`,
+  `IDRAK_RL_PASS_RETURN`), the numeric path's, `idrak help reinforcement` (a dashboard line), the CLI README (an example),
+  the Idrak.Reinforcement README. **Variables:** the new row `IDRAK_RL_PASS_RETURN`. Two existing rows say what changed:
+  `IDRAK_RL_LOG` (its `reinforce` default) and `IDRAK_CLUSTER_CONTROL` (read at reinforce's iterations, also in one process).
+- **Found, not fixed (the owner decides): a language-model run resumed from a checkpoint is not bit for bit the uninterrupted
+  run.** `FineTuningSession` draws its packing order (FineTuner's tie order and bin shuffle) from its own `Random(seed)`,
+  which no reinforcement checkpoint keeps. A resumed session starts that generator again, so its later steps pack the same
+  sequences in another order. Measured here: largest adapter gap 1.04e-7 on 2 ranks (shared and all-reduce), 1.10e-7 in
+  one process, 1.49e-8 through the dashboard and `cluster sim --resume`. Every iteration before a stop, and a run paused and
+  resumed, are bit for bit. R7's test saw "resumed to the uninterrupted adapters bit for bit" with an `exact` reward, under
+  which the tiny model's adapters hardly move; that is likely why the gap did not show there (not checked further). `ModulePolicy` and DQN resume bit for bit. The fix would be a packing draw derived
+  from (seed, step), or the generator's state in the checkpoint: a change to `Idrak.Text` that changes every run's packing,
+  so it is not taken here.
+- **Tests** (`tests/Idrak.Tests/ClusterControlTests.cs`, group `cluster control:`, 4; in-process ranks and in-process
+  commands only):
+  1. The registry (in-process, then control-file, both the library's), `PassReturn` and its variable, nothing steering an
+     unsteered simulated run. With a paused run control, each rank's step 0 passes its gate while `Boundary(0)` holds it,
+     and the stop is said on every rank. In one process the control file pauses, goes on and stops with its state reports,
+     is not read again within the poll, and a cancellation while paused stops.
+  2. Two in-process ranks, a `cer` reward (the adapters move), grpo with four updates an iteration. Case 1, the run's
+     control: started paused, then paused at an iteration boundary with every rank there; resumed, the run ends with the
+     uninterrupted run's iterations and adapters bit for bit. Case 2, the run's control, stopped: every rank ends at the same
+     iteration (`StopAfter + 1`); rank 0 writes one checkpoint; the iterations before the stop are bit for bit; the resumed
+     adapters are within 1e-4. Case 3, a control file under all-reduce: the same, and the stop lands exactly after iteration
+     4 as the file asked, with "stopped 4" in the state file.
+  3. One process through the control file: the language model and ppo on cartpole are paused before 0 and at 2 and stopped
+     after 4, with one checkpoint and bit for bit before the stop; resumed, ppo is bit for bit and the language model within
+     1e-4. DQN on cartpole is paused before step 0 and at step 1,000, stopped at step 2,000 with one checkpoint, and resumed
+     to the uninterrupted network bit for bit. Then `idrak reinforce` with `IDRAK_CLUSTER_CONTROL`: "stopped after 0
+     iterations" or "steps" for ppo, dqn and the language model; paused and let go, a ppo run trains to its end with
+     `DIR/log.jsonl` holding a line per iteration with `event`, `iterations` and `pass_rate`.
+  4. The dashboard: a reinforce run started paused from `POST /api/runs` on 2 in-process ranks. The listing says
+     `unit: iteration` and the log's path; every rank waits before iteration 0 with nothing logged; resumed, two iterations
+     are listed. Paused at an iteration boundary (the iterations listed stay put; every rank waits before the one after),
+     resumed, then stopped: state `stopped`, the detail names the iteration, the figures (reward, its first value, spread,
+     pass rate, 1,000 iterations), one checkpoint and the adapter, the log a line per iteration, the events stream the last
+     iteration. `cluster sim --resume` goes on at N + 1; the steered run's N log lines are the uninterrupted run's line for
+     line; the adapter is within 1e-4.
+- **The run (CPU, this agent):** four builds of `tests/Idrak.Tests`. The first two stopped on compile errors (a property
+  `Output` clashing with `DashboardRun.Output(writer)`, renamed `OutputFolder`; a nullable tuple's `default` in a test); the
+  third was clean. `IDRAK_UPDATE_API=1` (`public API`: `api/Idrak.Abstraction.txt`, `api/Idrak.Reinforcement.txt`) and
+  `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`). `cluster control:` gave 3 passed, 1 failed: the dashboard
+  test's byte comparison of the resumed adapter, which is the finding above. The tests were rewritten to compare pauses bit
+  for bit to the end and a stop bit for bit up to it, then within 1e-4 after the resume (and with a `cer` reward so the
+  adapters move). The fourth build was clean; `cluster control:` then gave **4 passed** (0.6, 4.2, 3.0 and 1.8 s). Then,
+  once each: `cluster stop:|cluster: ui|public API|abstraction inventory|cli health: every environment variable|cli polish:
+  the environment table|naming:` **25 passed, 0 failed**; `cli reinforce|reinforcement:|reinforcement cluster:|plugins:
+  classic` **33 passed, 0 failed**; `cluster: cli|cluster: a stopped` **19 passed, 0 failed**. Beyond the brief,
+  `cli polish|cli arabic|cli health|cli help`: 27 passed, 1 failed. That failure was there before R11: `cli arabic: every
+  message ...` reports two summaries with no Arabic text, the first `reinforce`'s from R5. R11 changed no summary, group
+  title or `Messages.T` call. The page's script passes `node --check`. Nothing of this agent is left running.
+- **Left:** (1) The localhost path (`--mode localhost`, or "Processes here" on the page) is wired through the control-file
+  steering and its `SyncCore` bypass but not run here (child processes loading a model); see the owner's session below. (2)
+  The finding above. (3) Live faults on an in-process reinforce run are drawn at its gradient steps, while the page's "at
+  step N" for a queued fault counts iterations (display only). (4) The cost was not measured: with nothing steering a run
+  it is one null check an iteration. With a control, it is one shared-memory hold (in-process), or one broadcast of one
+  value an iteration (a control file on a cluster), or a file read at most every poll (one process).
+- **The owner's commands** (repo at `D:\Projects\Idrak`; the CUDA lines run the same in-process ranks carved from the card):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cluster control:|cluster stop:|cluster: ui|cluster: cli|cluster: a stopped|cli reinforce|reinforcement:|reinforcement cluster:|plugins: classic|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cluster control:|cluster stop: reinforcement|cluster: ui a sim run"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  # a dashboard session: reinforce on one card split in two, steered from the page
+  $idrak = "src\Idrak.Cli\bin\Release\net10.0\Idrak.Cli.exe"
+  New-Item -ItemType Directory -Force runs | Out-Null
+  1..32 | ForEach-Object { '{"question": "What is ' + $_ + ' plus ' + $_ + '? Answer with the number.", "answer": "' + (2 * $_) + '"}' } | Set-Content runs\sums.jsonl
+  & $idrak cluster init -y --nodes 1 --devices cuda:0,cuda:0 -o runs\two-cuda.json
+  & $idrak cluster ui --topology runs\two-cuda.json
+  # On the page, Run: "Simulate here", tick "Start paused", the command
+  #   reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-ui
+  # then Resume; after a few iterations "Pause at next iteration", Resume, then "Stop and checkpoint".
+  # Again with "Processes here" (localhost) and -o runs\rl-ui-local. Then Ctrl+C in the dashboard's window, and resume:
+  & $idrak cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-ui --resume
+  # the same from the terminal: cluster sim --dashboard opens the page on a run it starts
+  & $idrak cluster sim --topology runs\two-cuda.json --dashboard -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 20 --max-new 64 --no-think --seed 1 -o runs\rl-ui-terminal
+  ```
+  What to look at: the run card shows "iteration N / 50", the reward (from the first), the pass rate and the reward curve.
+  Started paused, nothing runs (no `runs\rl-ui\log.jsonl`) until Resume. A pause holds both ranks between iterations: the
+  iteration count stops; on localhost the state line says "rank 0 reports the ranks paused at step N". After the stop the
+  run reads "stopped after iteration N; its checkpoint is in ...", `runs\rl-ui\checkpoints` holds `iteration-N` alone with
+  the adapter beside it, and the `--resume` line starts at iteration N + 1. A miss on the card, or a localhost run that does
+  not end on both processes, is a finding.
 
 ## Order and parallelism
 

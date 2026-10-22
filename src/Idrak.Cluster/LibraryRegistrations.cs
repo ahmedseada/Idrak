@@ -8,7 +8,7 @@ namespace Idrak.Cluster;
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction (plan 23): the "sim" devices, the "sim" transport, the
 /// built-in link profiles, the built-in failure models (none, slow-worker, dropped-worker, link-loss, partition, late-join,
-/// mixed, and "live": faults queued while a run goes), the "shared" stop agreement and the "cluster" profiler probe. <c>LibraryDefaults.Ensure</c> calls
+/// mixed, and "live": faults queued while a run goes), the "shared" stop agreement, the "in-process" run steering and the "cluster" profiler probe. <c>LibraryDefaults.Ensure</c> calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, when the application ships it.
 /// </summary>
 internal static class LibraryRegistrations
@@ -35,6 +35,7 @@ internal static class LibraryRegistrations
         },
         [typeof(ProfileProbes)] = () => ProfileProbes.Register(new ClusterProbe()),
         [typeof(StopAgreements)] = () => StopAgreements.Register(new SharedStopAgreementProvider()),   // Plan 27, R7: in-process ranks agree through the run's memory
+        [typeof(RunSteerings)] = () => RunSteerings.Register(new InProcessSteeringProvider()),       // Plan 27, R11: a trainer's boundaries steered by the run's control
     };
 
     private static void RegisterFor(Type registry)

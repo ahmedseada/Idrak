@@ -321,7 +321,13 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IHostValueCollectiv
             throw new ArgumentOutOfRangeException(nameof(step), step, $"rank {Real} began step {Step}; steps go forward");
         }
 
-        _world.Control?.Gate(Real, step, Device);           // a steered run waits here while paused, and stops here (phase C9)
+        // A steered run waits here while paused, and stops here (phase C9), unless its trainer holds and stops it at its own
+        // boundaries (Plan 27, R11: an iteration of a reinforcement run, RunSteerings).
+        if (_world.Control is { } control && !RunSteerings.Steered(this))
+        {
+            control.Gate(Real, step, Device);
+        }
+
         if (_world.Broken is not null)
         {
             throw _world.Failure();

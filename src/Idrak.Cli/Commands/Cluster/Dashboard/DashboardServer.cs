@@ -501,7 +501,18 @@ internal sealed class DashboardServer : IDisposable
         var (kept, channel, leave) = Runs.Listen(run);
         using (leave)
         {
-            var tail = run.Kind != RunKind.InProcess && run.Folder is { } folder ? new DashboardTail(folder) : null;
+            // A localhost or followed run's folder; a reinforce run's JSON log (its iterations, rewards and pass rate, Plan 27 R11).
+            var tails = new List<DashboardTail>(2);
+            if (run.Kind != RunKind.InProcess && run.Folder is { } folder)
+            {
+                tails.Add(new DashboardTail(folder));
+            }
+
+            if (run.Figures is { } figures)
+            {
+                tails.Add(figures.Tail());
+            }
+
             try
             {
                 foreach (string record in kept)
@@ -516,13 +527,16 @@ internal sealed class DashboardServer : IDisposable
                         await Send(http, record, token);
                     }
 
-                    if (tail is not null)
+                    foreach (var tail in tails)
                     {
                         foreach (string line in tail.Read())
                         {
                             await Send(http, line, token);
                         }
+                    }
 
+                    if (tails.Count > 0)
+                    {
                         run.PollState();
                     }
 
