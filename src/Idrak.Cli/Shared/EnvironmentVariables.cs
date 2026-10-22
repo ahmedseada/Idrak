@@ -367,6 +367,9 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_MAX_NEW", Reinforcement, "256", "The longest reply a language-model policy samples, in tokens (idrak reinforce's --max-new)", ReinforcementRun),
         new("IDRAK_RL_TEACHER", Reinforcement, "none", "A teacher model for idrak reinforce: its distributions on the model's own replies, a term beside the reward (or alone with --algorithm distill)", ReinforcementRun),
         new("IDRAK_RL_TEACHER_DEVICE", Reinforcement, "the model's device", "The device idrak reinforce loads the teacher on (cpu, cuda:N, vulkan:N)", ReinforcementRun),
+        new("IDRAK_CODING_LANGUAGES", Sandbox, "all", "The coding languages the coding tools and agent work with (programs, folders skipped, prompt lines): all registered, detected in the workspace, none, or names such as csharp,typescript", SandboxRun),
+        new("IDRAK_CSHARP_PACKAGES", Reinforcement, "the machine's NuGet folder", "The csharp environment's package folder every episode restores from (NUGET_PACKAGES for its commands; Idrak.Reinforcement.Plugins)", ReinforcementRun),
+        new("IDRAK_CSHARP_PROTECT", Reinforcement, "Directory.Build.props/.targets, Directory.Packages.props, global.json, *Tests and *Test projects", "The csharp environment's protected files: globs (separated by commas) whose edits count as test edits", ReinforcementRun),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
         new("PROCESSOR_IDENTIFIER", Devices, "as the system sets it", "The processor's name on Windows (device listings, tuning keys)", OnDevice),
@@ -384,6 +387,9 @@ internal static class EnvironmentVariables
         new("npm_config_yes", Child, "true", "Set for the commands the coding tools run (no npm questions)", ChildCommands),
         new("npm_config_fund", Child, "false", "Set for the commands the coding tools run (no funding messages)", ChildCommands),
         new("npm_config_audit", Child, "false", "Set for the commands the coding tools run (no audit)", ChildCommands),
+        new("NUGET_PACKAGES", Child, "the csharp environment's package folder", "Set for the csharp environment's commands when it has a package folder (IDRAK_CSHARP_PACKAGES)", ReinforcementRun),
+        new("MSBUILDDISABLENODEREUSE", Child, "1", "Set for the csharp environment's commands unless node-reuse=true (build nodes end with their build)", ReinforcementRun),
+        new("UseSharedCompilation", Child, "unset", "Set to false for the csharp environment's commands with build-server=false (each build compiles in its own process)", ReinforcementRun),
     ];
 
     /// <summary>The variable named <paramref name="name"/>, or null.</summary>

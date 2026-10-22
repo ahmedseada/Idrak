@@ -19,7 +19,7 @@ internal static partial class Tests
         ("reinforcement contracts: the advantage-estimator suite passes discounted returns with and without a baseline (bit for bit, from several threads, against a reference) and fails a noisy estimator", ReinforcementEstimatorSuite),
         ("reinforcement contracts: the policy-loss suite passes a clipped-ratio loss (one finite element, its gradient against central differences past the clip's kinks) and fails one whose gradient does not reach the log-probabilities", ReinforcementLossSuite),
         ("reinforcement contracts: registries: every not-registered message names the registered ones and the package to reference; register, find ignoring case, origin and unregister; the guarded three throw, fall back and shadow by policy over a library default, and environment kinds have no policy", ReinforcementRegistries),
-        ("reinforcement contracts: Idrak.Reinforcement references Idrak alone (not Idrak.Text) and registers through LibraryDefaults; Idrak.Reinforcement.Plugins is a plug-in package on Idrak.Reinforcement and Idrak.Text", ReinforcementPackages),
+        ("reinforcement contracts: Idrak.Reinforcement references Idrak alone (not Idrak.Text) and registers through LibraryDefaults; Idrak.Reinforcement.Plugins is a plug-in package on Idrak.Reinforcement, Idrak.Text and Idrak.Text.Plugins", ReinforcementPackages),
     ];
 
     private const string CorridorName = "reinforcement-test-corridor";
@@ -516,7 +516,7 @@ internal static partial class Tests
         Check(references.SequenceEqual(["Idrak"]), $"Idrak.Reinforcement references {string.Join(", ", references)}: Idrak alone, never Idrak.Text");
         string plugins = File.ReadAllText(Path.Combine(root, "src", "Idrak.Reinforcement.Plugins", "Idrak.Reinforcement.Plugins.csproj"));
         var pluginReferences = System.Text.RegularExpressions.Regex.Matches(plugins, "<ProjectReference Include=\"([^\"]+)\"").Select(m => Path.GetFileNameWithoutExtension(m.Groups[1].Value.Replace('\\', '/'))).ToList();
-        Check(pluginReferences.Order(StringComparer.Ordinal).SequenceEqual(["Idrak.Reinforcement", "Idrak.Text"]), $"Idrak.Reinforcement.Plugins references {string.Join(", ", pluginReferences)}");
+        Check(pluginReferences.Order(StringComparer.Ordinal).SequenceEqual(["Idrak.Reinforcement", "Idrak.Text", "Idrak.Text.Plugins"]), $"Idrak.Reinforcement.Plugins references {string.Join(", ", pluginReferences)}");
         var defaults = (ValueTuple<string, string>[])typeof(Idrak.Abstraction.Plugins.IdrakPlugins).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!
             .GetField("Assemblies", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
         Check(defaults.Contains(("Idrak.Reinforcement", "Idrak.Reinforcement")), "LibraryDefaults lists Idrak.Reinforcement, so its estimators and losses become the slots' defaults");
@@ -524,7 +524,7 @@ internal static partial class Tests
         Check(registrations.GetMethod("RegisterFor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static, [typeof(Type)]) is not null,
             "Idrak.Reinforcement.LibraryRegistrations.RegisterFor(Type), which LibraryDefaults calls");
         Check(Idrak.Reinforcement.Plugins.ReinforcementPlugins.Package == "Idrak.Reinforcement.Plugins"
-              && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding"]),
-            "the plug-in package's families: coding (R4)");
+              && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding", "csharp"]),
+            "the plug-in package's families: coding (R4), csharp (R4b)");
     }
 }

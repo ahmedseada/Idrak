@@ -299,12 +299,12 @@ internal sealed class DataProfile
         string format;
         if (Directory.Exists(full))
         {
-            data = DatasetRows.FromFolder(full);
+            data = DatasetRows.FromFolder(full, options: CodeFolders.Read);
             format = "folder";
         }
         else if (File.Exists(full))
         {
-            data = DatasetRows.FromFile(full);
+            data = DatasetRows.FromFile(full, CodeFolders.Read);
             format = DataFileFormats.Find(full)?.Name.ToLowerInvariant() ?? System.IO.Path.GetExtension(full).TrimStart('.');
         }
         else

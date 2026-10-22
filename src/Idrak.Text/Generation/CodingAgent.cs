@@ -2,14 +2,19 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json.Nodes;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Text.Generation;
 
 /// <summary>How <see cref="CodingAgent"/> works.</summary>
 public sealed record AgentOptions
 {
-    /// <summary>The system prompt (default: <see cref="CodingAgent.DefaultSystemPrompt"/>).</summary>
+    /// <summary>
+    /// The system prompt; null (the default) for <see cref="CodingAgent.SystemPrompt"/> of the tools' coding languages
+    /// (<see cref="CodingTools.Languages"/>, chosen by <see cref="CodingToolOptions.Languages"/> in <see cref="Tools"/>).
+    /// </summary>
     public string? SystemPrompt { get; init; }
 
     /// <summary>Reasoning mode for every request.</summary>
@@ -24,7 +29,7 @@ public sealed record AgentOptions
     /// <summary>Wall-clock limit per task (model and tools; not setup or verification).</summary>
     public TimeSpan TimeLimit { get; init; } = TimeSpan.FromMinutes(20);
 
-    /// <summary>What the tools may do.</summary>
+    /// <summary>What the tools may do, and the coding languages they and the prompt work with (<see cref="CodingToolOptions.Languages"/>).</summary>
     public CodingToolOptions Tools { get; init; } = new();
 }
 
@@ -92,23 +97,112 @@ public sealed record CodingToolTurn(IReadOnlyList<ToolResult> Results, IReadOnly
 /// </summary>
 public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 {
-    /// <summary>The instructions the agent gets by default.</summary>
-    public const string DefaultSystemPrompt = """
-        You are a coding agent working in a software project on the user's machine. You have tools to list, read and
-        search the project's files, edit and write files, and run commands such as builds and tests.
+    // The prompt's language-free parts; the line on checking the work lists each language's way (PromptLines).
+    private const string PromptHead = "You are a coding agent working in a software project on the user's machine. You have tools to list, read and\n"
+                                      + "search the project's files, edit and write files, and run commands such as builds and tests.\n\n"
+                                      + "How to work:\n"
+                                      + "- Understand before changing: find the relevant files (list_files, search) and read them before editing.\n"
+                                      + "- Make focused changes with edit_file; copy old_text exactly as the file has it (read_file shows line numbers\n"
+                                      + "  before a \"| \" separator: they are not part of the file). Create new files with write_file.\n"
+                                      + "- Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.\n";
 
-        How to work:
-        - Understand before changing: find the relevant files (list_files, search) and read them before editing.
-        - Make focused changes with edit_file; copy old_text exactly as the file has it (read_file shows line numbers
-          before a "| " separator: they are not part of the file). Create new files with write_file.
-        - Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.
-        - Check your work: build and run the tests after changing code (C#: dotnet build, dotnet test; TypeScript:
-          npx tsc --noEmit, npm test; Angular: npx ng build, npx ng test --watch=false). Read the errors, fix them and
-          run the checks again until they pass.
-        - Do not weaken or delete tests to make them pass, unless the user asks for it.
-        - Do only what was asked; mention anything else worth doing instead of doing it.
-        - When the task is done, answer without a tool call: say briefly what you changed and how you checked it.
-        """;
+    private const string PromptTail = "\n- Do not weaken or delete tests to make them pass, unless the user asks for it.\n"
+                                      + "- Do only what was asked; mention anything else worth doing instead of doing it.\n"
+                                      + "- When the task is done, answer without a tool call: say briefly what you changed and how you checked it.";
+
+    // The prompt's lines are cut at this width, continued with two spaces.
+    private const int PromptWidth = 110;
+
+    /// <summary>
+    /// The instructions the agent gets by default with every registered coding language (<see cref="CodingLanguages.All"/>):
+    /// <see cref="SystemPrompt"/> of <see cref="CodingLanguages.Registered"/>.
+    /// </summary>
+    public static string DefaultSystemPrompt => SystemPrompt(CodingLanguages.Registered);
+
+    /// <summary>
+    /// The instructions the agent gets by default with <paramref name="languages"/>: how to work, and in the line on checking
+    /// the work each language's way to build and test (<see cref="ICodingLanguage.PromptLines"/>, in order); with none, a
+    /// prompt that names no build or test command. Lines end with '\n' on every platform.
+    /// </summary>
+    public static string SystemPrompt(IReadOnlyList<ICodingLanguage> languages)
+    {
+        ArgumentNullException.ThrowIfNull(languages);
+        var ways = CodingLanguages.Merge([.. languages.Select(l => l.PromptLines)]);
+        var line = new PromptLine(PromptWidth);
+        foreach (var word in "- Check your work: build and run the tests after changing code".Split(' '))
+        {
+            line.Put(ways.Count == 0 && word == "code" ? "code." : word);
+        }
+
+        for (int i = 0; i < ways.Count; i++)
+        {
+            // A way stays whole on a line when it fits; else it breaks after its "Name:", then between words.
+            string way = (i == 0 ? "(" : "") + ways[i] + (i == ways.Count - 1 ? ")." : ";");
+            int label = way.IndexOf(": ", StringComparison.Ordinal);
+            if (line.Fits(way) || label < 0)
+            {
+                line.PutWords(way);
+            }
+            else
+            {
+                line.PutWords(way[..(label + 1)]);
+                line.PutWords(way[(label + 2)..]);
+            }
+        }
+
+        foreach (var word in "Read the errors, fix them and run the checks again until they pass.".Split(' '))
+        {
+            line.Put(word);
+        }
+
+        return PromptHead + line + PromptTail;
+    }
+
+    // A bullet line cut at a width: a piece goes on the line when it fits, else it starts the next one (two spaces in).
+    private sealed class PromptLine(int width)
+    {
+        private const string Indent = "  ";
+        private readonly StringBuilder _text = new();
+        private int _column;
+
+        public bool Fits(string piece) => _column == 0 || _column + 1 + piece.Length <= width;
+
+        public void Put(string piece)
+        {
+            if (_column == 0)
+            {
+                _text.Append(piece);
+                _column = piece.Length;
+            }
+            else if (Fits(piece))
+            {
+                _text.Append(' ').Append(piece);
+                _column += 1 + piece.Length;
+            }
+            else
+            {
+                _text.Append('\n').Append(Indent).Append(piece);
+                _column = Indent.Length + piece.Length;
+            }
+        }
+
+        // A piece kept whole when it fits on this line or the next, else word by word.
+        public void PutWords(string piece)
+        {
+            if (Fits(piece) || Indent.Length + piece.Length <= width)
+            {
+                Put(piece);
+                return;
+            }
+
+            foreach (var word in piece.Split(' '))
+            {
+                Put(word);
+            }
+        }
+
+        public override string ToString() => _text.ToString();
+    }
 
     private readonly AgentOptions _options = options ?? new AgentOptions();
 
@@ -132,7 +226,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         ArgumentNullException.ThrowIfNull(tools);
         var registry = tools.Registry();
         var definitions = ToolDefinitions(tools);
-        var messages = new List<ChatMessage> { new("system", _options.SystemPrompt ?? DefaultSystemPrompt), new("user", prompt) };
+        var messages = new List<ChatMessage> { new("system", _options.SystemPrompt ?? SystemPrompt(tools.Languages)), new("user", prompt) };
         int rounds = 0, calls = 0, errors = 0, generated = 0;
         var modelTime = TimeSpan.Zero;
         var toolTime = TimeSpan.Zero;

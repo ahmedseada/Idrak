@@ -28,8 +28,15 @@ public static class DataFiles
         [".xml"] = "xml", [".toml"] = "toml", [".dockerfile"] = "dockerfile", [".vue"] = "vue", [".svelte"] = "svelte", [".dart"] = "dart", [".lua"] = "lua",
     };
 
-    private static readonly HashSet<string> SkippedFolders = new(["bin", "obj", "node_modules", ".git", ".vs", ".idea", "dist", ".angular", "__pycache__", ".venv"],
-        StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// The language a source file of <paramref name="path"/>'s extension is in, as the <c>code</c> format labels its rows
+    /// ("csharp", "typescript", "python", …: a table of file extensions, data with no behaviour for any language), or null
+    /// for an extension the table does not hold.
+    /// </summary>
+    public static string? LanguageOf(string path) => CodeLanguages.TryGetValue(Path.GetExtension(path), out var language) ? language : null;
+
+    // The folders reading skips (ReadOptions.SkippedFolders), as a set ignoring case.
+    private static HashSet<string> Skipped(ReadOptions options) => new(options.SkippedFolders ?? ReadOptions.DefaultSkippedFolders, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. Formats added with
@@ -108,12 +115,13 @@ public static class DataFiles
         var pending = new Stack<string>();
         pending.Push(root);
         var files = new List<string>();
+        var skipped = Skipped(options);
         while (pending.Count > 0)
         {
             string folder = pending.Pop();
             foreach (var sub in Directory.EnumerateDirectories(folder))
             {
-                if (!SkippedFolders.Contains(Path.GetFileName(sub)))
+                if (!skipped.Contains(Path.GetFileName(sub)))
                 {
                     pending.Push(sub);
                 }
@@ -170,9 +178,10 @@ public static class DataFiles
     private static IEnumerable<JsonObject> ReadArchive(string path, ReadOptions options)
     {
         var match = options.Pattern is null ? null : Glob(options.Pattern);
+        var skipped = Skipped(options);
         bool Wanted(string name)
         {
-            if (match is not null && !match.IsMatch(name) && !match.IsMatch(Path.GetFileName(name)) || name.Split('/').Any(SkippedFolders.Contains))
+            if (match is not null && !match.IsMatch(name) && !match.IsMatch(Path.GetFileName(name)) || name.Split('/').Any(skipped.Contains))
             {
                 return false;
             }

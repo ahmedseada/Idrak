@@ -315,13 +315,21 @@ public static class GitHub
 
     /// <summary>
     /// A repository's files at <paramref name="reference"/> (branch, tag or commit; default: the default branch), one row
-    /// per text file (source code, docs and data files alike): {"text", "path", "language", "repo"}. Dependency and build folders, binary files and files over
-    /// <see cref="ReadOptions.MaxDocumentBytes"/> are skipped; <paramref name="pattern"/> (e.g. "src/**/*.cs") narrows the files.
+    /// per text file (source code, docs and data files alike): {"text", "path", "language", "repo"}. The folders
+    /// <see cref="ReadOptions.SkippedFolders"/> names (of <paramref name="options"/>; .git and the editors' by default),
+    /// binary files and files over <see cref="ReadOptions.MaxDocumentBytes"/> are skipped; <paramref name="pattern"/>
+    /// (e.g. "src/**/*.cs") narrows the files. Of <paramref name="options"/> only those two are read: a repository is
+    /// always read as documents.
     /// </summary>
-    public static DatasetRows Repository(string repo, string? reference = null, string? pattern = null, string? token = null, IDownloader? downloader = null)
+    public static DatasetRows Repository(string repo, string? reference = null, string? pattern = null, string? token = null, IDownloader? downloader = null, ReadOptions? options = null)
     {
         var d = downloader ?? Downloader.Shared;
-        var options = new ReadOptions { Documents = true, Text = TextRows.Document, Pattern = pattern is null ? null : pattern.Contains('/') ? "*/" + pattern : pattern };
+        var given = options ?? ReadOptions.Default;
+        options = new ReadOptions
+        {
+            Documents = true, Text = TextRows.Document, Pattern = pattern is null ? null : pattern.Contains('/') ? "*/" + pattern : pattern, SkippedFolders = given.SkippedFolders,
+            MaxDocumentBytes = given.MaxDocumentBytes,
+        };
         return RemoteFiles.Over($"github:{repo}{(reference is null ? "" : "@" + reference)}",
             () =>
             {
