@@ -59,7 +59,7 @@ internal sealed class DesignPlan
 }
 
 /// <summary>
-/// Steps 2 and 3 of <c>idrak suggest</c> (plans/idrak-cli.md, "Design a model"): picks the task and proposes a network,
+/// Steps 2 and 3 of <c>idrak suggest</c> (plans/done/idrak-cli.md, "Design a model"): picks the task and proposes a network,
 /// its data preparation and its training from fixed rules sized by the data and the device. The rules are
 /// deterministic (the same data and options give the same files) and each choice records its rule. The numbers are
 /// rules of thumb, documented where they are applied; <c>--search</c> measures around them.

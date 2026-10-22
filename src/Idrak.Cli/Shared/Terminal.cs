@@ -16,7 +16,7 @@ internal enum Colour
 }
 
 /// <summary>
-/// Terminal helpers every command shares (plans/idrak-cli.md, "Helpers every command shares"): whether output goes to a
+/// Terminal helpers every command shares (plans/done/idrak-cli.md, "Helpers every command shares"): whether output goes to a
 /// terminal, colour (only on a terminal, never with <c>NO_COLOR</c> or <c>--json</c>), questions and confirmations
 /// (<c>--yes</c> skips them; without a terminal a question is an error that names <c>--yes</c>), <c>--dry-run</c>, and
 /// Ctrl+C handling (<see cref="Interrupt"/>).
@@ -26,7 +26,7 @@ internal static class Terminal
     /// <summary>The flags of a command that asks before deleting or overwriting: <c>--yes</c> and <c>--dry-run</c>.</summary>
     public static readonly string[] ConfirmFlags = ["--yes", "--dry-run"];
 
-    /// <summary>The short form of <c>--yes</c> (plans/idrak-cli.md: <c>-y</c>, the same in every command).</summary>
+    /// <summary>The short form of <c>--yes</c> (plans/done/idrak-cli.md: <c>-y</c>, the same in every command).</summary>
     public static readonly IReadOnlyDictionary<string, string> ConfirmShortForms = new Dictionary<string, string> { ["-y"] = "--yes" };
 
     /// <summary>Tests: answers questions as a terminal would, reading from this reader (null: the console decides).</summary>

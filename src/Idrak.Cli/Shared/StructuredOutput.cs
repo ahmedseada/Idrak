@@ -9,7 +9,7 @@ namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// JSON answers that follow a JSON schema (<c>run --schema</c>; serve may reuse it). The library has no constrained
-/// sampling yet (plans/plug-in.md gap 13), so the schema is given to the model as an instruction and the answer is
+/// sampling yet (plans/done/plug-in.md gap 13), so the schema is given to the model as an instruction and the answer is
 /// checked afterwards: it must hold one JSON value whose types, required properties, items and enums match.
 /// </summary>
 internal static class StructuredOutput

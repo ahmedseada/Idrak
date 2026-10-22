@@ -23,7 +23,7 @@ internal sealed class CommandContext : IDisposable
         ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--output", "--color", "--timeout", "--lang", "--lang-render"];
     internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "--offline", "--plain"];
 
-    /// <summary>Short forms every command accepts (plans/idrak-cli.md, "Short forms").</summary>
+    /// <summary>Short forms every command accepts (plans/done/idrak-cli.md, "Short forms").</summary>
     internal static readonly IReadOnlyDictionary<string, string> CommonShortForms = new Dictionary<string, string>
     {
         ["-h"] = "--help", ["-d"] = "--device", ["-j"] = "--json", ["-q"] = "--quiet", ["-v"] = "--verbose",

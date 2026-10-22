@@ -64,7 +64,7 @@ every utterance before its features (cached under the cleaning), and `idrak data
 
 The command line (`idrak help audio`): `idrak transcribe`, `idrak speak`, `idrak voice add|list|show|remove|export|import`,
 `idrak data audio`, `idrak data mel`, and `--audio` on `idrak run` and `idrak chat`. The other phases are in
-plans/21-audio.md.
+plans/done/21-audio.md.
 
 ```csharp
 var audio = AudioCodecs.Load("clip.wav", channels: 1);   // mono, as the file's rate

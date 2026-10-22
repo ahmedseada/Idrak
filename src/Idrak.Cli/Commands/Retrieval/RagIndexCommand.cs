@@ -24,7 +24,7 @@ internal sealed class RagIndexCommand : Command
         "Reads the text files under DIR (or one file), splits them into overlapping chunks and builds a keyword index\n" +
         "(BM25). With --model, every chunk is also embedded with that model and searches fuse both results (reciprocal\n" +
         "rank fusion). The embeddings are the model's averaged hidden states: the library has no embedding-model\n" +
-        "loader yet, so a chat model's vectors only complement keyword search (gap noted in plans/idrak-cli.md).\n\n" +
+        "loader yet, so a chat model's vectors only complement keyword search (gap noted in plans/done/idrak-cli.md).\n\n" +
         "Options:\n" +
         "  -o, --out INDEX       the index file to write (required)\n" +
         "  -f, --force           replace an existing index file\n" +

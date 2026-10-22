@@ -5,7 +5,7 @@ using Idrak.Cli.Commands.Developer;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>The new, test, onnx, vlm check, kernels, kernels dump, trace, demo and shell commands (plans/idrak-cli.md, "Developers").</summary>
+/// <summary>The new, test, onnx, vlm check, kernels, kernels dump, trace, demo and shell commands (plans/done/idrak-cli.md, "Developers").</summary>
 internal static class DeveloperCommands
 {
     public static IReadOnlyList<Command> All { get; } =

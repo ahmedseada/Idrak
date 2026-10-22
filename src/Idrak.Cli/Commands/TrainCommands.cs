@@ -5,7 +5,7 @@ using Idrak.Cli.Commands.Train;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>The tune, reinforce, train, resume, runs, predict, package and distill commands (plans/idrak-cli.md).</summary>
+/// <summary>The tune, reinforce, train, resume, runs, predict, package and distill commands (plans/done/idrak-cli.md).</summary>
 internal static class TrainCommands
 {
     public static IReadOnlyList<Command> All { get; } =
