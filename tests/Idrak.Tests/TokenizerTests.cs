@@ -16,6 +16,7 @@ internal static partial class Tests
         ("tokenizers: every BPE fixture loads through PretrainedTokenizers.Load (and BpeTokenizer.Load) to the ids, refusals and text BpeTokenizer.Load gave before the registry (tokenizers/bpe-baseline.json)", TokenizersBpeBaseline),
         ("tokenizers: the model registry names BPE, builds it from a definition, refuses an unknown model type naming the registered ones and TokenizerModels.Register, and an app's model type is built and unregistered", TokenizersModelRegistry),
         ("tokenizers: the readers find tokenizer.json in a folder and as a file, a list vocabulary is read as pieces and scores, Format and IDRAK_TOKENIZER_FORMAT pick the reader, and a folder without a tokenizer names the readers", TokenizersFileReaders),
+        ("tokenizers: a tokenizer.json that names no model type (written before tokenizers did: t5-small's, many BERT folders') is read as Hugging Face tokenizers reads it, from what its model holds (merges BPE, [piece, score] pairs Unigram, WordPiece's settings WordPiece, any other vocabulary WordLevel), to the ids of the same file naming it", TokenizersUntypedModel),
         ("tokenizers: an app's model overriding BPE is guarded: under FallBack one that fails to build or to encode (a text, a range, a batch, padded as the built-in pads it) is answered by the built-in, under Throw its failure reaches the caller", TokenizersGuardedModel),
         ("tokenizers: the piece cache is a setting (PieceCacheLimit, IDRAK_TOKENIZER_CACHE; 0 caches nothing and gives the same ids), a bad value is refused naming it, and PretrainedOptions carries the settings", TokenizersPieceCache),
         ("tokenizers: the built-in BPE passes the pretrained tokenizer suite (ranges, tokens by name, tokenizer.json naming the model) and a saved tokenizer loads back to the same ids", TokenizersPretrainedSuite),
@@ -347,6 +348,44 @@ internal static partial class Tests
         finally
         {
             Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, previous);
+            temporary.Delete(recursive: true);
+        }
+    }
+
+    private static void TokenizersUntypedModel(Device device)
+    {
+        _ = device;
+        var temporary = Directory.CreateTempSubdirectory("idrak-tokenizers-untyped-");
+        try
+        {
+            string[] texts = [.. File.ReadAllText(TestData("tokenizers/corpus.txt")).Split('\n').Where(t => t.Length > 0)];
+            foreach (var (name, type) in new[] { ("byte-level-roberta", TokenizerModels.Bpe), ("wordpiece-uncased", TokenizerModels.WordPiece), ("unigram", TokenizerModels.Unigram) })
+            {
+                string typed = Path.Combine(TokenizerData(name), "tokenizer.json");
+                var json = JsonNode.Parse(File.ReadAllText(typed))!.AsObject();
+                Check((string?)json["model"]?["type"] == type, $"{name}: the fixture names {type}");
+                json["model"]!.AsObject().Remove("type");
+                string untyped = Path.Combine(temporary.FullName, $"{name}.json");
+                File.WriteAllText(untyped, json.ToJsonString());
+                Check(PretrainedTokenizers.Read(untyped).ModelType == type, $"{name}: without model.type it is read as {type}");
+                var expected = PretrainedTokenizers.Load(typed);
+                var actual = PretrainedTokenizers.Load(untyped);
+                foreach (string text in texts)
+                {
+                    Check(actual.Encode(text).SequenceEqual(expected.Encode(text)), $"{name}: '{text}' encodes as with model.type");
+                }
+            }
+
+            string wordLevel = Path.Combine(temporary.FullName, "word-level.json");
+            File.WriteAllText(wordLevel, """
+                {"added_tokens": [], "normalizer": null, "pre_tokenizer": null, "post_processor": null, "decoder": null,
+                 "model": {"vocab": {"[UNK]": 0, "a": 1}, "unk_token": "[UNK]"}}
+                """);
+            Check(PretrainedTokenizers.Read(wordLevel).ModelType == "WordLevel", "a plain vocabulary without WordPiece's settings is read as WordLevel");
+            Expect<NotSupportedException>(() => PretrainedTokenizers.Load(wordLevel), "'WordLevel' is not registered", "a WordLevel model, which the library does not build");
+        }
+        finally
+        {
             temporary.Delete(recursive: true);
         }
     }

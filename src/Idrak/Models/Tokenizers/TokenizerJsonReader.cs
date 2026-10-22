@@ -98,8 +98,23 @@ internal sealed class TokenizerJsonReader : ITokenizerFileReader
             }
         }
 
+        if (rest["model"] is JsonObject untyped && !untyped.ContainsKey("type") && ModelTypeOf(untyped, vocabulary, pieces, merges) is { } inferred)
+        {
+            untyped["type"] = inferred;
+        }
+
         return new TokenizerDefinition { Source = path, Json = rest, Vocabulary = vocabulary, Pieces = pieces, Merges = merges };
     }
+
+    // The type of a model written before tokenizer.json named it (t5-small's, many BERT folders'), as Hugging Face
+    // tokenizers reads one: merges a BPE model, a list of [piece, score] a Unigram one, a vocabulary with WordPiece's
+    // settings a WordPiece one, any other vocabulary a WordLevel one; null when it holds none of them.
+    private static string? ModelTypeOf(JsonObject model, Dictionary<string, int>? vocabulary, List<(string, double)>? pieces, (string, string)[]? merges) =>
+        merges is not null ? TokenizerModels.Bpe
+        : pieces is not null ? TokenizerModels.Unigram
+        : vocabulary is null ? null
+        : model.ContainsKey("continuing_subword_prefix") || model.ContainsKey("max_input_chars_per_word") ? TokenizerModels.WordPiece
+        : "WordLevel";
 
     // Writes a definition as a tokenizer.json (UTF-8, indented): its JSON, with the model's vocabulary (an object of token to
     // id in id order, or a list of [piece, score]) and merges ([left, right] pairs in rank order) written back in.
