@@ -1,0 +1,352 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Globalization;
+using Idrak.Abstraction.Reinforcement;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Generation;
+
+namespace Idrak.Text.Reinforcement;
+
+/// <summary>
+/// Settings of a <see cref="LanguageModelPolicy"/>. The ones a run may need to change without code read an environment
+/// variable when it is set (the value given in code wins): <see cref="EpisodeTurns.EnvironmentVariable"/>,
+/// <see cref="BehaviorVariable"/>, <see cref="TeacherWeightVariable"/>, <see cref="DivergenceVariable"/>.
+/// </summary>
+public sealed record LanguageModelPolicyOptions
+{
+    /// <summary>Behaviour log-probabilities recomputed by the training forward once per rollout batch (the first ratio exactly 1).</summary>
+    public const string Recompute = "recompute";
+
+    /// <summary>Behaviour log-probabilities as the sampler drew them (after its temperature and filters).</summary>
+    public const string Sampler = "sampler";
+
+    /// <summary>The variable of <see cref="Behavior"/>: recompute or sampler.</summary>
+    public const string BehaviorVariable = "IDRAK_RL_BEHAVIOR";
+
+    /// <summary>The variable of <see cref="TeacherWeight"/>.</summary>
+    public const string TeacherWeightVariable = "IDRAK_RL_TEACHER_WEIGHT";
+
+    /// <summary>The variable of <see cref="Divergence"/> (a <see cref="TeacherDivergences"/> name).</summary>
+    public const string DivergenceVariable = "IDRAK_RL_DIVERGENCE";
+
+    /// <summary>The most tokens a reply samples.</summary>
+    public int MaxNewTokens { get; init; } = 256;
+
+    /// <summary>The context window replies are generated in; null: the model's.</summary>
+    public int? ContextLength { get; init; }
+
+    /// <summary>
+    /// Generation settings the policy starts from (stop sequences, chunk size, a loop's stop); its sampling (temperature,
+    /// top-k, top-p, min-p, the penalties, the seed) comes from each call's <see cref="ActionSampling"/>, so the policy
+    /// samples its distribution as it is. Null: the defaults.
+    /// </summary>
+    public GenerationOptions? Generation { get; init; }
+
+    /// <summary>The reasoning mode of observations that give none (null: the template's default).</summary>
+    public bool? Think { get; init; }
+
+    /// <summary>How a multi-turn episode trains: <see cref="EpisodeTurns.Auto"/> (the default), episode or turn (<see cref="EpisodeTurns.EnvironmentVariable"/>).</summary>
+    public string Turns { get; init; } = Setting(EpisodeTurns.EnvironmentVariable) ?? EpisodeTurns.Auto;
+
+    /// <summary>Where the behaviour log-probabilities come from: <see cref="Recompute"/> (the default) or <see cref="Sampler"/> (<see cref="BehaviorVariable"/>).</summary>
+    public string Behavior { get; init; } = Setting(BehaviorVariable) ?? Recompute;
+
+    /// <summary>Give the policy loss the reference's log-probabilities (the model with its adapters off; a KL penalty reads them). True by default.</summary>
+    public bool Reference { get; init; } = true;
+
+    /// <summary>
+    /// The weight of a teacher term added to the policy loss (on-policy distillation beside the reward,
+    /// <see cref="FineTuningLosses.OnPolicyDistillation"/>; the teacher is the session's <see cref="FineTuningOptions.Teacher"/>);
+    /// 0 (the default): none (<see cref="TeacherWeightVariable"/>).
+    /// </summary>
+    public float TeacherWeight { get; init; } = SettingFloat(TeacherWeightVariable) ?? 0f;
+
+    /// <summary>The teacher term's divergence (<see cref="TeacherDivergences"/>; "reverse" by default, <see cref="DivergenceVariable"/>).</summary>
+    public string Divergence { get; init; } = Setting(DivergenceVariable) ?? TeacherDivergences.Reverse;
+
+    /// <summary>The generalized Jensen-Shannon weight of the teacher term, in (0, 1).</summary>
+    public float Beta { get; init; } = 0.5f;
+
+    /// <summary>The temperature both distributions of the teacher term are softened by.</summary>
+    public float TeacherTemperature { get; init; } = 1f;
+
+    internal static string? Setting(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value.Trim() : null;
+
+    internal static float? SettingFloat(string name) =>
+        Setting(name) is not { } text ? null
+        : float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value) && float.IsFinite(value) ? value
+        : throw new ArgumentException($"{name}={text} is not a number.");
+}
+
+/// <summary>
+/// A language model as a reinforcement-learning policy (Plan 27, R3, contract R-C3): observations are conversations
+/// (<see cref="ChatObservation"/>), actions the assistant's replies. It acts through <see cref="ChatGenerator.ChatBatch"/>
+/// on the session's live adapters with the token ids recorded (<see cref="GenerationOptions.ReturnTokens"/>), and updates
+/// through <see cref="FineTuningSession.Step"/> with the policy loss (<see cref="FineTuningLosses.Policy"/>) on exactly the
+/// ids sampled: each episode laid out by <see cref="EpisodeTurns"/> (only the replies trained), each token's advantage its
+/// turn's, the reference the base model (adapters off), the behaviour log-probabilities recomputed once per rollout batch
+/// by the training forward or taken from the sampler (<see cref="LanguageModelPolicyOptions.Behavior"/>), and a teacher
+/// term beside the policy loss when asked (<see cref="LanguageModelPolicyOptions.TeacherWeight"/>). Idrak.Text does not
+/// reference Idrak.Reinforcement: the policy meets its trainer and losses through Idrak.Abstraction's contracts.
+/// Not thread-safe: one trainer drives it.
+/// </summary>
+public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
+{
+    private readonly bool _ownsSession;
+    private readonly FineTuningLoss? _teacher;
+    private object? _batch;                                  // the rollout batch laid out
+    private List<TrainingSequence>[] _sequences = [];        // its episodes' sequences, with their values and log-probabilities
+    private EpisodeLayout[] _layouts = [];
+    private bool _disposed;
+
+    /// <summary>A policy over <paramref name="session"/>'s model and adapters.</summary>
+    /// <param name="session">The fine-tuning session the policy samples from and trains.</param>
+    /// <param name="options">Its settings; null for the defaults (and the variables').</param>
+    /// <param name="ownsSession">Whether disposing the policy disposes the session (true by default).</param>
+    /// <exception cref="ArgumentException">A setting out of its range (an unknown turn layout or behaviour, a weight that is not finite).</exception>
+    /// <exception cref="InvalidOperationException">A teacher weight without a teacher, or a teacher of another vocabulary.</exception>
+    /// <exception cref="NotSupportedException">The session runs on a cluster, or its teacher is a file.</exception>
+    public LanguageModelPolicy(FineTuningSession session, LanguageModelPolicyOptions? options = null, bool ownsSession = true)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        options ??= new LanguageModelPolicyOptions();
+        _ = EpisodeTurns.Parse(options.Turns);
+        if (!options.Behavior.Equals(LanguageModelPolicyOptions.Recompute, StringComparison.OrdinalIgnoreCase)
+            && !options.Behavior.Equals(LanguageModelPolicyOptions.Sampler, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"The behaviour log-probabilities come from '{LanguageModelPolicyOptions.Recompute}' or '{LanguageModelPolicyOptions.Sampler}', "
+                                        + $"not '{options.Behavior}' ({LanguageModelPolicyOptions.BehaviorVariable}).", nameof(options));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxNewTokens);
+        if (!float.IsFinite(options.TeacherWeight) || options.TeacherWeight < 0f)
+        {
+            throw new ArgumentException($"The teacher weight is a finite number, 0 or more, not {options.TeacherWeight} ({LanguageModelPolicyOptions.TeacherWeightVariable}).", nameof(options));
+        }
+
+        if (session.Sync is not null)
+        {
+            throw new NotSupportedException("A language-model policy runs in one process for now: rollouts spread over a cluster's ranks are not written yet (Plan 27).");
+        }
+
+        if (options.TeacherWeight > 0f)
+        {
+            var teacher = session.Options.Teacher
+                ?? throw new InvalidOperationException("A teacher weight needs a teacher: open the session with FineTuningOptions.Teacher (DistillationTeachers.FromModel).");
+            DistillationTeachers.CheckOnPolicy(teacher, session.Model.Tokenizer ?? throw new InvalidOperationException("The student has no tokenizer."));
+            _teacher = FineTuningLosses.OnPolicyDistillation(options.Divergence, options.TeacherTemperature, options.Beta);
+        }
+
+        Session = session;
+        Options = options;
+        _ownsSession = ownsSession;
+        Chat = session.Generator(options.ContextLength);
+    }
+
+    /// <summary>The session the policy samples from and trains.</summary>
+    public FineTuningSession Session { get; }
+
+    /// <summary>The policy's settings.</summary>
+    public LanguageModelPolicyOptions Options { get; }
+
+    /// <summary>The chat model the policy acts with (the session's, on its live adapters).</summary>
+    public ChatGenerator Chat { get; }
+
+    /// <summary>
+    /// A reply to each conversation, generated together (<see cref="ChatGenerator.ChatBatch"/>): sampled at the call's
+    /// temperature from its seed with no top-k, top-p, min-p or penalty (greedy: the most likely token), so the
+    /// policy's distribution is what samples. Each record holds the prompt ids, the reply ids and their log-probabilities
+    /// as sampled. Completes synchronously.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A reply outgrew the context window (its window slid, so its ids no longer follow its prompt).</exception>
+    public ValueTask<PolicyActions<ChatMessage>> ActAsync(IReadOnlyList<ChatObservation> observations, ActionSampling sampling, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(observations);
+        ArgumentNullException.ThrowIfNull(sampling);
+        if (observations.Count == 0)
+        {
+            return ValueTask.FromResult(new PolicyActions<ChatMessage>([], []));
+        }
+
+        var generation = (Options.Generation ?? new GenerationOptions()) with
+        {
+            Temperature = sampling.Greedy ? 0f : sampling.Temperature, TopK = sampling.Greedy ? 1 : 0, TopP = 1f, MinP = 0f,
+            RepeatPenalty = 1f, PresencePenalty = 0f, FrequencyPenalty = 0f, Seed = sampling.Seed,
+            NumPredict = Options.MaxNewTokens, NumCtx = Options.ContextLength ?? Session.Model.MaxPositions,
+            ReturnTokens = true, ReturnLogProbabilities = true,
+        };
+        var requests = observations.Select(o => new ChatRequest((o ?? throw new ArgumentException("An observation is null.", nameof(observations))).Messages,
+            o.Tools is { Count: > 0 } ? o.Tools : null, o.Think ?? Options.Think, generation)).ToList();
+        var replies = Chat.ChatBatch(requests, cancellationToken);
+        var actions = new ChatMessage[replies.Count];
+        var records = new ActionRecord[replies.Count];
+        for (int i = 0; i < replies.Count; i++)
+        {
+            var reply = replies[i];
+            var tokens = reply.Tokens ?? throw new InvalidOperationException("The generator gave no token ids (GenerationOptions.ReturnTokens).");
+            if (reply.Stats is { ContextResets: > 0 })
+            {
+                throw new InvalidOperationException($"Reply {i} outgrew the context window ({generation.NumCtx} tokens) and its window slid: its ids no longer follow its prompt. "
+                                                    + "Give a shorter MaxNewTokens or a larger ContextLength.");
+            }
+
+            actions[i] = reply.Message ?? new ChatMessage("assistant", "");
+            records[i] = new ActionRecord(tokens.Reply, tokens.LogProbabilities ?? throw new InvalidOperationException("The generator gave no log-probabilities."),
+                float.NaN, tokens.Prompt);
+        }
+
+        return ValueTask.FromResult(new PolicyActions<ChatMessage>(actions, records));
+    }
+
+    /// <summary>
+    /// The training layout of episodes of <paramref name="batch"/> (all when <paramref name="episodes"/> is null): what
+    /// <see cref="Update"/> trains on, before the values and log-probabilities are added.
+    /// </summary>
+    public IReadOnlyList<EpisodeLayout> Lay(RolloutBatch<ChatObservation, ChatMessage> batch, IReadOnlyList<int>? episodes = null)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        return [.. (episodes ?? [.. Enumerable.Range(0, batch.Episodes)]).Select(e => EpisodeTurns.Lay(batch.Trajectories[e].Records, Options.Turns))];
+    }
+
+    /// <summary>
+    /// One optimizer step on the episodes <paramref name="episodes"/> of <paramref name="batch"/> with <paramref name="loss"/>
+    /// (and the teacher term when <see cref="LanguageModelPolicyOptions.TeacherWeight"/> is set). The first update on a
+    /// batch lays its episodes out and computes, for all of them at once, the reference log-probabilities and (with
+    /// <see cref="LanguageModelPolicyOptions.Recompute"/>) the behaviour ones, before any weight moves; later mini-batches
+    /// and epochs of the same batch reuse them.
+    /// </summary>
+    public UpdateStats Update(RolloutBatch<ChatObservation, ChatMessage> batch, IPolicyLoss loss, IReadOnlyList<int>? episodes = null,
+        IReadOnlyDictionary<string, string>? lossOptions = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(batch);
+        ArgumentNullException.ThrowIfNull(loss);
+        Prepare(batch);
+        IReadOnlyList<int> chosen = episodes ?? [.. Enumerable.Range(0, batch.Episodes)];
+        if (chosen.Count == 0 || chosen.Any(e => (uint)e >= (uint)batch.Episodes))
+        {
+            throw new ArgumentException($"The mini-batch names episodes of the batch's {batch.Episodes} (at least one).", nameof(episodes));
+        }
+
+        var sequences = chosen.SelectMany(e => _sequences[e]).ToList();
+        var objective = FineTuningLosses.Policy(loss, lossOptions, Options.Reference);
+        if (_teacher is not null)
+        {
+            objective = FineTuningLosses.Add(objective, _teacher, Options.TeacherWeight);
+        }
+
+        var step = Session.Step(sequences, objective);
+        int units = chosen.Sum(e => batch.Trajectories[e].Units);
+        var metrics = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            ["learning_rate"] = step.LearningRate,
+            ["tokens_per_second"] = step.TokensPerSecond,
+            ["sequences"] = sequences.Count,
+            ["episodes_as_one_sequence"] = chosen.Count(e => _layouts[e].Mode == EpisodeTurns.Episode) / (double)chosen.Count,
+        };
+        return new UpdateStats(step.Loss, chosen.Count, units, metrics);
+    }
+
+    // Lays out every episode of a batch once (the first update on it): its sequences, each trained token's advantage (its
+    // turn's), the reference's log-probabilities, and the behaviour's (recomputed by the training forward before any step
+    // on the batch, or as sampled).
+    private void Prepare(RolloutBatch<ChatObservation, ChatMessage> batch)
+    {
+        if (ReferenceEquals(batch, _batch))
+        {
+            return;
+        }
+
+        var layouts = new EpisodeLayout[batch.Episodes];
+        var all = new List<TrainingSequence>();
+        for (int e = 0; e < batch.Episodes; e++)
+        {
+            layouts[e] = EpisodeTurns.Lay(batch.Trajectories[e].Records, Options.Turns);
+            all.AddRange(layouts[e].Sequences);
+        }
+
+        bool recompute = Options.Behavior.Equals(LanguageModelPolicyOptions.Recompute, StringComparison.OrdinalIgnoreCase);
+        var behavior = recompute ? Session.LogProbabilities(all, adapters: true) : null;
+        var reference = Options.Reference ? Session.LogProbabilities(all, adapters: false) : null;
+        var advantages = batch.Advantages;
+        var offsets = batch.Offsets;
+        var sequences = new List<TrainingSequence>[batch.Episodes];
+        for (int e = 0, k = 0; e < batch.Episodes; e++)
+        {
+            var trajectory = batch.Trajectories[e];
+            // The episode's units in turn order: each one's advantage (its step's) and sampled log-probability.
+            var values = new float[trajectory.Units];
+            var sampled = new float[trajectory.Units];
+            for (int s = 0, at = 0; s < trajectory.Steps; s++)
+            {
+                var record = trajectory.Records[s];
+                values.AsSpan(at, record.Units).Fill(advantages[offsets[e] + s]);
+                record.LogProbabilities.CopyTo(sampled, at);
+                at += record.Units;
+            }
+
+            sequences[e] = new List<TrainingSequence>(layouts[e].Sequences.Count);
+            int unit = 0;
+            foreach (var sequence in layouts[e].Sequences)
+            {
+                int count = sequence.TrainedTokens;
+                var own = values[unit..(unit + count)];
+                double sum = 0;
+                foreach (float v in own)
+                {
+                    sum += v;
+                }
+
+                sequences[e].Add(sequence with
+                {
+                    Value = (float)(sum / Math.Max(1, count)),
+                    TokenValues = own,
+                    BehaviorLogProbabilities = behavior is null ? sampled[unit..(unit + count)] : behavior[k],
+                    ReferenceLogProbabilities = reference?[k],
+                });
+                unit += count;
+                k++;
+            }
+
+            if (unit != trajectory.Units)
+            {
+                throw new InvalidOperationException($"Episode {trajectory.Index}'s sequences train {unit} tokens for its {trajectory.Units} sampled.");
+            }
+        }
+
+        (_batch, _layouts, _sequences) = (batch, layouts, sequences);
+    }
+
+    /// <summary>Writes the adapters, the optimizer's state and the steps done (<see cref="FineTuningSession.Checkpoint"/>).</summary>
+    public void Save(string path)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Session.Checkpoint(path);
+    }
+
+    /// <summary>Loads what <see cref="Save"/> wrote (<see cref="FineTuningSession.Restore"/>).</summary>
+    public void Load(string path)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Session.Restore(path);
+        _batch = null;
+    }
+
+    /// <summary>Releases the session when the policy owns it.</summary>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        (_batch, _sequences, _layouts) = (null, [], []);
+        if (_ownsSession)
+        {
+            Session.Dispose();
+        }
+    }
+}

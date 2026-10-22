@@ -339,6 +339,13 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_UI_HISTORY", Cluster, "20000", "Records the dashboard keeps per run for a page that connects late", ClusterUi),
         new("IDRAK_CLUSTER_UI_POLL", Cluster, "0.5", "Seconds between the dashboard's reads of a followed run folder while a page listens", ClusterUi),
         new("IDRAK_CLUSTER_PROBE_BYTES", Cluster, "32 MiB (at most an eighth of the free memory)", "The bytes a link measurement copies (same-device, shared-memory, pcie)", ["cluster init", "cluster inspect", "cluster ui", "test"]),
+        // Plan 27, R3: read by Idrak.Text's language-model policy (LanguageModelPolicyOptions) and on-policy distillation
+        // (OnPolicyDistillationOptions); idrak reinforce (R5) carries them.
+        new("IDRAK_RL_TURNS", Reinforcement, "auto", "How a multi-turn episode of a language model trains: auto (one sequence when its ids are prefix-stable, else a sequence per turn), episode or turn", ["tune", "distill"]),
+        new("IDRAK_RL_BEHAVIOR", Reinforcement, "recompute", "Where a language-model policy's behaviour log-probabilities come from: recompute (the training forward, once per rollout batch) or sampler (as sampled)", ["tune", "distill"]),
+        new("IDRAK_RL_TEACHER_WEIGHT", Reinforcement, "0", "The weight of the on-policy distillation term beside a policy loss (0: none)", ["tune", "distill"]),
+        new("IDRAK_RL_DIVERGENCE", Reinforcement, "reverse", "The on-policy distillation divergence: forward, reverse or jsd (TeacherDivergences)", ["tune", "distill"]),
+        new("IDRAK_RL_DISTILL_MIX", Reinforcement, "0", "λ of on-policy distillation: the share of a step's prompts trained on the data's answers instead of the student's samples, in [0, 1]", ["distill"]),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
         new("PROCESSOR_IDENTIFIER", Devices, "as the system sets it", "The processor's name on Windows (device listings, tuning keys)", OnDevice),

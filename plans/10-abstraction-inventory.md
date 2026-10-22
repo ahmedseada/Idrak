@@ -15,7 +15,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak` | 17 | 4 | 20 | 41 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Text` | 12 | 2 | 9 | 23 | 0 |
+| `Idrak.Text` | 13 | 2 | 10 | 25 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 8 | 0 | 7 | 15 | 0 |
 | `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
@@ -172,16 +172,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CrnnPlugin.CrnnRegistration, DeepSeekPlugin.DeepSeekRegistration, EspeakNgPlugin.EspeakNgRegistration, Gemma3VisionPlugin.Gemma3VisionRegistration, GemmaPlugin.GemmaRegistration, +12 |  | Audio.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IdrakPlugins` | registry | public | — |  | — | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Reinforcement.AdvantageEstimators` | registry | public | — |  | gae, group, leave-one-out, returns | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.EnvironmentKinds` | registry | public | — |  | — | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IAdvantageEstimator` | interface | public | — | AdvantageEstimators.GuardedEstimator, GeneralizedAdvantageEstimator, GroupAdvantageEstimator, LeaveOneOutEstimator, ReturnsEstimator |  | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IEnvironment` | interface | public | — | — |  | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction>` | interface | public | — | — |  | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IEnvironmentKind` | interface | public | — | — |  | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction>` | interface | public | — | ModulePolicy<TAction> |  | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IPolicyLoss` | interface | public | Tensor | ClippedRatioLoss, PolicyLosses.GuardedLoss, ReinforceLoss |  | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IRewardFunction` | interface | public | — | RewardFunctions.GuardedReward |  | — | Abstraction |
+| `Idrak.Abstraction.Reinforcement.EnvironmentKinds` | registry | public | — |  | prompts | Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IAdvantageEstimator` | interface | public | — | AdvantageEstimators.GuardedEstimator, GeneralizedAdvantageEstimator, GroupAdvantageEstimator, LeaveOneOutEstimator, ReturnsEstimator |  | Abstraction, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IEnvironment` | interface | public | — | PromptsEnvironment |  | Abstraction, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction>` | interface | public | — | PromptsEnvironment |  | Abstraction, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IEnvironmentKind` | interface | public | — | PromptsEnvironmentKind |  | Abstraction, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction>` | interface | public | — | LanguageModelPolicy, ModulePolicy<TAction> |  | Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IPolicyLoss` | interface | public | Tensor | ClippedRatioLoss, PolicyLosses.GuardedLoss, ReinforceLoss |  | Abstraction, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IRewardFunction` | interface | public | — | JudgeReward, RewardFunctions.GuardedReward, TextRewards.JsonReward, TextRewards.LengthReward, TextRewards.MetricReward, TextRewards.RegexReward, +1 |  | Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.PolicyLosses` | registry | public | — |  | grpo, ppo, reinforce | Reinforcement | Abstraction |
-| `Idrak.Abstraction.Reinforcement.RewardFunctions` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Reinforcement.RewardFunctions` | registry | public | — |  | json, judge, length, metric, regex, sum | Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | AspNetCore, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | Text | Abstraction |
 | `Idrak.Abstraction.Serving.EngineModel<TCopy>` | abstract class | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, Seq2SeqEngineModel, TextEngineModel |  | AspNetCore, Idrak, Text | Abstraction |
@@ -257,6 +257,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.IPretrainingSource` | interface | public | — | RecordPretrainingSource, TokenPretrainingSource |  | Text | Text |
 | `Idrak.Text.Abstractions.IRandomTextSource` | interface | public | — | PooledTextSource |  | Text | Text |
 | `Idrak.Text.Abstractions.ISyntheticRecordFormat` | interface | public | — | MessagesSyntheticRecords, ShareGptSyntheticRecords, TextSyntheticRecords |  | Text | Text |
+| `Idrak.Text.Abstractions.ITeacherDivergence` | interface | public | Tensor | TeacherDivergences.ForwardDivergence, TeacherDivergences.GuardedDivergence, TeacherDivergences.JensenShannonDivergence, TeacherDivergences.ReverseDivergence |  | Text | Text |
 | `Idrak.Text.Abstractions.ITextMatcher` | interface | public | — | SemiGlobalMatcher, TextMatchers.GuardedMatcher |  | Text | Text |
 | `Idrak.Text.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat, TranscriptsDataFormat |  | Text | Text |
 | `Idrak.Text.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Text | Text |
@@ -266,6 +267,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.RandomTextSources` | registry | public | — |  | ar, en | — | Text |
 | `Idrak.Text.Abstractions.SyntheticRecordFormats` | registry | public | — |  | messages, sharegpt, text | Text | Text |
 | `Idrak.Text.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Text | Text |
+| `Idrak.Text.Abstractions.TeacherDivergences` | registry | public | Tensor |  | forward, jsd, reverse | Text | Text |
 | `Idrak.Text.Abstractions.TextMatchers` | registry | public | — |  | semi-global | — | Text |
 | `Idrak.Text.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt, transcripts | Text | Text |
 | `Idrak.Text.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Text | Text |

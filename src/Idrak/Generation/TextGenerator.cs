@@ -16,7 +16,11 @@ namespace Idrak.Generation;
 /// <param name="Done">True for the prompt's final chunk.</param>
 /// <param name="DoneReason">"stop" or "length" on the final chunk.</param>
 /// <param name="Stats">Statistics, on the final chunk only.</param>
-public sealed record BatchChunk(int Index, string Text, bool Done = false, string? DoneReason = null, GenerationStats? Stats = null);
+public sealed record BatchChunk(int Index, string Text, bool Done = false, string? DoneReason = null, GenerationStats? Stats = null)
+{
+    /// <summary>The prompt's and the continuation's ids, on the final chunk when the options asked for them (<see cref="GenerationOptions.ReturnTokens"/>); null otherwise.</summary>
+    public ChatTokens? Tokens { get; init; }
+}
 
 /// <summary>
 /// Autoregressive text generation for a causal language model built as a <see cref="Sequential"/> of
@@ -316,7 +320,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             {
                 foreach (var chunk in Stream(prompts[p], options, cancellationToken))
                 {
-                    yield return new BatchChunk(p, chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats);
+                    yield return new BatchChunk(p, chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats) { Tokens = chunk.Tokens };
                 }
             }
 
@@ -344,7 +348,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             {
                 foreach (var chunk in Stream(prompts[group[0]], options, cancellationToken))
                 {
-                    yield return new BatchChunk(group[0], chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats);
+                    yield return new BatchChunk(group[0], chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats) { Tokens = chunk.Tokens };
                 }
 
                 continue;
@@ -400,7 +404,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 int r = group[0];
                 foreach (var chunk in Stream(prompts[r], (imageToken, images[r], attention), options, cancellationToken))
                 {
-                    yield return new BatchChunk(r, chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats);
+                    yield return new BatchChunk(r, chunk.Text, chunk.Done, chunk.DoneReason, chunk.Stats) { Tokens = chunk.Tokens };
                 }
 
                 continue;
@@ -466,6 +470,10 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         var generated = Enumerable.Range(0, rows).Select(_ => new List<int>()).ToList();
+        // The ids asked for on the final chunks (ReturnTokens): each sampled id's log-probability, each stop's length.
+        bool returnTokens = options.ReturnTokens || options.ReturnLogProbabilities;
+        var logProbabilities = options.ReturnLogProbabilities ? Enumerable.Range(0, rows).Select(_ => new List<float>()).ToList() : null;
+        var stopTexts = new string?[rows];
         var ends = new int?[rows];                                            // text length where a stop sequence begins
         var reasons = new string?[rows];                                      // why a row ended ("stop", "repetition")
         var emitted = new int[rows];                                          // characters handed out so far
@@ -501,6 +509,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     if (ends[r] is null)
                     {
                         generated[r].Add(step[r].Id);
+                        logProbabilities?[r].Add(MathF.Log(step[r].Probability));
                     }
                 }
             }
@@ -524,6 +533,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     if (at >= 0)
                     {
                         (ends[r], reasons[r]) = (from + at, "stop");
+                        stopTexts[r] = StopAt(text, from + at, stops);
                     }
 
                     searched[r] = text;
@@ -629,7 +639,10 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
 
             yield return new BatchChunk(index[r], "", true, reasons[r] ?? "length",
-                new GenerationStats(tokens[r].Count, promptDuration, count, elapsed - promptDuration, elapsed, 0));
+                new GenerationStats(tokens[r].Count, promptDuration, count, elapsed - promptDuration, elapsed, 0))
+            {
+                Tokens = returnTokens ? Sampled([.. tokens[r]], ids, logProbabilities?[r], reasons[r] == "stop" ? stopTexts[r] : null) : null,
+            };
         }
     }
 
@@ -723,6 +736,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         int promptTokens = history.Count;
+        // The ids asked for on the final chunk (ReturnTokens): the prompt as fed, each sampled id's log-probability, where
+        // a stop sequence begins and its length.
+        int[]? promptIds = options.ReturnTokens || options.ReturnLogProbabilities ? [.. history] : null;
+        var logProbabilities = options.ReturnLogProbabilities ? new List<float>() : null;
+        string? stopText = null;
         var stops = options.Stop.Where(s => s.Length > 0).ToArray();
         int holdBack = stops.Length == 0 ? 0 : stops.Max(s => s.Length) - 1;
         var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
@@ -767,6 +785,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 {
                     generated.Add(step[0].Id);
                     history.Add(step[0].Id);
+                    logProbabilities?.Add(MathF.Log(step[0].Probability));
                 }
 
                 read = produced;
@@ -829,6 +848,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     {
                         end = at;
                         doneReason = "stop";
+                        stopText = stop;
                     }
                 }
             }
@@ -1053,7 +1073,55 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         Device.Synchronize();
         var stats = new GenerationStats(promptTokens, promptDuration, generated.Count, total.Elapsed - promptDuration,
             total.Elapsed, resets);
-        yield return new GenerationChunk("", Done: true, DoneReason: doneReason, Stats: stats);
+        yield return new GenerationChunk("", Done: true, DoneReason: doneReason, Stats: stats)
+        {
+            Tokens = promptIds is null ? null : Sampled(promptIds, generated, logProbabilities, doneReason == "stop" ? stopText : null),
+        };
+    }
+
+    // A reply's ids as sampled (GenerationOptions.ReturnTokens): up to the token that completes its stop sequence `stop`
+    // (the shortest run of ids whose decoding holds it, found by bisection: a decoding that holds it keeps it as ids are
+    // added, while its length alone need not grow, a character's bytes still to come decoding as replacements), else
+    // every id sampled; with their log-probabilities when recorded.
+    private ChatTokens Sampled(int[] prompt, List<int> generated, List<float>? logProbabilities, string? stop)
+    {
+        var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated);
+        int count = ids.Length;
+        if (stop is { Length: > 0 } && count > 1)
+        {
+            int low = 1, high = count;
+            while (low < high)
+            {
+                int middle = (low + high) / 2;
+                if (Tokenizer.Decode(ids[..middle]).Contains(stop, StringComparison.Ordinal))
+                {
+                    high = middle;
+                }
+                else
+                {
+                    low = middle + 1;
+                }
+            }
+
+            count = low;
+        }
+
+        return new ChatTokens(prompt, ids[..count].ToArray(),
+            logProbabilities is null ? null : System.Runtime.InteropServices.CollectionsMarshal.AsSpan(logProbabilities)[..count].ToArray());
+    }
+
+    // The stop sequence that begins at `at` of `text` (the first of `stops`, in their order, that does).
+    private static string? StopAt(string text, int at, string[] stops)
+    {
+        foreach (var stop in stops)
+        {
+            if (text.AsSpan(at).StartsWith(stop, StringComparison.Ordinal))
+            {
+                return stop;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

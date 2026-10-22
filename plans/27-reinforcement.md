@@ -9,7 +9,7 @@
 | R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | Done 2026-10-22; CPU pass |
 | R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | Done 2026-10-22; CPU pass |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Done 2026-10-22; CPU pass |
-| R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Planned |
+| R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (left: rollouts on a cluster; see "R3 as built") |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
@@ -595,6 +595,129 @@ their messages.
 coding agent:|evaluation:|tuning metrics|reinforcement:|public API|abstraction inventory|cli health: every environment
 variable`. **Owner (CUDA):** the same `reinforcement text:|fine-tuning:` on `cuda`, and the GRPO run of R5 on a small real
 model.
+
+**R3 as built (2026-10-22).** Items 1-7 built in one change; `Idrak.Text` still references no `Idrak.Reinforcement` (the policy
+meets its trainer and losses only through `Idrak.Abstraction.Reinforcement`). R2's losses and estimators were written beside
+this phase, so the policy is proven here with test-only fakes (a clipped-ratio loss registered from the test into
+`PolicyLosses`, a group-normalized advantage and an update loop written in the test); **the end-to-end run with R2's real
+trainer and `grpo` is R4's first item, after both merge.**
+- **`FineTuningSession`** (`src/Idrak.Text/FineTuningSession.cs`, public): opened with a model, `FineTuningOptions` and the
+  schedule's `totalSteps` (an optional sample of sequences decides the image side and the FP8 check; without one FP8 is checked
+  on the first step's sequences). It holds what `TrainCore` held: adapters (resumed from `ResumeFrom`), trained parameters, FP8
+  copies, the optimizer, the cluster's sync, the schedule and the step runner with its recorded graphs. Members: `Step(sequences,
+  loss?) → FineTuningStepStats` (one optimizer step over all the sequences' batches, packed as `Packing` says; null loss: the
+  options' own, the fused cross-entropy when none), `LogProbabilities(sequences, adapters: on | off)` (no gradient, the network in
+  evaluation mode for the call, the batches a step would make), `Generator(context, cache format)` (a `ChatGenerator` on the live
+  adapters, `KeepCache` off; the session releases every generator's cache before a step and its log-probabilities), `Save`,
+  `Checkpoint` (adapters, optimizer state, steps: the stop-checkpoint format, so `ResumeFrom` reads it), `Restore` (into a session
+  that has not passed the checkpoint; the schedule moves on to it), `Steps`, `TotalSteps`, `ResumedSteps`, `LearningRate`,
+  `Settings`, `Dispose` (the reverse order of `TrainCore`'s usings). **`FineTuner.Train` is a loop over a session**: `TrainCore`
+  opens one (its internal constructor runs `TrainCore`'s old set-up in the same order), makes the epochs' batches from its own
+  seeded `Random` as before, then `Begin` (schedule and runner with the run's batch sizes) and `Run`/`Skip` per step; the stop
+  checkpoint is `session.Checkpoint`. The step runner takes its loss of one's own per step (`StepRunner.Custom`; graphs only for
+  the fused loss, as before), and a session's loss of one's own drops the cached reference values of sequences it no longer trains
+  (`CustomLoss.Keep`), so a run that brings new sequences each step holds one step's.
+- **Results unchanged, proven (rule 71):** a scratch program (not checked in) ran `FineTuner.Train` on seven fixed cases with the
+  DLLs built before the change and with the new ones, the test project's own tiny model writer and sequences called by
+  reflection: the packed fused loss, gradient accumulation, a loss delegate, padded batches with evaluations, DPO pairs with
+  evaluations, distillation from a teacher model, DoRA with SGD and a linear schedule. **Every step's loss, every evaluation loss
+  and a hash of every trained adapter value are the same bits** (and a second run of the old build gave the same bits, so the
+  comparison means something). In the suite, `reinforcement text: FineTuner.Train is a loop over a session` checks that Train's
+  losses step by step and its adapters equal, bit for bit, a session stepped by hand (the fused loss, `Loss` set, a loss given per
+  step; one step per epoch so the batches are the same draws). The existing `fine-tuning:`, `fine-tuning options:`,
+  `distillation:`, `conversation tuning:`, `vision tuning` and `pretrain:` tests pass with unchanged expectations.
+- **Sampled tokens:** `GenerationOptions.ReturnTokens` and `ReturnLogProbabilities` (off by default: serving copies nothing);
+  `ChatTokens(Prompt, Reply, LogProbabilities?)` (`Idrak.Abstraction.Generation`) on the last `ChatChunk`, `GenerationChunk` and
+  `BatchChunk` (`Tokens`, an init property, so every constructor stays as it was). The core generator records the prompt as fed
+  (after its cut to the window), each sampled id and log(probability) as the sampler drew it (after temperature and filters), and
+  cuts the reply at the token that completes the stop sequence (the shortest run of ids whose decoding holds the stop, by
+  bisection; a decoded length alone is not monotone when a byte-level reply ends inside a character), on the single and the
+  batched paths and their fall-backs; `ChatBatch` now reads `StreamBatch` (the same texts as `GenerateBatch`), `StreamBatch` (both
+  paths) and `Stream` pass the ids on. A test checks the ids and log-probabilities against a recording sampler on `Chat`,
+  `Stream`, `ChatBatch` and `StreamBatch`, the stop cut, and the same texts with the option off.
+- **Multi-turn episodes** (`EpisodeTurns`, `Idrak.Text.Reinforcement`): `PrefixStable(records)` on the ids, `Lay(records, mode)`
+  → `EpisodeLayout(Mode, Sequences)`: `episode` (the last prompt and reply, every reply's ids trained) when stable, `turn` (each
+  reply on its own prompt) otherwise; `auto` picks; `episode` on unstable ids is refused naming `turn`/`auto`;
+  `IDRAK_RL_TURNS`. Tested on ChatML ids (stable) and Qwen3's template, which drops earlier reasoning (not stable), and on a
+  two-turn run of the policy on the tiny model, whose layout follows what its ids say and whose trained ids are the replies'.
+- **`FineTuningLossInput`**: `SequenceValues`, `TokenValues`, `BehaviorLogProbabilities` / `HasBehavior`, from the sequences
+  (`TrainingSequence` gained the init properties `Value`, `TokenValues`, `BehaviorLogProbabilities`, `ReferenceLogProbabilities`,
+  not part of its equality) or given to the public constructor (new optional parameters); `ReferenceLogProbabilities` is taken
+  from the sequences when every one carries it (no reference pass then). **`FineTuningLosses.Policy(IPolicyLoss, options,
+  reference = true)`** adapts a registered policy loss (units = trained tokens, counts per sequence, step sizes). Deviation: the
+  adapter takes `reference` as a flag because R1's `IPolicyLoss` does not say whether a loss reads the reference (see "For R2").
+- **`LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>`** (`src/Idrak.Text/Reinforcement/LanguageModelPolicy.cs`). R1
+  defined no conversation type, so **`ChatObservation(Messages, Tools?, Think?)`** is new in `Idrak.Abstraction.Generation`
+  (value equality, so the environment suite's replays compare conversations; R4's coding environment uses it too). It acts through
+  `ChatBatch` on the session's generator with `ReturnTokens` on, sampling at the call's temperature and seed with no top-k, top-p,
+  min-p or penalty (greedy: top-k 1), records `ActionRecord(reply ids, sampler log-probabilities, NaN, prompt ids)` and refuses a
+  reply whose window slid. `Update` lays out the whole rollout batch on its first update (one per batch): the sequences, each
+  token's advantage (its turn's step), the reference (`LogProbabilities`, adapters off) and the behaviour (recomputed by the
+  training forward before any step on the batch, or the sampler's: `IDRAK_RL_BEHAVIOR` `recompute` | `sampler`), then
+  `session.Step` with the policy loss (and the teacher term). `Lay(batch)` shows what it trains; `Save`/`Load` are
+  `Checkpoint`/`Restore`. Options: `MaxNewTokens`, `ContextLength`, `Generation`, `Think`, `Turns`, `Behavior`, `Reference`,
+  `TeacherWeight`, `Divergence`, `Beta`, `TeacherTemperature`. Measured on CPU: the first update's |log p − behaviour| is exactly 0
+  (ratios exactly 1).
+- **The `prompts` environment** (`PromptsEnvironmentKind`, registered by `Idrak.Text`'s `LibraryRegistrations`): tasks from
+  `data` (a chat-transcript JSON-lines file, the last assistant message the reference) or given in code (`PromptTask`), one drawn
+  per episode from its seed; options `reward` (a reward or metric name, or `exact:1,length:0.1`), `rounds`, and each term's
+  options as `term.key`; a kind made with an `IToolRegistry` runs a reply's calls for up to `rounds` replies (the last one
+  truncated when it still calls tools); one made with a tokenizer gives each answer's token count in the info (`tokens`).
+- **Text rewards** (`TextRewards`, registered by `Idrak.Text`): `metric` (any `TuningMetrics` name, `exact` by default; 1 − value
+  for an error rate; refuses an input without a reference), `regex` (`pattern`, `whole`, `ignore_case`; a matcher per thread),
+  `json` (1 as written, `repaired` 0.5 after `JsonRepairs`' repair, 0 none), `length` (−`penalty` per `unit` past `budget`; tokens
+  from the info, or words, characters), `judge` (`JudgeReward`: P(yes) against no through `AnswerScorer.Choose`; the library's
+  loads `model` on `device` once per process, `Release` frees it; an app's is made with its scorer; **the question and the two
+  words are required options**, so no language is assumed), `sum` (`terms`, weighted, in order). All pass the reward suite.
+- **On-policy distillation:** registry **`TeacherDivergences`** (`Idrak.Text.Abstractions`, `ITeacherDivergence`): `forward`,
+  `reverse`, `jsd` (β in (0, 1), as TRL's GKD), each its value and its gradient with respect to the softened logits, run chunk by
+  chunk through the existing kernels: core's `Tensor.TokenDivergences` / `TokenDivergenceRows` gained an optional
+  `TokenDivergenceRule` (null keeps the old forward path, so today's distillation is unchanged; the library's `forward` by name
+  takes that path, checked bit for bit). `FineTuningLossInput.TeacherDivergence(temperature, divergence, beta)` beside the old
+  overload; **`FineTuningLosses.OnPolicyDistillation(divergence = reverse, temperature, beta)`** (T² · mean) and
+  `FineTuningLosses.Add(first, second, weight)` (the teacher term beside a policy loss); **`DistillationTeachers.CheckOnPolicy`**:
+  a teacher file refused with its reason (it cannot cover new samples), another vocabulary refused naming `idrak distill
+  --generate`; **`OnPolicyDistiller.Train(session, data, options)`**: the student samples, a share λ (`Mix`,
+  `IDRAK_RL_DISTILL_MIX`) of each step's prompts train on the data's answers instead; only assistant tokens train (the replies'
+  ids, the encoder's assistant spans). Beside a reward: `LanguageModelPolicyOptions.TeacherWeight` (`IDRAK_RL_TEACHER_WEIGHT`),
+  `Divergence` (`IDRAK_RL_DIVERGENCE`). Tested: forward, reverse and jsd against a double-precision computation (values, and the
+  hidden gradient against central differences of the divergence itself); a teacher equal to the student gives divergences under
+  1e-6 and moves the weights by under 1e-6 (SGD, so a tiny gradient is not scaled up as Adam would); a stronger tiny teacher
+  (tuned in the test) lowers the student's reverse KL on its own samples (a Monte Carlo estimate on 16 samples) below 0.7 of its
+  start alone, with λ = 0.5, and as a term beside a reward.
+- **Variables** (in `EnvironmentVariables.cs`, group "Reinforcement learning", commands `tune`, `distill` until R5 adds
+  `reinforce`): `IDRAK_RL_TURNS`, `IDRAK_RL_BEHAVIOR`, `IDRAK_RL_TEACHER_WEIGHT`, `IDRAK_RL_DIVERGENCE`, `IDRAK_RL_DISTILL_MIX`;
+  each option reads its variable when set, a value given in code wins.
+- **Inventory:** R1's contracts are now used by `Idrak.Text` (and, after R2, by `Idrak.Reinforcement`); alone in this branch the
+  inventory would move them to `Idrak.Text`, so nine lines in `tests/Idrak.Tests/data/shared-contracts.txt` keep them in
+  `Idrak.Abstraction` (decision 6). **At the merge with R2, the inventory test names the lines that became stale (several packages
+  use them then); delete those** and regenerate the inventory. `api/Idrak.Abstraction.txt`, `Idrak.Text.txt`, `Idrak.txt` and
+  `plans/10-abstraction-inventory.md` regenerated.
+- **For R2 (no R1 contract changed here):** `IPolicyLoss` could say whether a loss reads the reference (a `NeedsReference`
+  member, as the suite already has), so `FineTuningLosses.Policy` and the policy would skip the reference pass on their own;
+  `PolicyLossInput` has no per-sequence values, which is why the policy repeats a turn's advantage over its tokens.
+- **Left:** rollouts on a cluster spread over the ranks (the policy refuses a session with a cluster, naming it); the CUDA
+  measurement that the device's peak holds the cache or the activations, not both (the CPU test checks that held memory does
+  not grow over 20 iterations); `idrak reinforce` and `idrak distill --on-policy` are R5's.
+- **Tests:** `tests/Idrak.Tests/ReinforcementTextTests.cs`, group `reinforcement text:` (9). The run (CPU, one build plus one
+  rebuild for the failures): `reinforcement text:|distillation:|fine-tuning:|fine-tuning options:|conversation tuning:|chat
+  templates:|generation|coding agent:|evaluation:|tuning metrics:|vision tuning|reinforcement contracts|public API|abstraction
+  inventory|cli health: every environment variable|naming:|pretrain:|scoring:|decoding|cli polish|plugins: packages`: 174 passed,
+  4 failed. Fixed: the inventory placement (above), the environment suite's replays (`ChatObservation`'s value equality), the GRPO
+  test's bar (its pass rate rose from 0.06 to about 0.6 with one epoch a rollout; now two epochs and a bar of a rise of 0.3 to at
+  least 0.6). Rerun `reinforcement text:|abstraction inventory|public API`: all pass (the inventory regenerated once more for the
+  shared lines). Not mine: `t5 real:` (caught by `generation`) needs the owner's real references (`make_tiny_t5.py --real`).
+- **The owner's commands** (repo at `D:\Projects\Idrak`):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement text:|fine-tuning:|fine-tuning options:|distillation:|conversation tuning:|generation:|decoding|scoring:|pretrain:|abstraction inventory|public API|cli health: every environment variable"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "reinforcement text:|fine-tuning:|fine-tuning options:|distillation:|conversation tuning:|generation:|decoding|scoring:|pretrain:|vision tuning"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+  On CUDA, the GRPO test's "first ratios exactly 1" says whether a recomputed forward gives the step's values bit for bit on
+  the card; a failure there is a finding (the behaviour pass and the step pack the sequences differently), not a setting.
 
 ## Phase R4: `Idrak.Reinforcement.Plugins.Coding`
 

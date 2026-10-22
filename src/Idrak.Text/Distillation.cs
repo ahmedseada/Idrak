@@ -14,7 +14,7 @@ namespace Idrak.Text;
 /// <summary>
 /// The built-in teachers of knowledge distillation (<see cref="DistillationTeacher"/>, Idrak.Abstraction) for
 /// <see cref="FineTuner"/>: the distribution over the next token at every trained position, which
-/// <see cref="FineTuningLossInput.TeacherDivergence"/> compares with the student's (and
+/// <see cref="FineTuningLossInput.TeacherDivergence(float)"/> compares with the student's (and
 /// <see cref="FineTuningLosses.Distillation"/> trains on). Set one as <see cref="FineTuningOptions.Teacher"/>. Two kinds:
 /// <list type="bullet">
 /// <item><see cref="FromModel(PretrainedModel, int, int)"/>: a loaded model computes its distributions on the fly, in inference mode, batch by batch
@@ -57,6 +57,36 @@ public static class DistillationTeachers
 
     /// <summary>A teacher that reads the top-k logits stored in <paramref name="path"/> (see <see cref="TeacherLogitsWriter"/>); disposing it closes the file.</summary>
     public static DistillationTeacher FromFile(string path) => new StoredTeacher(TeacherLogitsFile.Open(path));
+
+    /// <summary>
+    /// Checks that <paramref name="teacher"/> can teach <paramref name="student"/> on-policy
+    /// (<see cref="FineTuningLosses.OnPolicyDistillation"/>): it must compute its distributions on sequences it has never
+    /// seen (the student's own samples), so a live teacher (<see cref="FromModel(PretrainedModel, int, int)"/>, or one of
+    /// one's own), not stored logits (<see cref="FromFile"/>, which hold only the sequences they were written for); and it
+    /// must share the student's vocabulary (<see cref="DistillationTeacher.Check"/>).
+    /// </summary>
+    /// <exception cref="NotSupportedException">A teacher file.</exception>
+    /// <exception cref="InvalidOperationException">The vocabularies differ: the message names <c>idrak distill --generate</c> (answers the teacher writes, which cross tokenizers).</exception>
+    public static void CheckOnPolicy(DistillationTeacher teacher, ITokenizer student)
+    {
+        ArgumentNullException.ThrowIfNull(teacher);
+        ArgumentNullException.ThrowIfNull(student);
+        if (teacher is StoredTeacher)
+        {
+            throw new NotSupportedException("On-policy distillation needs a live teacher (DistillationTeachers.FromModel): a teacher file holds the logits of the "
+                                            + "sequences it was written for, and on-policy distillation trains on the student's own new samples, which no file covers.");
+        }
+
+        try
+        {
+            teacher.Check(student);
+        }
+        catch (InvalidOperationException e)
+        {
+            throw new InvalidOperationException($"On-policy distillation compares the teacher's and the student's distributions token by token on the student's samples, "
+                                                + $"so they must share a vocabulary: {e.Message} Across tokenizers, train on answers the teacher writes (idrak distill --generate).", e);
+        }
+    }
 }
 
 // Top-k logits as dense distributions, for the built-in teachers.
