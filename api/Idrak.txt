@@ -1447,6 +1447,7 @@ public static class Idrak.Losses
   public static Idrak.Abstraction.Tensor Ctc(Idrak.Abstraction.Tensor logProbs, Idrak.Abstraction.Tensor targets, System.Collections.Generic.IReadOnlyList<int> inputLengths, System.Collections.Generic.IReadOnlyList<int> targetLengths, int blank = 0, Idrak.LossReduction reduction = (Idrak.LossReduction)0, bool zeroInfinity = false, bool batchFirst = false)
   public static Idrak.Abstraction.Tensor Ctc(Idrak.Abstraction.Tensor logProbs, System.Collections.Generic.IReadOnlyList<int[]> labels, System.Collections.Generic.IReadOnlyList<int> inputLengths, int blank = 0, Idrak.LossReduction reduction = (Idrak.LossReduction)0, bool zeroInfinity = false, bool batchFirst = false)
   public static Idrak.Abstraction.Tensor Distillation(Idrak.Abstraction.Tensor studentLogits, Idrak.Abstraction.Tensor teacherLogits, float temperature)
+  public static Idrak.Abstraction.Tensor LogSigmoid(Idrak.Abstraction.Tensor x)
   public static Idrak.Abstraction.Tensor MeanAbsoluteError(Idrak.Abstraction.Tensor prediction, Idrak.Abstraction.Tensor target)
   public static Idrak.Abstraction.Tensor MeanSquaredError(Idrak.Abstraction.Tensor prediction, Idrak.Abstraction.Tensor target)
   public static Idrak.Abstraction.Tensor PixelCrossEntropy(Idrak.Abstraction.Tensor logits, Idrak.Abstraction.Tensor classIndices)

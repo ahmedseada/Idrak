@@ -113,7 +113,7 @@ public static partial class Pretrainer
                 // The ranks holding this stage (its replicas) sum its gradients; with one replica there is nothing to sum.
                 using var sync = pipe.Replicas is { } replicas ? GradientSyncs.Create(replicas, optimizer, cluster) : null;
                 sync?.Start();
-                var schedule = FineTuningSchedules.Create(stage.Schedule, stage.WarmupFraction, stage.MinLearningRate)(optimizer, stage.Steps);
+                var schedule = LearningRateSchedules.Factory(stage.Schedule, new LearningRateScheduleSettings(stage.WarmupFraction, stage.MinLearningRate))(optimizer, stage.Steps);
                 for (int i = 0; i < stageStep; i++)
                 {
                     schedule.Step();

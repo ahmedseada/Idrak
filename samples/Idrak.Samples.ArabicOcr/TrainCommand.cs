@@ -36,7 +36,7 @@ internal static class TrainCommand
           --eval DIR           held-out lines: CER and WER every epoch; the best epoch is kept (else the lowest loss)
           -o, --out MODEL      the model folder (default: recognizer): recognizer.ikm + recognizer.json
           --epochs N           (30)        --batch N   lines per step (16)      --lr X   (0.001)      --seed N (1)
-          --schedule NAME      the learning rate over the run's steps (the library's FineTuningSchedules): cosine
+          --schedule NAME      the learning rate over the run's steps (the library's LearningRateSchedules): cosine
                                (default), linear, constant, wsd    --warmup F  warm-up share of the steps (0.03)
                                --min-lr X  the rate at the end (0)
           --height N           line height, a multiple of 4 (48)    --channels A,B,C  (32,64,128)
@@ -70,10 +70,10 @@ internal static class TrainCommand
         float learningRate = (float)a.Number("--lr", 0.001, 1e-7);
         string scheduleName = (a.Option("--schedule") ?? "cosine").ToLowerInvariant();
         float warmup = (float)a.Number("--warmup", 0.03, 0), minLearningRate = (float)a.Number("--min-lr", 0, 0);
-        if (!FineTuningSchedules.Names.Contains(scheduleName) || warmup >= 1)
+        if (LearningRateSchedules.Find(scheduleName) is null || warmup >= 1)
         {
             throw new UsageException($"--schedule {scheduleName}, --warmup {warmup.ToString(CultureInfo.InvariantCulture)}: use one of "
-                                     + $"{string.Join(", ", FineTuningSchedules.Names)} and a warm-up share under 1.");
+                                     + $"{string.Join(", ", LearningRateSchedules.Names)} and a warm-up share under 1.");
         }
         bool drafts = a.Flag("--include-drafts");
         string direction = a.Option("--direction") ?? "rtl";
@@ -204,7 +204,7 @@ internal static class TrainCommand
         TimeSpan profileData = default, profileCompute = default;
         // The learning rate follows the schedule over every step of the run (warm-up, then the decay), stepped after each
         // optimizer step.
-        var schedule = FineTuningSchedules.Create(scheduleName, warmup, minLearningRate)(optimizer, Math.Max(1, epochs * stepsPerEpoch));
+        var schedule = LearningRateSchedules.Factory(scheduleName, new LearningRateScheduleSettings(warmup, minLearningRate))(optimizer, Math.Max(1, epochs * stepsPerEpoch));
         Telemetry.TrainingStarted(new TrainingStarted("ArabicOcr line recognizer", "AdamW", context.Device, epochs, train.Count, evaluation.Count, batchSize,
             stepsPerEpoch, recognizer.Network.ParameterCount, learningRate, Environment.ProcessorCount));
         for (int epoch = 1; epoch <= epochs; epoch++)

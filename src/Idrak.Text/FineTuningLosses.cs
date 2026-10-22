@@ -3,7 +3,6 @@
 
 using Idrak.Models;
 using Idrak.Text.Abstractions;
-using Idrak.Optimizers;
 
 namespace Idrak.Text;
 
@@ -312,10 +311,10 @@ public static class FineTuningLosses
             Require(input, "DPO");
             var ratios = input.SequenceSums(input.LogProbabilities) - input.SequenceSums(input.ReferenceLogProbabilities);
             var margins = (input.Chosen(ratios) - input.Rejected(ratios)) * beta;
-            var losses = -LogSigmoid(margins);
+            var losses = -Losses.LogSigmoid(margins);
             if (labelSmoothing > 0f)
             {
-                losses = losses * (1f - labelSmoothing) - LogSigmoid(-margins) * labelSmoothing;
+                losses = losses * (1f - labelSmoothing) - Losses.LogSigmoid(-margins) * labelSmoothing;
             }
 
             return losses.Sum() / (input.StepSequences / 2);
@@ -340,7 +339,7 @@ public static class FineTuningLosses
             // log odds = a − log(1 − exp a) for the mean log-probability a < 0 (as TRL's log1p(−exp a)); the small floor keeps
             // an answer the model is already certain of finite.
             var logOdds = means - (1f - means.Exp() + 1e-7f).Log();
-            var ratio = LogSigmoid(input.Chosen(logOdds) - input.Rejected(logOdds));
+            var ratio = Losses.LogSigmoid(input.Chosen(logOdds) - input.Rejected(logOdds));
             var losses = -input.Chosen(means) - ratio * lambda;
             return losses.Sum() / (input.StepSequences / 2);
         };
@@ -361,20 +360,8 @@ public static class FineTuningLosses
             Require(input, "SimPO");
             var means = input.SequenceMeans(input.LogProbabilities);
             var margins = (input.Chosen(means) - input.Rejected(means)) * beta - gamma;
-            return -LogSigmoid(margins).Sum() / (input.StepSequences / 2);
+            return -Losses.LogSigmoid(margins).Sum() / (input.StepSequences / 2);
         };
-    }
-
-    /// <summary>
-    /// log σ(x), element-wise, without overflow for large |x|: −(m + log(exp(−m) + exp(−x − m))) with m = max(−x, 0), so
-    /// no exponent is positive. Written as a shifted log-sum-exp (not with |x|) so the gradient at x = 0 is the true ½: the
-    /// derivative of m cancels whatever value the kink takes.
-    /// </summary>
-    public static Tensor LogSigmoid(Tensor x)
-    {
-        ArgumentNullException.ThrowIfNull(x);
-        var m = (-x).Relu();
-        return -(m + ((-m).Exp() + (-x - m).Exp()).Log());
     }
 
     private static void Require(FineTuningLossInput input, string name)
@@ -383,104 +370,5 @@ public static class FineTuningLosses
         {
             throw new InvalidOperationException($"{name} needs preference pairs: train with PreferencePair data (chosen and rejected answers).");
         }
-    }
-}
-
-/// <summary>
-/// Built-in learning-rate schedules for <see cref="FineTuningOptions.Scheduler"/>: each is created from the optimizer and
-/// the number of optimizer steps, and stepped once per optimizer step. A warm-up raises the rate linearly to the
-/// optimizer's own rate over the first <c>warmupFraction</c> of the steps (step i of w uses (i + 1) / (w + 1) of it).
-/// </summary>
-public static class FineTuningSchedules
-{
-    /// <summary>The names <see cref="Create"/> accepts: cosine, linear, constant, wsd (warm-up, stable, decay).</summary>
-    public static IReadOnlyList<string> Names { get; } = ["cosine", "linear", "constant", "wsd"];
-
-    /// <summary>
-    /// The schedule <paramref name="name"/> (see <see cref="Names"/>, ignoring case) with a warm-up over
-    /// <paramref name="warmupFraction"/> of the steps and a decay to <paramref name="minLearningRate"/> (wsd: over the last
-    /// <paramref name="decayFraction"/> of the steps; constant: no decay). For command lines and settings files.
-    /// </summary>
-    public static Func<Optimizer, int, LearningRateScheduler> Create(string name, float warmupFraction = 0.03f, float minLearningRate = 0f, float decayFraction = 0.2f)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        return name.ToLowerInvariant() switch
-        {
-            "cosine" => Cosine(warmupFraction, minLearningRate),
-            "linear" => Linear(warmupFraction, minLearningRate),
-            "constant" => Constant(warmupFraction),
-            "wsd" => WarmupStableDecay(warmupFraction, decayFraction, minLearningRate),
-            _ => throw new ArgumentException($"Learning-rate schedule '{name}' is not registered; use {string.Join(", ", Names)}.", nameof(name)),
-        };
-    }
-
-    /// <summary>Warm-up, then cosine decay to <paramref name="minLearningRate"/> at the last step (the default schedule).</summary>
-    public static Func<Optimizer, int, LearningRateScheduler> Cosine(float warmupFraction = 0.03f, float minLearningRate = 0f) =>
-        (optimizer, steps) => new CosineAnnealing(optimizer, Math.Max(1, steps), minLearningRate, Warmup(warmupFraction, steps));
-
-    /// <summary>Warm-up, then linear decay to <paramref name="minLearningRate"/> at the last step.</summary>
-    public static Func<Optimizer, int, LearningRateScheduler> Linear(float warmupFraction = 0.03f, float minLearningRate = 0f) =>
-        (optimizer, steps) =>
-        {
-            int warmup = Warmup(warmupFraction, steps);
-            return new LambdaSchedule(optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1)
-                : rate + (minLearningRate - rate) * (float)Math.Min(1.0, (step - warmup) / (double)Math.Max(1, steps - warmup)));
-        };
-
-    /// <summary>Warm-up, then the optimizer's rate unchanged.</summary>
-    public static Func<Optimizer, int, LearningRateScheduler> Constant(float warmupFraction = 0f) =>
-        (optimizer, steps) =>
-        {
-            int warmup = Warmup(warmupFraction, steps);
-            return new LambdaSchedule(optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1) : rate);
-        };
-
-    /// <summary>
-    /// Warm-up, stable, decay (Hu et al. 2024, "MiniCPM", arXiv:2404.06395): warm-up, then the optimizer's rate until the
-    /// last <paramref name="decayFraction"/> of the steps, then linear decay to <paramref name="minLearningRate"/>.
-    /// </summary>
-    public static Func<Optimizer, int, LearningRateScheduler> WarmupStableDecay(float warmupFraction = 0.03f, float decayFraction = 0.2f, float minLearningRate = 0f)
-    {
-        if (decayFraction is < 0f or > 1f)
-        {
-            throw new ArgumentOutOfRangeException(nameof(decayFraction), "The decay fraction is in [0, 1].");
-        }
-
-        return (optimizer, steps) =>
-        {
-            int warmup = Warmup(warmupFraction, steps);
-            int decay = Math.Max(0, Math.Min(steps - warmup, (int)Math.Round(decayFraction * steps)));
-            int stable = steps - decay;
-            return new LambdaSchedule(optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1)
-                : step < stable ? rate
-                : rate + (minLearningRate - rate) * (float)Math.Min(1.0, (step - stable + 1) / (double)Math.Max(1, decay)));
-        };
-    }
-
-    private static int Warmup(float fraction, int steps) => (int)Math.Round(fraction * steps);
-}
-
-/// <summary>Built-in optimizers for <see cref="FineTuningOptions.Optimizer"/>, by name (for command lines and settings files).</summary>
-public static class FineTuningOptimizers
-{
-    /// <summary>The names <see cref="Create"/> accepts: adamw, adam, adamw8bit, sgd.</summary>
-    public static IReadOnlyList<string> Names { get; } = ["adamw", "adam", "adamw8bit", "sgd"];
-
-    /// <summary>
-    /// The optimizer factory for <paramref name="name"/> (see <see cref="Names"/>, ignoring case) with
-    /// <paramref name="learningRate"/> and <paramref name="weightDecay"/> (decoupled for AdamW and 8-bit AdamW, L2 for Adam
-    /// and SGD); SGD uses <paramref name="momentum"/>.
-    /// </summary>
-    public static Func<IReadOnlyList<Tensor>, Optimizer> Create(string name, float learningRate, float weightDecay = 0f, float momentum = 0.9f)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        return name.ToLowerInvariant() switch
-        {
-            "adamw" => ps => new AdamW(ps, learningRate, weightDecay: weightDecay),
-            "adam" => ps => new Adam(ps, learningRate, weightDecay: weightDecay),
-            "adamw8bit" => ps => new AdamW8Bit(ps, learningRate, weightDecay: weightDecay),
-            "sgd" => ps => new Sgd(ps, learningRate, momentum, weightDecay),
-            _ => throw new ArgumentException($"Unknown optimizer '{name}' (known: {string.Join(", ", Names)}).", nameof(name)),
-        };
     }
 }

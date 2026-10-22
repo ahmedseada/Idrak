@@ -187,3 +187,21 @@ public sealed class AdamW8Bit : Optimizer
         base.Dispose();
     }
 }
+
+// "adamw8bit" in OptimizerKinds (a library default, registered from LibraryRegistrations): AdamW8Bit with the settings'
+// rate, decoupled weight decay and betas (Adam's 0.9, 0.999 and 1e-8 unless given).
+internal sealed class AdamW8BitKind : IOptimizerKind
+{
+    public string Name => "adamw8bit";
+
+    public string Summary => "AdamW with 8-bit moments (2 bytes of state per parameter instead of 8; beta1, beta2, epsilon)";
+
+    public Optimizer Create(IReadOnlyList<Tensor> parameters, OptimizerSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentNullException.ThrowIfNull(settings);
+        return new AdamW8Bit(parameters, settings.LearningRate, settings.Beta1 ?? 0.9f, settings.Beta2 ?? 0.999f, settings.Epsilon ?? 1e-8f, settings.WeightDecay);
+    }
+
+    public override string ToString() => Name;
+}
