@@ -48,6 +48,14 @@ batch against its single form, an estimator's fixed order, a loss's gradient) ar
   a frozen reference or not; its updates are autograd and an optimizer made through `OptimizerKinds`.
 - **Settings**: `ReinforcementOptions` and `ModulePolicyOptions`, each option with a default and an `IDRAK_RL_*` variable
   (`FromEnvironment`; listed by `idrak help env`).
+- **Off-policy learning** (`Idrak.Reinforcement.Abstractions` holds its contract): `ReplayBuffer` (a ring of the last N
+  transitions in arrays rented once, sampled from a seed, saved and loaded bit for bit), `QLosses` (`IQLoss`, the
+  Q-learning losses by name: `dqn`, Mnih et al. 2015, a Huber loss against a target network, double Q-learning (van
+  Hasselt et al. 2016) as its option `double`) and `OffPolicyTrainer` (DQN on a `Module` Q-network: ε-greedy rounds over
+  several environments, updates on mini-batches from the buffer, a target network copied or Polyak-averaged, a schedule
+  from `LearningRateSchedules`, greedy evaluations, checkpoints that resume bit for bit with the episodes under way
+  replayed from their seeds and actions, progress, telemetry and a JSON line per report). Its settings are
+  `OffPolicyOptions` (`IDRAK_RL_DQN_*` and the shared `IDRAK_RL_SEED`, `IDRAK_RL_GAMMA` and the others it names).
 
 ## Install
 

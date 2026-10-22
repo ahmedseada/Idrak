@@ -20,9 +20,10 @@ public static class ReinforcementPlugins
 
     /// <summary>
     /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: agentic coding
-    /// (<see cref="Coding.CodingPlugin"/>), then agentic coding on C# projects (<see cref="CSharp.CSharpCodingPlugin"/>).
+    /// (<see cref="Coding.CodingPlugin"/>), agentic coding on C# projects (<see cref="CSharp.CSharpCodingPlugin"/>), then
+    /// the classic control environments (<see cref="Classic.ClassicControlPlugin"/>).
     /// </summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Coding.CodingPlugin.Plugin, CSharp.CSharpCodingPlugin.Plugin];
+    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Coding.CodingPlugin.Plugin, CSharp.CSharpCodingPlugin.Plugin, Classic.ClassicControlPlugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

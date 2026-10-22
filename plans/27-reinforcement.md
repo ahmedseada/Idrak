@@ -15,7 +15,7 @@
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Done 2026-10-22; CPU pass |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Done 2026-10-22; CPU pass (left: the demo suite through R4b's `--env csharp` after its merge; see "R5 as built") |
-| R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
+| R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Done 2026-10-22; CPU pass |
 
 ## Goal
 
@@ -1471,6 +1471,150 @@ For the owner to start or drop: it proves the general part on standard tasks, an
 bandit and CartPole within seeded step counts on the CPU.
 
 **Tests (CPU here):** `plugins: classic|reinforcement:|public API|abstraction inventory`.
+
+**R6 as built (2026-10-22).** Both parts built; no R1 contract and neither of R3b's files (`RolloutCollector.cs`,
+`ReinforcementTrainer.cs`) changed; the plug-in uses the public API only.
+- **`Idrak.Reinforcement.Plugins.Classic`** (`src/Idrak.Reinforcement.Plugins/Classic/`): `ClassicControlPlugin` ("classic", the
+  third of `ReinforcementPlugins.All`) registers `bandit`, `cartpole`, `pendulum` and `mountain-car` in `EnvironmentKinds` as
+  `Part`s (Unregister leaves the registry as found); the kinds are also its properties (`CartPoleKind`, ..., `Kinds`). The
+  environments are public sealed classes an app can make directly, each with an options record (`FromOptions`, `Keys`):
+  `CartPoleEnvironment` (`IEnvironment<float[], int>`; `max-steps` 500, `sutton-barto`, `reset-low`/`reset-high` ±0.05),
+  `PendulumEnvironment` (`IEnvironment<float[], float[]>`, a box action of one torque; `max-steps` 200, `g` 10, `reset-angle` π,
+  `reset-speed` 1: Gymnasium's x_init and y_init), `MountainCarEnvironment` (`IEnvironment<float[], int>`; `max-steps` 200,
+  `goal-velocity` 0, `reset-low`/`reset-high` −0.6/−0.4) and `BanditEnvironment` (`arms`, `means`, `spreads` one or one per arm,
+  `means-seed`, `pulls` an episode, the last one terminating it; by default Sutton and Barto's 10-armed testbed, its means drawn
+  once from `means-seed`, so every environment of a kind has the same arms; the observation a box of one 0). Gymnasium's
+  equations, constants, clips, thresholds, rewards, start distributions and TimeLimit truncation (the step that reaches the
+  limit is truncated, also when it terminates: both flags, as Gymnasium; R2's collector then keeps "terminated"). Starts are
+  drawn from the episode's seed with .NET's `Random` (Gymnasium's numpy generator is not imitated); `ResetTo(state)` starts from
+  a given state, `State` and `Steps` show it. An environment allocates only the observation it returns.
+  **Deviations, with reasons:** a step after an episode ended is refused (`InvalidOperationException`, R1's contract), where
+  Gymnasium warns and pays 0; a pendulum torque out of [−2, 2] is clipped, as Gymnasium clips it (a NaN or infinite one, or
+  another length than 1, is refused); the bandit has no Gymnasium reference (Gymnasium has no bandit), so it is checked by its
+  statistics.
+- **The reference** (`tools/reinforcement/make_fixtures.py`, `requirements.txt`: gymnasium 1.2.1, numpy 2.3.4 and Gymnasium's
+  three dependencies, pinned; run with `python3 -I` from `/home/user/rl-venv`, PyPI reachable): every episode starts from a state
+  the script draws (a fixed seed) and sets on `env.unwrapped` after `gym.make(..., max_episode_steps=...)` and `reset`, its
+  actions drawn or chosen by a fixed rule from Gymnasium's observations, recorded with Gymnasium's observations, rewards and
+  flags. 25 episodes in `tests/Idrak.Tests/data/reinforcement/` (`cartpole.json`: 13, random actions, wider starts, a balancing
+  rule truncated at a 60-step limit, out past x = 2.4, Sutton and Barto's reward; `pendulum.json`: 5, random torques past the
+  limit to the 200-step limit, g = 9.81, spun past the top speed; `mountain-car.json`: 7, random actions to the limit, pumped to
+  the goal, into the left wall, a goal velocity of 0.01; `manifest.json`: versions, sizes and SHA-256, which the test checks).
+  **An episode is kept only when it is robust to rounding:** replayed from its start changed by 4e-12 (relative), its
+  observations move by less than 1e-6 and its rewards and flags do not change; otherwise the script stops naming it. So no
+  fixture depends on the last bit of a platform's sine (Windows' UCRT and glibc may differ there).
+- **Precision and tolerance.** Idrak keeps the state in double precision in Gymnasium's order of operations (Gymnasium computes
+  CartPole, MountainCar and the pendulum's θ, θ̇ in float64); the pendulum's torque u is the action's float32 and the two terms
+  Gymnasium computes from it in float32 (numpy 2 keeps a Python float times a float32 in float32: 3u/(ml²) and 0.001u²) are
+  rounded to float32 the same way; observations are the state rounded once to float32; rewards are the contract's float32.
+  **The test compares observations and rewards within 1e-5 relative (|a − b| ≤ 1e-5 · max(1, |b|)), the flags exactly.** Why:
+  float32 observations carry 6e-8 relative rounding, the robustness check bounds what a last-bit difference of a sine grows to
+  at 1e-6, and the rewards are Gymnasium's float64 against Idrak's float32 (6e-8 relative): 1e-5 is an order of magnitude above
+  rounding and far below any wrong equation (a wrong constant moves an observation by 1e-3 or more within a few steps).
+  **Measured here (Linux, glibc):** all 2,144 observations of the 2,119 steps are bit for bit Gymnasium's, and the rewards differ
+  only by their float32 rounding (largest 5.9e-8, the pendulum's).
+- **Off-policy in `Idrak.Reinforcement`** (new files only). **No existing registry fits an off-policy algorithm:**
+  `PolicyLosses` reads the log-probabilities of a policy that acted (and its behaviour's), which a Q-network has not, and bending
+  it was ruled out. So the algorithm got a contract and a registry of its own, in `Idrak.Reinforcement.Abstractions` (only this
+  package uses it; the inventory agrees: "Belongs in: Reinforcement"): `IQLoss` (`Loss(QLossInput, options)`,
+  `NeedsNextValues(options)` as a default interface member, so the online network runs over the next states only for double
+  Q-learning) and `QLosses` (a guarded `SlotTable`: an app's loss shadows the library's, `FallBack`/`Shadow` compared within
+  1e-5), whose library default `dqn` (Mnih et al. 2015: y = r + d·max Q′(s′, ·), a Huber loss of δ `huber` 1, the squared error
+  for 0, a mean over the batch, weighted when weights are given; `double` true is van Hasselt et al. 2016's
+  y = r + d·Q′(s′, argmax Q(s′, ·))) builds its targets on the host in double and rounds them once, and takes Q(s, a) by a
+  one-hot mask, so the gradient reaches only the actions taken. `QLossInput` holds the recorded values [batch, actions] and the
+  rest as `ReadOnlyMemory` over the trainer's pooled arrays, checked when made. `ReplayBuffer`: a ring of the last N
+  transitions (observation, action, reward, next observation, terminated: truncation bootstraps) in arrays rented from
+  `ArrayPool` once at full size and returned by `Dispose`; adding allocates nothing (tested); `Sample(Random, Span<int>)` draws
+  with replacement in order; `Gather` into the caller's arrays; `Save`/`Load` little-endian, bit for bit. `OffPolicyTrainer`
+  (DQN on a `Module` Q-network and a target module of the same architecture, which it owns): each round steps
+  `Environments` environments once in order (sequential, parallel, or measured on the first rounds as R2's collector does) with
+  ε-greedy actions of one batched forward (uniform before `LearningStarts`), records the transitions, trains every `TrainEvery`
+  rounds `GradientSteps` updates (the gradient clipped, an optimizer by `OptimizerKinds`, the rate by a `LearningRateSchedules`
+  schedule over the run's updates), and moves the target network every `TargetEvery` steps (copied for τ 1, Polyak-averaged
+  for τ < 1, through `CopyFrom`, `Scale` and `AddScaled` on the parameters and buffers). **ε is its own setting** (linear from
+  `EpsilonStart` to `EpsilonEnd` over `EpsilonFraction` of the run's steps, as Stable-Baselines3 has it): the
+  `LearningRateSchedules` registry drives an optimizer's rate, which ε is not. Defaults are Stable-Baselines3's DQN defaults
+  (lr 1e-4, batch 32, learning starts 100, train every 4, target every 10,000, τ 1, ε 1 → 0.05 over 10%, clip 10), with a
+  replay of 100,000 in place of its million. Every draw derives from the run's seed by SplitMix64 (R2's `Seeds`, on streams of
+  its own: an environment's episode, a round's exploration, an update's mini-batch). **Checkpoints with resume:** `step-N/`
+  holds `network.ikw`, `target.ikw`, `optimizer.safetensors`, `replay.bin` and `state.json` (rounds, updates, episodes, seed,
+  and each environment's episode under way as its seed, its actions so far and its return), written into `.writing` and moved
+  whole; a resume loads them, replays each environment's actions from its seed (an environment's state is its seed and its
+  actions: R1's seeded-replay rule) and the schedule's steps, and refuses another run's checkpoint (seed, environments) or an
+  episode that ends while replayed. Greedy `EvaluateAsync` episodes (environments made once, all episodes in one batched
+  forward a step); `Values`, `Act`. **Progress and telemetry:** steps as the progress unit (detail: return, ε, evaluation,
+  steps a second); `TrainingStarted`, a `BatchCompleted` per update, an `EpochCompleted` per report (steps, episodes,
+  reward-mean, epsilon, updates, q, gradient-norm; the evaluation as its validation metric), `TrainingCompleted`, each built only
+  when a hook listens; `OnReport` (`OffPolicySummary`: the window's returns, mean, loss, ε, rate, evaluation, metrics) and a JSON
+  line per report into `Log`. **Settings:** `OffPolicyOptions.FromEnvironment`: 20 new variables `IDRAK_RL_DQN_LOSS`, `_DOUBLE`,
+  `_HUBER`, `_STEPS`, `_ENVIRONMENTS`, `_REPLAY`, `_BATCH`, `_LEARNING_STARTS`, `_TRAIN_EVERY`, `_GRADIENT_STEPS`, `_TARGET_EVERY`,
+  `_TAU`, `_EPSILON_START`, `_EPSILON_END`, `_EPSILON_FRACTION`, `_LEARNING_RATE`, `_MAX_GRAD_NORM`, `_REPORT_EVERY`,
+  `_EVALUATE_EVERY`, `_SAVE_EVERY` (a row each in `EnvironmentVariables.cs`, group "Reinforcement learning", command `test`:
+  no command of the tool trains off-policy yet), and the shared `IDRAK_RL_SEED`, `_GAMMA`, `_OPTIMIZER`, `_SCHEDULE`, `_WARMUP`,
+  `_MAX_STEPS`, `_PARALLEL_STEPS`, `_EVALUATION_EPISODES`, `_CHECKPOINTS`, `_RESUME`, `_LOG` with their on-policy meanings. The
+  learning rate and the gradient clip got variables of their own (`_DQN_LEARNING_RATE`, `_DQN_MAX_GRAD_NORM`) because their
+  defaults differ from the on-policy ones (1e-4 and 10 against 3e-4 and 1).
+- **Measured step counts** (a scratch program, not checked in, the Debug build here, CPU, 4 cores). **PPO** (R2's trainer;
+  categorical 64 × 64 tanh actor and critic, Adam 1e-3, 16 episodes an iteration, mini-batches of 4 episodes, 4 epochs, GAE with
+  normalized advantages; stopped when 32 greedy evaluation episodes average 490 or more), seeds 1-8: solved after 2 to 70
+  iterations (1,176 to 250,727 steps, 0.9 to 12.9 s), then 100 new greedy episodes averaged 496.0 to 500.0 (all at least
+  Gymnasium's 475). With an 8-episode evaluation and a stop at 475, seed 4's 100 new episodes averaged only 466.7, so the test
+  stops at 490 over 32. The test (seed 1): 26 iterations, 80,049 steps, 100 new greedy episodes 497.4, 5.1 s. **DQN on CartPole**
+  (Stable-Baselines3 zoo's CartPole-v1 settings on a 64 × 64 network: lr 2.3e-3, batch 64, learning starts 1,000, 128 updates
+  every 256 rounds, target every 10 steps, ε to 0.04 over 16% of 60,000 steps; stopped when 16 greedy episodes average 490),
+  seeds 1-8: solved at 22,000 to 52,000 steps (3.4 to 6.8 s), 100 new greedy episodes 500 for every seed. The test (seed 2):
+  22,000 steps, 10,496 updates, 500, 3.2 s with the bandit runs. Double Q-learning with the same settings (50,000-step runs):
+  seed 4 solved at 48,000, seed 1 not within 50,000 (100 new episodes 111): those settings are tuned for DQN, so the test holds
+  double Q-learning to the bandit and to the loss's direct computation, not to a CartPole bar. **DQN on the bandit** (means 0.2,
+  0.5, 1.0, 0.8, spread 1, a linear Q-network, lr 0.01, an update a step after 100 random ones, 3,000 steps): the greedy arm is
+  the best from step 200, Q 0.12/0.43/0.99/0.61 at the end, 400 greedy pulls above 0.9; double Q-learning gives the same, as
+  every one-pull transition terminates (nothing is bootstrapped). These are full-length solves against Gymnasium's bar: no
+  shorter bar was needed for the tests.
+- **Memory:** the replay buffer's bytes are fixed when it is made and do not change after it is full (a 1,000-transition
+  CartPole buffer: 41,984 bytes; device memory in use 24,872 bytes at step 2,000 and at 12,000; the managed heap 31,128 →
+  31,139 KB). `ArrayPool` rounds each array up to a power of two, so a 100,000-transition CartPole buffer holds 5.37 MB for its
+  4.1 MB of transitions: the buffer is pooled as asked; exact-size arrays allocated once would save that, a candidate for the
+  owner (not taken).
+- **Tests** (`tests/Idrak.Tests/ClassicControlTests.cs`, `plugins: classic:` 5; `tests/Idrak.Tests/OffPolicyTests.cs`,
+  `reinforcement: off-policy:` 5): registration (twice, unregister as found, from Idrak.Reinforcement.Plugins, the "not
+  registered" message, the options' refusals); the fixtures (hashes, then every observation, reward and flag within the
+  tolerance, a step after the end refused); R1's environment suite on the four kinds with their defaults and with options; the
+  reset distributions (4,000 resets each: bounds, mean and variance of the uniform draws, the same seed the same start) and the
+  bandit's means and spreads (6,000 pulls an arm within 0.05; the testbed's means the same in every environment); PPO and DQN
+  solving as above; the replay buffer (ring order, no allocation when adding, seeded draws, save and load, refusals); `dqn`
+  against a direct computation (δ 1 and 2, the squared error, double, weights; the gradient only at the actions taken; refusals;
+  an app's failing loss answered by the library's under `FallBack`); a seeded DQN run the same twice, on 1 and 4 threads,
+  stepped in parallel and as measured, another seed different, and memory that does not grow; a run stopped at 2,000 of 4,000
+  steps and resumed into networks of other weights matching the uninterrupted one bit for bit (each report's returns and loss,
+  the weights, the target network, the replay file byte for byte, the linear schedule's rate), with two environments whose
+  episodes were under way at the checkpoint; ε's line, the target copied and Polyak-averaged, progress, telemetry and the log,
+  the refusals and the variables. `reinforcement contracts`' package check now expects the families coding, csharp, classic
+  (`tests/Idrak.Tests/ReinforcementContractTests.cs`, its one line). `api/Idrak.Reinforcement.txt`,
+  `api/Idrak.Reinforcement.Plugins.txt` and `plans/10-abstraction-inventory.md` regenerated.
+- **The run (CPU, this agent):** one build of `tests/Idrak.Tests` (no warnings); `IDRAK_UPDATE_API=1` (`public API`) and
+  `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`); then `plugins: classic|reinforcement:|reinforcement contracts|plugins:|
+  public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|conformance kit:`:
+  98 passed, 1 failed, in 1 min 32 s. The failure was the PPO test's own check: two of the 100 greedy episodes drove the cart past
+  x = 2.4 on exactly their 500th step (terminated and truncated in Gymnasium; the collector keeps terminated), where the check
+  wanted every 500-step episode truncated. The check now accepts an episode terminated on any step up to 500 or truncated at
+  500. One rebuild, the failing test rerun: 1 passed. Total 99 of 99.
+- **Left:** none of R6 is open. The candidates measured and not taken: exact-size replay arrays (above), and a double-DQN
+  setting of its own for CartPole. No command of the tool trains in the classic environments or off-policy (`idrak reinforce`
+  trains language models); that is the owner's call.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; R6 has no GPU kernel: the CUDA line runs the same tensors on the card,
+  with bars measured on the CPU, so a miss there is a finding, not a failure of the CPU work; the Gymnasium comparison on Windows
+  checks the tolerance against Windows' own sine and cosine):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "plugins: classic|reinforcement:|reinforcement contracts|plugins:|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|conformance kit:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "plugins: classic: PPO|plugins: classic: DQN|reinforcement: off-policy"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+  To make the fixtures again (they are checked in; the same versions give the same files): `python -m venv rl-venv`,
+  `rl-venv\Scripts\pip install -r tools\reinforcement\requirements.txt`, `rl-venv\Scripts\python -I tools\reinforcement\make_fixtures.py`.
 
 ## Order and parallelism
 
