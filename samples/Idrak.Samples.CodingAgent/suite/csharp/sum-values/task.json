@@ -1,0 +1,15 @@
+{
+  "prompt": "MathTools.Sum in MathTools.cs gives a wrong total. Fix it so that it returns the sum of every value it is given (0 for none). The project builds with dotnet build; tests/Checks.cs is replaced by hidden tests when the task is checked.",
+  "language": "csharp",
+  "tags": [
+    "demo",
+    "bug-fix"
+  ],
+  "setup": [
+    "dotnet restore -nodeReuse:false"
+  ],
+  "verify": [
+    "dotnet build --no-restore -nodeReuse:false",
+    "dotnet bin/Debug/net10.0/Numbers.dll"
+  ]
+}

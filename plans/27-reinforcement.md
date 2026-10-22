@@ -12,7 +12,7 @@
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (left: rollouts on a cluster; see "R3 as built") |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
-| R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
+| R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Done 2026-10-22; CPU pass (left: the demo suite through R4b's `--env csharp` after its merge; see "R5 as built") |
 | R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
 
 ## Goal
@@ -1052,6 +1052,108 @@ passes, and `agent-check` passes on the demo suite (CPU here).
 
 **Tests (CPU here):** one build; `cli reinforce|cli health|cli tune|plugins: coding|reinforcement text:|public API|
 abstraction inventory`; the CodingAgent sample built.
+
+**R5 as built (2026-10-22).** Everything in the CLI and the sample; no library code changed, so no API dump or inventory
+change (the `public API` and `abstraction inventory` guards pass as they were).
+- **`idrak reinforce MODEL`** (`src/Idrak.Cli/Commands/Train/ReinforceCommand.cs`, Train group after `tune init`): R2's
+  `ReinforcementTrainer<ChatObservation, ChatMessage>` over R3's `LanguageModelPolicy` on a `FineTuningSession` of the loaded
+  model. `--env NAME` is any `EnvironmentKinds` kind that observes conversations and acts with replies (another kind is
+  refused naming both types; an unregistered one with the registry's "not registered" message, exit 2). `prompts`: the
+  library's kind made over `--data` read **as idrak tune reads data** (files, folders, hf: specs, column templates,
+  question/answer rows normalized to conversations, `--system`, `--max-rows`), with the model's tokenizer for the length
+  reward; `coding` (or a plug-in's): the registered kind with its options. Environment options: `--reward` (`IDRAK_RL_REWARD`),
+  `--suite`, `--rounds`, `--sandbox` (checked in `CommandSandboxes`), `--no-think`, `--data` for a kind that reads one file,
+  and `--env-option KEY=VALUE` for any key (term options with a dot); every key is checked against the kind's `Keys` before
+  the model loads. Run options: `--algorithm` (a `PolicyLosses` name, or `distill`), `--estimator`, `--group`, `--episodes`,
+  `--kl`, `--clip`, `--epochs`, `--minibatch`, `--iterations`, `--environments`, `--temperature`, `--save-every`,
+  `--evaluate-every`, `--seed` (common); each over `ReinforcementOptions.FromEnvironment()`, so every `IDRAK_RL_*` variable
+  applies and the command line wins (a bad variable is a usage error naming it). Policy: `--max-new` (`IDRAK_RL_MAX_NEW`,
+  256), `--teacher MODEL` (`IDRAK_RL_TEACHER`) with `--teacher-device` (`IDRAK_RL_TEACHER_DEVICE`), `--teacher-weights`,
+  `--teacher-weight` (1 by default when a teacher is given, else `IDRAK_RL_TEACHER_WEIGHT`; a weight without a teacher is
+  refused), `--divergence` (checked in `TeacherDivergences`), `--beta`; `IDRAK_RL_TURNS` and `IDRAK_RL_BEHAVIOR` through
+  the policy's own defaults. `--out DIR`: the adapter (PEFT) and `idrak-tuning.json` in DIR (so `idrak tune chat DIR` and
+  `--adapter DIR` load it), checkpoints in `DIR/checkpoints` (or `IDRAK_RL_CHECKPOINTS`); `--resume` goes on from the
+  latest there (`IDRAK_RL_RESUME` names another; nothing to resume is a usage error). Ctrl+C (or `--timeout`) stops after
+  the current iteration, with a checkpoint and the adapter saved. Progress: a `ProgressLine` (the CLI's `IProgressReporter`)
+  handed to the trainer as its `Progress`, a text line per iteration (reward mean ± spread, min to max, loss, updates,
+  evaluation, rollout and update seconds), the trainer's JSON line per iteration with `IDRAK_RL_LOG`, and with `--json` one
+  document (iterations, cancelled, checkpoint, each iteration's returns and loss, the output lines). `--list` prints every
+  registry's entries with their summaries and option keys (environments, rewards, algorithms with `distill`, estimators,
+  sandboxes, divergences), in text or JSON.
+- **Shared with tune, not copied:** the session's options are `TuneTool.SessionValueOptions` / `SessionFlags` (LoRA rank,
+  alpha, targets, type, an adapter to go on with; optimizer, schedule, warm-up, lengths, batch tokens, accumulation; context,
+  matmul, GPU memory; checkpointing, recompute, bf16 activations, packing, graphs, FP8, CPU optimizer, offload) and
+  `TuneArguments` (weights `-w`, device, seed) builds tune's arguments, which `TuneTool.Parse` reads as `idrak tune` does.
+  `TuneTool.Session` is a new hook: `train` then loads the model with the tool's device, weights and process settings
+  (put back afterwards), hands it with the parsed `FineTuningOptions` to the command's work, and writes the manifest on
+  success; `TuneTool.ReadChats` reads the data after the model as conversations. `idrak distill` now takes its session
+  options from the same list (it gains `--momentum`, `--decay`, `--adapter`, `--matmul`, `--gpu-memory`, `--no-graphs`, `--fp8`,
+  `--cpu-optimizer`) and builds its arguments with `TuneArguments` (its messages unchanged).
+- **The schedule:** without `--schedule`, the session's schedule is the run's (`IDRAK_RL_SCHEDULE`, constant; warm-up
+  `IDRAK_RL_WARMUP`, 0), not tune's cosine with 3 % warm-up; the session's steps are iterations × epochs × mini-batches (the
+  trainer's defaults: ppo 4 epochs, else 1). R2's `MaxGradientNorm` and schedule apply only to an `IScheduledPolicy`; the
+  language-model policy keeps the session's (as R4 noted).
+- **`idrak distill --on-policy`:** R3's `OnPolicyDistiller.Train` on a session of the student with the teacher
+  (`DistillationTeachers.FromModel`), over the prompts of `--data` read as tune reads them; `--divergence`
+  (`IDRAK_RL_DIVERGENCE`), `--beta`, `--mix` (λ, `IDRAK_RL_DISTILL_MIX`), `--steps` (default: `--epochs` passes over the
+  prompts), `--batch-size` (prompts a step), `--max-new` (256), `--temperature` (the divergence's softening); the student
+  samples at `IDRAK_RL_TEMPERATURE`. A stored-logits teacher reaches the library's refusal (it cannot cover new samples). The
+  same helper (`DistillCommand.TrainOnPolicy`) runs `idrak reinforce --algorithm distill`, its steps the iterations and
+  its prompts a step the episodes.
+- **Variables** (`EnvironmentVariables.cs`): `ReinforcementRun` is now `["reinforce"]`; new `OnPolicyRun` (`reinforce`,
+  `distill`) for `IDRAK_RL_TURNS`, `_BEHAVIOR`, `_TEACHER_WEIGHT`, `_DIVERGENCE`, `_DISTILL_MIX`, `_TEMPERATURE` (R3 had named
+  `tune`, `distill`); `reinforce` joins the sandbox rows; new rows `IDRAK_RL_ENV`, `IDRAK_RL_REWARD`, `IDRAK_RL_MAX_NEW`,
+  `IDRAK_RL_TEACHER`, `IDRAK_RL_TEACHER_DEVICE`. Help: the command's usage, a topic page `idrak help reinforcement` (`rl`)
+  listing the registries (it registers the tool's plug-in packages first, as every command does, so `coding` and
+  `container` show), the CLI README's Train table.
+- **The sample** (`samples/Idrak.Samples.CodingAgent`): `agent-train <model> <suite> --out DIR` runs R2's trainer in the
+  plug-in's `coding` environment over R3's policy (no trainer of its own): `ReinforcementOptions.FromEnvironment()` with
+  `--algorithm`, `--iterations`, `--group`, `--episodes`, `--temperature`, `--resume` over it, `--lr`, `--rank`, `--max-new`
+  (1024), `--rounds`, `--filter`, `--work`, `--adapter` (trained further, not merged); checkpoints in `DIR/checkpoints`, the
+  adapter in DIR. `agent-run` and `agent-check` were already on the plug-in (R4). New `README.md` (none existed). The csproj
+  keeps `suite/` out of its compile.
+- **The demo suite** (`samples/Idrak.Samples.CodingAgent/suite/csharp/`): `sum-values` (a sum that skips the last value),
+  `reverse-words` (a method to implement), `palindrome` (case and punctuation ignored). Each is a console project
+  (`net10.0`, no packages); the workspace's `tests/Checks.cs` is a quick run the agent can build, the hidden
+  `verify/tests/Checks.cs` replaces it with the checks (exit 0 when all pass; in a sub-folder, so only edits under `tests/`
+  count as test edits); `setup` is `dotnet restore -nodeReuse:false`, `verify` is `dotnet build --no-restore
+  -nodeReuse:false` then `dotnet bin/Debug/net10.0/<Name>.dll`, explicit, so it runs on `coding` today. **`agent-check`:
+  3/3 tasks check out** (each 5 s; 17 s for the suite on 4 cores).
+- **Deviations:** (1) the CLI's coding test runs grpo with the tests' tiny decoder on R4's quick suite (git grep), not with
+  R4's scripted model: a script cannot learn (`Update` is not one), and the command trains a real model's adapters; the
+  scripted episodes stay R4's. (2) `--algorithm distill` runs on `prompts` only (R3's distiller); in another environment
+  the teacher goes beside a policy loss (`--teacher` with grpo), since no registered loss is zero on the reward. (3)
+  `agent-train` was built but not run here (it needs a real model).
+- **Tests** (`tests/Idrak.Tests/CliReinforceTests.cs`, 4): `cli reinforce:` `--list` against every registry, and 17 usage
+  errors that exit 2 before a model loads (variables included); a seeded grpo iteration on `prompts` over the tiny decoder
+  (the command line over `IDRAK_RL_ITERATIONS`/`_GROUP`, `IDRAK_RL_LOG` lines, the adapter, manifest and checkpoint, the same
+  returns and loss from the same seed, `--resume` going on at iteration 2); grpo on a coding suite (each episode verified and
+  rewarded 0 or 1, adapter and checkpoint, workspaces deleted); `cli distill: --on-policy` (two steps with a mix and jsd, the
+  adapter, `reinforce --algorithm distill`, its usage errors).
+- **The run (CPU, this agent):** one build of `tests/Idrak.Tests` (after one compile fix: `string.Create` over a non-literal
+  concatenation) and of the sample (after one: a name clash in its top-level code). `cli reinforce|cli distill|cli train
+  data|cli health|cli polish|public API|abstraction inventory|naming:`: 40 passed, 2 failed (`reinforce`'s summary line was
+  wider than the help's 120 characters; the coding run hit tune's "needs data" check, made before the session hook was set).
+  `plugins: coding|reinforcement:|coding agent:|reinforcement contracts|cli run: tools`: 26 passed; `reinforcement text:`: 10
+  passed. Fixed, one rebuild, the failing filters rerun: 4 of 4 passed; then the topic page registered the plug-ins (one
+  rebuild), and `cli health: help topics|cli health: no command|cli reinforce: --list|cli polish: help lists`: 4 of 4.
+- **Left:** the demo suite through R4b's `--env csharp` after its merge (its tasks name their commands, so `csharp` takes
+  them as they are); the owner's real run below; on CUDA the CLI's tiny-model runs.
+- **The owner's commands** (repo at `D:\Projects\Idrak`):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli train data|cli health|cli polish|plugins: coding|reinforcement text:|reinforcement:|reinforcement contracts|coding agent:|cli run: tools|public API|abstraction inventory|naming:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cli reinforce: a seeded|cli reinforce: grpo|cli distill|cli train data: distill|reinforcement text:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  dotnet build -c Release samples\Idrak.Samples.CodingAgent
+  dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-check samples\Idrak.Samples.CodingAgent\suite
+  # the first real runs: the CLI, then the sample's agent-train and an evaluation with its adapter
+  dotnet run -c Release --project src\Idrak.Cli -- reinforce Qwen/Qwen3-0.6B --env coding --suite samples\Idrak.Samples.CodingAgent\suite --algorithm grpo --group 8 --iterations 20 --out runs\rl-demo
+  dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-train Qwen/Qwen3-0.6B samples\Idrak.Samples.CodingAgent\suite --out runs\agent-rl --algorithm grpo --group 8 --iterations 20 --cuda
+  dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-run Qwen/Qwen3-0.6B samples\Idrak.Samples.CodingAgent\suite --adapter runs\agent-rl --out runs\after.jsonl --cuda
+  ```
 
 ## Phase R6 (optional): classic environments and off-policy learning
 

@@ -435,3 +435,58 @@ internal sealed class TuneInitCommand : Command
         return ExitCodes.Ok;
     }
 }
+
+/// <summary>
+/// The arguments of idrak tune's train that the commands running a fine-tuning session of their own (idrak distill,
+/// idrak reinforce) build from their options and hand to <see cref="TuneTool"/>, which parses them as tune does: the
+/// model, the data, the output, the base weights, the device, the seed and the session's options.
+/// </summary>
+internal static class TuneArguments
+{
+    /// <summary>"train", the model, the data and --out, then the base weights (-w, or the alias's), the device and the seed when given.</summary>
+    /// <param name="context">The command's options.</param>
+    /// <param name="choice">The model as chosen (an alias's weights apply unless -w is given).</param>
+    /// <param name="data">The data after the model.</param>
+    /// <param name="output">The adapter's folder.</param>
+    /// <param name="who">What loads the weights, for the message of a format that is not one ("the student").</param>
+    public static List<string> Train(CommandContext context, ModelChoices.ModelChoice choice, IEnumerable<string> data, string output, string who)
+    {
+        List<string> args = ["train", choice.Model, .. data, "--out", output];
+        if ((context.Option("--weights") ?? choice.Weights) is { } weights)
+        {
+            args.Add(weights.ToLowerInvariant() switch
+            {
+                "int8" => "--int8",
+                "int4" => "--int4",
+                "bf16" or "bfloat16" => "--bf16",
+                _ => throw new UsageException($"--weights {weights}: {who} loads as int8, int4 or bf16 (leave it out for float32)."),
+            });
+        }
+
+        if ((context.Option("--device") ?? context.Config.Get("device")) is { } device)
+        {
+            args.AddRange(["--device", device]);
+        }
+
+        if (context.Option("--seed") is { } seed)
+        {
+            args.AddRange(["--seed", seed]);
+        }
+
+        return args;
+    }
+
+    /// <summary>Adds every value given of <paramref name="values"/> (under tune's name: <paramref name="renamed"/>'s, else its own) and every flag given of <paramref name="flags"/>.</summary>
+    public static void Pass(CommandContext context, List<string> args, IEnumerable<string> values, IEnumerable<string> flags, IReadOnlyDictionary<string, string>? renamed = null)
+    {
+        foreach (string option in values)
+        {
+            foreach (string value in context.Options(option))
+            {
+                args.AddRange([renamed?.GetValueOrDefault(option, option) ?? option, value]);
+            }
+        }
+
+        args.AddRange(flags.Where(context.Flag));
+    }
+}

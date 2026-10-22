@@ -13,4 +13,10 @@
     <ProjectReference Include="..\..\src\Idrak.Reinforcement.Plugins\Idrak.Reinforcement.Plugins.csproj" />
   </ItemGroup>
 
+  <!-- suite/: the demo task suite (C# projects of their own, built in copies by the coding environment), not this sample's code. -->
+  <ItemGroup>
+    <Compile Remove="suite/**" />
+    <None Remove="suite/**" />
+  </ItemGroup>
+
 </Project>

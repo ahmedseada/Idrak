@@ -77,16 +77,20 @@ internal static class EnvironmentVariables
         Cluster = "Cluster";
 
     // Plan 27, phase R2: read by ReinforcementOptions.FromEnvironment and ModulePolicyOptions.FromEnvironment in
-    // Idrak.Reinforcement (the library and its tests); idrak reinforce (R5) joins them.
+    // Idrak.Reinforcement (the library and its tests), and by idrak reinforce (R5), whose command line wins.
     private const string Reinforcement = "Reinforcement learning";
 
-    private static readonly string[] ReinforcementRun = ["test"];
+    private static readonly string[] ReinforcementRun = ["reinforce"];
+
+    // Plan 27, phases R3 and R5: the language-model policy's and on-policy distillation's settings (idrak reinforce, and
+    // idrak distill --on-policy).
+    private static readonly string[] OnPolicyRun = ["reinforce", "distill"];
 
     // Plan 27, phase R4: the command sandboxes (CommandSandboxes; the coding tools' commands, the coding environment's
     // builds and tests): idrak agent and the tests; idrak reinforce (R5) joins them.
     private const string Sandbox = "Command sandbox";
 
-    private static readonly string[] SandboxRun = ["agent", "test"];
+    private static readonly string[] SandboxRun = ["agent", "reinforce", "test"];
 
     // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
     // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
@@ -251,7 +255,7 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_MAX_GRAD_NORM", Reinforcement, "1", "The largest gradient norm an update applies (0: no clip)", ReinforcementRun),
         new("IDRAK_RL_SCHEDULE", Reinforcement, "constant", "The learning-rate schedule over the run's updates: a LearningRateSchedules name", ReinforcementRun),
         new("IDRAK_RL_WARMUP", Reinforcement, "0", "The schedule's warm-up share of the updates", ReinforcementRun),
-        new("IDRAK_RL_TEMPERATURE", Reinforcement, "1", "The temperature rollouts sample at", ReinforcementRun),
+        new("IDRAK_RL_TEMPERATURE", Reinforcement, "1", "The temperature rollouts sample at (and idrak distill --on-policy's student)", OnPolicyRun),
         new("IDRAK_RL_MAX_STEPS", Reinforcement, "0 (the environment's own limit)", "The most steps of an episode before the trainer cuts it", ReinforcementRun),
         new("IDRAK_RL_SEED", Reinforcement, "0", "The run's seed: every episode, draw and shuffle derives from it", ReinforcementRun),
         new("IDRAK_RL_EVALUATE_EVERY", Reinforcement, "0 (no evaluation)", "Greedy evaluation episodes after every this many iterations", ReinforcementRun),
@@ -347,17 +351,22 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_PROBE_BYTES", Cluster, "32 MiB (at most an eighth of the free memory)", "The bytes a link measurement copies (same-device, shared-memory, pcie)", ["cluster init", "cluster inspect", "cluster ui", "test"]),
         // Plan 27, R3: read by Idrak.Text's language-model policy (LanguageModelPolicyOptions) and on-policy distillation
         // (OnPolicyDistillationOptions); idrak reinforce (R5) carries them.
-        new("IDRAK_RL_TURNS", Reinforcement, "auto", "How a multi-turn episode of a language model trains: auto (one sequence when its ids are prefix-stable, else a sequence per turn), episode or turn", ["tune", "distill"]),
-        new("IDRAK_RL_BEHAVIOR", Reinforcement, "recompute", "Where a language-model policy's behaviour log-probabilities come from: recompute (the training forward, once per rollout batch) or sampler (as sampled)", ["tune", "distill"]),
-        new("IDRAK_RL_TEACHER_WEIGHT", Reinforcement, "0", "The weight of the on-policy distillation term beside a policy loss (0: none)", ["tune", "distill"]),
-        new("IDRAK_RL_DIVERGENCE", Reinforcement, "reverse", "The on-policy distillation divergence: forward, reverse or jsd (TeacherDivergences)", ["tune", "distill"]),
+        new("IDRAK_RL_TURNS", Reinforcement, "auto", "How a multi-turn episode of a language model trains: auto (one sequence when its ids are prefix-stable, else a sequence per turn), episode or turn", OnPolicyRun),
+        new("IDRAK_RL_BEHAVIOR", Reinforcement, "recompute", "Where a language-model policy's behaviour log-probabilities come from: recompute (the training forward, once per rollout batch) or sampler (as sampled)", OnPolicyRun),
+        new("IDRAK_RL_TEACHER_WEIGHT", Reinforcement, "0 (idrak reinforce: 1 with a teacher)", "The weight of the on-policy distillation term beside a policy loss (0: none)", OnPolicyRun),
+        new("IDRAK_RL_DIVERGENCE", Reinforcement, "reverse", "The on-policy distillation divergence: forward, reverse or jsd (TeacherDivergences)", OnPolicyRun),
         new("IDRAK_RL_WORKSPACES", Reinforcement, "the CPU threads, fewer when the free disk holds fewer than two copies of a task's workspace each", "The most coding episodes running tools, builds and tests at once (the coding environment's workspaces)", ReinforcementRun),
         new("IDRAK_RL_KEEP_WORKSPACES", Reinforcement, "false", "true: the coding environment keeps every episode's workspace (and the prepared copies) for inspection instead of deleting them", ReinforcementRun),
         new("IDRAK_SANDBOX", Sandbox, "process", "The sandbox the coding tools run commands in: process (a plain process: programs allowed, time, output and memory limits), container (Docker or Podman; Idrak.Reinforcement.Plugins), or a plug-in's", SandboxRun),
         new("IDRAK_SANDBOX_PROGRAM", Sandbox, "docker, else podman, found on the PATH", "The container sandbox's program (a path, or a name on the PATH)", SandboxRun),
         new("IDRAK_SANDBOX_IMAGE", Sandbox, "none: the container sandbox refuses", "The image the container sandbox runs every command in (it holds the programs the commands start)", SandboxRun),
         new("IDRAK_SANDBOX_NETWORK", Sandbox, "off", "The container sandbox's network: off (none), on (the program's default network), or a network's name", SandboxRun),
-        new("IDRAK_RL_DISTILL_MIX", Reinforcement, "0", "λ of on-policy distillation: the share of a step's prompts trained on the data's answers instead of the student's samples, in [0, 1]", ["distill"]),
+        new("IDRAK_RL_DISTILL_MIX", Reinforcement, "0", "λ of on-policy distillation: the share of a step's prompts trained on the data's answers instead of the student's samples, in [0, 1]", OnPolicyRun),
+        new("IDRAK_RL_ENV", Reinforcement, "prompts", "The environment kind idrak reinforce trains in: an EnvironmentKinds name (prompts, coding, or a plug-in's)", ReinforcementRun),
+        new("IDRAK_RL_REWARD", Reinforcement, "the environment's (prompts: exact; coding: tests-passed)", "The reward expression of idrak reinforce's environment: a reward or metric name, or weighted terms such as exact:1,length:0.1", ReinforcementRun),
+        new("IDRAK_RL_MAX_NEW", Reinforcement, "256", "The longest reply a language-model policy samples, in tokens (idrak reinforce's --max-new)", ReinforcementRun),
+        new("IDRAK_RL_TEACHER", Reinforcement, "none", "A teacher model for idrak reinforce: its distributions on the model's own replies, a term beside the reward (or alone with --algorithm distill)", ReinforcementRun),
+        new("IDRAK_RL_TEACHER_DEVICE", Reinforcement, "the model's device", "The device idrak reinforce loads the teacher on (cpu, cuda:N, vulkan:N)", ReinforcementRun),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
         new("PROCESSOR_IDENTIFIER", Devices, "as the system sets it", "The processor's name on Windows (device listings, tuning keys)", OnDevice),

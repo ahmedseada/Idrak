@@ -315,6 +315,7 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 |---|---|
 | `idrak tune` | Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
 | `idrak tune init` | Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config |
+| `idrak reinforce` | Reinforcement learning of a language model's adapters in an environment (`prompts`, `coding`, a plug-in's): GRPO, PPO, REINFORCE, a teacher term beside the reward, or on-policy distillation alone; `--list` names every registered environment, reward, algorithm, estimator, sandbox and divergence |
 | `idrak train` | Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images |
 | `idrak resume` | Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more) |
 | `idrak runs list` (`runs`) | Training runs (from their JSON Lines logs): epochs, best epoch and loss, time, status |
@@ -322,7 +323,7 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 | `idrak runs compare` | Training runs side by side: settings, best epoch and loss, time, and their validation curves |
 | `idrak predict` | Run a model package (.ikm) or an image model on new rows or images: classes, boxes, masks or features |
 | `idrak package` | Bundle a network, its weights, scalers and tokenizer from a folder into one model package (.ikm) |
-| `idrak distill` | Distil a teacher model into a student: its token probabilities (on the fly, or precomputed as top-k logits with `--precompute`) or its written answers (`--generate`) |
+| `idrak distill` | Distil a teacher model into a student: its token probabilities (on the fly, or precomputed as top-k logits with `--precompute`), its written answers (`--generate`), or on the student's own sampled answers (`--on-policy`) |
 
 ```bash
 idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl && idrak tune --config tune.json
@@ -334,6 +335,8 @@ idrak predict -P MyFamilies.dll ./detector street/*.jpg --threshold 0.4 -o boxes
 idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --augment "flip" --metric coco
 idrak runs list && idrak runs show NAME && idrak resume NAME --epochs 20
 idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data chats.jsonl --alpha 0.8 -o adapters/distilled
+idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
+idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --group 8 --iterations 20 -o runs/rl-demo
 ```
 
 Image models (classifiers, detectors, segmenters, backbones) come from an image model family, which a plug-in registers
