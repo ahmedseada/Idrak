@@ -25,7 +25,7 @@ These are the owner's standing rules. They hold in every session, after every co
   for what it does, not one that uses the room it was given.
 - **Card-agnostic.** Nothing is tuned for, or assumes, a specific GPU, card or memory size. Measure the device at run
   time; never hardcode a card, a vendor path or a GB budget in code, comments, tests, docs or advice.
-- **Abstraction always.** New behaviour goes through a contract plus a `SlotTable` registry (decision 10). Keep the
+- **Abstraction always.** New behaviour goes through a contract plus a `SlotTable` registry. Keep the
   inventory test and the public API guard (`api/Idrak.txt`) passing; regenerate the dump when the public API changes.
   A contract only one package can use lives in that package's `{package}.Abstractions` namespace; one that any package
   can use (now or later) lives in `Idrak.Abstraction`, and each package registers its own implementations into it.
@@ -34,7 +34,7 @@ These are the owner's standing rules. They hold in every session, after every co
   an environment variable where the library already reads one, carried through to the apps' settings and the benches'
   variables. Defaults may be automatic (measured at run time), but never the only way.
 - **No family-specific code or fallback in the library.** A model family that is not registered fails loudly with
-  "not registered". Families live in plug-ins or apps (for example `samples/Gemma3Vision/Idrak.Gemma3Vision`), never as
+  "not registered". Families live in plug-ins or apps (for example `Idrak.Vision.Plugins.Gemma`), never as
   library defaults. Defaults are for things meant to work together (GPU falls back to CPU), not one family for another.
 - **Branch: `abstraction` only.** Every session works on `abstraction`: check it out, fast-forward it to
   `origin/abstraction`, commit and push there. Never create, use or push a `ccr-*` session branch or any other
