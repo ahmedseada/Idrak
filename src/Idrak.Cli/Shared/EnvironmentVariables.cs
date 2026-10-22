@@ -93,11 +93,11 @@ internal static class EnvironmentVariables
     private static readonly string[] SandboxRun = ["agent", "reinforce", "test"];
 
     // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
-    // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
+    // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8; reinforce from Plan 27, R3c).
     private static readonly string[] ClusterRun =
     [
         "cluster sim", "cluster start", "cluster bench", "cluster ui", "cluster replay", "cluster calibrate", "cluster inspect", "transports", "pretrain", "train", "tune",
-        "resume", "distill", "profile", "tuning show", "test",
+        "resume", "distill", "reinforce", "profile", "tuning show", "test",
     ];
 
     // Plan 23, phase C9: the dashboard (cluster ui, and cluster sim --dashboard).

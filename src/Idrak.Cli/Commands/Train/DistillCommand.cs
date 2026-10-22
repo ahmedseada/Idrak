@@ -78,6 +78,7 @@ internal sealed class DistillCommand : Command
               --batch-size N        with --generate: prompts answered together (default 8); with --on-policy: the
                                     prompts of each step (default 8)
               --on-policy           the student samples its own answers and learns the teacher's distributions on them
+                                    (in one process: on a cluster, idrak reinforce with a policy loss and --teacher)
               --divergence NAME     with --on-policy: forward, reverse (default) or jsd, or a registered one
                                     (TeacherDivergences; IDRAK_RL_DIVERGENCE)
               --beta B              with --on-policy and jsd: the Jensen-Shannon weight, in (0, 1) (default 0.5)
@@ -168,6 +169,14 @@ internal sealed class DistillCommand : Command
         {
             throw new UsageException(onPolicy ? "--on-policy, --generate and --precompute are different ways: give one."
                 : "--generate and --precompute are two different ways: give one.");
+        }
+
+        if (onPolicy && ClusterSession.Current is not null)
+        {
+            // Plan 27, R3c: OnPolicyDistiller samples every step's prompts on every rank and steps on them without an exchange,
+            // so the ranks would agree only where generation is bit-identical across them, and the sampling is not spread.
+            throw new UsageException("--on-policy does not run on a cluster: on-policy distillation samples every prompt on every rank. Run it in one process, or "
+                                     + "idrak reinforce with a policy loss and --teacher on the cluster (the teacher's term beside the reward, its episodes spread over the ranks).");
         }
 
         var onPolicyOptions = onPolicy ? OnPolicyOptions(context) : null;
@@ -517,8 +526,7 @@ internal sealed class DistillCommand : Command
             progress.Clear();
         }
 
-        Directory.CreateDirectory(output);
-        session.Save(output);
+        session.SaveOnce(output);
         console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"{(stopped ? "stopped after" : "distilled in")} {losses.Count} steps{(losses.Count > 0 ? FormattableString.Invariant($", divergence {losses[0]:F4} → {losses[^1]:F4}") : "")}; "
             + $"adapter written to {Path.GetFullPath(output)}"));

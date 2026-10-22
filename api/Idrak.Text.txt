@@ -607,6 +607,7 @@ public sealed class Idrak.Text.FineTuningSession : System.IDisposable
   public Idrak.Text.FineTuningOptions Options { get; }
   public Idrak.Text.FineTuningStepStats Step(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, Idrak.Text.FineTuningLoss? loss = null, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Text.Generation.ChatGenerator Generator(int? contextLength = null, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0)
+  public bool SaveOnce(string folder)
   public float LearningRate { get; }
   public float[][] LogProbabilities(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, bool adapters = true)
   public int Steps { get; }

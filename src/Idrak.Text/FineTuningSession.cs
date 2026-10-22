@@ -436,6 +436,30 @@ public sealed class FineTuningSession : IDisposable
     }
 
     /// <summary>
+    /// Writes what the session trained to <paramref name="folder"/> once, also on a cluster (Plan 27, R3c): every rank calls
+    /// it at the same point (a collective: a sharded run's weights are made whole while they are read), rank 0 alone creates
+    /// the folder and writes it (<see cref="Save"/>), and every rank returns once it is written. In one process it creates
+    /// the folder and saves. Returns whether this rank wrote.
+    /// </summary>
+    public bool SaveOnce(string folder)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+        bool writes = Sync is null || Sync.Rank == 0;
+        using (Sync?.Gather())
+        {
+            if (writes)
+            {
+                Directory.CreateDirectory(folder);
+                Save(folder);
+            }
+        }
+
+        Sync?.Barrier();
+        return writes;
+    }
+
+    /// <summary>
     /// Writes a checkpoint to <paramref name="folder"/>: the adapters (<see cref="Save"/>), the optimizer's state and the
     /// steps done, which a new session resumes from (<see cref="FineTuningOptions.ResumeFrom"/>) or this one goes back to
     /// (<see cref="Restore"/>). On a cluster every rank takes part (a sharded run's state is joined) and rank 0 writes.
