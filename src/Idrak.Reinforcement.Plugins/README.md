@@ -25,6 +25,7 @@ ReinforcementPlugins.RegisterAll();      // every family of the package; calling
 |---|---|---|---|
 | `Idrak.Reinforcement.Plugins.Coding` | `CodingPlugin` ("coding") | `EnvironmentKinds`: `coding`; `RewardFunctions`: `tests-passed`, `verify-fraction`, `rounds`, `tool-errors`; `CommandSandboxes`: `container` | `CodingEnvironmentKind`, `CodingVerifier` |
 | `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp"; requires "coding" and Idrak.Text.Plugins' "csharp-language") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build` | `CSharpEnvironmentVariant`, `CSharpRewards` |
+| `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` ("classic") | `EnvironmentKinds`: `bandit`, `cartpole`, `pendulum`, `mountain-car` | `CartPoleEnvironment`, `PendulumEnvironment`, `MountainCarEnvironment`, `BanditEnvironment` |
 
 **Coding** (`Idrak.Reinforcement.Plugins.Coding`): the coding task layer (`CodingTask` with its `task.json` layout,
 `CodingSuite`, `CodingWorkspace`, `CodingVerifier` and `CodingOutcome`; an app evaluates a model on a suite with them,
@@ -52,6 +53,18 @@ without it); the protected files (`protect`, `IDRAK_CSHARP_PROTECT`, by default 
 `Directory.Build.targets`, `Directory.Packages.props`, `global.json` and the `*Tests` / `*Test` projects) and the reward
 (`csharp-tests`) are its defaults for the coding options. Sandbox: `process` with `dotnet` allowed, or `container` with an
 image of your own that holds the .NET SDK (`IDRAK_SANDBOX_IMAGE`).
+
+**Classic** (`Idrak.Reinforcement.Plugins.Classic`): the classic control environments on float observations, for
+`ModulePolicy` (on-policy, Idrak.Reinforcement) and `OffPolicyTrainer` (DQN, the discrete ones). `cartpole`
+(CartPole-v1), `pendulum` (Pendulum-v1, a box action) and `mountain-car` (MountainCar-v0) are Gymnasium's equations,
+limits, termination and truncation rules and start distributions, matched step by step against Gymnasium 1.2.1 from the
+same start states and actions (`tools/reinforcement/make_fixtures.py`, its fixtures in `tests/Idrak.Tests/data/reinforcement`);
+the state is integrated in double precision (Gymnasium's float64) and observed as float32. Starts are drawn from the
+episode's seed by .NET's `Random` (Gymnasium's numpy generator is not imitated); `ResetTo(state)` starts from a given
+state. Options: `max-steps` (each one's Gymnasium limit, 500, 200, 200), and `sutton-barto`, `reset-low`, `reset-high`
+(cartpole); `g`, `reset-angle`, `reset-speed` (pendulum); `goal-velocity`, `reset-low`, `reset-high` (mountain-car).
+`bandit` is a multi-armed bandit (Gymnasium has none): `arms`, `means`, `spreads`, `means-seed` (Sutton and Barto's
+10-armed testbed by default) and `pulls` an episode.
 
 An environment whose kind is not registered is refused with "not registered", naming this package.
 

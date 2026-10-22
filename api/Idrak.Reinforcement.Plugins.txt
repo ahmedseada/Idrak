@@ -44,6 +44,111 @@ public static class Idrak.Reinforcement.Plugins.CSharp.CSharpRewards
   public const string Tests = "csharp-tests"
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.IRewardFunction> All { get; }
 
+public sealed class Idrak.Reinforcement.Plugins.Classic.BanditEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], int>, System.IDisposable
+  public BanditEnvironment(Idrak.Reinforcement.Plugins.Classic.BanditOptions? options = null)
+  public Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]> Step(int action, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Reinforcement.Space ActionSpace { get; }
+  public Idrak.Abstraction.Reinforcement.Space ObservationSpace { get; }
+  public Idrak.Reinforcement.Plugins.Classic.BanditOptions Options { get; }
+  public System.Collections.Generic.IReadOnlyList<double> Means { get; }
+  public System.Collections.Generic.IReadOnlyList<double> Spreads { get; }
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]>> StepAsync(int action, System.Threading.CancellationToken cancellationToken = default)
+  public const string KindName = "bandit"
+  public float[] Reset(int seed)
+  public int BestArm { get; }
+  public int Steps { get; }
+  public void Dispose()
+
+public sealed record Idrak.Reinforcement.Plugins.Classic.BanditOptions : System.IEquatable<Idrak.Reinforcement.Plugins.Classic.BanditOptions>
+  public BanditOptions()
+  public System.Collections.Generic.IReadOnlyList<double> Spreads { get; init; }
+  public System.Collections.Generic.IReadOnlyList<double>? Means { get; init; }
+  public int Arms { get; init; }
+  public int MeansSeed { get; init; }
+  public int Pulls { get; init; }
+  public static Idrak.Reinforcement.Plugins.Classic.BanditOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+
+public sealed class Idrak.Reinforcement.Plugins.Classic.CartPoleEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], int>, System.IDisposable
+  public CartPoleEnvironment(Idrak.Reinforcement.Plugins.Classic.CartPoleOptions? options = null)
+  public Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]> Step(int action, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Reinforcement.Space ActionSpace { get; }
+  public Idrak.Abstraction.Reinforcement.Space ObservationSpace { get; }
+  public Idrak.Reinforcement.Plugins.Classic.CartPoleOptions Options { get; }
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]>> StepAsync(int action, System.Threading.CancellationToken cancellationToken = default)
+  public const string KindName = "cartpole"
+  public double[] State { get; }
+  public float[] Reset(int seed)
+  public float[] ResetTo(System.ReadOnlySpan<double> state)
+  public int Steps { get; }
+  public void Dispose()
+
+public sealed record Idrak.Reinforcement.Plugins.Classic.CartPoleOptions : System.IEquatable<Idrak.Reinforcement.Plugins.Classic.CartPoleOptions>
+  public CartPoleOptions()
+  public bool SuttonBartoReward { get; init; }
+  public double ResetHigh { get; init; }
+  public double ResetLow { get; init; }
+  public int MaxSteps { get; init; }
+  public static Idrak.Reinforcement.Plugins.Classic.CartPoleOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+
+public static class Idrak.Reinforcement.Plugins.Classic.ClassicControlPlugin
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind BanditKind { get; }
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind CartPoleKind { get; }
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind MountainCarKind { get; }
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind PendulumKind { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.IEnvironmentKind> Kinds { get; }
+  public static bool IsRegistered { get; }
+  public static void Register()
+  public static void Unregister()
+
+public sealed class Idrak.Reinforcement.Plugins.Classic.MountainCarEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], int>, System.IDisposable
+  public Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]> Step(int action, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Reinforcement.Space ActionSpace { get; }
+  public Idrak.Abstraction.Reinforcement.Space ObservationSpace { get; }
+  public Idrak.Reinforcement.Plugins.Classic.MountainCarOptions Options { get; }
+  public MountainCarEnvironment(Idrak.Reinforcement.Plugins.Classic.MountainCarOptions? options = null)
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]>> StepAsync(int action, System.Threading.CancellationToken cancellationToken = default)
+  public const string KindName = "mountain-car"
+  public double[] State { get; }
+  public float[] Reset(int seed)
+  public float[] ResetTo(System.ReadOnlySpan<double> state)
+  public int Steps { get; }
+  public void Dispose()
+
+public sealed record Idrak.Reinforcement.Plugins.Classic.MountainCarOptions : System.IEquatable<Idrak.Reinforcement.Plugins.Classic.MountainCarOptions>
+  public MountainCarOptions()
+  public double GoalVelocity { get; init; }
+  public double ResetHigh { get; init; }
+  public double ResetLow { get; init; }
+  public int MaxSteps { get; init; }
+  public static Idrak.Reinforcement.Plugins.Classic.MountainCarOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+
+public sealed class Idrak.Reinforcement.Plugins.Classic.PendulumEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], float[]>, System.IDisposable
+  public Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]> Step(System.ReadOnlySpan<float> action, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Reinforcement.Space ActionSpace { get; }
+  public Idrak.Abstraction.Reinforcement.Space ObservationSpace { get; }
+  public Idrak.Reinforcement.Plugins.Classic.PendulumOptions Options { get; }
+  public PendulumEnvironment(Idrak.Reinforcement.Plugins.Classic.PendulumOptions? options = null)
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]>> StepAsync(float[] action, System.Threading.CancellationToken cancellationToken = default)
+  public const string KindName = "pendulum"
+  public double[] State { get; }
+  public float[] Reset(int seed)
+  public float[] ResetTo(System.ReadOnlySpan<double> state)
+  public int Steps { get; }
+  public void Dispose()
+
+public sealed record Idrak.Reinforcement.Plugins.Classic.PendulumOptions : System.IEquatable<Idrak.Reinforcement.Plugins.Classic.PendulumOptions>
+  public PendulumOptions()
+  public double Gravity { get; init; }
+  public double ResetAngle { get; init; }
+  public double ResetSpeed { get; init; }
+  public int MaxSteps { get; init; }
+  public static Idrak.Reinforcement.Plugins.Classic.PendulumOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+
 public abstract class Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant
   protected CodingEnvironmentVariant()
   public abstract string Language { get; }

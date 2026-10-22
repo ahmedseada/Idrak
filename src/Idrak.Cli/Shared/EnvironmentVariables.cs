@@ -85,6 +85,9 @@ internal static class EnvironmentVariables
     // Plan 27, phases R3 and R5: the language-model policy's and on-policy distillation's settings (idrak reinforce, and
     // idrak distill --on-policy).
     private static readonly string[] OnPolicyRun = ["reinforce", "distill"];
+    // Plan 27, phase R6: read by OffPolicyOptions.FromEnvironment in Idrak.Reinforcement (the off-policy trainer, DQN: the
+    // library and its tests); no command of the tool trains off-policy yet.
+    private static readonly string[] OffPolicyRun = ["test"];
 
     // Plan 27, phase R4: the command sandboxes (CommandSandboxes; the coding tools' commands, the coding environment's
     // builds and tests): idrak agent and the tests; idrak reinforce (R5) joins them.
@@ -266,6 +269,26 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_LOG", Reinforcement, "none", "A file each iteration is appended to as a JSON line", ReinforcementRun),
         new("IDRAK_RL_OPTIMIZER", Reinforcement, "adam", "A module policy's optimizer: an OptimizerKinds name", ReinforcementRun),
         new("IDRAK_RL_LEARNING_RATE", Reinforcement, "0.0003", "A module policy's learning rate (the schedule's base)", ReinforcementRun),
+        new("IDRAK_RL_DQN_LOSS", Reinforcement, "dqn", "The off-policy trainer's algorithm: a QLosses name (dqn, or an app's)", OffPolicyRun),
+        new("IDRAK_RL_DQN_DOUBLE", Reinforcement, "the loss's (off)", "on or off: double Q-learning (van Hasselt et al. 2016), the next action chosen by the online network and valued by the target one", OffPolicyRun),
+        new("IDRAK_RL_DQN_HUBER", Reinforcement, "the loss's (1)", "The Huber loss's δ of DQN's temporal-difference error (0: the squared error)", OffPolicyRun),
+        new("IDRAK_RL_DQN_STEPS", Reinforcement, "100000", "The environment steps of an off-policy run (every environment's together)", OffPolicyRun),
+        new("IDRAK_RL_DQN_ENVIRONMENTS", Reinforcement, "1", "The environments an off-policy run plays side by side (a round steps each once)", OffPolicyRun),
+        new("IDRAK_RL_DQN_REPLAY", Reinforcement, "100000", "The transitions the replay buffer keeps (fixed when the trainer is made; the oldest overwritten)", OffPolicyRun),
+        new("IDRAK_RL_DQN_BATCH", Reinforcement, "32", "The transitions of each off-policy update's mini-batch", OffPolicyRun),
+        new("IDRAK_RL_DQN_LEARNING_STARTS", Reinforcement, "100", "The steps taken with random actions, and before any update, to fill the replay buffer", OffPolicyRun),
+        new("IDRAK_RL_DQN_TRAIN_EVERY", Reinforcement, "4", "The rounds between two off-policy trainings", OffPolicyRun),
+        new("IDRAK_RL_DQN_GRADIENT_STEPS", Reinforcement, "1", "The updates of each off-policy training", OffPolicyRun),
+        new("IDRAK_RL_DQN_TARGET_EVERY", Reinforcement, "10000", "The environment steps between two updates of DQN's target network", OffPolicyRun),
+        new("IDRAK_RL_DQN_TAU", Reinforcement, "1", "How far each target update moves the target network to the online one (1: a copy; below 1: Polyak averaging)", OffPolicyRun),
+        new("IDRAK_RL_DQN_EPSILON_START", Reinforcement, "1", "ε of the ε-greedy actions at the start of an off-policy run", OffPolicyRun),
+        new("IDRAK_RL_DQN_EPSILON_END", Reinforcement, "0.05", "ε once its linear decay is over", OffPolicyRun),
+        new("IDRAK_RL_DQN_EPSILON_FRACTION", Reinforcement, "0.1", "The share of the run's steps over which ε falls from its start to its end", OffPolicyRun),
+        new("IDRAK_RL_DQN_LEARNING_RATE", Reinforcement, "0.0001", "The off-policy trainer's learning rate (the schedule's base)", OffPolicyRun),
+        new("IDRAK_RL_DQN_MAX_GRAD_NORM", Reinforcement, "10", "The largest gradient norm an off-policy update applies (0: no clip)", OffPolicyRun),
+        new("IDRAK_RL_DQN_REPORT_EVERY", Reinforcement, "1000", "The environment steps between two reports of an off-policy run (progress, telemetry, the log's line)", OffPolicyRun),
+        new("IDRAK_RL_DQN_EVALUATE_EVERY", Reinforcement, "0 (no evaluation)", "Greedy evaluation episodes of an off-policy run after every this many steps", OffPolicyRun),
+        new("IDRAK_RL_DQN_SAVE_EVERY", Reinforcement, "0 (at the end only)", "A checkpoint of an off-policy run (networks, optimizer, replay buffer, episodes under way) after every this many steps", OffPolicyRun),
 
         new("IDRAK_CLUSTER_TOPOLOGY", Cluster, "none: one node with the devices given", "The topology file of a cluster run (idrak cluster init writes it)", ClusterRun),
         new("IDRAK_CLUSTER_NODE", Cluster, "the node named after this host", "Which node of the topology file this machine is", ClusterRun),
