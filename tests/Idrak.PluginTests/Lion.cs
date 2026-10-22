@@ -61,3 +61,26 @@ public sealed class Lion(IEnumerable<Tensor> parameters, float learningRate = 1e
         base.Dispose();
     }
 }
+
+/// <summary>
+/// <see cref="Lion"/> as an optimizer kind, registered into <see cref="OptimizerKinds"/> from outside the library: "lion",
+/// with the settings' rate and weight decay, and its own betas (0.9, 0.99) unless the settings give others.
+/// </summary>
+public sealed class LionKind : IOptimizerKind
+{
+    /// <summary>The kind's name: "lion".</summary>
+    public const string KindName = "lion";
+
+    /// <inheritdoc />
+    public string Name => KindName;
+
+    /// <inheritdoc />
+    public string Summary => "Lion: the sign of interpolated momentum and gradient, decoupled weight decay (beta1, beta2)";
+
+    /// <inheritdoc />
+    public Optimizer Create(IReadOnlyList<Tensor> parameters, OptimizerSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return new Lion(parameters, settings.LearningRate, settings.Beta1 ?? 0.9f, settings.Beta2 ?? 0.99f, settings.WeightDecay);
+    }
+}

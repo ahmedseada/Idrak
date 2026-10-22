@@ -31,13 +31,13 @@ internal static partial class Tests
     private static void EvaluationMetrics(Device device)
     {
         _ = device;
-        Check(ChatEvaluation.FinalNumber("so 4 * 3 = 12\n#### 1,200") == 1200m && ChatEvaluation.FinalNumber("The answer is $8.") == 8m
-              && ChatEvaluation.FinalNumber("-3.5 then 7") == 7m && ChatEvaluation.FinalNumber("none") is null, "final numbers");
-        Check(ChatEvaluation.Score(AnswerMetric.Number, "Tom gets 20 - 12 = $8 back.", "20-12=8\n#### 8") == 1
-              && ChatEvaluation.Score(AnswerMetric.Number, "#### 9", "#### 8") == 0, "number");
-        Check(ChatEvaluation.Score(AnswerMetric.Exact, "  Paris. ", "paris") == 1 && ChatEvaluation.Score(AnswerMetric.Contains, "It is Paris, France", "paris") == 1, "exact, contains");
-        Check(Math.Abs(ChatEvaluation.Score(AnswerMetric.F1, "the cat sat", "the cat ran") - 2.0 / 3) < 1e-9 && ChatEvaluation.Score(AnswerMetric.F1, "dog", "cat") == 0, "f1");
-        Check(ChatEvaluation.Score(AnswerMetric.Auto, "so it is 14", "#### 14") == 1, "auto picks the number for #### references");
+        Check(TuningMetrics.FinalNumber("so 4 * 3 = 12\n#### 1,200") == 1200m && TuningMetrics.FinalNumber("The answer is $8.") == 8m
+              && TuningMetrics.FinalNumber("-3.5 then 7") == 7m && TuningMetrics.FinalNumber("none") is null, "final numbers");
+        Check(ChatEvaluation.Score(TuningMetrics.NumberMatch, "Tom gets 20 - 12 = $8 back.", "20-12=8\n#### 8") == 1
+              && ChatEvaluation.Score(TuningMetrics.NumberMatch, "#### 9", "#### 8") == 0, "number");
+        Check(ChatEvaluation.Score(TuningMetrics.ExactMatch, "  Paris. ", "paris") == 1 && ChatEvaluation.Score(TuningMetrics.ContainsMatch, "It is Paris, France", "paris") == 1, "exact, contains");
+        Check(Math.Abs(ChatEvaluation.Score(TuningMetrics.WordF1, "the cat sat", "the cat ran") - 2.0 / 3) < 1e-9 && ChatEvaluation.Score(TuningMetrics.WordF1, "dog", "cat") == 0, "f1");
+        Check(ChatEvaluation.Score(ChatEvaluation.Auto, "so it is 14", "#### 14") == 1, "auto picks the number for #### references");
     }
 
     private static void GgufQuants(Device device)

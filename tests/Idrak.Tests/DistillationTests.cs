@@ -355,7 +355,7 @@ internal static partial class Tests
             FineTuner.Train(student, sequences, null, new FineTuningOptions
             {
                 Rank = 4, Alpha = 8, Targets = targets, Seed = 6, BatchTokens = 4096, Epochs = 1, MaxGradientNorm = 1e9f,
-                Optimizer = ps => new Sgd(ps, Rate), Scheduler = FineTuningSchedules.Constant(0f),
+                Optimizer = ps => new Sgd(ps, Rate), Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings(0f)),
                 Teacher = distilled, Loss = FineTuningLosses.Distillation(T, Alpha),
             }, progress: new SynchronousProgress<FineTuningProgress>(p => losses.Add(p.Loss)));
             Check(losses.Count == 1, $"one step, {losses.Count}");

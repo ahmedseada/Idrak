@@ -269,6 +269,18 @@ public static class Losses
     /// </summary>
     public static Tensor BinaryCrossEntropyWithLogits(Tensor logits, Tensor targets) =>
         (logits.Relu() - logits * targets + ((-logits.Abs()).Exp() + 1f).Log()).Mean();
+
+    /// <summary>
+    /// log σ(x), element-wise, without overflow for large |x|: −(m + log(exp(−m) + exp(−x − m))) with m = max(−x, 0), so
+    /// no exponent is positive. Written as a shifted log-sum-exp (not with |x|) so the gradient at x = 0 is the true ½: the
+    /// derivative of m cancels whatever value the kink takes. The preference losses (DPO, SimPO) and policy losses build on it.
+    /// </summary>
+    public static Tensor LogSigmoid(Tensor x)
+    {
+        ArgumentNullException.ThrowIfNull(x);
+        var m = (-x).Relu();
+        return -(m + ((-m).Exp() + (-x - m).Exp()).Log());
+    }
 }
 
 /// <summary>How a loss over a batch of samples becomes the value returned.</summary>

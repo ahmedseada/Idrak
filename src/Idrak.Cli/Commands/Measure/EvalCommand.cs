@@ -17,7 +17,7 @@ internal sealed class EvalCommand : Command
 {
     public override string Name => "eval";
 
-    public override string Summary => "Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1)";
+    public override string Summary => "Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1, error rates)";
 
     public override string Usage =>
         "MODEL SET.jsonl [options]\n\n" +
@@ -28,13 +28,14 @@ internal sealed class EvalCommand : Command
         "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "  -k, --kv FORMAT       the key/value cache format\n" +
         "      --context N       the context length; --adapter DIR: merge an adapter first\n" +
-        "      --metric NAME     auto (default: number for '#### n' references, else f1), number, exact, contains, f1\n" +
+        "      --metric NAME     auto (default: number for '#### n' references, else f1) or a registered metric:\n" +
+        $"                        {string.Join(", ", TuningMetrics.Names)}\n" +
         "      --max-tokens N    longest answer (default 512)\n" +
         "      --batch N         conversations answered together (default 1)\n" +
         "      --limit N         only the first N conversations\n" +
         "      --think / --no-think  the reasoning mode passed to the chat template (default: the template's)\n" +
         "  -o, --out FILE        write every answer with its score as JSON Lines\n\n" +
-        "Metrics beyond these (judged answers, pass@k) wait for the library's evaluation plug-ins (plug-in gap 16).\n\n" +
+        "A plug-in (-P) adds metrics to TuningMetrics; the error rates (cer, wer) are lower for better answers.\n\n" +
         "Examples:\n" +
         "  idrak eval org/model test-set.jsonl --limit 100 --no-think\n" +
         "  idrak eval ./tuned held-out.jsonl --metric exact -o answers.jsonl -j";
@@ -59,15 +60,8 @@ internal sealed class EvalCommand : Command
             throw new UsageException($"No file {set}: give a JSON Lines file of conversations ({{\"messages\": [...]}} per line).");
         }
 
-        var metric = (context.Option("--metric")?.ToLowerInvariant()) switch
-        {
-            null or "auto" => AnswerMetric.Auto,
-            "number" => AnswerMetric.Number,
-            "exact" => AnswerMetric.Exact,
-            "contains" => AnswerMetric.Contains,
-            "f1" => AnswerMetric.F1,
-            var other => throw new UsageException($"--metric takes auto, number, exact, contains or f1, not '{other}'."),
-        };
+        string metric = context.Option("--metric") is not { } named || named.Equals(ChatEvaluation.Auto, StringComparison.OrdinalIgnoreCase) ? ChatEvaluation.Auto
+            : TuningMetrics.Find(named)?.Name ?? throw new UsageException($"--metric takes auto or a registered metric ({string.Join(", ", TuningMetrics.Names)}), not '{named}'.");
         if (context.Flag("--think") && context.Flag("--no-think"))
         {
             throw new UsageException("Choose --think or --no-think, not both.");
@@ -105,7 +99,8 @@ internal sealed class EvalCommand : Command
             }
         }
 
-        string metricName = report.Metric.ToString().ToLowerInvariant();
+        string metricName = report.Metric;
+        bool lowerIsBetter = TuningMetrics.Find(metricName)?.LowerIsBetter == true;
         context.Write($"{choice.Model} on {context.Device}: {report.Answers.Count} of {rows.Count} conversations scored ({rows.Count - report.Answers.Count} without a final assistant answer skipped)");
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{metricName} {report.Score:P1} · {report.MeanTokens:F0} tokens per answer · {report.TokensPerSecond:F1} tokens/s · {report.Duration.TotalSeconds:F1} s"));
         if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
@@ -118,7 +113,7 @@ internal sealed class EvalCommand : Command
         }
         if (context.Verbose)
         {
-            foreach (var wrong in report.Answers.Where(a => a.Score < 1).Take(5))
+            foreach (var wrong in report.Answers.Where(a => lowerIsBetter ? a.Score > 0 : a.Score < 1).Take(5))
             {
                 context.Detail($"  expected: {Shorten(wrong.Reference)}\n  answered: {Shorten(wrong.Answer)}");
             }

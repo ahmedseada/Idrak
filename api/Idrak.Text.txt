@@ -286,13 +286,6 @@ public sealed record Idrak.Text.AnswerChoice : System.IEquatable<Idrak.Text.Answ
   public System.Collections.Generic.IReadOnlyList<double> Probabilities { get; init; }
   public int Best { get; init; }
 
-public enum Idrak.Text.AnswerMetric : int
-  Auto = 0
-  Contains = 3
-  Exact = 2
-  F1 = 4
-  Number = 1
-
 public sealed class Idrak.Text.AnswerScorer
   public AnswerScorer(Idrak.Models.PretrainedModel model, int maxLength = 2048)
   public Idrak.Abstraction.MatMulPrecision EffectivePrecision { get; }
@@ -308,9 +301,9 @@ public sealed class Idrak.Text.AnswerScorer
   public int PromptsPerPass { get; init; }
 
 public static class Idrak.Text.ChatEvaluation
-  public static Idrak.Text.EvaluationReport Run(Idrak.Text.Generation.ChatGenerator chat, System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> conversations, Idrak.Text.AnswerMetric metric = (Idrak.Text.AnswerMetric)0, int maxNewTokens = 512, bool? think = null, System.IProgress<Idrak.Text.EvaluatedAnswer>? progress = null, int contextLength = 4096, System.Threading.CancellationToken cancellationToken = default, int batchSize = 1)
-  public static decimal? FinalNumber(string text)
-  public static double Score(Idrak.Text.AnswerMetric metric, string answer, string reference)
+  public const string Auto = "auto"
+  public static Idrak.Text.EvaluationReport Run(Idrak.Text.Generation.ChatGenerator chat, System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> conversations, string metric = "auto", int maxNewTokens = 512, bool? think = null, System.IProgress<Idrak.Text.EvaluatedAnswer>? progress = null, int contextLength = 4096, System.Threading.CancellationToken cancellationToken = default, int batchSize = 1)
+  public static double Score(string metric, string answer, string reference)
 
 public sealed record Idrak.Text.ChatTranscript : System.IEquatable<Idrak.Text.ChatTranscript>
   public ChatTranscript(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools, bool? Think = null)
@@ -408,14 +401,14 @@ public sealed record Idrak.Text.EvaluatedAnswer : System.IEquatable<Idrak.Text.E
   public string Reference { get; init; }
 
 public sealed record Idrak.Text.EvaluationReport : System.IEquatable<Idrak.Text.EvaluationReport>
-  public EvaluationReport(Idrak.Text.AnswerMetric Metric, System.Collections.Generic.IReadOnlyList<Idrak.Text.EvaluatedAnswer> Answers, double Loss, System.TimeSpan Duration)
-  public Idrak.Text.AnswerMetric Metric { get; init; }
+  public EvaluationReport(string Metric, System.Collections.Generic.IReadOnlyList<Idrak.Text.EvaluatedAnswer> Answers, double Loss, System.TimeSpan Duration)
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.EvaluatedAnswer> Answers { get; init; }
   public System.TimeSpan Duration { get; init; }
   public double Loss { get; init; }
   public double MeanTokens { get; }
   public double Score { get; }
   public double TokensPerSecond { get; }
+  public string Metric { get; init; }
 
 public static class Idrak.Text.FineTuner
   public static (System.Collections.Generic.List<Idrak.Text.Abstractions.TrainingSequence>, System.Collections.Generic.IReadOnlyList<(int[], int, int)>) BalanceAnswers(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, int maxRepeats = 4, int maxAnswers = 64, int seed = 0)
@@ -444,16 +437,11 @@ public sealed class Idrak.Text.FineTuningLossInput
   public int StepTokens { get; }
 
 public static class Idrak.Text.FineTuningLosses
-  public static Idrak.Abstraction.Tensor LogSigmoid(Idrak.Abstraction.Tensor x)
   public static Idrak.Text.FineTuningLoss Distillation(float temperature = 1f, float alpha = 0.5f)
   public static Idrak.Text.FineTuningLoss Dpo(float beta = 0.1f, float labelSmoothing = 0f)
   public static Idrak.Text.FineTuningLoss Orpo(float lambda = 0.1f)
   public static Idrak.Text.FineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
   public static Idrak.Text.FineTuningLoss TokenCrossEntropy { get; }
-
-public static class Idrak.Text.FineTuningOptimizers
-  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
-  public static System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> Create(string name, float learningRate, float weightDecay = 0f, float momentum = 0.9f)
 
 public sealed record Idrak.Text.FineTuningOptions : System.IEquatable<Idrak.Text.FineTuningOptions>
   public FineTuningOptions()
@@ -516,14 +504,6 @@ public sealed record Idrak.Text.FineTuningProgress : System.IEquatable<Idrak.Tex
   public int Epoch { get; init; }
   public int Step { get; init; }
   public int TotalSteps { get; init; }
-
-public static class Idrak.Text.FineTuningSchedules
-  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
-  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Constant(float warmupFraction = 0f)
-  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Cosine(float warmupFraction = 0.03f, float minLearningRate = 0f)
-  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Create(string name, float warmupFraction = 0.03f, float minLearningRate = 0f, float decayFraction = 0.2f)
-  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Linear(float warmupFraction = 0.03f, float minLearningRate = 0f)
-  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> WarmupStableDecay(float warmupFraction = 0.03f, float decayFraction = 0.2f, float minLearningRate = 0f)
 
 public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idrak.Text.Generation.AgentOptions>
   public AgentOptions()

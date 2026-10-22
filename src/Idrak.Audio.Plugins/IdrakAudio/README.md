@@ -110,7 +110,7 @@ baseline, not a voice to ship.
 
 `SpeechTrainingOptions`, all settings: steps, `BatchSeconds` (audio seconds per micro-batch, length-bucketed; halved and the
 step repeated when the device runs out of memory), gradient accumulation, learning rate with warmup and the schedule
-(`FineTuningSchedules`), the optimizer (`FineTuningOptimizers`, host optimizer optional), weight decay, gradient
+(`LearningRateSchedules`), the optimizer (`OptimizerKinds`, host optimizer optional), weight decay, gradient
 clipping, bfloat16 activations, checkpointing, `SaveEvery` / `KeepCheckpoints`, `EvaluateEvery` with a `TuningMetrics`
 metric (CER by default, WER too) and the decoder, augmentations (`AudioAugmentations`: speed, noise, spec-mask, seeded
 per utterance and pass) and the seed. Checkpoints are `checkpoint-STEP/` folders (the model, the optimizer state,

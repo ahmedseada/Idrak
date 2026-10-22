@@ -29,7 +29,7 @@ internal static partial class Tests
         Alpha = (float)tuning["settings"]!["lora"]!["alpha"]!,
         Targets = ["q", "k", "v", "o"],
         Optimizer = ps => new Idrak.Abstraction.Training.Sgd(ps, (float)tuning["settings"]!["optimizer"]!["learning_rate"]!),
-        Scheduler = FineTuningSchedules.Constant(),
+        Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings(0f)),
         MaxGradientNorm = 0f,
         Epochs = epochs,
         BatchTokens = 4096,

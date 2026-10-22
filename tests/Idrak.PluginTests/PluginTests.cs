@@ -25,7 +25,7 @@ public static class PluginTests
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
         ("outside plug-in: Idrak grants this assembly no internal access", NoInternalAccess),
-        ("outside plug-in: a Lion optimizer makes the reference update and trains a linear model", LionTrains),
+        ("outside plug-in: a Lion optimizer makes the reference update and trains a linear model; as a kind registered in OptimizerKinds from outside, it is made by name, passes the optimizer suite and unregisters", LionTrains),
         ("outside plug-in: softplus through Autograd.Function matches finite differences, registers as a network step, trains with Lion and imports from ONNX", SoftplusStep),
         ("outside plug-in: a packed weight format multiplies like its expanded weights, with the input's gradient", PackedFormat),
         ("outside plug-in: a key/value cache format generates the float32 cache's greedy text", CacheFormat),
@@ -62,11 +62,12 @@ public static class PluginTests
 
     private static void LionTrains(Device device)
     {
-        // One step against the formula, on the host.
+        // One step against the formula, made directly and, registered as a kind from this assembly, by name.
         float[] p0 = [0.5f, -1f, 2f, 0.25f], g0 = [0.1f, -0.3f, 0f, 2f];
-        using (var p = Tensor.Persistent(p0, [4], device, requiresGrad: true))
-        using (var lion = new Lion([p], learningRate: 0.1f, weightDecay: 0.5f))
+        void FirstStep(Func<IReadOnlyList<Tensor>, Optimizer> make, string what)
         {
+            using var p = Tensor.Persistent(p0, [4], device, requiresGrad: true);
+            using var lion = make([p]);
             using (var scope = new TensorScope())
             {
                 using var target = Tensor.From(g0, [4], device);
@@ -76,7 +77,24 @@ public static class PluginTests
             lion.Step();
             lion.ZeroGrad();
             var expected = p0.Select((v, i) => v * (1f - 0.1f * 0.5f) - 0.1f * MathF.Sign((1f - 0.9f) * g0[i])).ToArray();
-            CheckClose(expected, p.ToArray(), 1e-6f, "the first Lion step");
+            CheckClose(expected, p.ToArray(), 1e-6f, what);
+        }
+
+        FirstStep(ps => new Lion(ps, learningRate: 0.1f, weightDecay: 0.5f), "the first Lion step");
+        OptimizerKinds.Register(new LionKind());
+        try
+        {
+            Check(OptimizerKinds.Names.Contains(LionKind.KindName) && OptimizerKinds.Origin(LionKind.KindName) == typeof(LionKind).Assembly.GetName().Name
+                  && OptimizerKinds.Default(LionKind.KindName) is null && OptimizerKinds.Describe().Contains("lion: Lion", StringComparison.Ordinal),
+                $"registered from outside: {string.Join(", ", OptimizerKinds.Names)}, origin {OptimizerKinds.Origin(LionKind.KindName)}");
+            FirstStep(OptimizerKinds.Factory("LION", new OptimizerSettings(0.1f, WeightDecay: 0.5f)), "the first Lion step, made by name");
+            var report = Idrak.Abstraction.Testing.Conformance.CheckOptimizerKind(LionKind.KindName, device: device,
+                options: new Idrak.Abstraction.Testing.ContractCheckOptions { RandomCases = 4 });
+            Check(report.Passed, $"the optimizer suite:\n{report}");
+        }
+        finally
+        {
+            Check(OptimizerKinds.Unregister(LionKind.KindName) && OptimizerKinds.Find(LionKind.KindName) is null, "unregistered");
         }
 
         // A noisy linear function, learned.

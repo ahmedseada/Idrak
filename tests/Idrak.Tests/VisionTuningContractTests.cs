@@ -400,16 +400,18 @@ internal static partial class Tests
         Is(cer.Score(misread, emoji), TableDistance([.. misread.EnumerateRunes().Select(r => r.Value)], [.. emoji.EnumerateRunes().Select(r => r.Value)]),
             emoji.EnumerateRunes().Count(), "cer over characters outside the basic plane, as the table counts them");
 
-        // An app's metric, and an unknown name.
+        // An app's metric over the library's "exact" (which Unregister brings back), and an unknown name.
         var mine = new ExactMetric();
         TuningMetrics.Register(mine);
         try
         {
-            Check(TuningMetrics.Get("exact").Score("a", "a").Value == 1 && TuningMetrics.Origin("exact") == typeof(ExactMetric).Assembly.GetName().Name, "an app's metric");
+            Check(TuningMetrics.Get("exact").Score("a", "a").Value == 1 && TuningMetrics.Get("exact").Score("A.", "a").Value == 0
+                  && TuningMetrics.Origin("exact") == typeof(ExactMetric).Assembly.GetName().Name, "an app's metric");
         }
         finally
         {
-            Check(TuningMetrics.Unregister("exact") && TuningMetrics.Find("exact") is null, "unregistered");
+            Check(TuningMetrics.Unregister("exact") && TuningMetrics.Origin("exact") == Overrides.Library && TuningMetrics.Get("exact").Score("A.", "a").Value == 1,
+                "unregistered: the library's exact match is back");
         }
 
         var notRegistered = Failure<NotSupportedException>(() => TuningMetrics.Get("bleu"));
