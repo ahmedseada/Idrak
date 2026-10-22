@@ -97,6 +97,11 @@ standing rules; they win over anything here), then the plan you are asked to wor
    /home/user/Idrak-xx origin/abstraction`), committing locally only; the main session merges, builds once, runs the
    filters and pushes. Tell each agent the files the other one owns. A free slot takes the next ready piece only when
    the owner has asked for that work to go on.
+   **After an agent finishes and its work is merged (the owner, 2026-10-22):** remove its worktree (`git worktree remove`,
+   then `git worktree prune`), check that no process of it is left (`pgrep -f "dotnet|VBCSCompiler"` with each process's
+   working folder and age: a test run or build whose worktree is gone, or one idle for long, is stopped), and tell every
+   agent in its brief to leave no background process running. MSBuild nodes and the compiler server shared by agents
+   still building are not leftovers.
 8. **The reference is not the ceiling**: Hugging Face `tokenizers`, sentencepiece, PyTorch, llama.cpp fix what the
    output must be, never how fast Idrak may be.
 
