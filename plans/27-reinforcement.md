@@ -1661,6 +1661,71 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# ---- Leftover 6: a real multi-machine run (two machines, one GPU each, on one LAN) ----
+# Fill these four once, the same on both machines (A runs rank 0 and is the coordinator):
+$A = "desk"; $B = "mini"            # each machine's host name, exactly as `hostname` prints it there
+$AIP = "192.168.1.10"               # machine A's LAN address
+$idrak = "D:\Projects\Idrak\src\Idrak.Cli\bin\Release\net10.0\Idrak.Cli.exe"
+
+# 1. Both machines: the same commit, built
+cd D:\Projects\Idrak
+git checkout abstraction; git pull
+dotnet build -c Release src\Idrak.Cli
+
+# 2. Machine A only: a key of at least 16 characters (shared by both, never on a command line); copy its value to B
+$k = New-Object byte[] 24; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($k); [Convert]::ToBase64String($k)
+#    Both machines, in every window that runs a rank (paste the printed value):
+$env:IDRAK_CLUSTER_KEY = "<the printed value>"
+$env:IDRAK_CLUSTER_PORT = "29501"   # each rank's own listening port (one rank per machine here)
+
+# 3. Both machines, an administrator PowerShell once: let the two ports in on the private network
+New-NetFirewallRule -DisplayName "Idrak cluster" -Direction Inbound -Protocol TCP -LocalPort 29500-29501 -Action Allow -Profile Private
+
+# 4. Machine A: the topology (the link between the machines: your LAN's speed, e.g. ethernet-1g or ethernet-2.5g),
+#    then copy runs\lan.json to the same path on B
+New-Item -ItemType Directory -Force runs | Out-Null
+& $idrak cluster init -y --nodes 2 --names "$A,$B" --address "${AIP}:29500" --devices "cuda:0;cuda:0" --inter ethernet-1g -o runs\lan.json
+& $idrak cluster inspect runs\lan.json
+#    Both machines: the transports each can use, and why not the others
+& $idrak transports
+
+# 5. Both machines, the same line (B first, then A): the links measured, cold and warm apart; then A fits the profiles
+& $idrak cluster bench --topology runs\lan.json --concurrent -j > runs\bench.json
+& $idrak cluster calibrate --from runs\bench.json            # A only: the measured link replaces the LAN's guess
+& $idrak cluster inspect runs\lan.json                       # A: the link now shows as calibrated
+
+# 6. Both machines: the same data file (it must be identical on both)
+1..32 | ForEach-Object { '{"question": "What is ' + $_ + ' plus ' + $_ + '? Answer with the number.", "answer": "' + (2 * $_) + '"}' } | Set-Content runs\sums.jsonl
+
+# 7. reinforce on the two machines (the same line on both, B first): rank 0 (A) alone writes runs\rl-lan and the log
+$env:IDRAK_RL_LOG = "runs\rl-lan.jsonl"
+& $idrak cluster start --topology runs\lan.json -- $idrak reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 5 --max-new 64 --no-think --seed 1 -o runs\rl-lan
+#    Machine A alone, the same run in one process (the same shards), to compare
+$env:IDRAK_RL_LOG = "runs\rl-one.jsonl"
+& $idrak reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 5 --max-new 64 --no-think --seed 1 -d cuda:0 -o runs\rl-one
+Remove-Item Env:IDRAK_RL_LOG
+#    Check: the first line's rewards are the same in runs\rl-lan.jsonl and runs\rl-one.jsonl (a difference is a finding: a
+#    kernel whose result depends on its batch, or the two cards differing); runs\rl-lan holds one adapter,
+#    idrak-tuning.json and checkpoints\, and nothing was written on B.
+Get-Content runs\rl-lan.jsonl -TotalCount 1; Get-Content runs\rl-one.jsonl -TotalCount 1
+
+# 8. Resume on the two machines (the same line on both): it starts at iteration 6
+& $idrak cluster start --topology runs\lan.json -- $idrak reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 6 --max-new 64 --no-think --seed 1 -o runs\rl-lan --resume
+
+# 9. tune on the two machines against one process (data-parallel fine-tuning over the real link)
+& $idrak cluster start --topology runs\lan.json -- $idrak tune Qwen/Qwen3-0.6B --data runs\sums.jsonl --epochs 1 --seed 1 -o runs\tune-lan
+& $idrak tune Qwen/Qwen3-0.6B --data runs\sums.jsonl --epochs 1 --seed 1 -d cuda:0 -o runs\tune-one
+#    Check: the losses printed by both runs agree to float rounding; then calibrate from the real run's transfers
+& $idrak cluster calibrate --from runs\tune-lan --topology runs\lan.json --dry-run
+
+# 10. After R7 (ranks agree on a stop) is merged: start step 7's line again with --iterations 20, then press Ctrl+C in
+#     B's window during iteration 3: both machines end at the same iteration (no hang), A writes one checkpoint, and
+#     step 8's --resume line (with --iterations 20) continues from it.
+
+# 11. When done, on both machines (administrator): remove the firewall rule
+Remove-NetFirewallRule -DisplayName "Idrak cluster"
+Remove-Item Env:IDRAK_CLUSTER_KEY, Env:IDRAK_CLUSTER_PORT
+
 # R6 (merged): no GPU kernel; the CUDA line runs the same tensors on the card against bars measured on the CPU (a miss is
 # a finding); on Windows the Gymnasium comparison checks the 1e-5 tolerance against Windows' own sine and cosine
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "plugins: classic|reinforcement:|reinforcement contracts|plugins:|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|conformance kit:"
