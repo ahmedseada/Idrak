@@ -10,6 +10,7 @@
 | R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | Done 2026-10-22; CPU pass |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Done 2026-10-22; CPU pass |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (left: rollouts on a cluster; see "R3 as built") |
+| R3b | R3's leftover: rollouts on a cluster (the language-model policy's episodes spread over the ranks, gathered in rank order; the policy refuses a cluster session today) | B | In progress (2026-10-22) |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Done 2026-10-22; CPU pass (left: the demo suite through R4b's `--env csharp` after its merge; see "R5 as built") |
@@ -1204,6 +1205,18 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 ```powershell
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
+
+# R5 (merged): CPU, CUDA, the demo suite's check, then the first real runs (they download a small model)
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli train data|cli health|cli polish|plugins: coding|reinforcement text:|reinforcement:|reinforcement contracts|coding agent:|cli run: tools|public API|abstraction inventory|naming:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cli reinforce: a seeded|cli reinforce: grpo|cli distill|cli train data: distill|reinforcement text:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+dotnet build -c Release samples\Idrak.Samples.CodingAgent
+dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-check samples\Idrak.Samples.CodingAgent\suite
+dotnet run -c Release --project src\Idrak.Cli -- reinforce Qwen/Qwen3-0.6B --env coding --suite samples\Idrak.Samples.CodingAgent\suite --algorithm grpo --group 8 --iterations 20 --out runs\rl-demo
+dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-train Qwen/Qwen3-0.6B samples\Idrak.Samples.CodingAgent\suite --out runs\agent-rl --algorithm grpo --group 8 --iterations 20 --cuda
+dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-run Qwen/Qwen3-0.6B samples\Idrak.Samples.CodingAgent\suite --adapter runs\agent-rl --out runs\after.jsonl --cuda
 
 # R4 (merged): CPU, CUDA for the language-model tests (the pass-rate bars were measured on the CPU only: a miss on the
 # card is a finding), the sample, and `container` on a machine with Docker or Podman and an image of your own with the .NET SDK
