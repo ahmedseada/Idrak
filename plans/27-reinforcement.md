@@ -9,8 +9,8 @@
 | R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | Done 2026-10-22; CPU pass |
 | R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | Done 2026-10-22; CPU pass |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Done 2026-10-22; CPU pass |
-| R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (left: rollouts on a cluster; see "R3 as built") |
-| R3b | R3's leftover: rollouts on a cluster (the language-model policy's episodes spread over the ranks, gathered in rank order; the policy refuses a cluster session today) | B | In progress (2026-10-22) |
+| R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (rollouts on a cluster done in R3b; see "R3b as built") |
+| R3b | R3's leftover: rollouts on a cluster (the language-model policy's episodes spread over the ranks, gathered in rank order; the policy refused a cluster session before) | B | Done 2026-10-22; CPU pass |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Done 2026-10-22; CPU pass (left: the demo suite through R4b's `--env csharp` after its merge; see "R5 as built") |
@@ -719,6 +719,104 @@ trainer and `grpo` is R4's first item, after both merge.**
   ```
   On CUDA, the GRPO test's "first ratios exactly 1" says whether a recomputed forward gives the step's values bit for bit on
   the card; a failure there is a finding (the behaviour pass and the step pack the sequences differently), not a setting.
+
+**R3b as built (2026-10-22).** R3's leftover: the language-model policy's rollouts on a cluster. `Idrak.Text` still references
+no `Idrak.Reinforcement`; the two meet in one new contract in `Idrak.Abstraction.Reinforcement`.
+- **Why shards (the design's root).** The sampler draws each token from a counter of (seed, step, **row of the batch**)
+  (`TokenSampler`, the same on CPU and GPU), so a reply depends on which other episodes share its `ActAsync` call and at which
+  row. Spreading a rollout's episodes over W ranks therefore cannot replay a one-process run that acts on all of them in one
+  call. Per-row seeds would mean a new sampling kernel on every backend (CPU, CUDA PTX, Vulkan); not taken. Instead the
+  collector cuts a rollout into **shards**: a shard's episodes under way act together in one call a round, from a seed of the
+  shard's own (`Seeds.Derive(seed, sampling, round, shard)`; shard 0's is the round's old seed). A shard replays alike wherever
+  it is played, so **a seeded run with the same shard count gives the same episodes on any number of ranks**, one process
+  included.
+- **The split (`RolloutSpread`, `Idrak.Reinforcement`, public):** every rank computes it from the episodes' numbers, the
+  shard count and the rank count alone (no message). `Shards(numbers, S, spread)`: the episodes ranked by number, then
+  `blocks` (the default: runs in number order, sizes within one, so a group's episodes, which share a prompt, act together)
+  or `interleaved` (episode k in shard k mod S); duplicates refused. `Rank(s, S, W) = ⌊s·W/S⌋`: runs of shards, shard r on
+  rank r when S = W, S/W shards a rank when S is a multiple. Settings: `ReinforcementOptions.Shards` (`IDRAK_RL_SHARDS`, 0 =
+  one per rank, so **one process keeps one shard and acts exactly as before**: R2's, R3's, R4's and R5's tests pass
+  unchanged) and `ReinforcementOptions.Spread` (`IDRAK_RL_SPREAD`), passed to the collector by the trainer; the collector's
+  constructor takes both (`shards`, `spread`, optional).
+- **Contract added (R-C3's neighbour, nothing changed in R1's):** `IRolloutRanks<TObservation, TAction>` (`Rank`, `WorldSize`,
+  `Gather(mine, ct)`: every rank's episodes in rank order, a collective). The collector looks for it on its policy; a policy
+  that is not one plays every episode in its process. In the inventory it is used by `Idrak.Reinforcement` and `Idrak.Text`,
+  so it stays in `Idrak.Abstraction` with no shared-contracts line.
+- **`RolloutCollector` (minimal hook):** this rank's slots are the episodes of its shards; their environments are made for
+  those slots alone, lazily, each with its slot's creation seed (the same on whichever rank plays it; `Created` counts what
+  was made, `Played` the last rollout's share); each round one `ActAsync` per shard of this rank, in shard order, then this
+  rank's environments stepped together (sequentially or in parallel as measured, unchanged); the final values of cut
+  episodes per shard too. After the rollout the policy gathers, and the batch is sorted by episode number, so every rank
+  holds the same batch. **The environment side:** each rank resets and steps only its own episodes' environments (the
+  `prompts` environment; the `coding` environment's workspaces, made per episode, are per rank too).
+- **`ReinforcementTrainer` (minimal hook):** on a cluster every rank runs a trainer with the same settings; rank 0 alone
+  writes a checkpoint's folder, its `state.json` and the move into place, and the JSON log; every rank calls the policy's
+  `Save` (a collective: the session's rank 0 writes the adapters and the optimizer state). Nothing else changed.
+- **`LanguageModelPolicy`:** the refusal is gone. It implements `IRolloutRanks` over its session's cluster (`Rank`,
+  `WorldSize` from the session's synchronisation; 0 and 1 in one process). `Gather` sends this rank's episodes as bytes
+  (`RolloutExchange`, internal: text messages and tool lists written once each by reference and shared again as they were,
+  tool calls, reasoning, the ids, log-probabilities, values and contexts as sampled, rewards, ends, info; a part that is not
+  text is refused) and keeps its own episodes as the objects it played. The exchange is an all-gather of each rank's count,
+  then of the values padded to the longest rank's, straight from host memory where the collectives take host values (the
+  library's and the simulator's), else through two device buffers made for the call: bytes travel three to a value as an
+  integer below 2^24, so no copy or wire changes them. **The update stays the session's data-parallel step** (every rank
+  lays out the same batch and calls `Step` with the same sequences; each rank trains its share of the step's batches and the
+  gradients are all-reduced, as `FineTuner` does). **The behaviour and reference passes are spread too** (rule 75: every
+  rank computing all of them is W times the work): each rank computes a contiguous run of the batch's sequences, cut where
+  the positions before it reach r/W of all positions, and the runs are gathered (`LanguageModelPolicyOptions.SpreadPasses`,
+  `IDRAK_RL_SPREAD_PASSES`, on by default).
+- **What is bit-identical across 1, 2 and 4 ranks (CPU, tested, 4 shards):** the first rollout's episodes whole (numbers,
+  seeds, groups, prompt and reply ids, replies, the sampler's log-probabilities), every iteration's rewards and advantages,
+  and in the test's four iterations every later rollout's ids and replies; on every rank of one run the adapters are the same
+  bits; spreading the passes or running them whole gives the same adapters bit for bit, and every update's ratios are exactly
+  1 on every rank (a sequence's forward on the CPU does not depend on what it is packed with). **What is not, and why:** the
+  adapters after an update differ from one process's by float rounding (largest gap 6.0e-8 after four updates), because a
+  step's gradient is summed per rank over its batches and then across the ranks in the collective's order, where one process
+  accumulates all batches in one order; so later rollouts sample from weights a rounding apart and their sampler
+  log-probabilities differ by up to 2.9e-6. Their ids stayed the same here; a later token can differ where the rounding meets
+  a near-tie of the sampler (then the runs part, each valid). Without a fixed shard count (the default, one per rank), runs on
+  different rank counts draw differently by design.
+- **Measured (rule 79), in the test on the simulated cluster (4 cores, the tiny decoder, 16 episodes of 6 tokens, 4 shards,
+  iterations 2 to 4, one run):** rollout / update seconds: one process 0.09 / 0.25; 2 ranks 0.04 / 0.13; 4 ranks 0.03 / 0.11;
+  4 ranks with the passes run whole on every rank 0.04 / 0.19 (so spreading them paid); interleaved, iteration 2: one process
+  0.02 / 0.08, 4 ranks 0.01 / 0.04. The baseline is one process with the same 4 shards (four calls a round, needed for equal
+  episodes); one process with its default single shard was not timed here. `blocks` stays the default for the reason above
+  (a group's rows in one call; on a model without per-row starts rows of one length decode together), which is reasoning,
+  not a measurement: on this model the two splits cost about the same.
+- **Tests** (`tests/Idrak.Tests/ReinforcementClusterTests.cs`, group `reinforcement cluster:`, 2, in-process clusters only, no
+  child process): the split (blocks, interleaved, sizes, duplicates, shards to ranks), the settings and their variables (a bad
+  split refused naming `IDRAK_RL_SPREAD`), the exchange on 3 ranks (uneven and empty byte lists, floats as bits: -0, the
+  smallest subnormal, the largest), a two-step text episode's round trip (tools, a tool call, reasoning, info, a context and
+  none; a tool list and messages shared as they were), an image refused; then R3's tiny decoder warmed up once and
+  checkpointed, the `prompts` environment (two prompts, reward `metric` exact), grpo (group advantages, a k3 KL of 0.01, one
+  epoch) under R2's trainer for 4 iterations of 16 episodes in groups of 4, on one process and on 2 and 4 ranks (blocks),
+  4 ranks with the passes whole, and interleaved on one process and 4 ranks (2 iterations): the checks above, every rank
+  playing its share each iteration (16, 8 or 4 episodes), the 2-rank run's checkpoint written once by rank 0 with no
+  `.writing` left and its log one line an iteration, and each rank's device memory held after iteration 2 not growing by the
+  last. Variables in `EnvironmentVariables.cs` (Reinforcement): `IDRAK_RL_SHARDS`, `IDRAK_RL_SPREAD`, `IDRAK_RL_SPREAD_PASSES`.
+  `api/Idrak.Abstraction.txt`, `Idrak.Reinforcement.txt`, `Idrak.Text.txt` and `plans/10-abstraction-inventory.md`
+  regenerated.
+- **The run (CPU, this agent):** one build of `tests/Idrak.Tests` (no warnings); `IDRAK_UPDATE_API=1` (`public API`) and
+  `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`); then `reinforcement cluster:|reinforcement:|reinforcement
+  contracts|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:`:
+  31 passed, 0 failed; `reinforcement text:|fine-tuning:|fine-tuning options:|cluster: 2 ranks equal one process|cli
+  reinforce|plugins: coding`: 43 passed, 0 failed. Total 74 of 74, no rebuild.
+- **Left:** `idrak reinforce` on a cluster: `idrak cluster sim` runs pretrain, tune, train and resume only, and the command
+  saves the adapter on every rank; the library side is ready (the command's session already takes the rank's collectives as
+  tune does). A real multi-process cluster (`idrak cluster` over TCP) was not run here; the exchange takes the collectives'
+  device path there when they do not take host values.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; CUDA runs the same in-process cluster carved from one card):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement cluster:|reinforcement:|reinforcement contracts|reinforcement text:|fine-tuning:|fine-tuning options:|cluster: 2 ranks equal one process|cli reinforce|plugins: coding|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "reinforcement cluster:|reinforcement text:|cluster: 2 ranks equal one process"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+  On CUDA the ratio and spread-passes bit checks are skipped (CPU only); the first rollout's bit-identity across rank counts
+  and the adapters within 1e-4 are checked there, and a miss is a finding (a kernel whose result depends on the batch it runs
+  in), not a setting.
 
 ## Phase R4: `Idrak.Reinforcement.Plugins.Coding`
 

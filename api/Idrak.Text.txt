@@ -1036,14 +1036,17 @@ public sealed class Idrak.Text.Reinforcement.JudgeReward : Idrak.Abstraction.Rei
   public string Summary { get; }
   public void Release()
 
-public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstraction.Reinforcement.IPolicy<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, System.IDisposable
+public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstraction.Reinforcement.IPolicy<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, Idrak.Abstraction.Reinforcement.IRolloutRanks<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, System.IDisposable
   public Idrak.Abstraction.Reinforcement.UpdateStats Update(Idrak.Abstraction.Reinforcement.RolloutBatch<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage> batch, Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyList<int>? episodes = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null)
   public Idrak.Text.FineTuningSession Session { get; }
   public Idrak.Text.Generation.ChatGenerator Chat { get; }
   public Idrak.Text.Reinforcement.LanguageModelPolicyOptions Options { get; }
   public LanguageModelPolicy(Idrak.Text.FineTuningSession session, Idrak.Text.Reinforcement.LanguageModelPolicyOptions? options = null, bool ownsSession = true)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>> Gather(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>> mine, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Reinforcement.EpisodeLayout> Lay(Idrak.Abstraction.Reinforcement.RolloutBatch<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage> batch, System.Collections.Generic.IReadOnlyList<int>? episodes = null)
   public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.PolicyActions<Idrak.Abstraction.Generation.ChatMessage>> ActAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatObservation> observations, Idrak.Abstraction.Reinforcement.ActionSampling sampling, System.Threading.CancellationToken cancellationToken = default)
+  public int Rank { get; }
+  public int WorldSize { get; }
   public void Dispose()
   public void Load(string path)
   public void Save(string path)
@@ -1051,11 +1054,13 @@ public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstrac
 public sealed record Idrak.Text.Reinforcement.LanguageModelPolicyOptions : System.IEquatable<Idrak.Text.Reinforcement.LanguageModelPolicyOptions>
   public Idrak.Abstraction.Generation.GenerationOptions? Generation { get; init; }
   public LanguageModelPolicyOptions()
+  public bool SpreadPasses { get; init; }
   public bool? Think { get; init; }
   public const string BehaviorVariable = "IDRAK_RL_BEHAVIOR"
   public const string DivergenceVariable = "IDRAK_RL_DIVERGENCE"
   public const string Recompute = "recompute"
   public const string Sampler = "sampler"
+  public const string SpreadPassesVariable = "IDRAK_RL_SPREAD_PASSES"
   public const string TeacherWeightVariable = "IDRAK_RL_TEACHER_WEIGHT"
   public float Beta { get; init; }
   public float TeacherTemperature { get; init; }

@@ -39,6 +39,18 @@ public sealed record ReinforcementOptions
     /// <summary>Whether environments step in parallel: true, false, or null to measure which is faster (rule 79). <c>IDRAK_RL_PARALLEL_STEPS</c> (on, off, auto).</summary>
     public bool? ParallelSteps { get; init; }
 
+    /// <summary>
+    /// The shards each rollout is cut into (<see cref="RolloutSpread"/>): a shard's episodes act together, one call of the
+    /// policy a round with a seed of the shard's own, and on a cluster each rank plays the episodes of its shards. 0 for one
+    /// per rank (1 in one process: the rollout acts as one call, as before). A seeded run gives the same episodes on any
+    /// number of ranks that share a shard count, so set it to a multiple of every rank count a run is compared on.
+    /// <c>IDRAK_RL_SHARDS</c>.
+    /// </summary>
+    public int Shards { get; init; }
+
+    /// <summary>How the episodes are cut into shards: <see cref="RolloutSpread.Blocks"/> (runs in number order, a group's together) or <see cref="RolloutSpread.Interleaved"/>. <c>IDRAK_RL_SPREAD</c>.</summary>
+    public string Spread { get; init; } = RolloutSpread.Blocks;
+
     /// <summary>The iterations of the run (each a rollout, its advantages and the updates). <c>IDRAK_RL_ITERATIONS</c>.</summary>
     public int Iterations { get; init; } = 100;
 
@@ -129,7 +141,7 @@ public sealed record ReinforcementOptions
     /// <summary>
     /// These options with each one an <c>IDRAK_RL_*</c> variable sets in its place; the variables not set keep
     /// <paramref name="start"/>'s (the defaults when null). The variables: IDRAK_RL_ALGORITHM, _ESTIMATOR, _GROUP, _EPISODES,
-    /// _ENVIRONMENTS, _PARALLEL_STEPS, _ITERATIONS, _EPOCHS, _MINIBATCH, _GAMMA, _LAMBDA, _GROUP_SCALE,
+    /// _ENVIRONMENTS, _PARALLEL_STEPS, _SHARDS, _SPREAD, _ITERATIONS, _EPOCHS, _MINIBATCH, _GAMMA, _LAMBDA, _GROUP_SCALE,
     /// _NORMALIZE_ADVANTAGES, _CLIP, _KL, _KL_ESTIMATOR, _ENTROPY, _VALUE, _NORMALIZE, _MAX_GRAD_NORM, _SCHEDULE, _WARMUP,
     /// _TEMPERATURE, _MAX_STEPS, _SEED, _EVALUATE_EVERY, _EVALUATION_EPISODES, _SAVE_EVERY, _CHECKPOINTS, _RESUME, _LOG.
     /// </summary>
@@ -143,6 +155,8 @@ public sealed record ReinforcementOptions
         o = Variables.Int("IDRAK_RL_EPISODES", 1) is { } episodes ? o with { EpisodesPerIteration = episodes } : o;
         o = Variables.Int("IDRAK_RL_ENVIRONMENTS", 0) is { } environments ? o with { Environments = environments } : o;
         o = Variables.Switch("IDRAK_RL_PARALLEL_STEPS") is var (set, parallel) && set ? o with { ParallelSteps = parallel } : o;
+        o = Variables.Int(RolloutSpread.ShardsVariable, 0) is { } shards ? o with { Shards = shards } : o;
+        o = Variables.Text(RolloutSpread.SpreadVariable) is { } spread ? o with { Spread = ParseSpread(spread) } : o;
         o = Variables.Int("IDRAK_RL_ITERATIONS", 0) is { } iterations ? o with { Iterations = iterations } : o;
         o = Variables.Int("IDRAK_RL_EPOCHS", 0) is { } epochs ? o with { Epochs = epochs } : o;
         o = Variables.Int("IDRAK_RL_MINIBATCH", 0) is { } miniBatch ? o with { MiniBatch = miniBatch } : o;
@@ -171,6 +185,19 @@ public sealed record ReinforcementOptions
         return o;
     }
 
+    // A split named by its variable, refused naming the variable.
+    private static string ParseSpread(string text)
+    {
+        try
+        {
+            return RolloutSpread.Parse(text);
+        }
+        catch (ArgumentException)
+        {
+            throw new ArgumentException($"{RolloutSpread.SpreadVariable}={text} is not {string.Join(" or ", RolloutSpread.Names)}.");
+        }
+    }
+
     // The settings that cannot work, refused before a run starts (the names are checked by their registries).
     internal void Validate()
     {
@@ -196,6 +223,8 @@ public sealed record ReinforcementOptions
         NotNegative(Iterations, nameof(Iterations));
         NotNegative(GroupSize, nameof(GroupSize));
         NotNegative(Environments, nameof(Environments));
+        NotNegative(Shards, nameof(Shards));
+        _ = RolloutSpread.Parse(Spread);
         NotNegative(Epochs, nameof(Epochs));
         NotNegative(MiniBatch, nameof(MiniBatch));
         NotNegative(MaxEpisodeSteps, nameof(MaxEpisodeSteps));

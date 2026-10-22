@@ -266,6 +266,9 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_LOG", Reinforcement, "none", "A file each iteration is appended to as a JSON line", ReinforcementRun),
         new("IDRAK_RL_OPTIMIZER", Reinforcement, "adam", "A module policy's optimizer: an OptimizerKinds name", ReinforcementRun),
         new("IDRAK_RL_LEARNING_RATE", Reinforcement, "0.0003", "A module policy's learning rate (the schedule's base)", ReinforcementRun),
+        new("IDRAK_RL_SHARDS", Reinforcement, "0 (one per rank; 1 in one process)", "The shards a rollout is cut into: a shard's episodes act together (one call of the policy a round), and on a cluster each rank plays its shards' episodes; a seeded run gives the same episodes on any rank count that shares it", ReinforcementRun),
+        new("IDRAK_RL_SPREAD", Reinforcement, "blocks", "How a rollout's episodes are cut into shards: blocks (runs in number order, a group's together) or interleaved (episode k in shard k mod the shards)", ReinforcementRun),
+        new("IDRAK_RL_SPREAD_PASSES", Reinforcement, "on", "on or off: on a cluster, a language-model policy's behaviour and reference passes are spread over the ranks (each a run of the batch's sequences, gathered) rather than run whole on every rank", ReinforcementRun),
 
         new("IDRAK_CLUSTER_TOPOLOGY", Cluster, "none: one node with the devices given", "The topology file of a cluster run (idrak cluster init writes it)", ClusterRun),
         new("IDRAK_CLUSTER_NODE", Cluster, "the node named after this host", "Which node of the topology file this machine is", ClusterRun),

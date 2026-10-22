@@ -10,7 +10,7 @@ templates or coding agent.
 The contracts are in `Idrak.Abstraction.Reinforcement` (add the `using` line to name them), so every package reaches
 them: `IEnvironment<TObservation, TAction>` and `Space` (an episode's reset and steps, its observation and action
 spaces), `IEnvironmentKind` and `EnvironmentKinds` (environments by name), `IPolicy<TObservation, TAction>` (acting and
-updating), `IRewardFunction` and `RewardFunctions` (scores of answers), `IAdvantageEstimator` and `AdvantageEstimators`
+updating) and `IRolloutRanks<TObservation, TAction>` (a policy on every rank of a cluster, which gathers the ranks' episodes), `IRewardFunction` and `RewardFunctions` (scores of answers), `IAdvantageEstimator` and `AdvantageEstimators`
 (advantages and returns in a fixed summation order), `IPolicyLoss` and `PolicyLosses` (the algorithms' losses), and the
 data passed between them: `Trajectory`, `ActionRecord`, `RolloutBatch` (pooled arrays, returned on `Dispose`).
 
@@ -34,7 +34,11 @@ batch against its single form, an estimator's fixed order, a loss's gradient) ar
   estimator, normalized per sequence, per token or by a constant), as tensor operations with autograd.
 - **`RolloutCollector`**: plays a rollout's episodes at once, an environment each (made once and reused), the policy asked
   for every episode's action in one call, the environments stepped in parallel only where it measured faster; scratch
-  buffers reused, episodes numbered and sorted by number, so threads change nothing.
+  buffers reused, episodes numbered and sorted by number, so threads change nothing. On a cluster (a policy that is an
+  `IRolloutRanks`: the language-model policy on a fine-tuning session opened with a cluster) the episodes are cut into
+  shards (`RolloutSpread`: `IDRAK_RL_SHARDS`, one per rank by default; `IDRAK_RL_SPREAD` blocks or interleaved), each rank
+  plays its shards' episodes in environments of its own, and the policy gathers every rank's in rank order; a seeded run
+  with the same shard count gives the same episodes on any number of ranks.
 - **`ReinforcementTrainer`**: collect, estimate, `Epochs` passes of mini-batch updates; the gradient clip and a schedule from
   `LearningRateSchedules` for a policy that exposes its optimizer (`IScheduledPolicy`); greedy evaluation episodes with
   seeds of their own; checkpoints (the policy with its optimizer, the iteration, the updates, the seed) and a resume that
