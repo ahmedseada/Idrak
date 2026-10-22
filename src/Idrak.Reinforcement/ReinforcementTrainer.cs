@@ -89,6 +89,11 @@ public static class ReinforcementTrainer
 /// the library's telemetry (training start and end, a batch event per update, an epoch event per iteration whose metrics
 /// are the episodes, steps, reward mean and spread, KL, clip share, rollout and update times), built only when a hook
 /// listens; a JSON line per iteration into <see cref="ReinforcementOptions.Log"/>.</item>
+/// <item><b>On a cluster</b> (Plan 27, R3b: a policy that is an <see cref="IRolloutRanks{TObservation, TAction}"/> of several
+/// ranks): every rank runs a trainer with the same settings; each rollout's episodes are spread over the ranks
+/// (<see cref="ReinforcementOptions.Shards"/>, <see cref="ReinforcementOptions.Spread"/>) and gathered, so every rank
+/// estimates the same advantages and makes the same updates (the policy's data-parallel step); rank 0 alone writes the
+/// checkpoints' files and the log, while every rank saves the policy (a collective). A run is stopped on every rank alike.</item>
 /// </list>
 /// </summary>
 /// <typeparam name="TObservation">The environment's observations.</typeparam>
@@ -186,7 +191,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
         bool cancelled = false;
         double best = double.NegativeInfinity;
         var started = Stopwatch.StartNew();
-        using var collector = new RolloutCollector<TObservation, TAction>(_kind, o.EnvironmentOptions, seed, o.Environments, o.ParallelSteps);
+        using var collector = new RolloutCollector<TObservation, TAction>(_kind, o.EnvironmentOptions, seed, o.Environments, o.ParallelSteps, o.Shards, o.Spread);
         var starts = new EpisodeStart[o.EpisodesPerIteration];
         var order = new int[o.EpisodesPerIteration];
         var miniBatchIndices = new int[miniBatch];
@@ -320,7 +325,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             last = summary;
             bool isBest = summary.RewardMean > best;
             best = Math.Max(best, summary.RewardMean);
-            Publish(summary, o, device, isBest);
+            Publish(summary, o, device, isBest, Lead);
             progress?.Report(iteration + 1);
             OnIteration?.Invoke(summary);
             if (o.CheckpointFolder is { } folder && o.SaveEvery > 0 && (iteration + 1) % o.SaveEvery == 0 && iteration + 1 < o.Iterations)
@@ -506,7 +511,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
     }
 
     // The iteration to telemetry (built only when a hook listens) and to the log file.
-    private static void Publish(IterationSummary s, ReinforcementOptions o, Device device, bool isBest)
+    private static void Publish(IterationSummary s, ReinforcementOptions o, Device device, bool isBest, bool lead)
     {
         if (Telemetry.IsEnabled(TelemetryLevel.Training))
         {
@@ -527,7 +532,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                 s.Steps / Math.Max(duration.TotalSeconds, 1e-9), ComputeResources.GetMemoryUsage(device), isBest));
         }
 
-        if (o.Log is { } log)
+        if (lead && o.Log is { } log)                                              // on a cluster, rank 0's line alone
         {
             using var stream = new FileStream(log, FileMode.Append, FileAccess.Write, FileShare.Read);
             using (var writer = new Utf8JsonWriter(stream))
@@ -566,12 +571,22 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
         }
     }
 
+    // Whether this trainer writes the run's files: in one process, or rank 0 of a cluster (every rank runs a trainer).
+    private bool Lead => _policy is not IRolloutRanks<TObservation, TAction> { WorldSize: > 1, Rank: > 0 };
+
     // The checkpoint after `iterations`: the policy, then the run's state, written into a folder of its own and moved in
-    // place whole, so a stop part-way leaves the previous checkpoint as it was.
+    // place whole, so a stop part-way leaves the previous checkpoint as it was. On a cluster every rank saves the policy
+    // (a collective: the policy's rank 0 writes it) and rank 0 alone writes the folder and the state.
     private string WriteCheckpoint(string root, int iterations, int seed, long updates)
     {
         string folder = Path.Combine(root, CheckpointPrefix + iterations.ToString("D6", CultureInfo.InvariantCulture));
         string writing = folder + ".writing";
+        if (!Lead)
+        {
+            _policy.Save(Path.Combine(writing, PolicyFolder));
+            return folder;
+        }
+
         if (Directory.Exists(writing))
         {
             Directory.Delete(writing, recursive: true);
