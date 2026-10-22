@@ -9,7 +9,7 @@
 | R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | In progress (2026-10-22) |
 | R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | In progress (2026-10-22) |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Planned |
-| R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards | B | Planned |
+| R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Planned |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
 | R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
@@ -284,13 +284,43 @@ cli health: every environment variable`.
   matches a pattern: a final-answer tag, a format), `json` (the answer parses, through the library's `JsonRepairs`),
   `length` (a penalty past a token budget), `judge` (a judge model's probability of "yes" through `AnswerScorer`, any model
   the library loads), `sum` (weighted).
+- **On-policy distillation (the owner, 2026-10-22)** (Agarwal et al. 2024, "On-Policy Distillation of Language Models:
+  Learning from Self-Generated Mistakes", arXiv:2306.13649). The student generates its own episodes in any environment
+  (`prompts`, or R4's multi-turn `coding` episodes with tool calls), and the teacher's next-token distributions are
+  computed on exactly the ids the student sampled, so the student learns where its own outputs go wrong, not only on
+  answers someone else wrote (`idrak distill` today).
+  - **The teacher** is a live `DistillationTeacher` (`DistillationTeachers.FromModel`, exists): frozen, no gradients, in
+    its own precision (int8 or int4 allowed), on the device the app loads it on, so teacher and student can sit on one
+    device or on two (measured, never assumed). A precomputed teacher file (`FromFile`) cannot cover new samples and is
+    refused with that reason. Teacher and student share the vocabulary (`DistillationTeacher.Check`, the fingerprint);
+    otherwise refused, naming `idrak distill --generate` (answers written by the teacher) as the way across tokenizers.
+  - **Only the assistant's tokens train:** prompts, tool calls' results and the environment's messages never do, so an
+    agentic-coding episode is distilled turn by turn as the multi-turn rule above lays it out.
+  - **Divergences** as a registry, `TeacherDivergences` (`Idrak.Text.Abstractions`): `forward` (KL(q ‖ p), today's
+    `FineTuningLossInput.TeacherDivergence`), `reverse` (KL(p ‖ q), mode-seeking, the usual on-policy choice), `jsd`
+    (generalized Jensen-Shannon with β); `TeacherDivergence` takes the kind. Each costs one more pass of the student's and
+    the teacher's heads over the trained rows; the `[tokens, vocabulary]` logits are never stored.
+  - **Two uses.** (1) Pure distillation: `FineTuningLosses.OnPolicyDistillation(divergence, temperature, β)`, no reward
+    and no advantage; a share λ of each step's batches comes from the dataset's own answers instead of the student's
+    samples (the paper's λ, a setting). (2) With reinforcement learning: a teacher term added to the policy loss with a
+    weight, a dense per-token signal beside the environment's sparse reward. For agentic coding, where most early
+    episodes fail the tests and give no signal, the teacher's per-token guidance is what moves the student; the tests'
+    reward takes over as the student improves (the weight can follow a schedule from M2). The KL to the reference in
+    `grpo` and `ppo` stays as it is; the teacher term is separate.
+  - **Settings:** the teacher (model and device), the divergence, β, the temperature, λ, the teacher weight; variables
+    `IDRAK_RL_TEACHER_WEIGHT`, `IDRAK_RL_DIVERGENCE`, `IDRAK_RL_DISTILL_MIX` (names proposed, as R5's).
 
 **Done when:** `FineTuner.Train`'s tests pass unchanged with the same losses; on a tiny decoder made in the test (no
 download), GRPO on a `prompts` task with a `metric:exact` reward raises the pass rate within a seeded number of
 iterations; the trained ids equal the sampled ids; a multi-turn episode picks `episode` on a prefix-stable template and
 `turn` on one that drops reasoning; peak device memory over 20 iterations does not grow (CPU here; CUDA the owner's).
+On-policy distillation: with the teacher equal to the student every divergence is 0 and the weights do not move; with a
+stronger tiny teacher trained in the test, the student's reverse KL on its own samples falls within a seeded number of
+iterations, alone and as a term beside a reward; `forward`, `reverse` and `jsd` match a direct computation on fixed
+logits; a multi-turn episode trains its assistant tokens only; a vocabulary mismatch and a teacher file are refused with
+their messages.
 
-**Tests (CPU here):** one build; `reinforcement text:|fine-tuning:|conversation tuning:|chat templates:|generation|
+**Tests (CPU here):** one build; `reinforcement text:|distillation:|fine-tuning:|conversation tuning:|chat templates:|generation|
 coding agent:|evaluation:|tuning metrics|reinforcement:|public API|abstraction inventory|cli health: every environment
 variable`. **Owner (CUDA):** the same `reinforcement text:|fine-tuning:` on `cuda`, and the GRPO run of R5 on a small real
 model.
@@ -323,10 +353,14 @@ model.
   builds and tests run on the cores (rule 79; the number of workspaces is measured from the cores and the free disk, and
   a setting, `IDRAK_RL_WORKSPACES`). Workspaces are deleted after their episode unless kept for inspection
   (`IDRAK_RL_KEEP_WORKSPACES`).
+- **Agentic coding with a teacher:** the coding environment runs under R3's on-policy distillation as under any
+  algorithm: the student works the tasks with the tools, the teacher grades every token of the student's own turns, and
+  the tests' reward is added when a weight is given. No coding-specific distillation code: it is R3's, on R4's episodes.
 
 **Done when:** the moved `coding agent:` tests pass unchanged; `plugins: coding` passes on a task suite written in the test
 (a C# project and a hidden test; a scripted fake chat model that solves it on some seeds): a seeded episode replays the same,
-the reward follows verification, a broken setup is left out and reported, a test edit is refused when asked; `process`
+the reward follows verification, a broken setup is left out and reported, a test edit is refused when asked; on-policy distillation runs on the suite with a fake
+teacher and trains the assistant's tokens only; `process`
 enforces its time, output and memory limits and refuses `network: off`; `container` refuses when no program is found
 (running it is the owner's).
 
@@ -338,14 +372,18 @@ Docker or Podman, and the coding run of R5.
 
 - **`idrak reinforce MODEL`** (Train group, beside `tune`): `--env prompts --data FILE --reward exact` or `--env coding
   --suite DIR`; `--algorithm` (a `PolicyLosses` name), `--estimator`, `--group`, `--kl`, `--clip`, `--epochs`,
-  `--iterations`, `--environments`, `--sandbox`, LoRA and device options as `tune` has them (shared, not copied),
+  `--iterations`, `--environments`, `--sandbox`, `--teacher MODEL` with `--teacher-device`, `--teacher-weight`,
+  `--divergence`, `--algorithm distill` (on-policy distillation alone), LoRA and device options as `tune` has them (shared, not copied),
   `--out DIR` (adapters and checkpoints; `--resume`), `--list` (environments, rewards, algorithms, estimators, sandboxes,
   each from its registry). The live progress line through `IProgressReporter`; a JSON line per iteration with
   `IDRAK_RL_LOG`.
 - **Every new variable** in `src/Idrak.Cli/Shared/EnvironmentVariables.cs`: `IDRAK_RL_ALGORITHM`, `IDRAK_RL_ESTIMATOR`,
   `IDRAK_RL_GROUP`, `IDRAK_RL_KL`, `IDRAK_RL_CLIP`, `IDRAK_RL_ENVIRONMENTS`, `IDRAK_RL_WORKSPACES`,
   `IDRAK_RL_KEEP_WORKSPACES`, `IDRAK_RL_TURNS`, `IDRAK_RL_BEHAVIOR`, `IDRAK_RL_LOG`, `IDRAK_SANDBOX`,
-  `IDRAK_SANDBOX_PROGRAM`, `IDRAK_SANDBOX_IMAGE`, `IDRAK_SANDBOX_NETWORK` (names proposed; the owner may rename).
+  `IDRAK_SANDBOX_PROGRAM`, `IDRAK_SANDBOX_IMAGE`, `IDRAK_SANDBOX_NETWORK`, and R3's `IDRAK_RL_TEACHER_WEIGHT`,
+  `IDRAK_RL_DIVERGENCE`, `IDRAK_RL_DISTILL_MIX` (names as proposed, the owner 2026-10-22).
+- **`idrak distill --on-policy`:** the existing command gains on-policy distillation over its chat data (the `prompts`
+  environment), with `--divergence`, `--beta` and `--mix` (λ); the training is R3's, not a copy.
 - **`samples/Idrak.Samples.CodingAgent`:** `agent-run` and `agent-check` on the plug-in's suite and verifier, and a new
   `agent-train` that calls the library's trainer (no trainer of its own); its README.
 - **A demo suite** under `samples/Idrak.Samples.CodingAgent/suite/`: a few small C# tasks (a workspace, hidden tests, a
