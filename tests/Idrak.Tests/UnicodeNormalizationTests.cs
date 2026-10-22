@@ -342,7 +342,12 @@ internal static partial class Tests
 
         string folder = TestData("tokenizers/wordpiece-uncased");
         const string text = "Caf\u00E9 na\u00EFve R\u00C9SUM\u00C9 \u00DCn\u00EFc\u00F6d\u00E9 e\u0301t\u00E9 \uD55C\uAD6D\uC5B4 \uFB01";
-        var info = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, StandardOutputEncoding = Encoding.UTF8 };
+        // Standard input given and closed: the tool adds piped input to its text, and an inherited pipe nobody closes (a
+        // runner started from a script) would hold it.
+        var info = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, StandardOutputEncoding = Encoding.UTF8,
+        };
         foreach (string arg in new[] { dll, "tokenize", folder, text, "--json", "--offline" })
         {
             info.ArgumentList.Add(arg);
@@ -351,6 +356,7 @@ internal static partial class Tests
         info.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         info.Environment["DOTNET_NOLOGO"] = "1";
         using var process = Process.Start(info)!;
+        process.StandardInput.Close();
         var error = process.StandardError.ReadToEndAsync();
         string output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();

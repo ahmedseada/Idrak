@@ -16,6 +16,7 @@ internal static partial class Tests
         ("tokenizers: every BPE fixture loads through PretrainedTokenizers.Load (and BpeTokenizer.Load) to the ids, refusals and text BpeTokenizer.Load gave before the registry (tokenizers/bpe-baseline.json)", TokenizersBpeBaseline),
         ("tokenizers: the model registry names BPE, builds it from a definition, refuses an unknown model type naming the registered ones and TokenizerModels.Register, and an app's model type is built and unregistered", TokenizersModelRegistry),
         ("tokenizers: the readers find tokenizer.json in a folder and as a file, a list vocabulary is read as pieces and scores, Format and IDRAK_TOKENIZER_FORMAT pick the reader, and a folder without a tokenizer names the readers", TokenizersFileReaders),
+        ("tokenizers: the decoded text's spaces: a folder whose tokenizer_config.json sets clean_up_tokenization_spaces takes out the space before punctuation and English contractions as transformers does (each replacement in its order); CleanUpSpaces and IDRAK_TOKENIZER_CLEANUP override it, a bad value refused naming the variable; without the setting nothing is taken out", TokenizersCleanUpSpaces),
         ("tokenizers: a tokenizer.json that names no model type (written before tokenizers did: t5-small's, many BERT folders') is read as Hugging Face tokenizers reads it, from what its model holds (merges BPE, [piece, score] pairs Unigram, WordPiece's settings WordPiece, any other vocabulary WordLevel), to the ids of the same file naming it", TokenizersUntypedModel),
         ("tokenizers: an app's model overriding BPE is guarded: under FallBack one that fails to build or to encode (a text, a range, a batch, padded as the built-in pads it) is answered by the built-in, under Throw its failure reaches the caller", TokenizersGuardedModel),
         ("tokenizers: the piece cache is a setting (PieceCacheLimit, IDRAK_TOKENIZER_CACHE; 0 caches nothing and gives the same ids), a bad value is refused naming it, and PretrainedOptions carries the settings", TokenizersPieceCache),
@@ -349,6 +350,39 @@ internal static partial class Tests
         {
             Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, previous);
             temporary.Delete(recursive: true);
+        }
+    }
+
+    private static void TokenizersCleanUpSpaces(Device device)
+    {
+        _ = device;
+        Check(DecodedSpaces.CleanUp("it 's here , is n't it ? yes ! I 'm sure we 've seen they 're ' fine' .")
+              == "it's here, isn't it? yes! I'm sure we've seen they're'fine'.", "transformers' replacements (\" ' \" too, which joins the quote to both words)");
+        Check(DecodedSpaces.CleanUp("a  .") == "a .", "each replacement once over the text, as str.replace: two spaces keep one");
+
+        string folder = TokenizerData("wordpiece-uncased");                     // its tokenizer_config.json sets the clean-up
+        Check(PretrainedTokenizers.Read(folder).CleanUpTokenizationSpaces == true, "the folder's tokenizer_config.json asks for it");
+        var asked = PretrainedTokenizers.Load(folder);
+        var raw = PretrainedTokenizers.Load(folder, new TokenizerOptions { CleanUpSpaces = false });
+        int[] ids = [.. raw.Encode("it's here, isn't it?")];
+        string rawText = raw.Decode(ids), cleaned = asked.Decode(ids);
+        Check(cleaned == DecodedSpaces.CleanUp(rawText) && cleaned != rawText,
+            $"the folder's tokenizer takes the spaces out ('{cleaned}'), CleanUpSpaces false keeps them ('{rawText}')");
+        Check(PretrainedTokenizers.Load(Path.Combine(folder, "tokenizer.json")).Decode(ids) == cleaned, "the tokenizer.json given as a file reads its folder's tokenizer_config.json too");
+        Check(PretrainedTokenizers.Read(TokenizerData("unigram")).CleanUpTokenizationSpaces is null, "a folder whose tokenizer_config.json says nothing of it leaves it off");
+
+        string? previous = Environment.GetEnvironmentVariable(TokenizerOptions.CleanUpVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(TokenizerOptions.CleanUpVariable, "0");
+            Check(PretrainedTokenizers.Load(folder).Decode(ids) == rawText, "IDRAK_TOKENIZER_CLEANUP=0 keeps the spaces over the folder's setting");
+            Check(PretrainedTokenizers.Load(folder, new TokenizerOptions { CleanUpSpaces = true }).Decode(ids) == cleaned, "the option wins over the variable");
+            Environment.SetEnvironmentVariable(TokenizerOptions.CleanUpVariable, "some");
+            Expect<InvalidOperationException>(() => PretrainedTokenizers.Load(folder), "IDRAK_TOKENIZER_CLEANUP is 'some'", "a variable that is not 1 or 0");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(TokenizerOptions.CleanUpVariable, previous);
         }
     }
 

@@ -26,6 +26,9 @@ public sealed record TokenizerOptions
     /// <summary>The number of encoded pieces a tokenizer keeps when nothing sets <see cref="PieceCacheLimit"/>.</summary>
     public const int DefaultPieceCacheLimit = 100_000;
 
+    /// <summary>The variable <see cref="CleanUpSpaces"/> falls back to.</summary>
+    public const string CleanUpVariable = "IDRAK_TOKENIZER_CLEANUP";
+
     /// <summary>The variable <see cref="SamplingAlpha"/> falls back to.</summary>
     public const string SamplingAlphaVariable = "IDRAK_TOKENIZER_ALPHA";
 
@@ -190,6 +193,31 @@ public sealed record TokenizerOptions
 
     /// <summary>The reader's name, from the setting or its variable; null when neither sets one.</summary>
     public string? ResolvedFormat() => Format ?? (Environment.GetEnvironmentVariable(FormatVariable) is { Length: > 0 } name ? name.Trim() : null);
+
+    /// <summary>
+    /// Whether a decode takes out the space before punctuation and English contractions (" ." to ".", " n't" to "n't"), as
+    /// transformers' <c>clean_up_tokenization_spaces</c> does; null takes IDRAK_TOKENIZER_CLEANUP (1 or 0), then the
+    /// model's tokenizer_config.json (<see cref="TokenizerDefinition.CleanUpTokenizationSpaces"/>), then off.
+    /// </summary>
+    public bool? CleanUpSpaces { get; init; }
+
+    /// <summary>The clean-up, from the setting, its variable, or <paramref name="file"/> (the model's own; off when null).</summary>
+    /// <exception cref="InvalidOperationException">The variable is not 1, 0, true or false.</exception>
+    public bool ResolvedCleanUpSpaces(bool? file)
+    {
+        if (CleanUpSpaces is { } set)
+        {
+            return set;
+        }
+
+        return Environment.GetEnvironmentVariable(CleanUpVariable) switch
+        {
+            null or "" => file ?? false,
+            "1" or "true" or "True" => true,
+            "0" or "false" or "False" => false,
+            var text => throw new InvalidOperationException($"{CleanUpVariable} is '{text}': give 1 (take out the spaces) or 0 (keep them)."),
+        };
+    }
 
     /// <summary>The piece cache's size, from the setting, its variable or the default.</summary>
     /// <exception cref="ArgumentOutOfRangeException">The setting is negative.</exception>
