@@ -172,6 +172,10 @@ internal static class HelpTopics
               idrak distill --teacher BIG --student MODEL --data FILE --on-policy -o DIR
                                                       on-policy distillation alone (Agarwal et al. 2024)
               idrak reinforce --list                  every registered name below, with its options
+              idrak cluster sim --topology FILE -- reinforce MODEL ... -o DIR
+                                                      on a simulated cluster: each rank plays its shards' episodes (--shards,
+                                                      --spread), rank 0 writes the adapter, checkpoints and log (--cluster
+                                                      FILE: one rank of a real cluster)
 
             Registered now (with the -P plug-ins of this command):
               environments: {{{Names(Idrak.Abstraction.Reinforcement.EnvironmentKinds.Names)}}}

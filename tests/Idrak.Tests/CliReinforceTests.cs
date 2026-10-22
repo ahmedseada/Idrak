@@ -1,15 +1,20 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Abstraction.Reinforcement;
+using Idrak.Cli;
+using Idrak.Models;
 using Idrak.Reinforcement.Plugins.Coding;
+using Idrak.Text;
 using Idrak.Text.Abstractions;
 
 // Plan 27, R5: idrak reinforce (the library's trainer over Idrak.Text's language-model policy, in the prompts environment
 // and the coding plug-in's) and idrak distill --on-policy (R3's OnPolicyDistiller), run in-process on the tests' tiny
-// decoders; no download.
+// decoders; no download. R3c: idrak reinforce under idrak cluster sim (an in-process cluster: a thread per rank, no child
+// process).
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliReinforceGroup =
@@ -17,6 +22,7 @@ internal static partial class Tests
         ("cli reinforce: --list names every registry's entries (environments, rewards, algorithms and distill, estimators, sandboxes, divergences) in text and JSON; usage errors (no model, no --out, an unregistered environment, algorithm or estimator, episodes that do not fill the groups, a coding run without a suite, nothing to resume, a teacher weight without a teacher, distill without a teacher or outside prompts) exit with 2 before a model loads", d => { if (d == Device.Cpu) CliReinforceListAndUsage(); }),
         ("cli reinforce: a seeded grpo iteration on the prompts environment of a tiny model (the command line over the IDRAK_RL_* variables): its adapter, checkpoint and JSON log line are written, the same seed gives the same returns, and --resume goes on from the checkpoint", CliReinforcePrompts),
         ("cli reinforce: grpo on a coding suite (the coding plug-in's environment, verified by git grep in the process sandbox) with the tiny model: every episode verified and rewarded, the adapter written", CliReinforceCoding),
+        ("cli reinforce: cluster sim runs a seeded grpo on 2 ranks of the prompts environment (4 shards from --shards, against one process with IDRAK_RL_SHARDS=4): every rank ends, rank 0 alone prints and writes (the output folder holds what one process's holds: one adapter, its manifest, the checkpoints; the log a line per iteration; the session's SaveOnce writes nothing on rank 1), the first rollout's rewards are one process's and the adapters within R3b's 1e-4, and --resume goes on on the cluster as in one process; distill refused on a cluster with the reason", CliReinforceCluster),
         ("cli distill: --on-policy: the student answers the prompts itself and learns the teacher's distributions on its samples (R3's OnPolicyDistiller), with a mix of data answers; the adapter is written; reinforce --algorithm distill runs the same training; its usage errors exit with 2", CliDistillOnPolicy),
     ];
 
@@ -151,6 +157,108 @@ internal static partial class Tests
         finally
         {
             CodingWorkspace.Delete(folder);
+            Directory.Delete(model, true);
+        }
+    }
+
+    private static void CliReinforceCluster(Device device)
+    {
+        string folder = TempFolder();
+        var (model, data) = ReinforceFixture(folder);
+        try
+        {
+            string topology = Path.Combine(folder, "two.json");
+            File.WriteAllText(topology, DpTopology(device, 2).ToJson());
+            string alone = Path.Combine(folder, "alone"), ranks = Path.Combine(folder, "ranks");
+            string aloneLog = Path.Combine(folder, "alone.jsonl"), ranksLog = Path.Combine(folder, "ranks.jsonl");
+            // A reward with a spread (1 less the character error rate against the reference), so the updates move the adapters.
+            string[] Reinforce(int iterations, string output, params string[] more) => ["reinforce", model, "--env", "prompts", "--data", data, "--reward", "cer",
+                "--algorithm", "grpo", "--group", "4", "--episodes", "8", "--iterations", iterations.ToString(CultureInfo.InvariantCulture), "--seed", "3", "-o", output,
+                .. TinySession(device, folder), .. more];
+            Dictionary<string, string?> Variables(string log, string? shards) => new()
+            {
+                ["IDRAK_RL_LOG"] = log, ["IDRAK_RL_SHARDS"] = shards, ["IDRAK_RL_ENVIRONMENTS"] = "1", ["IDRAK_RL_PARALLEL_STEPS"] = "off",
+            };
+
+            (int Code, string Out, string Err) one = (0, "", ""), two = (0, "", "");
+            WithEnvironment(Variables(aloneLog, "4"), () => one = TrainCli(Reinforce(2, alone)));
+            WithEnvironment(Variables(ranksLog, null), () => two = ClusterCli(["cluster", "sim", "--topology", topology, "--", .. Reinforce(2, ranks, "--shards", "4")]));
+            Check(one.Code == 0, $"one process, 4 shards: exit {one.Code}\n{one.Out}\n{one.Err}");
+            Check(two.Code == 0 && two.Out.Contains("network time on the virtual clock: rank 0", StringComparison.Ordinal) && two.Out.Contains("rank 1", StringComparison.Ordinal),
+                $"cluster sim runs reinforce to the end on both ranks: exit {two.Code}\n{two.Out}\n{two.Err}");
+            int Count(string text, string part) => text.Split('\n').Count(l => l.StartsWith(part, StringComparison.Ordinal));
+            Check(Count(two.Out, "iteration 1/2: reward") == 1 && Count(two.Out, "iteration 2/2: reward") == 1 && Count(two.Out, "trained 2 iterations") == 1
+                  && two.Out.Contains("adapter written to", StringComparison.Ordinal), $"rank 0 alone prints its lines (once each): {two.Out}");
+
+            // The output folder: what one process writes, once (no event log, nothing half-written).
+            static string[] Entries(string path) => [.. Directory.EnumerateFileSystemEntries(path).Select(e => Path.GetFileName(e)).Order(StringComparer.Ordinal)];
+            Check(Entries(ranks).SequenceEqual(Entries(alone)) && Entries(ranks).Contains("adapter_model.safetensors") && Entries(ranks).Contains("idrak-tuning.json")
+                  && Entries(ranks).Contains("checkpoints") && !Entries(ranks).Contains("cluster-events.idrklog"),
+                $"the cluster's output holds what one process's holds: {string.Join(", ", Entries(ranks))} | {string.Join(", ", Entries(alone))}");
+            Check(Entries(Path.Combine(ranks, "checkpoints")).SequenceEqual(["iteration-000002"]), $"one checkpoint, moved into place: {string.Join(", ", Entries(Path.Combine(ranks, "checkpoints")))}");
+
+            // The log: a line per iteration (rank 0's alone); the first rollout is one process's (the same weights, 4 shards).
+            JsonObject[] Lines(string log) => [.. File.ReadAllLines(log).Select(l => (JsonObject)JsonNode.Parse(l)!)];
+            var aloneLines = Lines(aloneLog);
+            var ranksLines = Lines(ranksLog);
+            Check(aloneLines.Length == 2 && ranksLines.Length == 2 && ranksLines.Select(l => (int)l["iteration"]!).SequenceEqual([1, 2]), $"the log: a line per iteration: {File.ReadAllText(ranksLog)}");
+            string Rewards(JsonObject line) => string.Join(" ", new[] { "episodes", "reward_mean", "reward_spread", "reward_min", "reward_max" }.Select(k => line[k]!.ToJsonString()));
+            Check(Rewards(ranksLines[0]) == Rewards(aloneLines[0]), $"the first rollout's rewards are one process's: {Rewards(ranksLines[0])} | {Rewards(aloneLines[0])}");
+            Check((double)aloneLines[0]["reward_spread"]! > 0, $"the rewards differ, so the updates move the adapters: {aloneLines[0]}");
+
+            // The adapters: within R3b's tolerance of one process's (a step's gradients are summed per rank, then across the ranks).
+            static (string[] Names, float[] Values) Adapter(string path)
+            {
+                using var reader = SafeTensorsReader.Open(Path.Combine(path, "adapter_model.safetensors"));
+                string[] names = [.. reader.Tensors.Keys.Order(StringComparer.Ordinal)];
+                return (names, [.. names.SelectMany(n => reader.Read(n))]);
+            }
+
+            void SameAdapter(string what)
+            {
+                var (aloneNames, aloneValues) = Adapter(alone);
+                var (ranksNames, ranksValues) = Adapter(ranks);
+                Check(ranksNames.SequenceEqual(aloneNames) && aloneNames.Length > 0, $"{what}: the same tensors: {string.Join(", ", ranksNames)}");
+                AssertClose(aloneValues, ranksValues, 1e-4f, $"{what}: the 2-rank adapter against one process's");
+                Console.WriteLine($"    {what}: the adapter's largest gap to one process {Gap(aloneValues, ranksValues):E2}");
+            }
+
+            SameAdapter("after 2 iterations");
+
+            // --resume on the cluster: iteration 3 from the checkpoint, as one process goes on.
+            WithEnvironment(Variables(aloneLog, "4"), () => one = TrainCli([.. Reinforce(3, alone), "--resume"]));
+            WithEnvironment(Variables(ranksLog, null), () => two = ClusterCli(["cluster", "sim", "--topology", topology, "--", .. Reinforce(3, ranks, "--shards", "4", "--resume")]));
+            Check(one.Code == 0 && two.Code == 0 && Count(two.Out, "iteration 3/3: reward") == 1 && !two.Out.Contains("iteration 1/3", StringComparison.Ordinal),
+                $"--resume goes on at iteration 3 on the cluster: exit {two.Code}\n{two.Out}\n{two.Err}");
+            ranksLines = Lines(ranksLog);
+            Check(ranksLines.Length == 3 && (int)ranksLines[2]["iteration"]! == 3 && Entries(Path.Combine(ranks, "checkpoints")).SequenceEqual(["iteration-000002", "iteration-000003"]),
+                $"the resumed run's line and checkpoint: {File.ReadAllText(ranksLog)}");
+            SameAdapter("resumed to 3 iterations");
+
+            // The session's collective save: every rank takes part, rank 0 alone writes (each rank names a folder of its own here).
+            string[] targets = [Path.Combine(folder, "save-0"), Path.Combine(folder, "save-1")];
+            var wrote = DpRun(DpTopology(device, 2), DpOptions(), rank =>
+            {
+                using var loaded = PretrainedModel.Load(model, new PretrainedOptions { Device = rank.Device });
+                using var session = new FineTuningSession(loaded, SessionOptions() with { Cluster = rank.Collectives, ClusterOptions = DpOptions() }, totalSteps: 1);
+                return session.SaveOnce(targets[rank.Rank]);
+            });
+            Check(wrote.SequenceEqual([true, false]) && File.Exists(Path.Combine(targets[0], "adapter_model.safetensors")) && !Directory.Exists(targets[1]),
+                $"SaveOnce: rank 0 wrote, rank 1 wrote nothing: {string.Join(", ", wrote)}");
+
+            // Usage errors: no output folder, distill on a cluster, a bad split.
+            var noOut = ClusterCli("cluster", "sim", "--topology", topology, "--", "reinforce", model, "--data", data);
+            Check(noOut.Code == ExitCodes.Usage && noOut.Error.Contains("-o DIR", StringComparison.Ordinal), $"reinforce without -o names it: {noOut.Error}");
+            var distill = ClusterCli("cluster", "sim", "--topology", topology, "--", "distill", "--teacher", model, "--student", model, "--data", data, "--on-policy", "-o", alone);
+            Check(distill.Code == ExitCodes.Usage && distill.Error.Contains("does not run distill", StringComparison.Ordinal), $"cluster sim refuses distill naming why: {distill.Error}");
+            var alone2 = ClusterCli(["cluster", "sim", "--topology", topology, "--", .. Reinforce(1, Path.Combine(folder, "d"), "--algorithm", "distill", "--teacher", model)]);
+            Check(alone2.Code == ExitCodes.Usage && alone2.Error.Contains("does not run on a cluster", StringComparison.Ordinal), $"reinforce --algorithm distill on a cluster names why: {alone2.Error}");
+            var spread = TrainCli([.. Reinforce(1, Path.Combine(folder, "s"), "--spread", "diagonal")]);
+            Check(spread.Code == 2 && spread.Err.Contains("--spread diagonal", StringComparison.Ordinal), $"a bad --spread is named: {spread.Err}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
             Directory.Delete(model, true);
         }
     }

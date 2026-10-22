@@ -337,6 +337,7 @@ idrak runs list && idrak runs show NAME && idrak resume NAME --epochs 20
 idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data chats.jsonl --alpha 0.8 -o adapters/distilled
 idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
 idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --group 8 --iterations 20 -o runs/rl-demo
+idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data math.jsonl --algorithm grpo --shards 4 -o runs/math2
 ```
 
 Image models (classifiers, detectors, segmenters, backbones) come from an image model family, which a plug-in registers
