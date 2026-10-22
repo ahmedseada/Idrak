@@ -11,7 +11,7 @@
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Planned |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Planned |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
-| R4b | `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects, on the coding plug-in (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
+| R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
 | R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
 
@@ -173,7 +173,11 @@ the same way and under the same limits").
 | # | Namespace | Plug-in | Registers | Comes from | Phase |
 |---|---|---|---|---|---|
 | 1 | `Idrak.Reinforcement.Plugins.Coding` | `CodingPlugin` ("coding") | `EnvironmentKinds`: `coding`; `RewardFunctions`: `tests-passed`, `verify-fraction`, `rounds`, `tool-errors`; `CommandSandboxes`: `container` | M5 (`src/Idrak.Text/Generation/CodingAgent.cs`), new | R4 |
-| 2 | `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build`; requires "coding" | new (the owner, 2026-10-22) | R4b |
+| 2 | `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build`; requires "coding" and "csharp-language" | new (the owner, 2026-10-22) | R4b |
+
+R4b also adds two profiles to `Idrak.Text.Plugins` (not reinforcement plug-ins, as `idrak agent` uses them without
+training): `Idrak.Text.Plugins.CSharp` ("csharp-language") and `Idrak.Text.Plugins.TypeScript` ("typescript-language",
+profiles `typescript` and `angular`), from the library's coding agent.
 | 3 | `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` ("classic") | `EnvironmentKinds`: `bandit`, `cartpole`, `pendulum`, `mountain-car` | new | R6 (optional) |
 
 `container` is a plug-in, not a library default, because it runs an outside program (Docker or Podman), as the espeak-ng
@@ -370,14 +374,69 @@ enforces its time, output and memory limits and refuses `network: off`; `contain
 plugins:|public API|abstraction inventory|cli health: every environment variable`. **Owner:** `container` on a machine with
 Docker or Podman, and the coding run of R5.
 
-## Phase R4b: `Idrak.Reinforcement.Plugins.CSharp` (the owner, 2026-10-22)
+## Phase R4b: no programming language in the library; `Idrak.Reinforcement.Plugins.CSharp` (the owner, 2026-10-22)
 
-Agentic coding on C# projects as a plug-in of its own, so nothing tied to one programming language sits in the library or
-in the general `coding` plug-in (which stays driven by each task's own commands). It builds on `coding` and copies none
-of it: `CSharpCodingPlugin` requires `CodingPlugin` (`Requires`, as Gemma 3 vision requires the Gemma text plug-in).
-- **The `csharp` environment** (`EnvironmentKinds`): the `coding` environment with C#'s defaults for what a task does not
-  say: setup `dotnet restore`, verification `dotnet build --no-restore` then `dotnet test --no-build` with a results file;
-  `language: "csharp"`; the system prompt's C# lines (build, test, read the errors) from the plug-in, not the library.
+The owner's rule: nothing language-specific in the library. R4b first takes every programming language out of the
+library's coding agent (part 1), then adds agentic coding on C# projects as a plug-in of its own on top (part 2), so
+nothing tied to one programming language sits in the library or in the general `coding` plug-in (which stays driven by
+each task's own commands).
+
+### Part 1: coding languages as a registry, out of the library
+
+**What names a language in the library today (found in the source at 2a5df3e):**
+- `src/Idrak.Text/Generation/CodingTools.cs`: `CodingToolOptions.Commands` (`:27`: `dotnet`, `npm`, `npx`, `ng`, `node`,
+  `tsc`, `git`), `IgnoredDirectories` (`:48`: `bin`, `obj`, `node_modules`, `dist`, `.angular` beside `.git`, `.vs`,
+  `.idea`, `coverage`, `out`), and the tools' descriptions (`:78`, `:109-110`: "dotnet build, dotnet test, npm test, npx
+  tsc --noEmit, ng build").
+- `src/Idrak.Text/Generation/CodingAgent.cs`: `DefaultSystemPrompt`'s build and test lines for C#, TypeScript and Angular
+  (`:160`); the doc examples (`:19`, `:23`); and in the task layer that M5 moves to the coding plug-in in R4: the suite
+  skipping `node_modules` (`:35`), `node_modules` linked instead of copied (`:356-375`), the build-output folders not
+  copied (`:392`) and the start commit's git excludes (`:423`).
+- The CLI's `idrak agent` (`src/Idrak.Cli/Commands/Run/AgentCommand.cs:101`) reads `CodingAgent.DefaultSystemPrompt`.
+
+**The contract** (`Idrak.Text.Abstractions`, since only `Idrak.Text` uses it in the library; plug-ins count as apps):
+`ICodingLanguage`: `Name` ("csharp"), `Summary`, `Detect(workspace)` (from the files at the workspace's top, e.g. a
+`.csproj`, a `package.json`), `Commands` (the programs `run_command` may start for it), `PromptLines` (how to build,
+check and test), `ToolExamples` (for the tools' descriptions), `IgnoredDirectories`, `LinkedDirectories` (dependency
+folders linked into a workspace, not copied), `GitExcludes`, `DefaultSetup` and `DefaultVerify` (for tasks that name
+none). Registry `CodingLanguages` (a `SlotTable`, unguarded: a profile is read once per run; with a reason).
+- **The library registers no language.** What stays in the library is language-free: the agent loop, the tools, the
+  read-only `git` subcommands, `.git` as an ignored folder, and a prompt with no build or test commands in it.
+- **The agent composes its defaults from the registered languages:** the prompt's generic part plus each language's
+  lines, the allowed commands as `git` plus each language's, the ignored and linked folders as the union. Which
+  languages: every registered one (the default, so the tool behaves as today), the ones detected in the workspace, or a
+  list (`AgentOptions.Languages`, `IDRAK_CODING_LANGUAGES`: `all`, `detected` or names).
+- **A workspace whose language is detected by no registered profile** (a `.csproj` with no `csharp` registered) gets a
+  clear notice naming the plug-in to register, not a silent agent that cannot build; a task's explicit commands still
+  run (they are the task's, not the library's).
+
+**The profiles move to `Idrak.Text.Plugins`** (not to the reinforcement plug-ins: `idrak agent` uses them with no
+training): `Idrak.Text.Plugins.CSharp` (plug-in "csharp-language", profile `csharp`: `dotnet`; `bin`, `obj`, `.vs`;
+build and test lines) and `Idrak.Text.Plugins.TypeScript` (plug-in "typescript-language", profiles `typescript`: `npm`,
+`npx`, `node`, `tsc`, `node_modules` linked, `dist`; and `angular`: `ng`, `.angular`). `TextPlugins.All` lists them, so
+the CLI (which registers `Idrak.Text.Plugins` at startup) and the CodingAgent sample (which calls
+`TextPlugins.RegisterAll()`) keep today's behaviour.
+
+**Results unchanged, proven (rule 71):** with `Idrak.Text.Plugins` registered and `Languages: all`, the composed system
+prompt, the allowed commands, the ignored folders and the tools' descriptions are byte for byte today's (a test compares
+them with the current strings, kept in the test only); with no language registered, they name no language (a test scans
+them for every profile's commands and folders).
+
+**Also found, for the owner (not changed without an answer):** `src/Idrak.Data/DataFiles.cs` holds the `code` data
+format's table from file extensions to language names (`:21-22`, about forty languages, as labels on rows) and the
+folders its folder reader skips (`:31`: `bin`, `obj`, `node_modules`, `.git`, `.vs`, `.idea`, `dist`, `.angular`,
+`__pycache__`, `.venv`). The table is a generic list like a media-type map; the skip list is the same kind of default as
+the agent's. Proposed: the skip list becomes a `ReadOptions` setting read from the registered coding languages' ignored
+folders when `Idrak.Text` is present, the extension table stays as data; or both move to a registry in
+`Idrak.Abstraction` so `Idrak.Data` and `Idrak.Text` read one list.
+
+### Part 2: `Idrak.Reinforcement.Plugins.CSharp`
+
+It builds on `coding` and on the `csharp` profile and copies neither: `CSharpCodingPlugin` requires `CodingPlugin` and
+the `csharp` language plug-in (`Requires`, as Gemma 3 vision requires the Gemma text plug-in).
+- **The `csharp` environment** (`EnvironmentKinds`): the `coding` environment with the `csharp` profile's defaults for
+  what a task does not say (setup `dotnet restore`; verification `dotnet build --no-restore`, then `dotnet test
+  --no-build` with a results file) and the profile's prompt lines and commands; `language: "csharp"`.
 - **Rewards read from machine-readable output, not console text:**
   - `csharp-tests`: the share of tests that passed, from `dotnet test`'s TRX results file (XML through the base
     library's `XmlReader`), so a task with ten tests that passes seven gets 0.7, not 0; tests that did not run count as
@@ -398,14 +457,22 @@ of it: `CSharpCodingPlugin` requires `CodingPlugin` (`Requires`, as Gemma 3 visi
 - **Settings:** the default commands, the reward weights, the protected globs, the package folder; variables
   `IDRAK_CSHARP_PACKAGES`, `IDRAK_CSHARP_PROTECT` (names proposed).
 
-**Done when:** `plugins: csharp` passes on a tiny C# solution written by the test (a library project and a test project;
+**Done when (part 1):** the coding agent's prompt, commands, folders and tool descriptions are today's byte for byte
+with `Idrak.Text.Plugins` registered, and name no language with none registered; `detected` picks `csharp` for a
+`.csproj` workspace and `typescript` for a `package.json` one; an unregistered detected language gives its notice;
+`plugins: csharp-language` and `plugins: typescript-language` register and unregister as found; `coding agent:` and
+`coding tools` pass with the same expectations.
+
+**Done when (part 2):** `plugins: csharp` passes on a tiny C# solution written by the test (a library project and a test project;
 it runs the real `dotnet`, as the CodingAgent tests do): a task with no commands gets the C# defaults; a fake model's
 partly right answer gets the share of tests it passes; a build with errors gets `csharp-build`'s penalty per error; an
 edit to the test project is refused when asked; two episodes in parallel share the package folder and leave no build
 nodes running; unregistering `csharp` leaves `coding` as it found it.
 
-**Tests (CPU here):** one build; `plugins: csharp|plugins: coding|coding agent:|reinforcement contracts|plugins:|
-public API|abstraction inventory|cli health: every environment variable`. **Owner:** the C# demo suite run of R5.
+**Tests (CPU here):** one build; `coding languages|plugins: csharp|plugins: typescript|plugins: coding|coding agent:|
+coding tools|cli agent|reinforcement contracts|plugins:|public API|abstraction inventory|cli health: every environment
+variable`. **Owner:** `idrak agent` on a C# and on a TypeScript project (unchanged behaviour), and the C# demo suite run of
+R5.
 
 ## Phase R5: `idrak reinforce`, the samples, a demo suite
 
