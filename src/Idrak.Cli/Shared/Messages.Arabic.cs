@@ -370,7 +370,7 @@ internal static partial class Messages
             "مقارنة أرقام الرموز وقوالب المحادثة والقيم اللوغاريتمية والمخرجات الجشعة بمرجع transformers",
         ["Compares a vision-language model with a transformers reference: pixels, features, logits, tokens"] =
             "مقارنة نموذج رؤية ولغة بمرجع transformers: البكسلات والخصائص والقيم اللوغاريتمية والرموز",
-        ["Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1)"] = "مقاييس إجابات نموذج محادثة على محادثات محجوزة (الدقة والتطابق التام و F1)",
+        ["Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1, error rates)"] = "مقاييس إجابات نموذج محادثة على محادثات محجوزة (الدقة والتطابق التام و F1 ومعدلات الخطأ)",
         ["Perplexity of a text under a model (compare weight formats and fine-tunes)"] = "حيرة نص تحت نموذج (لمقارنة صيغ الأوزان والضبط الدقيق)",
         ["Time per layer, operation and kernel of one decoding step"] = "الوقت لكل طبقة وعملية ونواة في خطوة فك ترميز واحدة",
         ["The kernel choices measured on this machine (the tuning caches); --reset clears them"] = "اختيارات النوى المقيسة على هذا الجهاز (مخازن الضبط)؛ والخيار --reset يمسحها",
@@ -438,6 +438,8 @@ internal static partial class Messages
             "جمع شبكة وأوزانها ومقاييسها ومقطع رموزها من مجلد في حزمة نموذج واحدة (.ikm)",
         ["Distil a teacher model into a student: its token probabilities (on the fly or precomputed) or its answers"] =
             "تقطير نموذج معلم في نموذج طالب: احتمالات رموزه (أثناء التدريب أو محسوبة مسبقا) أو إجاباته",
+        ["Reinforcement learning of a model's adapters in an environment: GRPO, PPO, on-policy distillation"] =
+            "التعلم المعزز لمحولات نموذج في بيئة: GRPO و PPO والتقطير على إجابات النموذج نفسه",
         ["Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info"] =
             "الضبط الدقيق لنماذج اللغة (LoRA و QLoRA و DoRA و DPO/ORPO/SimPO)؛ والتقييم والمحادثة والتصدير والتنزيل والمعلومات",
         ["Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config"] =
