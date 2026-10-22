@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Reinforcement;
+using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
 using Idrak.Models;
 using Idrak.Reinforcement;
@@ -21,7 +22,10 @@ namespace Idrak.Cli.Commands.Train;
 /// on-policy distillation alone (Idrak.Text's <see cref="OnPolicyDistiller"/>, as <c>idrak distill --on-policy</c>). The
 /// model, the adapters, the optimizer and the device are idrak tune's (its options, parsed by <see cref="TuneTool"/>).
 /// Every run setting reads its <c>IDRAK_RL_*</c> variable (<see cref="ReinforcementOptions.FromEnvironment"/>); the
-/// command line wins.
+/// command line wins. On a cluster (a rank of <c>idrak cluster sim</c>, or <c>--cluster FILE</c>; Plan 27, R3c) every rank
+/// runs the command: the session trains on the rank's device with its collectives (as idrak tune's), each rank plays its
+/// shards' episodes (R3b), and rank 0 alone writes the adapter, its manifest, the checkpoints and the log and shows the
+/// progress.
 /// </summary>
 internal sealed class ReinforceCommand : Command
 {
@@ -48,7 +52,7 @@ internal sealed class ReinforceCommand : Command
     [
         "--base", "--env", "--data", "--suite", "--reward", "--rounds", "--env-option", "--sandbox", "--algorithm", "--estimator", "--group", "--episodes", "--kl",
         "--clip", "--epochs", "--minibatch", "--iterations", "--environments", "--temperature", "--max-new", "--save-every", "--evaluate-every", "--teacher",
-        "--teacher-device", "--teacher-weights", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights",
+        "--teacher-device", "--teacher-weights", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights", "--shards", "--spread",
     ];
 
     public override string Name => "reinforce";
@@ -111,6 +115,14 @@ internal sealed class ReinforceCommand : Command
           -o, --out DIR           where the adapter and the checkpoints go
               --list              the registered environments, rewards, algorithms, estimators, sandboxes and divergences
           -w, --weights F         the model's base weights: int8, int4 (QLoRA) or bf16
+              --shards N          the shards a rollout is cut into: a shard's episodes act together, and on a cluster each
+                                  rank plays its shards' episodes; the same count gives the same episodes on any number
+                                  of ranks (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)
+              --spread NAME       how the episodes are cut into shards: blocks (runs in number order, a group's together;
+                                  the default) or interleaved (IDRAK_RL_SPREAD)
+              --cluster FILE      train as one rank of a real cluster of the topology file (idrak cluster init writes
+                                  one); on a node of several workers IDRAK_RANK names this process's (--rank stays the
+                                  adapter's rank); --node NAME, --coordinator H:P and --world-size N as idrak tune has them
           and these options of idrak tune train: --rank, --alpha, --lr, --max-length, --batch-tokens, --accumulate,
           --targets, --optimizer, --weight-decay, --momentum, --schedule (default: IDRAK_RL_SCHEDULE's, constant),
           --warmup (default: IDRAK_RL_WARMUP's, 0), --min-lr, --decay, --adapter-type, --adapter, --context, --matmul,
@@ -118,16 +130,23 @@ internal sealed class ReinforceCommand : Command
           --fp8, --cpu-optimizer, --offload. Every run setting also reads its IDRAK_RL_* variable (idrak help env); the
           command line wins. IDRAK_RL_LOG appends a JSON line per iteration. --json prints one JSON document at the end.
 
+        On a cluster (idrak cluster sim --topology FILE -- reinforce ..., or --cluster FILE) every rank runs the command on
+        its device: each rollout's episodes are spread over the ranks by shards and gathered, every rank makes the same
+        updates (the gradients summed across the ranks), and rank 0 alone writes the adapter, its manifest, the checkpoints
+        and the log and shows the progress; --resume goes on from the checkpoint on every rank. --algorithm distill does
+        not run on a cluster (idrak distill --on-policy's sampling is not spread over ranks): give grpo with --teacher.
+
         Examples:
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
           idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --group 8 --iterations 20 -o runs/rl-demo
           idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --sandbox container -o runs/rl --resume
           idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --teacher Qwen/Qwen3-8B -w int4 -o runs/t
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data chats.jsonl --algorithm distill --teacher Qwen/Qwen3-8B -o runs/d
+          idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data m.jsonl --algorithm grpo --shards 4 -o rl
           idrak reinforce --list
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = [.. OwnValues, .. TuneTool.SessionValueOptions];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = [.. OwnValues, .. TuneTool.SessionValueOptions, .. ClusterJoin.Options];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--list", "--resume", "--no-think", .. TuneTool.SessionFlags];
 
@@ -138,6 +157,7 @@ internal sealed class ReinforceCommand : Command
 
     public override int Run(CommandContext context)
     {
+        using var cluster = ClusterJoin.Join(context, ownsRank: true);    // --cluster FILE: one rank of a real cluster; --rank is the adapter's
         if (context.Flag("--list"))
         {
             return List(context);
@@ -204,6 +224,14 @@ internal sealed class ReinforceCommand : Command
         if (distill && teacher is null)
         {
             throw new UsageException($"--algorithm {Distill} learns from a teacher: give --teacher MODEL.");
+        }
+
+        if (distill && ClusterSession.Current is not null)
+        {
+            // OnPolicyDistiller samples every step's prompts on every rank and steps on them without an exchange: the ranks
+            // would agree only where generation is bit-identical across them, and the sampling is not spread (W times the work).
+            throw new UsageException($"--algorithm {Distill} does not run on a cluster: on-policy distillation alone samples every prompt on every rank. Give a policy loss "
+                                     + "with --teacher (grpo --teacher MODEL: the teacher's term beside the reward, its episodes spread over the ranks), or run it in one process.");
         }
 
         if (distill && (context.Flag("--resume") || options.Resume is not null))
@@ -356,7 +384,8 @@ internal sealed class ReinforceCommand : Command
         using (policy)
         {
             using var stop = new StopKey(context, console.Log, "stopping after the current iteration and saving the adapter (Ctrl+C again to quit now)…");
-            using var progress = new ProgressLine(context, $"reinforce {kind.Name}", options.Iterations);
+            // On a cluster rank 0 shows the progress (the other ranks' lines would only be kept as their error text).
+            using var progress = new ProgressLine(context, $"reinforce {kind.Name}", options.Iterations, enabled: ClusterSession.Current is { Rank: > 0 } ? false : null);
             var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(kind, policy, options)
             {
                 Progress = progress,
@@ -371,13 +400,12 @@ internal sealed class ReinforceCommand : Command
             };
             var clock = System.Diagnostics.Stopwatch.StartNew();
             var result = trainer.Train(stop.Token);
-            Directory.CreateDirectory(output);
-            session.Save(output);
+            bool wrote = session.SaveOnce(output);                             // every rank takes part; rank 0 writes on a cluster
             var history = result.History;
             console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"{(result.Cancelled ? "stopped after" : "trained")} {result.Iterations} iterations in {clock.Elapsed.TotalSeconds:0.0} s"
                 + $"{(history.Count > 0 ? FormattableString.Invariant($": reward {history[0].RewardMean:0.###} → {history[^1].RewardMean:0.###}") : "")}"
-                + $"; adapter written to {Path.GetFullPath(output)}{(result.Checkpoint is { } c ? $", checkpoint {c}" : "")}"));
+                + $"; adapter {(wrote ? "written" : "written by rank 0")} to {Path.GetFullPath(output)}{(result.Checkpoint is { } c ? $", checkpoint {c}" : "")}"));
             return (ExitCodes.Ok, result);
         }
     }
@@ -409,6 +437,8 @@ internal sealed class ReinforceCommand : Command
         o = Int(context, "--save-every", 1) is { } saveEvery ? o with { SaveEvery = saveEvery } : o;
         o = Int(context, "--evaluate-every", 1) is { } evaluateEvery ? o with { EvaluateEvery = evaluateEvery } : o;
         o = context.Seed is { } seed ? o with { Seed = seed } : o;
+        o = Int(context, "--shards", 0) is { } shards ? o with { Shards = shards } : o;
+        o = context.Option("--spread") is { } spread ? o with { Spread = Spread(spread) } : o;
         o = o with { CheckpointFolder = o.CheckpointFolder ?? Path.Combine(output, "checkpoints") };
         o = context.Flag("--resume") ? o with { Resume = o.CheckpointFolder } : o;
 
@@ -616,6 +646,19 @@ internal sealed class ReinforceCommand : Command
         }
 
         return ExitCodes.Ok;
+    }
+
+    // --spread: a RolloutSpread name.
+    private static string Spread(string text)
+    {
+        try
+        {
+            return RolloutSpread.Parse(text);
+        }
+        catch (ArgumentException)
+        {
+            throw new UsageException($"--spread {text}: use {string.Join(" or ", RolloutSpread.Names)}.");
+        }
     }
 
     private static string? Text(string variable) => Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value && value.Trim().Length > 0 ? value.Trim() : null;

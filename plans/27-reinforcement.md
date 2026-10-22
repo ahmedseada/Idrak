@@ -11,7 +11,7 @@
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Done 2026-10-22; CPU pass |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (rollouts on a cluster done in R3b; see "R3b as built") |
 | R3b | R3's leftover: rollouts on a cluster (the language-model policy's episodes spread over the ranks, gathered in rank order; the policy refused a cluster session before) | B | Done 2026-10-22; CPU pass |
-| R3c | R3b's leftover: `idrak reinforce` under `idrak cluster sim` (the command on every rank, the adapter and manifest written once by rank 0) | A | In progress (2026-10-22) |
+| R3c | R3b's leftover: `idrak reinforce` under `idrak cluster sim` (the command on every rank, the adapter and manifest written once by rank 0) | A | Done 2026-10-22; CPU pass (on-policy distillation on a cluster not taken, refused with the reason; see "R3c as built") |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Done 2026-10-22; CPU pass |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Done 2026-10-22; CPU pass (left: the demo suite through R4b's `--env csharp` after its merge; see "R5 as built") |
@@ -818,6 +818,96 @@ no `Idrak.Reinforcement`; the two meet in one new contract in `Idrak.Abstraction
   On CUDA the ratio and spread-passes bit checks are skipped (CPU only); the first rollout's bit-identity across rank counts
   and the adapters within 1e-4 are checked there, and a miss is a finding (a kernel whose result depends on the batch it runs
   in), not a setting.
+
+**R3c as built (2026-10-22).** R3b's leftover: `idrak reinforce` under `idrak cluster sim`. Almost all of it is in the CLI;
+the library gained one method.
+- **`idrak cluster sim --topology FILE -- reinforce MODEL ... -o DIR`** (`ClusterSimCommand`): `reinforce` joins the commands
+  a simulated cluster runs (pretrain, tune, train, resume, reinforce; the usage error lists them), with `-o`/`--out` as the
+  folder rank 0 writes (a run without it is refused naming `-o DIR`). Every rank runs the command on a thread, exactly as
+  `tune` runs there: `TuneTool.Session` (R5's hook) already trained on the rank's device with its collectives
+  (`FineTuningOptions.Cluster`, `ClusterOptions` from the rank) and wrote the manifest on rank 0 only; the policy then
+  implements R3b's `IRolloutRanks` over the session, so each rank plays its shards' episodes and R3b's trainer writes the
+  checkpoints and the JSON log on rank 0 alone. Like `tune`'s, reinforce's `-o` is an adapter folder, not a run folder: no
+  event log is put in it (`RunFolder` is null for both; `--event-log FILE` still writes one). `--placement pipeline` is
+  refused as for tune; the dashboard does not steer it (the RL trainer has no stop-with-checkpoint hook: the existing
+  message names it); `--profile` runs it as any command (not tested here).
+- **`idrak reinforce`** (`ReinforceCommand`): `--shards N` (`ReinforcementOptions.Shards`, over `IDRAK_RL_SHARDS`) and
+  `--spread blocks|interleaved` (over `IDRAK_RL_SPREAD`; a bad name is a usage error naming it); `ClusterJoin.Join` first,
+  as tune and distill do, so `--mode localhost` (each rank a process of the tool, joined from `IDRAK_RANK` and
+  `IDRAK_CLUSTER_TOPOLOGY`) and `--cluster FILE`, `--node`, `--coordinator`, `--world-size` (a real cluster; `--rank` stays the
+  adapter's, `IDRAK_RANK` names the process's) reach it too. The final adapter is written by the new collective save, so
+  rank 0 alone creates `--out` and writes it; the other ranks take part and write nothing. Progress: rank 0's progress line
+  and text lines; on another rank the progress reporter is the quiet one (its output is the null writer under cluster sim,
+  and its error text, kept to name a failing rank, holds no progress). `--resume` works on every rank from the checkpoint
+  rank 0 wrote (each rank reads it; the check that one exists runs on each).
+- **Library (one method, `src/Idrak.Text/FineTuningSession.cs`, public, `api/Idrak.Text.txt` regenerated):**
+  `FineTuningSession.SaveOnce(folder)`: every rank calls it at the same point (a collective: `Gather` makes a sharded run's
+  weights whole while they are read, as `Checkpoint` does), rank 0 alone creates the folder and calls `Save`, then a
+  barrier; in one process it creates the folder and saves; returns whether this rank wrote. `Save` itself is unchanged
+  (`Checkpoint` calls it inside its own gather). Nothing in `Idrak.Reinforcement` changed; the inventory is unchanged.
+- **`idrak distill --on-policy` on a cluster: not taken, and now refused (why).** The CLI path would be cheap (the same
+  session hook and `SaveOnce`), but the library's `OnPolicyDistiller` is not cluster-aware: every rank would sample every
+  step's prompts (W times the generation, rule 75) and step on them without an exchange, so the ranks' data-parallel steps
+  agree only where generation is bit-identical across ranks, and where it is not, ranks that lay out different batches can
+  call the collectives a different number of times (a hang, not an error). Doing it right is R3b's design applied to the
+  distiller (shards with seeds of their own, each rank sampling its shards, the sampled ids exchanged), a library change not
+  taken here. So: `cluster sim -- distill` is a usage error naming why (its other ways are teacher passes of their own, not
+  asked here); `distill --on-policy` on any cluster rank (`--cluster FILE` too: before, it ran with every rank sampling
+  everything and every rank writing the adapter, untested) and `reinforce --algorithm distill` on a cluster are usage errors
+  pointing to `reinforce` with a policy loss and `--teacher` (the teacher's term beside the reward, whose episodes are
+  spread). `distill --on-policy` in one process now saves through `SaveOnce` (the same files).
+- **Variables:** none new (`--shards` and `--spread` are R3b's `IDRAK_RL_SHARDS`, `IDRAK_RL_SPREAD`); `reinforce` joins the
+  commands of the Cluster rows (`ClusterRun` in `EnvironmentVariables.cs`), since it now reads `IDRAK_CLUSTER_*` and
+  `IDRAK_RANK` through `ClusterJoin`. Help: `cluster sim`'s usage (the command list, reinforce's folder, shards and spread, an
+  example), `reinforce`'s (the two options, the cluster options, a paragraph on clusters, an example), `distill`'s
+  `--on-policy` line, `idrak help reinforcement`, the CLI README's Train examples.
+- **Test** (`tests/Idrak.Tests/CliReinforceTests.cs`, `cli reinforce: cluster sim runs a seeded grpo on 2 ranks ...`, in-process
+  ranks only, no child process): R5's tiny decoder and prompts file, grpo with groups of 4, 8 episodes, reward `cer` (a
+  spread, so the updates move the adapters; checked), seed 3. One process with `IDRAK_RL_SHARDS=4` against `cluster sim` on
+  2 CPU ranks with `--shards 4` (so the option is proven: without it the cluster would cut 2 shards and draw other
+  episodes): both exit 0, every rank ends (the virtual-clock line names both), rank 0's iteration lines appear once each;
+  the cluster's `--out` holds exactly the entries one process's holds (the adapter's files with `adapter_model.safetensors`,
+  `idrak-tuning.json`, `checkpoints/` with `iteration-000002` alone; no event log, nothing `.writing`); the log one line an
+  iteration; the first iteration's episode count and mean, spread, min and max reward equal one process's; the adapters' tensors the
+  same names and within R3b's 1e-4 (largest gap measured 4.4e-6 after 2 iterations and after the resume; R3b's 6.0e-8 was
+  from warmed adapters at a smaller step). `--resume` to 3 iterations on the cluster and in one process: iteration 3 alone,
+  the log's third line, `iteration-000003`, the adapters again within 1e-4. `SaveOnce` on an in-process 2-rank cluster with
+  a folder per rank: rank 0 wrote, rank 1's folder does not exist. Usage errors: no `-o`, `cluster sim -- distill`,
+  `reinforce --algorithm distill` on the cluster, `--spread diagonal`.
+- **The run (CPU, this agent):** a build of `tests/Idrak.Tests` with one compile error (a nullable tuple's default in the
+  test), fixed, one rebuild with no warning; `IDRAK_UPDATE_API=1` (`public API`: `Idrak.Text.txt` gained `SaveOnce`) and
+  `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`: unchanged); then once `cli reinforce|cli cluster|cli tune|cli
+  distill|cli train data|reinforcement cluster:|cluster: 2 ranks equal one process|cli health|cli polish|public API|
+  abstraction inventory|naming:`: **54 passed, 0 failed** (no rerun).
+- **Left:** (1) `cluster sim --mode localhost -- reinforce` and `reinforce --cluster FILE` are wired through `ClusterJoin` as
+  tune's are, not run here (child processes loading a model; the owner's run below). (2) A stop (Ctrl+C, `--timeout`) is
+  each rank's own token, checked between iterations; ranks are not made to agree on it (tune's runs share the same gap), so a
+  stop landing between two ranks' checks can leave one rank waiting in the next rollout's exchange until the collectives
+  time out. Agreeing would be a stop flag in the rollout exchange or the trainer (library, not built). (3) The dashboard does
+  not steer reinforce (no stop-with-checkpoint in the RL trainer). (4) On-policy distillation on a cluster (above). (5) A
+  real multi-machine run, as R3b left it.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; the CUDA cluster is carved from one card, two ranks on it):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli cluster|cli train data|reinforcement cluster:|cluster: 2 ranks equal one process|cli health|cli polish|public API|abstraction inventory|naming:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cli reinforce: cluster sim|cli reinforce: a seeded|reinforcement cluster:|cluster: 2 ranks equal one process"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  # a real small model on a simulated cluster of two ranks carved from the card, against one process with the same 4 shards
+  New-Item -ItemType Directory -Force runs | Out-Null
+  1..32 | ForEach-Object { '{"question": "What is ' + $_ + ' plus ' + $_ + '? Answer with the number.", "answer": "' + (2 * $_) + '"}' } | Set-Content runs\sums.jsonl
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster init -y --nodes 1 --devices cuda:0,cuda:0 -o runs\two-cuda.json
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 5 --max-new 64 --no-think --seed 1 -o runs\rl-cluster
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 5 --max-new 64 --no-think --seed 1 -d cuda:0 -o runs\rl-one
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 6 --max-new 64 --no-think --seed 1 -o runs\rl-cluster --resume
+  # the same on localhost processes (each rank a process of the tool)
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster sim --topology runs\two-cuda.json --mode localhost -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 2 --max-new 64 --no-think --seed 1 -o runs\rl-localhost
+  ```
+  What to look at: the first iteration's reward line equal in `rl-cluster` and `rl-one` (the first rollout is the same on
+  any rank count with the same shards; a miss on the card is a finding: a kernel whose result depends on its batch), later
+  lines close; `runs\rl-cluster` holding one adapter, `idrak-tuning.json` and `checkpoints\`; the resumed run starting at
+  iteration 6; the localhost run ending on both processes.
 
 ## Phase R4: `Idrak.Reinforcement.Plugins.Coding`
 
