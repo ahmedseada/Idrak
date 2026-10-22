@@ -31,8 +31,8 @@ standing rules; they win over anything here), then the plan you are asked to wor
   the plan's "The owner's runs" (the owner, 2026-10-22: "I will test all later"). Its status line lists what is left;
   none of it starts without the owner. The owner ordered it by priority and started items 1 and 2 (2026-10-22): R7 (ranks
   agree on a stop) in `/home/user/Idrak-r7`, R8 (exact-size replay arrays) in `/home/user/Idrak-r8`. Then "finish all in order" (the owner):
-  R7, R8 and R9 merged; R10 (distillation on a cluster) and R11 (dashboard steering) run in `/home/user/Idrak-r10` and
-  `/home/user/Idrak-r11`; leftover 6 (a real multi-machine run) is the owner's.
+  R7-R11 merged and pushed (leftovers 1-5 done; with them the Arabic of reinforce's and eval's summaries, which `cli arabic`
+  caught after R0 and R5: run `cli arabic` with any change to a command's summary). No agent runs, no worktree is left; leftover 6 (a real multi-machine run) is the owner's.
 - **Plan 28 (documents)** — [28-documents.md](28-documents.md): written 2026-10-22 from the owner's decisions (PDF as a
   library default on a format-neutral document contract, Office later as a plug-in on it, nothing language-specific in
   the library). Phases D0-D5; **nothing is built**. The owner asked for planning only: its "Questions for the owner"

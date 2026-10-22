@@ -6,7 +6,11 @@
 (CPU passes; each merge's run in its as-built note); the owner's runs are collected in "The owner's runs". Left, not
 started (none asked for): on-policy distillation on a cluster (the distiller on R3b's shards), ranks agreeing on a stop
 (`tune` has the same gap), the dashboard steering `reinforce`, a real multi-machine run, `idrak reinforce` for the classic
-environments and DQN; R6's measured candidate (exact-size replay arrays) is done in R8.
+environments and DQN; R6's measured candidate (exact-size replay arrays) is done in R8. **Leftovers 1-5 done 2026-10-22 (R7-R11)**; left: leftover 6
+(a real multi-machine run, the owner's: commands in "The owner's runs"), and R11's finding for the owner: a language-model
+run resumed after a stop ends within about 1e-7 of an uninterrupted run, not bit for bit, because `FineTuningSession`
+draws its packing order from a `Random` no checkpoint keeps (a packing draw from (seed, step), or the generator's state
+saved, would make it exact but changes every run's packing).
 
 | Phase | What | Lane | State |
 |---|---|---|---|
@@ -2207,6 +2211,23 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 ```powershell
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
+
+# R11 (merged; 111 passed on the merged tree with the Arabic fix 532d447): CPU, CUDA, then the dashboard steering reinforce:
+# the run card shows "iteration N / 50", reward, pass rate and its curve; started paused nothing runs and no log.jsonl appears
+# until Resume; a pause freezes the count; after "Stop and checkpoint" the run reads "stopped after iteration N", checkpoints\
+# holds only iteration-N with the adapter beside it, and --resume starts at N + 1; a localhost run must end on both processes
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cluster control:|cluster stop:|cluster: ui|cluster: cli|cluster: a stopped|cli reinforce|reinforcement:|reinforcement cluster:|plugins: classic|cli arabic|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cluster control:|cluster stop: reinforcement|cluster: ui a sim run"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+& $idrak cluster ui --topology runs\two-cuda.json
+# On the page: Run, "Simulate here", tick "Start paused", command:
+#   reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-ui
+# Resume; after a few iterations "Pause at next iteration"; Resume; "Stop and checkpoint". Again with "Processes here"
+# (localhost) and -o runs\rl-ui-local. Then Ctrl+C the dashboard and resume:
+& $idrak cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-ui --resume
+& $idrak cluster sim --topology runs\two-cuda.json --dashboard -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 20 --max-new 64 --no-think --seed 1 -o runs\rl-ui-terminal
 
 # R10 (merged): CPU, CUDA, then on-policy distillation on one card split in two against one process (the first divergence
 # of "distilled in 6 steps, divergence A -> B" must match; the start line names "4 shards (blocks)"; runs\opd-cluster holds one
