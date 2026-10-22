@@ -262,6 +262,7 @@ public static class Idrak.Diagnostics.ModelMemory
 
 public sealed record Idrak.Generation.BatchChunk : System.IEquatable<Idrak.Generation.BatchChunk>
   public BatchChunk(int Index, string Text, bool Done = false, string? DoneReason = null, Idrak.Abstraction.Generation.GenerationStats? Stats = null)
+  public Idrak.Abstraction.Generation.ChatTokens? Tokens { get; init; }
   public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
   public bool Done { get; init; }
   public int Index { get; init; }

@@ -48,13 +48,31 @@ public sealed record ChatRequest(IReadOnlyList<ChatMessage> Messages, IReadOnlyL
     public bool AddSpecialTokens { get; init; }
 }
 
+/// <summary>
+/// The token ids of one generated reply, as the model saw and sampled them (<see cref="GenerationOptions.ReturnTokens"/>):
+/// what a fine-tune of the reply trains on, so it learns exactly what was sampled and never a re-encoding of the text
+/// (which can give other ids). The reply's ids run up to the token that completed a stop sequence (the end-of-turn marker
+/// included), or to the last one sampled when the reply ended otherwise.
+/// </summary>
+/// <param name="Prompt">The prompt's ids as rendered and fed (after any cut to the context window).</param>
+/// <param name="Reply">The ids sampled, in order.</param>
+/// <param name="LogProbabilities">
+/// log p of each of <paramref name="Reply"/> under the distribution it was drawn from (after the temperature and the top-k,
+/// top-p and min-p filters; <see cref="GenerationOptions.ReturnLogProbabilities"/>), or null when not asked for.
+/// </param>
+public sealed record ChatTokens(int[] Prompt, int[] Reply, float[]? LogProbabilities = null);
+
 /// <summary>A streamed piece of the assistant's reply; the final one carries the reason, the full message and statistics.</summary>
 /// <param name="Delta">What this piece added (content, reasoning, completed tool calls).</param>
 /// <param name="Done">True for the final piece.</param>
 /// <param name="DoneReason">"stop" or "length" on the final piece.</param>
 /// <param name="Message">The complete assistant message, on the final piece.</param>
 /// <param name="Stats">Statistics, on the final piece.</param>
-public sealed record ChatChunk(ChatDelta Delta, bool Done = false, string? DoneReason = null, ChatMessage? Message = null, GenerationStats? Stats = null);
+public sealed record ChatChunk(ChatDelta Delta, bool Done = false, string? DoneReason = null, ChatMessage? Message = null, GenerationStats? Stats = null)
+{
+    /// <summary>The prompt's and the reply's ids, on the final piece when the request asked for them (<see cref="GenerationOptions.ReturnTokens"/>); null otherwise.</summary>
+    public ChatTokens? Tokens { get; init; }
+}
 
 /// <summary>Anything that answers chat requests: <c>ChatGenerator</c>, a model hosted by the inference engine, or <c>FakeChatModel</c> in tests.</summary>
 public interface IChatModel

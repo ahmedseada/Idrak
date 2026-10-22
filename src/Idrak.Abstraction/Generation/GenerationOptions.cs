@@ -56,6 +56,19 @@ public sealed record GenerationOptions
     public int ChunkSize { get; init; } = 8;
 
     /// <summary>
+    /// Give the token ids on the final chunk (<see cref="ChatChunk.Tokens"/>, <see cref="GenerationChunk.Tokens"/>): the
+    /// prompt as fed and the ids sampled, for training on exactly what was generated (reinforcement learning, on-policy
+    /// distillation). Off by default: serving copies nothing.
+    /// </summary>
+    public bool ReturnTokens { get; init; }
+
+    /// <summary>
+    /// With the ids (<see cref="ReturnTokens"/>, which this implies), the log-probability of each sampled id under the
+    /// distribution it was drawn from (<see cref="ChatTokens.LogProbabilities"/>). Off by default.
+    /// </summary>
+    public bool ReturnLogProbabilities { get; init; }
+
+    /// <summary>
     /// Ends the answer when its last tokens are one run of <see cref="RepeatStopMinTokens"/> to 64 tokens repeated this
     /// many times in a row (0 = off; at least 2): a model caught in a loop stops (done reason "repetition") instead of
     /// filling its token limit. Checked as the tokens reach the host (every <see cref="ChunkSize"/>).

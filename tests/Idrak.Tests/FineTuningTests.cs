@@ -746,7 +746,10 @@ internal static partial class Tests
             throw new HttpRequestException("No such host is known.");
     }
 
-    private static string WriteChatModel(DecoderSpec spec)
+    private static string WriteChatModel(DecoderSpec spec) => WriteChatModelWith(spec, Qwen3Template);
+
+    // The tiny chat model with the chat template `template` (Jinja), its weights from seed 91.
+    private static string WriteChatModelWith(DecoderSpec spec, string template)
     {
         string folder = TempFolder();
         var weights = new RandomWeights(91);
@@ -775,7 +778,7 @@ internal static partial class Tests
         File.WriteAllText(Path.Combine(folder, "tokenizer.json"), tokenizer.ToJsonString());
         File.WriteAllText(Path.Combine(folder, "tokenizer_config.json"), new JsonObject
         {
-            ["chat_template"] = Qwen3Template, ["eos_token"] = "<|im_end|>", ["bos_token"] = null,
+            ["chat_template"] = template, ["eos_token"] = "<|im_end|>", ["bos_token"] = null,
         }.ToJsonString());
         return folder;
     }

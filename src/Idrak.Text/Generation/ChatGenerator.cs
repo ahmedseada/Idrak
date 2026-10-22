@@ -256,12 +256,24 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         ThrowIfImages(requests);
         var options = requests[0].Options ?? new GenerationOptions();
         options = options with { Stop = [.. options.Stop, .. Template.StopSequences] };
-        var outputs = Generator.GenerateBatch([.. requests.Select(RenderPrompt)], options, cancellationToken);
+        // GenerateBatch's texts, with each reply's final chunk (its ids when the options ask for them).
+        var texts = requests.Select(_ => new System.Text.StringBuilder()).ToArray();
+        var finals = new BatchChunk?[requests.Count];
+        foreach (var chunk in Generator.StreamBatch([.. requests.Select(RenderPrompt)], options, cancellationToken))
+        {
+            texts[chunk.Index].Append(chunk.Text);
+            if (chunk.Done)
+            {
+                finals[chunk.Index] = chunk;
+            }
+        }
+
         var replies = new List<ChatChunk>(requests.Count);
         for (int i = 0; i < requests.Count; i++)
         {
             var request = requests[i];
-            var (text, reason, stats) = outputs[i];
+            string text = texts[i].ToString();
+            var final = finals[i] ?? throw new InvalidOperationException($"Generation ended without a final chunk for request {i}.");
             var parser = new ChatOutputParser(Template, request.Tools, separateThinking: request.Think != false);
             var first = parser.Feed(text);
             var last = parser.Finish();
@@ -269,7 +281,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             string thinking = first.Thinking + last.Thinking;
             var message = new ChatMessage("assistant", (first.Content + last.Content).Trim(), thinking.Length > 0 ? thinking.Trim() : null,
                 calls.Count > 0 ? calls : null);
-            replies.Add(new ChatChunk(last, true, reason, message, stats));
+            replies.Add(new ChatChunk(last, true, final.DoneReason, message, final.Stats) { Tokens = final.Tokens });
         }
 
         return replies;
@@ -344,7 +356,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
             string thought = thinking[i].ToString();
             var message = Reply(parsers[i], content[i].ToString(), thought, calls[i]);
-            yield return (i, new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats));
+            yield return (i, new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats) { Tokens = chunk.Tokens });
         }
     }
 
@@ -494,7 +506,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
                 if (chunk.Done)
                 {
                     yield return (r, new ChatChunk(delta, true, chunk.DoneReason, Reply(parsers[r], content[r].ToString(), thinking[r].ToString(), calls[r]),
-                        chunk.Stats));
+                        chunk.Stats) { Tokens = chunk.Tokens });
                 }
                 else if (!delta.IsEmpty)
                 {
@@ -657,7 +669,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
                 if (chunk.Done)
                 {
                     var message = Reply(parser, content.ToString(), thinking.ToString(), calls);
-                    yield return new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats);
+                    yield return new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats) { Tokens = chunk.Tokens };
                 }
                 else if (!delta.IsEmpty)
                 {
