@@ -1416,6 +1416,14 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R3b (merged): CPU, then CUDA (the simulated cluster is carved from one card; the first rollout's bit-identity and the
+# 1e-4 adapter tolerance are checked there: a miss is a finding)
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement cluster:|reinforcement:|reinforcement contracts|reinforcement text:|fine-tuning:|fine-tuning options:|cluster: 2 ranks equal one process|cli reinforce|plugins: coding|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "reinforcement cluster:|reinforcement text:|cluster: 2 ranks equal one process"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+
 # R4b (merged 24d6e50, with f3864ba: tune, distill and reinforce skip the languages' build folders as before): no GPU
 # code; CPU filters, then the agent on a C# and on a TypeScript project of your own (unchanged behaviour)
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "coding languages|plugins: csharp|plugins: typescript|plugins: python|plugins: coding|coding agent:|coding tools|command sandboxes|data files|cli train data|datasets: JSON Lines|datasets: Hugging Face|cli run: tools|plugins:|reinforcement contracts|public API|abstraction inventory|cli health|cli polish|naming:|override loop:"
