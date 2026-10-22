@@ -1318,6 +1318,15 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R4b (merged 24d6e50, with f3864ba: tune, distill and reinforce skip the languages' build folders as before): no GPU
+# code; CPU filters, then the agent on a C# and on a TypeScript project of your own (unchanged behaviour)
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "coding languages|plugins: csharp|plugins: typescript|plugins: python|plugins: coding|coding agent:|coding tools|command sandboxes|data files|cli train data|datasets: JSON Lines|datasets: Hugging Face|cli run: tools|plugins:|reinforcement contracts|public API|abstraction inventory|cli health|cli polish|naming:|override loop:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+dotnet run -c Release --no-build --project src\Idrak.Cli -- agent <model> "Build the project and run its tests" --workspace <a C# project> --yes
+dotnet run -c Release --no-build --project src\Idrak.Cli -- agent <model> "Build the project and run its tests" --workspace <a TypeScript project> --yes --languages detected
+dotnet run -c Release --project src\Idrak.Cli -- reinforce Qwen/Qwen3-0.6B --env csharp --suite samples\Idrak.Samples.CodingAgent\suite --algorithm grpo --group 8 --iterations 20 --out runs\rl-csharp
+
 # R5 (merged): CPU, CUDA, the demo suite's check, then the first real runs (they download a small model)
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli train data|cli health|cli polish|plugins: coding|reinforcement text:|reinforcement:|reinforcement contracts|coding agent:|cli run: tools|public API|abstraction inventory|naming:"
 dotnet run -c Release --no-build --project tests\Idrak.Tests
