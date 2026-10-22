@@ -160,6 +160,7 @@ public sealed record Idrak.Reinforcement.OffPolicySummary : System.IEquatable<Id
   public long Updates { get; init; }
 
 public sealed class Idrak.Reinforcement.OffPolicyTrainer : System.IDisposable
+  public Idrak.Abstraction.Cluster.IRunSteering? Steering { get; init; }
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Diagnostics.IProgressReporter? Progress { get; init; }
   public Idrak.Abstraction.Module Network { get; }
@@ -221,6 +222,7 @@ public sealed record Idrak.Reinforcement.ReinforcementOptions : System.IEquatabl
   public bool? GroupScale { get; init; }
   public bool? NormalizeAdvantages { get; init; }
   public bool? ParallelSteps { get; init; }
+  public const string PassReturnVariable = "IDRAK_RL_PASS_RETURN"
   public float Clip { get; init; }
   public float EntropyWeight { get; init; }
   public float Gamma { get; init; }
@@ -229,6 +231,7 @@ public sealed record Idrak.Reinforcement.ReinforcementOptions : System.IEquatabl
   public float MaxGradientNorm { get; init; }
   public float Temperature { get; init; }
   public float ValueWeight { get; init; }
+  public float? PassReturn { get; init; }
   public int Environments { get; init; }
   public int EpisodesPerIteration { get; init; }
   public int Epochs { get; init; }
@@ -265,6 +268,7 @@ public static class Idrak.Reinforcement.ReinforcementTrainer
   public static Idrak.Reinforcement.ReinforcementResult Train<TObservation, TAction>(string environmentKind, Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction> policy, Idrak.Reinforcement.ReinforcementOptions? options = null, Idrak.Abstraction.Diagnostics.IProgressReporter? progress = null, System.Threading.CancellationToken cancellationToken = default)
 
 public sealed class Idrak.Reinforcement.ReinforcementTrainer<TObservation, TAction>
+  public Idrak.Abstraction.Cluster.IRunSteering? Steering { get; init; }
   public Idrak.Abstraction.Diagnostics.IProgressReporter? Progress { get; init; }
   public Idrak.Reinforcement.ReinforcementOptions Options { get; }
   public Idrak.Reinforcement.ReinforcementResult Train(System.Threading.CancellationToken cancellationToken = default)

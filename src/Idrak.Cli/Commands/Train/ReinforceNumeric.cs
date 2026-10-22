@@ -97,7 +97,9 @@ internal static class ReinforceNumeric
               --report-every N    dqn: steps between two report lines (default 1000); --save-every and --evaluate-every
                                   count steps too
         Each reads its IDRAK_RL_* variable (dqn's: IDRAK_RL_DQN_*); the command line wins. DIR receives the policy (or
-        the Q-network, network.ikw) and idrak-reinforce.json (its settings); checkpoints go to DIR/checkpoints.
+        the Q-network, network.ikw) and idrak-reinforce.json (its settings); checkpoints go to DIR/checkpoints, the log to
+        DIR/log.jsonl. A control file (IDRAK_CLUSTER_CONTROL: run, pause or stop) pauses, resumes or stops the run at an
+        iteration (dqn: a round), read at most every IDRAK_CLUSTER_CONTROL_POLL seconds.
         """;
 
     /// <summary>The usage's examples of this path.</summary>
@@ -236,6 +238,7 @@ internal static class ReinforceNumeric
             var trainer = new ReinforcementTrainer<float[], TAction>(kind, policy, options)
             {
                 Progress = progress,
+                Steering = ReinforceCommand.Steering(),                         // a launcher's control file, at each iteration (R11)
                 OnIteration = s =>
                 {
                     progress.Erase();
@@ -301,6 +304,7 @@ internal static class ReinforceNumeric
             trainer = new OffPolicyTrainer(kind, online, target, options)
             {
                 Progress = progress,
+                Steering = ReinforceCommand.Steering(),                         // a launcher's control file, at each round (R11)
                 OnReport = s =>
                 {
                     progress.Erase();
@@ -411,7 +415,7 @@ internal static class ReinforceNumeric
         o = Long(context, "--evaluate-every", 1) is { } evaluateEvery ? o with { EvaluateEvery = evaluateEvery } : o;
         o = ReinforceCommand.Int(context, "--evaluation-episodes", 1) is { } evaluationEpisodes ? o with { EvaluationEpisodes = evaluationEpisodes } : o;
         o = Long(context, "--save-every", 1) is { } saveEvery ? o with { SaveEvery = saveEvery } : o;
-        o = o with { CheckpointFolder = o.CheckpointFolder ?? Path.Combine(output, "checkpoints") };
+        o = o with { CheckpointFolder = o.CheckpointFolder ?? Path.Combine(output, "checkpoints"), Log = o.Log ?? Path.Combine(output, ReinforceCommand.LogFile) };
         o = context.Flag("--resume") ? o with { Resume = o.CheckpointFolder } : o;
         if (o.Resume is { } resume && !File.Exists(Path.Combine(resume, "state.json"))
             && !(Directory.Exists(resume) && Directory.EnumerateDirectories(resume, "step-*").Any(d => File.Exists(Path.Combine(d, "state.json")))))

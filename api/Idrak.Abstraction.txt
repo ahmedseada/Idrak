@@ -422,6 +422,15 @@ public interface Idrak.Abstraction.Cluster.IPipelineSchedule
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Abstraction.Cluster.IRunSteering
+  public Idrak.Abstraction.Cluster.ClusterControlCommand Boundary(long step, System.Threading.CancellationToken cancellationToken = default)
+  public string Name { get; }
+
+public interface Idrak.Abstraction.Cluster.IRunSteeringProvider
+  public Idrak.Abstraction.Cluster.IRunSteering? Create(Idrak.Abstraction.Cluster.ICollectives? collectives, Idrak.Abstraction.Cluster.ClusterOptions options)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Abstraction.Cluster.IStepGroup
   public bool BeginStep(long step)
   public bool Changed { get; }
@@ -571,6 +580,21 @@ public enum Idrak.Abstraction.Cluster.ReduceOp : int
   Max = 1
   Min = 2
   Sum = 0
+
+public static class Idrak.Abstraction.Cluster.RunSteerings
+  public const string StopReason = "a stop asked through the run's control (the dashboard, or its control file)"
+  public static Idrak.Abstraction.Cluster.IRunSteering? For(Idrak.Abstraction.Cluster.ICollectives? collectives, Idrak.Abstraction.Cluster.ClusterOptions? options = null)
+  public static Idrak.Abstraction.Cluster.IRunSteeringProvider Get(string name)
+  public static Idrak.Abstraction.Cluster.IRunSteeringProvider? Default(string name)
+  public static Idrak.Abstraction.Cluster.IRunSteeringProvider? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.IRunSteeringProvider> All { get; }
+  public static bool Steered(Idrak.Abstraction.Cluster.ICollectives collectives)
+  public static bool Stops(this Idrak.Abstraction.Cluster.IRunSteering? steering, long step, Idrak.Abstraction.Cluster.IStopAgreement? agreement, System.Threading.CancellationToken cancellationToken = default)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.IRunSteeringProvider provider)
 
 public enum Idrak.Abstraction.Cluster.ShardMode : int
   Gradients = 2

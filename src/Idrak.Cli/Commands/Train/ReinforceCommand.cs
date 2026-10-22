@@ -68,7 +68,10 @@ internal sealed class ReinforceCommand : Command
         iteration plays episodes with the model's own sampled replies, scores them, estimates each one's advantage and
         updates the adapters with the algorithm's loss, by the library's trainer. Checkpoints go to DIR/checkpoints after
         every --save-every iterations and at the end (or on Ctrl+C, after the current iteration); --resume goes on from the
-        latest. The adapter is written to DIR (idrak tune chat DIR, idrak run MODEL --adapter DIR use it).
+        latest. The adapter is written to DIR (idrak tune chat DIR, idrak run MODEL --adapter DIR use it). Every iteration
+        is a control point: the cluster dashboard (idrak cluster ui, cluster sim --dashboard) or a launcher's control file
+        (IDRAK_CLUSTER_CONTROL, in one process too) pauses the run there, resumes it as if nothing happened, or stops it
+        there with its checkpoint; the dashboard shows the iterations, rewards and pass rate from DIR/log.jsonl.
 
         Environments (--list shows the registered ones, a plug-in's among them):
           prompts     chat prompts with references (--data, conversations as idrak tune reads them: the last assistant
@@ -129,7 +132,8 @@ internal sealed class ReinforceCommand : Command
           --warmup (default: IDRAK_RL_WARMUP's, 0), --min-lr, --decay, --adapter-type, --adapter, --context, --matmul,
           --gpu-memory, --no-packing, --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-graphs,
           --fp8, --cpu-optimizer, --offload. Every run setting also reads its IDRAK_RL_* variable (idrak help env); the
-          command line wins. IDRAK_RL_LOG appends a JSON line per iteration. --json prints one JSON document at the end.
+          command line wins. A JSON line per iteration goes to DIR/log.jsonl (IDRAK_RL_LOG: another file; the pass rate
+          counts the episodes whose return reaches IDRAK_RL_PASS_RETURN, 1). --json prints one JSON document at the end.
         {{ReinforceNumeric.UsageOptions}}
 
         On a cluster (idrak cluster sim --topology FILE -- reinforce ..., or --cluster FILE) every rank runs the command on
@@ -391,6 +395,7 @@ internal sealed class ReinforceCommand : Command
             var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(kind, policy, options)
             {
                 Progress = progress,
+                Steering = Steering(),                                         // the dashboard's pause, resume and stop at each iteration (R11)
                 OnIteration = s =>
                 {
                     progress.Erase();
@@ -409,6 +414,26 @@ internal sealed class ReinforceCommand : Command
                 + $"{(history.Count > 0 ? FormattableString.Invariant($": reward {history[0].RewardMean:0.###} → {history[^1].RewardMean:0.###}") : "")}"
                 + $"; adapter {(wrote ? "written" : "written by rank 0")} to {Path.GetFullPath(output)}{(result.Checkpoint is { } c ? $", checkpoint {c}" : "")}"));
             return (ExitCodes.Ok, result);
+        }
+    }
+
+    /// <summary>The run's JSON log in DIR (a line per iteration; IDRAK_RL_LOG names another file): the dashboard shows the run from it.</summary>
+    public const string LogFile = "log.jsonl";
+
+    /// <summary>
+    /// The run's control point at its boundaries (Plan 27, R11): the dashboard's in-process control of this cluster rank, or
+    /// the control file a launcher set (IDRAK_CLUSTER_CONTROL; in one process too); null when nothing steers the run.
+    /// </summary>
+    internal static global::Idrak.Abstraction.Cluster.IRunSteering? Steering()
+    {
+        var rank = ClusterSession.Current;
+        try
+        {
+            return global::Idrak.Abstraction.Cluster.RunSteerings.For(rank?.Collectives, rank?.Context.Options ?? global::Idrak.Abstraction.Cluster.ClusterOptions.FromEnvironment());
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
         }
     }
 
@@ -441,7 +466,7 @@ internal sealed class ReinforceCommand : Command
         o = context.Seed is { } seed ? o with { Seed = seed } : o;
         o = Int(context, "--shards", 0) is { } shards ? o with { Shards = shards } : o;
         o = context.Option("--spread") is { } spread ? o with { Spread = Spread(spread) } : o;
-        o = o with { CheckpointFolder = o.CheckpointFolder ?? Path.Combine(output, "checkpoints") };
+        o = o with { CheckpointFolder = o.CheckpointFolder ?? Path.Combine(output, "checkpoints"), Log = o.Log ?? Path.Combine(output, LogFile) };
         o = context.Flag("--resume") ? o with { Resume = o.CheckpointFolder } : o;
 
         // The names, checked by their registries before anything loads.

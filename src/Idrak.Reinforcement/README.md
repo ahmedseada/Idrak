@@ -42,8 +42,10 @@ batch against its single form, an estimator's fixed order, a loss's gradient) ar
 - **`ReinforcementTrainer`**: collect, estimate, `Epochs` passes of mini-batch updates; the gradient clip and a schedule from
   `LearningRateSchedules` for a policy that exposes its optimizer (`IScheduledPolicy`); greedy evaluation episodes with
   seeds of their own; checkpoints (the policy with its optimizer, the iteration, the updates, the seed) and a resume that
-  continues bit for bit; a clean stop between iterations; progress through `IProgressReporter`, the library's telemetry,
-  and a JSON line per iteration. Every draw derives from the run's seed and where the run is.
+  continues bit for bit; a clean stop between iterations; a control point at each iteration (`Steering`, from
+  `RunSteerings.For`: the cluster dashboard's or a control file's pause, resume and stop, a stop agreed by every rank);
+  progress through `IProgressReporter`, the library's telemetry, and a JSON line per iteration (with its pass rate,
+  `PassReturn`). Every draw derives from the run's seed and where the run is.
 - **`ModulePolicy`**: a policy over a `Module`: categorical over discrete actions or Gaussian over a box, a critic or not,
   a frozen reference or not; its updates are autograd and an optimizer made through `OptimizerKinds`.
 - **`PolicyNetworks`**: a module policy or DQN's Q-network and target built from settings for an environment kind's spaces
