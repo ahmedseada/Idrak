@@ -763,7 +763,20 @@ internal static partial class Tests
             float allowed = tolerance * Math.Max(1f, MathF.Abs(expected[i]));
             if (!(MathF.Abs(expected[i] - actual[i]) <= allowed))
             {
-                throw new Exception($"{what}: element {i} is {actual[i]}, expected {expected[i]}");
+                // How far it is off as a whole (one ulp everywhere, a tail, a block) says more than the first element.
+                int differ = 0;
+                float largest = 0f;
+                for (int j = 0; j < expected.Length; j++)
+                {
+                    float gap = MathF.Abs(expected[j] - actual[j]);
+                    if (!(gap <= tolerance * Math.Max(1f, MathF.Abs(expected[j]))))
+                    {
+                        differ++;
+                        largest = float.IsNaN(gap) ? float.NaN : MathF.Max(largest, gap);
+                    }
+                }
+
+                throw new Exception($"{what}: element {i} is {actual[i]:R}, expected {expected[i]:R}; {differ} of {expected.Length} differ, by up to {largest:G3}");
             }
         }
     }
