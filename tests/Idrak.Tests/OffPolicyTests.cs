@@ -15,7 +15,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] OffPolicyGroup =
     [
-        ("reinforcement: off-policy: the replay buffer is a fixed ring: the memory rented when it is made does not grow after it is full, the oldest transition is overwritten, sampling is seeded, Save and Load keep it bit for bit", d => { if (d == Device.Cpu) OffPolicyReplayBuffer(); }),
+        ("reinforcement: off-policy: the replay buffer is a fixed ring: the memory allocated when it is made is the transitions' size exactly (no pool's rounding) and does not grow after it is full, the oldest transition is overwritten, sampling is seeded, Save and Load keep it bit for bit", d => { if (d == Device.Cpu) OffPolicyReplayBuffer(); }),
         ("reinforcement: off-policy: dqn is QLosses' library default; it matches a direct computation (Huber of δ 1 and 2, the squared error, double Q-learning, weights), its gradient reaches only the actions taken, and unknown names, options and inputs are refused; an app's loss falls back on it", OffPolicyLoss),
         ("reinforcement: off-policy: a seeded DQN run gives the same returns, losses and weights twice, on 1 and 4 threads, with its environments stepped in parallel or not; another seed differs; memory held does not grow after the buffer is full", OffPolicyReproducible),
         ("reinforcement: off-policy: a resumed DQN run matches an uninterrupted one bit for bit (returns, losses, weights, the target network, the replay buffer, the schedule's rate), episodes under way at the checkpoint replayed from their seeds and actions", OffPolicyResume),
@@ -64,11 +64,20 @@ internal static partial class Tests
     {
         using var buffer = new ReplayBuffer(5, 2);
         long bytes = buffer.Bytes;
-        Check(buffer.Capacity == 5 && buffer.Count == 0 && bytes >= 5 * (2 * 2 * 4 + 4 + 4 + 1), $"a buffer of 5 transitions of 2 floats: {bytes} bytes");
+        Check(buffer.Capacity == 5 && buffer.Count == 0 && bytes == 5 * (2 * 2 * 4 + 4 + 4 + 1), $"a buffer of 5 transitions of 2 floats holds 125 bytes, not {bytes}");
         ThrowsNaming<InvalidOperationException>(() => buffer.Sample(new Random(1), new int[3]), "sampling an empty buffer", "empty");
         using (var warm = new ReplayBuffer(5, 2))
         {
             warm.Add([1f, 2f], 0, 0f, [3f, 4f], false);                      // the first call compiled before allocations are counted
+        }
+
+        // A large buffer allocates its transitions' size and a constant (the five arrays' headers), not a pool's power of two (R8).
+        long start = GC.GetAllocatedBytesForCurrentThread();
+        using (var large = new ReplayBuffer(100_000, 4))
+        {
+            long made = GC.GetAllocatedBytesForCurrentThread() - start;
+            Check(large.Bytes == 4_100_000 && made >= large.Bytes && made - large.Bytes < 1_024,
+                $"a buffer of 100,000 CartPole transitions holds 4,100,000 bytes ({large.Bytes}) and allocates them and under 1 KB more when made ({made} bytes)");
         }
 
         long allocated = 0;
@@ -263,7 +272,8 @@ internal static partial class Tests
         };
         running = trainer;
         trainer.Train();
-        Check(trainer.Replay.Count == 1_000 && trainer.Replay.Added == 12_000 && trainer.Replay.Bytes == bytesFull, $"the buffer full at 1,000 of 12,000 transitions, {trainer.Replay.Bytes} bytes");
+        Check(trainer.Replay.Count == 1_000 && trainer.Replay.Added == 12_000 && trainer.Replay.Bytes == bytesFull && bytesFull == 1_000 * (2 * 4 * 4 + 9),
+            $"the buffer full at 1,000 of 12,000 transitions, {trainer.Replay.Bytes} bytes (41,000 expected)");
         Check(deviceEnd == deviceFull, $"device memory in use when the buffer is full (step 2,000): {deviceFull} bytes; at step 12,000: {deviceEnd}");
         Check(heapEnd - heapFull < 512 * 1024, $"the managed heap at step 2,000: {heapFull / 1024} KB; at 12,000: {heapEnd / 1024} KB (grew {(heapEnd - heapFull) / 1024} KB)");
         Console.WriteLine($"    off-policy memory: replay {bytesFull} bytes, device {deviceFull} → {deviceEnd} bytes, heap {heapFull / 1024} → {heapEnd / 1024} KB over 10,000 steps");

@@ -18,7 +18,7 @@ transitions).
 | R3b | R3's leftover: rollouts on a cluster (the language-model policy's episodes spread over the ranks, gathered in rank order; the policy refused a cluster session before) | B | Done 2026-10-22; CPU pass |
 | R3c | R3b's leftover: `idrak reinforce` under `idrak cluster sim` (the command on every rank, the adapter and manifest written once by rank 0) | A | Done 2026-10-22; CPU pass (on-policy distillation on a cluster not taken, refused with the reason; see "R3c as built") |
 | R7 | Leftover 1 (the owner, 2026-10-22): ranks agree on a stop (Ctrl+C, a timeout, a stop request) at the same step, for `reinforce` and `tune` and every trainer that runs on a cluster, then one checkpoint | A | In progress (2026-10-22) |
-| R8 | Leftover 2 (the owner, 2026-10-22): the replay buffer in exact-size arrays (5.37 MB held for 4.1 MB at 100,000 transitions) | B | In progress (2026-10-22) |
+| R8 | Leftover 2 (the owner, 2026-10-22): the replay buffer in exact-size arrays (5.37 MB held for 4.1 MB at 100,000 transitions) | B | Done 2026-10-22; CPU pass |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Done 2026-10-22; CPU pass |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Done 2026-10-22; CPU pass (left: the demo suite through R4b's `--env csharp` after its merge; see "R5 as built") |
@@ -1622,6 +1622,87 @@ bandit and CartPole within seeded step counts on the CPU.
   ```
   To make the fixtures again (they are checked in; the same versions give the same files): `python -m venv rl-venv`,
   `rl-venv\Scripts\pip install -r tools\reinforcement\requirements.txt`, `rl-venv\Scripts\python -I tools\reinforcement\make_fixtures.py`.
+
+**R8 as built (2026-10-22).** The replay buffer holds its transitions in arrays of exactly the capacity's length, allocated once
+when it is made, never grown and never pooled; only `src/Idrak.Reinforcement/ReplayBuffer.cs` changed in the library
+(`OffPolicyTrainer.cs` did not: it still makes the buffer once with `new ReplayBuffer(ReplayCapacity, observationSize)`).
+- **What changed.** The five arrays (observations, next observations, rewards, actions, terminations) are
+  `GC.AllocateUninitializedArray<T>` of `capacity × observationSize` and `capacity` elements, where they were
+  `ArrayPool<T>.Shared.Rent` of the same counts (which rounds each up to a power of two, and keeps the arrays after `Dispose`
+  returns them). Not zeroed, as a rented array was not: no slot is read before `Add` or `Load` writes it (`Gather`, `Save` and
+  `Load` stop at `Count`). `Dispose` now lets the arrays go instead of returning them. `Bytes` (the same formula over the arrays'
+  lengths) is now `Capacity × (8 × ObservationSize + 9)`, the transitions' size exactly: 41,000 for the tests' 1,000-transition
+  CartPole buffer (41,984 before). The ring, the seeded draws, `Gather`, the save and load format and the public API are
+  unchanged (`api/*.txt` and the inventory did not change; the `public API` and `abstraction inventory` tests pass on them as
+  they are). Only `Bytes`' value and the doc comments differ.
+- **Proven unchanged (rule 71)**, in a scratch Release program (not checked in, `DOTNET_TieredCompilation=0`) built once against
+  the library before the change (a32262f) and once after, run on the same inputs: 20 seeded draws of 64 from a 1,000-transition
+  CartPole buffer filled with 2,500 transitions (wrapped), each draw's indices, observations, next observations, actions, rewards
+  and terminations hashed; the buffer's saved bytes; a seeded DQN run on CartPole (the tests' `SmallDqn(7)` shape: 4,000 steps,
+  two environments, 16 × 16, replay 1,000, a linear schedule, checkpoints every 2,000) with every report's step, updates,
+  episodes, loss bits, rate bits and returns hashed, the network's and target's weights, and every checkpoint file
+  (`network.ikw`, `target.ikw`, `optimizer.safetensors`, `replay.bin`, `state.json` at 2,000 and 4,000); a run stopped at 2,000
+  and resumed into other weights. **All 48 lines of output are the same before and after**, and every checkpoint file is the same
+  byte for byte. **Across builds:** the new build resumed the old build's 2,000-step checkpoint and the old build resumed the new
+  one's, both ending with the uninterrupted run's reports, weights and every step-4,000 file byte for byte; a buffer file saved by
+  either build loads in the other and saves the same bytes. So a checkpoint written before loads after, bit for bit.
+- **Memory** (the same program; a 100,000-transition CartPole buffer, 4 floats an observation, its transitions 4,100,000 bytes;
+  `GC.GetTotalAllocatedBytes(precise: true)` around construction, `GC.GetTotalMemory(true)` before, after construction, after
+  filling with 100,000 CartPole transitions and after `Dispose`):
+
+  | | Before (pooled) | After (exact) |
+  |---|---|---|
+  | `Bytes` | 5,373,952 | 4,100,000 |
+  | allocated by construction | 5,384,328 | 4,100,208 |
+  | heap held after construction | 5,376,872 | 4,100,376 |
+  | heap held after filling | 5,376,920 | 4,100,376 |
+  | heap held after `Dispose` and a full collection | 5,384,432 (kept in the pool) | 5,448 |
+
+  1,276,496 bytes less held while it lives (31% of the transitions' size), and nothing held once it is gone; the held memory is the transitions' size
+  plus 376 bytes (the arrays' headers and the object). The test run's DQN memory line: replay 41,000 bytes (41,984 before).
+- **Speed** (the same program, warm, medians of 41 × 2,000 calls per run; a 100,000-transition buffer; five runs of each build
+  alternated, before, after, before, ...). **Measured while the other agent's build ran (load 4-5.5 on 4 cores),** so single runs
+  swing by up to 70%; the table gives the median over the five runs and, in brackets, the best run:
+
+  | Per call | Before | After |
+  |---|---|---|
+  | `Sample` + `Gather`, batch 32 | 815 ns (752) | 710 ns (691) |
+  | `Sample` + `Gather`, batch 64 | 1,492 ns (1,451) | 1,509 ns (1,390) |
+  | `Sample` + `Gather`, batch 256 | 6,039 ns (5,794) | 5,943 ns (5,486) |
+  | `Add` into the full ring | 10.7 ns (10.5) | 11.7 ns (11.6) |
+  | construction, cold (the first in the process; two runs, one run) | 6.1 and 5.9 ms | 2.5 ms |
+  | construction, again after one was disposed | 0.0-0.1 µs (a pool hit) | 26 µs (24-221 µs) |
+
+  Sampling is the same within the noise (batch 64's median 1% higher, its best run 4% lower; batches 32 and 256 lower in both). **Two slowdowns, reported:** `Add` measured about 1 ns slower
+  (9%) in every pair of runs (its code did not change; the arrays' lengths and addresses did), a step of DQN costs microseconds
+  (one batched forward), so it is not seen in a run; and a buffer made again after another was disposed now allocates its 4.1 MB
+  (26 µs) where the pool handed back the arrays it kept: that is the memory the pool held for nothing, and a trainer makes its
+  buffer once.
+- **Other long-lived pooled arrays in `src/Idrak.Reinforcement/` (not changed, the owner decides):** none of a size that matters.
+  `OffPolicyTrainer`'s per-run `Sample` (nine arrays rented for the whole `Train`, of the batch's size): exact for any batch that
+  is a power of two (the defaults 32 and the CartPole tests' 64 with 4 floats and 2 actions: 0 bytes rounded); a batch of 100
+  with 4 floats and 2 actions would hold 8,320 bytes for 6,500. `Train`'s `input`, `values` and `chosen` (environments' size,
+  for the run): the pool's smallest array is 16 elements, so 2 environments of CartPole hold 192 bytes for 56. The rest
+  (`EvaluateAsync`'s arrays, `ModulePolicy`'s and `Estimators`' per-call arrays, the big-endian copy in `ReplayBuffer.Write`) are
+  rented and returned within one call, the case a pool is for.
+- **Tests** (`tests/Idrak.Tests/OffPolicyTests.cs`): the replay buffer test now checks `Bytes` exactly (125 for 5 transitions of
+  2 floats), and that a 100,000-transition CartPole buffer holds 4,100,000 bytes and allocates them and under 1 KB more when made
+  (the pooled layout allocated 5.38 MB: it would fail); its name says so. The memory test checks the full buffer's 41,000 bytes.
+  The bit-for-bit checks that were there (a seeded run twice, on 1 and 4 threads, stepped in parallel or as measured; a resumed
+  run against an uninterrupted one, the replay file byte for byte) pass unchanged.
+- **The run (CPU, this agent):** one build of `tests/Idrak.Tests` (no warnings); `IDRAK_DEVICES=cpu IDRAK_FILTER="reinforcement:
+  off-policy|plugins: classic|public API|abstraction inventory"`: **16 passed, 0 failed** (with one encoder test whose name holds
+  "public API"), in 14 s.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; R8 has no GPU code, the buffer is host memory: the CUDA line runs the
+  same DQN tests on the card):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement: off-policy|plugins: classic|public API|abstraction inventory"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "plugins: classic: DQN|reinforcement: off-policy"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Order and parallelism
 
