@@ -104,12 +104,14 @@ public sealed record Idrak.Data.Abstractions.ReadOptions : System.IEquatable<Idr
   public Idrak.Data.Abstractions.IDataFileFormat? FileFormat { get; init; }
   public Idrak.Data.Abstractions.TextRows Text { get; init; }
   public ReadOptions()
+  public System.Collections.Generic.IReadOnlyCollection<string> SkippedFolders { get; init; }
   public bool Documents { get; init; }
   public bool IncludeCode { get; init; }
   public bool IncludeFile { get; init; }
   public bool InferTypes { get; init; }
   public long MaxDocumentBytes { get; init; }
   public static Idrak.Data.Abstractions.ReadOptions Default { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> DefaultSkippedFolders { get; }
   public string? JsonProperty { get; init; }
   public string? Pattern { get; init; }
   public string? Root { get; init; }
@@ -157,6 +159,7 @@ public static class Idrak.Data.DataFiles
   public static System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> ReadStream(System.Func<System.IO.Stream> open, string path, Idrak.Data.Abstractions.IDataFileFormat format, Idrak.Data.Abstractions.ReadOptions options)
   public static System.Text.RegularExpressions.Regex Glob(string glob)
   public static bool IsArchive(string path)
+  public static string? LanguageOf(string path)
 
 public sealed record Idrak.Data.DatasetRecipe : System.IEquatable<Idrak.Data.DatasetRecipe>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public DatasetRecipe()
@@ -164,6 +167,7 @@ public sealed record Idrak.Data.DatasetRecipe : System.IEquatable<Idrak.Data.Dat
   public (Idrak.Data.DatasetRows, Idrak.Data.DatasetRows?) Build(Idrak.Abstraction.Data.IDownloader? downloader, Idrak.Data.RecipeCounts? counts)
   public Idrak.Data.MixStop Stop { get; init; }
   public Idrak.Data.RowKind Kind { get; init; }
+  public System.Collections.Generic.IReadOnlyCollection<string>? SkippedFolders { get; init; }
   public bool Deduplicate { get; init; }
   public bool Shuffle { get; init; }
   public bool? MixByWeight { get; init; }
@@ -210,8 +214,8 @@ public sealed class Idrak.Data.DatasetRows : Idrak.Data.Abstractions.IDatasetRow
 
 public static class Idrak.Data.DatasetSpecExtensions
   public static Idrak.Data.ChatMapping? get_Mapping(Idrak.Data.Abstractions.DatasetSpec spec)
-  public static Idrak.Data.DatasetRows Open(this Idrak.Data.Abstractions.DatasetSpec spec, Idrak.Abstraction.Data.IDownloader? downloader = null)
-  public static System.Collections.Generic.IReadOnlyList<string> Download(this Idrak.Data.Abstractions.DatasetSpec spec, Idrak.Abstraction.Data.IDownloader? downloader = null)
+  public static Idrak.Data.DatasetRows Open(this Idrak.Data.Abstractions.DatasetSpec spec, Idrak.Abstraction.Data.IDownloader? downloader = null, System.Collections.Generic.IReadOnlyCollection<string>? skippedFolders = null)
+  public static System.Collections.Generic.IReadOnlyList<string> Download(this Idrak.Data.Abstractions.DatasetSpec spec, Idrak.Abstraction.Data.IDownloader? downloader = null, System.Collections.Generic.IReadOnlyCollection<string>? skippedFolders = null)
 
 public sealed record Idrak.Data.DownloadProgress : System.IEquatable<Idrak.Data.DownloadProgress>
   public DownloadProgress(string Url, long Received, long? Total, string File = "", System.TimeSpan Elapsed = default, bool Completed = false)
@@ -244,7 +248,7 @@ public sealed class Idrak.Data.Downloader : Idrak.Abstraction.Data.IDownloader
 public static class Idrak.Data.GitHub
   public static Idrak.Data.DatasetRows Files(string repo, string pattern, string? reference = null, string? token = null, Idrak.Data.Abstractions.ReadOptions? options = null, Idrak.Abstraction.Data.IDownloader? downloader = null)
   public static Idrak.Data.DatasetRows Release(string repo, string assetPattern, string? tag = null, string? token = null, Idrak.Data.Abstractions.ReadOptions? options = null, Idrak.Abstraction.Data.IDownloader? downloader = null)
-  public static Idrak.Data.DatasetRows Repository(string repo, string? reference = null, string? pattern = null, string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null)
+  public static Idrak.Data.DatasetRows Repository(string repo, string? reference = null, string? pattern = null, string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, Idrak.Data.Abstractions.ReadOptions? options = null)
   public static string Api { get; }
   public static string? Token(string? token = null)
 

@@ -858,6 +858,7 @@ internal sealed class DataMixCommand : Command
         string recipePath = context.Argument(0, "RECIPE.json");
         string output = context.Option("--out") ?? throw new UsageException("Give -o, --out FILE for the training rows.");
         var recipe = DatasetRecipe.Load(recipePath);
+        recipe = recipe with { SkippedFolders = recipe.SkippedFolders ?? CodeFolders.Skipped };
         if (context.Option("--eval-fraction") is not null)
         {
             recipe = recipe with { EvaluationFraction = DataSplitCommand.Fraction(context, "--eval-fraction", 0) };

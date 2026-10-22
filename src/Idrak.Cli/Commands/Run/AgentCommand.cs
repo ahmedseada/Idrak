@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
+using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
 
 namespace Idrak.Cli.Commands.Run;
@@ -19,17 +20,23 @@ internal sealed class AgentCommand : Command
         MODEL ["task"] [options]
 
         The model works in the folder (--workspace, default the current one) with the coding tools: list_files,
-        read_file, search, edit_file, write_file and run_command (allowlisted programs such as dotnet, npm, node, git
-        started without a shell; paths cannot leave the folder). With a task it works on it and exits; without one it
-        reads tasks line by line, as chat does, keeping the conversation (/exit ends). Every command the model wants to
-        run is shown and asked about (y to run it) unless --yes is given; without a terminal and without --yes,
-        commands are refused.
+        read_file, search, edit_file, write_file and run_command (allowlisted programs started without a shell:
+        git and those of the coding languages, such as dotnet, npm, node; paths cannot leave the folder). The
+        coding languages (Idrak.Text.Plugins registers C#, TypeScript, Angular and Python) set the programs, the
+        folders skipped and the prompt's build and test commands: all registered ones by default, --languages
+        detected for those the folder shows, or names. A folder no chosen language detects gets a note naming
+        the plug-in to register. With a task it works on it and exits; without one it reads tasks line by line,
+        as chat does, keeping the conversation (/exit ends). Every command the model wants to run is shown and
+        asked about (y to run it) unless --yes is given; without a terminal and without --yes, commands are
+        refused.
 
         Options:
               --workspace DIR    the folder to work in (default: the current folder)
           -y, --yes              run commands without asking
               --read-only        only the reading tools (no edits, writes or commands)
               --rounds N         model replies allowed per task (default 40)
+              --languages LIST   the coding languages: all, detected, none or names such as csharp,typescript
+                                 (default: IDRAK_CODING_LANGUAGES, else all)
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
           --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores and one
                                  vocabulary table for tied models, less memory than int8/int4 heads, slower)
@@ -43,7 +50,7 @@ internal sealed class AgentCommand : Command
           idrak agent qwen -y --context 16384
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds", "--languages"];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--yes", "--read-only"];
 
@@ -66,7 +73,21 @@ internal sealed class AgentCommand : Command
         bool interactive = !StandardInput.IsRedirected;
         bool yes = context.Flag("--yes");
 
-        var coding = new CodingTools(workspace, new CodingToolOptions { ReadOnly = context.Flag("--read-only") });
+        CodingTools coding;
+        try
+        {
+            coding = new CodingTools(workspace, new CodingToolOptions { ReadOnly = context.Flag("--read-only"), Languages = context.Option("--languages") ?? CodingLanguages.DefaultChoice });
+        }
+        catch (NotSupportedException e) when (e.Message.Contains("Coding language", StringComparison.Ordinal))
+        {
+            throw new UsageException(e.Message);
+        }
+
+        if (coding.LanguageNotice is { } notice)
+        {
+            context.Error(notice);
+        }
+
         var builder = ToolRegistry.Create().Add(coding.All);
         if (!yes && coding.All.Any(t => t.Definition.Name == "run_command"))
         {
@@ -98,7 +119,7 @@ internal sealed class AgentCommand : Command
             ThinkingStream = context.Json || context.Quiet ? null : context.Output,
             Color = color,
         };
-        var messages = new List<ChatMessage> { new("system", settings.System ?? CodingAgent.DefaultSystemPrompt) };
+        var messages = new List<ChatMessage> { new("system", settings.System ?? CodingAgent.SystemPrompt(coding.Languages)) };
         var answers = new List<ChatAnswer>();
         void Work(string text)
         {

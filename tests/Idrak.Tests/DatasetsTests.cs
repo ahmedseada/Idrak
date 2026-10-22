@@ -217,10 +217,12 @@ internal static partial class Tests
 
             web.Json("https://api.github.com/repos/owner/app/commits/HEAD", "1a2b3c4d5e6f7a8b9c0d");
             web.Bytes("https://api.github.com/repos/owner/app/tarball/1a2b3c4d5e6f7a8b9c0d", tarball.ToArray(), requireToken: "gh_secret");
-            var code = GitHub.Repository("owner/app", token: "gh_secret", downloader: downloader).ToList();
+            var code = GitHub.Repository("owner/app", token: "gh_secret", downloader: downloader, options: new ReadOptions { SkippedFolders = [.. ReadOptions.DefaultSkippedFolders, "bin"] }).ToList();
             Check(code.Select(r => (string)r["path"]!).Order().SequenceEqual(["data/rows.jsonl", "src/Program.cs", "web/main.ts"]) && code.All(r => (string?)r["repo"] == "owner/app"),
                 $"github repository: {string.Join(", ", code.Select(r => r["path"]))}");
-            Check(GitHub.Repository("owner/app", pattern: "*.cs", token: "gh_secret", downloader: downloader).Single()["language"]!.GetValue<string>() == "csharp", "github pattern");
+            Check(GitHub.Repository("owner/app", token: "gh_secret", downloader: downloader).Count() == 4, "github repository: no language's build folder skipped by default");
+            Check(GitHub.Repository("owner/app", pattern: "*.cs", token: "gh_secret", downloader: downloader, options: new ReadOptions { SkippedFolders = [.. ReadOptions.DefaultSkippedFolders, "bin"] })
+                      .Single()["language"]!.GetValue<string>() == "csharp", "github pattern");
 
             web.Json("https://api.github.com/repos/owner/data/commits/HEAD", "fedcba9876543210fedc");
             web.Json("https://api.github.com/repos/owner/data/git/trees/fedcba9876543210fedc?recursive=1",
@@ -441,9 +443,11 @@ internal static partial class Tests
                 Add("repo-abc/README.md", "# Title\n\nText.");
             }
 
-            var code = DatasetRows.FromFile(P("k.tar.gz"), new ReadOptions { IncludeCode = true, Text = TextRows.Document }).ToList();
+            // Idrak.Data skips only .git and the editors' folders; a caller that knows a language's dependency folders names them.
+            var code = DatasetRows.FromFile(P("k.tar.gz"), new ReadOptions { IncludeCode = true, Text = TextRows.Document, SkippedFolders = [.. ReadOptions.DefaultSkippedFolders, "node_modules"] }).ToList();
             Check(code.Count == 3 && code.Any(r => (string?)r["language"] == "csharp") && code.Any(r => (string?)r["language"] == "typescript")
                   && code.All(r => !((string)r["path"]!).Contains("node_modules", StringComparison.Ordinal)), $"tar.gz code: {string.Join(", ", code.Select(r => r["path"]))}");
+            Check(DatasetRows.FromFile(P("k.tar.gz"), new ReadOptions { IncludeCode = true, Text = TextRows.Document }).Count() == 4, "tar.gz code: no language's folder skipped by default");
 
             Directory.CreateDirectory(P("nested/deeper"));
             File.WriteAllText(P("nested/deeper/x.jsonl"), "{\"q\":1}\n");

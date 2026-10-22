@@ -5,6 +5,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using Idrak.Abstraction.Reinforcement;
+using Idrak.Reinforcement.Plugins.Coding.Abstractions;
+using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
 using Idrak.Text.Reinforcement;
 
@@ -37,11 +39,16 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// </list>
 /// Options: <c>suite</c> (a suite folder, <see cref="CodingSuite"/>; unless the kind was made with tasks), <c>filter</c>,
 /// <c>reward</c> (and each term's options as term.key), <c>rounds</c> (40), <c>time</c> (seconds, 1200), <c>system</c>
-/// (the system prompt; <see cref="CodingAgent.DefaultSystemPrompt"/>), <c>think</c>, <c>sandbox</c>
+/// (the system prompt; <see cref="CodingAgent.SystemPrompt"/> of the languages), <c>languages</c> (the coding languages
+/// the tools and the prompt work with, <see cref="CodingToolOptions.Languages"/>: all, detected in the tasks' folders,
+/// none, or names; IDRAK_CODING_LANGUAGES, else all), <c>protect</c> (globs of files whose edits count as test edits
+/// beside the hidden tests' paths, separated by commas; none by default), <c>think</c>, <c>sandbox</c>
 /// (<see cref="CommandSandboxes"/>; IDRAK_SANDBOX, else process), <c>memory</c> (a command's memory: bytes, or with KB, MB,
 /// GB), <c>processes</c>, <c>cpus</c>, <c>network</c> (true or false), <c>command-timeout</c> (seconds, 300),
 /// <c>verify-timeout</c> (seconds, 600), <c>workspaces</c>, <c>keep</c>, <c>work</c> (the folder the copies are made in;
-/// a new temporary folder by default), <c>refuse-test-edits</c>.
+/// a new temporary folder by default), <c>refuse-test-edits</c>. A variant for one language
+/// (<see cref="CodingEnvironmentVariant"/>, such as the C# plug-in's <c>csharp</c>) is this environment under its own
+/// name, with its language's defaults, its own options and its own info.
 /// </summary>
 public sealed class CodingEnvironmentKind : IEnvironmentKind
 {
@@ -56,11 +63,12 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
 
     private static readonly string[] OwnKeys =
     [
-        "suite", "filter", "reward", "rounds", "time", "system", "think", "sandbox", "memory", "processes", "cpus", "network", "command-timeout", "verify-timeout",
-        "workspaces", "keep", "work", "refuse-test-edits",
+        "suite", "filter", "reward", "rounds", "time", "system", "languages", "protect", "think", "sandbox", "memory", "processes", "cpus", "network", "command-timeout",
+        "verify-timeout", "workspaces", "keep", "work", "refuse-test-edits",
     ];
 
     private readonly IReadOnlyList<CodingTask>? _tasks;
+    private readonly CodingEnvironmentVariant? _variant;
     private readonly Dictionary<string, CodingSuiteRun> _runs = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
 
@@ -86,14 +94,34 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
         Name = name;
     }
 
+    /// <summary>The kind of <paramref name="variant"/>: the coding environment under the variant's name, with its defaults and options (its tasks from the option <c>suite</c>, or <paramref name="tasks"/>).</summary>
+    /// <param name="variant">The variant.</param>
+    /// <param name="tasks">The tasks (the option <c>suite</c> is then refused), or null.</param>
+    public CodingEnvironmentKind(CodingEnvironmentVariant variant, IReadOnlyList<CodingTask>? tasks = null)
+    {
+        ArgumentNullException.ThrowIfNull(variant);
+        ArgumentException.ThrowIfNullOrWhiteSpace(variant.Name);
+        if (tasks is { Count: 0 })
+        {
+            throw new ArgumentException("A coding environment has at least one task.", nameof(tasks));
+        }
+
+        _variant = variant;
+        _tasks = tasks is null ? null : [.. tasks];
+        Name = variant.Name;
+    }
+
     /// <inheritdoc />
     public string Name { get; }
 
-    /// <inheritdoc />
-    public string Summary => "coding tasks (suite=DIR): the agent works with the coding tools; the hidden tests' verification is the reward (reward=tests-passed)";
+    /// <summary>The variant the kind runs (null for the plain coding environment).</summary>
+    public CodingEnvironmentVariant? Variant => _variant;
 
     /// <inheritdoc />
-    public IReadOnlyCollection<string> Keys => _tasks is null ? OwnKeys : [.. OwnKeys.Where(k => k != "suite")];
+    public string Summary => _variant?.Summary ?? "coding tasks (suite=DIR): the agent works with the coding tools; the hidden tests' verification is the reward (reward=tests-passed)";
+
+    /// <inheritdoc />
+    public IReadOnlyCollection<string> Keys => [.. OwnKeys.Concat(_variant?.Keys ?? []).Where(k => _tasks is null || k != "suite")];
 
     /// <inheritdoc />
     public Type ObservationType => typeof(ChatObservation);
@@ -118,7 +146,7 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
                 }
 
                 string key = settings.Key;
-                run = new CodingSuiteRun(settings, tasks, _gate, () => _runs.Remove(key));
+                run = new CodingSuiteRun(settings, tasks, _gate, () => _runs.Remove(key), _variant);
                 _runs[settings.Key] = run;
             }
 
@@ -128,19 +156,34 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
 }
 
 // The parsed options of one Create call; equal options share a run (prepared copies, the workspace limit).
-internal sealed record CodingSettings(string? Suite, string? Filter, string Reward, Dictionary<string, string> RewardOptions, int Rounds, TimeSpan Time, string SystemPrompt,
-    bool? Think, CodingToolOptions Tools, TimeSpan VerifyTimeout, int Workspaces, bool Keep, string? Work, bool RefuseTestEdits, string Key)
+internal sealed record CodingSettings(string? Suite, string? Filter, string Reward, Dictionary<string, string> RewardOptions, int Rounds, TimeSpan Time, string? SystemPrompt,
+    bool? Think, CodingToolOptions Tools, TimeSpan VerifyTimeout, int Workspaces, bool Keep, string? Work, bool RefuseTestEdits, string Key, string Languages,
+    IReadOnlyList<string> Protect, Dictionary<string, string> VariantOptions)
 {
-    public static CodingSettings Parse(CodingEnvironmentKind kind, IReadOnlyDictionary<string, string>? options)
+    public static CodingSettings Parse(CodingEnvironmentKind kind, IReadOnlyDictionary<string, string>? given)
     {
-        string? suite = null, filter = null, work = null, think = null;
-        string reward = CodingRewards.TestsPassed, system = CodingAgent.DefaultSystemPrompt, sandbox = CommandSandboxes.DefaultName;
+        // A variant's defaults for the coding options, under what the caller gives.
+        var options = new Dictionary<string, string>(kind.Variant?.Defaults() ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+        if (kind.Variant is { } defaultsOf && !options.ContainsKey("languages"))
+        {
+            options["languages"] = defaultsOf.Language;
+        }
+
+        foreach (var (key, value) in given ?? new Dictionary<string, string>())
+        {
+            options[key] = value;
+        }
+
+        string? suite = null, filter = null, work = null, think = null, system = null;
+        string reward = CodingRewards.TestsPassed, sandbox = CommandSandboxes.DefaultName, languages = CodingLanguages.DefaultChoice;
+        IReadOnlyList<string> protect = [];
         var rewardOptions = new Dictionary<string, string>(StringComparer.Ordinal);
+        var variantOptions = new Dictionary<string, string>(StringComparer.Ordinal);
         int rounds = 40, processes = 0, workspaces = Positive(kind, CodingEnvironmentKind.WorkspacesVariable, Environment.GetEnvironmentVariable(CodingEnvironmentKind.WorkspacesVariable), allowEmpty: true);
         double time = 1200, commandTimeout = 300, verifyTimeout = 600, cpus = 0;
         long memory = 0;
         bool network = true, refuse = false, keep = Flag(kind, CodingEnvironmentKind.KeepWorkspacesVariable, Environment.GetEnvironmentVariable(CodingEnvironmentKind.KeepWorkspacesVariable) ?? "false");
-        foreach (var (key, value) in options ?? new Dictionary<string, string>())
+        foreach (var (key, value) in options)
         {
             switch (key)
             {
@@ -161,6 +204,12 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
                     break;
                 case "system":
                     system = value;
+                    break;
+                case "languages":
+                    languages = value;
+                    break;
+                case "protect":
+                    protect = [.. value.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
                     break;
                 case "think":
                     think = Flag(kind, key, value) ? "true" : "false";
@@ -198,6 +247,9 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
                 case "refuse-test-edits":
                     refuse = Flag(kind, key, value);
                     break;
+                case var own when kind.Variant?.Keys.Contains(own, StringComparer.Ordinal) == true:
+                    variantOptions[own] = value;
+                    break;
                 default:
                     if (!key.Contains('.', StringComparison.Ordinal))
                     {
@@ -210,14 +262,16 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
             }
         }
 
+        kind.Variant?.Check(variantOptions);
         var tools = new CodingToolOptions
         {
             Sandbox = sandbox, CommandTimeout = TimeSpan.FromSeconds(commandTimeout), MaxMemoryBytes = memory, MaxProcesses = processes, MaxCpus = cpus, Network = network,
+            Languages = languages, Environment = kind.Variant?.Variables(variantOptions),
         };
-        string identity = string.Join("\n", (options ?? new Dictionary<string, string>()).OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"))
-                          + $"\n#sandbox={sandbox}\n#workspaces={workspaces}\n#keep={keep}";
+        string identity = string.Join("\n", options.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"))
+                          + $"\n#sandbox={sandbox}\n#workspaces={workspaces}\n#keep={keep}\n#languages={languages}";
         return new CodingSettings(suite, filter, reward, rewardOptions, rounds, TimeSpan.FromSeconds(time), system, think is null ? null : think == "true", tools,
-            TimeSpan.FromSeconds(verifyTimeout), workspaces, keep, work, refuse, identity);
+            TimeSpan.FromSeconds(verifyTimeout), workspaces, keep, work, refuse, identity, languages, protect, variantOptions);
     }
 
     private static int Positive(CodingEnvironmentKind kind, string key, string? value, bool allowEmpty = false) =>
@@ -270,21 +324,36 @@ internal sealed class CodingSuiteRun
     private int _users, _slots;
     private long _largest;
 
-    public CodingSuiteRun(CodingSettings settings, IReadOnlyList<CodingTask> tasks, Lock kind, Action forget)
+    public CodingSuiteRun(CodingSettings settings, IReadOnlyList<CodingTask> tasks, Lock kind, Action forget, CodingEnvironmentVariant? variant = null)
     {
         Settings = settings;
-        Tasks = tasks;
+        Variant = variant;
         _kind = kind;
         _forget = forget;
+
+        // The languages once for the run (detected: in any task's folders), named explicitly for every workspace's tools,
+        // so the tools' definitions and the prompt are the same in every episode.
+        Languages = settings.Languages.Trim().Equals(CodingLanguages.Detected, StringComparison.OrdinalIgnoreCase)
+            ? [.. CodingLanguages.Registered.Where(l => tasks.Any(t => new[] { t.Base, t.Workspace }.Any(f => f is not null && l.Detect(f, settings.Tools.DetectionDepth))))]
+            : CodingLanguages.Resolve(settings.Languages);
+        Tools = settings.Tools with { Languages = Languages.Count == 0 ? CodingLanguages.None : string.Join(",", Languages.Select(l => l.Name)) };
+        SystemPrompt = settings.SystemPrompt ?? CodingAgent.SystemPrompt(Languages);
+        if (variant is not null)
+        {
+            var language = CodingLanguages.Get(variant.Language);
+            tasks = [.. tasks.Select(t => variant.Task(t, language, settings.VariantOptions))];
+        }
+
+        Tasks = tasks;
         _ownsWork = settings.Work is null || !Directory.Exists(settings.Work);
         _work = settings.Work ?? Path.Combine(Path.GetTempPath(), "idrak-coding", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_work);
-        Verifier = new CodingVerifier(new CodingVerifierOptions { Tools = settings.Tools, Timeout = settings.VerifyTimeout });
+        Verifier = new CodingVerifier(new CodingVerifierOptions { Tools = Tools, Timeout = settings.VerifyTimeout });
         try
         {
             // The sandbox is named and checked now (a missing one, or limits it cannot keep, fail before any episode); the
             // tools' definitions are the same for every workspace, so every observation offers the same ones.
-            var probe = new CodingTools(_work, settings.Tools);
+            var probe = new CodingTools(_work, Tools);
             Sandbox = probe.Sandbox;
             Definitions = [.. probe.All.Select(t => t.Definition)];
             _ = TextRewards.ScoreAsync(settings.Reward, [], settings.RewardOptions).AsTask().GetAwaiter().GetResult();   // a bad reward fails now, not at the first episode's end
@@ -299,6 +368,15 @@ internal sealed class CodingSuiteRun
     }
 
     public CodingSettings Settings { get; }
+
+    public CodingEnvironmentVariant? Variant { get; }
+
+    // The coding languages of the run, the tools' options naming them, and the system prompt.
+    public IReadOnlyList<ICodingLanguage> Languages { get; }
+
+    public CodingToolOptions Tools { get; }
+
+    public string SystemPrompt { get; }
 
     public IReadOnlyList<CodingTask> Tasks { get; }
 
@@ -398,7 +476,7 @@ internal sealed class CodingSuiteRun
             CodingWorkspace.Delete(folder);
         }
 
-        CodingWorkspace.Prepare(task, folder);
+        CodingWorkspace.Prepare(task, folder, Languages);
         var setup = await Verifier.SetupAsync(task, Verifier.Checks(folder)).ConfigureAwait(false);
         if (!setup.Passed)
         {
@@ -406,7 +484,7 @@ internal sealed class CodingSuiteRun
             return new Prepared(folder, true);
         }
 
-        CodingWorkspace.CommitStart(folder);
+        CodingWorkspace.CommitStart(folder, Languages);
         long bytes = new DirectoryInfo(folder).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
         long seen;
         while (bytes > (seen = Interlocked.Read(ref _largest)) && Interlocked.CompareExchange(ref _largest, bytes, seen) != seen)
@@ -491,9 +569,9 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
         CodingWorkspace.Clone(prepared.Folder, folder);
         _task = task;
         _start = prepared.Folder;
-        _tools = new CodingTools(folder, _run.Settings.Tools, _run.Sandbox);
+        _tools = new CodingTools(folder, _run.Tools, _run.Sandbox);
         _registry = _tools.Registry();
-        _messages = [new ChatMessage("system", _run.Settings.SystemPrompt), new ChatMessage("user", task.Prompt)];
+        _messages = [new ChatMessage("system", _run.SystemPrompt), new ChatMessage("user", task.Prompt)];
         (_rounds, _calls, _errors, _previous) = (0, 0, 0, null);
         _clock = Stopwatch.StartNew();
         _active = true;
@@ -561,8 +639,10 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
         var settings = _run.Settings;
         var task = _task!;
         string workspace = _tools!.Workspace;
-        var edits = CodingWorkspace.TestEdits(task, _start!, workspace);
+        IReadOnlyList<string> edits = [.. CodingWorkspace.TestEdits(task, _start!, workspace, _run.Languages)
+            .Union(CodingWorkspace.ProtectedEdits(_start!, workspace, settings.Protect, _run.Languages), StringComparer.Ordinal).Order(StringComparer.Ordinal)];
         bool refused = settings.RefuseTestEdits && edits.Count > 0;
+        _run.Variant?.BeforeVerify(workspace, settings.VariantOptions);
         CodingVerification verification;
         if (refused)
         {
@@ -574,7 +654,7 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                verification = await _run.Verifier.VerifyAsync(task, new CodingTools(workspace, settings.Tools with { CommandTimeout = settings.VerifyTimeout }, _run.Sandbox),
+                verification = await _run.Verifier.VerifyAsync(task, new CodingTools(workspace, _run.Tools with { CommandTimeout = settings.VerifyTimeout }, _run.Sandbox),
                     cancellationToken).ConfigureAwait(false);
             }
             finally
@@ -600,6 +680,8 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
         {
             info[CodingInfo.BrokenTasks] = _run.BrokenList;
         }
+
+        _run.Variant?.AfterVerify(task, workspace, verification, info, settings.VariantOptions);
 
         Verification = verification;
         var scores = await TextRewards.ScoreAsync(settings.Reward, [new RewardInput(task.Prompt, last.Content, null, info)], settings.RewardOptions, cancellationToken)

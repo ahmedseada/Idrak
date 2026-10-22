@@ -4,14 +4,35 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Idrak.Text.Abstractions;
 
 namespace Idrak.Text.Generation;
 
 /// <summary>Limits and permissions of <see cref="CodingTools"/>.</summary>
 public sealed record CodingToolOptions
 {
-    /// <summary>Programs <c>run_command</c> may start (file names without extension; resolved on the PATH).</summary>
-    public IReadOnlyList<string> Commands { get; init; } = ["dotnet", "npm", "npx", "ng", "node", "tsc", "git"];
+    /// <summary>
+    /// The folders skipped whatever the languages (no language's: <c>.git</c>, the JetBrains editors' <c>.idea</c>, and the
+    /// usual names of coverage reports and build output, <c>coverage</c> and <c>out</c>).
+    /// </summary>
+    public static IReadOnlyList<string> LanguageFreeIgnoredDirectories { get; } = [".git", ".idea", "coverage", "out"];
+
+    /// <summary>
+    /// The coding languages (<see cref="CodingLanguages"/>) the tools work with, whose programs, folders, examples and
+    /// variables compose the defaults: <see cref="CodingLanguages.All"/> (every registered one), <see cref="CodingLanguages.Detected"/>
+    /// (those that detect the workspace), <see cref="CodingLanguages.None"/>, or names separated by commas; by default
+    /// <see cref="CodingLanguages.EnvironmentVariable"/> (IDRAK_CODING_LANGUAGES), else all.
+    /// </summary>
+    public string Languages { get; init; } = CodingLanguages.DefaultChoice;
+
+    /// <summary>How many folders below the workspace's top the languages are detected in (0: the top only; 2 by default).</summary>
+    public int DetectionDepth { get; init; } = CodingLanguages.DefaultDepth;
+
+    /// <summary>
+    /// Programs <c>run_command</c> may start (file names without extension; resolved on the PATH); null (the default) for
+    /// the languages' programs, then <c>git</c>.
+    /// </summary>
+    public IReadOnlyList<string>? Commands { get; init; }
 
     /// <summary>The only <c>git</c> subcommands allowed (read-only by default: the agent edits files, not history).</summary>
     public IReadOnlyList<string> GitSubcommands { get; init; } = ["status", "diff", "log", "show", "ls-files", "grep", "blame"];
@@ -31,8 +52,11 @@ public sealed record CodingToolOptions
     /// <summary>Paths <c>list_files</c> returns.</summary>
     public int MaxListedFiles { get; init; } = 400;
 
-    /// <summary>Directories never listed or searched (build output, dependencies, tool state).</summary>
-    public IReadOnlyList<string> IgnoredDirectories { get; init; } = [".git", "bin", "obj", "node_modules", "dist", ".angular", ".vs", ".idea", "coverage", "out"];
+    /// <summary>
+    /// Directories never listed or searched (build output, dependencies, tool state); null (the default) for
+    /// <see cref="LanguageFreeIgnoredDirectories"/> and the languages' ignored and linked folders.
+    /// </summary>
+    public IReadOnlyList<string>? IgnoredDirectories { get; init; }
 
     /// <summary>Only the reading tools (no edits, writes or commands).</summary>
     public bool ReadOnly { get; init; }
@@ -62,23 +86,23 @@ public sealed record CodingToolOptions
 
 /// <summary>
 /// Tools for a coding agent working in one folder (the workspace): <c>list_files</c>, <c>read_file</c>, <c>search</c>,
-/// <c>edit_file</c> (exact search and replace), <c>write_file</c> and <c>run_command</c> (allowlisted programs such as
-/// dotnet, npm, ng, started without a shell, in the command sandbox the options name: <see cref="CodingToolOptions.Sandbox"/>).
-/// Paths are relative to the workspace and cannot leave it; results are plain text sized for a model's context; mistakes
-/// come back as messages the model can act on.
+/// <c>edit_file</c> (exact search and replace), <c>write_file</c> and <c>run_command</c> (allowlisted programs, started
+/// without a shell, in the command sandbox the options name: <see cref="CodingToolOptions.Sandbox"/>). The programs
+/// allowed, the folders skipped, the commands' variables and the examples in the tools' descriptions come from the coding
+/// languages the options choose (<see cref="CodingToolOptions.Languages"/>, <see cref="CodingLanguages"/>); with none,
+/// only the language-free ones (git, <c>.git</c>). Paths are relative to the workspace and cannot leave it; results are
+/// plain text sized for a model's context; mistakes come back as messages the model can act on.
 /// </summary>
 public sealed class CodingTools
 {
-    // Non-interactive, uncoloured, no telemetry prompts.
-    private static readonly Dictionary<string, string> Quiet = new(StringComparer.Ordinal)
-    {
-        ["CI"] = "1", ["NO_COLOR"] = "1", ["FORCE_COLOR"] = "0", ["NG_CLI_ANALYTICS"] = "false", ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1", ["DOTNET_NOLOGO"] = "1",
-        ["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1", ["npm_config_yes"] = "true", ["npm_config_fund"] = "false", ["npm_config_audit"] = "false",
-    };
+    // Non-interactive and uncoloured, whatever the language (each language adds its programs' own).
+    private static readonly Dictionary<string, string> Quiet = new(StringComparer.Ordinal) { ["CI"] = "1", ["NO_COLOR"] = "1", ["FORCE_COLOR"] = "0" };
 
     private readonly string _root;
     private readonly CodingToolOptions _options;
     private readonly CommandLimits _limits;
+    private readonly HashSet<string> _ignored;
+    private readonly Lazy<string?> _notice;
 
     /// <summary>Tools over <paramref name="workspace"/>.</summary>
     /// <param name="workspace">The folder the tools work in.</param>
@@ -95,9 +119,18 @@ public sealed class CodingTools
         }
 
         _options = options ?? new CodingToolOptions();
+        Languages = CodingLanguages.Resolve(_options.Languages, _root, _options.DetectionDepth);
+        var languages = Languages;
+        Commands = _options.Commands ?? CodingLanguages.Merge([.. languages.Select(l => l.Commands), ["git"]], StringComparer.OrdinalIgnoreCase);
+        IgnoredDirectories = _options.IgnoredDirectories ?? CodingLanguages.Merge(
+            [CodingToolOptions.LanguageFreeIgnoredDirectories.Take(1).ToList(), .. languages.Select(l => l.IgnoredDirectories), .. languages.Select(l => l.LinkedDirectories),
+             CodingToolOptions.LanguageFreeIgnoredDirectories.Skip(1).ToList()], StringComparer.OrdinalIgnoreCase);
+        _ignored = new HashSet<string>(IgnoredDirectories, StringComparer.OrdinalIgnoreCase);
+        string choice = string.IsNullOrWhiteSpace(_options.Languages) ? CodingLanguages.DefaultChoice : _options.Languages.Trim();
+        _notice = new Lazy<string?>(() => choice.Equals(CodingLanguages.None, StringComparison.OrdinalIgnoreCase) ? null : CodingLanguages.Notice(_root, languages, _options.DetectionDepth));
         Sandbox = sandbox ?? CommandSandboxes.Get(_options.Sandbox);
         var environment = new Dictionary<string, string>(Quiet, StringComparer.Ordinal);
-        foreach (var (name, value) in _options.Environment ?? new Dictionary<string, string>())
+        foreach (var (name, value) in languages.SelectMany(l => l.Environment).Concat(_options.Environment ?? new Dictionary<string, string>()))
         {
             environment[name] = value;
         }
@@ -105,18 +138,22 @@ public sealed class CodingTools
         _limits = new CommandLimits
         {
             Time = _options.CommandTimeout, MaxOutputCharacters = _options.MaxOutputCharacters, MaxMemoryBytes = _options.MaxMemoryBytes, MaxProcesses = _options.MaxProcesses,
-            MaxCpus = _options.MaxCpus, Network = _options.Network, Programs = _options.Commands, Environment = environment, Root = _root,
+            MaxCpus = _options.MaxCpus, Network = _options.Network, Programs = Commands, Environment = environment, Root = _root,
         };
         if (Sandbox.Check(_limits) is { } refusal)
         {
             throw new NotSupportedException(refusal);
         }
+
+        // The examples in the descriptions: every language's, in their order (none without a language).
+        IReadOnlyList<string> Examples(Func<CodingToolExamples, IReadOnlyList<string>> pick) => CodingLanguages.Merge([.. languages.Select(l => pick(l.ToolExamples))]);
+        static string Example(string text, IReadOnlyList<string> examples, string separator) => examples.Count == 0 ? text + "." : $"{text}, e.g. {string.Join(separator, examples)}.";
         var tools = new List<Tool>
         {
             Tool.Create("list_files", "List the files of the workspace, or of a folder in it, as paths relative to the workspace. " +
-                "Build output and dependency folders (bin, obj, node_modules, dist, .git …) are skipped.",
+                $"Build output and dependency folders ({string.Join(", ", Examples(e => e.Folders).Append(".git"))} …) are skipped.",
                 Schema(("path", "string", "Folder to list, relative to the workspace (default: the whole workspace).", false),
-                    ("pattern", "string", "Only file names matching this glob, e.g. *.cs or *.component.ts.", false)),
+                    ("pattern", "string", Example("Only file names matching this glob", Examples(e => e.FileGlobs), " or "), false)),
                 (args, _) => Task.FromResult(ListFiles(Text(args, "path") ?? ".", Text(args, "pattern")))),
             Tool.Create("read_file", "Read a text file, with line numbers. Long files are returned in parts: pass start_line and end_line for the rest.",
                 Schema(("path", "string", "File path, relative to the workspace.", true),
@@ -124,9 +161,9 @@ public sealed class CodingTools
                     ("end_line", "integer", "Last line to return (default: as many as fit).", false)),
                 (args, _) => Task.FromResult(ReadFile(Text(args, "path")!, Number(args, "start_line"), Number(args, "end_line")))),
             Tool.Create("search", "Search the files of the workspace for a regular expression; returns path:line: text for each match.",
-                Schema(("pattern", "string", "Regular expression (.NET syntax), e.g. class \\w+Service or ngOnInit.", true),
+                Schema(("pattern", "string", Example("Regular expression (.NET syntax)", Examples(e => e.SearchPatterns), " or "), true),
                     ("path", "string", "Folder or file to search, relative to the workspace (default: everything).", false),
-                    ("glob", "string", "Only files whose names match this glob, e.g. *.ts.", false),
+                    ("glob", "string", Example("Only files whose names match this glob", Examples(e => e.SearchGlobs), " or "), false),
                     ("ignore_case", "boolean", "Match case-insensitively.", false)),
                 (args, _) => Task.FromResult(Search(Text(args, "pattern")!, Text(args, "path") ?? ".", Text(args, "glob"), args["ignore_case"]?.GetValue<bool>() ?? false))),
         };
@@ -144,9 +181,9 @@ public sealed class CodingTools
                     ("content", "string", "The complete file content.", true)),
                 (args, _) => Task.FromResult(WriteFile(Text(args, "path")!, Text(args, "content")!))));
             tools.Add(Tool.Create("run_command", $"Run a command in the workspace and return its exit code and output. Allowed programs: " +
-                $"{string.Join(", ", _options.Commands)} (git only {string.Join(", ", _options.GitSubcommands)}). The command is not run by a shell: " +
-                "no pipes, redirection, && or variables. Use it to build, test, lint and inspect, e.g. dotnet build, dotnet test, npm test, npx tsc --noEmit, ng build.",
-                Schema(("command", "string", "The command line, e.g. dotnet test --no-restore.", true),
+                $"{string.Join(", ", Commands)} (git only {string.Join(", ", _options.GitSubcommands)}). The command is not run by a shell: " +
+                "no pipes, redirection, && or variables. " + Example("Use it to build, test, lint and inspect", Examples(e => e.Commands), ", "),
+                Schema(("command", "string", Example("The command line", Examples(e => e.CommandLines), " or "), true),
                     ("directory", "string", "Folder to run in, relative to the workspace (default: the workspace).", false),
                     ("timeout_seconds", "integer", $"Stop the command after this many seconds (at most {(int)_options.CommandTimeout.TotalSeconds}).", false)),
                 (args, token) => RunCommandAsync(Text(args, "command")!, Text(args, "directory") ?? ".", Number(args, "timeout_seconds"), token)));
@@ -157,6 +194,22 @@ public sealed class CodingTools
 
     /// <summary>The workspace folder (absolute).</summary>
     public string Workspace => _root;
+
+    /// <summary>The coding languages the tools work with (<see cref="CodingToolOptions.Languages"/>, resolved), in order.</summary>
+    public IReadOnlyList<ICodingLanguage> Languages { get; }
+
+    /// <summary>The programs <c>run_command</c> may start (the options', or the languages' then git).</summary>
+    public IReadOnlyList<string> Commands { get; }
+
+    /// <summary>The folders never listed or searched (the options', or the language-free ones and the languages').</summary>
+    public IReadOnlyList<string> IgnoredDirectories { get; }
+
+    /// <summary>
+    /// A notice when none of the languages detects the workspace although it holds source files
+    /// (<see cref="CodingLanguages.Notice"/>: which plug-in to register); null otherwise, and with the choice
+    /// <see cref="CodingLanguages.None"/>. Found on first read.
+    /// </summary>
+    public string? LanguageNotice => _notice.Value;
 
     /// <summary>The sandbox every command runs in.</summary>
     public ICommandSandbox Sandbox { get; }
@@ -429,9 +482,9 @@ public sealed class CodingTools
         }
 
         string program = Path.GetFileNameWithoutExtension(words[0]);
-        if (!_options.Commands.Contains(program, StringComparer.OrdinalIgnoreCase) || words[0].Contains('/') || words[0].Contains('\\'))
+        if (!Commands.Contains(program, StringComparer.OrdinalIgnoreCase) || words[0].Contains('/') || words[0].Contains('\\'))
         {
-            return Refuse($"Error: '{words[0]}' is not an allowed program. Allowed: {string.Join(", ", _options.Commands)}.");
+            return Refuse($"Error: '{words[0]}' is not an allowed program. Allowed: {string.Join(", ", Commands)}.");
         }
 
         if (program.Equals("git", StringComparison.OrdinalIgnoreCase) && (words.Count < 2 || !_options.GitSubcommands.Contains(words[1])))
@@ -475,7 +528,7 @@ public sealed class CodingTools
             {
                 if (Directory.Exists(entry))
                 {
-                    if (!_options.IgnoredDirectories.Contains(Path.GetFileName(entry), StringComparer.OrdinalIgnoreCase))
+                    if (!_ignored.Contains(Path.GetFileName(entry)))
                     {
                         pending.Push(entry);
                     }

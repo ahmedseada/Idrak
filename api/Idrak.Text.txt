@@ -21,6 +21,55 @@ public static class Idrak.Text.Abstractions.AnswerTexts
   public static void Register(Idrak.Text.Abstractions.IAnswerText text)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed record Idrak.Text.Abstractions.CodingLanguage : Idrak.Text.Abstractions.ICodingLanguage, System.IEquatable<Idrak.Text.Abstractions.CodingLanguage>
+  public CodingLanguage(string Name, string Summary)
+  public Idrak.Text.Abstractions.CodingToolExamples ToolExamples { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Environment { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Commands { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> DefaultSetup { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> DefaultVerify { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> GitExcludes { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> IgnoredDirectories { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> LinkedDirectories { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Markers { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> PromptLines { get; init; }
+  public bool Detect(string workspace, int depth)
+  public string Name { get; init; }
+  public string Summary { get; init; }
+
+public static class Idrak.Text.Abstractions.CodingLanguages
+  public const int DefaultDepth = 2
+  public const string All = "all"
+  public const string Detected = "detected"
+  public const string EnvironmentVariable = "IDRAK_CODING_LANGUAGES"
+  public const string None = "none"
+  public const string PluginPackage = "Idrak.Text.Plugins"
+  public static Idrak.Text.Abstractions.ICodingLanguage Get(string name)
+  public static Idrak.Text.Abstractions.ICodingLanguage? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> Detect(string workspace, int depth = 2)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> Registered { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> Resolve(string? choice, string? workspace = null, int depth = 2)
+  public static System.Collections.Generic.IReadOnlyList<string> Merge(System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<string>> lists, System.Collections.Generic.IEqualityComparer<string>? comparer = null)
+  public static bool NameMatches(string name, string pattern)
+  public static bool Unregister(string name)
+  public static string DefaultChoice { get; }
+  public static string Describe()
+  public static string? FindFile(string workspace, int depth, System.Func<string, bool> match, System.Collections.Generic.IReadOnlyCollection<string>? skipped = null)
+  public static string? Notice(string workspace, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> languages, int depth = 2)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Text.Abstractions.ICodingLanguage language)
+
+public sealed record Idrak.Text.Abstractions.CodingToolExamples : System.IEquatable<Idrak.Text.Abstractions.CodingToolExamples>
+  public CodingToolExamples()
+  public System.Collections.Generic.IReadOnlyList<string> CommandLines { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Commands { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> FileGlobs { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Folders { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> SearchGlobs { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> SearchPatterns { get; init; }
+  public static Idrak.Text.Abstractions.CodingToolExamples None { get; }
+
 public abstract class Idrak.Text.Abstractions.DistillationTeacher : System.IDisposable
   protected DistillationTeacher()
   protected virtual void Dispose(bool disposing)
@@ -41,6 +90,20 @@ public interface Idrak.Text.Abstractions.IAnswerText
   public string Name { get; }
   public string Summary { get; }
   public string Text(string answer)
+
+public interface Idrak.Text.Abstractions.ICodingLanguage
+  public Idrak.Text.Abstractions.CodingToolExamples ToolExamples { get; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Environment { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Commands { get; }
+  public System.Collections.Generic.IReadOnlyList<string> DefaultSetup { get; }
+  public System.Collections.Generic.IReadOnlyList<string> DefaultVerify { get; }
+  public System.Collections.Generic.IReadOnlyList<string> GitExcludes { get; }
+  public System.Collections.Generic.IReadOnlyList<string> IgnoredDirectories { get; }
+  public System.Collections.Generic.IReadOnlyList<string> LinkedDirectories { get; }
+  public System.Collections.Generic.IReadOnlyList<string> PromptLines { get; }
+  public bool Detect(string workspace, int depth)
+  public string Name { get; }
+  public string Summary { get; }
 
 public interface Idrak.Text.Abstractions.IJsonRepair
   public Idrak.Text.Abstractions.JsonRepairResult? Repair(string text)
@@ -616,21 +679,9 @@ public sealed class Idrak.Text.Generation.CodingAgent
   public System.Action<Idrak.Abstraction.Generation.ChatDelta>? OnDelta { get; init; }
   public System.Action<Idrak.Abstraction.Generation.ToolResult>? OnToolResult { get; init; }
   public System.Threading.Tasks.Task<Idrak.Text.Generation.CodingAgentRun> RunAsync(string prompt, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
-  public const string DefaultSystemPrompt = "You are a coding agent working in a software project on the user's machine. You have tools to list, read and
-search the project's files, edit and write files, and run commands such as builds and tests.
-
-How to work:
-- Understand before changing: find the relevant files (list_files, search) and read them before editing.
-- Make focused changes with edit_file; copy old_text exactly as the file has it (read_file shows line numbers
-  before a \"| \" separator: they are not part of the file). Create new files with write_file.
-- Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.
-- Check your work: build and run the tests after changing code (C#: dotnet build, dotnet test; TypeScript:
-  npx tsc --noEmit, npm test; Angular: npx ng build, npx ng test --watch=false). Read the errors, fix them and
-  run the checks again until they pass.
-- Do not weaken or delete tests to make them pass, unless the user asks for it.
-- Do only what was asked; mention anything else worth doing instead of doing it.
-- When the task is done, answer without a tool call: say briefly what you changed and how you checked it."
   public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default)
+  public static string DefaultSystemPrompt { get; }
+  public static string SystemPrompt(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> languages)
 
 public enum Idrak.Text.Generation.CodingAgentEnd : int
   Answered = 0
@@ -657,19 +708,22 @@ public sealed record Idrak.Text.Generation.CodingAgentRun : System.IEquatable<Id
 public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable<Idrak.Text.Generation.CodingToolOptions>
   public CodingToolOptions()
   public System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment { get; init; }
-  public System.Collections.Generic.IReadOnlyList<string> Commands { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> GitSubcommands { get; init; }
-  public System.Collections.Generic.IReadOnlyList<string> IgnoredDirectories { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string>? Commands { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string>? IgnoredDirectories { get; init; }
   public System.TimeSpan CommandTimeout { get; init; }
   public bool Network { get; init; }
   public bool ReadOnly { get; init; }
   public double MaxCpus { get; init; }
+  public int DetectionDepth { get; init; }
   public int MaxListedFiles { get; init; }
   public int MaxOutputCharacters { get; init; }
   public int MaxProcesses { get; init; }
   public int MaxReadLines { get; init; }
   public int MaxSearchResults { get; init; }
   public long MaxMemoryBytes { get; init; }
+  public static System.Collections.Generic.IReadOnlyList<string> LanguageFreeIgnoredDirectories { get; }
+  public string Languages { get; init; }
   public string Sandbox { get; init; }
 
 public sealed record Idrak.Text.Generation.CodingToolTurn : System.IEquatable<Idrak.Text.Generation.CodingToolTurn>
@@ -685,6 +739,9 @@ public sealed class Idrak.Text.Generation.CodingTools
   public Idrak.Abstraction.Generation.ToolRegistry Registry()
   public Idrak.Abstraction.ICommandSandbox Sandbox { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> All { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> Languages { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Commands { get; }
+  public System.Collections.Generic.IReadOnlyList<string> IgnoredDirectories { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.CommandResult> ExecuteAsync(string command, string directory = ".", System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<string> RunCommandAsync(string command, string directory = ".", int? timeoutSeconds = null, System.Threading.CancellationToken cancellationToken = default)
   public string EditFile(string path, string oldText, string newText, bool replaceAll = false)
@@ -693,6 +750,7 @@ public sealed class Idrak.Text.Generation.CodingTools
   public string Search(string pattern, string path = ".", string? glob = null, bool ignoreCase = false)
   public string Workspace { get; }
   public string WriteFile(string path, string content)
+  public string? LanguageNotice { get; }
 
 public sealed class Idrak.Text.Generation.Conversation
   public Idrak.Abstraction.Generation.IToolRegistry? Tools { get; }

@@ -12,6 +12,16 @@ and `Unregister` brings it back. A Parquet codec or a dataset source an app over
 reported with a hint (`SetPolicy` opts it into `FallBack` to the library's, or `Shadow`); a file format is used as registered (its rows are read lazily). Shared
 contracts (sample sources, `IDownloader`, model sources) are in Idrak.Abstraction.
 
+## Folders skipped
+
+Reading a folder or an archive skips the folders `ReadOptions.SkippedFolders` names: by default
+(`ReadOptions.DefaultSkippedFolders`) only `.git` and the editors' state (`.vs`, `.idea`). No language's build output or
+dependency folders are skipped unless named (`bin`, `obj`, `node_modules`, `dist`, `__pycache__`, …): a caller that knows
+them adds them. The `idrak` tool's data commands add every registered coding language's (Idrak.Text's `CodingLanguages`;
+the tool registers Idrak.Text.Plugins' at startup), so they read code folders as before. A recipe takes them as
+`"skip_folders": [...]`, `DatasetSpec.Open` and `GitHub.Repository` as an argument. The table from file extensions to
+language names that labels the `code` format's rows (`DataFiles.LanguageOf`) is data only.
+
 ## Install
 
 ```bash
