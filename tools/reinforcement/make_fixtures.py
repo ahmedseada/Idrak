@@ -23,7 +23,7 @@ An episode is kept only when it is robust to rounding: replayed from its start s
 size of a last-bit difference in a sine on another platform, grown by the dynamics), its observations move by less than
 1e-6 (relative, at least 1 absolute) and its rewards and flags stay the same; otherwise the script stops naming it, so
 the fixtures never hold an episode whose comparison would depend on the last bit of a platform's libm. The C# test then
-compares within 1e-5 (plans/27-reinforcement.md, "R6 as built").
+compares within 1e-5 (plans/done/27-reinforcement.md, "R6 as built").
 """
 import hashlib
 import json
