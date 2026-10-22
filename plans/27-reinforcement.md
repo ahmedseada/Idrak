@@ -1103,6 +1103,18 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R4 (merged): CPU, CUDA for the language-model tests (the pass-rate bars were measured on the CPU only: a miss on the
+# card is a finding), the sample, and `container` on a machine with Docker or Podman and an image of your own with the .NET SDK
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "plugins: coding|command sandboxes|coding agent:|coding tools|reinforcement text:|reinforcement:|reinforcement contracts|plugins:|cli run: tools|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|override loop:|conformance kit:|fine-tuning:|distillation:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "reinforcement text:|plugins: coding: R3's on-policy distillation"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+dotnet build -c Release samples\Idrak.Samples.CodingAgent
+$env:IDRAK_SANDBOX = "container"; $env:IDRAK_SANDBOX_IMAGE = "<your image with the .NET SDK>"
+dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-check samples\Idrak.Samples.CodingAgent\suite
+Remove-Item Env:IDRAK_SANDBOX, Env:IDRAK_SANDBOX_IMAGE
+
 # R3 (merged 9cbb9d4): CPU, then CUDA (watch "the first update's ratios are exactly 1": a failure on the card means the
 # recomputed forward and the training step pack sequences differently there, a finding to report)
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement text:|fine-tuning:|fine-tuning options:|distillation:|conversation tuning:|generation:|decoding|scoring:|pretrain:|abstraction inventory|public API|cli health: every environment variable"
