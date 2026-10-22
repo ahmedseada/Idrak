@@ -22,6 +22,29 @@ refused with "not registered". The contract suites (an environment's reset and s
 batch against its single form, an estimator's fixed order, a loss's gradient) are in `Idrak.Abstraction.Testing`
 (`Conformance.CheckEnvironmentKind`, `CheckRewardFunction`, `CheckAdvantageEstimator`, `CheckPolicyLoss`).
 
+## What it holds
+
+- **Advantage estimators** (`AdvantageEstimators`, registered as library defaults): `gae` (generalized advantage
+  estimation, Schulman et al. 2015, arXiv:1506.02438: γ, λ, a critic's values), `group` (GRPO's group-relative
+  advantages, Shao et al. 2024, arXiv:2402.03300: an episode's return less its group's mean, over the group's deviation
+  or not), `leave-one-out` (RLOO, Ahmadian et al. 2024, arXiv:2402.14740) and `returns` (REINFORCE's discounted returns,
+  less a baseline or not). Every sum runs in a fixed order, so a batch gives the same advantages bit for bit anywhere.
+- **Policy losses** (`PolicyLosses`, the algorithms): `reinforce`, `ppo` (a clipped ratio, a value loss, an entropy bonus;
+  Schulman et al. 2017, arXiv:1707.06347) and `grpo` (a clipped ratio and a KL penalty to the reference by the k1, k2 or k3
+  estimator, normalized per sequence, per token or by a constant), as tensor operations with autograd.
+- **`RolloutCollector`**: plays a rollout's episodes at once, an environment each (made once and reused), the policy asked
+  for every episode's action in one call, the environments stepped in parallel only where it measured faster; scratch
+  buffers reused, episodes numbered and sorted by number, so threads change nothing.
+- **`ReinforcementTrainer`**: collect, estimate, `Epochs` passes of mini-batch updates; the gradient clip and a schedule from
+  `LearningRateSchedules` for a policy that exposes its optimizer (`IScheduledPolicy`); greedy evaluation episodes with
+  seeds of their own; checkpoints (the policy with its optimizer, the iteration, the updates, the seed) and a resume that
+  continues bit for bit; a clean stop between iterations; progress through `IProgressReporter`, the library's telemetry,
+  and a JSON line per iteration. Every draw derives from the run's seed and where the run is.
+- **`ModulePolicy`**: a policy over a `Module`: categorical over discrete actions or Gaussian over a box, a critic or not,
+  a frozen reference or not; its updates are autograd and an optimizer made through `OptimizerKinds`.
+- **Settings**: `ReinforcementOptions` and `ModulePolicyOptions`, each option with a default and an `IDRAK_RL_*` variable
+  (`FromEnvironment`; listed by `idrak help env`).
+
 ## Install
 
 ```bash
