@@ -8,7 +8,11 @@ namespace Idrak.Abstraction.Generation;
 /// <param name="Done">True for the final chunk.</param>
 /// <param name="DoneReason">"stop" (a stop sequence was produced) or "length" (the token limit was reached); null until done.</param>
 /// <param name="Stats">Statistics, on the final chunk only.</param>
-public sealed record GenerationChunk(string Text, bool Done = false, string? DoneReason = null, GenerationStats? Stats = null);
+public sealed record GenerationChunk(string Text, bool Done = false, string? DoneReason = null, GenerationStats? Stats = null)
+{
+    /// <summary>The prompt's and the continuation's ids, on the final chunk when the options asked for them (<see cref="GenerationOptions.ReturnTokens"/>); null otherwise.</summary>
+    public ChatTokens? Tokens { get; init; }
+}
 
 /// <summary>Anything that continues a text prompt: <c>TextGenerator</c>, or a text or chat model hosted by the inference engine.</summary>
 public interface ITextModel

@@ -2705,6 +2705,7 @@ public sealed record Idrak.Abstraction.Generation.ChatChunk : System.IEquatable<
   public ChatChunk(Idrak.Abstraction.Generation.ChatDelta Delta, bool Done = false, string? DoneReason = null, Idrak.Abstraction.Generation.ChatMessage? Message = null, Idrak.Abstraction.Generation.GenerationStats? Stats = null)
   public Idrak.Abstraction.Generation.ChatDelta Delta { get; init; }
   public Idrak.Abstraction.Generation.ChatMessage? Message { get; init; }
+  public Idrak.Abstraction.Generation.ChatTokens? Tokens { get; init; }
   public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
   public bool Done { get; init; }
   public string? DoneReason { get; init; }
@@ -2746,6 +2747,14 @@ public sealed record Idrak.Abstraction.Generation.ChatMessage : System.IEquatabl
   public string Role { get; init; }
   public string? Thinking { get; init; }
   public string? ToolName { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.ChatObservation : System.IEquatable<Idrak.Abstraction.Generation.ChatObservation>
+  public ChatObservation(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools = null, bool? Think = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools { get; init; }
+  public bool Equals(Idrak.Abstraction.Generation.ChatObservation? other)
+  public bool? Think { get; init; }
+  public override int GetHashCode()
 
 public sealed class Idrak.Abstraction.Generation.ChatOutputParser
   public (System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall>, string)? CallsInAnswer(string answer)
@@ -2815,6 +2824,12 @@ public sealed record Idrak.Abstraction.Generation.ChatText : Idrak.Abstraction.G
   public ChatText(string Text)
   public override string Kind { get; }
   public string Text { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.ChatTokens : System.IEquatable<Idrak.Abstraction.Generation.ChatTokens>
+  public ChatTokens(int[] Prompt, int[] Reply, float[]? LogProbabilities = null)
+  public float[]? LogProbabilities { get; init; }
+  public int[] Prompt { get; init; }
+  public int[] Reply { get; init; }
 
 public static class Idrak.Abstraction.Generation.ChatTools
   public static Idrak.Abstraction.Generation.IChatModel WithTools(this Idrak.Abstraction.Generation.IChatModel model, Idrak.Abstraction.Generation.IToolRegistry tools, int maxToolRounds)
@@ -3033,6 +3048,7 @@ public sealed class Idrak.Abstraction.Generation.Float16Weight : Idrak.Abstracti
 
 public sealed record Idrak.Abstraction.Generation.GenerationChunk : System.IEquatable<Idrak.Abstraction.Generation.GenerationChunk>
   public GenerationChunk(string Text, bool Done = false, string? DoneReason = null, Idrak.Abstraction.Generation.GenerationStats? Stats = null)
+  public Idrak.Abstraction.Generation.ChatTokens? Tokens { get; init; }
   public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
   public bool Done { get; init; }
   public string Text { get; init; }
@@ -3046,6 +3062,8 @@ public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEq
   public GenerationOptions()
   public System.Collections.Generic.IReadOnlyList<string> Stop { get; init; }
   public bool EarlyStopping { get; init; }
+  public bool ReturnLogProbabilities { get; init; }
+  public bool ReturnTokens { get; init; }
   public bool UseCache { get; init; }
   public bool UseGraph { get; init; }
   public float FrequencyPenalty { get; init; }
@@ -5207,6 +5225,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor TokenCrossEntropyRows(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, Idrak.Abstraction.Tensor rows, Idrak.Abstraction.Tensor targets, Idrak.Abstraction.Tensor weights, float normalizer, int chunkRows)
   public static Idrak.Abstraction.Tensor TokenCrossEntropyRows(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, int[] rows, float[] targets, float[] weights, float normalizer, int chunkRows)
   public static Idrak.Abstraction.Tensor TokenDivergenceRows(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, int[] rows, float[] weights, System.Func<int, int, Idrak.Abstraction.Tensor> teacher, float temperature, int chunkRows)
+  public static Idrak.Abstraction.Tensor TokenDivergenceRows(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, int[] rows, float[] weights, System.Func<int, int, Idrak.Abstraction.Tensor> teacher, float temperature, int chunkRows, Idrak.Abstraction.TokenDivergenceRule? rule)
   public static Idrak.Abstraction.Tensor Traced(string operation, Idrak.Abstraction.Tensor output, long start)
   public static Idrak.Abstraction.Tensor Uniform(System.ReadOnlySpan<int> shape, float low, float high, System.Random? random = null, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor WeightNorm(Idrak.Abstraction.Tensor gain, Idrak.Abstraction.Tensor direction)
@@ -5231,6 +5250,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static bool WillRecord(Idrak.Abstraction.Tensor a)
   public static bool WillRecord(Idrak.Abstraction.Tensor a, Idrak.Abstraction.Tensor b)
   public static float[] TokenDivergences(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, int[] rows, System.Func<int, int, Idrak.Abstraction.Tensor> teacher, float temperature, int chunkRows)
+  public static float[] TokenDivergences(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, int[] rows, System.Func<int, int, Idrak.Abstraction.Tensor> teacher, float temperature, int chunkRows, Idrak.Abstraction.TokenDivergenceRule? rule)
   public static float[] TokenLogProbabilities(Idrak.Abstraction.Tensor hidden, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> head, int[] rows, int[] targets, int chunkRows)
   public static string FormatShape(System.ReadOnlySpan<int> shape)
   public static void RecomputeGatedActivation(Idrak.Abstraction.Tensor gate, Idrak.Abstraction.Tensor up, Idrak.Abstraction.Tensor y, Idrak.Abstraction.Generation.FeedForwardActivation activation)
@@ -5272,6 +5292,8 @@ public static class Idrak.Abstraction.Text.UnicodeNormalization
   public static int GetNormalizedLength(System.ReadOnlySpan<char> source, System.Text.NormalizationForm form = (System.Text.NormalizationForm)1)
   public static int MaxDecompositionLength(bool compatibility)
   public static string Normalize(string text, System.Text.NormalizationForm form = (System.Text.NormalizationForm)1)
+
+public delegate (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor?) Idrak.Abstraction.TokenDivergenceRule(Idrak.Abstraction.Tensor studentLogProbabilities, Idrak.Abstraction.Tensor teacherProbabilities, bool gradient)
 
 public class Idrak.Abstraction.Training.Adam : Idrak.Abstraction.Training.Optimizer
   protected virtual bool DecoupledWeightDecay { get; }

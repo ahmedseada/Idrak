@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Models;
 using Idrak.Text.Abstractions;
 
@@ -28,10 +29,12 @@ public delegate Tensor FineTuningLoss(FineTuningLossInput input);
 public sealed class FineTuningLossInput
 {
     private readonly Func<float[]>? _reference;
-    private Func<float, float[]>? _divergence;
+    private readonly Func<float, ITeacherDivergence?, float, float[]>? _divergence;
     private Tensor? _referenceTensor;
     private Tensor? _sums, _means;
-    private readonly List<(Tensor Values, float Temperature)> _divergences = [];
+    private Tensor? _sequenceValues, _tokenValues, _behavior;
+    private bool _behaviorRead;
+    private readonly List<(Tensor Values, float Temperature, ITeacherDivergence? Kind, float Beta)> _divergences = [];
 
     /// <summary>
     /// The input for <paramref name="logProbabilities"/> [tokens] divided into sequences of
@@ -44,24 +47,47 @@ public sealed class FineTuningLossInput
     /// <param name="stepTokens">Trained tokens of the whole step (0: this input's).</param>
     /// <param name="stepSequences">Sequences of the whole step (0: this input's).</param>
     /// <param name="teacherDivergence">
-    /// The divergence from a teacher of each trained token at a temperature (see <see cref="TeacherDivergence"/>), or null
-    /// when there is no teacher.
+    /// The divergence from a teacher of each trained token at a temperature (see <see cref="TeacherDivergence(float)"/>), or
+    /// null when there is no teacher. It gives the forward KL: another kind asked for is refused.
     /// </param>
+    /// <param name="sequenceValues">A value per sequence [sequences] (<see cref="SequenceValues"/>), or null.</param>
+    /// <param name="tokenValues">A value per trained token [tokens] (<see cref="TokenValues"/>), or null (the sequence's value repeated).</param>
+    /// <param name="behaviorLogProbabilities">log p of each trained token under the policy that sampled it [tokens] (<see cref="BehaviorLogProbabilities"/>), or null.</param>
     public FineTuningLossInput(Tensor logProbabilities, IReadOnlyList<int> tokenCounts, Tensor? referenceLogProbabilities = null, bool pairs = false,
-        int stepTokens = 0, int stepSequences = 0, Func<float, float[]>? teacherDivergence = null)
+        int stepTokens = 0, int stepSequences = 0, Func<float, float[]>? teacherDivergence = null, Tensor? sequenceValues = null, Tensor? tokenValues = null,
+        Tensor? behaviorLogProbabilities = null)
         : this(logProbabilities, tokenCounts, [], null, pairs, stepTokens, stepSequences)
     {
         ArgumentNullException.ThrowIfNull(logProbabilities);
         _referenceTensor = referenceLogProbabilities;
-        _divergence = teacherDivergence;
+        _divergence = teacherDivergence is null ? null
+            : (temperature, kind, _) => kind is null || TeacherDivergences.IsLibraryForward(kind) ? teacherDivergence(temperature)
+                : throw new NotSupportedException($"This input's teacher divergence gives the forward KL only, not '{kind.Name}'.");
         if (referenceLogProbabilities is not null && referenceLogProbabilities.Size != logProbabilities.Size)
         {
             throw new ArgumentException("The reference log-probabilities need one value per trained token.", nameof(referenceLogProbabilities));
         }
+
+        if (sequenceValues is not null && sequenceValues.Size != tokenCounts.Count)
+        {
+            throw new ArgumentException($"The sequence values need one value per sequence ({tokenCounts.Count}), not {sequenceValues.Size}.", nameof(sequenceValues));
+        }
+
+        if (tokenValues is not null && tokenValues.Size != logProbabilities.Size)
+        {
+            throw new ArgumentException("The token values need one value per trained token.", nameof(tokenValues));
+        }
+
+        if (behaviorLogProbabilities is not null && behaviorLogProbabilities.Size != logProbabilities.Size)
+        {
+            throw new ArgumentException("The behaviour log-probabilities need one value per trained token.", nameof(behaviorLogProbabilities));
+        }
+
+        (_sequenceValues, _tokenValues, _behavior, _behaviorRead) = (sequenceValues, tokenValues, behaviorLogProbabilities, behaviorLogProbabilities is not null);
     }
 
     internal FineTuningLossInput(Tensor logProbabilities, IReadOnlyList<int> tokenCounts, IReadOnlyList<TrainingSequence> sequences, Func<float[]>? reference,
-        bool pairs, int stepTokens, int stepSequences, Func<float, float[]>? divergence = null)
+        bool pairs, int stepTokens, int stepSequences, Func<float, ITeacherDivergence?, float, float[]>? divergence = null)
     {
         _divergence = divergence;
         ArgumentNullException.ThrowIfNull(tokenCounts);
@@ -89,9 +115,10 @@ public sealed class FineTuningLossInput
 
     /// <summary>
     /// <see cref="LogProbabilities"/> under the reference model: the same network with its adapters disabled (the base
-    /// model, see <see cref="Layers.ModuleExtensions.DisableAdapters"/>), so no second copy of the model is held. Computed
-    /// on first use, with one more forward pass of the batch without gradients, and kept for each sequence for the rest of
-    /// the run (later epochs and evaluations reuse it). Not recorded.
+    /// model, see <see cref="Layers.ModuleExtensions.DisableAdapters"/>), so no second copy of the model is held. Taken from
+    /// the sequences when every one carries them (<see cref="TrainingSequence.ReferenceLogProbabilities"/>, computed
+    /// beforehand); otherwise computed on first use, with one more forward pass of the batch without gradients, and kept for
+    /// each sequence for the rest of the run (later epochs and evaluations reuse it). Not recorded.
     /// </summary>
     public Tensor ReferenceLogProbabilities
     {
@@ -99,12 +126,134 @@ public sealed class FineTuningLossInput
         {
             if (_referenceTensor is null)
             {
-                var values = _reference?.Invoke() ?? throw new InvalidOperationException("No reference log-probabilities were given for this input.");
+                var values = Given(s => s.ReferenceLogProbabilities, "reference log-probabilities") ?? _reference?.Invoke()
+                    ?? throw new InvalidOperationException("No reference log-probabilities were given for this input.");
                 _referenceTensor = Tensor.From(values, [values.Length], LogProbabilities.Device);
             }
 
             return _referenceTensor;
         }
+    }
+
+    /// <summary>
+    /// The value of each sequence [sequences] (<see cref="TrainingSequence.Value"/>, or the values the input was made with):
+    /// a policy loss's advantage, a reward. Not recorded.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A sequence has no value.</exception>
+    public Tensor SequenceValues
+    {
+        get
+        {
+            if (_sequenceValues is null)
+            {
+                if (Sequences.Count == 0 || Sequences.Any(s => s.Value is null))
+                {
+                    throw new InvalidOperationException("No per-sequence values were given for this input: set TrainingSequence.Value on every sequence of the step.");
+                }
+
+                _sequenceValues = Tensor.From([.. Sequences.Select(s => s.Value!.Value)], [Sequences.Count], LogProbabilities.Device);
+            }
+
+            return _sequenceValues;
+        }
+    }
+
+    /// <summary>
+    /// The value of each trained token [tokens]: a sequence's <see cref="TrainingSequence.TokenValues"/>, else its
+    /// <see cref="TrainingSequence.Value"/> repeated over its trained tokens (a policy loss's advantage per unit). Not recorded.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A sequence has neither, or token values of another count than its trained tokens.</exception>
+    public Tensor TokenValues
+    {
+        get
+        {
+            if (_tokenValues is null)
+            {
+                var values = new float[LogProbabilities.Size];
+                if (Sequences.Count == 0)
+                {
+                    // Made from values alone: the sequence values repeated.
+                    var perSequence = SequenceValues.ToArray();
+                    for (int s = 0, t = 0; s < TokenCounts.Count; s++)
+                    {
+                        values.AsSpan(t, TokenCounts[s]).Fill(perSequence[s]);
+                        t += TokenCounts[s];
+                    }
+                }
+                else
+                {
+                    for (int s = 0, t = 0; s < Sequences.Count; t += TokenCounts[s], s++)
+                    {
+                        var sequence = Sequences[s];
+                        if (sequence.TokenValues is { } own)
+                        {
+                            if (own.Length != TokenCounts[s])
+                            {
+                                throw new InvalidOperationException($"Sequence {s} has {own.Length} token values for its {TokenCounts[s]} trained tokens.");
+                            }
+
+                            own.CopyTo(values, t);
+                        }
+                        else
+                        {
+                            values.AsSpan(t, TokenCounts[s]).Fill(sequence.Value
+                                ?? throw new InvalidOperationException($"Sequence {s} has no value: set TrainingSequence.Value or TokenValues on every sequence of the step."));
+                        }
+                    }
+                }
+
+                _tokenValues = Tensor.From(values, [values.Length], LogProbabilities.Device);
+            }
+
+            return _tokenValues;
+        }
+    }
+
+    /// <summary>
+    /// log p of each trained token under the policy that sampled it [tokens] (<see cref="TrainingSequence.BehaviorLogProbabilities"/>,
+    /// or the values the input was made with): the denominator of a policy loss's ratio. Null when none were given (the
+    /// sequences are the current policy's own: on-policy). Not recorded.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Some sequences carry them and others do not, or a count differs from the trained tokens.</exception>
+    public Tensor? BehaviorLogProbabilities
+    {
+        get
+        {
+            if (!_behaviorRead)
+            {
+                _behaviorRead = true;
+                var values = Given(s => s.BehaviorLogProbabilities, "behaviour log-probabilities");
+                _behavior = values is null ? null : Tensor.From(values, [values.Length], LogProbabilities.Device);
+            }
+
+            return _behavior;
+        }
+    }
+
+    /// <summary>Whether behaviour log-probabilities were given (<see cref="BehaviorLogProbabilities"/> is not null).</summary>
+    public bool HasBehavior => BehaviorLogProbabilities is not null;
+
+    // Values every sequence carries (each one per trained token), joined in order; null when none carries them.
+    private float[]? Given(Func<TrainingSequence, float[]?> of, string what)
+    {
+        if (Sequences.Count == 0 || Sequences.All(s => of(s) is null))
+        {
+            return null;
+        }
+
+        var values = new float[LogProbabilities.Size];
+        for (int s = 0, t = 0; s < Sequences.Count; t += TokenCounts[s], s++)
+        {
+            var own = of(Sequences[s]) ?? throw new InvalidOperationException($"Sequence {s} carries no {what} while others of the step do: give them for every sequence or none.");
+            if (own.Length != TokenCounts[s])
+            {
+                throw new InvalidOperationException($"Sequence {s} carries {own.Length} {what} for its {TokenCounts[s]} trained tokens.");
+            }
+
+            own.CopyTo(values, t);
+        }
+
+        return values;
     }
 
     /// <summary>
@@ -117,22 +266,51 @@ public sealed class FineTuningLossInput
     /// asked for costs one more pass of the head (and of the teacher's head) over the trained rows.
     /// </summary>
     /// <param name="temperature">Softens both distributions (1: as they are).</param>
-    public Tensor TeacherDivergence(float temperature = 1f)
+    public Tensor TeacherDivergence(float temperature = 1f) => Divergence(temperature, null, 0f);
+
+    /// <summary>
+    /// The teacher's divergence of the kind <paramref name="divergence"/> (a <see cref="TeacherDivergences"/> name:
+    /// "forward" is <see cref="TeacherDivergence(float)"/>, "reverse" KL(p ‖ q), "jsd" the generalized Jensen-Shannon
+    /// divergence of weight <paramref name="beta"/>) at each trained token [tokens], recorded as the forward one is: the
+    /// trainer back-propagates it through one more pass of the head over the trained rows.
+    /// </summary>
+    /// <param name="temperature">Softens both distributions (1: as they are).</param>
+    /// <param name="divergence">The kind, by name.</param>
+    /// <param name="beta">The kind's weight when it takes one (<see cref="ITeacherDivergence.UsesBeta"/>), in (0, 1).</param>
+    /// <exception cref="NotSupportedException">No divergence of that name is registered.</exception>
+    public Tensor TeacherDivergence(float temperature, string divergence, float beta = 0.5f)
+    {
+        var kind = TeacherDivergences.Get(divergence);
+        if (kind.UsesBeta && !(beta > 0f && beta < 1f))
+        {
+            throw new ArgumentOutOfRangeException(nameof(beta), beta, $"The '{kind.Name}' divergence's beta is in (0, 1).");
+        }
+
+        return Divergence(temperature, kind, kind.UsesBeta ? beta : 0f);
+    }
+
+    private Tensor Divergence(float temperature, ITeacherDivergence? kind, float beta)
     {
         if (!(temperature > 0f) || float.IsInfinity(temperature))
         {
             throw new ArgumentOutOfRangeException(nameof(temperature), "The temperature is a positive number.");
         }
 
-        foreach (var (values, t) in _divergences)
+        // The library's forward KL by name is the same as the default.
+        if (kind is not null && TeacherDivergences.IsLibraryForward(kind))
         {
-            if (t == temperature)
+            kind = null;
+        }
+
+        foreach (var (values, t, k, b) in _divergences)
+        {
+            if (t == temperature && ReferenceEquals(k, kind) && b == beta)
             {
                 return values;
             }
         }
 
-        var divergence = _divergence?.Invoke(temperature)
+        var divergence = _divergence?.Invoke(temperature, kind, beta)
                          ?? throw new InvalidOperationException("No teacher for this input: set FineTuningOptions.Teacher (DistillationTeachers.FromModel or FromFile) to distil.");
         if (divergence.Length != LogProbabilities.Size)
         {
@@ -140,12 +318,12 @@ public sealed class FineTuningLossInput
         }
 
         var tensor = Tensor.From(divergence, [divergence.Length], LogProbabilities.Device, requiresGrad: LogProbabilities.RequiresGrad);
-        _divergences.Add((tensor, temperature));
+        _divergences.Add((tensor, temperature, kind, beta));
         return tensor;
     }
 
-    /// <summary>The <see cref="TeacherDivergence"/> tensors the loss asked for, with their temperatures (the trainer back-propagates them).</summary>
-    internal IReadOnlyList<(Tensor Values, float Temperature)> Divergences => _divergences;
+    /// <summary>The divergence tensors the loss asked for, with their temperatures and kinds (null: the forward KL) (the trainer back-propagates them).</summary>
+    internal IReadOnlyList<(Tensor Values, float Temperature, ITeacherDivergence? Kind, float Beta)> Divergences => _divergences;
 
     /// <summary>Trained tokens of each sequence of the batch, in order.</summary>
     public IReadOnlyList<int> TokenCounts { get; }
@@ -256,7 +434,7 @@ public static class FineTuningLosses
     /// Knowledge distillation per token (Hinton, Vinyals and Dean 2015, "Distilling the Knowledge in a Neural Network",
     /// arXiv:1503.02531): the mean over the step's trained tokens of α · T² · KL(q_T ‖ p_T) + (1 − α) · (−log p(token)),
     /// with q_T and p_T the teacher's and the model's next-token distributions softened by the temperature T
-    /// (<see cref="FineTuningLossInput.TeacherDivergence"/>; the teacher is <see cref="FineTuningOptions.Teacher"/>). The
+    /// (<see cref="FineTuningLossInput.TeacherDivergence(float)"/>; the teacher is <see cref="FineTuningOptions.Teacher"/>). The
     /// T² factor keeps the soft term's gradient about as large as at T = 1, so α weighs the two terms as it says. Training
     /// with a teacher and no <see cref="FineTuningOptions.Loss"/> uses this loss with its defaults.
     /// </summary>
@@ -285,6 +463,82 @@ public static class FineTuningLosses
             var soft = input.TeacherDivergence(temperature).Sum() * (alpha * temperature * temperature / input.StepTokens);
             return hard is null ? soft : soft + hard;
         };
+    }
+
+    /// <summary>
+    /// A policy-gradient loss of <see cref="PolicyLosses"/> (REINFORCE, PPO, GRPO: Idrak.Reinforcement's, or one an app
+    /// registered) as a fine-tuning loss, for a language model's policy trained through a <see cref="FineTuningSession"/>:
+    /// each trained token is an action unit, its sequence's tokens a sequence of the policy loss
+    /// (<see cref="PolicyLossInput.Counts"/>), its advantage <see cref="FineTuningLossInput.TokenValues"/> (from
+    /// <see cref="TrainingSequence.Value"/> or <see cref="TrainingSequence.TokenValues"/>), the behaviour log-probabilities
+    /// <see cref="FineTuningLossInput.BehaviorLogProbabilities"/> (none: on-policy, every ratio 1), and the reference the
+    /// model with its adapters disabled (<see cref="FineTuningLossInput.ReferenceLogProbabilities"/>, taken from the
+    /// sequences when they carry it). The step's sizes are the policy loss's <see cref="PolicyLossInput.StepUnits"/> and
+    /// <see cref="PolicyLossInput.StepSequences"/>. The policy loss's gradient reaches the network as any loss of one's own
+    /// does: one more pass of the head over the trained rows.
+    /// </summary>
+    /// <param name="loss">The policy loss (<see cref="PolicyLosses.Get"/>).</param>
+    /// <param name="options">Its options by key (<see cref="IPolicyLoss.Keys"/>), null for its defaults.</param>
+    /// <param name="reference">
+    /// Give the policy loss the reference log-probabilities (true, the default: a KL penalty reads them); false leaves them
+    /// out, so a loss without a KL term costs no reference pass.
+    /// </param>
+    public static FineTuningLoss Policy(IPolicyLoss loss, IReadOnlyDictionary<string, string>? options = null, bool reference = true)
+    {
+        ArgumentNullException.ThrowIfNull(loss);
+        return input =>
+        {
+            var policy = new PolicyLossInput(input.LogProbabilities, input.TokenCounts, input.TokenValues, input.BehaviorLogProbabilities,
+                reference ? input.ReferenceLogProbabilities : null, stepUnits: input.StepTokens, stepSequences: input.StepSequences);
+            return loss.Loss(policy, options);
+        };
+    }
+
+    /// <summary>
+    /// On-policy distillation (Agarwal et al. 2024, "On-Policy Distillation of Language Models: Learning from
+    /// Self-Generated Mistakes", arXiv:2306.13649): the mean over the step's trained tokens of T² · D(teacher, student),
+    /// with D a <see cref="TeacherDivergences"/> kind computed on exactly the tokens the student sampled (its own replies,
+    /// <see cref="GenerationOptions.ReturnTokens"/>), so the student learns where its own outputs go wrong. The teacher is
+    /// <see cref="FineTuningOptions.Teacher"/>, a live model (<see cref="DistillationTeachers.FromModel(PretrainedModel, int, int)"/>;
+    /// see <see cref="DistillationTeachers.CheckOnPolicy"/>). No reward and no advantage: alone it is the paper's
+    /// distillation; beside a policy loss (<see cref="Add"/>) a dense per-token signal next to a sparse reward.
+    /// </summary>
+    /// <param name="divergence">The kind (<see cref="TeacherDivergences"/>): "reverse" KL(p ‖ q) by default (mode-seeking, the usual on-policy choice), "forward", "jsd".</param>
+    /// <param name="temperature">Softens both distributions (1: as they are).</param>
+    /// <param name="beta">The generalized Jensen-Shannon weight, for a kind that takes one, in (0, 1).</param>
+    /// <exception cref="NotSupportedException">No divergence of that name is registered.</exception>
+    public static FineTuningLoss OnPolicyDistillation(string divergence = TeacherDivergences.Reverse, float temperature = 1f, float beta = 0.5f)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(divergence);
+        if (!(temperature > 0f) || float.IsInfinity(temperature))
+        {
+            throw new ArgumentOutOfRangeException(nameof(temperature), "The temperature is a positive number.");
+        }
+
+        var kind = TeacherDivergences.Get(divergence);
+        if (kind.UsesBeta && !(beta > 0f && beta < 1f))
+        {
+            throw new ArgumentOutOfRangeException(nameof(beta), beta, $"The '{kind.Name}' divergence's beta is in (0, 1).");
+        }
+
+        return input => input.TeacherDivergence(temperature, divergence, beta).Sum() * (temperature * temperature / input.StepTokens);
+    }
+
+    /// <summary>
+    /// The sum of two losses, the second weighted: <paramref name="first"/> + <paramref name="weight"/> ·
+    /// <paramref name="second"/> (a policy loss with a teacher term, <see cref="OnPolicyDistillation"/>). The weight can
+    /// follow a schedule by building a new sum each step.
+    /// </summary>
+    public static FineTuningLoss Add(FineTuningLoss first, FineTuningLoss second, float weight = 1f)
+    {
+        ArgumentNullException.ThrowIfNull(first);
+        ArgumentNullException.ThrowIfNull(second);
+        if (!float.IsFinite(weight))
+        {
+            throw new ArgumentOutOfRangeException(nameof(weight), weight, "The weight is a finite number.");
+        }
+
+        return input => weight == 0f ? first(input) : first(input) + second(input) * weight;
     }
 
     /// <summary>

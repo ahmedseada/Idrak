@@ -15,3 +15,12 @@ Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for
 Idrak.Abstraction.Cluster.IFailureModel | which faults a run injects (slow, dropped, lost links, partitions, late joins), for every package that runs ranks: the simulator (Idrak.Cluster) and, from C5, Idrak.Network's real transports under test, so a seeded fault plan replays the same on both
 Idrak.Abstraction.Cluster.FailureModels | the failure models by name, overridable once (IDRAK_CLUSTER_FAILURES) for every package that runs ranks
 Idrak.Abstraction.Generation.IAttentionPositionBias | how an attention layer adds a bias by the query's and the key's positions, for any package's attention (core's text encoders and decoders, vision and audio towers, a family plug-in's own layers); a kind is registered once (AttentionPositionBiases) for all of them
+Idrak.Abstraction.Reinforcement.IEnvironment | Idrak.Text's language-model policy and environment (Plan 27 R3) and Idrak.Reinforcement's trainer (R2) meet only in these contracts (decision 6: neither package references the other)
+Idrak.Abstraction.Reinforcement.IEnvironment`2 | the episodes Idrak.Text's prompts environment (R3) and the plug-ins' environments run, stepped by Idrak.Reinforcement's trainer (R2)
+Idrak.Abstraction.Reinforcement.IEnvironmentKind | Idrak.Text's prompts kind (R3) and the plug-ins' kinds, created by Idrak.Reinforcement's trainer (R2)
+Idrak.Abstraction.Reinforcement.EnvironmentKinds | the environment kinds by name for every package that trains or registers one (Idrak.Text's prompts, R3; Idrak.Reinforcement's trainer, R2; the plug-ins)
+Idrak.Abstraction.Reinforcement.IPolicy`2 | Idrak.Text's language-model policy (R3) and Idrak.Reinforcement's module policy (R2), driven by one trainer
+Idrak.Abstraction.Reinforcement.IPolicyLoss | Idrak.Reinforcement's losses (R2) trained by Idrak.Text's language-model policy (R3, FineTuningLosses.Policy) and by the module policy
+Idrak.Abstraction.Reinforcement.IAdvantageEstimator | Idrak.Reinforcement's estimators (R2) over the rollout batches Idrak.Text's policy trains on (R3)
+Idrak.Abstraction.Reinforcement.IRewardFunction | Idrak.Text's text rewards (R3) and the plug-ins' rewards, for every environment that scores text
+Idrak.Abstraction.Reinforcement.RewardFunctions | the rewards by name for every package that scores text (Idrak.Text's, R3; the coding plug-in's, R4)

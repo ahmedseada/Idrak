@@ -51,7 +51,35 @@ public sealed record TrainingSequence(int[] Tokens, bool[] Trained)
     /// </summary>
     public IReadOnlyList<TrainingPart> Parts { get; init; } = [];
 
-    /// <summary>Equal when both hold the same token, trained, image and part lists (the cached count is not compared).</summary>
+    /// <summary>
+    /// One value for the whole sequence that a loss of one's own reads (<c>FineTuningLossInput.SequenceValues</c>): a policy
+    /// loss's advantage, a reward. Null (the default): none.
+    /// </summary>
+    public float? Value { get; init; }
+
+    /// <summary>
+    /// A value per trained token, in their order (<c>FineTuningLossInput.TokenValues</c>): an episode whose turns have
+    /// advantages of their own; null (the default): <see cref="Value"/> for every trained token.
+    /// </summary>
+    public float[]? TokenValues { get; init; }
+
+    /// <summary>
+    /// log p of each trained token under the policy that sampled the sequence, in their order
+    /// (<c>FineTuningLossInput.BehaviorLogProbabilities</c>, a policy loss's ratio); null (the default): none.
+    /// </summary>
+    public float[]? BehaviorLogProbabilities { get; init; }
+
+    /// <summary>
+    /// log p of each trained token under the reference, computed beforehand (a session's <c>LogProbabilities</c> with the
+    /// adapters off), in their order; null (the default): <c>FineTuningLossInput.ReferenceLogProbabilities</c> computes
+    /// them when a loss asks.
+    /// </summary>
+    public float[]? ReferenceLogProbabilities { get; init; }
+
+    /// <summary>
+    /// Equal when both hold the same token, trained, image and part lists (the cached count, and the values and
+    /// log-probabilities a loss reads, are not compared).
+    /// </summary>
     public bool Equals(TrainingSequence? other) =>
         other is not null && ReferenceEquals(Tokens, other.Tokens) && ReferenceEquals(Trained, other.Trained) && ReferenceEquals(Images, other.Images)
         && ReferenceEquals(Parts, other.Parts);
