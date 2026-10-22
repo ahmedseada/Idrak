@@ -102,6 +102,12 @@ standing rules; they win over anything here), then the plan you are asked to wor
    working folder and age: a test run or build whose worktree is gone, or one idle for long, is stopped), and tell every
    agent in its brief to leave no background process running. MSBuild nodes and the compiler server shared by agents
    still building are not leftovers.
+   **R1's mistake, not to repeat (2026-10-22):** R1 handed back its report while a background job of its own still ran
+   (its notification said "waiting on its own background work"; it truly finished about 28 minutes later), and the main
+   session merged it and removed its worktree with `--force` in between. Now: every agent brief says to run builds and
+   tests in the foreground only and to report last, with nothing of its own running; the main session merges an agent
+   and removes its worktree only after its notification says **finished** (not "waiting on its own background work"),
+   checks that no process works in that worktree, and never removes a worktree with `--force`.
 8. **The reference is not the ceiling**: Hugging Face `tokenizers`, sentencepiece, PyTorch, llama.cpp fix what the
    output must be, never how fast Idrak may be.
 
