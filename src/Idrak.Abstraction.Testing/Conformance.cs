@@ -3,6 +3,7 @@
 
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Operations;
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Abstraction.Testing.Devices;
 
 namespace Idrak.Abstraction.Testing;
@@ -415,5 +416,91 @@ public static class Conformance
     {
         ArgumentNullException.ThrowIfNull(topology);
         return Check(topology, new TopologySuite(), options ?? new ContractCheckOptions { RandomCases = 2 });
+    }
+
+    /// <summary>
+    /// Checks an environment kind and the environments it creates (<see cref="EnvironmentSuite{TObservation, TAction}"/>)
+    /// on episodes played with actions from <paramref name="act"/>: the kind's types and option keys, the reset and step
+    /// rules (no step before a reset or after an episode ended), observations in their space and finite rewards, a seeded
+    /// replay giving the same steps (the environment reset again, a new one, two at once), and cancellation. Four random
+    /// cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// Conformance.CheckEnvironmentKind&lt;float[], int&gt;(EnvironmentKinds.Get("cartpole"), (random, _) =&gt; random.Next(2)).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    /// <param name="kind">The kind.</param>
+    /// <param name="act">An action for an observation, drawn from the random source given.</param>
+    /// <param name="kindOptions">The kind's options for every environment created; null for its defaults.</param>
+    /// <param name="maxSteps">The steps an episode may take before the suite stops it.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckEnvironmentKind<TObservation, TAction>(IEnvironmentKind kind, Func<Random, TObservation, TAction> act,
+        IReadOnlyDictionary<string, string>? kindOptions = null, int maxSteps = 64, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(kind);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSteps);
+        return Check(kind, new EnvironmentSuite<TObservation, TAction>(act, kindOptions) { MaxSteps = maxSteps }, options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>
+    /// Checks a reward function on answers of its own (<see cref="RewardFunctionSuite"/>): a finite score per input, a
+    /// batch scoring what its inputs score one by one, the same scores again and from two calls at once, options and
+    /// cancellation, and, given a <paramref name="reference"/> (by default the library's reward of that name, when there
+    /// is one and it is not the one checked), the same scores. Eight random cases unless <paramref name="options"/> says
+    /// otherwise.
+    /// </summary>
+    /// <param name="reward">The reward function.</param>
+    /// <param name="samples">The answers it is checked on.</param>
+    /// <param name="rewardOptions">Its options for every call; null for its defaults.</param>
+    /// <param name="reference">The reward to agree with; null for the library's of that name.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckRewardFunction(IRewardFunction reward, IReadOnlyList<RewardInput> samples, IReadOnlyDictionary<string, string>? rewardOptions = null,
+        IRewardFunction? reference = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(reward);
+        reference ??= RewardFunctions.Default(reward.Name) is { } library && !ReferenceEquals(library, reward) ? library : null;
+        return Check(reward, new RewardFunctionSuite(samples, rewardOptions, reference), options ?? new ContractCheckOptions { RandomCases = 8 });
+    }
+
+    /// <summary>
+    /// Checks an advantage estimator (<see cref="AdvantageEstimatorSuite"/>) on batches of episodes in groups, with and
+    /// without values and truncated episodes: every step written and finite, the same output bit for bit again and from
+    /// several threads (a fixed summation order), wrong lengths and options refused, and, given a
+    /// <paramref name="reference"/> (by default the library's estimator of that name, when there is one and it is not the
+    /// one checked), the same advantages and returns.
+    /// </summary>
+    /// <param name="estimator">The estimator.</param>
+    /// <param name="estimatorOptions">Its options for every call; null for its defaults.</param>
+    /// <param name="reference">The estimator to agree with; null for the library's of that name.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckAdvantageEstimator(IAdvantageEstimator estimator, IReadOnlyDictionary<string, string>? estimatorOptions = null,
+        IAdvantageEstimator? reference = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(estimator);
+        reference ??= AdvantageEstimators.Default(estimator.Name) is { } library && !ReferenceEquals(library, estimator) ? library : null;
+        return Check(estimator, new AdvantageEstimatorSuite(estimatorOptions, reference), options);
+    }
+
+    /// <summary>
+    /// Checks a policy loss (<see cref="PolicyLossSuite"/>) on drawn mini-batches, on- and off-policy, with and without a
+    /// reference and a value head: a finite one-element loss, the same every time, a gradient that reaches the
+    /// log-probabilities and agrees with central differences where the loss is smooth, options refused, and, given a
+    /// <paramref name="reference"/> (by default the library's loss of that name, when there is one and it is not the one
+    /// checked), the same loss. Eight random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="loss">The loss.</param>
+    /// <param name="lossOptions">Its options for every call; null for its defaults.</param>
+    /// <param name="reference">The loss to agree with; null for the library's of that name.</param>
+    /// <param name="needsReference">Every case gives reference log-probabilities (a loss with a KL penalty).</param>
+    /// <param name="needsValues">Every case gives a value head's predictions and targets (a loss with a value term).</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckPolicyLoss(IPolicyLoss loss, IReadOnlyDictionary<string, string>? lossOptions = null, IPolicyLoss? reference = null,
+        bool needsReference = false, bool needsValues = false, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(loss);
+        reference ??= PolicyLosses.Default(loss.Name) is { } library && !ReferenceEquals(library, loss) ? library : null;
+        return Check(loss, new PolicyLossSuite(lossOptions, reference) { NeedsReference = needsReference, NeedsValues = needsValues },
+            options ?? new ContractCheckOptions { RandomCases = 8 });
     }
 }

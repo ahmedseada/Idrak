@@ -64,7 +64,7 @@ Common options (every command):
 | Option | Meaning |
 |---|---|
 | `-d, --device NAME` | `cpu`, `cuda:0`, `vulkan:1`, `hip:0`; default: the config's device, else the default device |
-| `-P, --plugin PATH` | Load an assembly that registers formats, families, tool-call formats, ... (repeatable); the tool registers the families of `Idrak.Text.Plugins`, `Idrak.Vision.Plugins` and `Idrak.Audio.Plugins` itself, before these |
+| `-P, --plugin PATH` | Load an assembly that registers formats, families, tool-call formats, ... (repeatable); the tool registers the families of `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` and `Idrak.Reinforcement.Plugins` itself, before these |
 | `-j, --json` | One JSON document (also `--format json`) |
 | `-q, --quiet` / `-v, --verbose` | Less or more output |
 | `-C, --config FILE` | The config file (default `IDRAK_CONFIG` or `~/.idrak/config.json`) |

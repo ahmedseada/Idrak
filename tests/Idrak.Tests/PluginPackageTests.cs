@@ -10,23 +10,24 @@ using Idrak.Audio.Plugins;
 using Idrak.Cli;
 using Idrak.Cli.Commands.Health;
 using Idrak.Models.Abstractions;
+using Idrak.Reinforcement.Plugins;
 using Idrak.Text.Plugins;
 using Idrak.Vision.Plugins;
 
-// Plan 26, phase P1: the three plug-in packages (Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins), the
-// plug-in contract they register through (IIdrakPlugin, IdrakPlugin, IdrakPlugins), the tool registering them at startup
-// and loading them with -P, their lack of internals, and the "not registered" messages naming them. Each family the later
-// phases move in gets its own group (plugins: <family>).
+// Plan 26, phase P1: the plug-in packages (Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins, and plan 27's
+// Idrak.Reinforcement.Plugins), the plug-in contract they register through (IIdrakPlugin, IdrakPlugin, IdrakPlugins), the
+// tool registering them at startup and loading them with -P, their lack of internals, and the "not registered" messages
+// naming them. Each family the later phases move in gets its own group (plugins: <family>).
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] PluginPackageGroup =
     [
-        ("plugins: packages: Idrak.Text.Plugins, Idrak.Vision.Plugins and Idrak.Audio.Plugins load, each root class has All, RegisterAll, UnregisterAll and the -P entry RegisterIdrakPlugin, each family in a namespace of its own; RegisterAll twice leaves every registry the tool lists as once, and UnregisterAll leaves them as found", PluginPackagesRegisterAll),
+        ("plugins: packages: Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins and Idrak.Reinforcement.Plugins load, each root class has All, RegisterAll, UnregisterAll and the -P entry RegisterIdrakPlugin, each family in a namespace of its own; RegisterAll twice leaves every registry the tool lists as once, and UnregisterAll leaves them as found", PluginPackagesRegisterAll),
         ("plugins: packages: an IdrakPlugin registers its parts once however often Register is called (from several threads too), Unregister leaves the registries as found, a failing part takes back the parts before it, Requires registers a needed plug-in only when missing; IdrakPlugins registers a plug-in once, replaces one of the same name (unregistering the earlier, which comes back when the new one fails) and names the packages when none is registered", PluginContract),
-        ("plugins: packages: the tool registers the three packages at startup (text first), and -P on each package's DLL loads it through the tool's loader (RegisterIdrakPlugin runs) adding nothing twice", PluginPackagesCli),
-        ("plugins: packages: IDRAK_PLUGIN_PACKAGES chooses the packages the tool registers at startup (all when unset, none, or a list taken in the tool's order) and is refused naming the variable when it names no package", PluginPackagesSetting),
+        ("plugins: packages: the tool registers the four packages at startup (text first, reinforcement last), and -P on each package's DLL loads it through the tool's loader (RegisterIdrakPlugin runs) adding nothing twice", PluginPackagesCli),
+        ("plugins: packages: IDRAK_PLUGIN_PACKAGES chooses the packages the tool registers at startup (all four when unset, none, or a list taken in the tool's order) and is refused naming the variable when it names no package", PluginPackagesSetting),
         ("plugins: packages: no library assembly nor the tool grants a plug-in package its internals, the plug-in packages grant none but the test runner (as every library package does), and they are not library defaults", PluginPackagesNoInternals),
-        ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures and ToolCallFormats name the plug-in package to reference and its RegisterAll", PluginPackagesMessages),
+        ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures, ToolCallFormats, EnvironmentKinds and RewardFunctions name the plug-in package to reference and its RegisterAll", PluginPackagesMessages),
     ];
 
     private sealed record PluginPackage(string Name, Type Root, IReadOnlyList<IIdrakPlugin> All, Action RegisterAll, Action UnregisterAll);
@@ -36,6 +37,7 @@ internal static partial class Tests
         new(TextPlugins.Package, typeof(TextPlugins), TextPlugins.All, TextPlugins.RegisterAll, TextPlugins.UnregisterAll),
         new(VisionPlugins.Package, typeof(VisionPlugins), VisionPlugins.All, VisionPlugins.RegisterAll, VisionPlugins.UnregisterAll),
         new(AudioPlugins.Package, typeof(AudioPlugins), AudioPlugins.All, AudioPlugins.RegisterAll, AudioPlugins.UnregisterAll),
+        new(ReinforcementPlugins.Package, typeof(ReinforcementPlugins), ReinforcementPlugins.All, ReinforcementPlugins.RegisterAll, ReinforcementPlugins.UnregisterAll),
     ];
 
     // What the tool lists (every registry by category) and the plug-ins recorded, as one comparable text.
@@ -199,7 +201,8 @@ internal static partial class Tests
             Check(second.IsRegistered && ReferenceEquals(IdrakPlugins.Find(Name), second) && Samplers("plugins-test-c"), "a failing replacement leaves the earlier plug-in registered");
             Check(IdrakPlugins.Unregister(Name) && !second.IsRegistered && IdrakPlugins.Find(Name) is null && Samplers(), "Unregister by name takes the plug-in back and forgets it");
             Check(!IdrakPlugins.Unregister(Name), "Unregister of a name not recorded is false");
-            ThrowsNaming<NotSupportedException>(() => IdrakPlugins.Get(Name), "an unknown plug-in", $"'{Name}'", "IdrakPlugins.Register", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins");
+            ThrowsNaming<NotSupportedException>(() => IdrakPlugins.Get(Name), "an unknown plug-in", $"'{Name}'", "IdrakPlugins.Register", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins",
+                "Idrak.Reinforcement.Plugins");
 
             // Requires: the needed plug-in is registered when missing and taken back with the one that needed it; one
             // registered already stays.
@@ -229,11 +232,11 @@ internal static partial class Tests
     private static void PluginPackagesCli(Device device)
     {
         _ = device;
-        Check(CommandLine.PluginPackages.Select(p => p.Package).SequenceEqual(PluginPackages.Select(p => p.Name)), "the tool registers Idrak.Text.Plugins, Idrak.Vision.Plugins and Idrak.Audio.Plugins, in that order");
+        Check(CommandLine.PluginPackages.Select(p => p.Package).SequenceEqual(PluginPackages.Select(p => p.Name)), "the tool registers Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins and Idrak.Reinforcement.Plugins, in that order");
         var listed = CliJson("plugins", "list", "-j");
         Check(listed["plugins"] is JsonObject, $"plugins list has the plug-ins: {listed}");
         var recorded = listed["plugins"]!["names"]!.AsArray().Select(n => (string?)n).ToHashSet(StringComparer.Ordinal);
-        Check(PluginPackages.SelectMany(p => p.All).All(p => p.IsRegistered && recorded.Contains(p.Name)), "every family of the three packages is registered by the tool, before any -P");
+        Check(PluginPackages.SelectMany(p => p.All).All(p => p.IsRegistered && recorded.Contains(p.Name)), "every family of the four packages is registered by the tool, before any -P");
         Check(listed.AsObject().All(c => c.Value!["added"]!.AsArray().Count == 0), "the packages' families are the tool's own, not added by a plug-in");
         foreach (var package in PluginPackages)
         {
@@ -250,11 +253,13 @@ internal static partial class Tests
     {
         _ = device;
         static string[] Chosen(string? value) => [.. CommandLine.ChosenPluginPackages(value).Select(p => p.Name)];
-        Check(Chosen(null).SequenceEqual(["text", "vision", "audio"]) && Chosen("").Length == 3 && Chosen(" All ").Length == 3, "all three when unset, empty or all");
+        Check(Chosen(null).SequenceEqual(["text", "vision", "audio", "reinforcement"]) && Chosen("").Length == 4 && Chosen(" All ").Length == 4, "all four when unset, empty or all");
         Check(Chosen("none").Length == 0 && Chosen(" NONE ").Length == 0, "none");
-        Check(Chosen("audio, text").SequenceEqual(["text", "audio"]) && Chosen("Vision").SequenceEqual(["vision"]), "a list, in the tool's order (text first)");
+        Check(Chosen("audio, text").SequenceEqual(["text", "audio"]) && Chosen("Vision").SequenceEqual(["vision"]) && Chosen("reinforcement,text").SequenceEqual(["text", "reinforcement"]),
+            "a list, in the tool's order (text first)");
+        Check(CommandLine.ChosenPluginPackages("Reinforcement").Single().Package == ReinforcementPlugins.Package, "reinforcement is Idrak.Reinforcement.Plugins");
         Check(CommandLine.ChosenPluginPackages("vision").Single().Package == VisionPlugins.Package, "each name is its package");
-        ThrowsNaming<UsageException>(() => CommandLine.ChosenPluginPackages("text,speech"), "an unknown package", ["IDRAK_PLUGIN_PACKAGES=text,speech", "'speech'", "text, vision, audio"]);
+        ThrowsNaming<UsageException>(() => CommandLine.ChosenPluginPackages("text,speech"), "an unknown package", ["IDRAK_PLUGIN_PACKAGES=text,speech", "'speech'", "text, vision, audio, reinforcement"]);
         Check(Idrak.Cli.Shared.EnvironmentVariables.All.Any(v => v.Name == CommandLine.PluginPackagesVariable), "the variable is in the tool's table");
         WithEnvironment(new Dictionary<string, string?> { [CommandLine.PluginPackagesVariable] = "speech" }, () =>
         {
@@ -286,6 +291,7 @@ internal static partial class Tests
         var defaults = (ValueTuple<string, string>[])typeof(IdrakPlugins).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!
             .GetField("Assemblies", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
         Check(!defaults.Any(d => plugins.Contains(d.Item1)), "the plug-in packages register nothing as library defaults (LibraryDefaults does not list them)");
+        Check(defaults.Any(d => d.Item1 == "Idrak.Reinforcement"), "Idrak.Reinforcement, a library package, is listed in LibraryDefaults (unlike its plug-in package)");
     }
 
     private static void PluginPackagesMessages(Device device)
@@ -293,7 +299,7 @@ internal static partial class Tests
         _ = device;
         const string None = "PluginsTestNobody";
         string[] text = ["Idrak.Text.Plugins", "TextPlugins.RegisterAll()"], vision = ["Idrak.Vision.Plugins", "VisionPlugins.RegisterAll()"],
-            audio = ["Idrak.Audio.Plugins", "AudioPlugins.RegisterAll()"];
+            audio = ["Idrak.Audio.Plugins", "AudioPlugins.RegisterAll()"], reinforcement = ["Idrak.Reinforcement.Plugins", "ReinforcementPlugins.RegisterAll()"];
         ThrowsNaming<NotSupportedException>(() => VisionFamilies.For(None, new JsonObject { ["vision_config"] = new JsonObject() }), "VisionFamilies",
             [$"'{None}' is not registered", "VisionFamilies.Register", .. vision]);
         ThrowsNaming<NotSupportedException>(() => SpeechFamilies.Get(None), "SpeechFamilies", [$"'{None}' is not registered", "SpeechFamilies.Register", .. audio]);
@@ -302,5 +308,9 @@ internal static partial class Tests
         ThrowsNaming<NotSupportedException>(() => GgufArchitectures.Get(None), "GgufArchitectures", [$"'{None}' is registered", "GgufArchitectures.Register", .. text]);
         ThrowsNaming<NotSupportedException>(() => Idrak.Abstraction.Generation.ToolCallFormats.Create(None, new ToolCallContext(new ChatMLTemplate(), [], null)), "ToolCallFormats",
             [$"'{None}' is registered", "ToolCallFormats.Register", .. text]);
+        ThrowsNaming<NotSupportedException>(() => Idrak.Abstraction.Reinforcement.EnvironmentKinds.Get(None), "EnvironmentKinds",
+            [$"'{None}' is not registered", "EnvironmentKinds.Register", .. reinforcement]);
+        ThrowsNaming<NotSupportedException>(() => Idrak.Abstraction.Reinforcement.RewardFunctions.Get(None), "RewardFunctions",
+            [$"'{None}' is not registered", "RewardFunctions.Register", .. reinforcement]);
     }
 }

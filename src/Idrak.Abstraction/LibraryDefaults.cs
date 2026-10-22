@@ -30,8 +30,8 @@ internal static class LibraryDefaults
     // Idrak.* namespaces). Planned packages are listed so they work the day they appear.
     private static readonly (string Assembly, string Namespace)[] Assemblies =
         [("Idrak", "Idrak"), ("Idrak.Gpu", "Idrak.Gpu"), ("Idrak.Imaging", "Idrak.Imaging"), ("Idrak.Data", "Idrak.Data"), ("Idrak.Text", "Idrak.Text"),
-            ("Idrak.Vision", "Idrak.Vision"), ("Idrak.Diffusion", "Idrak.Diffusion"), ("Idrak.Audio", "Idrak.Audio"), ("Idrak.Cluster", "Idrak.Cluster"),
-            ("Idrak.Network", "Idrak.Networking")];
+            ("Idrak.Vision", "Idrak.Vision"), ("Idrak.Diffusion", "Idrak.Diffusion"), ("Idrak.Audio", "Idrak.Audio"), ("Idrak.Reinforcement", "Idrak.Reinforcement"),
+            ("Idrak.Cluster", "Idrak.Cluster"), ("Idrak.Network", "Idrak.Networking")];
 
     /// <summary>
     /// Has the first-party assemblies register their built-ins of <paramref name="registry"/>, unless done already (on
@@ -45,6 +45,7 @@ internal static class LibraryDefaults
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Reinforcement.LibraryRegistrations", "Idrak.Reinforcement")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Cluster.LibraryRegistrations", "Idrak.Cluster")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Networking.LibraryRegistrations", "Idrak.Network")]
     public static void Ensure(Type registry)
