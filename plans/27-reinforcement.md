@@ -1713,8 +1713,8 @@ Get-Content runs\rl-lan.jsonl -TotalCount 1; Get-Content runs\rl-one.jsonl -Tota
 & $idrak cluster start --topology runs\lan.json -- $idrak reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 6 --max-new 64 --no-think --seed 1 -o runs\rl-lan --resume
 
 # 9. tune on the two machines against one process (data-parallel fine-tuning over the real link)
-& $idrak cluster start --topology runs\lan.json -- $idrak tune Qwen/Qwen3-0.6B --data runs\sums.jsonl --epochs 1 --seed 1 -o runs\tune-lan
-& $idrak tune Qwen/Qwen3-0.6B --data runs\sums.jsonl --epochs 1 --seed 1 -d cuda:0 -o runs\tune-one
+& $idrak cluster start --topology runs\lan.json -- $idrak tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 1 --seed 1 -o runs\tune-lan
+& $idrak tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 1 --seed 1 -d cuda:0 -o runs\tune-one
 #    Check: the losses printed by both runs agree to float rounding; then calibrate from the real run's transfers
 & $idrak cluster calibrate --from runs\tune-lan --topology runs\lan.json --dry-run
 
