@@ -8,7 +8,7 @@
 |---|---|---|---|
 | R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | Done 2026-10-22; CPU pass |
 | R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | Done 2026-10-22; CPU pass |
-| R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Planned |
+| R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Done 2026-10-22; CPU pass |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Planned |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
@@ -424,6 +424,105 @@ for bit; memory held after iteration 2 does not grow by iteration 20.
 
 **Tests (CPU here):** one build; `reinforcement:|reinforcement contracts|public API|abstraction inventory|
 cli health: every environment variable`.
+
+**R2 as built (2026-10-22).** `src/Idrak.Reinforcement` (references `Idrak` only), no model family, environment or language.
+- **Estimators** (`Estimators.cs`, registered as `AdvantageEstimators` library defaults by `LibraryRegistrations`, in this order):
+  `gae` (γ 0.99, λ 0.95, `normalize`; TD errors summed backwards, the truncated episode bootstrapped from its final value,
+  returns A + V), `group` (an episode's return less its group's mean, over the sample deviation + ε unless `scale=false`;
+  ε 1e-4; a group of one, or equal returns with ε 0, gives 0), `leave-one-out` (R_i − mean of the others), `returns` (G_t
+  discounted, `baseline` none, mean or value, `normalize`). Group members are found by sorting (group, episode) keys in a
+  pooled array, so each group's statistics are computed once, in episode order; every sum is in double, in a fixed order,
+  rounded once. The group estimators write each step's reward-to-go as its return. Papers and formulas in the XML docs.
+- **Losses** (`Losses.cs`, `PolicyLosses` defaults): `reinforce` (−A log p, `entropy`, `value` 0.5 when values are given,
+  `normalize`, `constant`), `ppo` and `grpo` (one class, `ClippedRatioLoss`: min(ρA, clip(ρ, 1 − ε, 1 + ε_high)A), `clip`
+  0.2, `clip-high` (DAPO's decoupled upper clip), `kl` with `kl-estimator` k1, k2 or k3, `entropy`; ppo adds `value` 0.5 and
+  normalizes per token, grpo per sequence; both take `normalize` token, sequence or constant with `constant`). Each unit's
+  term is weighted by the step's normalization (a weight tensor) and summed by one reduction. **Choice: grpo's `kl` defaults to
+  0** (DAPO, TRL's GRPOTrainer), the paper's 0.04 is `kl=0.04`; a β above 0 without reference log-probabilities is refused
+  naming `kl`, so nothing needs a reference unless asked.
+- **`RolloutCollector<TObservation, TAction>`:** all of a rollout's episodes at once, one environment per episode slot (made
+  once, reused by every later rollout and the evaluations); each round one `ActAsync` for every episode under way, in slot
+  order, with a seed derived from the sampling seed and the round; then the environments stepped sequentially or through
+  `Parallel.ForEachAsync` (`Environments` at once). With `ParallelSteps` null it times the first rounds both ways (a warm-up
+  round, then two sequential and two parallel, per step) and keeps the faster (rule 79). Scratch lists per slot are cleared
+  and reused; a finished episode is copied out at its exact size. A truncated (or `maxSteps`-cut) episode with values gets the
+  value of its last observation from one more batched `ActAsync`. **Deviation from the plan's wording:** "N environments at
+  once" became "every episode of the rollout at once, N stepped at once": if the policy's batch were N wide its draws would
+  depend on N, and the default N comes from the cores, so a seed would replay differently on another machine; this way the
+  results do not depend on N or on the threads (tested), at the cost of an environment per episode slot.
+- **`ReinforcementTrainer<TObservation, TAction>`** (and a static `ReinforcementTrainer.Train` by kind or kind name):
+  collect, estimate (`AdvantageEstimators`; the algorithm's own when none is named: grpo group, ppo gae or returns when the
+  policy has no critic, reinforce returns), `Epochs` (ppo 4, else 1) passes of `MiniBatch`-episode updates, each pass
+  shuffled from its own seed; evaluation every `EvaluateEvery` iterations (greedy, `EvaluationEpisodes` from seeds of their
+  own, the same each time); checkpoints `iteration-NNNNNN/` (the policy's `Save` folder and `state.json`: iteration, seed,
+  updates, algorithm, environment), written into a `.writing` folder and moved whole, every `SaveEvery` iterations and at
+  the end or a stop; `Resume` takes a checkpoint or the folder of them (its latest), loads the policy and replays the
+  schedule's steps; a cancelled token stops between iterations (an iteration under way is dropped before its updates) with a
+  checkpoint. **The run's random state is its seed and where it is:** every draw derives from SplitMix64 over (seed, stream,
+  iteration, group or round or pass), so a resume needs no generator state. Episodes of a group share their environment's
+  seed. `OnIteration` and `OnBatch` hooks; `IterationSummary` (returns, mean, spread, min, max, loss, updates, rate,
+  evaluation, times, the policy's metrics averaged and the share that terminated); `ReinforcementResult`.
+- **Contract added (in `Idrak.Reinforcement.Abstractions`, not in R1's):** `IScheduledPolicy` (`Optimizer`,
+  `MaxGradientNorm`, `Device`). The trainer clips and schedules (a `LearningRateSchedules` schedule over the run's updates,
+  `ScheduleSettings` with no warm-up by default) only a policy that exposes its optimizer; `IPolicy` has no way to reach one,
+  and R3's language-model policy schedules through its fine-tuning session (it cannot implement this one, as `Idrak.Text`
+  does not reference `Idrak.Reinforcement`). **No R1 contract was changed.**
+- **`ModulePolicy`:** `ModulePolicy.Categorical` and `.Gaussian` make a `ModulePolicy<int>` or `<float[]>` over float
+  observations (a box): an actor (logits, or means with a learned state-independent log std per element), an optional critic
+  [batch, 1], an optional frozen reference (a module of the actor's shape that takes its starting weights, for a KL).
+  Acting is one forward under `NoGrad`, draws row by row from the call's seed (the behaviour log-probability is that of the
+  distribution sampled, at its temperature; a Gaussian action is clipped to the box and its density taken there, on acting
+  and on updating). `Update` gathers the mini-batch's units into pooled arrays, recomputes log-probabilities, entropies and
+  values with autograd, the reference's under `NoGrad`, calls the loss, clips (`ClipGradientNorm`) and steps an optimizer made
+  through `OptimizerKinds` (`ModulePolicyOptions`: adam, 3e-4); metrics: k3 KL to the behaviour, clip fraction, entropy, KL
+  to the reference, gradient norm. `Save`/`Load` a folder (.ikw weights, the optimizer state as safetensors, a JSON kind
+  check). `ModulePolicy.Perceptron` builds a small tanh network.
+- **Settings:** `ReinforcementOptions.FromEnvironment` and `ModulePolicyOptions.FromEnvironment`; 33 variables, all in
+  `src/Idrak.Cli/Shared/EnvironmentVariables.cs` (group "Reinforcement learning", command `test` until R5 adds `reinforce`):
+  `IDRAK_RL_ALGORITHM`, `_ESTIMATOR`, `_GROUP`, `_EPISODES`, `_ENVIRONMENTS`, `_PARALLEL_STEPS`, `_ITERATIONS`, `_EPOCHS`,
+  `_MINIBATCH`, `_GAMMA`, `_LAMBDA`, `_GROUP_SCALE`, `_NORMALIZE_ADVANTAGES`, `_CLIP`, `_KL`, `_KL_ESTIMATOR`, `_ENTROPY`,
+  `_VALUE`, `_NORMALIZE`, `_MAX_GRAD_NORM`, `_SCHEDULE`, `_WARMUP`, `_TEMPERATURE`, `_MAX_STEPS`, `_SEED`,
+  `_EVALUATE_EVERY`, `_EVALUATION_EPISODES`, `_SAVE_EVERY`, `_CHECKPOINTS`, `_RESUME`, `_LOG`, `_OPTIMIZER`,
+  `_LEARNING_RATE`. `IDRAK_RL_LOG` (`Log`) appends a JSON line per iteration.
+- **Progress and telemetry:** `IProgressReporter` (an iteration a unit; detail: reward mean ± spread, evaluation,
+  episodes a second); the library's telemetry: `TrainingStarted`, a `BatchCompleted` per update (with the gradient norm),
+  an `EpochCompleted` per iteration (metrics: episodes, steps, reward mean, spread, min, max, kl, clip-fraction, entropy,
+  gradient-norm, terminated, rollout and update seconds; the evaluation as its validation metric), `TrainingCompleted`,
+  each built only when a hook listens (rule 78). **Not done:** a "pass rate" counter: what passes is the environment's
+  (R3's and R4's rewards and info), so the general trainer reports the share that terminated instead.
+- **Inventory:** with `Idrak.Reinforcement` the only library user of R1's contracts in this tree, decision 10 would move
+  them into it; `tests/Idrak.Tests/data/shared-contracts.txt` gained lines for `IEnvironment`, `IEnvironment<,>`,
+  `IEnvironmentKind`, `EnvironmentKinds`, `IPolicy<,>`, `IAdvantageEstimator`, `AdvantageEstimators`, `IPolicyLoss`,
+  `PolicyLosses` and `IProgressReporter` (the first library user of the interface type itself). **After R3's merge**, the
+  lines of those `Idrak.Text` uses too become stale and the inventory test asks for their removal (the list only shrinks).
+  `api/Idrak.Reinforcement.txt` and `plans/10-abstraction-inventory.md` regenerated.
+- **Tests** (`tests/Idrak.Tests/ReinforcementTests.cs`, group `reinforcement:`, 11; fakes: a two-armed bandit with common
+  draws per group, a 5-cell corridor (optimum 0.97), a one-element box target): every estimator and loss passes R1's suites
+  (with option sets: gae with γ, λ and normalize, group without scale, returns with a mean baseline; reinforce by a constant,
+  ppo with values, entropy, a k3 KL and clip-high, grpo with k1 and k3 KLs and per token) and matches a direct computation
+  on fixed inputs (GAE summed forwards, not by the recursion); the defaults, order and messages; REINFORCE, PPO and GRPO take
+  the bandit to the best arm at p ≥ 0.95 (iterations: reinforce 6, ppo 1, grpo 6 of 100) and the corridor to its optimum
+  greedy return (2, 2, 2 of 150); a Gaussian policy's first ratio is 1 and its mean reaches 1 ± 0.1 (19 of 150); a seeded
+  PPO run gives the same rewards, advantages and weights bit for bit twice, on 1 and on 4 threads, sequential, in parallel
+  and measured, and GRPO in groups of 4 sequential and parallel; a run stopped after 3 of 6 iterations and resumed into
+  a policy of other starting weights matches the uninterrupted one bit for bit (rewards, advantages, weights, the linear
+  schedule's rate); over iterations 2 to 20 device memory in use stays 3,888 bytes, the managed heap 17,141 → 17,128 KB, and
+  16 environments are made once; the collector's order, seeds, groups, cut and bootstrapped episodes, reuse and measuring; a
+  cancelled run's checkpoint; progress, telemetry and the JSON log; the variables.
+- **The run (CPU, this agent):** one build (no warnings), `IDRAK_UPDATE_API=1` (`public API`) and `IDRAK_UPDATE_INVENTORY=1`
+  (`abstraction inventory: plans`), then `reinforcement:|reinforcement contracts|public API|abstraction inventory|cli
+  health: every environment variable|cli polish: the environment table|naming:|override loop:|conformance kit:|plugins:
+  packages`: 48 passed, 3 failed, all three in the tests' own setup (the bandit's PPO reached the target in its first
+  iteration, so first and last iteration were the same one; the "stopped" run had 3 iterations, so its linear schedule
+  differed from the 6-iteration run's, where a stop is a cancellation of the same run; the environment count included the
+  one the test makes to read the spaces); fixed in the tests, one rebuild, the three rerun: 3 passed. Total 51 of 51.
+- **The owner's commands** (from `D:\Projects\Idrak`; R2 is CPU code, there are no CUDA filters for it):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement:|reinforcement contracts|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|override loop:|plugins: packages"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase R3: the language-model policy in `Idrak.Text`
 
