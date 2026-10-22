@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Reinforcement</RootNamespace>
+    <AssemblyName>Idrak.Reinforcement</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Reinforcement</PackageId>
+    <Description>Reinforcement learning for Idrak (no dependencies beyond Idrak): the general algorithms on Idrak.Abstraction's reinforcement contracts (environments, policies, rewards, advantage estimators, policy losses), registered by name, with no environment, task or model family in it.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Policies over modules train with core's layers, autograd and optimizers; no reference to Idrak.Text (plan 27, decision 6). -->
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+  </ItemGroup>
+
+</Project>

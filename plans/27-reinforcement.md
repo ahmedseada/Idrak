@@ -7,7 +7,7 @@
 | Phase | What | Lane | State |
 |---|---|---|---|
 | R0 | What moves out of `Idrak.Text` into the library: optimizers and schedules by name as registries, the answer metrics into `TuningMetrics`, `LogSigmoid` into core | A | Done 2026-10-22; CPU pass |
-| R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | In progress (2026-10-22) |
+| R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | Done 2026-10-22; CPU pass |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Planned |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Planned |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
@@ -301,6 +301,98 @@ package (register twice, unregister as found, `-P` on it, the CLI's order), and 
 
 **Tests (CPU here):** one build; `reinforcement contracts|plugins:|public API|abstraction inventory|naming:|override loop:|
 cli health|conformance kit:`.
+
+**R1 as built (2026-10-22).** As planned, with these specifics:
+- **The contracts** (`src/Idrak.Abstraction/Reinforcement/`, namespace `Idrak.Abstraction.Reinforcement`, full XML docs):
+  - `Space` (`Spaces.cs`): `SpaceKind` `Discrete`, `Box`, `Text`, `Conversation`; `Space.Discrete(n)`, `Space.Box(shape, low,
+    high)` (one bound for all elements or one per element), `Space.Text`, `Space.Conversation`; `Count`, `Shape`, `Size`, `Low`,
+    `High`, `Contains(int)`, `Contains(ReadOnlySpan<float>)`, `ContainsValue(object?)` (named apart so a `float[]` argument
+    is never ambiguous between the span and the object form), equality by value, `ToString` ("discrete(4)", "box([3], -1 to 1)").
+  - R-C1 (`Environments.cs`): `EnvironmentStep<TObservation>` (observation, reward, terminated, truncated, info as
+    `IReadOnlyDictionary<string, string>?`, `Done`); a non-generic `IEnvironment : IDisposable` (the two spaces) under the
+    generic `IEnvironment<TObservation, TAction>` (`Reset(int seed)`, `ValueTask<EnvironmentStep<T>> StepAsync(action, ct)`).
+    The non-generic base exists so a kind can create environments without the registry being generic; `ValueTask`
+    because simulations complete synchronously and are stepped very often, while a coding environment awaits. The rules
+    (no step before a reset or after an episode ended: `InvalidOperationException`; seeded replay; independent instances;
+    cancellation) are written on the interface and checked by the suite.
+  - R-C2: `IEnvironmentKind` (`Name`, `Summary`, `Keys`, `ObservationType`, `ActionType`, `IEnvironment Create(options,
+    seed)`) and `EnvironmentKinds` (unguarded, reason: a kind creates environments that keep an episode's state between
+    steps, so no single call can fall back; no `SetPolicy`), with `Create<TObservation, TAction>(name, options, seed)`, which
+    refuses other types naming both.
+  - R-C3 (`Policies.cs`): `IPolicy<TObservation, TAction> : IDisposable` with `ActAsync(observations, ActionSampling, ct) →
+    ValueTask<PolicyActions<TAction>>` (actions plus `ActionRecord`s), `Update(RolloutBatch, IPolicyLoss, episodes?,
+    lossOptions?) → UpdateStats`, `Save`, `Load`. Refined from the plan: `Update` takes the mini-batch as indices into the
+    batch (null for all), so a trainer splits a batch without copying it, and the loss's options, as every registry here
+    takes options per call. `ActionSampling` (`Greedy`, `Temperature` > 0, `Seed`), `UpdateStats` (loss, episodes, units,
+    metrics by name).
+  - R-C4 (`Rewards.cs`): `RewardInput(Prompt, Answer, Reference?, Info?)`, `IRewardFunction` (`ScoreAsync(inputs, options,
+    ct) → ValueTask<float[]>`), `RewardFunctions` (guarded, shadow compared within 1e-5).
+  - R-C5 (`Advantages.cs`): `AdvantageInput`, a `readonly ref struct` over spans (rewards and values per step, lengths,
+    truncation flags, final values and groups per episode; checked when made), and `IAdvantageEstimator` (`UsesValues`,
+    `Estimate(input, Span<float> advantages, Span<float> returns, options)`): the outputs are written into the caller's
+    (pooled) arrays rather than returned, so an iteration allocates nothing; episode ends are per episode (terminated or
+    truncated, with the final value a truncated one bootstraps from) rather than a flag per step. `AdvantageEstimators`
+    (guarded: the shadowed app writes into pooled arrays of its own and is compared within 1e-5).
+  - R-C6 (`PolicyLosses.cs`): `PolicyLossInput` (log-probabilities [units] recorded, counts per sequence, advantages per
+    unit, behaviour log-probabilities (null: on-policy, the current ones detached), reference, values and returns
+    (together or not at all), entropies, `StepUnits`, `StepSequences`), `IPolicyLoss` (`Loss(input, options) → Tensor`),
+    `PolicyLosses` (guarded; a shadowed app's loss is computed under `Autograd.NoGrad`, so only the library's is recorded).
+  - R-C7 (`Rollouts.cs`): `ActionRecord` (ids sampled, behaviour log-probability per unit, value or NaN, context ids),
+    `Trajectory<TObservation, TAction>` (index, seed, group (its index unless given), one observation more than the
+    steps, actions, records, finite rewards, ends, final value, info; `Return` summed in step order), and
+    `RolloutBatch<TObservation, TAction> : IDisposable`: episodes sorted by number (duplicates refused), rewards, values,
+    advantages, returns, final values, lengths, groups, offsets and truncation in arrays rented from `ArrayPool` and
+    returned by `Dispose` (twice harmless; reading after it throws `ObjectDisposedException`); `Input` and `Estimate`.
+  - Each registry: `Register` (`[MethodImpl(NoInlining)]`, the calling assembly as origin), `Unregister`, `Names`, `Find`,
+    `Get`, `Default`, `Origin`, `Describe`, `SetPolicy` on the guarded three, names ignoring case, a static constructor
+    calling `LibraryDefaults.Ensure`; no defaults yet. The "not registered" messages: environment kinds name
+    `Idrak.Reinforcement.Plugins` and `ReinforcementPlugins.RegisterAll()`; rewards name `Idrak.Text` and
+    `Idrak.Reinforcement.Plugins`; estimators and losses name `Idrak.Reinforcement`.
+- **The contract suites** (`src/Idrak.Abstraction.Testing/Contracts/`): `EnvironmentSuite<TObservation, TAction>` (on an
+  `IEnvironmentKind`, with actions chosen by the test: types, options refused unless in `Keys`, no step before a reset or
+  after an end, observations and actions in their spaces, finite rewards, a seeded replay in the same environment, a new
+  one and two at once, cancellation, `Dispose` twice), `RewardFunctionSuite` (on the test's `RewardInput`s: a finite score
+  each, none for none, batch equals one by one, the same again and from two calls, options, cancellation, reference),
+  `AdvantageEstimatorSuite` (bit for bit again and from four threads, every step written, wrong lengths and a missing critic
+  refused, options, reference), `PolicyLossSuite` (one finite element, the same again, the gradient reaches the
+  log-probabilities and agrees with central differences where the one-sided differences agree, so a clip's kinks are left
+  out; on-policy cases keep the drawn log-probabilities as the behaviour of a perturbed input; options, reference;
+  `NeedsReference`, `NeedsValues`). Entry points `Conformance.CheckEnvironmentKind`, `CheckRewardFunction`,
+  `CheckAdvantageEstimator`, `CheckPolicyLoss` (the reference defaults to the registry's library default of that name).
+- **The packages:** `src/Idrak.Reinforcement` (references `Idrak` only; README; internal `LibraryRegistrations` with an
+  empty map; `InternalsVisibleTo Idrak.Tests`), listed in `LibraryDefaults`' assemblies and `DynamicDependency`,
+  `Idrak.slnx`, `build/IdrakFromSource.targets`, the API guard and the inventory. `src/Idrak.Reinforcement.Plugins`
+  (references `Idrak.Reinforcement` and `Idrak.Text`, no internals either way; README in `Idrak.Vision.Plugins`' layout,
+  families table empty; `ReinforcementPlugins` with `Package`, `All` (empty), `RegisterAll`, `UnregisterAll`,
+  `RegisterIdrakPlugin`), not in `LibraryDefaults`. The README package tables (root and `src/Idrak/README.md`), the
+  Abstraction and testing-kit READMEs, `IdrakPlugins.Get`'s message, the CLI's README and `help plugins` text name them.
+- **The CLI:** references both; `CommandLine.PluginPackages` gains `("reinforcement", …)` after audio;
+  `IDRAK_PLUGIN_PACKAGES` defaults to `text,vision,audio,reinforcement`. Beyond the plan: `plugins list` (the tool's
+  registry snapshot, `Registries.cs`) lists `environments`, `rewards`, `advantages` and `policylosses`, so the fourth
+  package's registrations are covered by the "register twice, unregister as found" check as the others' are.
+- **Tests:** `reinforcement contracts` (7, `tests/Idrak.Tests/ReinforcementContractTests.cs`): spaces and data types; each
+  suite passed by a fake (a seeded corridor, a length-budget reward, discounted returns with and without a baseline, a
+  PPO-style clipped loss with a k3 KL and a value term) and failed by one broken on purpose (shared random draws, a
+  batch-relative reward, a noisy estimator, a detached loss, a shifted reference); every registry's message, origin,
+  case-insensitive lookup and unregister; Throw, FallBack and Shadow over a library default registered by the test (once
+  per process, named `reinforcement-test-guarded`); `Idrak.Reinforcement` referencing `Idrak` alone. `plugins: packages`
+  covers the fourth package (register twice, unregister as found, `-P` on its DLL, the tool's order, the variable, no
+  internals, `Idrak.Reinforcement` in `LibraryDefaults` and the plug-in package not, the `EnvironmentKinds` and
+  `RewardFunctions` messages). The inventory, API guard and IdrakFromSource lists include both packages; `api/
+  Idrak.Reinforcement.txt` (empty surface) and `api/Idrak.Reinforcement.Plugins.txt` are new. No line in
+  `shared-contracts.txt` was needed: the inventory places the contracts in `Idrak.Abstraction` (the registries there use
+  them).
+- **Run (CPU, the agent):** one build (no warnings); `IDRAK_UPDATE_API=1` (`public API`) and `IDRAK_UPDATE_INVENTORY=1`
+  (`abstraction inventory: plans`) regenerated the dumps; then `reinforcement contracts|plugins:|public API|abstraction
+  inventory|naming:|override loop:|cli health|conformance kit:`: 90 passed, 0 failed. R1 has no GPU code: there are no
+  CUDA filters for it.
+- **The owner's commands** (from `D:\Projects\Idrak`):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement contracts|plugins:|public API|abstraction inventory|naming:|override loop:|cli health|conformance kit:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase R2: `Idrak.Reinforcement`, the general part
 

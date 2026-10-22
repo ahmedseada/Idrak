@@ -3,6 +3,7 @@
 
 using Idrak.Audio.Plugins;
 using Idrak.Cli.Shared;
+using Idrak.Reinforcement.Plugins;
 using Idrak.Text.Plugins;
 using Idrak.Vision.Plugins;
 
@@ -16,8 +17,8 @@ namespace Idrak.Cli;
 internal static class CommandLine
 {
     /// <summary>
-    /// The plug-in packages the tool ships with (plan 26), in the order they are registered (text first: a vision or audio
-    /// family may build on a text one), each with its short name in <see cref="PluginPackagesVariable"/>. Registered before
+    /// The plug-in packages the tool ships with (plans 26 and 27), in the order they are registered (text first: a vision,
+    /// audio or reinforcement family may build on a text one), each with its short name in <see cref="PluginPackagesVariable"/>. Registered before
     /// every command: before <c>plugins list</c> takes its snapshot (they are the tool's own, not added) and before the
     /// <c>--plugin</c> assemblies load (which can still take a family's place). Registering is idempotent and loads no
     /// model: only the families' names.
@@ -27,11 +28,13 @@ internal static class CommandLine
         ("text", TextPlugins.Package, TextPlugins.RegisterAll),
         ("vision", VisionPlugins.Package, VisionPlugins.RegisterAll),
         ("audio", AudioPlugins.Package, AudioPlugins.RegisterAll),
+        ("reinforcement", ReinforcementPlugins.Package, ReinforcementPlugins.RegisterAll),
     ];
 
     /// <summary>
-    /// The environment variable that chooses the plug-in packages registered at startup: unset or empty for all three,
-    /// "none" for none, or a comma list of their short names (text, vision, audio); <c>-P</c> plug-ins load either way.
+    /// The environment variable that chooses the plug-in packages registered at startup: unset or empty for all four,
+    /// "none" for none, or a comma list of their short names (text, vision, audio, reinforcement); <c>-P</c> plug-ins load
+    /// either way.
     /// </summary>
     internal const string PluginPackagesVariable = "IDRAK_PLUGIN_PACKAGES";
 

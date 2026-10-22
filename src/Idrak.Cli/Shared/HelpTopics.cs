@@ -180,7 +180,8 @@ internal static class HelpTopics
         available to every command (e.g. -w MYFORMAT).
 
         The tool itself registers the model families of Idrak.Text.Plugins, Idrak.Vision.Plugins and
-        Idrak.Audio.Plugins first, so a -P plug-in can still take a family's place.
+        Idrak.Audio.Plugins, and the environment families of Idrak.Reinforcement.Plugins, first, so a -P plug-in can
+        still take a family's place.
 
         Commands: idrak plugins list (with -P: what the assembly added, marked "+"), idrak formats, idrak new plugin.
         """;

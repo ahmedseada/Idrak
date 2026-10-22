@@ -40,6 +40,8 @@
     <Project Path="src/Idrak.Text.Plugins/Idrak.Text.Plugins.csproj" />
     <Project Path="src/Idrak.Audio/Idrak.Audio.csproj" />
     <Project Path="src/Idrak.Audio.Plugins/Idrak.Audio.Plugins.csproj" />
+    <Project Path="src/Idrak.Reinforcement/Idrak.Reinforcement.csproj" />
+    <Project Path="src/Idrak.Reinforcement.Plugins/Idrak.Reinforcement.Plugins.csproj" />
     <Project Path="src/Idrak.Cluster/Idrak.Cluster.csproj" />
     <Project Path="src/Idrak.Network/Idrak.Network.csproj" />
     <Project Path="src/Idrak/Idrak.csproj" />
