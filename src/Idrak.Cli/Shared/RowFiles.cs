@@ -23,7 +23,7 @@ internal static class RowFiles
     {
         if (Directory.Exists(path))
         {
-            return DatasetRows.FromFolder(path);
+            return DatasetRows.FromFolder(path, options: CodeFolders.Read);
         }
 
         if (!File.Exists(path))
@@ -31,7 +31,7 @@ internal static class RowFiles
             throw new FileNotFoundException($"{path} not found.", path);
         }
 
-        return DatasetRows.FromFile(path);
+        return DatasetRows.FromFile(path, CodeFolders.Read);
     }
 
     /// <summary>The format's name for messages: csv, tsv, jsonl, json, parquet or the extension.</summary>

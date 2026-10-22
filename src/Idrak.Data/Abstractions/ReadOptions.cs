@@ -44,6 +44,13 @@ public enum TextRows
 /// <summary>How a dataset reads files (<c>DatasetRows</c> and <c>DataFiles</c> in Idrak.Data, and every <see cref="IDataFileFormat"/>).</summary>
 public sealed record ReadOptions
 {
+    /// <summary>
+    /// The folders folder and archive reading skips by default: <c>.git</c> and the editors' state (<c>.vs</c>,
+    /// <c>.idea</c>). No language's build output or dependency folders: a caller that knows them (the idrak tool's data
+    /// commands, from the registered coding languages) adds them in <see cref="SkippedFolders"/>.
+    /// </summary>
+    public static IReadOnlyList<string> DefaultSkippedFolders { get; } = [".git", ".vs", ".idea"];
+
     /// <summary>The defaults.</summary>
     public static ReadOptions Default { get; } = new();
 
@@ -85,4 +92,11 @@ public sealed record ReadOptions
 
     /// <summary>The folder paths are shown relative to (set by <c>DatasetRows.FromFolder</c>).</summary>
     public string? Root { get; init; }
+
+    /// <summary>
+    /// Folders (by name, ignoring case) never read in a folder or an archive: <see cref="DefaultSkippedFolders"/> unless
+    /// set (<c>.git</c>, <c>.vs</c>, <c>.idea</c>); add build output and dependency folders (<c>bin</c>,
+    /// <c>node_modules</c>, …) to skip them too.
+    /// </summary>
+    public IReadOnlyCollection<string> SkippedFolders { get; init; } = DefaultSkippedFolders;
 }

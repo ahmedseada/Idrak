@@ -15,7 +15,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak` | 17 | 4 | 20 | 41 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Text` | 13 | 2 | 10 | 25 | 0 |
+| `Idrak.Text` | 14 | 2 | 11 | 27 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 8 | 0 | 7 | 15 | 0 |
 | `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
@@ -28,7 +28,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Text.Plugins` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Vision.Plugins` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Audio.Plugins` | 1 | 0 | 0 | 1 | 0 |
-| `Idrak.Reinforcement.Plugins` | 0 | 0 | 0 | 0 | 0 |
+| `Idrak.Reinforcement.Plugins` | 0 | 1 | 0 | 1 | 0 |
 
 An abstract class that also declares `Register` counts once under abstract classes and once under registries.
 
@@ -170,8 +170,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Text, Vision | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, DeepSeekPlugin.DeepSeekRegistration, EspeakNgPlugin.EspeakNgRegistration, Gemma3VisionPlugin.Gemma3VisionRegistration, +13 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, DeepSeekPlugin.DeepSeekRegistration, EspeakNgPlugin.EspeakNgRegistration, Gemma3VisionPlugin.Gemma3VisionRegistration, +13 |  | Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, DeepSeekPlugin.DeepSeekRegistration, +17 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, DeepSeekPlugin.DeepSeekRegistration, +17 |  | Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IdrakPlugins` | registry | public | — |  | — | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Reinforcement.AdvantageEstimators` | registry | public | — |  | gae, group, leave-one-out, returns | Reinforcement | Abstraction |
 | `Idrak.Abstraction.Reinforcement.EnvironmentKinds` | registry | public | — |  | prompts | Reinforcement, Reinforcement.Plugins, Text | Abstraction |
@@ -181,7 +181,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Reinforcement.IEnvironmentKind` | interface | public | — | CodingEnvironmentKind, PromptsEnvironmentKind |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction>` | interface | public | — | LanguageModelPolicy, ModulePolicy<TAction> |  | Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IPolicyLoss` | interface | public | Tensor | ClippedRatioLoss, PolicyLosses.GuardedLoss, ReinforceLoss |  | Abstraction, Reinforcement, Text | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IRewardFunction` | interface | public | — | CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, CodingRewards.ToolErrorsReward, CodingRewards.VerifyFractionReward, JudgeReward, RewardFunctions.GuardedReward, +5 |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IRewardFunction` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, CodingRewards.ToolErrorsReward, CodingRewards.VerifyFractionReward, +7 |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.PolicyLosses` | registry | public | — |  | grpo, ppo, reinforce | Reinforcement | Abstraction |
 | `Idrak.Abstraction.Reinforcement.RewardFunctions` | registry | public | — |  | json, judge, length, metric, regex, sum | Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | AspNetCore, Mcp, Text | Abstraction |
@@ -250,8 +250,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Text.Abstractions.AnswerTexts` | registry | public | — |  | raw, values | Text | Text |
+| `Idrak.Text.Abstractions.CodingLanguages` | registry | public | — |  | — | Reinforcement.Plugins, Text, Text.Plugins | Text |
 | `Idrak.Text.Abstractions.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | Text | Text |
 | `Idrak.Text.Abstractions.IAnswerText` | interface | public | — | AnswerTexts.GuardedText, JsonValuesAnswerText, RawAnswerText |  | Text | Text |
+| `Idrak.Text.Abstractions.ICodingLanguage` | interface | public | — | CodingLanguage |  | Reinforcement.Plugins, Text, Text.Plugins | Text |
 | `Idrak.Text.Abstractions.IJsonRepair` | interface | public | — | JsonRepairs.GuardedRepair, LenientJsonRepair |  | Text | Text |
 | `Idrak.Text.Abstractions.IKeywordIndex` | interface | public | — | Bm25Index |  | Text | Text |
 | `Idrak.Text.Abstractions.IPagePartFiller` | interface | public | — | LibraryPagePartFillers.Filler |  | Text | Text |
@@ -387,6 +389,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Audio.Plugins.Vits.Abstractions.IVitsDurationPredictor` | interface | internal | Tensor | VitsDeterministicDurationPredictor, VitsStochasticDurationPredictor |  | Audio.Plugins | Audio.Plugins |
+
+### Idrak.Reinforcement.Plugins
+
+| Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
+|---|---|---|---|---|---|---|---|
+| `Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant` | abstract class | public | — | CSharpEnvironmentVariant |  | Reinforcement.Plugins | Reinforcement.Plugins |
 
 ## The device contract (`Backend`)
 

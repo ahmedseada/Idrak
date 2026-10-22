@@ -50,7 +50,7 @@ internal static class LibraryDatasetSources
             ? GitHub.Release(repo, spec.Get("asset") ?? "*", release == "latest" ? null : release, options: read, downloader: downloader)
             : dataFiles
                 ? GitHub.Files(repo, spec.Get("files")!, reference, options: read, downloader: downloader)
-                : GitHub.Repository(repo, reference, spec.Get("files"), downloader: downloader);
+                : GitHub.Repository(repo, reference, spec.Get("files"), downloader: downloader, options: read);
     }
 
     // A source written as "prefix:rest" (the prefix ignores case).

@@ -11,7 +11,7 @@
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Done 2026-10-22; CPU pass |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (left: rollouts on a cluster; see "R3 as built") |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
-| R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
+| R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Done 2026-10-22; CPU pass |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
 | R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
 
@@ -1023,6 +1023,118 @@ nodes running; unregistering `csharp` leaves `coding` as it found it.
 coding tools|cli agent|reinforcement contracts|plugins:|public API|abstraction inventory|cli health: every environment
 variable`. **Owner:** `idrak agent` on a C# and on a TypeScript project (unchanged behaviour), and the C# demo suite run of
 R5.
+
+**R4b as built (2026-10-22).** Both parts built; the library registers no coding language, `Idrak.Data` still references
+no `Idrak.Text`, and the plug-ins use the public API only.
+- **The contract** (`src/Idrak.Text/Abstractions/CodingLanguages.cs`, `Idrak.Text.Abstractions`): `ICodingLanguage` (`Name`,
+  `Summary`, `Detect(workspace, depth)`, `Commands`, `PromptLines` as "Name: commands", `ToolExamples` (`CodingToolExamples`:
+  folders, file globs, search patterns and globs, commands, command lines), `IgnoredDirectories`, `LinkedDirectories`,
+  `GitExcludes`, `Environment`, `DefaultSetup`, `DefaultVerify`), `CodingLanguage` (a profile as data; `Detect` looks for its
+  `Markers` within the depth), and the registry `CodingLanguages` (a `SlotTable`, unguarded: a profile is read once, when the
+  tools are made, so no call could fall back). Choices: `all` (the default), `detected`, `none` (added: the language-free
+  defaults alone), or names in their order; `IDRAK_CODING_LANGUAGES`. `Merge` joins lists keeping every list's own order (an
+  item new to the result goes right after the one before it in its list). `Notice` and `FindFile` are public helpers.
+- **The library composes its defaults** (`CodingTools`, `CodingAgent`): `CodingToolOptions.Languages` (all by default) and
+  `DetectionDepth` (2); `Commands` and `IgnoredDirectories` became nullable (null: composed). The programs are the languages'
+  then `git`; the ignored folders `.git`, the languages' ignored and linked ones, then `.idea`, `coverage`, `out`
+  (`CodingToolOptions.LanguageFreeIgnoredDirectories`); the commands' variables `CI`, `NO_COLOR`, `FORCE_COLOR` and the
+  languages'; the tools' examples merged in order, a sentence without them when there are none. `CodingTools` exposes the
+  resolved `Languages`, `Commands`, `IgnoredDirectories` and `LanguageNotice` (found on first read). `CodingAgent.SystemPrompt(languages)`
+  composes the prompt: the language-free text, and the line on checking the work with each language's "Name: commands" in
+  parentheses, cut at 110 columns (a way kept whole when it fits, else broken after its "Name:"). `DefaultSystemPrompt` is
+  now a static property (every registered language), no longer a const; `RunAsync` uses the tools' languages.
+- **Results unchanged, proven:** with Idrak.Text.Plugins' languages and `all`, the prompt, the programs (`dotnet, npm, npx, ng,
+  node, tsc, git`, in the old order), every tool description and the variables are the old ones byte for byte (the test keeps
+  the old strings); the ignored folders are the old ten plus `__pycache__` and `.venv`. With none registered, a scan for every
+  profile's programs, folders, examples, prompt labels, variables and names finds none.
+- **The profiles** (`Idrak.Text.Plugins`, in `TextPlugins.All` after DeepSeek): `CSharp` ("csharp-language": `csharp`, markers
+  `*.sln`, `*.slnx`, `*.csproj`; `dotnet`; `bin`, `obj`, `.vs`; the DOTNET_ variables; setup `dotnet restore`, verify `dotnet
+  build --no-restore`, `dotnet test --no-build`), `TypeScript` ("typescript-language": `typescript`, `package.json` or
+  `tsconfig.json`, `npm, npx, node, tsc`, `node_modules` linked, `dist`; `angular`, `angular.json`, `npm, npx, ng, node, tsc`,
+  `.angular`), `Python` ("python-language": `__pycache__`, `.venv`, nothing else). A README section.
+- **The notice:** a workspace none of the chosen languages detects, holding source files (named by Idrak.Data's extension table,
+  now readable as `DataFiles.LanguageOf`), gets "Note: … detects this workspace, whose files are csharp, xml: the agent gets
+  no build or test commands for them. Register a coding-language plug-in that provides 'csharp' (Idrak.Text.Plugins: …)";
+  `idrak agent` prints it on the error output. A task's own commands still run.
+- **The coding plug-in's task layer** names no language: `CodingWorkspace.Prepare`, `Overlay`, `CommitStart`, `HiddenFiles`,
+  `TestEdits` take the languages (optional; every registered one by default) for what is not copied, what is linked and the
+  git excludes; new `ProtectedEdits(start, workspace, globs)`. `CodingSuite.Load` skips `.git` and the languages' folders
+  (it skipped `node_modules` only). The `coding` environment gained the options `languages` (resolved once per run; `detected`
+  looks in the tasks' folders; the tools get the names, so every episode offers the same definitions) and `protect` (globs
+  whose edits count as test edits).
+- **`Idrak.Data`:** `ReadOptions.SkippedFolders` (default `ReadOptions.DefaultSkippedFolders`: `.git`, `.vs`, `.idea`), read by
+  folder and archive reading; carried by `DatasetSpec.Open`/`Download` (an argument), `DatasetRecipe.SkippedFolders` (JSON
+  `"skip_folders"`) and `GitHub.Repository(…, options)` (the github source passes the spec's). The CLI's data commands pass
+  `CodeFolders.Skipped` (Idrak.Data's three and every registered language's ignored and linked folders: exactly the old list):
+  `data show`, `count`, `download`, the default build, `data recipe`, and `RowFiles`/`DataProfile` (folders and archives). The
+  extension table stays as data. README section.
+- **Part 2, `Idrak.Reinforcement.Plugins.CSharp`:** `CSharpCodingPlugin` ("csharp", in `ReinforcementPlugins.All`) `Requires`
+  `CodingPlugin` and `CSharpLanguagePlugin` (so the package now references Idrak.Text.Plugins, as Idrak.Vision.Plugins does) and
+  registers the `csharp` kind and the rewards `csharp-tests`, `csharp-build`. The kind is `CodingEnvironmentKind(new
+  CSharpEnvironmentVariant())`: a new contract, `CodingEnvironmentVariant` (`Idrak.Reinforcement.Plugins.Coding.Abstractions`),
+  lets a language variant set the coding options' defaults (`reward` csharp-tests, `languages` csharp, `protect`), add
+  options (`packages`, `node-reuse`, `build-server`), variables, the task's defaults (the language's setup and verify for what a
+  task does not name) and info before the reward, with no copy of the environment. Verification's `dotnet build` gets `-fl1
+  -flp1:errorsonly -fl2 -flp2:warningsonly` (logs `msbuild1.log`, `msbuild2.log`) and `dotnet test` `--logger trx
+  --results-directory .idrak-results`; stale ones are deleted before verification (an agent cannot plant a passing TRX);
+  after it, `CSharpResults` reads the TRX `Counters` with `XmlReader` and counts MSBuild's `error`/`warning` lines once each
+  into the info (`CSharpInfo`). `csharp-tests` = passed / total (0 when none ran); `csharp-build` = (built ? 1 : 0) − `error`
+  (0.1) × errors − `warning` (0) × warnings, at least `floor` (−1). `packages` / `IDRAK_CSHARP_PACKAGES` sets `NUGET_PACKAGES`
+  (default: none, the machine's NuGet folder, already shared); `node-reuse` false sets `MSBUILDDISABLENODEREUSE=1`;
+  `build-server` false sets `UseSharedCompilation=false`. `protect` defaults to `IDRAK_CSHARP_PROTECT` or
+  `**/Directory.Build.props`, `**/Directory.Build.targets`, `**/Directory.Packages.props`, `**/global.json`, `**/*Tests/**`,
+  `**/*Test/**`, `**/*Tests.csproj`, `**/*Test.csproj`. **Measured** (a scratch solution of a library and an xunit project, 4
+  cores, warm, three builds each): the shared compiler server 1.3-1.5 s a build, `UseSharedCompilation=false` 7.7-7.9 s, so it
+  stays on by default; node reuse on 1.32-1.48 s, off 1.37-1.43 s (no difference), so it is off by default (no nodes left
+  behind by parallel episodes). README row and section. New variables in `EnvironmentVariables.cs`: `IDRAK_CODING_LANGUAGES`,
+  `IDRAK_CSHARP_PACKAGES`, `IDRAK_CSHARP_PROTECT`, and `NUGET_PACKAGES`, `MSBUILDDISABLENODEREUSE`, `UseSharedCompilation` (set
+  for the csharp environment's commands). `idrak agent --languages LIST`; `plugins list` shows `languages`.
+- **Deviations, with reasons.** `AgentOptions.Languages` is `CodingToolOptions.Languages`, reached through `AgentOptions.Tools`:
+  one setting the tools and the prompt share, not two that could disagree. The contract has `Environment` beside the plan's
+  fields: the tools' non-interactive variables named languages (DOTNET_*, npm_config_*, NG_CLI_ANALYTICS). `Detect` takes a
+  depth (`DetectionDepth`, 2) because a solution's projects sit below its top. The library keeps `.git`, `.idea`, `coverage`
+  and `out` (no language's), and `.vs` went to the C# profile as planned, so Idrak.Data's default (`.git`, `.vs`, `.idea`,
+  the owner's) and the agent's language-free list differ in `.vs`. The Angular profile lists `npm, npx, node, tsc` too (its
+  toolchain), which with the order-keeping merge gives the old program order exactly. The coding workspace's git excludes are
+  the old five lines with `dist/` before `.angular/`. The composed prompt ends its lines with `\n` on every platform; the old
+  const took its source file's line endings, so on a checkout with CRLF line endings the prompt changes from CRLF to LF (rule
+  70). The build log uses the file loggers' default names because the coding tools refuse a `;` in a command (no shell), which
+  `-flp:logfile=…;errorsonly` needs. The rewards read the environment's info (the files are parsed at the episode's end,
+  before the workspace is deleted), as every R4 reward does. The leftover-node check reads `/proc` (Linux); elsewhere the test
+  checks that `MSBUILDDISABLENODEREUSE=1` reaches the commands.
+- **Tests** (`tests/Idrak.Tests/CodingLanguageTests.cs`, 7; `CSharpCodingPluginTests.cs`, 2): `coding languages:` (3: unchanged
+  byte for byte, none names a language, detection, names, the notice, the variable, the merge), `plugins: csharp-language`,
+  `plugins: typescript-language`, `plugins: python-language` (register once, unregister as found), `data files:` (Idrak.Data
+  alone skips three folders in folders and archives; the CLI's lists and `idrak data count` skip the old ten), `plugins:
+  csharp:` (2: registration over coding and the language, the rewards' suite, TRX and log reading, the variables; and a
+  solution of a library and an xunit project built and tested by the real dotnet: the C# defaults, 3 of 4 tests (0.75), two
+  build errors (−0.2), the protected edits refused, two episodes in parallel with one package folder and no node left). Changed
+  expectations: `datasets:` (an archive and the GitHub snapshot now read `node_modules` and `bin` unless told), R1's
+  `reinforcement contracts` package check (the plug-in package's references and families). The C# test downloads the xunit
+  packages once into the kept folder `%TEMP%/idrak-csharp-test-packages` (network needed the first time).
+- **The run (CPU, this agent):** one build of `tests/Idrak.Tests` (no warning), `IDRAK_UPDATE_API=1` (`public API`) and
+  `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`): `api/Idrak.Data.txt`, `Idrak.Text.txt`, `Idrak.Text.Plugins.txt`,
+  `Idrak.Reinforcement.Plugins.txt` and `plans/10-abstraction-inventory.md` regenerated. Then `coding languages|plugins: csharp|
+  plugins: typescript|plugins: python|plugins: coding|coding agent:|coding tools|command sandboxes|data files|cli train data:
+  data|datasets: JSON Lines|datasets: Hugging Face|cli run: tools|plugins:|reinforcement contracts|public API|abstraction
+  inventory|cli health: every environment variable|cli health: plugins list|cli polish: the environment table|naming:|
+  override loop:`: 95 passed, 1 failed (`datasets: Hugging Face`: its GitHub pattern line, which the new default reaches, a
+  test expectation). One rebuild of the test project fixed it; the filter then passed 1 of 1.
+- **Left:** `idrak tune` (`TuneTool`) and `idrak distill` (`DistillCommand`), R5's files, read their sources with Idrak.Data's
+  default now (only `.git`, `.vs`, `.idea` skipped in a folder or an archive given as data); each needs `CodeFolders.Skipped`
+  passed (`spec.Open(downloads, CodeFolders.Skipped)`, `recipe with { SkippedFolders = … }`). Idrak.Text has no reader of code
+  folders to change. `CodingVerifier` (agent-run, agent-check) applies no language defaults: a task run there still names its
+  commands. The owner's: `idrak agent` on a C# and a TypeScript project, and the C# demo suite of R5.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; no GPU code changed):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "coding languages|plugins: csharp|plugins: typescript|plugins: python|plugins: coding|coding agent:|coding tools|command sandboxes|data files|cli train data: data|datasets: JSON Lines|datasets: Hugging Face|cli run: tools|plugins:|reinforcement contracts|public API|abstraction inventory|cli health: every environment variable|cli health: plugins list|cli polish: the environment table|naming:|override loop:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  # idrak agent on a C# and on a TypeScript project (the same programs, prompt and folders as before), and detection:
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- agent <model> "Build the project and run its tests" --workspace <a C# project> --yes
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- agent <model> "Build the project and run its tests" --workspace <a TypeScript project> --yes --languages detected
+  ```
 
 ## Phase R5: `idrak reinforce`, the samples, a demo suite
 

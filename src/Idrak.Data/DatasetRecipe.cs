@@ -11,10 +11,13 @@ public static class DatasetSpecExtensions
 {
     extension(DatasetSpec spec)
     {
-        /// <summary>The rows of this source, with take / skip / columns applied (not yet normalized to chat or text).</summary>
-        public DatasetRows Open(IDownloader? downloader = null)
+        /// <summary>
+        /// The rows of this source, with take / skip / columns applied (not yet normalized to chat or text); folders and
+        /// archives skip <paramref name="skippedFolders"/> (null: <see cref="ReadOptions.DefaultSkippedFolders"/>).
+        /// </summary>
+        public DatasetRows Open(IDownloader? downloader = null, IReadOnlyCollection<string>? skippedFolders = null)
         {
-            var data = spec.OpenSource(downloader);
+            var data = spec.OpenSource(downloader, skippedFolders);
             if (spec.GetInt64("skip") is { } skip)
             {
                 data = data.Skip(skip);
@@ -33,15 +36,15 @@ public static class DatasetSpecExtensions
             return data;
         }
 
-        /// <summary>Downloads the source's files into the cache (without reading rows) and returns their local paths.</summary>
-        public IReadOnlyList<string> Download(IDownloader? downloader = null) => spec.OpenSource(downloader).Download();
+        /// <summary>Downloads the source's files into the cache (without reading rows) and returns their local paths (folders skip <paramref name="skippedFolders"/>, as <see cref="Open"/>).</summary>
+        public IReadOnlyList<string> Download(IDownloader? downloader = null, IReadOnlyCollection<string>? skippedFolders = null) => spec.OpenSource(downloader, skippedFolders).Download();
 
         /// <summary>The chat mapping given by the user / assistant / system options, or null to detect the layout.</summary>
         public ChatMapping? Mapping => spec.Get("user") is { } user
             ? new ChatMapping { User = user, Assistant = spec.Get("assistant") ?? throw new ArgumentException($"{spec.Source}: user= needs assistant= too."), System = spec.Get("system") }
             : null;
 
-        private DatasetRows OpenSource(IDownloader? downloader)
+        private DatasetRows OpenSource(IDownloader? downloader, IReadOnlyCollection<string>? skippedFolders)
         {
             var opener = DatasetSources.Find(spec.Source);
             foreach (var key in spec.Options.Keys.Where(k => !DatasetSpec.CommonOptions.Contains(k, StringComparer.OrdinalIgnoreCase)
@@ -65,6 +68,7 @@ public static class DatasetSpecExtensions
                 FileFormat = spec.Get("format") is { } named && !Enum.TryParse<DataFormat>(named, ignoreCase: true, out _) ? DataFileFormats.Get(named) : null,
                 JsonProperty = spec.Get("json_property"),
                 Documents = spec.Flag("documents"),
+                SkippedFolders = skippedFolders ?? ReadOptions.DefaultSkippedFolders,
             };
 
             // The registered sources, in order (see DatasetSources): hf:, github:, kaggle:, zenodo:, http(s)://, folders, files.
@@ -133,6 +137,12 @@ public sealed record DatasetRecipe
     /// </summary>
     public double EvaluationFraction { get; init; }
 
+    /// <summary>
+    /// Folders the sources' folders and archives skip (<see cref="ReadOptions.SkippedFolders"/>; null for
+    /// <see cref="ReadOptions.DefaultSkippedFolders"/>); as JSON, "skip_folders": [...].
+    /// </summary>
+    public IReadOnlyCollection<string>? SkippedFolders { get; init; }
+
     /// <summary>A recipe of the given sources with the defaults.</summary>
     public static DatasetRecipe Of(params string[] sources) => new() { Sources = [.. sources.Select(DatasetSpec.Parse)] };
 
@@ -180,6 +190,7 @@ public sealed record DatasetRecipe
             MaxCharacters = (int?)json["max_chars"] ?? 0,
             MaxRows = (long?)json["max_rows"] ?? 0,
             EvaluationFraction = (double?)json["eval_fraction"] ?? 0,
+            SkippedFolders = json["skip_folders"] is JsonArray skip ? [.. skip.Select(n => (string?)n ?? throw new InvalidDataException("\"skip_folders\" holds folder names."))] : null,
         };
     }
 
@@ -200,7 +211,7 @@ public sealed record DatasetRecipe
             throw new InvalidOperationException("The recipe has no sources.");
         }
 
-        var parts = Sources.Select(s => (Data: ChatRows.Normalize(s.Open(downloader), Kind, s.Mapping, System), s.Weight)).ToList();
+        var parts = Sources.Select(s => (Data: ChatRows.Normalize(s.Open(downloader, SkippedFolders), Kind, s.Mapping, System), s.Weight)).ToList();
         bool mix = MixByWeight ?? Sources.Any(s => s.Options.ContainsKey("weight"));
         var data = parts.Count == 1 ? parts[0].Data : mix ? DatasetRows.Mix(parts, Seed, Stop) : DatasetRows.Concat([.. parts.Select(p => p.Data)]);
         if (counts is not null)
