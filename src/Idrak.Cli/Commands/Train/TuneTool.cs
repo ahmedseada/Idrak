@@ -397,9 +397,17 @@ internal sealed class TuneTool(ToolConsole console)
     /// <summary>Runs the parsed command; returns the exit code (1 when it fails, with the reason on the error output).</summary>
     public int Execute()
     {
-        // The settings the tool changes for the whole process, put back afterwards (idrak runs it in-process).
-        var (previousPrecision, previousDevice) = (MixedPrecision.Default, Device.Default);
-        var (previousOffload, previousLimit) = (ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit);
+        // The settings the tool changes for the whole process, put back afterwards (idrak runs it in-process). The ranks of
+        // a simulated cluster run it at once in one process: the first in keeps the settings as they were and the last out
+        // puts them back, so a rank never takes another rank's bfloat16 for the process's own and leaves it on.
+        lock (ProcessSettingsGate)
+        {
+            if (s_running++ == 0)
+            {
+                s_saved = (MixedPrecision.Default, Device.Default, ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit);
+            }
+        }
+
         try
         {
             if (offload)
@@ -416,10 +424,21 @@ internal sealed class TuneTool(ToolConsole console)
         }
         finally
         {
-            (MixedPrecision.Default, Device.Default) = (previousPrecision, previousDevice);
-            (ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit) = (previousOffload, previousLimit);
+            lock (ProcessSettingsGate)
+            {
+                if (--s_running == 0)
+                {
+                    (MixedPrecision.Default, Device.Default) = (s_saved.Precision, s_saved.Device);
+                    (ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit) = (s_saved.Offload, s_saved.Limit);
+                }
+            }
         }
     }
+
+    // The process-wide settings as they were before the first of the runs under way (Execute).
+    private static readonly Lock ProcessSettingsGate = new();
+    private static int s_running;
+    private static (MatMulPrecision Precision, Device Device, bool Offload, long? Limit) s_saved;
 
     private int Run()
     {

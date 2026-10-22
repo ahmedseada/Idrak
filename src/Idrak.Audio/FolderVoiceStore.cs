@@ -89,21 +89,24 @@ public sealed class FolderVoiceStore : IVoiceStore
             return null;
         }
 
-        string exact = Path.Combine(Root, name);
-        if (File.Exists(Path.Combine(exact, ManifestFile)))
+        // The folder as it is spelled on disk (a file system that ignores case would open Root/name as given, so the profile
+        // would name the folder as asked, not as installed): the exact name first, else the name ignoring case.
+        string? match = null;
+        foreach (string folder in Directory.EnumerateDirectories(Root))
         {
-            return Read(exact);
-        }
-
-        foreach (string folder in Directory.EnumerateDirectories(Root))           // the name ignoring case, on a case-sensitive file system
-        {
-            if (string.Equals(Path.GetFileName(folder), name, StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(folder, ManifestFile)))
+            string folderName = Path.GetFileName(folder);
+            if (string.Equals(folderName, name, StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(folder, ManifestFile)))
             {
-                return Read(folder);
+                if (string.Equals(folderName, name, StringComparison.Ordinal))
+                {
+                    return Read(folder);
+                }
+
+                match ??= folder;
             }
         }
 
-        return null;
+        return match is null ? null : Read(match);
     }
 
     /// <inheritdoc />

@@ -134,6 +134,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
         }
 
         ArgumentNullException.ThrowIfNull(key);
+        registeredBy = Overrides.RegisteredBy ?? registeredBy;                // a plug-in's parts: the plug-in, wherever they were inlined
         var (id, origin) = Overrides.Describe(implementation ?? value);
         var assembly = registeredBy ?? Overrides.AssemblyOf(implementation ?? value);
         origin = registeredBy?.GetName().Name ?? origin;

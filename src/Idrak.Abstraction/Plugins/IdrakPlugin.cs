@@ -55,7 +55,7 @@ public abstract class IdrakPlugin : IIdrakPlugin
             _registering = parts;
             try
             {
-                RegisterParts();
+                Overrides.AsRegisteredBy(GetType().Assembly, RegisterParts);   // the parts' origin is the plug-in's assembly
             }
             catch (Exception e)
             {

@@ -14,9 +14,11 @@ internal sealed partial class CpuBackend
     /// <summary>
     /// Runs body(start, end) over [0, count), splitting across cores when work (≈ element operations) passes the measured
     /// cut-over. A body whose chunks are summed together (<paramref name="chunksSummed"/>) splits by the numerical
-    /// contract instead (<see cref="CpuTuning.ReductionElements"/>), so a timing never changes its result.
+    /// contract instead (<see cref="CpuTuning.ReductionElements"/>), so a timing never changes its result. A body over
+    /// single elements with a vector loop and a scalar tail (<paramref name="wholeVectors"/>) gets chunks of whole vectors,
+    /// so no element takes the tail's arithmetic for ending a chunk: which ones would follow the thread count.
     /// </summary>
-    private static void For(int count, long work, Action<int, int> body, bool chunksSummed = false)
+    private static void For(int count, long work, Action<int, int> body, bool chunksSummed = false, bool wholeVectors = false)
     {
         bool split = chunksSummed ? work >= CpuTuning.ReductionElements && ComputeResources.AllowParallel : CpuTuning.SplitElements(work);
         if (count <= 1 || !split)
@@ -27,6 +29,12 @@ internal sealed partial class CpuBackend
 
         int chunks = Math.Min(count, ComputeResources.MaxCpuThreads * 4);
         int size = (count + chunks - 1) / chunks;
+        if (wholeVectors)
+        {
+            size = (size + Vector<float>.Count - 1) / Vector<float>.Count * Vector<float>.Count;
+            chunks = (count + size - 1) / size;
+        }
+
         Parallel.For(0, chunks, ComputeResources.ParallelOptions, c =>
         {
             int start = c * size;
