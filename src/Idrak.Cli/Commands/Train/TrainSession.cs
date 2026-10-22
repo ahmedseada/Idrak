@@ -252,7 +252,7 @@ internal static class TrainSession
             {
                 history = trainer.Fit(trainLoader, total, validationLoader, interrupt.Token);
             }
-            catch (Idrak.Abstraction.Cluster.ClusterRunStoppedException stop)
+            catch (Idrak.Abstraction.Cluster.ClusterRunStoppedException stop) when (!stop.Agreed)   // an agreed stop (Ctrl+C, Plan 27 R7) ends as in one process
             {
                 progress.Erase();
                 if (writes)

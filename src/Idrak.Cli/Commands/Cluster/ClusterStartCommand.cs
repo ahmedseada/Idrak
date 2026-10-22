@@ -120,6 +120,10 @@ internal sealed class ClusterStartCommand : Command
         using var board = new RankBoard(context, $"{context.Positional[0]} on node {node}", ranks, devices, line => line.Rank == ranks[0] && !line.IsError);
         // The ranks' lines also go to the run folder (when the command names one), so the dashboard follows the run (phase C9).
         using var lines = ClusterSimCommand.RunFolder(context.Positional) is { } folder ? new RankLines(folder, node, ranks, devices, context.Positional) : null;
+        // Ctrl+C reaches the ranks' processes too (they share this console): they agree to stop at a step boundary and end as
+        // a stopped run ends (Plan 27, R7), and this launcher waits for them; a second Ctrl+C ends the launcher and its ranks.
+        using var interrupt = new Interrupt();
+        using var told = interrupt.Token.Register(() => context.Write("stopping: the ranks agree on a step boundary and end there (Ctrl+C again to end them at once)…"));
         LocalhostRunResult result;
         try
         {

@@ -72,6 +72,12 @@ public static partial class Pretrainer
         int timedSteps = 0;
         bool startedTelemetry = false;
         using var seeds = Dropout.SeedsForRank(collectives.Rank);
+        // A cancelled token asks the ranks to stop and they agree at a step boundary (Plan 27, R7): no stage leaves a step
+        // the others are in. No collective of every rank carries the flag here (the replicas' reductions are a stage's), so
+        // the agreement sums it in a one-value all-reduce at the boundary (every ClusterOptions.StopEvery boundaries).
+        var agreement = StopAgreements.For(collectives, cluster);
+        agreement.Reset();
+        using var asks = agreement.Watch(cancellationToken);
 
         for (int stageIndex = resume?.Stage ?? 0; stageIndex < options.Stages.Count; stageIndex++)
         {
@@ -136,12 +142,18 @@ public static partial class Pretrainer
                     bool present;
                     try
                     {
+                        if (agreement.Agree(step))
+                        {
+                            throw agreement.Stopped(step);                     // every rank at this same boundary (Plan 27, R7)
+                        }
+
                         present = collectives is not IStepGroup group || group.BeginStep(step);
                     }
                     catch (ClusterRunStoppedException) when (step > 0 && last != Path.Combine(outputFolder, $"checkpoint-{step}"))
                     {
-                        // Stopped at this step boundary (a dashboard's stop, plan 23 C9; written since C8b): every rank stops
-                        // here alike, so every stage gives its part of the last finished step's checkpoint as a saving step does.
+                        // Stopped at this step boundary (a dashboard's stop, plan 23 C9; written since C8b; a stop the ranks
+                        // agreed on, Plan 27 R7): every rank stops here alike, so every stage gives its part of the last finished
+                        // step's checkpoint as a saving step does.
                         last = SavePipelined(model, pipe, collectives, optimizer, options, cluster, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations);
                         trace?.Invoke($"stopped: checkpoint {last}");
                         throw;
@@ -162,7 +174,6 @@ public static partial class Pretrainer
                         continue;
                     }
 
-                    cancellationToken.ThrowIfCancellationRequested();
                     var watch = Stopwatch.StartNew();
                     float rate = optimizer.LearningRate;
                     var owners = sync is null ? null : DrawShares.Owners([.. drawn.Select(q => (long)q.TrainedTokens)], sync.Shares);

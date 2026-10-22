@@ -178,7 +178,10 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// Trains for up to <paramref name="epochs"/> passes over <paramref name="train"/>. Training ends early when early
     /// stopping triggers or a callback calls <see cref="TrainerContext.Stop"/> (the history is returned as usual), or when
     /// <paramref name="cancellationToken"/> is cancelled: the loop ends after the current batch, callbacks see
-    /// <see cref="ITrainerCallback.OnTrainEnd"/>, and <see cref="OperationCanceledException"/> is thrown.
+    /// <see cref="ITrainerCallback.OnTrainEnd"/>, and <see cref="OperationCanceledException"/> is thrown. On a cluster
+    /// (<see cref="Cluster"/>) a cancelled token asks the ranks to stop instead (Plan 27, R7): they agree at a step boundary,
+    /// every rank leaves there with <see cref="ClusterRunStoppedException"/> (<see cref="ClusterRunStoppedException.Agreed"/>),
+    /// and rank 0 first writes the stop's checkpoint in <see cref="StopFolder"/> when it is set.
     /// </summary>
     public TrainingHistory Fit(IBatchSource train, int epochs, IBatchSource? validation = null, CancellationToken cancellationToken = default)
     {
@@ -233,12 +236,24 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             sync.Broadcast(buffers);
         }
 
+        // On a cluster a cancelled token asks the ranks to stop and they agree at a step boundary (Plan 27, R7), so no rank
+        // leaves a step the others are in; in one process the token stops the loop after the current batch, as before.
+        var agreement = Cluster is { } ranks ? StopAgreements.For(ranks, clusterOptions) : null;
+        agreement?.Reset();
+        using var asks = agreement?.Watch(cancellationToken) ?? default;
+        bool Cancelled() => agreement is null && cancellationToken.IsCancellationRequested;
+
         // The run steered from outside stops at a step boundary (ClusterRunStoppedException): the last finished step's
-        // checkpoint first (plan 23, C8b), every rank taking part as a saving step does.
+        // checkpoint first (plan 23, C8b), every rank taking part as a saving step does; so does a stop the ranks agreed on.
         bool Begin(long at)
         {
             try
             {
+                if (agreement is not null && agreement.Agree(at))
+                {
+                    throw agreement.Stopped(at);                            // every rank at this same boundary
+                }
+
                 return sync!.BeginStep(at);
             }
             catch (ClusterRunStoppedException) when (StopFolder is not null && at > resumeStep)
@@ -265,7 +280,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         int epoch = 0;
         for (epoch = 1; epoch <= epochs; epoch++)
         {
-            if (cancellationToken.IsCancellationRequested)
+            if (Cancelled())
             {
                 cancelled = true;
                 epoch--;
@@ -430,7 +445,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                     break;
                 }
 
-                if (cancellationToken.IsCancellationRequested)
+                if (Cancelled())
                 {
                     cancelled = true;
                     break;
@@ -543,7 +558,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 history.Epochs.Count > 0 ? history.Epochs[^1].Loss : double.NaN, history.BestEpoch, history.BestLoss, history.StoppedEarly, cancelled));
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
+        if (agreement is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return history;
     }
 

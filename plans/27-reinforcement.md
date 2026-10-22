@@ -17,7 +17,7 @@ transitions).
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (rollouts on a cluster done in R3b; see "R3b as built") |
 | R3b | R3's leftover: rollouts on a cluster (the language-model policy's episodes spread over the ranks, gathered in rank order; the policy refused a cluster session before) | B | Done 2026-10-22; CPU pass |
 | R3c | R3b's leftover: `idrak reinforce` under `idrak cluster sim` (the command on every rank, the adapter and manifest written once by rank 0) | A | Done 2026-10-22; CPU pass (on-policy distillation on a cluster not taken, refused with the reason; see "R3c as built") |
-| R7 | Leftover 1 (the owner, 2026-10-22): ranks agree on a stop (Ctrl+C, a timeout, a stop request) at the same step, for `reinforce` and `tune` and every trainer that runs on a cluster, then one checkpoint | A | In progress (2026-10-22) |
+| R7 | Leftover 1 (the owner, 2026-10-22): ranks agree on a stop (Ctrl+C, a timeout, a stop request) at the same step, for `reinforce` and `tune` and every trainer that runs on a cluster, then one checkpoint | A | Done 2026-10-22; CPU pass |
 | R8 | Leftover 2 (the owner, 2026-10-22): the replay buffer in exact-size arrays (5.37 MB held for 4.1 MB at 100,000 transitions) | B | In progress (2026-10-22) |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Done 2026-10-22; CPU pass |
@@ -1622,6 +1622,122 @@ bandit and CartPole within seeded step counts on the CPU.
   ```
   To make the fixtures again (they are checked in; the same versions give the same files): `python -m venv rl-venv`,
   `rl-venv\Scripts\pip install -r tools\reinforcement\requirements.txt`, `rl-venv\Scripts\python -I tools\reinforcement\make_fixtures.py`.
+
+**R7 as built (2026-10-22).** Leftover 1: the ranks agree on a stop. A rank whose token is cancelled (Ctrl+C, `--timeout`, a
+stop request) no longer leaves on its own: it asks, the ranks agree at one step (or iteration) boundary, every rank leaves
+there with no collective half-done, and the run ends once as a stopped run ends (rank 0 writes the one checkpoint; the
+adapter so far where the command writes one at a stop today; device memory released by the trainers' `using`s).
+- **The contract (`src/Idrak.Abstraction/Cluster/StopAgreement.cs`, namespace `Idrak.Abstraction.Cluster`):**
+  `IStopAgreement` (`Request(reason)` from any thread; `Reset()` as a run begins on every rank; `Agree(step)` at every
+  boundary, a collective point, the same answer on every rank and sticky until a reset; `Carries`, `Contribution`, `Carried(sum)`
+  for a flag carried in a collective the ranks make anyway; `Agreed`, `Step`, `Askers`, `Reason`; `GiveUpToken` and `GaveUp`;
+  `Stopped(step)`: the `ClusterRunStoppedException` every rank leaves with). `IStopAgreementProvider` and the registry
+  `StopAgreements` (SlotTable, unguarded; `Register`, `Find`, `Get` with the "is not registered" message, `Default`, `Origin`,
+  `Describe`), `For(collectives, options)` (one agreement per rank's collectives, kept in a `ConditionalWeakTable`, so every
+  trainer and gradient synchronisation over them shares it), `NameFor` ("auto": "shared" for collectives whose group can change,
+  `IStepGroup`, when registered; else "all-reduce"), `Watch(token)` (a cancellation asks instead of leaving) and `GaveUpError`.
+  `StopAgreement` (abstract) holds what both defaults share: the request, the agreed state, the give-up timer, the messages
+  ("the 2 ranks agreed to stop before step 8 (1 rank of 2 asked; rank 1 asked: cancelled (Ctrl+C or a timeout))").
+  `ClusterRunStoppedException.Agreed` (init) marks such a stop apart from the dashboard's.
+- **The two defaults.** `all-reduce` (`Idrak.Network`, `AllReduceStopAgreement`): every rank's flag (0 or 1) is the last value
+  of the gradient reduction's header (`GradientReduction`: `HeaderLength` + 1, written last so the values before it keep their
+  places; `ReadHeader` hands the sum to `Carried`), so a boundary after a reduced step decides from that sum with no message; a
+  boundary no such collective preceded (the run's first, a pipeline's steps, local SGD's) sums the flags in one all-reduce of
+  one value, every `StopEvery` boundaries. `shared` (`Idrak.Cluster`, `SharedStopAgreement` over `SimWorld.Stops`): the ranks of
+  an in-process simulated run agree through memory, as the dashboard's stop does: a request sets the stop after the last
+  boundary any rank passed (per run of a trainer, counted alike on every rank), so no message travels, the virtual clock and
+  event log are those of a run without it, and a late joiner or a replay's end agrees all the same (every rank calls the
+  boundary of every step, present or not). The gradient header carries nothing under `shared`.
+- **Settings** (`ClusterOptions`, rows in `EnvironmentVariables.cs`): `StopAgreement` (`IDRAK_CLUSTER_STOP`, `auto`),
+  `StopEvery` (`IDRAK_CLUSTER_STOP_EVERY`, 1: the boundaries between the agreement's own exchanges when nothing carried the
+  flag), `StopWait` (`IDRAK_CLUSTER_STOP_WAIT`, seconds, 0: wait as long as the step takes; else a rank that asked and did not
+  reach an agreed boundary in time cancels its step's work and leaves with a `TimeoutException` naming the setting, the others
+  then waiting until `IDRAK_CLUSTER_TIMEOUT`, as before R7).
+- **Every trainer that runs on a cluster uses the one agreement** (one process: no agreement, the token stops it as before):
+  `FineTuner` (`tune`, `distill`, conversation tuning: `session.Stop`; agreed before `BeginStep`, the existing stop catch
+  writes `checkpoint-STEP`; the step's batches and answer scoring get the give-up token instead of the user's), `Pretrainer`
+  (data parallel: the same at its boundary; the step's batches the give-up token) and the pipeline pretrainer (no collective of
+  every rank carries the flag there, so the one-value exchange a boundary), `Trainer` (agreed in its `Begin`, where
+  `StopFolder`'s checkpoint is written; the token's own breaks and the final `ThrowIfCancellationRequested` only in one process),
+  `ReinforcementTrainer` (through the policy: `IRolloutRanks.StopAgreement`, a default member returning null, which
+  `LanguageModelPolicy` gives from its session on a cluster; agreed at each iteration's start, the rollout, its exchange,
+  evaluation and updates run to their end on every rank; the result is `Cancelled` on every rank, the end checkpoint and
+  `SaveOnce` as before). `RolloutCollector` needed no change (the trainer hands it the give-up token). Not trainers, unchanged:
+  `PipelineStage.Serve` (inference, stopped by `StopServing`), `OnPolicyDistiller` (refused on a cluster, R3c),
+  `OffPolicyTrainer` (no cluster).
+- **The commands:** `tune` ends an agreed stop as its Ctrl+C in one process ends (rank 0 writes the adapter so far and the
+  manifest, names the checkpoint; exit 0); `pretrain` as its interrupt (the checkpoint line, exit 1 as in one process); `train`
+  lets it through as one process's Ctrl+C goes (exit 1, the message names the agreement; one process's `idrak train` Ctrl+C has
+  always left `Fit` with a cancellation, so its "Stopped" line after `Fit` is not reached: found, not changed); `reinforce` as
+  before (`stopped after N iterations`, the adapter, exit 0). `cluster sim --mode localhost` and `cluster start` now keep the
+  first Ctrl+C (the ranks' processes share the console and get it too): the launcher waits for them to agree and end; a second
+  Ctrl+C ends it and its ranks at once (before, the launcher died on the first and killed its ranks mid-step). The dashboard
+  stop is unchanged. **For the later item** (the dashboard steering `reinforce`): a stop request is
+  `StopAgreements.For(collectives).Request("…")` on any rank (rank 0's is enough), then the agreement does the rest.
+- **One process and unstopped runs:** no agreement in one process (every one-process test passes unchanged, and the new tests
+  check a cancelled `Trainer` and `FineTuner` still throw a plain cancellation and a cancelled reinforcement run stops before
+  its first iteration). Unstopped cluster runs are bit for bit those of before: under `shared` nothing is sent; under
+  `all-reduce` the header's earlier values keep their places and slices whenever the header holds more values than there are
+  ranks (always: 2 + parameters + buckets), flags and tokens are whole numbers summed exactly in any order; tested on 3 ranks with
+  ring (the Trainer's weights and losses) and on 2 (the fine-tuner's adapters, the reinforcement run's), the same bits.
+- **Measured (rule 78/79), on the simulated cluster (the sim transport's virtual clock and the wall, 2 in-process CPU ranks, 4
+  cores, the test process):** the boundary's own one-value all-reduce: 13 to 43 µs wall a boundary over three runs (the shared
+  test process is noisy), 0.0 µs on the virtual clock on the same-device link and 0.1 µs between 2 nodes on ethernet-1g; the
+  carried flag: 4 bytes more in each step's header and one exchange for the run (its first boundary; the test checks there is
+  exactly one in the Trainer's 20 steps), so the Trainer's network time a step on the virtual clock is unchanged at the 0.1 µs
+  printed (0.8 µs same device; 78.0 µs on ethernet-1g, with and without the flag) and its wall a step is within noise (medians of
+  3 alternating runs: 714 against 731 µs on one device, 755.5 against 755.1 µs over ethernet-1g). `shared` sends nothing.
+- **Tests** (`tests/Idrak.Tests/ClusterStopTests.cs`, group `cluster stop:`, 7, in-process ranks only, every stopped run awaited
+  at most 150 s against a 600 s collectives' timeout): the settings and their variables (bad values named), the registry, both
+  agreements on 3 ranks (rank 1 asks after boundary 3, every rank stops at 4, sticky, afresh after a reset; the message names
+  the askers), a carried flag deciding with no exchange, `StopEvery` 3 spacing the exchanges, `StopWait` 0.2 s giving up loudly;
+  the `Trainer` cancelled on rank 1 after step 7 (shared; all-reduce beside a rank 0 slowed 40 ms a batch: all-reduce stops
+  before step 8 exactly, shared before 7 or 8), one checkpoint, resumed to the uninterrupted weights bit for bit, and the 3-rank
+  unstopped comparison; the fine-tuner cancelled on rank 1 inside step 3 (a batch's trace line) and after step 4 (its progress
+  report), both agreements: every rank at one step, rank 0 alone writing one checkpoint, resumed to the uninterrupted adapters
+  bit for bit; the pretrainer (data parallel, cancelled after step 3, resumed to the same losses) and 2 pipeline stages under both
+  agreements; reinforcement on 2 ranks cancelled after iteration 2 (shared) and at rank 1's fifth act, inside a rollout
+  (all-reduce): every rank `Cancelled` at one iteration, one checkpoint, resumed to the uninterrupted adapters bit for bit;
+  `cluster sim -- reinforce … --timeout 4s` on 2 ranks (each rank's own timeout): exit 0, rank 0 alone says "stopped after N",
+  one adapter and one checkpoint, `--resume` goes on to N + 1; and the cost above. `cluster: options from environment` got the
+  three variables' test values. A slow rank is a wall-clock one (the `slow-worker` failure model slows the virtual clock only).
+- **The run (CPU, this agent):** one build of `tests/Idrak.Tests` (3 min 41 s, no warnings); `IDRAK_UPDATE_API=1` (`public
+  API`: `api/Idrak.Abstraction.txt`, `api/Idrak.Text.txt`) and `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`);
+  then, split to fit the tool's 10-minute foreground limit: `cluster stop:|public API|abstraction inventory|cli health: every
+  environment variable|cli polish: the environment table|naming:|conformance kit:` 26 passed, 0 failed; `cluster:` 119 passed,
+  1 failed (`cluster: options from environment`: the new variables had no test value); `cli cluster|cli reinforce|
+  reinforcement:|fine-tuning:|fine-tuning options:|pretrain:|cli train` 73 passed, 0 failed (`cli tune` names no test). One
+  rebuild (that test's values, and the cost test measured on two topologies), then `cluster: options from environment|cluster
+  stop: the cost`: 2 passed. Every run passed in the end.
+- **Left:** (1) `tune`'s agreed-stop branch in the CLI and the localhost launchers' Ctrl+C are not run here (Ctrl+C cannot be
+  pressed in a test, and `tune` reads no `--timeout`: it never did; only Ctrl+C stops it); the owner's localhost run below. (2)
+  `idrak train`'s one-process Ctrl+C exit (above). (3) The dashboard steering `reinforce` (the later item; it can use the
+  agreement). (4) A real multi-machine run, as R3b and R3c left it.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; CUDA runs the same in-process clusters carved from one card):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cluster stop:|cluster:|cli cluster|cli reinforce|reinforcement:|fine-tuning:|fine-tuning options:|pretrain:|cli train|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|conformance kit:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cluster stop:|cluster: 2 ranks equal one process|reinforcement cluster:|cli reinforce: cluster sim"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  # --mode localhost (each rank a process of the tool), stopped with Ctrl+C: press it once after a few steps or iterations
+  $idrak = "src\Idrak.Cli\bin\Release\net10.0\Idrak.Cli.exe"
+  New-Item -ItemType Directory -Force runs | Out-Null
+  1..32 | ForEach-Object { '{"question": "What is ' + $_ + ' plus ' + $_ + '? Answer with the number.", "answer": "' + (2 * $_) + '"}' } | Set-Content runs\sums.jsonl
+  & $idrak cluster init -y --nodes 1 --devices cuda:0,cuda:0 -o runs\two-cuda.json
+  & $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-stop
+  & $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 50 --max-new 64 --no-think --seed 1 -o runs\rl-stop --resume
+  & $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 20 -o runs\tune-stop
+  # then go on from the checkpoint the stop names (runs\tune-stop\checkpoint-N)
+  & $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 20 -o runs\tune-stop --resume-from runs\tune-stop\checkpoint-N
+  # the same in-process (no --mode): Ctrl+C reaches every rank's thread
+  & $idrak cluster sim --topology runs\two-cuda.json -- tune train Qwen/Qwen3-0.6B runs\sums.jsonl --epochs 20 -o runs\tune-stop-sim
+  ```
+  What to look at: after one Ctrl+C the launcher says "stopping: the ranks agree…", both ranks end (the summary line names each
+  rank done, no timeout after 120 s), rank 0 alone says "stopped after N iterations" (reinforce) or "stopped after … before
+  step N (the ranks agreed)" (tune), `runs\rl-stop\checkpoints` holds the stop's `iteration-N` and the resumed run starts at
+  N + 1; `runs\tune-stop` holds one `checkpoint-N` and the adapter so far.
 
 ## Order and parallelism
 

@@ -1204,91 +1204,114 @@ public static class FineTuner
         var runner = session.Runner;
         var evaluations = new List<float>();
         int step = 0;
-        for (int epoch = 0; epoch < options.Epochs; epoch++)
+        // On a cluster a cancelled token asks the ranks to stop and they agree at a step boundary (Plan 27, R7): the work
+        // inside a step runs to its end on every rank (its token is cancelled only when this rank gives up waiting).
+        var agreement = session.Stop;
+        agreement?.Reset();
+        using var asks = agreement?.Watch(cancellationToken) ?? default;
+        var inner = agreement?.GiveUpToken ?? cancellationToken;
+        try
         {
-            var batches = epochBatches[epoch];
-            for (int first = 0; first < batches.Count; first += perStep)
+            for (int epoch = 0; epoch < options.Epochs; epoch++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var global = batches.Skip(first).Take(perStep).ToList();
-                if (step < resumeStep)
+                var batches = epochBatches[epoch];
+                for (int first = 0; first < batches.Count; first += perStep)
                 {
-                    session.Skip();                                        // a step the stopped run finished (ResumeFrom)
-                    step = session.Steps;
-                    continue;
-                }
-
-                bool present;
-                try
-                {
-                    present = sync is null || sync.BeginStep(step);
-                }
-                catch (ClusterRunStoppedException) when (outputFolder is not null && step > resumeStep)
-                {
-                    // Stopped at this step boundary (a dashboard's stop, plan 23 C9; written since C8b): the last finished
-                    // step's adapters, optimizer state (a sharded run's joined) and step, as a saving step writes them.
-                    string stop = Path.Combine(outputFolder, $"checkpoint-{step}");
-                    session.Checkpoint(stop);
-                    trace?.Invoke($"stopped: checkpoint {stop}");
-                    throw;
-                }
-
-                if (!present)
-                {
-                    // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's last
-                    // step): the ranks that take part share the step's batches; the schedule moves on alike.
-                    session.Skip();
-                    step = session.Steps;
-                    continue;
-                }
-
-                bool writes = sync is null || sync.Rank == 0;            // the step's group's first rank writes and scores
-                var group = sync is null ? global : Share(global, train, sync, runner, trace);
-                var watch = Stopwatch.StartNew();
-                if (vision is not null)
-                {
-                    // The next step's images made on workers while this one runs (its own were started the step before).
-                    var coming = first + perStep < batches.Count ? batches.Skip(first + perStep).Take(perStep)
-                        : epoch + 1 < options.Epochs ? epochBatches[epoch + 1].Take(perStep) : [];
-                    vision.Prefetch(coming.SelectMany(b => b.Sequences.SelectMany(i => train[i].Images)));
-                }
-
-                var (loss, tokens, rate) = session.Run(group, null, cancellationToken,
-                    b => $"step {step + 1}/{totalSteps}, batch {first + b + 1}/{batches.Count} of epoch {epoch + 1}");
-                step = session.Steps;
-                float? evaluationLoss = null;
-                bool lastOfEpoch = first + perStep >= batches.Count;
-                bool evaluate = evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch);
-                bool saving = outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0;
-                // A sharded run's weights whole on every rank while they are read (plan 23, C6; nothing to do otherwise).
-                using var whole = evaluate || saving || options.Answers is { } due && due.IsDue(step, lastOfEpoch) ? sync?.Gather() : null;
-                if (evaluate && evaluation is not null)
-                {
-                    evaluationLoss = custom is not null ? EvaluateCustom(model, evaluation, pairs, custom, options, trace)
-                        : sync is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision)
-                        : EvaluateAcross(model, evaluation, sync, options.BatchTokens, options.LossChunkRows, trace, vision);
-                    evaluations.Add(evaluationLoss.Value);
-                }
-
-                // Generated answers are scored on rank 0 alone (every rank holds the same weights; the scores train nothing).
-                var answers = writes && options.Answers is { } scorer && scorer.IsDue(step, lastOfEpoch) ? scorer.Score(model, vision, cancellationToken: cancellationToken) : null;
-                if (answers is not null)
-                {
-                    trace?.Invoke($"answers at step {step}: {answers} ({answers.MeanTokens:F0} tokens each, {answers.Duration.TotalSeconds:F1} s)");
-                }
-
-                if (saving && outputFolder is not null)
-                {
-                    if (writes)
+                    if (agreement is null)
                     {
-                        session.Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
+                        cancellationToken.ThrowIfCancellationRequested();
                     }
 
-                    sync?.Barrier();                                       // rank 0 has written it
-                }
+                    var global = batches.Skip(first).Take(perStep).ToList();
+                    if (step < resumeStep)
+                    {
+                        session.Skip();                                        // a step the stopped run finished (ResumeFrom)
+                        step = session.Steps;
+                        continue;
+                    }
 
-                progress?.Report(new FineTuningProgress(step, totalSteps, epoch + 1, loss, rate, tokens / Math.Max(1e-9, watch.Elapsed.TotalSeconds), evaluationLoss) { Answers = answers });
+                    bool present;
+                    try
+                    {
+                        if (agreement is not null && agreement.Agree(step))
+                        {
+                            throw agreement.Stopped(step);                     // every rank at this same boundary
+                        }
+
+                        present = sync is null || sync.BeginStep(step);
+                    }
+                    catch (ClusterRunStoppedException) when (outputFolder is not null && step > resumeStep)
+                    {
+                        // Stopped at this step boundary (a dashboard's stop, plan 23 C9; written since C8b; a stop the ranks
+                        // agreed on, Plan 27 R7): the last finished step's adapters, optimizer state (a sharded run's joined) and
+                        // step, as a saving step writes them.
+                        string stop = Path.Combine(outputFolder, $"checkpoint-{step}");
+                        session.Checkpoint(stop);
+                        trace?.Invoke($"stopped: checkpoint {stop}");
+                        throw;
+                    }
+
+                    if (!present)
+                    {
+                        // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's last
+                        // step): the ranks that take part share the step's batches; the schedule moves on alike.
+                        session.Skip();
+                        step = session.Steps;
+                        continue;
+                    }
+
+                    bool writes = sync is null || sync.Rank == 0;            // the step's group's first rank writes and scores
+                    var group = sync is null ? global : Share(global, train, sync, runner, trace);
+                    var watch = Stopwatch.StartNew();
+                    if (vision is not null)
+                    {
+                        // The next step's images made on workers while this one runs (its own were started the step before).
+                        var coming = first + perStep < batches.Count ? batches.Skip(first + perStep).Take(perStep)
+                            : epoch + 1 < options.Epochs ? epochBatches[epoch + 1].Take(perStep) : [];
+                        vision.Prefetch(coming.SelectMany(b => b.Sequences.SelectMany(i => train[i].Images)));
+                    }
+
+                    var (loss, tokens, rate) = session.Run(group, null, inner,
+                        b => $"step {step + 1}/{totalSteps}, batch {first + b + 1}/{batches.Count} of epoch {epoch + 1}");
+                    step = session.Steps;
+                    float? evaluationLoss = null;
+                    bool lastOfEpoch = first + perStep >= batches.Count;
+                    bool evaluate = evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch);
+                    bool saving = outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0;
+                    // A sharded run's weights whole on every rank while they are read (plan 23, C6; nothing to do otherwise).
+                    using var whole = evaluate || saving || options.Answers is { } due && due.IsDue(step, lastOfEpoch) ? sync?.Gather() : null;
+                    if (evaluate && evaluation is not null)
+                    {
+                        evaluationLoss = custom is not null ? EvaluateCustom(model, evaluation, pairs, custom, options, trace)
+                            : sync is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision)
+                            : EvaluateAcross(model, evaluation, sync, options.BatchTokens, options.LossChunkRows, trace, vision);
+                        evaluations.Add(evaluationLoss.Value);
+                    }
+
+                    // Generated answers are scored on rank 0 alone (every rank holds the same weights; the scores train nothing).
+                    var answers = writes && options.Answers is { } scorer && scorer.IsDue(step, lastOfEpoch) ? scorer.Score(model, vision, cancellationToken: inner) : null;
+                    if (answers is not null)
+                    {
+                        trace?.Invoke($"answers at step {step}: {answers} ({answers.MeanTokens:F0} tokens each, {answers.Duration.TotalSeconds:F1} s)");
+                    }
+
+                    if (saving && outputFolder is not null)
+                    {
+                        if (writes)
+                        {
+                            session.Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
+                        }
+
+                        sync?.Barrier();                                       // rank 0 has written it
+                    }
+
+                    progress?.Report(new FineTuningProgress(step, totalSteps, epoch + 1, loss, rate, tokens / Math.Max(1e-9, watch.Elapsed.TotalSeconds), evaluationLoss) { Answers = answers });
+                }
             }
+        }
+        catch (OperationCanceledException e) when (agreement.GaveUpError(e) is { } gaveUp)
+        {
+            throw gaveUp;                                                  // this rank left its step on its own, loudly
         }
 
         sync?.End();                                                       // a sharded run's weights whole on every rank again

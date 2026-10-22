@@ -153,6 +153,7 @@ public sealed class FineTuningSession : IDisposable
             }
 
             Sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, clusterOptions!) : null;
+            Stop = options.Cluster is { } ranks ? StopAgreements.For(ranks, clusterOptions) : null;
             _seeds = Sync is null ? null : Dropout.SeedsForRank(Sync.Rank);
             if (options.ResumeFrom is { } resumed)
             {
@@ -198,6 +199,9 @@ public sealed class FineTuningSession : IDisposable
     internal Optimizer Optimizer { get; } = null!;
 
     internal IGradientSync? Sync { get; }
+
+    /// <summary>The ranks' agreement on a stop on a cluster (Plan 27, R7), or null in one process.</summary>
+    internal IStopAgreement? Stop { get; }
 
     internal FineTuner.StepRunner Runner => _runner ?? throw new InvalidOperationException("The session's schedule is not made yet (Begin).");
 

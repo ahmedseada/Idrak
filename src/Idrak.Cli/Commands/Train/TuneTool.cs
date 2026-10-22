@@ -733,6 +733,24 @@ internal sealed class TuneTool(ToolConsole console)
                 _out.WriteLine($"trained in {Elapsed(clock.Elapsed)}{(lastEvaluation is { } l ? $", evaluation loss {l:F4}" : "")}"
                                + $"{(lastAnswers is { } a ? $", {Score(a)}" : "")}; adapter written to {Path.GetFullPath(output!)}");
             }
+            catch (Idrak.Abstraction.Cluster.ClusterRunStoppedException stopped) when (stopped.Agreed)
+            {
+                // Ctrl+C on a cluster (Plan 27, R7): the ranks agreed to stop at this step boundary, the tuner wrote the last
+                // finished step's checkpoint, and rank 0 writes the adapter so far, as Ctrl+C does in one process.
+                if (writes)
+                {
+                    saveSoFar(output!);
+                    record.Save(output!);
+                }
+
+                console.Clear();
+                if (writes)
+                {
+                    string checkpoint = Path.Combine(Path.GetFullPath(output!), $"checkpoint-{stopped.Step}");
+                    _out.WriteLine($"stopped after {Elapsed(clock.Elapsed)} before step {stopped.Step} (the ranks agreed); the adapter so far written to {Path.GetFullPath(output!)}"
+                                   + (Directory.Exists(checkpoint) ? $"; checkpoint {checkpoint} (--resume-from it continues)" : ""));
+                }
+            }
             catch (Idrak.Abstraction.Cluster.ClusterRunStoppedException stopped)
             {
                 // Stopped as asked (a dashboard's stop, plan 23 C8b): every rank stops at this step boundary; the tuner wrote the
