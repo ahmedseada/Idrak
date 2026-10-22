@@ -59,8 +59,9 @@ internal sealed class ReinforceCommand : Command
 
     public override string Summary => "Reinforcement learning of a model's adapters in an environment: GRPO, PPO, on-policy distillation";
 
-    public override string Usage => """
+    public override string Usage => $$"""
         MODEL --env NAME [--data FILE | --suite DIR] -o DIR [options]
+        --env NAME -o DIR [options]   (an environment of numbers: bandit, cartpole, pendulum, mountain-car; no MODEL)
         --list
 
         The model's adapters (LoRA, as idrak tune trains them) learn from what the model does in an environment: each
@@ -129,6 +130,7 @@ internal sealed class ReinforceCommand : Command
           --gpu-memory, --no-packing, --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-graphs,
           --fp8, --cpu-optimizer, --offload. Every run setting also reads its IDRAK_RL_* variable (idrak help env); the
           command line wins. IDRAK_RL_LOG appends a JSON line per iteration. --json prints one JSON document at the end.
+        {{ReinforceNumeric.UsageOptions}}
 
         On a cluster (idrak cluster sim --topology FILE -- reinforce ..., or --cluster FILE) every rank runs the command on
         its device: each rollout's episodes are spread over the ranks by shards and gathered, every rank makes the same
@@ -144,11 +146,12 @@ internal sealed class ReinforceCommand : Command
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data chats.jsonl --algorithm distill --teacher Qwen/Qwen3-8B -o runs/d
           idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data m.jsonl --algorithm grpo --shards 4 -o rl
           idrak reinforce --list
+        {{ReinforceNumeric.UsageExamples}}
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = [.. OwnValues, .. TuneTool.SessionValueOptions, .. ClusterJoin.Options];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = [.. OwnValues, .. TuneTool.SessionValueOptions, .. ClusterJoin.Options, .. ReinforceNumeric.ValueOptions];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--list", "--resume", "--no-think", .. TuneTool.SessionFlags];
+    public override IReadOnlyCollection<string> Flags { get; } = ["--list", "--resume", "--no-think", .. TuneTool.SessionFlags, .. ReinforceNumeric.Flags];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
@@ -161,6 +164,11 @@ internal sealed class ReinforceCommand : Command
         if (context.Flag("--list"))
         {
             return List(context);
+        }
+
+        if (ReinforceNumeric.Kind(context) is { } numeric)
+        {
+            return ReinforceNumeric.Run(context, numeric);                   // an environment of numbers (R9): no model, a module policy or DQN
         }
 
         // The model and the output.
@@ -411,7 +419,7 @@ internal sealed class ReinforceCommand : Command
     }
 
     // The run's settings: ReinforcementOptions.FromEnvironment, then each option given on the command line in its place.
-    private static ReinforcementOptions Settings(CommandContext context, string output)
+    internal static ReinforcementOptions Settings(CommandContext context, string output)
     {
         ReinforcementOptions o;
         try
@@ -612,6 +620,7 @@ internal sealed class ReinforceCommand : Command
             ("rewards", nameof(RewardFunctions), [.. RewardFunctions.Names.Select(n => RewardFunctions.Get(n)).Select(r => (r.Name, r.Summary, r.Keys))]),
             ("algorithms", nameof(PolicyLosses), [.. PolicyLosses.Names.Select(n => PolicyLosses.Get(n)).Select(l => (l.Name, l.Summary, l.Keys)),
                 (Distill, "on-policy distillation alone: the model's own replies to the prompts, the teacher's distributions on them (--teacher; --env prompts)", (IReadOnlyCollection<string>)[])]),
+            ("off-policy", nameof(Idrak.Reinforcement.Abstractions.QLosses), [.. Idrak.Reinforcement.Abstractions.QLosses.Names.Select(n => Idrak.Reinforcement.Abstractions.QLosses.Get(n)).Select(l => (l.Name, l.Summary, l.Keys))]),
             ("estimators", nameof(AdvantageEstimators), [.. AdvantageEstimators.Names.Select(n => AdvantageEstimators.Get(n)).Select(e => (e.Name, e.Summary, e.Keys))]),
             ("sandboxes", nameof(CommandSandboxes), [.. CommandSandboxes.Names.Select(n => CommandSandboxes.Get(n)).Select(s => (s.Name, s.Summary, (IReadOnlyCollection<string>)[]))]),
             ("divergences", nameof(TeacherDivergences), [.. TeacherDivergences.Names.Select(n => TeacherDivergences.Get(n)).Select(d => (d.Name, d.Summary, (IReadOnlyCollection<string>)[]))]),
@@ -661,9 +670,9 @@ internal sealed class ReinforceCommand : Command
         }
     }
 
-    private static string? Text(string variable) => Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value && value.Trim().Length > 0 ? value.Trim() : null;
+    internal static string? Text(string variable) => Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value && value.Trim().Length > 0 ? value.Trim() : null;
 
-    private static int? Int(CommandContext context, string option, int min)
+    internal static int? Int(CommandContext context, string option, int min)
     {
         if (context.Option(option) is null)
         {
@@ -674,7 +683,7 @@ internal sealed class ReinforceCommand : Command
         return value >= min ? value : throw new UsageException(string.Create(CultureInfo.InvariantCulture, $"{option} is a whole number of at least {min}."));
     }
 
-    private static float? Float(CommandContext context, string option, float min, float max = float.PositiveInfinity)
+    internal static float? Float(CommandContext context, string option, float min, float max = float.PositiveInfinity)
     {
         if (context.Option(option) is not { } text)
         {

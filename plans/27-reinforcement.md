@@ -18,7 +18,7 @@ environments and DQN; R6's measured candidate (exact-size replay arrays) is done
 | R3c | R3b's leftover: `idrak reinforce` under `idrak cluster sim` (the command on every rank, the adapter and manifest written once by rank 0) | A | Done 2026-10-22; CPU pass (on-policy distillation on a cluster not taken, refused with the reason; see "R3c as built") |
 | R7 | Leftover 1 (the owner, 2026-10-22): ranks agree on a stop (Ctrl+C, a timeout, a stop request) at the same step, for `reinforce` and `tune` and every trainer that runs on a cluster, then one checkpoint | A | In progress (2026-10-22) |
 | R8 | Leftover 2 (the owner, 2026-10-22): the replay buffer in exact-size arrays (5.37 MB held for 4.1 MB at 100,000 transitions) | B | Done 2026-10-22; CPU pass |
-| R9 | Leftover 4 (the owner, 2026-10-22: "finish all in order"): `idrak reinforce` for the classic environments (module policy) and DQN (the off-policy trainer) | A | In progress (2026-10-22) |
+| R9 | Leftover 4 (the owner, 2026-10-22: "finish all in order"): `idrak reinforce` for the classic environments (module policy) and DQN (the off-policy trainer) | A | Done 2026-10-22; CPU pass |
 | R10 | Leftover 3: on-policy distillation on a cluster (the distiller on R3b's shards and exchange, stopping by R7's agreed stop) | A or B | Queued: starts when R7 is merged |
 | R11 | Leftover 5: the dashboard steers `reinforce` (stop with a checkpoint, through R7's agreed stop) | A or B | Queued: starts when R7 is merged |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
@@ -1705,6 +1705,115 @@ when it is made, never grown and never pooled; only `src/Idrak.Reinforcement/Rep
   dotnet run -c Release --no-build --project tests\Idrak.Tests
   Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
   ```
+
+**R9 as built (2026-10-22).** `idrak reinforce` trains in an environment of numbers with no model to load; the library gained
+small builders (no trainer changed: `ReinforcementTrainer.cs`, `OffPolicyTrainer.cs`, `RolloutCollector.cs` are as R6 and R8
+left them; no R1 contract changed; `TrainSession.cs` and the cluster commands untouched).
+- **The dispatch** (`ReinforceCommand.Run`, four lines after `--list`): when `--env` (or `IDRAK_RL_ENV`) names a registered kind
+  whose observations are not conversations, the run goes to the new `src/Idrak.Cli/Commands/Train/ReinforceNumeric.cs`; every
+  other run (no `--env`, `prompts`, `coding`, an unregistered name) takes the language-model path unchanged. The other edits to
+  `ReinforceCommand.cs`: its option lists gain `ReinforceNumeric.ValueOptions`/`Flags`, `Settings`, `Text`, `Int` and `Float` are
+  `internal` (the numeric path reuses them, not copies), `--list` gains an "off-policy (QLosses)" section, and the usage is a
+  `$$"""` string with three insertions (a synopsis line, `ReinforceNumeric.UsageOptions` after the options, `UsageExamples`
+  after the examples), so a merge with R7's stop handling meets only those lines.
+- **The numeric path** (`ReinforceNumeric.Run`): a kind of `float[]` observations and `int` or `float[]` actions (another is
+  refused naming its types); on a cluster (a rank of `cluster sim`, `--cluster FILE`) refused with the reason (a policy of
+  numbers is not spread over ranks; only a language model's rollouts are); a MODEL, a language model's option (`--data`,
+  `--reward`, `--teacher`, `--max-new`, `-w`, the LoRA and session options but `--lr`, `--optimizer`, `--weight-decay`,
+  `--schedule`, `--warmup`, `--min-lr`, `--decay`) and the other trainer's options are usage errors naming them; `-o DIR`
+  required; `--env-option K=V` checked against the kind's `Keys`, then one environment made to read the spaces
+  (`PolicyNetworks.Spaces`; a bad value is the kind's message), all before anything is built or written. The algorithm, by
+  registry: a `PolicyLosses` name trains on-policy, a `QLosses` name (`dqn`) off-policy; one in neither (and `distill`) is
+  refused naming both. **On-policy**: `ReinforceCommand.Settings` (every `IDRAK_RL_*` and the run options as for a language
+  model: `--iterations`, `--episodes`, `--group`, `--estimator`, `--kl`, `--clip`, `--epochs`, `--minibatch`, `--environments`,
+  `--temperature`, `--save-every`, `--evaluate-every`, `--seed`, `--shards`, `--spread`, `--resume`) plus `--gamma`, `--lambda`,
+  `--entropy`, `--max-grad-norm`, `--max-steps`, `--evaluation-episodes`, `--schedule` and its `--warmup`/`--min-lr`/`--decay`;
+  the policy `PolicyNetworks.Categorical` (discrete) or `.Gaussian` (a box), weights from the run's seed, a reference when
+  `--kl` is above 0. **Off-policy**: `OffPolicyOptions.FromEnvironment()` (every `IDRAK_RL_DQN_*` and the shared variables) with
+  `--steps`, `--environments` (here: environments side by side, `IDRAK_RL_DQN_ENVIRONMENTS`), `--replay`, `--batch`,
+  `--learning-starts`, `--train-every`, `--gradient-steps`, `--target-every`, `--tau`, `--epsilon-start`, `--epsilon-end`,
+  `--epsilon-fraction`, `--double`, `--huber`, `--report-every`, and `--save-every`/`--evaluate-every` in steps, `--lr`
+  (`IDRAK_RL_DQN_LEARNING_RATE` underneath), `--max-grad-norm`, `--optimizer`, `--schedule`, `--gamma`, `--max-steps`,
+  `--evaluation-episodes`, `--seed`, `--resume`; **a box of actions is refused** naming it ("--algorithm dqn values each of a
+  discrete set of actions; the pendulum environment acts in box([1], -2 to 2) (a box): train it on-policy with reinforce, ppo,
+  grpo"). The networks from `ModulePolicyOptions.FromEnvironment()` with `--hidden W,W` (none: one linear layer),
+  `--activation`, `--value-head`/`--no-value-head`, `--lr`, `--optimizer`, `--weight-decay`. **Output**: the policy's own `Save`
+  in DIR (`actor.ikw`, `critic.ikw`, `optimizer.safetensors`, `policy.json`) or the online Q-network as `DIR/network.ikw`, and
+  `DIR/idrak-reinforce.json` (format, environment and its options, algorithm, policy kind, spaces, hidden widths, activation,
+  value head, seed, iterations or steps and updates, the last checkpoint), also after a stop; checkpoints in `DIR/checkpoints`
+  (or `IDRAK_RL_CHECKPOINTS`): the trainers' own `iteration-N`/`step-N`; `--resume` from the latest (nothing there is a usage
+  error; another run's checkpoint is the trainer's message as a usage error). **Progress**: the CLI's `ProgressLine` as the
+  trainer's `IProgressReporter` (iterations, or steps), a line per iteration (reward mean ± spread, min to max, loss, updates,
+  evaluation, times) or per report (`step N/M: return, episodes, loss, ε, updates, evaluation`), the trainers' JSON line with
+  `IDRAK_RL_LOG`, Ctrl+C and `--timeout` through the command's `StopKey` (stop after the iteration or round, a checkpoint, the
+  policy saved), `--json` one document (spaces, history with returns and losses, the output lines).
+- **Library (`src/Idrak.Reinforcement`, public, `api/Idrak.Reinforcement.txt` regenerated, the inventory unchanged):**
+  `PolicyNetworks` (new file): `Spaces(kind, options)`, `Network(inputs, outputs, ModulePolicyOptions, device, random)` (the
+  hidden widths, each followed by the activation), `Categorical`/`Gaussian(observationSpace, actionSpace, options, valueHead,
+  device, seed, reference)` and `QNetworks(observationSpace, actionSpace, options, device, seed)` (a box refused naming it),
+  weights drawn from streams of the seed of their own (41-44, apart from the trainers'); `Activations` (tanh, relu, gelu,
+  sigmoid). `ModulePolicyOptions` gains `Hidden` (64, 64), `Activation` (tanh), `ValueHead` (null: automatic), `ValueHeadFor(run)`
+  (a critic for ppo with its own estimator, gae, or a returns baseline of `value`; none for grpo, reinforce and plain returns, so
+  no unused network trains) and `ParseHidden`; `FromEnvironment` reads three new variables. **Choice: the activation by a short
+  list, not `LayerTypes`.** `LayerTypes` (in `Idrak`) holds every layer by name, but a use from `Idrak.Reinforcement` makes it a
+  contract of two packages, which decision 10 (the inventory test) would move into `Idrak.Abstraction`, and it names `Module`
+  and `Device`, which cannot move; an app that wants another architecture builds its modules and hands them to `ModulePolicy`
+  or the off-policy trainer, as before.
+- **Variables** (`EnvironmentVariables.cs`): the twenty `IDRAK_RL_DQN_*` rows now name `reinforce` (they named `test`); new rows
+  `IDRAK_RL_HIDDEN`, `IDRAK_RL_ACTIVATION`, `IDRAK_RL_VALUE_HEAD` (command `reinforce`). Help: the command's usage (a synopsis
+  line, "Options of an environment of numbers", three examples), `idrak help reinforcement` (a paragraph, three examples, the
+  registered off-policy algorithms; its topic line), the CLI README's row and two examples, the library README's line.
+- **Not done (not asked):** a numeric run on `cluster sim` (refused); loading `idrak-reinforce.json` back into a policy to play
+  it (the settings are written for that; no command or builder reads them yet); `--env-option` values beyond the kind's own
+  checks. The real runs' speed is the owner's (below): no solve bar was measured for the commands' defaults here.
+- **Tests:** `tests/Idrak.Tests/CliReinforceNumericTests.cs` (`cli reinforce:`, 3): `--list` names the classic kinds and `dqn`
+  (JSON and text), the help shows the path, and 16 usage errors exit 2 with nothing written (an `--env-option` key the kind
+  does not take, also through `IDRAK_RL_ENV`; dqn on the pendulum naming `box(`; a model given; `--data` and `--max-new`; the
+  other trainer's options both ways; an algorithm in neither registry, and distill; no `-o`; nothing to resume for ppo and dqn;
+  a bad `--hidden`, `--activation`, `IDRAK_RL_HIDDEN`, `IDRAK_RL_DQN_BATCH`); a seeded ppo run on cartpole (4 iterations of 8
+  episodes, mini-batches of 4, `--hidden 16,16` over `IDRAK_RL_HIDDEN=8`, `--iterations 4` over `IDRAK_RL_ITERATIONS=9`):
+  the policy's files, the settings file, `iteration-000002` and `-000004`, four log lines; resumed in another folder from the
+  copied `iteration-000002`, iterations 3 and 4 have the uninterrupted run's returns and losses bit for bit and `actor.ikw`,
+  `critic.ikw`, `optimizer.safetensors` are its bytes; a seeded dqn run on the bandit (means 0.2, 0.5, 1.0, 0.8, a linear
+  Q-network, R6's bandit settings through the options, 3,000 steps over `IDRAK_RL_DQN_STEPS=10`, the replay of
+  `IDRAK_RL_DQN_REPLAY=2000`): six reports, 400 greedy pulls pay 0.988 (the best arm's mean is 1.0), `network.ikw`, the settings,
+  `step-000000001500` and `-3000`, six log lines; resumed from the copied step-1500 checkpoint, the three later reports equal the
+  uninterrupted run's JSON for JSON (returns, losses, ε, evaluation) and `network.ikw` and the last checkpoint's `network.ikw`,
+  `target.ikw`, `optimizer.safetensors` and `replay.bin` are its bytes. `tests/Idrak.Tests/PolicyNetworkTests.cs`
+  (`reinforcement: policy networks:`, 2): the options' defaults (equal records), variables and refusals, `ValueHeadFor`'s cases;
+  the network's layers, the same weights from the same seed, a critic and a reference when asked, acting, a Gaussian policy in
+  the pendulum's box, the spaces refused both ways, the Q-network and target taken by the off-policy trainer, a box refused.
+- **The run (CPU, this agent):** a build with one compile error (a catch variable named as a pattern variable of its block),
+  fixed, then a clean build; `IDRAK_UPDATE_API=1` (`public API`: `Idrak.Reinforcement.txt` gained 14 lines) and
+  `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`: unchanged); then once `cli reinforce|cli distill|plugins:
+  classic|reinforcement:`: 29 passed, 2 failed, and `cli train data|cli health|cli polish|public API|abstraction
+  inventory|naming:`: 38 passed. The two failures were one bug: the numeric path refused `--lr` as a language model's option,
+  because the list of shared session options was declared after the field whose initializer read it (static fields start in
+  order; C# 14 bound `Contains` to the span overload, so the empty array threw nothing). Moved, one rebuild, the two and the
+  numeric usage test rerun: 3 passed. **Total 69 of 69**; the language-model path's tests passed unchanged.
+- **The owner's commands** (repo at `D:\Projects\Idrak`; R9 has no GPU kernel: the CUDA line runs the same networks on the card,
+  and a miss of the bandit's 0.9 there is a finding):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli train data|plugins: classic|reinforcement:|cli health|cli polish|public API|abstraction inventory|naming:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cli reinforce: a seeded ppo run on cartpole|cli reinforce: a seeded dqn run|reinforcement: policy networks"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  # the first real runs: PPO and DQN on CartPole (the defaults: 64, 64 tanh), then each resumed for more
+  dotnet run -c Release --project src\Idrak.Cli -- reinforce --env cartpole --algorithm ppo --iterations 50 -o runs\cartpole
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env cartpole --algorithm dqn --steps 50000 -o runs\cartpole-dqn
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env cartpole --algorithm ppo --iterations 100 -o runs\cartpole --resume
+  # R6's measured CartPole DQN settings through the options, with evaluations
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env cartpole --algorithm dqn --steps 60000 --lr 0.0023 --batch 64 --learning-starts 1000 --train-every 256 --gradient-steps 128 --target-every 10 --epsilon-fraction 0.16 --epsilon-end 0.04 --evaluate-every 1000 --evaluation-episodes 16 --seed 2 -o runs\cartpole-zoo
+  # a box of actions on-policy
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env pendulum --algorithm ppo --iterations 200 --evaluate-every 10 -o runs\pendulum
+  ```
+  What to look at: the PPO lines' reward rising toward 500 (R6's PPO solved CartPole in 2 to 70 iterations of 16 episodes with a
+  64 × 64 network at lr 1e-3, mini-batches of 4 and normalized advantages: the command's defaults are 3e-4 and whole-rollout
+  updates, so give `--lr 0.001 --minibatch 4` and `IDRAK_RL_NORMALIZE_ADVANTAGES=true` to repeat it); the DQN zoo run's
+  evaluation reaching 490 (R6: 22,000 to 52,000 steps); the resumed PPO run starting at iteration 51; `runs\cartpole` holding the
+  policy, `idrak-reinforce.json` and `checkpoints\`.
 
 ## Order and parallelism
 
