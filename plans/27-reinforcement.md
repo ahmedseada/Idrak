@@ -1850,6 +1850,18 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R9 (merged): CPU, CUDA, then real runs in the classic environments (no model to download)
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli train data|plugins: classic|reinforcement:|cli health|cli polish|public API|abstraction inventory|naming:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cli reinforce: a seeded ppo run on cartpole|cli reinforce: a seeded dqn run|reinforcement: policy networks"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+dotnet run -c Release --project src\Idrak.Cli -- reinforce --env cartpole --algorithm ppo --iterations 50 -o runs\cartpole
+dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env cartpole --algorithm dqn --steps 50000 -o runs\cartpole-dqn
+dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env cartpole --algorithm ppo --iterations 100 -o runs\cartpole --resume
+dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env cartpole --algorithm dqn --steps 60000 --lr 0.0023 --batch 64 --learning-starts 1000 --train-every 256 --gradient-steps 128 --target-every 10 --epsilon-fraction 0.16 --epsilon-end 0.04 --evaluate-every 1000 --evaluation-episodes 16 --seed 2 -o runs\cartpole-zoo
+dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce --env pendulum --algorithm ppo --iterations 200 --evaluate-every 10 -o runs\pendulum
+
 # R8 (merged dcb2d9c): CPU and CUDA
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement: off-policy|plugins: classic|public API|abstraction inventory"
 dotnet run -c Release --no-build --project tests\Idrak.Tests
