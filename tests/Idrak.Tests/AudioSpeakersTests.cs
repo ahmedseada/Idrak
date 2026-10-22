@@ -140,7 +140,7 @@ internal static partial class Tests
             string names = Path.Combine(folder, VitsSynthesizer.SpeakersFile);
             IReadOnlyList<string> Voices()
             {
-                using var model = SpeechSynthesisModels.Load(folder);
+                using var model = SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = Device.Cpu });
                 return [.. model.Voices];
             }
 
@@ -157,7 +157,7 @@ internal static partial class Tests
             // VoicedSynthesizer: a checkpoint speaker comes before the store, by name in any case or by index.
             string store = Path.Combine(root, "voices");
             var ids = JsonNode.Parse(File.ReadAllText(AudioData("tiny-vits-speakers/reference/input.json")))!["ids"]!.AsArray().Select(v => (int)v!).ToArray();
-            using (var model = (VitsSynthesizer)SpeechSynthesisModels.Load(folder))
+            using (var model = (VitsSynthesizer)SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = Device.Cpu }))
             using (var voiced = new VoicedSynthesizer(model, new FolderVoiceStore(store)))
             {
                 foreach (string voice in (string[])["p226", "P226", "1"])
@@ -169,10 +169,11 @@ internal static partial class Tests
                 ThrowsNaming<ArgumentException>(() => voiced.Resolve(new SpeechSynthesisOptions { Voice = "5" }), "an index past the speakers", "'5'", "p225, p226, p227");
             }
 
-            // idrak speak --voice and --list-voices.
+            // idrak speak --voice and --list-voices, against the library on the device the command is given (-d cpu): a load
+            // without one takes Device.Default, the best GPU found.
             string wav = Path.Combine(root, "p226.wav");
             float[] expected;
-            using (var model = (VitsSynthesizer)SpeechSynthesisModels.Load(folder))
+            using (var model = (VitsSynthesizer)SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = Device.Cpu }))
             {
                 expected = model.Synthesize(ids, new SpeechSynthesisOptions { NoiseScale = 0, DurationNoiseScale = 0, Voice = "p226" }).Audio.Samples;
             }
@@ -182,30 +183,7 @@ internal static partial class Tests
             var spoken = AudioCli("speak", "-P", VitsPluginPath, folder, text, "--voice", "p226", "--noise", "0", "--duration-noise", "0", "--bits", "float",
                 "--voices", store, "-o", wav, "-d", "cpu");
             Check(spoken.Code == 0, $"speak --voice p226: {spoken.Code} {spoken.Out} {spoken.Err}");
-            float[] written = AudioCodecs.Decode(wav).Samples;
-            string which = "";
-            if (!written.AsSpan().SequenceEqual(expected))
-            {
-                // Which side moved: the library's call again (after the tool ran in this process), and the tool's path (the
-                // text through VoicedSynthesizer with the command's options) in process.
-                VitsPlugin.Register();
-                float[] again, voicedText;
-                using (var model = (VitsSynthesizer)SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = Device.Cpu }))
-                {
-                    again = model.Synthesize(ids, new SpeechSynthesisOptions { NoiseScale = 0, DurationNoiseScale = 0, Voice = "p226" }).Audio.Samples;
-                    using var voiced = new VoicedSynthesizer(model, new FolderVoiceStore(store));
-                    voicedText = voiced.Speak(text, new SpeechSynthesisOptions
-                    {
-                        Voice = "p226", NoiseScale = 0, DurationNoiseScale = 0, Conversion = new VoiceConversionOptions { Tau = new VoiceConversionOptions().Tau },
-                    }).Audio.Samples;
-                }
-
-                VitsPlugin.Unregister();
-                string Like(float[] values) => values.AsSpan().SequenceEqual(written) ? "the WAV's" : values.AsSpan().SequenceEqual(expected) ? "the first call's" : "neither";
-                which = $" (the library's call again gives {Like(again)} samples, the text through VoicedSynthesizer {Like(voicedText)})";
-            }
-
-            AssertClose(expected, written, 0f, $"speak --voice p226's WAV against the library's samples{which}");
+            AssertClose(expected, AudioCodecs.Decode(wav).Samples, 0f, "speak --voice p226's WAV against the library's samples");
             var listed = AudioCliJson("speak", "-P", VitsPluginPath, folder, "--list-voices", "--voices", store);
             Check(listed["speakers"]!.AsArray().Select(v => (string?)v).SequenceEqual(FixtureSpeakers), $"--list-voices names the speakers: {listed}");
         }
