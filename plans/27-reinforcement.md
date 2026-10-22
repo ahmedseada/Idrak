@@ -11,6 +11,7 @@
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Planned |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Planned |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
+| R4b | `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects, on the coding plug-in (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
 | R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
 
@@ -172,7 +173,8 @@ the same way and under the same limits").
 | # | Namespace | Plug-in | Registers | Comes from | Phase |
 |---|---|---|---|---|---|
 | 1 | `Idrak.Reinforcement.Plugins.Coding` | `CodingPlugin` ("coding") | `EnvironmentKinds`: `coding`; `RewardFunctions`: `tests-passed`, `verify-fraction`, `rounds`, `tool-errors`; `CommandSandboxes`: `container` | M5 (`src/Idrak.Text/Generation/CodingAgent.cs`), new | R4 |
-| 2 | `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` ("classic") | `EnvironmentKinds`: `bandit`, `cartpole`, `pendulum`, `mountain-car` | new | R6 (optional) |
+| 2 | `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build`; requires "coding" | new (the owner, 2026-10-22) | R4b |
+| 3 | `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` ("classic") | `EnvironmentKinds`: `bandit`, `cartpole`, `pendulum`, `mountain-car` | new | R6 (optional) |
 
 `container` is a plug-in, not a library default, because it runs an outside program (Docker or Podman), as the espeak-ng
 phonemizer is a plug-in (Plan 26, #18).
@@ -368,6 +370,43 @@ enforces its time, output and memory limits and refuses `network: off`; `contain
 plugins:|public API|abstraction inventory|cli health: every environment variable`. **Owner:** `container` on a machine with
 Docker or Podman, and the coding run of R5.
 
+## Phase R4b: `Idrak.Reinforcement.Plugins.CSharp` (the owner, 2026-10-22)
+
+Agentic coding on C# projects as a plug-in of its own, so nothing tied to one programming language sits in the library or
+in the general `coding` plug-in (which stays driven by each task's own commands). It builds on `coding` and copies none
+of it: `CSharpCodingPlugin` requires `CodingPlugin` (`Requires`, as Gemma 3 vision requires the Gemma text plug-in).
+- **The `csharp` environment** (`EnvironmentKinds`): the `coding` environment with C#'s defaults for what a task does not
+  say: setup `dotnet restore`, verification `dotnet build --no-restore` then `dotnet test --no-build` with a results file;
+  `language: "csharp"`; the system prompt's C# lines (build, test, read the errors) from the plug-in, not the library.
+- **Rewards read from machine-readable output, not console text:**
+  - `csharp-tests`: the share of tests that passed, from `dotnet test`'s TRX results file (XML through the base
+    library's `XmlReader`), so a task with ten tests that passes seven gets 0.7, not 0; tests that did not run count as
+    failed.
+  - `csharp-build`: 0 when the build fails, else 1, less a weight per error (and optionally per warning), from the
+    build's error and warning log (`-fileLoggerParameters` with `errorsonly` / `warningsonly`), whose
+    `file(line,col): error CSnnnn: text` lines are a stable format.
+  - Both combine with the general ones (`rounds`, `tool-errors`) and with R3's teacher term by weights.
+- **Speed (rules 75, 79):** one shared package folder for every episode (`NUGET_PACKAGES`, filled by each task's setup
+  once), so a workspace restores from disk; build nodes not left behind by parallel episodes (`MSBUILDDISABLENODEREUSE`)
+  and the build server per workspace a setting, measured; the number of builds at once measured from the cores (the
+  workspaces setting of R4).
+- **Guards against gaming the tests:** the hidden tests are copied in after the agent (R4); edits to the test projects
+  and to the build's shared files (`Directory.Build.props`, `Directory.Packages.props`, the test `.csproj`) are reported
+  and can be refused (a glob list, a setting).
+- **Sandbox:** `process` with `dotnet` on the allow-list (as today), or `container` with an image holding the .NET SDK,
+  the image the owner's setting (`IDRAK_SANDBOX_IMAGE`), never a fixed one.
+- **Settings:** the default commands, the reward weights, the protected globs, the package folder; variables
+  `IDRAK_CSHARP_PACKAGES`, `IDRAK_CSHARP_PROTECT` (names proposed).
+
+**Done when:** `plugins: csharp` passes on a tiny C# solution written by the test (a library project and a test project;
+it runs the real `dotnet`, as the CodingAgent tests do): a task with no commands gets the C# defaults; a fake model's
+partly right answer gets the share of tests it passes; a build with errors gets `csharp-build`'s penalty per error; an
+edit to the test project is refused when asked; two episodes in parallel share the package folder and leave no build
+nodes running; unregistering `csharp` leaves `coding` as it found it.
+
+**Tests (CPU here):** one build; `plugins: csharp|plugins: coding|coding agent:|reinforcement contracts|plugins:|
+public API|abstraction inventory|cli health: every environment variable`. **Owner:** the C# demo suite run of R5.
+
 ## Phase R5: `idrak reinforce`, the samples, a demo suite
 
 - **`idrak reinforce MODEL`** (Train group, beside `tune`): `--env prompts --data FILE --reward exact` or `--env coding
@@ -387,7 +426,8 @@ Docker or Podman, and the coding run of R5.
 - **`samples/Idrak.Samples.CodingAgent`:** `agent-run` and `agent-check` on the plug-in's suite and verifier, and a new
   `agent-train` that calls the library's trainer (no trainer of its own); its README.
 - **A demo suite** under `samples/Idrak.Samples.CodingAgent/suite/`: a few small C# tasks (a workspace, hidden tests, a
-  solution), each passing `agent-check`, for the owner's first real run.
+  solution), each passing `agent-check`, run through the `csharp` environment of R4b, for the owner's first real run
+  (this part of R5 waits for R4b's merge).
 
 **Done when:** `cli reinforce` runs a seeded GRPO iteration on the test's tiny model (`prompts`) and on the test's coding
 suite with the fake model, `--list` names every registry's entries, `--resume` continues, the variables table test
@@ -420,7 +460,7 @@ At most two agents at a time, each in its own worktree; a merge is built and its
 | 1 | R0, the moves (they touch `FineTuner`, Audio's trainers, the CLI's tune and eval) | R1, the contracts and skeletons (new files, the CLI's plug-in registration; none of R0's files) |
 | 2 | R2, the general part (after R1) | R3, the language-model policy (after R0 and R1) |
 | 3 | none (R6 waits for the main plan) | R4, the coding plug-in (after R2 and R3) |
-| 4 | R5, the CLI and samples (after R4) | none |
+| 4 | R4b, the C# coding plug-in (after R4) | R5, the CLI and samples (after R4; its demo suite after R4b) |
 | 5 | R6, classic environments and off-policy (after R5: the owner, 2026-10-22) | none |
 
 Files both lanes touch (`api/*.txt`, the abstraction inventory, `tests/Idrak.Tests/Program.cs`'s test list,
@@ -452,7 +492,7 @@ dotnet run -c Release --no-build --project tests\Idrak.Tests
 Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
 
 # R5: a first real run on the demo suite (adapters into runs\rl-demo)
-dotnet run -c Release --project src\Idrak.Cli -- reinforce Qwen/Qwen3-0.6B --env coding --suite samples\Idrak.Samples.CodingAgent\suite --algorithm grpo --group 8 --iterations 20 --out runs\rl-demo
+dotnet run -c Release --project src\Idrak.Cli -- reinforce Qwen/Qwen3-0.6B --env csharp --suite samples\Idrak.Samples.CodingAgent\suite --algorithm grpo --group 8 --iterations 20 --out runs\rl-demo
 ```
 
 ## Risks
