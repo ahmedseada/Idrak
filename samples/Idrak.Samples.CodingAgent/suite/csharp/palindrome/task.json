@@ -1,0 +1,15 @@
+{
+  "prompt": "Words.IsPalindrome in Words.cs should ignore case and every character that is not a letter or a digit: \"Never odd or even\" and \"A man, a plan, a canal: Panama\" are palindromes, \"hello\" is not. Fix it. The project builds with dotnet build; tests/Checks.cs is replaced by hidden tests when the task is checked.",
+  "language": "csharp",
+  "tags": [
+    "demo",
+    "bug-fix"
+  ],
+  "setup": [
+    "dotnet restore -nodeReuse:false"
+  ],
+  "verify": [
+    "dotnet build --no-restore -nodeReuse:false",
+    "dotnet bin/Debug/net10.0/Palindromes.dll"
+  ]
+}
