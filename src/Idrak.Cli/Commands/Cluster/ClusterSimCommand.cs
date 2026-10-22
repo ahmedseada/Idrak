@@ -53,8 +53,8 @@ internal static class ClusterSession
 }
 
 /// <summary>
-/// <c>idrak cluster sim --topology FILE -- pretrain|tune|train|resume|reinforce …</c> (plan 23, phases C2 and C8; reinforce
-/// from Plan 27, R3c): runs a training
+/// <c>idrak cluster sim --topology FILE -- pretrain|tune|train|resume|reinforce|distill …</c> (plan 23, phases C2 and C8; reinforce
+/// from Plan 27, R3c; distill --on-policy from R10): runs a training
 /// command once per rank of a topology file, every rank a thread of this process on a device carved from the physical
 /// device its entry names, joined by the simulated transport; rank 0 writes the run and prints, and each rank's network
 /// time on the virtual clock is reported beside the wall time. The run's event log goes to its run folder, flushed as it
@@ -70,6 +70,7 @@ internal sealed class ClusterSimCommand : Command
         ("train", ["--run"], "--run DIR"),
         ("resume", [], "RUN"),
         ("reinforce", ["-o", "--out"], "-o DIR"),                           // Plan 27, R3c: rank 0 writes the adapter, its checkpoints and log
+        ("distill", ["-o", "--out"], "-o DIR"),                             // Plan 27, R10: distill --on-policy; rank 0 writes the adapter
     ];
 
     /// <summary>The event log's file name in a run folder.</summary>
@@ -80,7 +81,7 @@ internal sealed class ClusterSimCommand : Command
     public override string Summary => "Runs training on a simulated cluster: every rank of a topology file in this process";
 
     public override string Usage => """
-        --topology FILE [options] -- pretrain|tune|train|resume|reinforce ARGS
+        --topology FILE [options] -- pretrain|tune|train|resume|reinforce|distill ARGS
 
         Runs the training command after -- once per rank of the topology file: every rank a thread of this process on
         a device carved from the physical device its entry names (the entry's memory as a hard cap), the ranks joined
@@ -89,7 +90,10 @@ internal sealed class ClusterSimCommand : Command
         train --run DIR, resume RUN, reinforce -o DIR) and its output is shown. reinforce spreads each rollout's episodes
         over the ranks by shards (--shards, --spread; IDRAK_RL_SHARDS, IDRAK_RL_SPREAD) and gathers them, so with the same
         shard count a seeded run plays the episodes one process plays; rank 0 writes the adapter, its manifest, the
-        checkpoints and the log, and --resume goes on from the checkpoint. Each training step draws the failure model's
+        checkpoints and the log, and --resume goes on from the checkpoint. distill runs with --on-policy (distill -o DIR):
+        each step's prompts are cut into the same shards, each rank samples its shards' and the samples are exchanged;
+        rank 0 writes the adapter (distill's other ways, which write teacher files or pass over fixed data, do not run
+        here). Each training step draws the failure model's
         faults from the seed (a slow worker, a lossy link, a late joiner that sits out its first steps while the others
         train them, a dropped worker that ends the run naming it); the faults injected are listed with their replay key,
         and the event log (faults, each rank's clock per step) is written to the run folder as it goes (idrak cluster
@@ -139,6 +143,7 @@ internal sealed class ClusterSimCommand : Command
           idrak cluster sim --topology two.json --profile -- train network.json --data houses.csv --run run
           idrak cluster sim --topology two.json -- tune train my-model chats.jsonl -o adapters/chat
           idrak cluster sim --topology two.json -- reinforce my-model --data prompts.jsonl --algorithm grpo --shards 4 -o rl
+          idrak cluster sim --topology two.json -- distill --teacher big --student small --data c.jsonl --on-policy -o op
           idrak cluster sim --topology two.json --dashboard -- pretrain my-model --tokens tokens.bin --steps 500 -o run
         """;
 
@@ -188,11 +193,13 @@ internal sealed class ClusterSimCommand : Command
     /// </summary>
     public static void CheckTrainer(IReadOnlyList<string> inner, bool steered = true)
     {
-        if (inner.Count > 0 && inner[0] == "distill")
+        if (inner.Count > 0 && inner[0] == "distill" && !inner.Contains("--on-policy"))
         {
-            // Plan 27, R3c: on-policy distillation samples every step's prompts on every rank, without an exchange (not spread).
-            throw new UsageException("cluster sim does not run distill: on-policy distillation samples every prompt on every rank, and its other ways are teacher passes "
-                                     + "of their own. Give reinforce with a policy loss and --teacher (its episodes spread over the ranks), or tune.");
+            // Plan 27, R10: on-policy distillation spreads its samples over the ranks; the other ways are not asked to run here
+            // (--generate and --precompute write teacher files every rank would write, the logits way is untried on a cluster).
+            throw new UsageException("cluster sim runs distill with --on-policy only (each rank samples its shards' prompts): its other ways write the teacher's "
+                                     + "answers or logits (--generate, --precompute) or pass the teacher over fixed data, and do not run on a simulated cluster. "
+                                     + "Give --on-policy, or tune on the cluster with data the teacher wrote in one process.");
         }
 
         if (inner.Count == 0 || Trainers.All(t => t.Command != inner[0]))
@@ -522,7 +529,7 @@ internal sealed class ClusterSimCommand : Command
             "pretrain" => Value("-o", "--out"),
             "train" => Value("--run"),
             "resume" => inner.Skip(1).FirstOrDefault(a => !a.StartsWith('-')) is { } run && Directory.Exists(run) ? run : null,
-            "tune" or "reinforce" => null,                                      // its -o is the adapter's folder, not a run's
+            "tune" or "reinforce" or "distill" => null,                         // its -o is the adapter's folder, not a run's
             _ => Value("-o", "--out"),                                          // another command cluster start runs
         };
     }

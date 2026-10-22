@@ -176,7 +176,8 @@ internal static class HelpTopics
               idrak reinforce MODEL ... --teacher BIG    a teacher's distributions on the model's own replies beside the reward
               idrak reinforce MODEL --algorithm distill --teacher BIG --data FILE -o DIR
               idrak distill --teacher BIG --student MODEL --data FILE --on-policy -o DIR
-                                                      on-policy distillation alone (Agarwal et al. 2024)
+                                                      on-policy distillation alone (Agarwal et al. 2024); on a
+                                                      cluster each rank samples its shards' prompts (--shards)
               idrak reinforce --env cartpole --algorithm ppo --iterations 50 -o runs/cartpole
                                                       PPO on CartPole: a categorical policy of 64, 64 tanh with a value head
               idrak reinforce --env cartpole --algorithm dqn --steps 50000 -o runs/cartpole-dqn

@@ -135,8 +135,9 @@ internal sealed class ReinforceCommand : Command
         On a cluster (idrak cluster sim --topology FILE -- reinforce ..., or --cluster FILE) every rank runs the command on
         its device: each rollout's episodes are spread over the ranks by shards and gathered, every rank makes the same
         updates (the gradients summed across the ranks), and rank 0 alone writes the adapter, its manifest, the checkpoints
-        and the log and shows the progress; --resume goes on from the checkpoint on every rank. --algorithm distill does
-        not run on a cluster (idrak distill --on-policy's sampling is not spread over ranks): give grpo with --teacher.
+        and the log and shows the progress; --resume goes on from the checkpoint on every rank. --algorithm distill cuts
+        each step's prompts into the same shards (each rank samples its shards', the samples are exchanged), as idrak
+        distill --on-policy does on a cluster.
 
         Examples:
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
@@ -234,14 +235,6 @@ internal sealed class ReinforceCommand : Command
             throw new UsageException($"--algorithm {Distill} learns from a teacher: give --teacher MODEL.");
         }
 
-        if (distill && ClusterSession.Current is not null)
-        {
-            // OnPolicyDistiller samples every step's prompts on every rank and steps on them without an exchange: the ranks
-            // would agree only where generation is bit-identical across them, and the sampling is not spread (W times the work).
-            throw new UsageException($"--algorithm {Distill} does not run on a cluster: on-policy distillation alone samples every prompt on every rank. Give a policy loss "
-                                     + "with --teacher (grpo --teacher MODEL: the teacher's term beside the reward, its episodes spread over the ranks), or run it in one process.");
-        }
-
         if (distill && (context.Flag("--resume") || options.Resume is not null))
         {
             throw new UsageException($"--algorithm {Distill} runs as idrak distill --on-policy does, without checkpoints to resume from: give a policy loss to --resume.");
@@ -284,6 +277,7 @@ internal sealed class ReinforceCommand : Command
                 {
                     Steps = options.Iterations, PromptsPerStep = options.EpisodesPerIteration, MaxLength = tuning.MaxLength, MaxNewTokens = policyOptions.MaxNewTokens,
                     SamplingTemperature = options.Temperature, Seed = options.Seed, Divergence = policyOptions.Divergence, Beta = policyOptions.Beta,
+                    Shards = options.Shards, Spread = options.Spread,              // R10: a step's prompts in R3b's shards, on a cluster too
                 }, output);
                 return code;
             }
