@@ -303,6 +303,11 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IHostValueCollectiv
 
     private int Real => _root.Real;
 
+    // The run's shared state and this rank in it (the "shared" stop agreement, Plan 27 R7).
+    internal SimWorld World => _world;
+
+    internal int RealRank => Real;
+
     private ICollectives Current => _present
         ? _current.Collectives
         : throw new InvalidOperationException(_joinsAt is { } at

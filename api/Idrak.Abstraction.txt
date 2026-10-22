@@ -134,6 +134,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public System.Collections.Generic.IReadOnlyList<int>? PipelineCuts { get; init; }
   public System.TimeSpan RetryDelay { get; init; }
   public System.TimeSpan SharedMemoryCheck { get; init; }
+  public System.TimeSpan StopWait { get; init; }
   public System.TimeSpan Timeout { get; init; }
   public System.TimeSpan? MessageCost { get; init; }
   public System.TimeSpan? SharedMemorySpin { get; init; }
@@ -157,6 +158,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public int RebalanceEvery { get; init; }
   public int RebalanceSteps { get; init; }
   public int Retries { get; init; }
+  public int StopEvery { get; init; }
   public int SuggestSliceValues { get; init; }
   public int SuggestSteps { get; init; }
   public int SyncWeightsEvery { get; init; }
@@ -180,6 +182,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public string Placement { get; init; }
   public string Schedule { get; init; }
   public string Selector { get; init; }
+  public string StopAgreement { get; init; }
   public string Transport { get; init; }
   public string? Collective { get; init; }
   public string? Compression { get; init; }
@@ -198,6 +201,7 @@ public sealed class Idrak.Abstraction.Cluster.ClusterRunStoppedException : Syste
   public ClusterRunStoppedException(long step, string message)
   public ClusterRunStoppedException(string message)
   public ClusterRunStoppedException(string message, System.Exception inner)
+  public bool Agreed { get; init; }
   public long Step { get; }
 
 public sealed record Idrak.Abstraction.Cluster.ClusterSimulationSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterSimulationSpec>
@@ -425,6 +429,30 @@ public interface Idrak.Abstraction.Cluster.IStepGroup
   public int Holder { get; }
   public long Step { get; }
 
+public interface Idrak.Abstraction.Cluster.IStopAgreement
+  public Idrak.Abstraction.Cluster.ClusterRunStoppedException Stopped(long step)
+  public System.Threading.CancellationToken GiveUpToken { get; }
+  public bool Agree(long step)
+  public bool Agreed { get; }
+  public bool Carries { get; }
+  public bool Requested { get; }
+  public float Contribution { get; }
+  public int Askers { get; }
+  public int Rank { get; }
+  public int WorldSize { get; }
+  public long? Step { get; }
+  public string Name { get; }
+  public string? GaveUp { get; }
+  public string? Reason { get; }
+  public void Carried(float sum)
+  public void Request(string reason)
+  public void Reset()
+
+public interface Idrak.Abstraction.Cluster.IStopAgreementProvider
+  public Idrak.Abstraction.Cluster.IStopAgreement Create(Idrak.Abstraction.Cluster.ICollectives collectives, Idrak.Abstraction.Cluster.ClusterOptions options)
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Abstraction.Cluster.ITransport : System.IDisposable
   public (default) System.TimeSpan SimulatedTime { get; }
   public (default) bool Simulated { get; }
@@ -572,6 +600,46 @@ public sealed record Idrak.Abstraction.Cluster.SimulationOptions : System.IEquat
 public enum Idrak.Abstraction.Cluster.StartingState : int
   Broadcast = 0
   Check = 1
+
+public abstract class Idrak.Abstraction.Cluster.StopAgreement : Idrak.Abstraction.Cluster.IStopAgreement
+  protected StopAgreement(int rank, int worldSize, System.TimeSpan wait)
+  protected abstract int Decide(long step)
+  protected virtual void Asked(string reason)
+  protected virtual void Began()
+  public Idrak.Abstraction.Cluster.ClusterRunStoppedException Stopped(long step)
+  public System.Threading.CancellationToken GiveUpToken { get; }
+  public System.TimeSpan Wait { get; }
+  public abstract string Name { get; }
+  public bool Agree(long step)
+  public bool Agreed { get; }
+  public bool Requested { get; }
+  public float Contribution { get; }
+  public int Askers { get; }
+  public int Rank { get; }
+  public int WorldSize { get; }
+  public long? Step { get; }
+  public string? GaveUp { get; }
+  public string? Reason { get; }
+  public virtual bool Carries { get; }
+  public virtual void Carried(float sum)
+  public void Request(string reason)
+  public void Reset()
+
+public static class Idrak.Abstraction.Cluster.StopAgreements
+  public const string Automatic = "auto"
+  public static Idrak.Abstraction.Cluster.IStopAgreement For(Idrak.Abstraction.Cluster.ICollectives collectives, Idrak.Abstraction.Cluster.ClusterOptions? options = null)
+  public static Idrak.Abstraction.Cluster.IStopAgreementProvider Get(string name)
+  public static Idrak.Abstraction.Cluster.IStopAgreementProvider? Default(string name)
+  public static Idrak.Abstraction.Cluster.IStopAgreementProvider? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.IStopAgreementProvider> All { get; }
+  public static System.Threading.CancellationTokenRegistration Watch(this Idrak.Abstraction.Cluster.IStopAgreement agreement, System.Threading.CancellationToken token, string reason = "cancelled (Ctrl+C or a timeout)")
+  public static System.TimeoutException? GaveUpError(this Idrak.Abstraction.Cluster.IStopAgreement? agreement, System.OperationCanceledException cancelled)
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string NameFor(Idrak.Abstraction.Cluster.ICollectives collectives, Idrak.Abstraction.Cluster.ClusterOptions options)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Cluster.IStopAgreementProvider provider)
 
 public enum Idrak.Abstraction.Cluster.ThroughputClock : int
   Simulated = 1
@@ -4808,6 +4876,7 @@ public interface Idrak.Abstraction.Reinforcement.IRewardFunction
   public string Summary { get; }
 
 public interface Idrak.Abstraction.Reinforcement.IRolloutRanks<TObservation, TAction>
+  public (default) Idrak.Abstraction.Cluster.IStopAgreement? StopAgreement { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>> Gather(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>> mine, System.Threading.CancellationToken cancellationToken = default)
   public int Rank { get; }
   public int WorldSize { get; }

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Cluster;
 using Idrak.Abstraction.Reinforcement;
 using Idrak.Reinforcement.Abstractions;
 
@@ -84,7 +85,9 @@ public static class ReinforcementTrainer
 /// iteration, the updates made and the seed, every <see cref="ReinforcementOptions.SaveEvery"/> iterations and at the end
 /// or a stop; <see cref="ReinforcementOptions.Resume"/> continues one bit for bit as if it had not stopped.</item>
 /// <item><b>Stopping:</b> a cancelled token stops the run between iterations (an iteration under way when it is cancelled is
-/// dropped, its updates not begun), with a checkpoint when a folder is set.</item>
+/// dropped, its updates not begun), with a checkpoint when a folder is set. On a cluster the token asks the ranks to stop
+/// (Plan 27, R7: <see cref="IRolloutRanks{TObservation, TAction}.StopAgreement"/>): the iteration under way runs to its end
+/// on every rank, and every rank stops at the iteration boundary they agree on, where rank 0 writes the checkpoint.</item>
 /// <item><b>Progress and telemetry:</b> the iterations on <see cref="Progress"/> (mean reward, spread, episodes a second);
 /// the library's telemetry (training start and end, a batch event per update, an epoch event per iteration whose metrics
 /// are the episodes, steps, reward mean and spread, KL, clip share, rollout and update times), built only when a hook
@@ -213,10 +216,17 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                 scheduled?.Optimizer.Parameters.Sum(p => (long)p.Size) ?? 0, scheduled?.Optimizer.LearningRate ?? 0f, ComputeResources.MaxCpuThreads));
         }
 
+        // On a cluster a cancelled token asks the ranks to stop and they agree at an iteration boundary (Plan 27, R7): the
+        // rollout, its exchange and the updates run to their end on every rank (their token is cancelled only when this rank
+        // gives up waiting), so no rank leaves a collective the others are in. In one process the token stops as before.
+        var agreement = (_policy as IRolloutRanks<TObservation, TAction>)?.StopAgreement;
+        agreement?.Reset();
+        using var asks = agreement?.Watch(cancellationToken) ?? default;
+        var inner = agreement?.GiveUpToken ?? cancellationToken;
         int iteration = first;
         for (; iteration < o.Iterations; iteration++)
         {
-            if (cancellationToken.IsCancellationRequested)
+            if (agreement is null ? cancellationToken.IsCancellationRequested : agreement.Agree(iteration))
             {
                 cancelled = true;
                 break;
@@ -235,9 +245,13 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             try
             {
                 batch = await collector.CollectAsync(_policy, starts, new ActionSampling { Temperature = o.Temperature, Seed = Seeds.Derive(seed, Seeds.Sampling, iteration) },
-                    o.MaxEpisodeSteps, cancellationToken).ConfigureAwait(false);
+                    o.MaxEpisodeSteps, inner).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException e) when (agreement.GaveUpError(e) is { } gaveUp)
+            {
+                throw gaveUp;                                                           // this rank left its rollout on its own, loudly
+            }
+            catch (OperationCanceledException) when (agreement is null && cancellationToken.IsCancellationRequested)
             {
                 cancelled = true;
                 break;
@@ -311,9 +325,13 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                 double? evaluation;
                 try
                 {
-                    evaluation = await EvaluateAsync(collector, evaluationSeed, iteration, o, cancellationToken).ConfigureAwait(false);
+                    evaluation = await EvaluateAsync(collector, evaluationSeed, iteration, o, inner).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException e) when (agreement.GaveUpError(e) is { } gaveUp)
+                {
+                    throw gaveUp;
+                }
+                catch (OperationCanceledException) when (agreement is null && cancellationToken.IsCancellationRequested)
                 {
                     evaluation = null;
                 }
