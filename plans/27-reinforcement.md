@@ -832,6 +832,11 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R2 (merged ba2f720): no GPU code; its CPU filters on the owner's machine
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement:|reinforcement contracts|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|override loop:|plugins: packages"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+
 # R1 (merged 6dd4e01): no GPU code; its CPU filters on the owner's machine
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement contracts|plugins:|public API|abstraction inventory|naming:|override loop:|cli health|conformance kit:"
 dotnet run -c Release --no-build --project tests\Idrak.Tests
