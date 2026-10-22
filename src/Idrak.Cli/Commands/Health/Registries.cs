@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Abstraction.Plugins;
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Audio.Abstractions;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
@@ -60,6 +61,10 @@ internal static class Registries
             new("linesegmenters", "Text line segmenters", false, Sorted(TextLineSegmenters.Names)),
             new("textmatchers", "Text matchers", false, Sorted(TextMatchers.Names)),
             new("readingorders", "Reading orders", false, Sorted(ReadingOrders.Names)),
+            new("environments", "Reinforcement environment kinds", false, Sorted(EnvironmentKinds.Names)),
+            new("rewards", "Reward functions", false, Sorted(RewardFunctions.Names)),
+            new("advantages", "Advantage estimators", false, Sorted(AdvantageEstimators.Names)),
+            new("policylosses", "Policy losses", false, Sorted(PolicyLosses.Names)),
             new("plugins", "Plug-ins (model families)", false, Sorted(IdrakPlugins.Names)),
             new("devices", "Device kinds", false, Sorted(DeviceListing.Backends.Select(b => b.Kind).Prepend("cpu"))),
         ];

@@ -4644,6 +4644,227 @@ public static class Idrak.Abstraction.Plugins.IdrakPlugins
 public static class Idrak.Abstraction.RandomDraws
   public static double NextGaussian(this System.Random random)
 
+public sealed class Idrak.Abstraction.Reinforcement.ActionRecord
+  public ActionRecord(int[] tokens, float[] logProbabilities, float value = NaNf, int[]? context = null)
+  public bool HasValue { get; }
+  public float Value { get; }
+  public float[] LogProbabilities { get; }
+  public int Units { get; }
+  public int[] Tokens { get; }
+  public int[]? Context { get; }
+
+public sealed record Idrak.Abstraction.Reinforcement.ActionSampling : System.IEquatable<Idrak.Abstraction.Reinforcement.ActionSampling>
+  public ActionSampling()
+  public bool Greedy { get; init; }
+  public float Temperature { get; init; }
+  public int Seed { get; init; }
+  public static Idrak.Abstraction.Reinforcement.ActionSampling Default { get; }
+
+public static class Idrak.Abstraction.Reinforcement.AdvantageEstimators
+  public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator Get(string name)
+  public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator? Default(string name)
+  public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Reinforcement.IAdvantageEstimator estimator)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+[Obsolete("Types with embedded references are not supported in this version of your compiler.", true)] public readonly ref struct Idrak.Abstraction.Reinforcement.AdvantageInput
+  public AdvantageInput(System.ReadOnlySpan<float> rewards, System.ReadOnlySpan<float> values, System.ReadOnlySpan<int> lengths, System.ReadOnlySpan<bool> truncated, System.ReadOnlySpan<float> finalValues, System.ReadOnlySpan<int> groups)
+  public System.ReadOnlySpan<bool> Truncated { get; }
+  public System.ReadOnlySpan<float> FinalValues { get; }
+  public System.ReadOnlySpan<float> Rewards { get; }
+  public System.ReadOnlySpan<float> Values { get; }
+  public System.ReadOnlySpan<int> Groups { get; }
+  public System.ReadOnlySpan<int> Lengths { get; }
+  public bool HasValues { get; }
+  public bool IsTruncated(int episode)
+  public int Episodes { get; }
+  public int Group(int episode)
+  public int Steps { get; }
+
+public static class Idrak.Abstraction.Reinforcement.EnvironmentKinds
+  public static Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction> Create<TObservation, TAction>(string name, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind Get(string name)
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind? Default(string name)
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Reinforcement.IEnvironmentKind kind)
+
+public readonly record struct Idrak.Abstraction.Reinforcement.EnvironmentStep<TObservation> : System.IEquatable<Idrak.Abstraction.Reinforcement.EnvironmentStep<TObservation>>
+  public EnvironmentStep(TObservation Observation, float Reward, bool Terminated, bool Truncated, System.Collections.Generic.IReadOnlyDictionary<string, string>? Info = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Info { get; init; }
+  public TObservation Observation { get; init; }
+  public bool Done { get; }
+  public bool Terminated { get; init; }
+  public bool Truncated { get; init; }
+  public float Reward { get; init; }
+
+public interface Idrak.Abstraction.Reinforcement.IAdvantageEstimator
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public bool UsesValues { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public void Estimate(Idrak.Abstraction.Reinforcement.AdvantageInput input, System.Span<float> advantages, System.Span<float> returns, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+
+public interface Idrak.Abstraction.Reinforcement.IEnvironment : System.IDisposable
+  public Idrak.Abstraction.Reinforcement.Space ActionSpace { get; }
+  public Idrak.Abstraction.Reinforcement.Space ObservationSpace { get; }
+
+public interface Idrak.Abstraction.Reinforcement.IEnvironmentKind
+  public Idrak.Abstraction.Reinforcement.IEnvironment Create(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public System.Type ActionType { get; }
+  public System.Type ObservationType { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction> : Idrak.Abstraction.Reinforcement.IEnvironment, System.IDisposable
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.EnvironmentStep<TObservation>> StepAsync(TAction action, System.Threading.CancellationToken cancellationToken = default)
+  public TObservation Reset(int seed)
+
+public interface Idrak.Abstraction.Reinforcement.IPolicyLoss
+  public Idrak.Abstraction.Tensor Loss(Idrak.Abstraction.Reinforcement.PolicyLossInput input, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction> : System.IDisposable
+  public Idrak.Abstraction.Reinforcement.UpdateStats Update(Idrak.Abstraction.Reinforcement.RolloutBatch<TObservation, TAction> batch, Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyList<int>? episodes = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null)
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.PolicyActions<TAction>> ActAsync(System.Collections.Generic.IReadOnlyList<TObservation> observations, Idrak.Abstraction.Reinforcement.ActionSampling sampling, System.Threading.CancellationToken cancellationToken = default)
+  public void Load(string path)
+  public void Save(string path)
+
+public interface Idrak.Abstraction.Reinforcement.IRewardFunction
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public System.Threading.Tasks.ValueTask<float[]> ScoreAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.RewardInput> inputs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public string Name { get; }
+  public string Summary { get; }
+
+public sealed class Idrak.Abstraction.Reinforcement.PolicyActions<TAction>
+  public PolicyActions(System.Collections.Generic.IReadOnlyList<TAction> actions, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> records)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> Records { get; }
+  public System.Collections.Generic.IReadOnlyList<TAction> Actions { get; }
+
+public sealed class Idrak.Abstraction.Reinforcement.PolicyLossInput
+  public Idrak.Abstraction.Tensor Advantages { get; }
+  public Idrak.Abstraction.Tensor BehaviorLogProbabilities { get; }
+  public Idrak.Abstraction.Tensor LogProbabilities { get; }
+  public Idrak.Abstraction.Tensor? Entropies { get; }
+  public Idrak.Abstraction.Tensor? ReferenceLogProbabilities { get; }
+  public Idrak.Abstraction.Tensor? Returns { get; }
+  public Idrak.Abstraction.Tensor? Values { get; }
+  public PolicyLossInput(Idrak.Abstraction.Tensor logProbabilities, System.Collections.Generic.IReadOnlyList<int> counts, Idrak.Abstraction.Tensor advantages, Idrak.Abstraction.Tensor? behaviorLogProbabilities = null, Idrak.Abstraction.Tensor? referenceLogProbabilities = null, Idrak.Abstraction.Tensor? values = null, Idrak.Abstraction.Tensor? returns = null, Idrak.Abstraction.Tensor? entropies = null, int stepUnits = 0, int stepSequences = 0)
+  public System.Collections.Generic.IReadOnlyList<int> Counts { get; }
+  public bool HasBehavior { get; }
+  public int Sequences { get; }
+  public int StepSequences { get; }
+  public int StepUnits { get; }
+  public int Units { get; }
+
+public static class Idrak.Abstraction.Reinforcement.PolicyLosses
+  public static Idrak.Abstraction.Reinforcement.IPolicyLoss Get(string name)
+  public static Idrak.Abstraction.Reinforcement.IPolicyLoss? Default(string name)
+  public static Idrak.Abstraction.Reinforcement.IPolicyLoss? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Reinforcement.IPolicyLoss loss)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public static class Idrak.Abstraction.Reinforcement.RewardFunctions
+  public static Idrak.Abstraction.Reinforcement.IRewardFunction Get(string name)
+  public static Idrak.Abstraction.Reinforcement.IRewardFunction? Default(string name)
+  public static Idrak.Abstraction.Reinforcement.IRewardFunction? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Reinforcement.IRewardFunction reward)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Abstraction.Reinforcement.RewardInput : System.IEquatable<Idrak.Abstraction.Reinforcement.RewardInput>
+  public RewardInput(string Prompt, string Answer, string? Reference = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? Info = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Info { get; init; }
+  public string Answer { get; init; }
+  public string Prompt { get; init; }
+  public string? Reference { get; init; }
+
+public sealed class Idrak.Abstraction.Reinforcement.RolloutBatch<TObservation, TAction> : System.IDisposable
+  public Idrak.Abstraction.Reinforcement.AdvantageInput Input { get; }
+  public RolloutBatch(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>> trajectories)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>> Trajectories { get; }
+  public System.ReadOnlySpan<bool> Truncated { get; }
+  public System.ReadOnlySpan<float> FinalValues { get; }
+  public System.ReadOnlySpan<float> Rewards { get; }
+  public System.ReadOnlySpan<float> Values { get; }
+  public System.ReadOnlySpan<int> Groups { get; }
+  public System.ReadOnlySpan<int> Lengths { get; }
+  public System.ReadOnlySpan<int> Offsets { get; }
+  public System.Span<float> Advantages { get; }
+  public System.Span<float> Returns { get; }
+  public bool HasValues { get; }
+  public int Episodes { get; }
+  public int Steps { get; }
+  public void Dispose()
+  public void Estimate(Idrak.Abstraction.Reinforcement.IAdvantageEstimator estimator, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+
+public sealed class Idrak.Abstraction.Reinforcement.Space : System.IEquatable<Idrak.Abstraction.Reinforcement.Space>
+  public Idrak.Abstraction.Reinforcement.SpaceKind Kind { get; }
+  public System.Collections.Generic.IReadOnlyList<float> High { get; }
+  public System.Collections.Generic.IReadOnlyList<float> Low { get; }
+  public System.Collections.Generic.IReadOnlyList<int> Shape { get; }
+  public bool Contains(System.ReadOnlySpan<float> values)
+  public bool Contains(int choice)
+  public bool ContainsValue(object? value)
+  public bool Equals(Idrak.Abstraction.Reinforcement.Space? other)
+  public int Count { get; }
+  public int Size { get; }
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
+  public static Idrak.Abstraction.Reinforcement.Space Box(System.Collections.Generic.IReadOnlyList<int> shape, System.Collections.Generic.IReadOnlyList<float> low, System.Collections.Generic.IReadOnlyList<float> high)
+  public static Idrak.Abstraction.Reinforcement.Space Box(System.Collections.Generic.IReadOnlyList<int> shape, float low, float high)
+  public static Idrak.Abstraction.Reinforcement.Space Conversation { get; }
+  public static Idrak.Abstraction.Reinforcement.Space Discrete(int count)
+  public static Idrak.Abstraction.Reinforcement.Space Text { get; }
+
+public enum Idrak.Abstraction.Reinforcement.SpaceKind : int
+  Box = 1
+  Conversation = 3
+  Discrete = 0
+  Text = 2
+
+public sealed class Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Info { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> Records { get; }
+  public System.Collections.Generic.IReadOnlyList<TAction> Actions { get; }
+  public System.Collections.Generic.IReadOnlyList<TObservation> Observations { get; }
+  public System.ReadOnlySpan<float> Rewards { get; }
+  public Trajectory(int index, int seed, System.Collections.Generic.IReadOnlyList<TObservation> observations, System.Collections.Generic.IReadOnlyList<TAction> actions, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> records, System.Collections.Generic.IReadOnlyList<float> rewards, bool terminated, bool truncated, int? group = null, float finalValue = NaNf, System.Collections.Generic.IReadOnlyDictionary<string, string>? info = null)
+  public bool Terminated { get; }
+  public bool Truncated { get; }
+  public float FinalValue { get; }
+  public float Return { get; }
+  public int Group { get; }
+  public int Index { get; }
+  public int Seed { get; }
+  public int Steps { get; }
+  public int Units { get; }
+
+public sealed record Idrak.Abstraction.Reinforcement.UpdateStats : System.IEquatable<Idrak.Abstraction.Reinforcement.UpdateStats>
+  public System.Collections.Generic.IReadOnlyDictionary<string, double>? Metrics { get; init; }
+  public UpdateStats(float Loss, int Episodes, int Units, System.Collections.Generic.IReadOnlyDictionary<string, double>? Metrics = null)
+  public float Loss { get; init; }
+  public int Episodes { get; init; }
+  public int Units { get; init; }
+
 public sealed class Idrak.Abstraction.ResourceLimitExceededException : System.Exception
   public ResourceLimitExceededException(string message)
 
