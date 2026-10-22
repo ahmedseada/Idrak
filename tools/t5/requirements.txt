@@ -2,3 +2,5 @@ torch==2.14.1
 transformers==5.18.0
 tokenizers==0.23.3
 safetensors==0.8.0
+sentencepiece==0.2.2
+protobuf==6.33.6
