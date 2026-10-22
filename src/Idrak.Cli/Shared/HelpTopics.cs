@@ -25,6 +25,7 @@ internal static class HelpTopics
         ("exit-codes", "What the tool's exit codes mean"),
         ("arabic", "Messages in Arabic (--lang ar) and how they are shown right to left in a terminal"),
         ("audio", "Sound files, speech recognition and synthesis, voices: the commands and what is registered"),
+        ("reinforcement", "Reinforcement learning of language models: idrak reinforce, on-policy distillation, what is registered"),
     ];
 
     /// <summary>The topic names.</summary>
@@ -46,6 +47,7 @@ internal static class HelpTopics
         "exit-codes" or "exitcodes" => ExitCodesPage,
         "arabic" or "lang" or "language" or "rtl" => Arabic,
         "audio" or "speech" or "sound" => Audio(),
+        "reinforcement" or "rl" => Reinforcement(),
         _ => null,
     };
 
@@ -134,6 +136,56 @@ internal static class HelpTopics
             A voice is a person's likeness: voice add records their consent, voice show prints it; the library cannot
             verify it. The library plays no sound: open what speak writes in any player.
             Variables: IDRAK_VOICES, IDRAK_STFT_PATH, IDRAK_CACHE (idrak help env).
+            """;
+    }
+
+    private static string Reinforcement()
+    {
+        static string Names(IEnumerable<string> names) => names.ToList() is { Count: > 0 } list ? string.Join(", ", list) : "none (a plug-in brings them: -P)";
+        try
+        {
+            CommandLine.RegisterPluginPackages();          // the tool's plug-in packages, as every command registers them (idempotent)
+        }
+        catch (UsageException)
+        {
+            // IDRAK_PLUGIN_PACKAGES names no package: the page lists what is registered, and the command says what is wrong.
+        }
+
+        return $$$"""
+            idrak help reinforcement
+
+            A language model's adapters learn from what the model does: each iteration plays episodes in an environment
+            with the model's own sampled replies, scores them with a reward, estimates each episode's advantage (against
+            the others of its group: the same situation played again) and updates the adapters with a policy loss. The
+            general part (rollouts, advantages, losses, the trainer, checkpoints) is Idrak.Reinforcement; the language-model
+            policy, the prompts environment and the text rewards are Idrak.Text's; environments several apps use (coding)
+            are plug-ins of Idrak.Reinforcement.Plugins, which the tool registers at startup. A name nobody registered is
+            refused with "not registered".
+
+              idrak reinforce MODEL --env prompts --data FILE --reward exact -o DIR
+                                                      prompts with references, the reply scored by a reward expression
+              idrak reinforce MODEL --env coding --suite DIR -o DIR
+                                                      coding tasks: the model works with the coding tools in a sandbox,
+                                                      rewarded by the hidden tests
+              idrak reinforce MODEL ... --teacher BIG    a teacher's distributions on the model's own replies beside the reward
+              idrak reinforce MODEL --algorithm distill --teacher BIG --data FILE -o DIR
+              idrak distill --teacher BIG --student MODEL --data FILE --on-policy -o DIR
+                                                      on-policy distillation alone (Agarwal et al. 2024)
+              idrak reinforce --list                  every registered name below, with its options
+
+            Registered now (with the -P plug-ins of this command):
+              environments: {{{Names(Idrak.Abstraction.Reinforcement.EnvironmentKinds.Names)}}}
+              rewards: {{{Names(Idrak.Abstraction.Reinforcement.RewardFunctions.Names)}}}
+              algorithms (policy losses): {{{Names(Idrak.Abstraction.Reinforcement.PolicyLosses.Names)}}}, and distill
+              advantage estimators: {{{Names(Idrak.Abstraction.Reinforcement.AdvantageEstimators.Names)}}}
+              command sandboxes: {{{Names(CommandSandboxes.Names)}}}
+              teacher divergences: {{{Names(Idrak.Text.Abstractions.TeacherDivergences.Names)}}}
+
+            A run is reproducible from its seed (--seed, IDRAK_RL_SEED) on every device and thread count; it writes
+            checkpoints into DIR/checkpoints and goes on from the latest with --resume. A coding episode runs the model's
+            commands on this machine: the process sandbox limits the programs, time, output and memory; container
+            (Docker or Podman, IDRAK_SANDBOX=container with an image of your own) isolates them.
+            Variables: IDRAK_RL_* (every run setting; the command line wins), IDRAK_SANDBOX_* (idrak help env).
             """;
     }
 

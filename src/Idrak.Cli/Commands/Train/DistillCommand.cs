@@ -11,6 +11,7 @@ using Idrak.Data.Abstractions;
 using Idrak.Models;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
+using Idrak.Text.Reinforcement;
 
 namespace Idrak.Cli.Commands.Train;
 
@@ -25,15 +26,15 @@ internal sealed class DistillCommand : Command
     // distill's own names for the tune options it passes on, where they differ (--alpha is distillation's mixing weight).
     private static readonly Dictionary<string, string> Renamed = new() { ["--lora-alpha"] = "--alpha" };
 
-    // The tune options distill passes on as they are.
+    // The tune options distill passes on as they are: a session's (TuneTool.SessionValueOptions, --alpha as --lora-alpha),
+    // then the data's, the epochs and the evaluation.
     private static readonly string[] TuneValues =
     [
-        "--rank", "--lora-alpha", "--lr", "--epochs", "--max-length", "--batch-tokens", "--accumulate", "--targets", "--optimizer", "--weight-decay",
-        "--schedule", "--warmup", "--min-lr", "--eval", "--eval-fraction", "--eval-every", "--save-every", "--system", "--max-rows", "--adapter-type", "--context",
-        "--data-format", "--images", "--image-transform", "--vision", "--parts", "--feature-cache",
+        .. TuneTool.SessionValueOptions.Select(o => Renamed.FirstOrDefault(r => r.Value == o).Key ?? o), "--epochs", "--eval", "--eval-fraction", "--eval-every", "--save-every",
+        "--system", "--max-rows", "--data-format", "--images", "--image-transform", "--vision", "--parts", "--feature-cache",
     ];
 
-    private static readonly string[] TuneFlags = ["--no-packing", "--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--no-dedup", "--offload"];
+    private static readonly string[] TuneFlags = [.. TuneTool.SessionFlags, "--no-dedup"];
 
     public override string Name => "distill";
 
@@ -42,7 +43,7 @@ internal sealed class DistillCommand : Command
     public override string Usage => """
         --teacher MODEL|FILE --student MODEL --data FILE... -o DIR [options]
 
-        The student's adapter (LoRA, as idrak tune trains it) learns from the teacher. Three ways:
+        The student's adapter (LoRA, as idrak tune trains it) learns from the teacher. Four ways:
           logits      (default) the teacher's next-token distributions at every trained token, computed as the student
                       trains (both models loaded; the teacher in inference mode, any weight format, any device). The loss is
                       alpha · T² · KL(teacher ‖ student) at temperature T plus (1 − alpha) · the cross-entropy on the data.
@@ -52,6 +53,11 @@ internal sealed class DistillCommand : Command
                       top k, renormalized: an approximation that drops the tail of each distribution.
           generate    --generate: the teacher answers the data's prompts (greedy; --reasoning keeps its reasoning) and the
                       student fine-tunes on its answers, written to DIR/teacher-data.jsonl. Works across vocabularies.
+          on-policy   --on-policy: the student answers the data's prompts itself (its live adapters, sampled), and learns
+                      the teacher's next-token distributions on exactly the tokens it sampled, so it learns where its own
+                      answers go wrong (Agarwal et al. 2024, the library's OnPolicyDistiller). A share --mix of each step's
+                      prompts trains on the data's own answers instead. Only the assistant's tokens train. A live teacher
+                      model of the same vocabulary (stored logits cannot cover new samples).
 
         Options:
               --teacher MODEL|FILE  the model that teaches (a Hugging Face id, a folder, a .gguf file or an alias), or a
@@ -67,15 +73,25 @@ internal sealed class DistillCommand : Command
               --generate            train on answers the teacher writes instead of its probabilities
               --reasoning           with --generate: the teacher reasons and its reasoning is kept in the answers
               --keep-cut-off        with --generate: keep answers cut off at --max-new (default: left out)
-              --max-new N           with --generate: the longest answer in tokens (default 512)
-              --batch-size N        with --generate: prompts answered together (default 8)
+              --max-new N           with --generate: the longest answer in tokens (default 512); with --on-policy: the
+                                    longest sampled answer (default 256)
+              --batch-size N        with --generate: prompts answered together (default 8); with --on-policy: the
+                                    prompts of each step (default 8)
+              --on-policy           the student samples its own answers and learns the teacher's distributions on them
+              --divergence NAME     with --on-policy: forward, reverse (default) or jsd, or a registered one
+                                    (TeacherDivergences; IDRAK_RL_DIVERGENCE)
+              --beta B              with --on-policy and jsd: the Jensen-Shannon weight, in (0, 1) (default 0.5)
+              --mix L               with --on-policy: λ, the share of a step's prompts trained on the data's answers, 0 to 1
+                                    (default 0; IDRAK_RL_DISTILL_MIX)
+              --steps N             with --on-policy: optimizer steps (default: --epochs passes over the prompts)
               --teacher-weights F   the teacher's weights: int8, int4 or bf16 (default: as stored)
               --teacher-device D    the teacher's device (default: the student's), e.g. cpu, cuda:1
           -w, --weights F           the student's base weights: int8, int4 (QLoRA) or bf16
           and these options of idrak tune train: --rank, --lora-alpha (tune's --alpha), --lr, --epochs, --max-length,
-          --batch-tokens, --accumulate, --targets, --optimizer, --weight-decay, --schedule, --warmup, --min-lr, --eval,
-          --eval-fraction, --eval-every, --save-every, --system, --max-rows, --adapter-type, --context, --no-packing,
-          --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-dedup, --offload, and for image
+          --batch-tokens, --accumulate, --targets, --optimizer, --weight-decay, --momentum, --schedule, --warmup, --min-lr,
+          --decay, --adapter-type, --adapter, --context, --matmul, --gpu-memory, --eval, --eval-fraction, --eval-every,
+          --save-every, --system, --max-rows, --no-packing, --checkpointing, --no-checkpointing, --recompute,
+          --bf16-activations, --no-graphs, --fp8, --cpu-optimizer, --no-dedup, --offload, and for image
           records --data-format, --images, --image-transform, --vision, --parts and --feature-cache (a vision-language
           teacher reads the student's images as they are prepared; its family's plug-in with -P). --json prints one JSON
           document at the end with the output lines.
@@ -93,16 +109,17 @@ internal sealed class DistillCommand : Command
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --precompute t.topk
           idrak distill --teacher t.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
           idrak distill --teacher big-model --student small-model --data prompts.jsonl --generate -o adapters/s
+          idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --on-policy --mix 0.25 -o adapters/op
           idrak distill --teacher t.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d --cluster lan.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--teacher", "--student", "--base", "--data", "--out", "--temperature", "--alpha", "--top-k", "--precompute", "--max-new", "--batch-size",
-        "--teacher-weights", "--teacher-device", "--weights", .. TuneValues, .. ClusterJoin.Options,
+        "--teacher-weights", "--teacher-device", "--weights", "--divergence", "--beta", "--mix", "--steps", .. TuneValues, .. ClusterJoin.Options,
     ];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--generate", "--reasoning", "--keep-cut-off", .. TuneFlags];
+    public override IReadOnlyCollection<string> Flags { get; } = ["--generate", "--reasoning", "--keep-cut-off", "--on-policy", .. TuneFlags];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
@@ -146,10 +163,14 @@ internal sealed class DistillCommand : Command
             throw new UsageException("--top-k is a whole number, 0 or more (0: the full distribution).");
         }
 
-        if (generate && precompute is not null)
+        bool onPolicy = context.Flag("--on-policy");
+        if ((generate ? 1 : 0) + (precompute is not null ? 1 : 0) + (onPolicy ? 1 : 0) > 1)
         {
-            throw new UsageException("--generate and --precompute are two different ways: give one.");
+            throw new UsageException(onPolicy ? "--on-policy, --generate and --precompute are different ways: give one."
+                : "--generate and --precompute are two different ways: give one.");
         }
+
+        var onPolicyOptions = onPolicy ? OnPolicyOptions(context) : null;
 
         if (precompute is null && output is null)
         {
@@ -162,7 +183,7 @@ internal sealed class DistillCommand : Command
             throw new UsageException($"{teacher} holds stored logits: it cannot write answers or logits; give the teacher model for --generate and --precompute.");
         }
 
-        string mode = generate ? "generate" : precompute is not null ? "precompute" : stored ? "stored logits" : "logits";
+        string mode = onPolicy ? "on-policy" : generate ? "generate" : precompute is not null ? "precompute" : stored ? "stored logits" : "logits";
         Device? teacherDevice = context.Option("--teacher-device") is { } deviceName ? ParseDevice(deviceName) : null;
         var teacherChoice = new ModelChoices.ModelChoice(teacher, context.Option("--teacher-weights"), null, null, null);
         if (teacherChoice.Weights?.ToLowerInvariant() is not (null or "int8" or "int4" or "bf16" or "bfloat16"))
@@ -190,42 +211,13 @@ internal sealed class DistillCommand : Command
         }
 
         var choice = ModelChoices.Choose(context, student);
-        List<string> args = ["train", choice.Model, .. trainingData, "--out", output ?? Path.GetDirectoryName(Path.GetFullPath(precompute!))!];
-        if ((context.Option("--weights") ?? choice.Weights) is { } weights)
-        {
-            args.Add(weights.ToLowerInvariant() switch
-            {
-                "int8" => "--int8",
-                "int4" => "--int4",
-                "bf16" or "bfloat16" => "--bf16",
-                _ => throw new UsageException($"--weights {weights}: the student loads as int8, int4 or bf16 (leave it out for float32)."),
-            });
-        }
-
-        if ((context.Option("--device") ?? context.Config.Get("device")) is { } device)
-        {
-            args.AddRange(["--device", device]);
-        }
-
-        if (context.Option("--seed") is { } seed)
-        {
-            args.AddRange(["--seed", seed]);
-        }
-
+        var args = TuneArguments.Train(context, choice, trainingData, output ?? Path.GetDirectoryName(Path.GetFullPath(precompute!))!, "the student");
         if (generate)
         {
             args.AddRange(["--kind", "chat"]);
         }
 
-        foreach (string option in TuneValues)
-        {
-            foreach (string value in context.Options(option))
-            {
-                args.AddRange([Renamed.GetValueOrDefault(option, option), value]);
-            }
-        }
-
-        args.AddRange(TuneFlags.Where(context.Flag));
+        TuneArguments.Pass(context, args, TuneValues, TuneFlags, Renamed);
         var tool = new TuneTool(console);
         try
         {
@@ -241,14 +233,29 @@ internal sealed class DistillCommand : Command
         PretrainedModel? teacherModel = null;
         DistillationTeacher? source = null;
         int precomputed = 0;
-        if (!generate)
+        IReadOnlyList<float> onPolicyLosses = [];
+        if (onPolicy)
+        {
+            // R3's on-policy distillation on the data's prompts, in a session of the model tune loaded.
+            tool.Session = (model, tuning) =>
+            {
+                var chats = tool.ReadChats();
+                int steps = onPolicyOptions!.Steps > 0 ? onPolicyOptions.Steps
+                    : Math.Max(1, tuning.Epochs) * Math.Max(1, (chats.Count + onPolicyOptions.PromptsPerStep - 1) / onPolicyOptions.PromptsPerStep);
+                (teacherModel, source) = LoadTeacher(context, console, teacherChoice, teacherDevice ?? tool.Device, topK ?? 0, tuning.BatchTokens);
+                int result;
+                (result, onPolicyLosses) = TrainOnPolicy(context, console, model, tuning, source!, chats,
+                    onPolicyOptions! with { Steps = steps, MaxLength = tuning.MaxLength, Temperature = temperature }, output!);
+                return result;
+            };
+        }
+        else if (!generate)
         {
             tool.BeforeTraining = (model, train, evaluation, tuning) =>
             {
                 if (!stored)
                 {
-                    teacherModel = ModelChoices.Load(context, teacherChoice, teacherDevice ?? tool.Device);
-                    console.Out.WriteLine($"teacher {teacher} on {teacherModel.Device}: {teacherModel.Spec.ParameterCount / 1e6:F0}M parameters, vocabulary {teacherModel.Spec.Vocabulary}");
+                    teacherModel = LoadTeacherModel(context, console, teacherChoice, teacherDevice ?? tool.Device);
                 }
 
                 if (precompute is not null)
@@ -308,7 +315,14 @@ internal sealed class DistillCommand : Command
                 ["exitCode"] = code,
                 ["output"] = new JsonArray([.. captured.ToString().Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).Select(l => (JsonNode)l)]),
             };
-            if (!generate && precompute is null)
+            if (onPolicy)
+            {
+                json["temperature"] = temperature;
+                json["divergence"] = onPolicyOptions!.Divergence;
+                json["mix"] = onPolicyOptions.Mix;
+                json["losses"] = new JsonArray([.. onPolicyLosses.Select(l => (JsonNode)l)]);
+            }
+            else if (!generate && precompute is null)
             {
                 json["temperature"] = temperature;
                 json["alpha"] = alpha;
@@ -389,6 +403,132 @@ internal sealed class DistillCommand : Command
         console.Finish();
         console.Out.WriteLine($"teacher wrote {count:N0} answers to {Path.GetFullPath(path)} in {clock.Elapsed.TotalSeconds:F1} s");
         return count;
+    }
+
+    // --on-policy's settings from the command line (each library default reads its variable): the divergence, β, λ, the
+    // prompts of a step, the longest sampled answer, the rollouts' temperature (IDRAK_RL_TEMPERATURE) and the seed; the
+    // steps (0 here: from the data), the lengths and the softening temperature are set once the data and model are read.
+    internal static OnPolicyDistillationOptions OnPolicyOptions(CommandContext context)
+    {
+        var o = new OnPolicyDistillationOptions();
+        string divergence = context.Option("--divergence") ?? o.Divergence;
+        o = o with
+        {
+            Divergence = TeacherDivergences.Find(divergence)?.Name ?? throw new UsageException(
+                $"{(context.Option("--divergence") is null ? LanguageModelPolicyOptions.DivergenceVariable + "=" : "--divergence ")}{divergence}: use {string.Join(", ", TeacherDivergences.Names)}."),
+        };
+        if (context.Option("--beta") is not null)
+        {
+            float beta = Number(context, "--beta", o.Beta);
+            o = beta is > 0f and < 1f ? o with { Beta = beta } : throw new UsageException("--beta is between 0 and 1 (both left out).");
+        }
+
+        if (context.Option("--mix") is not null)
+        {
+            float mix = Number(context, "--mix", o.Mix);
+            o = mix is >= 0f and <= 1f ? o with { Mix = mix } : throw new UsageException("--mix is between 0 and 1.");
+        }
+
+        int steps = context.Option("--steps") is null ? 0 : context.IntOption("--steps", 0);
+        int prompts = context.IntOption("--batch-size", o.PromptsPerStep), maxNew = context.IntOption("--max-new", o.MaxNewTokens);
+        if (steps < 0 || context.Option("--steps") is not null && steps == 0 || prompts < 1 || maxNew < 1)
+        {
+            throw new UsageException("--steps, --batch-size and --max-new are positive whole numbers.");
+        }
+
+        float sampling;
+        try
+        {
+            sampling = Idrak.Reinforcement.ReinforcementOptions.FromEnvironment().Temperature;
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
+        }
+
+        return o with { Steps = steps, PromptsPerStep = prompts, MaxNewTokens = maxNew, SamplingTemperature = sampling, Seed = context.Seed ?? 0 };
+    }
+
+    // The teacher model, loaded on its device (as stored, or in the weights its choice names).
+    internal static PretrainedModel LoadTeacherModel(CommandContext context, ToolConsole console, ModelChoices.ModelChoice choice, Device device)
+    {
+        var model = ModelChoices.Load(context, choice, device);
+        console.Out.WriteLine($"teacher {choice.Model} on {model.Device}: {model.Spec.ParameterCount / 1e6:F0}M parameters, vocabulary {model.Spec.Vocabulary}");
+        return model;
+    }
+
+    // The teacher of a distillation: a model and its distributions on the fly (its top k, 0: all), or a stored top-k logits
+    // file (no model loaded; refused where new samples are scored, by the library).
+    internal static (PretrainedModel? Model, DistillationTeacher Teacher) LoadTeacher(CommandContext context, ToolConsole console, ModelChoices.ModelChoice choice,
+        Device device, int topK, int batchTokens)
+    {
+        if (TeacherLogitsFile.IsTeacherLogits(choice.Model))
+        {
+            return (null, DistillationTeachers.FromFile(choice.Model));
+        }
+
+        var model = LoadTeacherModel(context, console, choice, device);
+        try
+        {
+            return (model, DistillationTeachers.FromModel(model, topK, batchTokens));
+        }
+        catch
+        {
+            model.Dispose();
+            throw;
+        }
+    }
+
+    // On-policy distillation alone (R3's OnPolicyDistiller): a session of the student's model with the teacher, its steps on
+    // a progress line, the adapter written to `output`. Ctrl+C stops after the current step and keeps what was trained.
+    internal static (int Code, IReadOnlyList<float> Losses) TrainOnPolicy(CommandContext context, ToolConsole console, PretrainedModel model, FineTuningOptions tuning,
+        DistillationTeacher teacher, IReadOnlyList<ChatTranscript> data, OnPolicyDistillationOptions options, string output)
+    {
+        if (data.Count == 0)
+        {
+            console.Error.WriteLine("error: no conversation in the data to take prompts from.");
+            return (ExitCodes.Failed, []);
+        }
+
+        console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"on-policy distillation: {options.Steps} steps of {options.PromptsPerStep} prompts from {data.Count:N0} conversations, divergence {options.Divergence}, "
+            + $"mix {options.Mix}, temperature {options.Temperature}, answers of at most {options.MaxNewTokens} tokens"));
+        using var session = new FineTuningSession(model, tuning with { Teacher = teacher }, options.Steps);
+        using var stop = new StopKey(context, console.Log, "stopping after the current step and saving the adapter (Ctrl+C again to quit now)…");
+        using var progress = new ProgressLine(context, "on-policy distillation", options.Steps);
+        OnPolicyDistillationProgress? last = null;
+        progress.Detail = () => last is null ? "" : string.Create(CultureInfo.InvariantCulture,
+            $"divergence {last.Loss:F4}, lr {last.LearningRate:G3}, {last.Sampled} sampled, {last.FromData} from the data");
+        var losses = new List<float>();
+        bool stopped = false;
+        try
+        {
+            OnPolicyDistiller.Train(session, data, options, new Reporter<OnPolicyDistillationProgress>(p =>
+            {
+                last = p;
+                losses.Add(p.Loss);
+                progress.Report(p.Step);
+            }), stop.Token);
+            progress.Finish();
+        }
+        catch (OperationCanceledException) when (stop.Token.IsCancellationRequested)
+        {
+            stopped = true;
+            progress.Clear();
+        }
+
+        Directory.CreateDirectory(output);
+        session.Save(output);
+        console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"{(stopped ? "stopped after" : "distilled in")} {losses.Count} steps{(losses.Count > 0 ? FormattableString.Invariant($", divergence {losses[0]:F4} → {losses[^1]:F4}") : "")}; "
+            + $"adapter written to {Path.GetFullPath(output)}"));
+        return (ExitCodes.Ok, losses);
+    }
+
+    // Reports on the calling thread.
+    private sealed class Reporter<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 
     private static float Number(CommandContext context, string option, float fallback)
