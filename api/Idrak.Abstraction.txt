@@ -4807,6 +4807,11 @@ public interface Idrak.Abstraction.Reinforcement.IRewardFunction
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Abstraction.Reinforcement.IRolloutRanks<TObservation, TAction>
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>> Gather(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>> mine, System.Threading.CancellationToken cancellationToken = default)
+  public int Rank { get; }
+  public int WorldSize { get; }
+
 public sealed class Idrak.Abstraction.Reinforcement.PolicyActions<TAction>
   public PolicyActions(System.Collections.Generic.IReadOnlyList<TAction> actions, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> records)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> Records { get; }
