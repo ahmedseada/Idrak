@@ -176,8 +176,9 @@ the same way and under the same limits").
 | 2 | `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build`; requires "coding" and "csharp-language" | new (the owner, 2026-10-22) | R4b |
 
 R4b also adds two profiles to `Idrak.Text.Plugins` (not reinforcement plug-ins, as `idrak agent` uses them without
-training): `Idrak.Text.Plugins.CSharp` ("csharp-language") and `Idrak.Text.Plugins.TypeScript` ("typescript-language",
-profiles `typescript` and `angular`), from the library's coding agent.
+training): `Idrak.Text.Plugins.CSharp` ("csharp-language"), `Idrak.Text.Plugins.TypeScript` ("typescript-language",
+profiles `typescript` and `angular`), from the library's coding agent, and `Idrak.Text.Plugins.Python` ("python-language",
+ignored folders only), from `Idrak.Data`'s code reader.
 | 3 | `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` ("classic") | `EnvironmentKinds`: `bandit`, `cartpole`, `pendulum`, `mountain-car` | new | R6 (optional) |
 
 `container` is a plug-in, not a library default, because it runs an outside program (Docker or Podman), as the espeak-ng
@@ -418,17 +419,26 @@ the CLI (which registers `Idrak.Text.Plugins` at startup) and the CodingAgent sa
 `TextPlugins.RegisterAll()`) keep today's behaviour.
 
 **Results unchanged, proven (rule 71):** with `Idrak.Text.Plugins` registered and `Languages: all`, the composed system
-prompt, the allowed commands, the ignored folders and the tools' descriptions are byte for byte today's (a test compares
+prompt, the allowed commands and the tools' descriptions are byte for byte today's, and the ignored folders today's plus
+the `python` profile's two (below) (a test compares
 them with the current strings, kept in the test only); with no language registered, they name no language (a test scans
 them for every profile's commands and folders).
 
-**Also found, for the owner (not changed without an answer):** `src/Idrak.Data/DataFiles.cs` holds the `code` data
-format's table from file extensions to language names (`:21-22`, about forty languages, as labels on rows) and the
-folders its folder reader skips (`:31`: `bin`, `obj`, `node_modules`, `.git`, `.vs`, `.idea`, `dist`, `.angular`,
-`__pycache__`, `.venv`). The table is a generic list like a media-type map; the skip list is the same kind of default as
-the agent's. Proposed: the skip list becomes a `ReadOptions` setting read from the registered coding languages' ignored
-folders when `Idrak.Text` is present, the extension table stays as data; or both move to a registry in
-`Idrak.Abstraction` so `Idrak.Data` and `Idrak.Text` read one list.
+**`Idrak.Data`'s code format (the owner, 2026-10-22: "go with recommendation"):** `src/Idrak.Data/DataFiles.cs` holds
+the `code` data format's table from file extensions to language names (`:21-22`, about forty languages, as labels on
+rows) and the folders its folder reader skips (`:31`: `bin`, `obj`, `node_modules`, `.git`, `.vs`, `.idea`, `dist`,
+`.angular`, `__pycache__`, `.venv`).
+- **The extension table stays** as data: a generic list of many languages used as row labels, like a media-type map, with
+  no behaviour for any of them.
+- **The skip list becomes a setting,** `ReadOptions.SkippedFolders`, whose library default names no language: `.git` and
+  the editors' state folders (`.vs`, `.idea`). The language folders come from the registered coding languages' ignored
+  folders, passed in by the callers that know them (the CLI's data commands and `Idrak.Text`'s readers of code data);
+  `Idrak.Data` reads no registry of `Idrak.Text`, which it does not reference.
+- So the CLI reads code folders as today, a `python` profile joins `Idrak.Text.Plugins.Python` ("python-language":
+  ignored folders `__pycache__`, `.venv`; no commands, no prompt lines). The coding agent's ignored folders gain those two
+  (the one change to the agent's defaults, reported and tested); its prompt and commands stay byte for byte today's.
+- A direct user of `Idrak.Data` with no setting now reads build-output folders it used to skip; the setting and its
+  default are in the API dump and `src/Idrak.Data/README.md`.
 
 ### Part 2: `Idrak.Reinforcement.Plugins.CSharp`
 
@@ -460,8 +470,9 @@ the `csharp` language plug-in (`Requires`, as Gemma 3 vision requires the Gemma 
 **Done when (part 1):** the coding agent's prompt, commands, folders and tool descriptions are today's byte for byte
 with `Idrak.Text.Plugins` registered, and name no language with none registered; `detected` picks `csharp` for a
 `.csproj` workspace and `typescript` for a `package.json` one; an unregistered detected language gives its notice;
-`plugins: csharp-language` and `plugins: typescript-language` register and unregister as found; `coding agent:` and
-`coding tools` pass with the same expectations.
+`plugins: csharp-language`, `plugins: typescript-language` and `plugins: python-language` register and unregister as
+found; `coding agent:` and `coding tools` pass with the same expectations; the CLI's code-data reading skips the same
+folders as today, and `Idrak.Data` alone skips only `.git`, `.vs` and `.idea`.
 
 **Done when (part 2):** `plugins: csharp` passes on a tiny C# solution written by the test (a library project and a test project;
 it runs the real `dotnet`, as the CodingAgent tests do): a task with no commands gets the C# defaults; a fake model's
@@ -469,7 +480,7 @@ partly right answer gets the share of tests it passes; a build with errors gets 
 edit to the test project is refused when asked; two episodes in parallel share the package folder and leave no build
 nodes running; unregistering `csharp` leaves `coding` as it found it.
 
-**Tests (CPU here):** one build; `coding languages|plugins: csharp|plugins: typescript|plugins: coding|coding agent:|
+**Tests (CPU here):** one build; `coding languages|plugins: csharp|plugins: typescript|plugins: python|data files|cli data|plugins: coding|coding agent:|
 coding tools|cli agent|reinforcement contracts|plugins:|public API|abstraction inventory|cli health: every environment
 variable`. **Owner:** `idrak agent` on a C# and on a TypeScript project (unchanged behaviour), and the C# demo suite run of
 R5.
