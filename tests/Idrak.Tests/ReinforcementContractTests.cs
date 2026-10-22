@@ -524,7 +524,7 @@ internal static partial class Tests
         Check(registrations.GetMethod("RegisterFor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static, [typeof(Type)]) is not null,
             "Idrak.Reinforcement.LibraryRegistrations.RegisterFor(Type), which LibraryDefaults calls");
         Check(Idrak.Reinforcement.Plugins.ReinforcementPlugins.Package == "Idrak.Reinforcement.Plugins"
-              && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding", "csharp"]),
-            "the plug-in package's families: coding (R4), csharp (R4b)");
+              && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding", "csharp", "classic"]),
+            "the plug-in package's families: coding (R4), csharp (R4b), classic (R6)");
     }
 }

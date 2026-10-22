@@ -1,0 +1,22 @@
+{
+ "gymnasium": "1.2.1",
+ "numpy": "2.3.4",
+ "python": "3.13.16",
+ "seed": 20261022,
+ "robust": 1e-06,
+ "perturbation": 4e-12,
+ "files": {
+  "cartpole.json": {
+   "bytes": 49708,
+   "sha256": "2095fecd1918053c3222e9a6e6fd66dd6c053813e83e8d8226527467567b49fa"
+  },
+  "pendulum.json": {
+   "bytes": 134635,
+   "sha256": "c7dcc18854d80d6bce1cbb8ee5faef1f7a44b3cacb941cdf53ed1b088530d46b"
+  },
+  "mountain-car.json": {
+   "bytes": 106889,
+   "sha256": "702e932adab34170ea8d12d06be0699e4b9fb6e8523b830586824ec63b3a5d02"
+  }
+ }
+}
