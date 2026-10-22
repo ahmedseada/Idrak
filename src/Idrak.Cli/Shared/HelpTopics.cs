@@ -25,7 +25,7 @@ internal static class HelpTopics
         ("exit-codes", "What the tool's exit codes mean"),
         ("arabic", "Messages in Arabic (--lang ar) and how they are shown right to left in a terminal"),
         ("audio", "Sound files, speech recognition and synthesis, voices: the commands and what is registered"),
-        ("reinforcement", "Reinforcement learning of language models: idrak reinforce, on-policy distillation, what is registered"),
+        ("reinforcement", "Reinforcement learning: idrak reinforce (language models, classic environments, DQN), what is registered"),
     ];
 
     /// <summary>The topic names.</summary>
@@ -162,6 +162,12 @@ internal static class HelpTopics
             are plug-ins of Idrak.Reinforcement.Plugins, which the tool registers at startup. A name nobody registered is
             refused with "not registered".
 
+            An environment whose observations are numbers (the classic plug-in's bandit, cartpole, pendulum and mountain-car,
+            or a plug-in's) needs no model: idrak reinforce builds a small network from --hidden, --activation and
+            --value-head and trains it on-policy (ppo, reinforce, grpo: a categorical policy for discrete actions, a
+            Gaussian one for a box) or off-policy (dqn: a Q-network with a target network and a replay buffer, discrete
+            actions only). DIR receives the policy or the Q-network and idrak-reinforce.json, its settings.
+
               idrak reinforce MODEL --env prompts --data FILE --reward exact -o DIR
                                                       prompts with references, the reply scored by a reward expression
               idrak reinforce MODEL --env coding --suite DIR -o DIR
@@ -171,6 +177,12 @@ internal static class HelpTopics
               idrak reinforce MODEL --algorithm distill --teacher BIG --data FILE -o DIR
               idrak distill --teacher BIG --student MODEL --data FILE --on-policy -o DIR
                                                       on-policy distillation alone (Agarwal et al. 2024)
+              idrak reinforce --env cartpole --algorithm ppo --iterations 50 -o runs/cartpole
+                                                      PPO on CartPole: a categorical policy of 64, 64 tanh with a value head
+              idrak reinforce --env cartpole --algorithm dqn --steps 50000 -o runs/cartpole-dqn
+                                                      DQN on CartPole (IDRAK_RL_DQN_* for its settings)
+              idrak reinforce --env pendulum --algorithm ppo -o runs/pendulum
+                                                      a Gaussian policy for a box of actions (dqn refuses a box)
               idrak reinforce --list                  every registered name below, with its options
               idrak cluster sim --topology FILE -- reinforce MODEL ... -o DIR
                                                       on a simulated cluster: each rank plays its shards' episodes (--shards,
@@ -181,6 +193,7 @@ internal static class HelpTopics
               environments: {{{Names(Idrak.Abstraction.Reinforcement.EnvironmentKinds.Names)}}}
               rewards: {{{Names(Idrak.Abstraction.Reinforcement.RewardFunctions.Names)}}}
               algorithms (policy losses): {{{Names(Idrak.Abstraction.Reinforcement.PolicyLosses.Names)}}}, and distill
+              off-policy algorithms (Q-learning losses): {{{Names(Idrak.Reinforcement.Abstractions.QLosses.Names)}}}
               advantage estimators: {{{Names(Idrak.Abstraction.Reinforcement.AdvantageEstimators.Names)}}}
               command sandboxes: {{{Names(CommandSandboxes.Names)}}}
               teacher divergences: {{{Names(Idrak.Text.Abstractions.TeacherDivergences.Names)}}}
@@ -189,7 +202,8 @@ internal static class HelpTopics
             checkpoints into DIR/checkpoints and goes on from the latest with --resume. A coding episode runs the model's
             commands on this machine: the process sandbox limits the programs, time, output and memory; container
             (Docker or Podman, IDRAK_SANDBOX=container with an image of your own) isolates them.
-            Variables: IDRAK_RL_* (every run setting; the command line wins), IDRAK_SANDBOX_* (idrak help env).
+            Variables: IDRAK_RL_* (every run setting; the command line wins), IDRAK_RL_DQN_* (dqn's), IDRAK_SANDBOX_*
+            (idrak help env).
             """;
     }
 

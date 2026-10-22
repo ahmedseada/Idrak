@@ -46,6 +46,8 @@ batch against its single form, an estimator's fixed order, a loss's gradient) ar
   and a JSON line per iteration. Every draw derives from the run's seed and where the run is.
 - **`ModulePolicy`**: a policy over a `Module`: categorical over discrete actions or Gaussian over a box, a critic or not,
   a frozen reference or not; its updates are autograd and an optimizer made through `OptimizerKinds`.
+- **`PolicyNetworks`**: a module policy or DQN's Q-network and target built from settings for an environment kind's spaces
+  (`ModulePolicyOptions`' hidden widths, activation and value head), what `idrak reinforce --env cartpole` trains.
 - **Settings**: `ReinforcementOptions` and `ModulePolicyOptions`, each option with a default and an `IDRAK_RL_*` variable
   (`FromEnvironment`; listed by `idrak help env`).
 - **Off-policy learning** (`Idrak.Reinforcement.Abstractions` holds its contract): `ReplayBuffer` (a ring of the last N

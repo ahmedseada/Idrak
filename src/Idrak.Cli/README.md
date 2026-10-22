@@ -315,7 +315,7 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 |---|---|
 | `idrak tune` | Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
 | `idrak tune init` | Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config |
-| `idrak reinforce` | Reinforcement learning of a language model's adapters in an environment (`prompts`, `coding`, a plug-in's): GRPO, PPO, REINFORCE, a teacher term beside the reward, or on-policy distillation alone; `--list` names every registered environment, reward, algorithm, estimator, sandbox and divergence |
+| `idrak reinforce` | Reinforcement learning of a language model's adapters in an environment (`prompts`, `coding`, a plug-in's): GRPO, PPO, REINFORCE, a teacher term beside the reward, or on-policy distillation alone; in an environment of numbers (`bandit`, `cartpole`, `pendulum`, `mountain-car`) a small policy with no model: PPO, REINFORCE, GRPO or DQN; `--list` names every registered environment, reward, algorithm, estimator, sandbox and divergence |
 | `idrak train` | Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images |
 | `idrak resume` | Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more) |
 | `idrak runs list` (`runs`) | Training runs (from their JSON Lines logs): epochs, best epoch and loss, time, status |
@@ -338,6 +338,8 @@ idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen
 idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
 idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --group 8 --iterations 20 -o runs/rl-demo
 idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data math.jsonl --algorithm grpo --shards 4 -o runs/math2
+idrak reinforce --env cartpole --algorithm ppo --iterations 50 -o runs/cartpole
+idrak reinforce --env cartpole --algorithm dqn --steps 50000 -o runs/cartpole-dqn
 ```
 
 Image models (classifiers, detectors, segmenters, backbones) come from an image model family, which a plug-in registers
