@@ -12,7 +12,7 @@
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards | B | Planned |
 | R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
-| R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Later (the owner, 2026-10-22): not started with the rest |
+| R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
 
 ## Goal
 
@@ -381,8 +381,9 @@ At most two agents at a time, each in its own worktree; a merge is built and its
 |---|---|---|
 | 1 | R0, the moves (they touch `FineTuner`, Audio's trainers, the CLI's tune and eval) | R1, the contracts and skeletons (new files, the CLI's plug-in registration; none of R0's files) |
 | 2 | R2, the general part (after R1) | R3, the language-model policy (after R0 and R1) |
-| 3 | R6, only when the owner asks for it | R4, the coding plug-in (after R2 and R3) |
-| 4 | R5, the CLI and samples (after R4) | the next ready step, if any |
+| 3 | none (R6 waits for the main plan) | R4, the coding plug-in (after R2 and R3) |
+| 4 | R5, the CLI and samples (after R4) | none |
+| 5 | R6, classic environments and off-policy (after R5: the owner, 2026-10-22) | none |
 
 Files both lanes touch (`api/*.txt`, the abstraction inventory, `tests/Idrak.Tests/Program.cs`'s test list,
 `EnvironmentVariables.cs`) are merged one lane at a time; the generated dumps are regenerated, never merged by hand. A
@@ -395,7 +396,7 @@ step is a dependency order, not a barrier.
    `Idrak.Reinforcement.Plugins`: **moves** (no second copy of the task layer).
 3. The coding environment's default sandbox: **`process`** (works everywhere with no outside program, rule 70; network
    allowed, as `CodingTools` today); `container` (isolated, network off, Docker or Podman) is the opt-in plug-in sandbox.
-4. R6: **later**, not started with the rest; it stays in the plan as optional.
+4. R6: **queued after the main plan** (the owner, 2026-10-22): it starts once R5 is merged.
 5. The variable names in R5: **as proposed**.
 
 ## The owner's runs
