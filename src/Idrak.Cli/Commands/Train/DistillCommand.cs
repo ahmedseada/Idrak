@@ -4,6 +4,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Cluster;
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Cli.Commands.Cluster;
 using Idrak.Cli.Shared;
 using Idrak.Data;
@@ -57,7 +59,11 @@ internal sealed class DistillCommand : Command
                       the teacher's next-token distributions on exactly the tokens it sampled, so it learns where its own
                       answers go wrong (Agarwal et al. 2024, the library's OnPolicyDistiller). A share --mix of each step's
                       prompts trains on the data's own answers instead. Only the assistant's tokens train. A live teacher
-                      model of the same vocabulary (stored logits cannot cover new samples).
+                      model of the same vocabulary (stored logits cannot cover new samples). On a cluster (idrak cluster
+                      sim -- distill --on-policy ..., or --cluster FILE) each step's prompts are cut into shards (--shards,
+                      --spread), each rank samples its shards' prompts, the samples are exchanged and every rank takes the
+                      same data-parallel step; rank 0 writes the adapter. The same shard count gives the same samples on any
+                      number of ranks.
 
         Options:
               --teacher MODEL|FILE  the model that teaches (a Hugging Face id, a folder, a .gguf file or an alias), or a
@@ -78,13 +84,16 @@ internal sealed class DistillCommand : Command
               --batch-size N        with --generate: prompts answered together (default 8); with --on-policy: the
                                     prompts of each step (default 8)
               --on-policy           the student samples its own answers and learns the teacher's distributions on them
-                                    (in one process: on a cluster, idrak reinforce with a policy loss and --teacher)
               --divergence NAME     with --on-policy: forward, reverse (default) or jsd, or a registered one
                                     (TeacherDivergences; IDRAK_RL_DIVERGENCE)
               --beta B              with --on-policy and jsd: the Jensen-Shannon weight, in (0, 1) (default 0.5)
               --mix L               with --on-policy: λ, the share of a step's prompts trained on the data's answers, 0 to 1
                                     (default 0; IDRAK_RL_DISTILL_MIX)
               --steps N             with --on-policy: optimizer steps (default: --epochs passes over the prompts)
+              --shards N            with --on-policy: the shards a step's prompts are cut into; a shard's prompts are
+                                    answered together from a seed of its own, and on a cluster each rank answers its
+                                    shards' (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)
+              --spread NAME         with --on-policy: blocks (runs of prompts, the default) or interleaved (IDRAK_RL_SPREAD)
               --teacher-weights F   the teacher's weights: int8, int4 or bf16 (default: as stored)
               --teacher-device D    the teacher's device (default: the student's), e.g. cpu, cuda:1
           -w, --weights F           the student's base weights: int8, int4 (QLoRA) or bf16
@@ -112,12 +121,13 @@ internal sealed class DistillCommand : Command
           idrak distill --teacher big-model --student small-model --data prompts.jsonl --generate -o adapters/s
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --on-policy --mix 0.25 -o adapters/op
           idrak distill --teacher t.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d --cluster lan.json
+          idrak cluster sim --topology two.json -- distill --teacher big --student small --data c.jsonl --on-policy -o op
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--teacher", "--student", "--base", "--data", "--out", "--temperature", "--alpha", "--top-k", "--precompute", "--max-new", "--batch-size",
-        "--teacher-weights", "--teacher-device", "--weights", "--divergence", "--beta", "--mix", "--steps", .. TuneValues, .. ClusterJoin.Options,
+        "--teacher-weights", "--teacher-device", "--weights", "--divergence", "--beta", "--mix", "--steps", "--shards", "--spread", .. TuneValues, .. ClusterJoin.Options,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--generate", "--reasoning", "--keep-cut-off", "--on-policy", .. TuneFlags];
@@ -171,14 +181,7 @@ internal sealed class DistillCommand : Command
                 : "--generate and --precompute are two different ways: give one.");
         }
 
-        if (onPolicy && ClusterSession.Current is not null)
-        {
-            // Plan 27, R3c: OnPolicyDistiller samples every step's prompts on every rank and steps on them without an exchange,
-            // so the ranks would agree only where generation is bit-identical across them, and the sampling is not spread.
-            throw new UsageException("--on-policy does not run on a cluster: on-policy distillation samples every prompt on every rank. Run it in one process, or "
-                                     + "idrak reinforce with a policy loss and --teacher on the cluster (the teacher's term beside the reward, its episodes spread over the ranks).");
-        }
-
+        // On a cluster (ClusterSession.Current) --on-policy spreads each step's prompts over the ranks by shards (Plan 27, R10).
         var onPolicyOptions = onPolicy ? OnPolicyOptions(context) : null;
 
         if (precompute is null && output is null)
@@ -415,11 +418,20 @@ internal sealed class DistillCommand : Command
     }
 
     // --on-policy's settings from the command line (each library default reads its variable): the divergence, β, λ, the
-    // prompts of a step, the longest sampled answer, the rollouts' temperature (IDRAK_RL_TEMPERATURE) and the seed; the
+    // shards and their split, the prompts of a step, the longest sampled answer, the rollouts' temperature (IDRAK_RL_TEMPERATURE) and the seed; the
     // steps (0 here: from the data), the lengths and the softening temperature are set once the data and model are read.
     internal static OnPolicyDistillationOptions OnPolicyOptions(CommandContext context)
     {
-        var o = new OnPolicyDistillationOptions();
+        OnPolicyDistillationOptions o;
+        try
+        {
+            o = new OnPolicyDistillationOptions();                         // its variables (IDRAK_RL_SHARDS, IDRAK_RL_SPREAD, ...)
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
+        }
+
         string divergence = context.Option("--divergence") ?? o.Divergence;
         o = o with
         {
@@ -436,6 +448,24 @@ internal sealed class DistillCommand : Command
         {
             float mix = Number(context, "--mix", o.Mix);
             o = mix is >= 0f and <= 1f ? o with { Mix = mix } : throw new UsageException("--mix is between 0 and 1.");
+        }
+
+        if (context.Option("--shards") is not null)
+        {
+            int shards = context.IntOption("--shards", 0);
+            o = shards >= 0 ? o with { Shards = shards } : throw new UsageException("--shards is a whole number, 0 or more (0: one per rank).");
+        }
+
+        if (context.Option("--spread") is { } spread)
+        {
+            try
+            {
+                o = o with { Spread = RolloutSpread.Parse(spread) };
+            }
+            catch (ArgumentException)
+            {
+                throw new UsageException($"--spread {spread}: use {string.Join(" or ", RolloutSpread.Names)}.");
+            }
         }
 
         int steps = context.Option("--steps") is null ? 0 : context.IntOption("--steps", 0);
@@ -489,7 +519,9 @@ internal sealed class DistillCommand : Command
     }
 
     // On-policy distillation alone (R3's OnPolicyDistiller): a session of the student's model with the teacher, its steps on
-    // a progress line, the adapter written to `output`. Ctrl+C stops after the current step and keeps what was trained.
+    // a progress line, the adapter written to `output`. Ctrl+C stops after the current step and keeps what was trained. On a
+    // cluster (R10) every rank runs this: each samples its shards' prompts, a stop is agreed at one step on every rank, rank 0
+    // alone shows the progress and writes the adapter.
     internal static (int Code, IReadOnlyList<float> Losses) TrainOnPolicy(CommandContext context, ToolConsole console, PretrainedModel model, FineTuningOptions tuning,
         DistillationTeacher teacher, IReadOnlyList<ChatTranscript> data, OnPolicyDistillationOptions options, string output)
     {
@@ -499,12 +531,14 @@ internal sealed class DistillCommand : Command
             return (ExitCodes.Failed, []);
         }
 
+        int shards = options.Shards > 0 ? options.Shards : ClusterSession.Current?.Collectives.WorldSize ?? 1;
+        string sharded = shards > 1 ? FormattableString.Invariant($", {shards} shards ({options.Spread})") : "";
         console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"on-policy distillation: {options.Steps} steps of {options.PromptsPerStep} prompts from {data.Count:N0} conversations, divergence {options.Divergence}, "
-            + $"mix {options.Mix}, temperature {options.Temperature}, answers of at most {options.MaxNewTokens} tokens"));
+            + $"mix {options.Mix}, temperature {options.Temperature}, answers of at most {options.MaxNewTokens} tokens{sharded}"));
         using var session = new FineTuningSession(model, tuning with { Teacher = teacher }, options.Steps);
         using var stop = new StopKey(context, console.Log, "stopping after the current step and saving the adapter (Ctrl+C again to quit now)…");
-        using var progress = new ProgressLine(context, "on-policy distillation", options.Steps);
+        using var progress = new ProgressLine(context, "on-policy distillation", options.Steps, enabled: ClusterSession.Current is { Rank: > 0 } ? false : null);
         OnPolicyDistillationProgress? last = null;
         progress.Detail = () => last is null ? "" : string.Create(CultureInfo.InvariantCulture,
             $"divergence {last.Loss:F4}, lr {last.LearningRate:G3}, {last.Sampled} sampled, {last.FromData} from the data");
@@ -520,16 +554,16 @@ internal sealed class DistillCommand : Command
             }), stop.Token);
             progress.Finish();
         }
-        catch (OperationCanceledException) when (stop.Token.IsCancellationRequested)
+        catch (OperationCanceledException e) when (stop.Token.IsCancellationRequested || e is ClusterRunStoppedException { Agreed: true })
         {
-            stopped = true;
+            stopped = true;                                                // one process's Ctrl+C, or a stop the ranks agreed on
             progress.Clear();
         }
 
-        session.SaveOnce(output);
+        bool wrote = session.SaveOnce(output);                             // every rank takes part; rank 0 writes on a cluster
         console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"{(stopped ? "stopped after" : "distilled in")} {losses.Count} steps{(losses.Count > 0 ? FormattableString.Invariant($", divergence {losses[0]:F4} → {losses[^1]:F4}") : "")}; "
-            + $"adapter written to {Path.GetFullPath(output)}"));
+            + $"adapter {(wrote ? "written" : "written by rank 0")} to {Path.GetFullPath(output)}"));
         return (ExitCodes.Ok, losses);
     }
 

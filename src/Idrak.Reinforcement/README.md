@@ -36,7 +36,7 @@ batch against its single form, an estimator's fixed order, a loss's gradient) ar
   for every episode's action in one call, the environments stepped in parallel only where it measured faster; scratch
   buffers reused, episodes numbered and sorted by number, so threads change nothing. On a cluster (a policy that is an
   `IRolloutRanks`: the language-model policy on a fine-tuning session opened with a cluster) the episodes are cut into
-  shards (`RolloutSpread`: `IDRAK_RL_SHARDS`, one per rank by default; `IDRAK_RL_SPREAD` blocks or interleaved), each rank
+  shards (`RolloutSpread`, in Idrak.Abstraction since R10: `IDRAK_RL_SHARDS`, one per rank by default; `IDRAK_RL_SPREAD` blocks or interleaved), each rank
   plays its shards' episodes in environments of its own, and the policy gathers every rank's in rank order; a seeded run
   with the same shard count gives the same episodes on any number of ranks.
 - **`ReinforcementTrainer`**: collect, estimate, `Epochs` passes of mini-batch updates; the gradient clip and a schedule from

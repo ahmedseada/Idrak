@@ -4950,6 +4950,17 @@ public sealed class Idrak.Abstraction.Reinforcement.RolloutBatch<TObservation, T
   public void Dispose()
   public void Estimate(Idrak.Abstraction.Reinforcement.IAdvantageEstimator estimator, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
 
+public static class Idrak.Abstraction.Reinforcement.RolloutSpread
+  public const string Blocks = "blocks"
+  public const string Interleaved = "interleaved"
+  public const string ShardsVariable = "IDRAK_RL_SHARDS"
+  public const string SpreadVariable = "IDRAK_RL_SPREAD"
+  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
+  public static int Rank(int shard, int shards, int worldSize)
+  public static int ShardSeed(int seed, int shard)
+  public static int[] Shards(System.ReadOnlySpan<int> indices, int shards, string spread = "blocks")
+  public static string Parse(string? spread)
+
 public sealed class Idrak.Abstraction.Reinforcement.Space : System.IEquatable<Idrak.Abstraction.Reinforcement.Space>
   public Idrak.Abstraction.Reinforcement.SpaceKind Kind { get; }
   public System.Collections.Generic.IReadOnlyList<float> High { get; }

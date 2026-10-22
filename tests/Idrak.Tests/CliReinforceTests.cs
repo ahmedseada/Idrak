@@ -22,7 +22,7 @@ internal static partial class Tests
         ("cli reinforce: --list names every registry's entries (environments, rewards, algorithms and distill, estimators, sandboxes, divergences) in text and JSON; usage errors (no model, no --out, an unregistered environment, algorithm or estimator, episodes that do not fill the groups, a coding run without a suite, nothing to resume, a teacher weight without a teacher, distill without a teacher or outside prompts) exit with 2 before a model loads", d => { if (d == Device.Cpu) CliReinforceListAndUsage(); }),
         ("cli reinforce: a seeded grpo iteration on the prompts environment of a tiny model (the command line over the IDRAK_RL_* variables): its adapter, checkpoint and JSON log line are written, the same seed gives the same returns, and --resume goes on from the checkpoint", CliReinforcePrompts),
         ("cli reinforce: grpo on a coding suite (the coding plug-in's environment, verified by git grep in the process sandbox) with the tiny model: every episode verified and rewarded, the adapter written", CliReinforceCoding),
-        ("cli reinforce: cluster sim runs a seeded grpo on 2 ranks of the prompts environment (4 shards from --shards, against one process with IDRAK_RL_SHARDS=4): every rank ends, rank 0 alone prints and writes (the output folder holds what one process's holds: one adapter, its manifest, the checkpoints; the log a line per iteration; the session's SaveOnce writes nothing on rank 1), the first rollout's rewards are one process's and the adapters within R3b's 1e-4, and --resume goes on on the cluster as in one process; distill refused on a cluster with the reason", CliReinforceCluster),
+        ("cli reinforce: cluster sim runs a seeded grpo on 2 ranks of the prompts environment (4 shards from --shards, against one process with IDRAK_RL_SHARDS=4): every rank ends, rank 0 alone prints and writes (the output folder holds what one process's holds: one adapter, its manifest, the checkpoints; the log a line per iteration; the session's SaveOnce writes nothing on rank 1), the first rollout's rewards are one process's and the adapters within R3b's 1e-4, and --resume goes on on the cluster as in one process; distill without --on-policy refused on a cluster with the reason (on-policy distillation runs there since R10: distillation cluster:)", CliReinforceCluster),
         ("cli distill: --on-policy: the student answers the prompts itself and learns the teacher's distributions on its samples (R3's OnPolicyDistiller), with a mix of data answers; the adapter is written; reinforce --algorithm distill runs the same training; its usage errors exit with 2", CliDistillOnPolicy),
     ];
 
@@ -246,13 +246,11 @@ internal static partial class Tests
             Check(wrote.SequenceEqual([true, false]) && File.Exists(Path.Combine(targets[0], "adapter_model.safetensors")) && !Directory.Exists(targets[1]),
                 $"SaveOnce: rank 0 wrote, rank 1 wrote nothing: {string.Join(", ", wrote)}");
 
-            // Usage errors: no output folder, distill on a cluster, a bad split.
+            // Usage errors: no output folder, distill's offline ways on a cluster (R10: --on-policy and reinforce --algorithm distill run there), a bad split.
             var noOut = ClusterCli("cluster", "sim", "--topology", topology, "--", "reinforce", model, "--data", data);
             Check(noOut.Code == ExitCodes.Usage && noOut.Error.Contains("-o DIR", StringComparison.Ordinal), $"reinforce without -o names it: {noOut.Error}");
-            var distill = ClusterCli("cluster", "sim", "--topology", topology, "--", "distill", "--teacher", model, "--student", model, "--data", data, "--on-policy", "-o", alone);
-            Check(distill.Code == ExitCodes.Usage && distill.Error.Contains("does not run distill", StringComparison.Ordinal), $"cluster sim refuses distill naming why: {distill.Error}");
-            var alone2 = ClusterCli(["cluster", "sim", "--topology", topology, "--", .. Reinforce(1, Path.Combine(folder, "d"), "--algorithm", "distill", "--teacher", model)]);
-            Check(alone2.Code == ExitCodes.Usage && alone2.Error.Contains("does not run on a cluster", StringComparison.Ordinal), $"reinforce --algorithm distill on a cluster names why: {alone2.Error}");
+            var distill = ClusterCli("cluster", "sim", "--topology", topology, "--", "distill", "--teacher", model, "--student", model, "--data", data, "-o", alone);
+            Check(distill.Code == ExitCodes.Usage && distill.Error.Contains("--on-policy only", StringComparison.Ordinal), $"cluster sim refuses distill without --on-policy naming why: {distill.Error}");
             var spread = TrainCli([.. Reinforce(1, Path.Combine(folder, "s"), "--spread", "diagonal")]);
             Check(spread.Code == 2 && spread.Err.Contains("--spread diagonal", StringComparison.Ordinal), $"a bad --spread is named: {spread.Err}");
         }
