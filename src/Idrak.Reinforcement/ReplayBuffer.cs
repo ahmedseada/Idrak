@@ -13,9 +13,12 @@ namespace Idrak.Reinforcement;
 /// action, reward, next observation, whether the episode terminated) of float observations and discrete actions, in a ring
 /// that overwrites the oldest once full, sampled uniformly from a seed.
 /// <list type="bullet">
-/// <item><b>Memory that does not grow:</b> every array is rented from <see cref="ArrayPool{T}"/> once, at its full size, when
-/// the buffer is made (observations and next observations as two flat float arrays, struct of arrays, rule 37), and
-/// returned by <see cref="Dispose"/>; adding and sampling allocate nothing. <see cref="Bytes"/> is what it holds.</item>
+/// <item><b>Memory that does not grow, and no more than it needs:</b> every array is allocated once, of exactly the capacity's
+/// length, when the buffer is made (observations and next observations as two flat float arrays, struct of arrays, rule 37),
+/// and never grown. They are not rented from <see cref="ArrayPool{T}"/>: the buffer is long-lived and fixed in size, where a
+/// pool rounds each array up to a power of two (30% more for 100,000 CartPole transitions) and keeps it after the buffer is
+/// gone. Adding and sampling allocate nothing; <see cref="Bytes"/> is what it holds, the transitions' size exactly;
+/// <see cref="Dispose"/> lets the arrays go.</item>
 /// <item><b>Reproducible:</b> <see cref="Sample"/> draws its indices from the <see cref="Random"/> it is given, in order (with
 /// replacement, as DQN samples), so a seeded draw gives the same mini-batch on every machine; <see cref="Save"/> and
 /// <see cref="Load"/> keep the contents bit for bit (little-endian), so a resumed run samples what it would have.</item>
@@ -45,11 +48,13 @@ public sealed class ReplayBuffer : IDisposable
 
         Capacity = capacity;
         ObservationSize = observationSize;
-        _observations = ArrayPool<float>.Shared.Rent(capacity * observationSize);
-        _next = ArrayPool<float>.Shared.Rent(capacity * observationSize);
-        _rewards = ArrayPool<float>.Shared.Rent(capacity);
-        _actions = ArrayPool<int>.Shared.Rent(capacity);
-        _terminated = ArrayPool<bool>.Shared.Rent(capacity);
+        // Exact lengths, allocated once and never pooled (R8). Not zeroed, as a rented array is not: no slot is read before
+        // Add or Load writes it (Gather, Save and Load stop at Count).
+        _observations = GC.AllocateUninitializedArray<float>(capacity * observationSize);
+        _next = GC.AllocateUninitializedArray<float>(capacity * observationSize);
+        _rewards = GC.AllocateUninitializedArray<float>(capacity);
+        _actions = GC.AllocateUninitializedArray<int>(capacity);
+        _terminated = GC.AllocateUninitializedArray<bool>(capacity);
     }
 
     /// <summary>The most transitions it keeps.</summary>
@@ -67,7 +72,7 @@ public sealed class ReplayBuffer : IDisposable
     /// <summary>The transitions added since it was made (or loaded), including those overwritten.</summary>
     public long Added { get; private set; }
 
-    /// <summary>The bytes its arrays hold, fixed from when it was made.</summary>
+    /// <summary>The bytes its arrays hold, fixed from when it was made: <see cref="Capacity"/> × (2 × <see cref="ObservationSize"/> × 4 + 9), the transitions' size.</summary>
     public long Bytes => (long)(_observations.Length + _next.Length + _rewards.Length) * sizeof(float) + (long)_actions.Length * sizeof(int) + _terminated.Length;
 
     /// <summary>Adds a transition, over the oldest one when full.</summary>
@@ -214,7 +219,7 @@ public sealed class ReplayBuffer : IDisposable
         (Count, Position, Added) = (count, position, added);
     }
 
-    /// <summary>Returns the arrays to the pool; more than once is harmless.</summary>
+    /// <summary>Lets the arrays go (the garbage collector frees them once nothing else holds the buffer); more than once is harmless.</summary>
     public void Dispose()
     {
         if (_disposed)
@@ -223,11 +228,6 @@ public sealed class ReplayBuffer : IDisposable
         }
 
         _disposed = true;
-        ArrayPool<float>.Shared.Return(_observations);
-        ArrayPool<float>.Shared.Return(_next);
-        ArrayPool<float>.Shared.Return(_rewards);
-        ArrayPool<int>.Shared.Return(_actions);
-        ArrayPool<bool>.Shared.Return(_terminated);
         _observations = _next = _rewards = [];
         _actions = [];
         _terminated = [];
