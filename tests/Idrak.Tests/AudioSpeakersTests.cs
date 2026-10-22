@@ -118,7 +118,30 @@ internal static partial class Tests
             var spoken = AudioCli("speak", "-P", VitsPluginPath, folder, text, "--voice", "p226", "--noise", "0", "--duration-noise", "0", "--bits", "float",
                 "--voices", store, "-o", wav, "-d", "cpu");
             Check(spoken.Code == 0, $"speak --voice p226: {spoken.Code} {spoken.Out} {spoken.Err}");
-            AssertClose(expected, AudioCodecs.Decode(wav).Samples, 0f, "speak --voice p226's WAV against the library's samples");
+            float[] written = AudioCodecs.Decode(wav).Samples;
+            string which = "";
+            if (!written.AsSpan().SequenceEqual(expected))
+            {
+                // Which side moved: the library's call again (after the tool ran in this process), and the tool's path (the
+                // text through VoicedSynthesizer with the command's options) in process.
+                VitsPlugin.Register();
+                float[] again, voicedText;
+                using (var model = (VitsSynthesizer)SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = Device.Cpu }))
+                {
+                    again = model.Synthesize(ids, new SpeechSynthesisOptions { NoiseScale = 0, DurationNoiseScale = 0, Voice = "p226" }).Audio.Samples;
+                    using var voiced = new VoicedSynthesizer(model, new FolderVoiceStore(store));
+                    voicedText = voiced.Speak(text, new SpeechSynthesisOptions
+                    {
+                        Voice = "p226", NoiseScale = 0, DurationNoiseScale = 0, Conversion = new VoiceConversionOptions { Tau = new VoiceConversionOptions().Tau },
+                    }).Audio.Samples;
+                }
+
+                VitsPlugin.Unregister();
+                string Like(float[] values) => values.AsSpan().SequenceEqual(written) ? "the WAV's" : values.AsSpan().SequenceEqual(expected) ? "the first call's" : "neither";
+                which = $" (the library's call again gives {Like(again)} samples, the text through VoicedSynthesizer {Like(voicedText)})";
+            }
+
+            AssertClose(expected, written, 0f, $"speak --voice p226's WAV against the library's samples{which}");
             var listed = AudioCliJson("speak", "-P", VitsPluginPath, folder, "--list-voices", "--voices", store);
             Check(listed["speakers"]!.AsArray().Select(v => (string?)v).SequenceEqual(FixtureSpeakers), $"--list-voices names the speakers: {listed}");
         }
