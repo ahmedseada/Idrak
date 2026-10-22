@@ -53,7 +53,8 @@ internal static class ClusterSession
 }
 
 /// <summary>
-/// <c>idrak cluster sim --topology FILE -- pretrain|tune|train|resume …</c> (plan 23, phases C2 and C8): runs a training
+/// <c>idrak cluster sim --topology FILE -- pretrain|tune|train|resume|reinforce …</c> (plan 23, phases C2 and C8; reinforce
+/// from Plan 27, R3c): runs a training
 /// command once per rank of a topology file, every rank a thread of this process on a device carved from the physical
 /// device its entry names, joined by the simulated transport; rank 0 writes the run and prints, and each rank's network
 /// time on the virtual clock is reported beside the wall time. The run's event log goes to its run folder, flushed as it
@@ -68,6 +69,7 @@ internal sealed class ClusterSimCommand : Command
         ("tune", ["-o", "--out"], "-o DIR"),
         ("train", ["--run"], "--run DIR"),
         ("resume", [], "RUN"),
+        ("reinforce", ["-o", "--out"], "-o DIR"),                           // Plan 27, R3c: rank 0 writes the adapter, its checkpoints and log
     ];
 
     /// <summary>The event log's file name in a run folder.</summary>
@@ -78,18 +80,22 @@ internal sealed class ClusterSimCommand : Command
     public override string Summary => "Runs training on a simulated cluster: every rank of a topology file in this process";
 
     public override string Usage => """
-        --topology FILE [options] -- pretrain|tune|train|resume ARGS
+        --topology FILE [options] -- pretrain|tune|train|resume|reinforce ARGS
 
         Runs the training command after -- once per rank of the topology file: every rank a thread of this process on
         a device carved from the physical device its entry names (the entry's memory as a hard cap), the ranks joined
         by the simulated transport. Each step's rows are shared across the ranks and the gradients summed after the
         backward pass, so the run trains as one process would; rank 0 writes the run (pretrain -o RUN, tune -o DIR,
-        train --run DIR, resume RUN) and its output is shown. Each training step draws the failure model's faults from
-        the seed (a slow worker, a lossy link, a late joiner that sits out its first steps while the others train them,
-        a dropped worker that ends the run naming it); the faults injected are listed with their replay key, and the
-        event log (faults, each rank's clock per step) is written to the run folder as it goes (idrak cluster replay
-        reads it). At the end each rank's network time on the virtual clock (what the cluster the file describes would
-        spend on its links) is printed beside the wall time. With --mode localhost every rank is a process of its own,
+        train --run DIR, resume RUN, reinforce -o DIR) and its output is shown. reinforce spreads each rollout's episodes
+        over the ranks by shards (--shards, --spread; IDRAK_RL_SHARDS, IDRAK_RL_SPREAD) and gathers them, so with the same
+        shard count a seeded run plays the episodes one process plays; rank 0 writes the adapter, its manifest, the
+        checkpoints and the log, and --resume goes on from the checkpoint. Each training step draws the failure model's
+        faults from the seed (a slow worker, a lossy link, a late joiner that sits out its first steps while the others
+        train them, a dropped worker that ends the run naming it); the faults injected are listed with their replay key,
+        and the event log (faults, each rank's clock per step) is written to the run folder as it goes (idrak cluster
+        replay reads it; tune and reinforce write none into their adapter folder). At the end each rank's network time
+        on the virtual clock (what the cluster the file describes would spend on its links) is printed beside the wall
+        time. With --mode localhost every rank is a process of its own,
         joined by the real transports (shared memory inside a node, TCP between nodes) paced to the links' profiles
         (IDRAK_CLUSTER_THROTTLE=0 lets them run free); one line per rank shows its progress; faults are the simulated
         transport's, so a localhost run has none. With --profile the run is profiled (in-process): cold and warm apart
@@ -132,6 +138,7 @@ internal sealed class ClusterSimCommand : Command
           idrak cluster sim --topology two.json --placement pipeline -- pretrain my-model --tokens t.bin -o run
           idrak cluster sim --topology two.json --profile -- train network.json --data houses.csv --run run
           idrak cluster sim --topology two.json -- tune train my-model chats.jsonl -o adapters/chat
+          idrak cluster sim --topology two.json -- reinforce my-model --data prompts.jsonl --algorithm grpo --shards 4 -o rl
           idrak cluster sim --topology two.json --dashboard -- pretrain my-model --tokens tokens.bin --steps 500 -o run
         """;
 
@@ -181,6 +188,13 @@ internal sealed class ClusterSimCommand : Command
     /// </summary>
     public static void CheckTrainer(IReadOnlyList<string> inner, bool steered = true)
     {
+        if (inner.Count > 0 && inner[0] == "distill")
+        {
+            // Plan 27, R3c: on-policy distillation samples every step's prompts on every rank, without an exchange (not spread).
+            throw new UsageException("cluster sim does not run distill: on-policy distillation samples every prompt on every rank, and its other ways are teacher passes "
+                                     + "of their own. Give reinforce with a policy loss and --teacher (its episodes spread over the ranks), or tune.");
+        }
+
         if (inner.Count == 0 || Trainers.All(t => t.Command != inner[0]))
         {
             throw new UsageException($"Give the training command after --: {string.Join(", ", Trainers.Select(t => t.Command))} (got {(inner.Count == 0 ? "nothing" : inner[0])}).");
@@ -508,7 +522,7 @@ internal sealed class ClusterSimCommand : Command
             "pretrain" => Value("-o", "--out"),
             "train" => Value("--run"),
             "resume" => inner.Skip(1).FirstOrDefault(a => !a.StartsWith('-')) is { } run && Directory.Exists(run) ? run : null,
-            "tune" => null,                                                     // its -o is the adapter's folder, not a run's
+            "tune" or "reinforce" => null,                                      // its -o is the adapter's folder, not a run's
             _ => Value("-o", "--out"),                                          // another command cluster start runs
         };
     }
