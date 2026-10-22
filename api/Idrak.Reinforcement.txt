@@ -69,11 +69,16 @@ public static class Idrak.Reinforcement.ModulePolicy
 
 public sealed record Idrak.Reinforcement.ModulePolicyOptions : System.IEquatable<Idrak.Reinforcement.ModulePolicyOptions>
   public ModulePolicyOptions()
+  public System.Collections.Generic.IReadOnlyList<int> Hidden { get; init; }
+  public bool ValueHeadFor(Idrak.Reinforcement.ReinforcementOptions run)
+  public bool? ValueHead { get; init; }
   public float InitialLogStd { get; init; }
   public float LearningRate { get; init; }
   public float MaxGradientNorm { get; init; }
   public float WeightDecay { get; init; }
   public static Idrak.Reinforcement.ModulePolicyOptions FromEnvironment(Idrak.Reinforcement.ModulePolicyOptions? start = null)
+  public static System.Collections.Generic.IReadOnlyList<int> ParseHidden(string text)
+  public string Activation { get; init; }
   public string Optimizer { get; init; }
 
 public sealed class Idrak.Reinforcement.ModulePolicy<TAction> : Idrak.Abstraction.Reinforcement.IPolicy<float[], TAction>, Idrak.Reinforcement.Abstractions.IScheduledPolicy, System.IDisposable
@@ -172,6 +177,15 @@ public sealed class Idrak.Reinforcement.OffPolicyTrainer : System.IDisposable
   public float[] Values(float[] observation)
   public int Act(float[] observation)
   public void Dispose()
+
+public static class Idrak.Reinforcement.PolicyNetworks
+  public const string Tanh = "tanh"
+  public static (Idrak.Abstraction.Reinforcement.Space, Idrak.Abstraction.Reinforcement.Space) Spaces(Idrak.Abstraction.Reinforcement.IEnvironmentKind environmentKind, System.Collections.Generic.IReadOnlyDictionary<string, string>? environmentOptions = null)
+  public static (Idrak.Layers.Sequential, Idrak.Layers.Sequential) QNetworks(Idrak.Abstraction.Reinforcement.Space observationSpace, Idrak.Abstraction.Reinforcement.Space actionSpace, Idrak.Reinforcement.ModulePolicyOptions options, Idrak.Abstraction.Device? device = null, int seed = 0)
+  public static Idrak.Layers.Sequential Network(int inputs, int outputs, Idrak.Reinforcement.ModulePolicyOptions options, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public static Idrak.Reinforcement.ModulePolicy<float[]> Gaussian(Idrak.Abstraction.Reinforcement.Space observationSpace, Idrak.Abstraction.Reinforcement.Space actionSpace, Idrak.Reinforcement.ModulePolicyOptions options, bool valueHead, Idrak.Abstraction.Device? device = null, int seed = 0, bool reference = false)
+  public static Idrak.Reinforcement.ModulePolicy<int> Categorical(Idrak.Abstraction.Reinforcement.Space observationSpace, Idrak.Abstraction.Reinforcement.Space actionSpace, Idrak.Reinforcement.ModulePolicyOptions options, bool valueHead, Idrak.Abstraction.Device? device = null, int seed = 0, bool reference = false)
+  public static System.Collections.Generic.IReadOnlyList<string> Activations { get; }
 
 public static class Idrak.Reinforcement.ReinforcementNames
   public const string BaselineKey = "baseline"

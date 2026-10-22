@@ -11,7 +11,10 @@ using Idrak.Reinforcement.Abstractions;
 
 namespace Idrak.Reinforcement;
 
-/// <summary>The settings of a <see cref="ModulePolicy{TAction}"/>: its optimizer, made by name through <c>OptimizerKinds</c>.</summary>
+/// <summary>
+/// The settings of a <see cref="ModulePolicy{TAction}"/>: its optimizer, made by name through <c>OptimizerKinds</c>, and the
+/// networks <see cref="PolicyNetworks"/> builds for it (hidden widths, activation, a value head).
+/// </summary>
 public sealed record ModulePolicyOptions
 {
     /// <summary>The optimizer, by name in <c>OptimizerKinds</c> (adam, adamw, adamw8bit, sgd, or an app's). <c>IDRAK_RL_OPTIMIZER</c>.</summary>
@@ -30,8 +33,72 @@ public sealed record ModulePolicyOptions
     public float InitialLogStd { get; init; }
 
     /// <summary>
+    /// The hidden layers' widths of a network <see cref="PolicyNetworks"/> builds from these options (an actor, a critic, a
+    /// Q-network); empty for one linear layer. <c>IDRAK_RL_HIDDEN</c> ("64,64"; "none" for none).
+    /// </summary>
+    public IReadOnlyList<int> Hidden { get; init; } = DefaultHidden;
+
+    /// <summary>The activation after each hidden layer of such a network: one of <see cref="PolicyNetworks.Activations"/>. <c>IDRAK_RL_ACTIVATION</c>.</summary>
+    public string Activation { get; init; } = PolicyNetworks.Tanh;
+
+    /// <summary>
+    /// Whether a policy <see cref="PolicyNetworks"/> builds has a value head (a critic); null for automatic
+    /// (<see cref="ValueHeadFor"/>). <c>IDRAK_RL_VALUE_HEAD</c> (on, off, auto).
+    /// </summary>
+    public bool? ValueHead { get; init; }
+
+    // One array for the default, so the defaults compare equal (a record compares a list by reference).
+    private static readonly int[] DefaultHidden = [64, 64];
+
+    /// <summary>
+    /// Whether a policy trained by <paramref name="run"/> gets a value head: <see cref="ValueHead"/> when set; else
+    /// automatic, a critic where the run's advantages use one (ppo with its own estimator, gae, or a value baseline of
+    /// returns) and none where they do not (grpo's group, reinforce's returns), so no unused network is trained.
+    /// </summary>
+    public bool ValueHeadFor(ReinforcementOptions run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        if (ValueHead is { } set)
+        {
+            return set;
+        }
+
+        string? estimator = run.Estimator;
+        if (estimator is null)
+        {
+            return string.Equals(run.Algorithm, ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(estimator, ReinforcementNames.Gae, StringComparison.OrdinalIgnoreCase)
+               || (string.Equals(estimator, ReinforcementNames.Returns, StringComparison.OrdinalIgnoreCase) && run.EstimatorOptions is { } options
+                   && options.TryGetValue(ReinforcementNames.BaselineKey, out string? baseline) && string.Equals(baseline, "value", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>The hidden widths in <paramref name="text"/>: whole numbers above 0 separated by commas ("64,64"), or "none" (or empty) for no hidden layer.</summary>
+    /// <exception cref="ArgumentException">A width that is not a whole number above 0.</exception>
+    public static IReadOnlyList<int> ParseHidden(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        string trimmed = text.Trim();
+        if (trimmed.Length == 0 || trimmed.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var widths = new List<int>();
+        foreach (string part in trimmed.Split(','))
+        {
+            widths.Add(int.TryParse(part.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int width) && width > 0 ? width
+                : throw new ArgumentException($"'{text}' is not a list of hidden widths: whole numbers above 0 separated by commas (64,64), or none."));
+        }
+
+        return widths;
+    }
+
+    /// <summary>
     /// These options with each one an <c>IDRAK_RL_*</c> variable sets in its place (<c>IDRAK_RL_OPTIMIZER</c>,
-    /// <c>IDRAK_RL_LEARNING_RATE</c>); the variables not set keep <paramref name="start"/>'s (the defaults when null).
+    /// <c>IDRAK_RL_LEARNING_RATE</c>, <c>IDRAK_RL_HIDDEN</c>, <c>IDRAK_RL_ACTIVATION</c>, <c>IDRAK_RL_VALUE_HEAD</c>); the
+    /// variables not set keep <paramref name="start"/>'s (the defaults when null).
     /// </summary>
     /// <exception cref="ArgumentException">A variable's value is not one the option takes (the message names the variable).</exception>
     public static ModulePolicyOptions FromEnvironment(ModulePolicyOptions? start = null)
@@ -45,6 +112,32 @@ public sealed record ModulePolicyOptions
         if (Variables.Float("IDRAK_RL_LEARNING_RATE", min: 0f) is { } rate)
         {
             options = options with { LearningRate = rate };
+        }
+
+        if (Variables.Text("IDRAK_RL_HIDDEN") is { } hidden)
+        {
+            try
+            {
+                options = options with { Hidden = ParseHidden(hidden) };
+            }
+            catch (ArgumentException)
+            {
+                throw new ArgumentException($"IDRAK_RL_HIDDEN={hidden} is not a list of hidden widths: whole numbers above 0 separated by commas (64,64), or none.");
+            }
+        }
+
+        if (Variables.Text("IDRAK_RL_ACTIVATION") is { } activation)
+        {
+            options = options with
+            {
+                Activation = PolicyNetworks.Activations.FirstOrDefault(a => a.Equals(activation, StringComparison.OrdinalIgnoreCase))
+                             ?? throw new ArgumentException($"IDRAK_RL_ACTIVATION={activation} is not {string.Join(", ", PolicyNetworks.Activations)}."),
+            };
+        }
+
+        if (Variables.Switch("IDRAK_RL_VALUE_HEAD") is var (valueSet, valueHead) && valueSet)
+        {
+            options = options with { ValueHead = valueHead };
         }
 
         return options;

@@ -86,8 +86,8 @@ internal static class EnvironmentVariables
     // idrak distill --on-policy).
     private static readonly string[] OnPolicyRun = ["reinforce", "distill"];
     // Plan 27, phase R6: read by OffPolicyOptions.FromEnvironment in Idrak.Reinforcement (the off-policy trainer, DQN: the
-    // library and its tests); no command of the tool trains off-policy yet.
-    private static readonly string[] OffPolicyRun = ["test"];
+    // library and its tests); idrak reinforce --algorithm dqn reads them from R9, its command line winning.
+    private static readonly string[] OffPolicyRun = ["reinforce"];
 
     // Plan 27, phase R4: the command sandboxes (CommandSandboxes; the coding tools' commands, the coding environment's
     // builds and tests): idrak agent and the tests; idrak reinforce (R5) joins them.
@@ -269,6 +269,9 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_LOG", Reinforcement, "none", "A file each iteration is appended to as a JSON line", ReinforcementRun),
         new("IDRAK_RL_OPTIMIZER", Reinforcement, "adam", "A module policy's optimizer: an OptimizerKinds name", ReinforcementRun),
         new("IDRAK_RL_LEARNING_RATE", Reinforcement, "0.0003", "A module policy's learning rate (the schedule's base)", ReinforcementRun),
+        new("IDRAK_RL_HIDDEN", Reinforcement, "64,64", "The hidden widths of the networks idrak reinforce builds for an environment of numbers (none: one linear layer)", ReinforcementRun),
+        new("IDRAK_RL_ACTIVATION", Reinforcement, "tanh", "The activation between those networks' layers: tanh, relu, gelu or sigmoid", ReinforcementRun),
+        new("IDRAK_RL_VALUE_HEAD", Reinforcement, "auto (ppo, gae or a value baseline: on; else off)", "on, off or auto: a module policy built from settings has a critic beside its actor", ReinforcementRun),
         new("IDRAK_RL_SHARDS", Reinforcement, "0 (one per rank; 1 in one process)", "The shards a rollout is cut into: a shard's episodes act together (one call of the policy a round), and on a cluster each rank plays its shards' episodes; a seeded run gives the same episodes on any rank count that shares it", ReinforcementRun),
         new("IDRAK_RL_SPREAD", Reinforcement, "blocks", "How a rollout's episodes are cut into shards: blocks (runs in number order, a group's together) or interleaved (episode k in shard k mod the shards)", ReinforcementRun),
         new("IDRAK_RL_SPREAD_PASSES", Reinforcement, "on", "on or off: on a cluster, a language-model policy's behaviour and reference passes are spread over the ranks (each a run of the batch's sequences, gathered) rather than run whole on every rank", ReinforcementRun),
