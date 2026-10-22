@@ -1459,6 +1459,7 @@ internal sealed class TuneTool(ToolConsole console)
             && JsonNode.Parse(File.ReadAllText(single)) is JsonObject json && json.ContainsKey("sources"))
         {
             var loaded = DatasetRecipe.Load(single);
+            loaded = loaded with { SkippedFolders = loaded.SkippedFolders ?? CodeFolders.Skipped };
             return evalFraction > 0 ? loaded with { EvaluationFraction = evalFraction } : loaded;
         }
 
@@ -1475,6 +1476,7 @@ internal sealed class TuneTool(ToolConsole console)
             MaxCharacters = maxChars,
             MaxRows = maxRows,
             EvaluationFraction = evalFraction,
+            SkippedFolders = CodeFolders.Skipped,           // code folders skip the registered languages' build output, as the data commands do
         };
     }
 

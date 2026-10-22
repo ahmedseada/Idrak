@@ -361,7 +361,7 @@ internal sealed class DistillCommand : Command
             {
                 var source = DatasetSpec.Parse(spec);
                 var mapping = source.Mapping;
-                foreach (var row in source.Open(downloader))
+                foreach (var row in source.Open(downloader, CodeFolders.Skipped))
                 {
                     if (mapping is null)
                     {
