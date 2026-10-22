@@ -15,9 +15,73 @@ internal static partial class Tests
     [
         ("audio voices: recorded speakers: the VITS plug-in reads tiny-vits-speakers and tiny-vits-speakers-det (3 speakers, an 8-wide speaker embedding conditioning the duration predictor, the flow and the decoder) and speaks the fixture's ids as each speaker within 1e-3 of the largest sample of transformers' waveform (noise 0), the speakers named by speakers.json (any case) or by index, no voice the first speaker, the speakers' sounds different; an unknown speaker refused listing them", AudioSpeakersFixture),
         ("audio voices: recorded speakers: speakers.json as a list or as a map of names to indices (the others keep their indices), none gives the indices, a name out of range or repeated refused; VoicedSynthesizer resolves a checkpoint speaker by name, any case or index before the store; idrak speak --voice p226 writes the library's samples and --list-voices lists the speakers", d => { if (d == Device.Cpu) AudioSpeakersNames(); }),
+        ("audio voices: recorded speakers: a synthesis run again gives its first run's values bit for bit at every stage (the speaker's embedding, the text encoder, the durations, the prior, the flow, the decoder), the first stage that differs named", d => { if (d == Device.Cpu) AudioSpeakersRepeatStages(); }),
     ];
 
     private static readonly string[] FixtureSpeakers = ["p225", "p226", "p227"];
+
+    // VitsSynthesizer.SynthesizeCore's stages (noise 0, speaker p226) run twice on the same model; the first stage whose
+    // output differs between the runs is the one whose arithmetic follows something other than its inputs.
+    private static void AudioSpeakersRepeatStages()
+    {
+        VitsPlugin.Register();
+        try
+        {
+            string folder = AudioData("tiny-vits-speakers");
+            var ids = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "reference", "input.json")))!["ids"]!.AsArray().Select(v => (int)v!).ToArray();
+            using var model = (VitsSynthesizer)SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = Device.Cpu });
+            T Field<T>(string name) => (T)typeof(VitsSynthesizer).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(model)!;
+            var encoder = Field<VitsTextEncoder>("_encoder");
+            var predictor = Field<Idrak.Audio.Plugins.Vits.Abstractions.IVitsDurationPredictor>("_durations");
+            var flow = Field<Idrak.Audio.Layers.ResidualCouplingBlock>("_flow");
+            var decoder = Field<Idrak.Audio.Layers.HifiGanGenerator>("_decoder");
+            var speakers = Field<Tensor>("_speakers");
+            var runs = new List<List<(string Stage, float[] Values)>>();
+            for (int run = 0; run < 2; run++)
+            {
+                var stages = new List<(string, float[])>();
+                using var noGrad = Autograd.NoGrad();
+                using var scope = new TensorScope();
+                var speaker = speakers.EmbeddingLookup(Tensor.Indices([model.SpeakerIndex("p226")], Device.Cpu)).Transpose();
+                stages.Add(("speaker", speaker.ToArray()));
+                var (hidden, means, logVariances) = encoder.Forward(ids);
+                stages.Add(("text encoder: hidden", hidden.ToArray()));
+                stages.Add(("text encoder: means", means.ToArray()));
+                stages.Add(("text encoder: log-variances", logVariances.ToArray()));
+                float[] logDurations = predictor.LogDurations(hidden.Transpose(), speaker, 0f, new Random(0));
+                stages.Add(("durations (log)", logDurations));
+                var rows = new List<int>();
+                for (int i = 0; i < logDurations.Length; i++)
+                {
+                    rows.AddRange(Enumerable.Repeat(i, (int)Math.Ceiling(Math.Exp(logDurations[i]))));
+                }
+
+                var prior = means.EmbeddingLookup(Tensor.Indices([.. rows], Device.Cpu));
+                stages.Add(("prior", prior.ToArray()));
+                var latents = flow.Reverse(prior.Transpose(), speaker);
+                stages.Add(("flow", latents.ToArray()));
+                stages.Add(("decoder", decoder.Samples(latents, speaker, model.DecoderChunkFrames)));
+                runs.Add(stages);
+            }
+
+            for (int i = 0; i < runs[0].Count; i++)
+            {
+                var (stage, first) = runs[0][i];
+                var second = runs[1][i].Values;
+                if (!first.AsSpan().SequenceEqual(second))
+                {
+                    int differ = first.Length == second.Length ? first.Zip(second).Count(p => BitConverter.SingleToInt32Bits(p.First) != BitConverter.SingleToInt32Bits(p.Second)) : -1;
+                    float largest = first.Length == second.Length ? first.Zip(second).Max(p => MathF.Abs(p.First - p.Second)) : float.NaN;
+                    Check(false, $"the first stage that differs between two runs is {stage}: {differ} of {first.Length} values, by up to {largest:G3}"
+                                 + $" (the stages before it equal: {string.Join(", ", runs[0].Take(i).Select(s => s.Stage))})");
+                }
+            }
+        }
+        finally
+        {
+            VitsPlugin.Unregister();
+        }
+    }
 
     private static void AudioSpeakersFixture(Device device)
     {
