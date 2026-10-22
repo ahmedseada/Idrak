@@ -806,7 +806,7 @@ internal sealed partial class CpuBackend
         For(n, (long)n * 8, (first, last) =>
         {
             CpuMath.Gated(gv.AsSpan(first, last - first), uv.AsSpan(first, last - first), yv.AsSpan(first, last - first), kind);
-        });
+        }, wholeVectors: true);                                            // its vector loop and tail differ in the last bits
     }
 
     public override void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)

@@ -253,10 +253,11 @@ internal static partial class Tests
         var fast = AudioCodecs.Decode(AudioData("wav/rate44k.wav"));
         Check(recognizer.Transcribe(fast, options with { Language = "ar" }).Text == recognizer.Transcribe(Resampler.Resample(fast, 16000), options with { Language = "ar" }).Text, "44.1 kHz is resampled to the model's rate");
 
-        // Device memory: the same bytes after every call from the second (the caches made once, nothing kept per call).
+        // Device memory: no more bytes after any call than after the second (the caches made once, nothing kept per call;
+        // a GPU may still give back what its first calls' measurements held, so fewer is no growth).
         var held = new List<long>();
         var times = new List<double>();
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 4; i++)
         {
             watch.Restart();
             recognizer.Transcribe(audio, options);
@@ -264,7 +265,7 @@ internal static partial class Tests
             held.Add(device.Backend.GetMemoryUsage().InUse);
         }
 
-        Check(held[1] == held[2], $"device bytes after each call: {string.Join(", ", held)}");
+        Check(held.Skip(2).All(h => h <= held[1]), $"device bytes after each call, none above the second's: {string.Join(", ", held)}");
         Console.WriteLine($"    Transcribe 1.5 s on {device}: cold {cold:F1} ms, warm {times.Skip(1).Average():F1} ms (features {result.Stats.Features.TotalMilliseconds:F1}, encoder {result.Stats.Encoder.TotalMilliseconds:F1}, decoder {result.Stats.Decoder.TotalMilliseconds:F1} ms cold)");
     }
 

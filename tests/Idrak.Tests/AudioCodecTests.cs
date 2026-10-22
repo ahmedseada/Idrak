@@ -203,6 +203,14 @@ internal static partial class Tests
             return;
         }
 
+        // An in-process tool run with -P on Idrak.PluginTests (cli vision:) ran its RegisterIdrakPlugin methods, this
+        // codec's among them, and the tool takes nothing back: start without it, and leave it as found.
+        bool registeredAlready = AudioCodecs.Origin(OutsideRawCodec.FormatName) is not null;
+        if (registeredAlready)
+        {
+            AudioPlugin.Unregister();
+        }
+
         var before = AudioCodecs.Names.ToArray();
         AudioPlugin.RegisterIdrakPlugin();
         try
@@ -221,7 +229,15 @@ internal static partial class Tests
             AudioPlugin.Unregister();
         }
 
-        Check(AudioCodecs.Names.SequenceEqual(before) && !AudioCodecs.CanDecode("a.oraw") && !AudioCodecs.Unregister(OutsideRawCodec.FormatName), "Unregister brings the order back");
+        string[] after = [.. AudioCodecs.Names];
+        bool readsIt = AudioCodecs.CanDecode("a.oraw"), unregisteredAgain = AudioCodecs.Unregister(OutsideRawCodec.FormatName);
+        if (registeredAlready)
+        {
+            AudioPlugin.RegisterIdrakPlugin();
+        }
+
+        Check(after.SequenceEqual(before) && !readsIt && !unregisteredAgain,
+            $"Unregister brings the order back: {string.Join(", ", after)} against {string.Join(", ", before)}; .oraw read {readsIt}, unregistered again {unregisteredAgain}");
     }
 
     private static void AudioDataConversions(Device device)

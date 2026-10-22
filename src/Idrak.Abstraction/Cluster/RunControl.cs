@@ -87,7 +87,7 @@ public static class ClusterControlFile
         string text;
         try
         {
-            text = File.ReadAllText(path).Trim();
+            text = Shared(() => ReadShared(path)).Trim();
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -115,10 +115,10 @@ public static class ClusterControlFile
     {
         try
         {
-            string[] parts = File.ReadAllText(StatePath(path)).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            string[] parts = Shared(() => ReadShared(StatePath(path))).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             return parts.Length == 2 && long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out long step) ? (parts[0], step) : null;
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return null;                                       // not written yet (or being replaced): no report
         }
@@ -139,7 +139,48 @@ public static class ClusterControlFile
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
         string temporary = full + "." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".tmp";
         File.WriteAllText(temporary, text + "\n");
-        File.Move(temporary, full, overwrite: true);
+        try
+        {
+            Shared(() =>
+            {
+                File.Move(temporary, full, overwrite: true);
+                return true;
+            });
+        }
+        catch
+        {
+            File.Delete(temporary);
+            throw;
+        }
+    }
+
+    // The file read while a writer may replace it: shared for reading, writing and deleting, so the reader holds up no
+    // replacement where the system allows it.
+    private static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    // Windows refuses to open a file while another process replaces it, and to replace one a reader has open (a sharing
+    // violation: an IOException or UnauthorizedAccessException); both last a moment, so the call is tried again, waiting
+    // a millisecond longer each time (about a second in all). A missing file is an answer, not a conflict.
+    private static T Shared<T>(Func<T> access)
+    {
+        const int attempts = 45;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return access();
+            }
+            catch (Exception e) when (attempt < attempts
+                                      && e is UnauthorizedAccessException or IOException and not (FileNotFoundException or DirectoryNotFoundException))
+            {
+                Thread.Sleep(attempt);
+            }
+        }
     }
 }
 

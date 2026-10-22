@@ -58,8 +58,15 @@ internal sealed unsafe partial class CudaBackend : Backend
     /// holds it for writing from BeginCapture to EndCapture. Recording captures everything issued on the stream, and
     /// the driver refuses synchronous copies and synchronization while it records, so other threads wait until the
     /// recording ends rather than landing in the graph or failing. The recording thread's own work still goes through.
+    /// One gate for every backend of the device (<see cref="CreateSeparate"/>: a simulated cluster's ranks carved from one
+    /// GPU): they share the device's primary context, whose synchronous copies and synchronization wait on every blocking
+    /// stream in it, so another rank's download while one rank records fails both (CUDA_ERROR_STREAM_CAPTURE_IMPLICIT,
+    /// _UNSUPPORTED) unless it waits for the recording too.
     /// </summary>
-    private readonly ReaderWriterLockSlim _streamGate = new(LockRecursionPolicy.SupportsRecursion);
+    private readonly ReaderWriterLockSlim _streamGate;
+
+    // The stream gate of each device (by ordinal), shared by its backends.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, ReaderWriterLockSlim> StreamGates = new();
 
     /// <summary>Managed thread id of the thread recording a graph (0 when none).</summary>
     private int _captureThread;
@@ -274,6 +281,7 @@ internal sealed unsafe partial class CudaBackend : Backend
     private CudaBackend(int ordinal, SeparateBackendOptions? separate = null)
     {
         _offload = separate?.Offload;
+        _streamGate = StreamGates.GetOrAdd(ordinal, static _ => new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion));
         Check(cuDeviceGet(out int device, ordinal), nameof(cuDeviceGet));
         _deviceHandle = device;
         Check(cuDevicePrimaryCtxRetain(out _context, device), nameof(cuDevicePrimaryCtxRetain));

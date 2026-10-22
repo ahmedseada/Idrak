@@ -681,13 +681,16 @@ internal static partial class Tests
             string stopped = Path.Combine(folder, "stopped"), straight = Path.Combine(folder, "straight");
             var control = new ClusterRunControl();
             control.Pause();                                       // before step 0
+            // Steps the stop ends long before: a fast machine ran the last of 40 between two polls, so the second pause asked
+            // for a step the run never began.
             var running = Task.Run(() => InProcessCluster.Run(DpTopology(device, 2), options,
-                rank => DpPretrain(rank.Device, Options(40, rank.Collectives), rank.Rank == 0 ? stopped : Path.Combine(folder, "stopped-1")), control));
+                rank => DpPretrain(rank.Device, Options(100_000, rank.Collectives), rank.Rank == 0 ? stopped : Path.Combine(folder, "stopped-1")), control));
             Check(UiWait(() => control.State == ClusterRunState.Paused, 120) && control.LastStep == -1, "both ranks wait before step 0");
             control.Resume();
             Check(UiWait(() => control.LastStep >= 1, 120), "two steps begun");
             long at = control.Pause();
-            Check(UiWait(() => control.State == ClusterRunState.Paused, 120) && control.LastStep == at - 1, $"both ranks wait before step {at}");
+            Check(UiWait(() => control.State == ClusterRunState.Paused, 120) && control.LastStep == at - 1,
+                $"both ranks wait before step {at} ({control.State}, last step {control.LastStep})");
             control.Resume();
             Check(UiWait(() => control.LastStep >= at + 1, 120), "the run goes on");
             long last = control.Stop();

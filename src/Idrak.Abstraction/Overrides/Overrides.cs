@@ -91,8 +91,37 @@ public static class Overrides
     [ThreadStatic]
     private static int t_defaults;
 
+    [ThreadStatic]
+    private static Assembly? t_registeredBy;
+
     /// <summary>Whether registrations on this thread are the library's built-ins (inside <see cref="AsLibraryDefaults"/>).</summary>
     internal static bool RegisteringDefaults => t_defaults > 0;
+
+    /// <summary>
+    /// The plug-in assembly registrations on this thread are made for (inside <see cref="AsRegisteredBy"/>), which is their
+    /// origin; null outside one.
+    /// </summary>
+    internal static Assembly? RegisteredBy => t_registeredBy;
+
+    /// <summary>
+    /// Runs <paramref name="registrations"/> with every registration it makes on this thread taken as made by
+    /// <paramref name="assembly"/>, whatever code calls the registry: a plug-in's parts are registered from
+    /// <see cref="Plugins.IdrakPlugin"/>, and the calling frame a registry would see is wherever the JIT inlined the part
+    /// (a registration delegate inlined into the plug-in base names Idrak.Abstraction). Nested calls take the innermost.
+    /// </summary>
+    internal static void AsRegisteredBy(Assembly assembly, Action registrations)
+    {
+        var previous = t_registeredBy;
+        t_registeredBy = assembly;
+        try
+        {
+            registrations();
+        }
+        finally
+        {
+            t_registeredBy = previous;
+        }
+    }
 
     /// <summary>
     /// Every entry an app has registered in the registries in use (a registry nobody has used holds no app entries), by

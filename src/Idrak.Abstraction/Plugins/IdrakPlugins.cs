@@ -48,7 +48,8 @@ public static class IdrakPlugins
                 throw;
             }
 
-            Registry.Register(plugin.Name, plugin, plugin.GetType().Assembly, plugin);
+            // Recorded as its own assembly's, also when another plug-in's part registers it (Requires).
+            Overrides.AsRegisteredBy(plugin.GetType().Assembly, () => Registry.Register(plugin.Name, plugin, implementation: plugin));
         }
     }
 
