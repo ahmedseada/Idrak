@@ -83,12 +83,13 @@ public static class AdversarialSynthesisTrainer
     // epsilon (VITS's 0.8, 0.99, 1e-9), the others as the speech trainer makes them.
     internal static Optimizer Optimizer(List<Tensor> parameters, SpeechTrainingOptions options, AdversarialSynthesisOptions adversarial, float rate)
     {
-        Func<IReadOnlyList<Tensor>, Optimizer> make = options.Optimizer.ToLowerInvariant() switch
+        var settings = new OptimizerSettings(rate, options.WeightDecay, options.Momentum);
+        if (options.Optimizer.Equals("adamw", StringComparison.OrdinalIgnoreCase) || options.Optimizer.Equals("adam", StringComparison.OrdinalIgnoreCase))
         {
-            "adamw" => ps => new AdamW(ps, rate, adversarial.Beta1, adversarial.Beta2, adversarial.Epsilon, options.WeightDecay),
-            "adam" => ps => new Adam(ps, rate, adversarial.Beta1, adversarial.Beta2, adversarial.Epsilon, options.WeightDecay),
-            _ => FineTuningOptimizers.Create(options.Optimizer, rate, options.WeightDecay, options.Momentum),
-        };
+            settings = settings with { Beta1 = adversarial.Beta1, Beta2 = adversarial.Beta2, Epsilon = adversarial.Epsilon };
+        }
+
+        var make = OptimizerKinds.Factory(options.Optimizer, settings);
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
 
@@ -163,7 +164,7 @@ public static class AdversarialSynthesisTrainer
                 _optimizer.LoadState(SpeechTrainer.ReadState(path));
             }
 
-            _schedule = FineTuningSchedules.Create(run.Schedule, run.WarmupFraction, run.MinLearningRate)(_optimizer, run.Steps);
+            _schedule = LearningRateSchedules.Factory(run.Schedule, new LearningRateScheduleSettings(run.WarmupFraction, run.MinLearningRate))(_optimizer, run.Steps);
             for (int i = 0; i < step; i++)
             {
                 _schedule.Step();

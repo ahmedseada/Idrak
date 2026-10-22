@@ -908,7 +908,7 @@ public sealed record FineTuningOptions
 
     /// <summary>
     /// Creates the optimizer from the trainable parameters (the adapters), e.g. <c>ps =&gt; new Sgd(ps, 0.05f, momentum: 0.9f)</c>
-    /// or <see cref="FineTuningOptimizers.Create"/>. Null (the default): AdamW with <see cref="LearningRate"/> and
+    /// or one by name, <see cref="OptimizerKinds.Factory"/>. Null (the default): AdamW with <see cref="LearningRate"/> and
     /// <see cref="WeightDecay"/>. The rate the optimizer starts with is the peak the schedule works from. With
     /// <see cref="HostOptimizer"/> it receives the CPU copies of the parameters (one each). Recorded steps
     /// (<see cref="CudaGraphs"/>) record only the forward and backward pass, so they work with any optimizer that keeps the
@@ -919,7 +919,7 @@ public sealed record FineTuningOptions
 
     /// <summary>
     /// Creates the learning-rate schedule from the optimizer and the number of optimizer steps planned; it is stepped once
-    /// per optimizer step (built-in: <see cref="FineTuningSchedules"/>). Null (the default): a linear warm-up over
+    /// per optimizer step (by name: <see cref="LearningRateSchedules.Factory"/>). Null (the default): a linear warm-up over
     /// <see cref="WarmupFraction"/> of the steps, then cosine decay to <see cref="MinLearningRate"/>.
     /// </summary>
     public Func<Optimizer, int, LearningRateScheduler>? Scheduler { get; init; }
@@ -1260,7 +1260,9 @@ public static class FineTuner
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int perStep = accumulation * (sync?.WorldSize ?? 1);
         int totalSteps = epochBatches.Sum(b => (b.Count + perStep - 1) / perStep);
-        var schedule = (options.Scheduler ?? FineTuningSchedules.Cosine(options.WarmupFraction, options.MinLearningRate))(optimizer, Math.Max(1, totalSteps))
+        var scheduler = options.Scheduler
+            ?? LearningRateSchedules.Factory(LearningRateSchedules.Cosine, new LearningRateScheduleSettings(options.WarmupFraction, options.MinLearningRate));
+        var schedule = scheduler(optimizer, Math.Max(1, totalSteps))
             ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
         var evaluations = new List<float>();
         int step = 0, nonFinite = 0;

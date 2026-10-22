@@ -408,6 +408,33 @@ public static class Conformance
         return Check(profile, new LinkProfileSuite(), options ?? new ContractCheckOptions { RandomCases = 4 });
     }
 
+    /// <summary>
+    /// Checks the optimizer kind registered as <paramref name="name"/> (or <paramref name="kind"/>, when given;
+    /// <see cref="OptimizerKindSuite"/>): it updates the parameters it was given at the rate asked for, its steps lower a
+    /// squared loss with every value finite, a parameter the loss does not reach keeps its values, the same case gives the
+    /// same values, and it agrees with the library's kind of that name when there is one (and it is not that one). Eight
+    /// random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckOptimizerKind(string name, IOptimizerKind? kind = null, Device? device = null, ContractCheckOptions? options = null)
+    {
+        var checkedKind = kind ?? OptimizerKinds.Get(name);
+        var library = OptimizerKinds.Default(name);
+        return Check(checkedKind, new OptimizerKindSuite(ReferenceEquals(checkedKind, library) ? null : library, device), options ?? new ContractCheckOptions { RandomCases = 8 });
+    }
+
+    /// <summary>
+    /// Checks the learning-rate schedule registered as <paramref name="name"/> (or <paramref name="schedule"/>, when given;
+    /// <see cref="LearningRateScheduleSuite"/>): it works from the optimizer and its rate, every rate is finite, not
+    /// negative and not above the optimizer's, the same settings give the same rates, and it agrees with the library's
+    /// schedule of that name when there is one (and it is not that one).
+    /// </summary>
+    public static ConformanceReport CheckLearningRateSchedule(string name, ILearningRateSchedule? schedule = null, ContractCheckOptions? options = null)
+    {
+        var checkedSchedule = schedule ?? LearningRateSchedules.Get(name);
+        var library = LearningRateSchedules.Default(name);
+        return Check(checkedSchedule, new LearningRateScheduleSuite(ReferenceEquals(checkedSchedule, library) ? null : library), options);
+    }
+
     /// <summary>Checks a cluster topology (plan 23, <see cref="TopologySuite"/>).</summary>
     /// <param name="topology">The topology.</param>
     /// <param name="options">The cases to run.</param>
