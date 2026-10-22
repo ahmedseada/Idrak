@@ -153,6 +153,15 @@ public interface IPolicyLoss
     /// <param name="options">The loss's options by key (<see cref="Keys"/>), values as text; null for its defaults.</param>
     /// <exception cref="ArgumentException">An option the loss does not take (the message names it and <see cref="Keys"/>), a bad value, or an input without what the loss needs (a reference, values).</exception>
     Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null);
+
+    /// <summary>
+    /// Whether <see cref="Loss"/> with <paramref name="options"/> reads <see cref="PolicyLossInput.ReferenceLogProbabilities"/>
+    /// (a KL penalty to the reference weighted above 0), so a policy computes the reference's log-probabilities only for a
+    /// loss that reads them (a pass of the reference model per rollout). True unless the loss says otherwise, so a loss
+    /// that does not answer is always given them.
+    /// </summary>
+    /// <param name="options">The options <see cref="Loss"/> will be called with; null for its defaults.</param>
+    bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => true;
 }
 
 /// <summary>
@@ -218,6 +227,9 @@ public static class PolicyLosses
         public string Summary => app.Summary;
 
         public IReadOnlyCollection<string> Keys => app.Keys;
+
+        // The library's loss may answer in the app's place (a fall-back, a shadow), so the reference is given when either reads it.
+        public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => app.NeedsReference(options) || library.NeedsReference(options);
 
         public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
         {

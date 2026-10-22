@@ -10,7 +10,7 @@
 | R1 | The contracts (`Idrak.Abstraction.Reinforcement`) and the two package skeletons (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`: registration, the CLI) | B | Done 2026-10-22; CPU pass |
 | R2 | `Idrak.Reinforcement`, the general part: rollouts, advantages, policy and value losses, the on-policy trainer, a module policy, checkpoints, progress, settings | A | Done 2026-10-22; CPU pass |
 | R3 | The language-model policy in `Idrak.Text`: a fine-tuning session, sampled tokens recorded, the `prompts` environment, the text rewards, on-policy distillation from a teacher (alone or beside a reward) | B | Built 2026-10-22; CPU pass (left: rollouts on a cluster; see "R3 as built") |
-| R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Planned |
+| R4 | `Idrak.Reinforcement.Plugins.Coding`: the coding task layer moves out of `Idrak.Text`, the coding environment, its rewards, the command sandbox (`process`, `container`) | B | Done 2026-10-22; CPU pass |
 | R4b | No programming language in the library: coding languages as a registry (`CodingLanguages`), C# and TypeScript/Angular as `Idrak.Text.Plugins` profiles; `Idrak.Reinforcement.Plugins.CSharp`: agentic coding on C# projects (dotnet defaults, rewards from the build's errors and the tests' results, a shared package cache) | A | Planned (the owner, 2026-10-22) |
 | R5 | `idrak reinforce`, the settings carried into the CLI and samples, the CodingAgent sample on the library, a small demo suite | A | Planned |
 | R6 | (optional, the owner decides) `Idrak.Reinforcement.Plugins.Classic`: bandit, CartPole, Pendulum, MountainCar; off-policy (replay buffer, DQN) | A or B | Queued (the owner, 2026-10-22): starts after R5, when the main plan is finished |
@@ -765,6 +765,154 @@ enforces its time, output and memory limits and refuses `network: off`; `contain
 **Tests (CPU here):** one build; `plugins: coding|coding agent:|coding tools|command sandboxes|reinforcement contracts|
 plugins:|public API|abstraction inventory|cli health: every environment variable`. **Owner:** `container` on a machine with
 Docker or Podman, and the coding run of R5.
+
+**R4 as built (2026-10-22).** Items 0-7 built; `Idrak.Text` still references no `Idrak.Reinforcement`, and the plug-in uses the
+public API only.
+- **R2 and R3 together (item 0).** R2's `ReinforcementTrainer` drives R3's `LanguageModelPolicy` with no change to the trainer:
+  the policy is not an `IScheduledPolicy`, so the trainer leaves its rate and clip to the fine-tuning session, as R2 meant. On
+  R3's tiny decoder and the `prompts` environment (reward `metric`, `metric.metric=exact`), `grpo` (group advantages, a k3 KL
+  of 0.01, two epochs a rollout, 40 iterations) and `ppo` (returns less their mean, two epochs of two mini-batches, no KL, 24
+  iterations) raise the pass rate. The first update's ratios are exactly 1, the trained ids are the sampled ids, and the
+  device memory held does not grow. On-policy distillation runs as a teacher term beside `grpo` under the trainer (the
+  student's reverse KL on its own samples falls below 0.7 of its start). **Contract change (R-C6):** `IPolicyLoss.NeedsReference(options)`,
+  a default interface member that answers true, so R1's fakes and any app loss still compile and are given the reference. R2's
+  `reinforce` answers false; `ppo` and `grpo` answer true when their option `kl` is weighted. The guarded slot answers for
+  the app's loss or the library's. This removes the flag cleanly: `FineTuningLosses.Policy(loss, options)` lost its
+  `reference` parameter and `LanguageModelPolicyOptions.Reference` is gone. The policy computes the reference pass only for
+  a loss that reads it, and adds it later on the same batch if a later loss does (the adapters off do not move). R3's
+  test-local `TestClippedLoss`, `GroupAdvantages` and its two update loops are removed: the adapter and multi-turn tests use
+  R2's `grpo`, and the pass-rate and teacher tests use R2's trainer. Kept: `RecordingLoss`, a library loss under a test name
+  that records the first gap and whether a reference came (R2 records neither), and the two-turn rollout of the multi-turn
+  test (its subject is the layout). **The bars were measured:** a scratch program (not checked in) ran both algorithms on
+  seeds 1-8. The five-iteration mean of the sampled pass rate went from 0.35-0.45 to 0.57-0.69 for grpo and from 0.31-0.42
+  to 0.54-0.69 for ppo. The test's bar, a rise of more than 0.1 to at least 0.5, held on all 16 runs. R3's single-run bar
+  (0.3 to 0.6 over 3 iterations) failed under the trainer's draws, at 0.36 to 0.50. The exact probability of "yes" is not
+  a usable measure: one ppo run that passed half its episodes had moved to another spelling that the metric's
+  normalization accepts.
+- **M5, the task layer in the plug-in** (`src/Idrak.Reinforcement.Plugins/Coding/`): `CodingTask` (the `task.json` layout and
+  `Load` unchanged), `CodingSuite.Load(folder, filter)`, `CodingWorkspace` (`Prepare`, `Overlay`, `CommitStart`, `Clone`,
+  `Delete`, `HiddenFiles`, `TestEdits`), `CodingVerifier` (`SetupAsync`, `VerifyAsync`, `CheckTaskAsync` → `CodingTaskCheck`,
+  and `RunAsync(agent, task, folder)`, the old `CodingAgent.RunAsync(task, folder)`; options `CodingVerifierOptions`: `Tools`,
+  `Timeout`, the old `AgentOptions.VerifyTimeout`; `OnStatus` moved from the agent), `CodingVerification` (passed, commands,
+  passed commands, output, `Fraction`), `CodingOutcome` (the old `AgentOutcome`'s names), and `CodingRun` (task, agent run,
+  outcome, verification output; `ToJson` writes the old run's JSON line, key for key). `CodingAgent` keeps the loop:
+  `RunAsync(prompt, tools)` → `CodingAgentRun` (messages, tools, think, `End`: `CodingAgentEnd` Answered, OutOfBudget, Error;
+  `Note`, rounds, calls, errors, tokens, times, workspace; `ToJson`, `AddFigures`), `Options`, and
+  `RunToolCallsAsync(registry, reply, previousCalls)` → `CodingToolTurn`: the loop's way of running one reply's calls (the
+  repeated-call note, "Error: …" messages, the error count). It is public, so the environment steps exactly as the loop
+  does with no copy. `AgentTask`, `AgentOutcome` and `AgentRun` are gone. `idrak agent` needed no change. The sample references
+  `Idrak.Reinforcement.Plugins` and calls `ReinforcementPlugins.RegisterAll()` (so `IDRAK_SANDBOX=container` works there).
+  `agent-run` uses `CodingVerifier.RunAsync`, `agent-check` uses `CheckTaskAsync`, and the live `agent --out` line goes
+  through `CodingRun`, so it reads as before. The `coding agent:` tests keep their names and count (3), with the calls
+  changed. The language defaults of the task layer (node_modules, the build-output folders, the git excludes) moved with it
+  into the plug-in, which is not the library; R4b takes the rest.
+- **R-C8, the sandbox** (`src/Idrak.Abstraction/CommandSandboxes.cs`, namespace `Idrak.Abstraction`, so `CommandResult`
+  moved out of `Idrak.Text.Generation` with no new using for its callers): `ICommandSandbox` (`Name`, `Summary`,
+  `Check(limits)` → null or the reason naming a sandbox that can, `RunAsync(words, directory, limits, ct)` → `CommandResult`,
+  throwing `NotSupportedException` for limits it cannot keep). `CommandLimits`: time, output cap, memory, processes, CPUs,
+  network, the programs allowed, variables, and the root the command may see. `CommandResult` gained `OutOfMemory`. The
+  registry `CommandSandboxes` is **unguarded**, with this reason: a sandbox is a safety boundary, and falling back would run
+  a model's command under other limits than the ones asked for. Constants `Process`, `Container` and `EnvironmentVariable`;
+  `DefaultName` reads `IDRAK_SANDBOX`. One line in `shared-contracts.txt` (`CommandSandboxes`). The inventory asked for an
+  `ICommandSandbox` line first, then refused it as stale, because Abstraction's own registry uses the interface. It also
+  asked to remove R3's `IRewardFunction` line, now stale. **`process`** (`ProcessCommandSandbox`, Idrak.Text, registered by
+  its `LibraryRegistrations`) is `ExecuteAsync`'s process code moved: the programs allowed, found on the PATH (the public
+  `FindProgram`, which `container` reuses), standard input closed, the time limit with a process-tree kill, the output cap.
+  It adds a memory limit on the started process's working set (`Process.WorkingSet64` every `PollInterval`, 50 ms; only
+  when a limit is set). **Deviation:** the processes the command starts in turn are not counted, because .NET gives no
+  portable way to list a process's children; `container` limits the whole tree. `process` refuses `network: off`, a process
+  limit and a CPU limit, naming `container`. `CodingTools` keeps its own checks in their old order and messages (folder,
+  shell operators, the allow-list, git's subcommands), then hands the words to the sandbox its options name. The options are
+  `CodingToolOptions.Sandbox` (`IDRAK_SANDBOX`, default process), `MaxMemoryBytes`, `MaxProcesses`, `MaxCpus`, `Network` and
+  `Environment`, or a sandbox given to its constructor. The tools check the sandbox when they are made, and it gets the
+  allow-list as `CommandLimits.Programs`. The non-interactive variables stay in `CodingTools`, passed as the limits'
+  variables, so no sandbox names a language. Results unchanged: `coding tools: run_command` passes as before.
+- **`container`** (`ContainerSandbox`, the plug-in): `run --rm --name idrak-sandbox-<guid>`, `--network none` unless both the
+  command and `IDRAK_SANDBOX_NETWORK` (on, or a network's name) allow it, the root bind-mounted at `/workspace` (`--mount`
+  type=bind, so Windows drive letters are safe) with `--workdir` its sub-folder, `--memory`/`--memory-swap`, `--cpus`,
+  `--pids-limit`, `--user`, `--env` (sorted) and `ExtraArguments`, then the image and the command. The program is Docker,
+  then Podman, found on the PATH, or `IDRAK_SANDBOX_PROGRAM`. The image comes from `IDRAK_SANDBOX_IMAGE` and none is
+  assumed. The program runs through the library's `process` sandbox (its time limit and output cap); a container still
+  running after a timeout or a cancellation is removed (`rm --force`). It refuses with the variable's name when no program
+  is found or no image is set. Tested: the refusals and the exact command lines. Running it is the owner's.
+- **`coding` environment** (`CodingEnvironmentKind`, `CodingEnvironment : IEnvironment<ChatObservation, ChatMessage>`; R3's
+  observation type, as the plan's `Conversation`). Options: `suite`, `filter`, `reward` (default `tests-passed`; term
+  options as term.key), `rounds` (40), `time` (1200 s), `system`, `think`, `sandbox`, `memory`, `processes`, `cpus`,
+  `network`, `command-timeout`, `verify-timeout`, `workspaces`, `keep`, `work`, `refuse-test-edits`. Environments of a kind
+  with equal options share one run: the tasks, the tool definitions (one set, so replays compare equal), the prepared copies,
+  the broken tasks and the workspace gate. The last one disposed deletes the copies (unless kept). `Reset(seed)` orders
+  the tasks by the seed (`Random(seed).Shuffle`) and plays the first whose setup passed. The first draw of a task lays it
+  out and runs its setup once, then commits its start for `git diff`; every episode clones that copy, `obj` included, so a
+  restore is reused. A failed setup leaves the task out, reported in `BrokenTasks` and the info's `broken_tasks`. Each
+  step runs the reply's calls through `CodingTools` with `CodingAgent.RunToolCallsAsync`. The episode ends on a reply
+  without calls (terminated), or on the rounds or the time (truncated, after the last reply's calls ran, as the loop does).
+  At the end: the test edits are found (files at the hidden paths, or in the hidden files' folders, that differ from the
+  prepared copy), the hidden tests are copied in and verified, and the reward expression is scored over the info (`task`,
+  `rounds`, `tool_calls`, `tool_errors`, `verify_passed`, `verify_commands`, `verify_passed_commands`, `test_edits`,
+  `outcome`, `refused`, `broken_tasks`; `CodingInfo`). The episode's workspace is then deleted unless kept. **Deviation:**
+  `refuse-test-edits` is an environment option, not a reward: a refused episode skips verification and counts as failed
+  (`refused=test-edits`), so every reward stays a function of the info. A seeded episode replays the same steps, rewards
+  and info; the observations replay exactly where the tools' output is deterministic (`run_command` reports seconds), and
+  only while no episode reaches the wall-clock limit.
+- **Coding rewards** (`CodingRewards`, in `RewardFunctions` by the plug-in): `tests-passed`; `verify-fraction` (commands run
+  in order and stop at the first failure, as verification always did, so it is the share passed before it); `rounds`
+  (−`penalty` 0.01 per reply past `free`); `tool-errors` (−`penalty` 0.05 per failed call). An answer without the
+  environment's info is refused, naming it. All four pass the reward suite.
+- **Episodes in parallel:** R2's collector steps one environment per episode and resets them one after another, so a gate at
+  `Reset` would deadlock. **Deviation:** `IDRAK_RL_WORKSPACES` (`workspaces`) is the most episodes whose tools or
+  verification run at once (a semaphore), not the number of workspaces that exist. Its default is the CPU threads, fewer when
+  the free disk holds fewer than two copies of the largest prepared workspace per slot. A workspace exists only while its
+  episode runs. `IDRAK_RL_KEEP_WORKSPACES` (`keep`) keeps them all. **Measured (rule 79), on 4 cores:** 4 episodes, each a
+  `dotnet build` and run of the test's project, took 4.7 s and 5.1 s one at a time and 1.6 s and 1.3 s four at once (two
+  runs), with the same rewards, info and conversations.
+- **Agentic coding with a teacher:** R3's policy with `TeacherWeight` 1 (a teacher equal to the student) under R2's trainer
+  with `grpo` runs on the coding environment with no coding-specific code; in every episode the trained ids are the replies'
+  ids. A multi-turn batch from the environment (a tool call, its result, an answer) trains the two replies' ids alone.
+- **The plug-in:** `CodingPlugin` ("coding") in `ReinforcementPlugins.All` registers the environment, the four rewards and
+  `container` as `Part`s; Unregister leaves the registries as found. A README table row; the Abstraction README has a row for
+  the sandboxes. The CLI's `plugins list` shows `sandboxes`. New variables in `EnvironmentVariables.cs`: `IDRAK_SANDBOX`,
+  `IDRAK_SANDBOX_PROGRAM`, `IDRAK_SANDBOX_IMAGE`, `IDRAK_SANDBOX_NETWORK` (group "Command sandbox": `agent`, `test`), and
+  `IDRAK_RL_WORKSPACES`, `IDRAK_RL_KEEP_WORKSPACES` (Reinforcement). `api/Idrak.Abstraction.txt`, `Idrak.Text.txt`,
+  `Idrak.Reinforcement.Plugins.txt` and `plans/10-abstraction-inventory.md` were regenerated.
+- **Tests:** `tests/Idrak.Tests/CodingPluginTests.cs`, 6 tests. `command sandboxes:` (2): process's limits (programs, a 1 ms
+  time limit, the output cap, a 1-byte memory limit with a 1 ms poll stops `dotnet --info`, a roomy one does not), the
+  refusals, cancellation, and the tools through a recording sandbox; container's refusals and command lines. `plugins:
+  coding` (4): registration and the reward suites; a C# suite written by the test (hello and hi: a net10.0 project, setup
+  `dotnet restore`, verification `dotnet build --no-restore` then running the hidden `tests/Check.cs`; broken: a setup that
+  fails) driven by scripted replies; the environment suite on a quick suite (`git grep`) and the parallel measurement; the
+  distillation runs on the tiny decoder. `reinforcement text:` now has 10 tests (ppo added). `reinforcement contracts`'
+  package check now expects the family "coding".
+- **The run (CPU, this agent):** one build of `tests/Idrak.Tests` (a first pass stopped on one compile error, a name clash in
+  the policy, fixed before anything ran) and of `samples/Idrak.Samples.CodingAgent` (no warnings); `IDRAK_UPDATE_API=1`
+  (`public API`) and `IDRAK_UPDATE_INVENTORY=1` (`abstraction inventory: plans`). Then
+  `plugins: coding|command sandboxes|coding agent:|coding tools|reinforcement text:`: 21 passed, 1 failed (the grpo bar,
+  above). Then `reinforcement:|reinforcement contracts|plugins:|cli run: tools|public API|abstraction inventory|cli health:
+  every environment variable|cli polish: the environment table|naming:|override loop:|conformance kit:|fine-tuning:|distillation:`:
+  117 passed, 2 failed (the inventory's two stale lines; R1's "no family yet" check). The fixes took three rebuilds. The
+  first gave the bars five-iteration means and 40 iterations; on its rerun grpo passed and ppo failed the bar of the time.
+  The seed probe above set the measured bars and 24 ppo iterations (second rebuild), and `reinforcement text: R2's trainer`
+  then passed 2 of 2. The third rebuild fixed the two stale checks, and `abstraction inventory|reinforcement contracts`
+  passed 11 of 11. On the final code every test of both lists passes (137 different tests; the second list repeats the 4
+  `plugins: coding` ones).
+- **Left:** `container` has not been run (no Docker or Podman here), and the language-model tests have not run on CUDA: both
+  are the owner's. The process sandbox's memory limit counts the started process only. No language moved into the library;
+  R4b removes the ones still there (the tools' commands, ignored folders and prompt, and the task layer's node_modules and
+  build-output folders, now in the plug-in). `idrak reinforce --env coding` and the coding options in the CLI are R5's.
+- **The owner's commands** (repo at `D:\Projects\Idrak`):
+  ```powershell
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "plugins: coding|command sandboxes|coding agent:|coding tools|reinforcement text:|reinforcement:|reinforcement contracts|plugins:|cli run: tools|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:|override loop:|conformance kit:|fine-tuning:|distillation:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "reinforcement text:|plugins: coding: R3's on-policy distillation"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  dotnet build -c Release samples\Idrak.Samples.CodingAgent
+  # container, on a machine with Docker or Podman, with an image of your own that holds the .NET SDK, on a task suite:
+  $env:IDRAK_SANDBOX = "container"; $env:IDRAK_SANDBOX_IMAGE = "<your image with the .NET SDK>"
+  dotnet run -c Release --no-build --project samples\Idrak.Samples.CodingAgent -- agent-check <suite folder>
+  Remove-Item Env:IDRAK_SANDBOX, Env:IDRAK_SANDBOX_IMAGE
+  ```
+  On CUDA the pass-rate bars were measured on the CPU only. A miss there is a finding to report (the card's draws differ).
 
 ## Phase R4b: no programming language in the library; `Idrak.Reinforcement.Plugins.CSharp` (the owner, 2026-10-22)
 

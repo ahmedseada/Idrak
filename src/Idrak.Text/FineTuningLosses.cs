@@ -473,19 +473,17 @@ public static class FineTuningLosses
     /// <see cref="TrainingSequence.Value"/> or <see cref="TrainingSequence.TokenValues"/>), the behaviour log-probabilities
     /// <see cref="FineTuningLossInput.BehaviorLogProbabilities"/> (none: on-policy, every ratio 1), and the reference the
     /// model with its adapters disabled (<see cref="FineTuningLossInput.ReferenceLogProbabilities"/>, taken from the
-    /// sequences when they carry it). The step's sizes are the policy loss's <see cref="PolicyLossInput.StepUnits"/> and
+    /// sequences when they carry it), given only when the loss reads it with these options (<see cref="IPolicyLoss.NeedsReference"/>),
+    /// so a loss without a KL term costs no reference pass. The step's sizes are the policy loss's <see cref="PolicyLossInput.StepUnits"/> and
     /// <see cref="PolicyLossInput.StepSequences"/>. The policy loss's gradient reaches the network as any loss of one's own
     /// does: one more pass of the head over the trained rows.
     /// </summary>
     /// <param name="loss">The policy loss (<see cref="PolicyLosses.Get"/>).</param>
     /// <param name="options">Its options by key (<see cref="IPolicyLoss.Keys"/>), null for its defaults.</param>
-    /// <param name="reference">
-    /// Give the policy loss the reference log-probabilities (true, the default: a KL penalty reads them); false leaves them
-    /// out, so a loss without a KL term costs no reference pass.
-    /// </param>
-    public static FineTuningLoss Policy(IPolicyLoss loss, IReadOnlyDictionary<string, string>? options = null, bool reference = true)
+    public static FineTuningLoss Policy(IPolicyLoss loss, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(loss);
+        bool reference = loss.NeedsReference(options);
         return input =>
         {
             var policy = new PolicyLossInput(input.LogProbabilities, input.TokenCounts, input.TokenValues, input.BehaviorLogProbabilities,

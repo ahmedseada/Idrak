@@ -23,8 +23,16 @@ ReinforcementPlugins.RegisterAll();      // every family of the package; calling
 
 | Namespace | Plug-in | Registers | Read more |
 |---|---|---|---|
+| `Idrak.Reinforcement.Plugins.Coding` | `CodingPlugin` ("coding") | `EnvironmentKinds`: `coding`; `RewardFunctions`: `tests-passed`, `verify-fraction`, `rounds`, `tool-errors`; `CommandSandboxes`: `container` | `CodingEnvironmentKind`, `CodingVerifier` |
 
-None yet.
+**Coding** (`Idrak.Reinforcement.Plugins.Coding`): the coding task layer (`CodingTask` with its `task.json` layout,
+`CodingSuite`, `CodingWorkspace`, `CodingVerifier` and `CodingOutcome`; an app evaluates a model on a suite with them,
+running Idrak.Text's `CodingAgent` loop), the `coding` environment (an episode is a task drawn from its seed; setup once per
+task; the assistant's tool calls run through `CodingTools`; the hidden tests' verification is the reward; options
+`suite`, `reward`, `rounds`, `time`, `sandbox`, the limits, `workspaces` (`IDRAK_RL_WORKSPACES`), `keep`
+(`IDRAK_RL_KEEP_WORKSPACES`), `refuse-test-edits`), its rewards, and the `container` sandbox: Docker or Podman
+(`IDRAK_SANDBOX_PROGRAM`, else the first on the PATH), the image `IDRAK_SANDBOX_IMAGE` (none assumed), the network off unless
+`IDRAK_SANDBOX_NETWORK`; `IDRAK_SANDBOX=container` makes the coding tools use it.
 
 An environment whose kind is not registered is refused with "not registered", naming this package.
 

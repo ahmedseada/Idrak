@@ -9,14 +9,15 @@ using Idrak.Abstraction.Testing;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Reinforcement;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
 using Idrak.Text.Reinforcement;
 
-// Plan 27, R3: the language-model policy in Idrak.Text. Idrak.Text does not reference Idrak.Reinforcement, whose losses
-// and estimators are written beside this phase: the policy is proven here with a test-only clipped loss registered into
-// PolicyLosses and a test-only update loop, on tiny decoders made by the tests (no download).
+// Plan 27, R3: the language-model policy in Idrak.Text, on tiny decoders made by the tests (no download). Idrak.Text does
+// not reference Idrak.Reinforcement; since R4 the policy is trained here by R2's trainer, estimators and losses (grpo,
+// ppo) through Idrak.Abstraction's registries, with a test-only wrapper of a library loss that records what it was given.
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ReinforcementTextGroup =
@@ -25,10 +26,11 @@ internal static partial class Tests
         ("reinforcement text: a session's log-probabilities follow its adapters (off: the base model), a checkpoint resumes in a new session and restores into a fresh one, and the generator samples the live adapters", SessionStateAndCheckpoints),
         ("reinforcement text: sampled tokens: off, no chunk carries ids; on, the last chunk of Chat, Stream, ChatBatch and StreamBatch carries the prompt as fed and the ids and log-probabilities the sampler drew, up to the token completing a stop; the texts are the same", SampledTokensRecorded),
         ("reinforcement text: multi-turn: a prefix-stable episode trains as one sequence, its replies alone trained; a template that drops earlier reasoning gives a sequence per turn; auto picks on the ids, episode is refused on unstable ids, and a two-turn run of the policy lays out what its ids say", MultiTurnLayouts),
-        ("reinforcement text: a policy loss through FineTuningLosses.Policy gets the token values, behaviour and reference log-probabilities a step's sequences carry, and the input gives them all or none", PolicyLossAdapter),
-        ("reinforcement text: GRPO through a test-only clipped loss and loop (two epochs a rollout) raises a prompts task's pass rate (exact) on a tiny decoder; the first update's ratios are exactly 1; trained ids are the sampled ids; held device memory does not grow over 20 iterations", PolicyRaisesPassRate),
+        ("reinforcement text: a policy loss through FineTuningLosses.Policy gets the token values, behaviour and reference log-probabilities a step's sequences carry (the reference only when the loss reads it: IPolicyLoss.NeedsReference), and the input gives them all or none", PolicyLossAdapter),
+        ("reinforcement text: R2's trainer with grpo (group advantages, a k3 KL to the reference, two epochs a rollout) drives the policy on a prompts task (reward metric, exact) and raises its pass rate on a tiny decoder; the first update's ratios are exactly 1; trained ids are the sampled ids; held device memory does not grow over 40 iterations", PolicyRaisesPassRate),
+        ("reinforcement text: R2's trainer with ppo (returns less their mean, mini-batches, no KL so no reference pass) drives the policy on the prompts task and raises its pass rate", PolicyPpoRaisesPassRate),
         ("reinforcement text: on-policy distillation: forward, reverse and jsd match a direct computation on fixed logits (values and gradients through the chunked head); the library's forward by name is the distillation's bit for bit; the registry", DivergenceKinds),
-        ("reinforcement text: on-policy distillation: a teacher equal to the student gives divergences of 0 and leaves the weights; a stronger teacher's reverse KL on the student's samples falls alone, with a mix of data answers and beside a reward; a teacher file and another vocabulary are refused", OnPolicyDistillationLearns),
+        ("reinforcement text: on-policy distillation: a teacher equal to the student gives divergences of 0 and leaves the weights; a stronger teacher's reverse KL on the student's samples falls alone, with a mix of data answers and as a teacher term beside grpo under R2's trainer; a teacher file and another vocabulary are refused", OnPolicyDistillationLearns),
         ("reinforcement text: the prompts environment passes the environment suite and reads a transcript file; the text rewards (metric, regex, json, length, judge, sum) pass the reward suite and are the library's in RewardFunctions", PromptsAndRewards),
     ];
 
@@ -402,8 +404,7 @@ internal static partial class Tests
                 Check(trainedIds.SequenceEqual(records[e].SelectMany(r => r.Tokens)), $"episode {e}: the replies' sampled ids alone are trained");
             }
 
-            var loss = new TestClippedLoss();
-            var stats = policy.Update(batch, loss);
+            var stats = policy.Update(batch, PolicyLosses.Get("grpo"));
             Check(float.IsFinite(stats.Loss) && stats.Episodes == 4 && stats.Units == batch.Trajectories.Sum(t => t.Units), $"an update over the two-turn episodes: {stats}");
         }
         finally
@@ -412,34 +413,40 @@ internal static partial class Tests
         }
     }
 
-    // GRPO's surrogate as a test-only policy loss: the clipped ratio with group-normalized advantages (given), a k3 KL to
-    // the reference; it records the largest |log p − behaviour| of its first call.
-    private sealed class TestClippedLoss(string name = "reinforcement-text-test-grpo", float kl = 0.01f) : IPolicyLoss
+    // A library policy loss under a test name, recording what it was given: the largest |log p − behaviour| of its first
+    // call, and whether any call had the reference's log-probabilities. It reads the reference when the library's does.
+    private sealed class RecordingLoss(string name, IPolicyLoss inner) : IPolicyLoss
     {
         public float? FirstGap { get; private set; }
 
+        public bool SawReference { get; private set; }
+
         public string Name => name;
 
-        public string Summary => "a clipped ratio with a k3 KL (the reinforcement text tests)";
+        public string Summary => $"{inner.Name}, recorded (the reinforcement text tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = ["clip"];
+        public IReadOnlyCollection<string> Keys => inner.Keys;
+
+        public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => inner.NeedsReference(options);
 
         public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
         {
-            float clip = options?.TryGetValue("clip", out var text) == true ? float.Parse(text, CultureInfo.InvariantCulture) : 0.2f;
             FirstGap ??= input.LogProbabilities.ToArray().Zip(input.BehaviorLogProbabilities.ToArray()).Max(p => Math.Abs(p.First - p.Second));
-            var ratio = (input.LogProbabilities - input.BehaviorLogProbabilities).Exp();
-            var a = ratio * input.Advantages;
-            var b = ratio.Clamp(1f - clip, 1f + clip) * input.Advantages;
-            var loss = -((a + b - (a - b).Abs()) * 0.5f).Sum() / input.StepUnits;
-            if (input.ReferenceLogProbabilities is { } reference && kl > 0f)
-            {
-                var d = reference - input.LogProbabilities;
-                loss = loss + (d.Exp() - d - 1f).Sum() * (kl / input.StepUnits);
-            }
-
-            return loss;
+            SawReference |= input.ReferenceLogProbabilities is not null;
+            return inner.Loss(input, options);
         }
+    }
+
+    // A loss that does not say whether it reads the reference: it is given it (IPolicyLoss.NeedsReference's default).
+    private sealed class SilentLoss : IPolicyLoss
+    {
+        public string Name => "reinforcement-text-test-silent";
+
+        public string Summary => "a loss that does not answer NeedsReference";
+
+        public IReadOnlyCollection<string> Keys { get; } = [];
+
+        public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null) => input.LogProbabilities.Sum();
     }
 
     private static void PolicyLossAdapter(Device device)
@@ -453,25 +460,38 @@ internal static partial class Tests
         var random = new Random(3);
         float[] Values(int n, float scale, float shift) => [.. Enumerable.Range(0, n).Select(_ => shift + scale * (random.NextSingle() - 0.5f))];
         float[] logp = Values(9, 1f, -1.5f), behavior = Values(9, 1f, -1.5f), reference = Values(9, 1f, -1.5f), advantages = Values(9, 2f, 0f);
-        var loss = new TestClippedLoss("reinforcement-text-test-adapter", kl: 0.1f);
+        var grpo = PolicyLosses.Get("grpo");
+        var kl = new Dictionary<string, string> { ["kl"] = "0.1" };
+
+        // Whether a loss reads the reference: grpo and ppo when their KL is weighted, reinforce never, a loss that does not say always.
+        Check(grpo.NeedsReference(kl) && !grpo.NeedsReference() && !grpo.NeedsReference(new Dictionary<string, string> { ["kl"] = "0" })
+              && PolicyLosses.Get("ppo").NeedsReference(new Dictionary<string, string> { ["kl"] = "0.04" }) && !PolicyLosses.Get("ppo").NeedsReference()
+              && !PolicyLosses.Get("reinforce").NeedsReference(), "NeedsReference: the KL's weight decides");
+        Check(((IPolicyLoss)new SilentLoss()).NeedsReference(), "a loss that does not answer is given the reference");
 
         // The adapter's loss and gradient equal the policy loss's on the same values.
         var leaf = Tensor.From(logp, [9], Device.Cpu, requiresGrad: true);
         var input = new FineTuningLossInput(leaf, counts, Tensor.From(reference, [9], Device.Cpu), stepTokens: 12, tokenValues: Tensor.From(advantages, [9], Device.Cpu),
             behaviorLogProbabilities: Tensor.From(behavior, [9], Device.Cpu));
-        var adapted = FineTuningLosses.Policy(loss)(input);
+        var adapted = FineTuningLosses.Policy(grpo, kl)(input);
         adapted.Backward();
         var direct = Tensor.From(logp, [9], Device.Cpu, requiresGrad: true);
-        var expected = loss.Loss(new PolicyLossInput(direct, counts, Tensor.From(advantages, [9], Device.Cpu), Tensor.From(behavior, [9], Device.Cpu),
-            Tensor.From(reference, [9], Device.Cpu), stepUnits: 12));
+        var expected = grpo.Loss(new PolicyLossInput(direct, counts, Tensor.From(advantages, [9], Device.Cpu), Tensor.From(behavior, [9], Device.Cpu),
+            Tensor.From(reference, [9], Device.Cpu), stepUnits: 12), kl);
         expected.Backward();
         AssertClose([expected.Item()], [adapted.Item()], 1e-6f, "the policy loss through the adapter");
         AssertClose(direct.Grad!.ToArray(), leaf.Grad!.ToArray(), 1e-6f, "its gradient");
 
-        // Without the reference asked for, the KL term is not given.
-        var noReference = FineTuningLosses.Policy(loss, reference: false)(new FineTuningLossInput(Tensor.From(logp, [9], Device.Cpu), counts, tokenValues: Tensor.From(advantages, [9], Device.Cpu)));
-        var expectedNoReference = loss.Loss(new PolicyLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(advantages, [9], Device.Cpu)));
+        // A loss that does not read the reference (grpo without a KL) is not given it, though the input has one.
+        var recorder = new RecordingLoss("reinforcement-text-test-adapter", grpo);
+        var noReference = FineTuningLosses.Policy(recorder)(new FineTuningLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(reference, [9], Device.Cpu),
+            tokenValues: Tensor.From(advantages, [9], Device.Cpu)));
+        var expectedNoReference = grpo.Loss(new PolicyLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(advantages, [9], Device.Cpu)));
         AssertClose([expectedNoReference.Item()], [noReference.Item()], 1e-6f, "on-policy, no reference");
+        Check(!recorder.SawReference, "the reference is left out for a loss that does not read it");
+        _ = FineTuningLosses.Policy(recorder, kl)(new FineTuningLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(reference, [9], Device.Cpu),
+            tokenValues: Tensor.From(advantages, [9], Device.Cpu)));
+        Check(recorder.SawReference, "and given to one that reads it");
 
         // From the sequences: a value each (repeated over its tokens) or token values, behaviour log-probabilities all or none.
         TrainingSequence Sequence(int trained, float? value = null, float[]? tokens = null, float[]? behaviour = null) =>
@@ -485,25 +505,6 @@ internal static partial class Tests
         Check(both.BehaviorLogProbabilities!.ToArray().SequenceEqual([-1f, -2f, -3f, -4f, -5f]) && both.SequenceValues.ToArray().SequenceEqual([1f, 2f]), "behaviour and sequence values joined in order");
     }
 
-    // Each group's rewards centred on their mean and scaled by their deviation (GRPO's advantage), written per step.
-    private static void GroupAdvantages(RolloutBatch<ChatObservation, ChatMessage> batch)
-    {
-        var rewards = batch.Rewards.ToArray();
-        var groups = batch.Groups.ToArray();
-        var offsets = batch.Offsets.ToArray();
-        var advantages = batch.Advantages;
-        foreach (var group in groups.Distinct())
-        {
-            var members = Enumerable.Range(0, batch.Episodes).Where(e => groups[e] == group).ToList();
-            double mean = members.Average(e => (double)rewards[offsets[e]]);
-            double deviation = Math.Sqrt(members.Average(e => Math.Pow(rewards[offsets[e]] - mean, 2)));
-            foreach (int e in members)
-            {
-                advantages[offsets[e]] = (float)((rewards[offsets[e]] - mean) / (deviation + 1e-4));
-            }
-        }
-    }
-
     // One prompt, its sequences for answer `answer` (the prompt as the template renders it, the answer then the end of turn).
     private static TrainingSequence AnswerSequence(PretrainedModel model, IReadOnlyList<ChatMessage> prompt, string answer)
     {
@@ -511,10 +512,22 @@ internal static partial class Tests
         return new TrainingSequence([.. p, .. a], [.. p.Select(_ => false), .. a.Select(_ => true)]);
     }
 
-    private static void PolicyRaisesPassRate(Device device)
+    private static void PolicyRaisesPassRate(Device device) => TrainerRaisesPassRate(device, "grpo", seed: 5, iterations: 40);
+
+    private static void PolicyPpoRaisesPassRate(Device device) => TrainerRaisesPassRate(device, "ppo", seed: 9, iterations: 24);
+
+    // R2's trainer driving the policy on a one-prompt task (exact match with "yes"), the loss a library one under a test
+    // name (so what it is given is recorded): grpo with group advantages, a k3 KL of 0.01 to the reference and two epochs a
+    // rollout; ppo with returns less their mean, two epochs of two mini-batches, and no KL (so no reference pass). The
+    // pass rate sampled from 16 episodes is noisy, so it is averaged over 5 iterations. Measured on the CPU over seeds 1 to
+    // 8 (R4): grpo in 40 iterations from 0.35-0.45 to 0.57-0.69, ppo in 24 from 0.31-0.42 to 0.54-0.69; the bar, a rise
+    // of more than 0.1 to at least 0.5, held on all 16. (The probability of the exact string "yes" is no measure: one ppo
+    // run passing half its episodes had moved to another spelling the metric's normalization accepts.)
+    private static void TrainerRaisesPassRate(Device device, string algorithm, int seed, int iterations)
     {
         string folder = WriteChatModelWith(TinyChatSpec(), ChatMlTemplate);
-        var loss = new TestClippedLoss();
+        bool grpo = algorithm == "grpo";
+        var loss = new RecordingLoss($"reinforcement-text-test-{algorithm}", PolicyLosses.Get(algorithm));
         PolicyLosses.Register(loss);
         try
         {
@@ -533,61 +546,56 @@ internal static partial class Tests
             var made = new List<IdRecordingSampler>();
             policy.Chat.Generator.CreateSampler = IdRecordingSampler.Into(made);
             var kind = new PromptsEnvironmentKind([new PromptTask(prompt, "yes")], name: "reinforcement-text-test-prompts");
-            var grpo = PolicyLosses.Get(loss.Name);
-            const int Group = 16, Iterations = 20;
-            var passRates = new List<double>();
-            long heldAfterSecond = 0, heldAtEnd = 0;
-            for (int iteration = 0; iteration < Iterations; iteration++)
+            const int Group = 16;
+            var options = new ReinforcementOptions
             {
-                var environments = Enumerable.Range(0, Group).Select(_ => (IEnvironment<ChatObservation, ChatMessage>)kind.Create()).ToList();
-                try
+                Algorithm = loss.Name, Estimator = grpo ? "group" : "returns", GroupSize = grpo ? Group : 1, EpisodesPerIteration = Group, Iterations = iterations,
+                Epochs = 2, MiniBatch = grpo ? 0 : Group / 2, KlWeight = grpo ? 0.01f : 0f, Seed = seed, Environments = 1, ParallelSteps = false,
+                EnvironmentOptions = new Dictionary<string, string> { ["reward"] = "metric", ["metric.metric"] = "exact" },
+                EstimatorOptions = grpo ? null : new Dictionary<string, string> { ["baseline"] = "mean" },
+            };
+            long heldAfterSecond = 0, heldAtEnd = 0;
+            var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(kind, policy, options)
+            {
+                OnBatch = (iteration, batch) =>
                 {
-                    var observations = environments.Select((e, i) => e.Reset(1000 * iteration + i)).ToList();
-                    made.Clear();
-                    var acted = policy.ActAsync(observations, new ActionSampling { Seed = iteration }).AsTask().GetAwaiter().GetResult();
-                    var steps = environments.Select((e, i) => e.StepAsync(acted.Actions[i]).AsTask().GetAwaiter().GetResult()).ToList();
-                    passRates.Add(steps.Average(s => (double)s.Reward));
-                    using var batch = new RolloutBatch<ChatObservation, ChatMessage>(Enumerable.Range(0, Group).Select(i => new Trajectory<ChatObservation, ChatMessage>(
-                        i, 1000 * iteration + i, [observations[i], steps[i].Observation], [acted.Actions[i]], [acted.Records[i]], [steps[i].Reward], steps[i].Terminated, steps[i].Truncated, group: 0)));
-                    GroupAdvantages(batch);
-                    if (iteration == 0)
+                    if (iteration != 0)
                     {
-                        // Trained on exactly the ids sampled: the prompt as fed and the sampler's ids.
-                        var layouts = policy.Lay(batch);
-                        for (int i = 0; i < Group; i++)
-                        {
-                            var record = acted.Records[i];
-                            Check(record.Context!.SequenceEqual(model.Tokenizer!.Encode(policy.Chat.RenderPrompt(new ChatRequest(observations[i].Messages)))), $"episode {i}: the prompt ids as rendered");
-                            Check(made[^1].Row(i).Take(record.Tokens.Length).SequenceEqual(record.Tokens), $"episode {i}: the sampler's ids");
-                            Check(layouts[i].Sequences.Single().Tokens.SequenceEqual(record.Context!.Concat(record.Tokens)), $"episode {i}: the sequence trained is the prompt and the sampled ids");
-                        }
+                        return;
                     }
 
-                    // Two epochs over the rollout (PPO's reuse): the second's ratios move off 1, its behaviour values the batch's own.
-                    policy.Update(batch, grpo);
-                    policy.Update(batch, grpo);
-                    if (iteration == 0)
+                    // Trained on exactly the ids sampled: the prompt as fed and the sampler's ids.
+                    var layouts = policy.Lay(batch);
+                    for (int i = 0; i < batch.Episodes; i++)
                     {
-                        Check(loss.FirstGap == 0f, $"the first update's ratios are exactly 1 (behaviour recomputed by the training forward): largest |log p − behaviour| {loss.FirstGap}");
+                        var trajectory = batch.Trajectories[i];
+                        var record = trajectory.Records[0];
+                        Check(record.Context!.SequenceEqual(model.Tokenizer!.Encode(policy.Chat.RenderPrompt(new ChatRequest(trajectory.Observations[0].Messages)))),
+                            $"episode {i}: the prompt ids as rendered");
+                        Check(made[^1].Row(i).Take(record.Tokens.Length).SequenceEqual(record.Tokens), $"episode {i}: the sampler's ids");
+                        Check(layouts[i].Sequences.Single().Tokens.SequenceEqual(record.Context!.Concat(record.Tokens)), $"episode {i}: the sequence trained is the prompt and the sampled ids");
                     }
-                }
-                finally
+                },
+                OnIteration = summary =>
                 {
-                    environments.ForEach(e => e.Dispose());
-                }
+                    long held = model.Device.Backend.GetMemoryUsage().InUse;
+                    if (summary.Iteration == 2)
+                    {
+                        heldAfterSecond = held;
+                    }
 
-                long held = model.Device.Backend.GetMemoryUsage().InUse;
-                if (iteration == 1)
-                {
-                    heldAfterSecond = held;
-                }
-
-                heldAtEnd = held;
-            }
-
-            double first = passRates.Take(3).Average(), last = passRates.TakeLast(3).Average();
-            Check(last >= 0.6 && last > first + 0.3, $"the pass rate rises: {string.Join(", ", passRates.Select(p => p.ToString("F2", CultureInfo.InvariantCulture)))}");
-            Check(heldAtEnd <= heldAfterSecond + (1L << 20), $"device memory held after iteration 2 ({heldAfterSecond} bytes) does not grow by iteration 20 ({heldAtEnd} bytes)");
+                    heldAtEnd = held;
+                },
+            };
+            var result = trainer.Train();
+            Check(loss.FirstGap == 0f, $"the first update's ratios are exactly 1 (behaviour recomputed by the training forward): largest |log p − behaviour| {loss.FirstGap}");
+            Check(loss.SawReference == grpo, $"the reference's log-probabilities {(grpo ? "given to grpo's KL" : "not computed for ppo without a KL")}");
+            var passRates = result.History.Select(h => h.RewardMean).ToList();
+            Check(passRates.Count == iterations && result.History.All(h => h.Updates == (grpo ? 2 : 4)), $"{passRates.Count} iterations of {result.History[0].Updates} updates");
+            double first = passRates.Take(5).Average(), last = passRates.TakeLast(5).Average();
+            Check(last >= 0.5 && last > first + 0.1, string.Create(CultureInfo.InvariantCulture,
+                $"{algorithm}: the pass rate rises ({first:F2} to {last:F2} over five iterations): {string.Join(", ", passRates.Select(p => p.ToString("F2", CultureInfo.InvariantCulture)))}"));
+            Check(heldAtEnd <= heldAfterSecond + (1L << 20), $"device memory held after iteration 2 ({heldAfterSecond} bytes) does not grow by iteration {iterations} ({heldAtEnd} bytes)");
         }
         finally
         {
@@ -801,28 +809,19 @@ internal static partial class Tests
                 Check(mix == 0f ? fromData == 0 : fromData > 0 && sampled > 0, $"{what}: {sampled} sampled, {fromData} from the data");
             }
 
-            // Beside a reward: the policy loss and a teacher term.
-            var loss = new TestClippedLoss("reinforcement-text-test-teacher");
+            // Beside a reward: R2's grpo and a teacher term, under R2's trainer.
             using (var studentModel = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
             {
                 var session = new FineTuningSession(studentModel, SessionOptions(1e-2f) with { Teacher = teacher2 }, totalSteps: 30);
                 using var student = new LanguageModelPolicy(session, new LanguageModelPolicyOptions { MaxNewTokens = 6, TeacherWeight = 1f });
                 var kind = new PromptsEnvironmentKind([new PromptTask(prompt, "yes")], name: "reinforcement-text-test-prompts");
                 double before = ReverseKlOnSamples(student, teacherSession, prompt, 98);
-                for (int iteration = 0; iteration < 20; iteration++)
+                var result = ReinforcementTrainer.Train(kind, student, new ReinforcementOptions
                 {
-                    var environments = Enumerable.Range(0, 8).Select(_ => (IEnvironment<ChatObservation, ChatMessage>)kind.Create()).ToList();
-                    var observations = environments.Select((e, i) => e.Reset(i)).ToList();
-                    var acted = student.ActAsync(observations, new ActionSampling { Seed = 500 + iteration }).AsTask().GetAwaiter().GetResult();
-                    var steps = environments.Select((e, i) => e.StepAsync(acted.Actions[i]).AsTask().GetAwaiter().GetResult()).ToList();
-                    using var batch = new RolloutBatch<ChatObservation, ChatMessage>(Enumerable.Range(0, 8).Select(i => new Trajectory<ChatObservation, ChatMessage>(
-                        i, i, [observations[i], steps[i].Observation], [acted.Actions[i]], [acted.Records[i]], [steps[i].Reward], true, false, group: 0)));
-                    GroupAdvantages(batch);
-                    student.Update(batch, loss);
-                    environments.ForEach(e => e.Dispose());
-                }
-
+                    Algorithm = "grpo", EpisodesPerIteration = 8, GroupSize = 8, Iterations = 20, Seed = 500, Environments = 1, ParallelSteps = false,
+                });
                 double after = ReverseKlOnSamples(student, teacherSession, prompt, 98);
+                Check(result.Iterations == 20 && result.History.All(h => float.IsFinite((float)h.Loss)), $"20 iterations of grpo with a teacher term: {result.Iterations}");
                 Check(after < 0.7 * before, $"a teacher term beside a reward: the reverse KL on the student's samples falls from {before:F3} to {after:F3}");
             }
 
