@@ -142,3 +142,165 @@ public static class ClusterControlFile
         File.Move(temporary, full, overwrite: true);
     }
 }
+
+/// <summary>
+/// A trainer's control point at its own boundaries (Plan 27, R11): the dashboard's pause, resume and stop (or a launcher's
+/// control file) taken where the trainer's unit of work ends, an iteration of a reinforcement run, a round of an off-policy
+/// one, instead of at each gradient step its synchronisation begins (<see cref="IStepGroup.BeginStep"/>, the control file
+/// read as <c>IGradientSync.BeginStep</c> begins a step), where a stop would cut an iteration's updates in two. Every rank
+/// calls <see cref="Boundary"/> at each boundary, at the same point of its run: it returns at once while the run goes on,
+/// holds every rank at this same boundary while the run is paused (no rank inside a collective), and says
+/// <see cref="ClusterControlCommand.Stop"/> on every rank alike once a stop was asked. <see cref="RunSteerings.For"/> gives a
+/// run's steering; <see cref="RunSteerings.Stops"/> takes a stop through the ranks' agreement (<see cref="IStopAgreement"/>).
+/// </summary>
+public interface IRunSteering
+{
+    /// <summary>The way the run is steered ("in-process", "control-file").</summary>
+    string Name { get; }
+
+    /// <summary>
+    /// The boundary before <paramref name="step"/> (every rank calls it at each boundary, at the same point: a collective
+    /// point): waits while the run is paused, then answers <see cref="ClusterControlCommand.Run"/> to go on or
+    /// <see cref="ClusterControlCommand.Stop"/>, the same answer on every rank (never <see cref="ClusterControlCommand.Pause"/>).
+    /// </summary>
+    /// <param name="step">The step (an iteration, a round) about to begin: the boundaries go forward.</param>
+    /// <param name="cancellationToken">A cancellation while paused ends the wait as a stop where the steering can tell every rank so (a control file's rank 0); else it is the trainer's to see.</param>
+    ClusterControlCommand Boundary(long step, CancellationToken cancellationToken = default);
+}
+
+/// <summary>One way of steering a run at its trainer's boundaries, registered by name in <see cref="RunSteerings"/>.</summary>
+public interface IRunSteeringProvider
+{
+    /// <summary>The name ("in-process").</summary>
+    string Name { get; }
+
+    /// <summary>One line for listings.</summary>
+    string Summary { get; }
+
+    /// <summary>The steering of a run over <paramref name="collectives"/> (null: a run in one process) with <paramref name="options"/>, or null when this way does not steer it.</summary>
+    IRunSteering? Create(ICollectives? collectives, ClusterOptions options);
+}
+
+/// <summary>
+/// The ways a run is steered at its trainer's boundaries (Plan 27, R11), by name, asked in registration order:
+/// Idrak.Cluster registers "in-process" (a simulated run's ranks, held and stopped through the run's
+/// <c>ClusterRunControl</c>, the dashboard's in-process control), Idrak.Network "control-file" (a launcher's control file,
+/// <see cref="SimulationOptions.Control"/>: read by rank 0 at each boundary and told to every rank in one broadcast of one
+/// value; in one process read as it is, at most every <see cref="SimulationOptions.ControlPoll"/>).
+/// </summary>
+public static class RunSteerings
+{
+    /// <summary>Why a trainer asks the ranks to stop when its steering says so.</summary>
+    public const string StopReason = "a stop asked through the run's control (the dashboard, or its control file)";
+
+    private static readonly SlotTable<string, IRunSteeringProvider> Table = new(nameof(RunSteerings), comparer: StringComparer.OrdinalIgnoreCase,
+        unguarded: "a steering holds every rank at the same boundary, so another cannot take over a run");
+
+    // The steerings handed out per rank's collectives: their step gates let every step through (Steered).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ICollectives, IRunSteering> Taken = new();
+
+    static RunSteerings() => LibraryDefaults.Ensure(typeof(RunSteerings));
+
+    /// <summary>The registered ways, in registration order (the order <see cref="For"/> asks them in).</summary>
+    public static IReadOnlyList<IRunSteeringProvider> All => Table.Values;
+
+    /// <summary>The registered names.</summary>
+    public static IReadOnlyCollection<string> Names => Table.Keys;
+
+    /// <summary>Registers <paramref name="provider"/> under its name (over the library's of that name, which stays behind it).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(IRunSteeringProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider.Name);
+        Table.Register(provider.Name, provider, System.Reflection.Assembly.GetCallingAssembly());
+    }
+
+    /// <summary>Removes the app's way of that name (the library's, if any, answers again).</summary>
+    public static bool Unregister(string name) => Table.Unregister(name);
+
+    /// <summary>The way of that name, or null.</summary>
+    public static IRunSteeringProvider? Find(string name) => Table.Find(name);
+
+    /// <summary>The way of that name.</summary>
+    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
+    public static IRunSteeringProvider Get(string name) => Table.Find(name)
+        ?? throw new NotSupportedException($"Run steering '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with RunSteerings.Register, or reference Idrak.Cluster or Idrak.Network.");
+
+    /// <summary>The library's way of that name, or null.</summary>
+    public static IRunSteeringProvider? Default(string name) => Table.Default(name);
+
+    /// <summary>Who registered the way of that name.</summary>
+    public static string? Origin(string name) => Table.Origin(name);
+
+    /// <summary>Each way as "name: summary", one a line.</summary>
+    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
+
+    /// <summary>
+    /// The steering of a trainer that pauses and stops at its own boundaries, over <paramref name="collectives"/> (null: a run
+    /// in one process) with <paramref name="options"/> (else the collectives' own, else <see cref="ClusterOptions.FromEnvironment"/>):
+    /// the first registered way that steers the run, or null when nothing steers it (no run control, no control file). The
+    /// trainer takes the run's control over: from then on these collectives' step gates let every step through
+    /// (<see cref="Steered"/>), so a run is held and stopped at the trainer's boundaries alone. One steering per rank's
+    /// collectives: a later call gives the same one.
+    /// </summary>
+    /// <exception cref="ArgumentException">A cluster variable that does not parse (when the options come from the environment).</exception>
+    public static IRunSteering? For(ICollectives? collectives, ClusterOptions? options = null)
+    {
+        if (collectives is not null && Taken.TryGetValue(collectives, out var taken))
+        {
+            return taken;
+        }
+
+        var o = options ?? collectives?.Context?.Options ?? ClusterOptions.FromEnvironment();
+        foreach (var provider in Table.Values)
+        {
+            if (provider.Create(collectives, o) is { } steering)
+            {
+                return collectives is null ? steering : Taken.GetValue(collectives, _ => steering);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether a trainer steers the run over <paramref name="collectives"/> at its own boundaries (<see cref="For"/> gave it
+    /// a steering): their step gates (a simulated rank's <see cref="IStepGroup.BeginStep"/>, the control file read as a
+    /// group of processes begins a gradient step) then let every step through.
+    /// </summary>
+    public static bool Steered(ICollectives collectives)
+    {
+        ArgumentNullException.ThrowIfNull(collectives);
+        return Taken.TryGetValue(collectives, out _);
+    }
+
+    /// <summary>
+    /// A trainer's boundary before <paramref name="step"/>: <paramref name="steering"/>'s <see cref="IRunSteering.Boundary"/>
+    /// (held there while the run is paused), then a stop it says taken as the run's stop. In one process (no
+    /// <paramref name="agreement"/>) true: the trainer stops here, as on a cancelled token. On a cluster every rank asks the
+    /// ranks' agreement at this same boundary (<see cref="StopReason"/>) and, every rank having asked, hands it that sum
+    /// (<see cref="IStopAgreement.Carried"/>), so the trainer's <see cref="IStopAgreement.Agree"/> right after stops every
+    /// rank here; false (the agreement says it). False when nothing steers the run.
+    /// </summary>
+    public static bool Stops(this IRunSteering? steering, long step, IStopAgreement? agreement, CancellationToken cancellationToken = default)
+    {
+        if (steering is null || steering.Boundary(step, cancellationToken) != ClusterControlCommand.Stop)
+        {
+            return false;
+        }
+
+        if (agreement is null)
+        {
+            return true;
+        }
+
+        agreement.Request(StopReason);
+        if (agreement.Carries)
+        {
+            agreement.Carried(agreement.WorldSize);            // every rank asked at this boundary: the sum is known with no message
+        }
+
+        return false;
+    }
+}

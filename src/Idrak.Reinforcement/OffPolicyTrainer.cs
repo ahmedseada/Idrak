@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Cluster;
 using Idrak.Abstraction.Reinforcement;
 using Idrak.Layers;
 using Idrak.Models;
@@ -63,6 +64,9 @@ public sealed record OffPolicyResult(IReadOnlyList<OffPolicySummary> History, lo
 /// library's telemetry (training start and end, a batch event per update, an epoch event per report with the steps,
 /// episodes, return, ε, Q and loss), built only when a hook listens (rule 78); a JSON line per report into
 /// <see cref="OffPolicyOptions.Log"/>.</item>
+/// <item><b>Steered</b> (Plan 27, R11: <see cref="Steering"/>, a launcher's control file): every round's boundary is a control
+/// point, so a pause holds the run between rounds and a resume goes on bit for bit, and a stop ends it there as a cancelled
+/// token does, with its checkpoint.</item>
 /// </list>
 /// The trainer owns the networks it is given and disposes them with itself. Not thread-safe: one caller trains it.
 /// </summary>
@@ -175,6 +179,13 @@ public sealed class OffPolicyTrainer : IDisposable
 
     /// <summary>Called after each report, on the training thread.</summary>
     public Action<OffPolicySummary>? OnReport { get; init; }
+
+    /// <summary>
+    /// The run's control point at each round's boundary (Plan 27, R11), or null for none: a launcher's control file, as
+    /// <see cref="RunSteerings.For"/> gives it for a run in one process. The boundary before a round is its step: the
+    /// environment steps done before it.
+    /// </summary>
+    public IRunSteering? Steering { get; init; }
 
     /// <summary>The online network's value of each action at <paramref name="observation"/>.</summary>
     public float[] Values(float[] observation)
@@ -382,11 +393,17 @@ public sealed class OffPolicyTrainer : IDisposable
         var steps = new EnvironmentStep<float[]>[environments];
         using var sample = new Sample(batch, _observationSize, _actions);
         long round = first;
+        if (o.Log is { } logFile && Path.GetDirectoryName(Path.GetFullPath(logFile)) is { } logFolder)
+        {
+            Directory.CreateDirectory(logFolder);                                      // the run's folder may not exist before its first line
+        }
+
         try
         {
             for (; round < rounds; round++)
             {
-                if (cancellationToken.IsCancellationRequested)
+                // The boundary: the run's control holds a paused run here; a stop it says ends the run as the token does (R11).
+                if (cancellationToken.IsCancellationRequested || Steering.Stops(round * environments, null, cancellationToken))
                 {
                     cancelled = true;
                     break;

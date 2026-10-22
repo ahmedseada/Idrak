@@ -189,6 +189,10 @@ internal static class HelpTopics
                                                       on a simulated cluster: each rank plays its shards' episodes (--shards,
                                                       --spread), rank 0 writes the adapter, checkpoints and log (--cluster
                                                       FILE: one rank of a real cluster)
+              idrak cluster sim --topology FILE --dashboard -- reinforce MODEL ... -o DIR
+                                                      steered from the cluster dashboard (idrak cluster ui starts runs too):
+                                                      paused, resumed and stopped at an iteration, every rank at the same one;
+                                                      its iterations, rewards and pass rate shown from DIR/log.jsonl
 
             Registered now (with the -P plug-ins of this command):
               environments: {{{Names(Idrak.Abstraction.Reinforcement.EnvironmentKinds.Names)}}}

@@ -88,6 +88,11 @@ public static class ReinforcementTrainer
 /// dropped, its updates not begun), with a checkpoint when a folder is set. On a cluster the token asks the ranks to stop
 /// (Plan 27, R7: <see cref="IRolloutRanks{TObservation, TAction}.StopAgreement"/>): the iteration under way runs to its end
 /// on every rank, and every rank stops at the iteration boundary they agree on, where rank 0 writes the checkpoint.</item>
+/// <item><b>Steered</b> (Plan 27, R11: <see cref="Steering"/>, the dashboard's pause, resume and stop, or a launcher's
+/// control file): every iteration boundary is a control point. A pause holds every rank there (no rank inside a rollout or
+/// an update), and a resume goes on as if nothing had happened, bit for bit; a stop ends the run there as a cancelled token
+/// does (in one process at once, on a cluster through the ranks' agreement, every rank at the same iteration), with the
+/// checkpoint written once.</item>
 /// <item><b>Progress and telemetry:</b> the iterations on <see cref="Progress"/> (mean reward, spread, episodes a second);
 /// the library's telemetry (training start and end, a batch event per update, an epoch event per iteration whose metrics
 /// are the episodes, steps, reward mean and spread, KL, clip share, rollout and update times), built only when a hook
@@ -139,6 +144,13 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
 
     /// <summary>Called with each iteration's batch once its advantages and returns are written, before the updates (for inspection; the batch is not to be kept).</summary>
     public Action<int, RolloutBatch<TObservation, TAction>>? OnBatch { get; init; }
+
+    /// <summary>
+    /// The run's control point at each iteration boundary (Plan 27, R11), or null for none: the dashboard's pause, resume and
+    /// stop, or a launcher's control file, as <see cref="RunSteerings.For"/> gives them for the policy's collectives (on a
+    /// cluster every rank's trainer takes its own rank's). The boundary before iteration N is its step N (0 for the first).
+    /// </summary>
+    public IRunSteering? Steering { get; init; }
 
     /// <summary>Runs the iterations (see the type), on the calling thread.</summary>
     /// <param name="cancellationToken">Stops the run between iterations.</param>
@@ -223,10 +235,18 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
         agreement?.Reset();
         using var asks = agreement?.Watch(cancellationToken) ?? default;
         var inner = agreement?.GiveUpToken ?? cancellationToken;
+        if (Lead && o.Log is { } logFile && Path.GetDirectoryName(Path.GetFullPath(logFile)) is { } logFolder)
+        {
+            Directory.CreateDirectory(logFolder);                                      // the run's folder may not exist before its first line
+        }
+
         int iteration = first;
         for (; iteration < o.Iterations; iteration++)
         {
-            if (agreement is null ? cancellationToken.IsCancellationRequested : agreement.Agree(iteration))
+            // The boundary: the run's control holds a paused run here and turns a stop into the run's own (Plan 27, R11), then
+            // the stop is the token's in one process, the ranks' agreement's on a cluster.
+            bool steered = Steering.Stops(iteration, agreement, cancellationToken);
+            if (agreement is null ? steered || cancellationToken.IsCancellationRequested : agreement.Agree(iteration))
             {
                 cancelled = true;
                 break;
@@ -316,7 +336,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                     metrics[name] = metricSums[name] / made;
                 }
 
-                summary = Summarize(iteration, batch, lossSum / made, made, scheduled?.Optimizer.LearningRate, rolloutTime, updateTime, metrics);
+                summary = Summarize(iteration, batch, lossSum / made, made, scheduled?.Optimizer.LearningRate, rolloutTime, updateTime, metrics, o.PassReturn);
             }
 
             // Evaluation: greedy episodes from their own seeds, the same ones every time.
@@ -501,12 +521,13 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
         return sum / batch.Episodes;
     }
 
+    // The iteration's figures; an episode passes when its return reaches `passReturn` (none: no pass rate).
     private static IterationSummary Summarize(int iteration, RolloutBatch<TObservation, TAction> batch, double loss, int updates, float? rate, TimeSpan rolloutTime,
-        TimeSpan updateTime, Dictionary<string, double> metrics)
+        TimeSpan updateTime, Dictionary<string, double> metrics, float? passReturn)
     {
         var returns = new float[batch.Episodes];
         double sum = 0, min = double.PositiveInfinity, max = double.NegativeInfinity;
-        int terminated = 0;
+        int terminated = 0, passed = 0;
         for (int e = 0; e < batch.Episodes; e++)
         {
             var trajectory = batch.Trajectories[e];
@@ -515,6 +536,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             min = Math.Min(min, returns[e]);
             max = Math.Max(max, returns[e]);
             terminated += trajectory.Terminated ? 1 : 0;
+            passed += returns[e] >= passReturn ? 1 : 0;
         }
 
         double mean = sum / batch.Episodes, squares = 0;
@@ -524,6 +546,10 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
         }
 
         metrics["terminated"] = (double)terminated / batch.Episodes;
+        if (passReturn is not null)
+        {
+            metrics["pass-rate"] = (double)passed / batch.Episodes;
+        }
         return new IterationSummary(iteration + 1, batch.Episodes, batch.Steps, mean, Math.Sqrt(squares / batch.Episodes), min, max, loss, updates, rate, null,
             rolloutTime, updateTime, metrics, returns);
     }
@@ -556,7 +582,9 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             using (var writer = new Utf8JsonWriter(stream))
             {
                 writer.WriteStartObject();
+                writer.WriteString("event", "iteration");                         // a run's records name their kind (the dashboard reads them)
                 writer.WriteNumber("iteration", s.Iteration);
+                writer.WriteNumber("iterations", o.Iterations);
                 writer.WriteNumber("episodes", s.Episodes);
                 writer.WriteNumber("steps", s.Steps);
                 writer.WriteNumber("reward_mean", s.RewardMean);

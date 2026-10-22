@@ -112,8 +112,9 @@ internal sealed class ClusterSimCommand : Command
         the run's log (idrak suggest RUN lists them). With
         --dashboard the run is shown in a browser while it goes (idrak cluster ui's page): its ranks, links, losses and
         faults; pause, resume, stop with a checkpoint, and faults injected at the next step (in-process; a localhost run
-        takes no faults). A run the dashboard steers is pretrain's (or resume of a pretrain run): its stop writes the
-        step's checkpoint, which train and tune do not yet.
+        takes no faults). Every command it runs is steered: pretrain, tune, train and resume pause and stop at a step,
+        writing that step's checkpoint; reinforce at an iteration (the ranks agree on it), writing its checkpoint and the
+        adapter so far, with its iterations, rewards and pass rate shown from DIR/log.jsonl.
 
         Options:
               --topology FILE    the topology file (idrak cluster init writes one)
@@ -216,15 +217,16 @@ internal sealed class ClusterSimCommand : Command
         if (steered && !Steerable(inner))
         {
             // A stop asked from the dashboard ends every rank as it begins the next step; the command answers it with that step's
-            // checkpoint (pretrain since C9; train and tune since C8b).
-            throw new UsageException($"The dashboard steers pretrain, tune and train runs (and resume of one): a stop ends with that step's checkpoint; {inner[0]} does not "
+            // checkpoint (pretrain since C9; train and tune since C8b; reinforce at an iteration since Plan 27, R11).
+            throw new UsageException($"The dashboard steers pretrain, tune, train and reinforce runs (and resume of one): a stop ends with a checkpoint; {inner[0]} does not "
                                      + "write one on a stop. Run it with idrak cluster sim without --dashboard.");
         }
     }
 
     // Whether a run can be steered (paused, resumed, stopped with a checkpoint): pretrain, tune and train (plan 23, C8b:
-    // the Trainer and the fine-tuner write the last finished step's checkpoint on a stop), and resume of a run of them.
-    private static bool Steerable(IReadOnlyList<string> inner) => inner[0] is "pretrain" or "tune" or "train" or "resume";
+    // the Trainer and the fine-tuner write the last finished step's checkpoint on a stop), resume of a run of them, and
+    // reinforce (Plan 27, R11: held and stopped at an iteration boundary, its checkpoint written once).
+    private static bool Steerable(IReadOnlyList<string> inner) => inner[0] is "pretrain" or "tune" or "train" or "resume" or "reinforce";
 
     public override int Run(CommandContext context)
     {
