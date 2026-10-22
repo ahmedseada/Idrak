@@ -11,7 +11,8 @@ namespace Idrak.Text.Reinforcement;
 /// <summary>
 /// Settings of a <see cref="LanguageModelPolicy"/>. The ones a run may need to change without code read an environment
 /// variable when it is set (the value given in code wins): <see cref="EpisodeTurns.EnvironmentVariable"/>,
-/// <see cref="BehaviorVariable"/>, <see cref="TeacherWeightVariable"/>, <see cref="DivergenceVariable"/>.
+/// <see cref="BehaviorVariable"/>, <see cref="TeacherWeightVariable"/>, <see cref="DivergenceVariable"/>,
+/// <see cref="SpreadPassesVariable"/>.
 /// </summary>
 public sealed record LanguageModelPolicyOptions
 {
@@ -29,6 +30,9 @@ public sealed record LanguageModelPolicyOptions
 
     /// <summary>The variable of <see cref="Divergence"/> (a <see cref="TeacherDivergences"/> name).</summary>
     public const string DivergenceVariable = "IDRAK_RL_DIVERGENCE";
+
+    /// <summary>The variable of <see cref="SpreadPasses"/>: on or off.</summary>
+    public const string SpreadPassesVariable = "IDRAK_RL_SPREAD_PASSES";
 
     /// <summary>The most tokens a reply samples.</summary>
     public int MaxNewTokens { get; init; } = 256;
@@ -68,7 +72,24 @@ public sealed record LanguageModelPolicyOptions
     /// <summary>The temperature both distributions of the teacher term are softened by.</summary>
     public float TeacherTemperature { get; init; } = 1f;
 
+    /// <summary>
+    /// On a cluster (the session opened with <see cref="FineTuningOptions.Cluster"/>): whether a rollout batch's behaviour
+    /// and reference passes (<see cref="FineTuningSession.LogProbabilities"/>, no gradient) are spread over the ranks, each
+    /// computing a contiguous run of the batch's sequences (balanced by their positions) and the runs gathered, rather than
+    /// every rank computing all of them. On by default (<see cref="SpreadPassesVariable"/>: on or off); in one process it
+    /// changes nothing.
+    /// </summary>
+    public bool SpreadPasses { get; init; } = SettingSwitch(SpreadPassesVariable) ?? true;
+
     internal static string? Setting(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value.Trim() : null;
+
+    internal static bool? SettingSwitch(string name) => Setting(name)?.ToLowerInvariant() switch
+    {
+        null => null,
+        "on" or "true" or "1" or "yes" => true,
+        "off" or "false" or "0" or "no" => false,
+        var other => throw new ArgumentException($"{name}={other} is not on or off."),
+    };
 
     internal static float? SettingFloat(string name) =>
         Setting(name) is not { } text ? null
@@ -87,9 +108,18 @@ public sealed record LanguageModelPolicyOptions
 /// by the training forward or taken from the sampler (<see cref="LanguageModelPolicyOptions.Behavior"/>), and a teacher
 /// term beside the policy loss when asked (<see cref="LanguageModelPolicyOptions.TeacherWeight"/>). Idrak.Text does not
 /// reference Idrak.Reinforcement: the policy meets its trainer and losses through Idrak.Abstraction's contracts.
+/// <para>
+/// <b>On a cluster</b> (Plan 27, R3b: a session opened with <see cref="FineTuningOptions.Cluster"/>, one policy per rank,
+/// each on its rank's device with the same weights): the policy is an <see cref="IRolloutRanks{TObservation, TAction}"/>,
+/// so a rollout collector gives each rank its share of a rollout's episodes to generate and step, and
+/// <see cref="Gather"/> brings every rank's episodes to every rank in rank order; each rank then lays out the whole batch
+/// alike, its behaviour and reference passes spread over the ranks (<see cref="LanguageModelPolicyOptions.SpreadPasses"/>),
+/// and <see cref="Update"/> is the session's data-parallel step (each rank trains its share of the step's batches and the
+/// gradients are summed).
+/// </para>
 /// Not thread-safe: one trainer drives it.
 /// </summary>
-public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
+public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>, IRolloutRanks<ChatObservation, ChatMessage>
 {
     private readonly bool _ownsSession;
     private readonly FineTuningLoss? _teacher;
@@ -105,7 +135,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
     /// <param name="ownsSession">Whether disposing the policy disposes the session (true by default).</param>
     /// <exception cref="ArgumentException">A setting out of its range (an unknown turn layout or behaviour, a weight that is not finite).</exception>
     /// <exception cref="InvalidOperationException">A teacher weight without a teacher, or a teacher of another vocabulary.</exception>
-    /// <exception cref="NotSupportedException">The session runs on a cluster, or its teacher is a file.</exception>
+    /// <exception cref="NotSupportedException">The session's teacher is a file.</exception>
     public LanguageModelPolicy(FineTuningSession session, LanguageModelPolicyOptions? options = null, bool ownsSession = true)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -122,11 +152,6 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
         if (!float.IsFinite(options.TeacherWeight) || options.TeacherWeight < 0f)
         {
             throw new ArgumentException($"The teacher weight is a finite number, 0 or more, not {options.TeacherWeight} ({LanguageModelPolicyOptions.TeacherWeightVariable}).", nameof(options));
-        }
-
-        if (session.Sync is not null)
-        {
-            throw new NotSupportedException("A language-model policy runs in one process for now: rollouts spread over a cluster's ranks are not written yet (Plan 27).");
         }
 
         if (options.TeacherWeight > 0f)
@@ -151,6 +176,38 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
 
     /// <summary>The chat model the policy acts with (the session's, on its live adapters).</summary>
     public ChatGenerator Chat { get; }
+
+    /// <summary>This rank of the session's cluster; 0 in one process.</summary>
+    public int Rank => Session.Sync?.Rank ?? 0;
+
+    /// <summary>The ranks of the session's cluster; 1 in one process.</summary>
+    public int WorldSize => Session.Sync?.WorldSize ?? 1;
+
+    /// <summary>
+    /// Every rank's episodes, in rank order, this rank's <paramref name="mine"/> among them (the objects given; the others'
+    /// sent as bytes: text conversations, the ids and log-probabilities as sampled, rewards, ends and info). A collective of
+    /// the session's cluster: every rank calls it once per rollout. In one process it returns <paramref name="mine"/>.
+    /// </summary>
+    /// <exception cref="NotSupportedException">A message holds a part that is not text (images are not sent between ranks).</exception>
+    public IReadOnlyList<Trajectory<ChatObservation, ChatMessage>> Gather(IReadOnlyList<Trajectory<ChatObservation, ChatMessage>> mine, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(mine);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Session.Sync is not { WorldSize: > 1 } sync)
+        {
+            return [.. mine];
+        }
+
+        var gathered = RolloutExchange.Gather(sync.Collectives, RolloutExchange.Write(mine));
+        var all = new List<Trajectory<ChatObservation, ChatMessage>>();
+        for (int r = 0; r < gathered.Length; r++)
+        {
+            all.AddRange(r == sync.Rank ? mine : RolloutExchange.Read(gathered[r]));
+        }
+
+        return all;
+    }
 
     /// <summary>
     /// A reply to each conversation, generated together (<see cref="ChatGenerator.ChatBatch"/>): sampled at the call's
@@ -259,7 +316,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
             if (needsReference && !_hasReference)
             {
                 var laid = _sequences.SelectMany(s => s).ToList();
-                var values = Session.LogProbabilities(laid, adapters: false);
+                var values = LogProbabilities(laid, adapters: false);
                 for (int e = 0, k = 0; e < _sequences.Length; e++)
                 {
                     for (int i = 0; i < _sequences[e].Count; i++, k++)
@@ -283,8 +340,8 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
         }
 
         bool recompute = Options.Behavior.Equals(LanguageModelPolicyOptions.Recompute, StringComparison.OrdinalIgnoreCase);
-        var behavior = recompute ? Session.LogProbabilities(all, adapters: true) : null;
-        var reference = needsReference ? Session.LogProbabilities(all, adapters: false) : null;
+        var behavior = recompute ? LogProbabilities(all, adapters: true) : null;
+        var reference = needsReference ? LogProbabilities(all, adapters: false) : null;
         var advantages = batch.Advantages;
         var offsets = batch.Offsets;
         var sequences = new List<TrainingSequence>[batch.Episodes];
@@ -332,6 +389,64 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>
         }
 
         (_batch, _layouts, _sequences, _hasReference) = (batch, layouts, sequences, needsReference);
+    }
+
+    // log p of the trained tokens of `all` with the adapters on or off (FineTuningSession.LogProbabilities). On a cluster
+    // with SpreadPasses each rank computes a contiguous run of the sequences, the runs cut where the positions before them
+    // reach r/W of all the positions (the same cut on every rank), and every rank's values are gathered: each sequence's
+    // count, then its values, as computed (an all-gather copies them).
+    private float[][] LogProbabilities(List<TrainingSequence> all, bool adapters)
+    {
+        if (Session.Sync is not { WorldSize: > 1 } sync || !Options.SpreadPasses)
+        {
+            return Session.LogProbabilities(all, adapters);
+        }
+
+        int world = sync.WorldSize;
+        var bounds = new int[world + 1];
+        long total = 0;
+        foreach (var sequence in all)
+        {
+            total += sequence.Tokens.Length;
+        }
+
+        long before = 0;
+        for (int r = 1, i = 0; r < world; r++)
+        {
+            while (i < all.Count && before * world < total * r)
+            {
+                before += all[i++].Tokens.Length;
+            }
+
+            bounds[r] = i;
+        }
+
+        bounds[world] = all.Count;
+        int from = bounds[sync.Rank];
+        var mine = Session.LogProbabilities(all.GetRange(from, bounds[sync.Rank + 1] - from), adapters);
+        var packed = new float[mine.Length + mine.Sum(m => m.Length)];
+        for (int i = 0, at = mine.Length; i < mine.Length; i++)
+        {
+            packed[i] = mine[i].Length;                                    // a sequence's trained tokens: below 2^24, exact
+            mine[i].CopyTo(packed, at);
+            at += mine[i].Length;
+        }
+
+        var gathered = RolloutExchange.Gather(sync.Collectives, packed);
+        var result = new float[all.Count][];
+        for (int r = 0; r < world; r++)
+        {
+            int count = bounds[r + 1] - bounds[r];
+            var values = gathered[r];
+            for (int i = 0, at = count; i < count; i++)
+            {
+                int length = (int)values[i];
+                result[bounds[r] + i] = values[at..(at + length)];
+                at += length;
+            }
+        }
+
+        return result;
     }
 
     /// <summary>Writes the adapters, the optimizer's state and the steps done (<see cref="FineTuningSession.Checkpoint"/>).</summary>
