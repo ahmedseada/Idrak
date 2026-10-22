@@ -1507,6 +1507,21 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R3c (merged): CPU, CUDA, then idrak reinforce under idrak cluster sim on one card split in two, against one process
+# (the first iteration's reward line must match: a difference on the card is a finding), resume, and localhost mode
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "cli reinforce|cli distill|cli cluster|cli train data|reinforcement cluster:|cluster: 2 ranks equal one process|cli health|cli polish|public API|abstraction inventory|naming:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "cli reinforce: cluster sim|cli reinforce: a seeded|reinforcement cluster:|cluster: 2 ranks equal one process"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+New-Item -ItemType Directory -Force runs | Out-Null
+1..32 | ForEach-Object { '{"question": "What is ' + $_ + ' plus ' + $_ + '? Answer with the number.", "answer": "' + (2 * $_) + '"}' } | Set-Content runs\sums.jsonl
+dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster init -y --nodes 1 --devices cuda:0,cuda:0 -o runs\two-cuda.json
+dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 5 --max-new 64 --no-think --seed 1 -o runs\rl-cluster
+dotnet run -c Release --no-build --project src\Idrak.Cli -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 5 --max-new 64 --no-think --seed 1 -d cuda:0 -o runs\rl-one
+dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 6 --max-new 64 --no-think --seed 1 -o runs\rl-cluster --resume
+dotnet run -c Release --no-build --project src\Idrak.Cli -- cluster sim --topology runs\two-cuda.json --mode localhost -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --reward number --algorithm grpo --group 8 --episodes 16 --shards 4 --iterations 2 --max-new 64 --no-think --seed 1 -o runs\rl-localhost
+
 # R3b (merged): CPU, then CUDA (the simulated cluster is carved from one card; the first rollout's bit-identity and the
 # 1e-4 adapter tolerance are checked there: a miss is a finding)
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "reinforcement cluster:|reinforcement:|reinforcement contracts|reinforcement text:|fine-tuning:|fine-tuning options:|cluster: 2 ranks equal one process|cli reinforce|plugins: coding|public API|abstraction inventory|cli health: every environment variable|cli polish: the environment table|naming:"
