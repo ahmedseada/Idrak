@@ -1096,6 +1096,7 @@ public sealed class Idrak.Text.Reinforcement.JudgeReward : Idrak.Abstraction.Rei
   public void Release()
 
 public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstraction.Reinforcement.IPolicy<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, Idrak.Abstraction.Reinforcement.IRolloutRanks<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, System.IDisposable
+  public Idrak.Abstraction.Cluster.IStopAgreement? StopAgreement { get; }
   public Idrak.Abstraction.Reinforcement.UpdateStats Update(Idrak.Abstraction.Reinforcement.RolloutBatch<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage> batch, Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyList<int>? episodes = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null)
   public Idrak.Text.FineTuningSession Session { get; }
   public Idrak.Text.Generation.ChatGenerator Chat { get; }

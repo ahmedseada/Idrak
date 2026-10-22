@@ -395,6 +395,12 @@ public static partial class Pretrainer
         bool startedTelemetry = false;
         bool lead = options.Cluster is not { Rank: > 0 };                  // data parallel: rank 0 writes and publishes
         using var seeds = options.Cluster is { } ranked ? Dropout.SeedsForRank(ranked.Rank) : null;
+        // On a cluster a cancelled token asks the ranks to stop and they agree at a step boundary (Plan 27, R7): a step's
+        // batches run to their end on every rank (their token is cancelled only when this rank gives up waiting).
+        var agreement = options.Cluster is { } agreeing ? StopAgreements.For(agreeing, clusterOptions) : null;
+        agreement?.Reset();
+        using var asks = agreement?.Watch(cancellationToken) ?? default;
+        var inner = agreement?.GiveUpToken ?? cancellationToken;
 
         for (int stageIndex = resume?.Stage ?? 0; stageIndex < options.Stages.Count; stageIndex++)
         {
@@ -503,11 +509,17 @@ public static partial class Pretrainer
                         bool present;
                         try
                         {
+                            if (agreement is not null && agreement.Agree(step))
+                            {
+                                throw agreement.Stopped(step);                 // every rank at this same boundary (Plan 27, R7)
+                            }
+
                             present = sync is null || sync.BeginStep(step);
                         }
                         catch (ClusterRunStoppedException) when (step > 0 && last != Path.Combine(outputFolder, $"checkpoint-{step}") && (lead || sync is { Updates: true }))
                         {
-                            // Stopped at this step boundary (a dashboard's stop, plan 23 C9): every rank stops here alike, so the
+                            // Stopped at this step boundary (a dashboard's stop, plan 23 C9; a stop the ranks agreed on, Plan 27
+                            // R7): every rank stops here alike, so the
                             // checkpoint is the last finished step's, written as a saving step writes it. A sharded run's weights
                             // and optimizer state are every rank's share: every rank joins them, rank 0 writes, all wait (C6).
                             partSources.Keep();
@@ -558,8 +570,12 @@ public static partial class Pretrainer
                         long tokens;
                         try
                         {
-                            (loss, tokens) = runner.Run(batches, sequences, cancellationToken,
+                            (loss, tokens) = runner.Run(batches, sequences, inner,
                                 b => $"{stage.Name} step {stageStep + 1}/{stage.Steps}, batch {b + 1}/{batches.Count}");
+                        }
+                        catch (OperationCanceledException e) when (agreement.GaveUpError(e) is { } gaveUp)
+                        {
+                            throw gaveUp;                                      // this rank left its step on its own, loudly
                         }
                         catch (OperationCanceledException) when (done > 0 && lead && sync is not { Updates: true })   // a sharded run's state is every rank's
                         {

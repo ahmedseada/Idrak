@@ -28,4 +28,11 @@ public interface IRolloutRanks<TObservation, TAction>
     /// <param name="mine">The episodes this rank played.</param>
     /// <param name="cancellationToken">Stops the call before it begins (a collective under way runs to its end).</param>
     IReadOnlyList<Trajectory<TObservation, TAction>> Gather(IReadOnlyList<Trajectory<TObservation, TAction>> mine, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The ranks' agreement on a stop (Plan 27, R7): the trainer asks through it when its token is cancelled and stops the
+    /// run at the iteration boundary the ranks agree on, so no rank leaves a rollout or an update the others are in; null
+    /// (the default) when the policy runs in one process, whose token stops it as before.
+    /// </summary>
+    Idrak.Abstraction.Cluster.IStopAgreement? StopAgreement => null;
 }

@@ -68,7 +68,11 @@ internal sealed partial class GradientReduction : SyncCore
     // The per-message cost measured on the simulator, per collective, world size and device kind, kept for the process.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float> MessageCosts = new(StringComparer.Ordinal);
 
-    private const int HeaderFloats = 2;                       // tokens, loss; then a presence flag per parameter, a changed flag per bucket
+    private const int HeaderFloats = 2;                       // tokens, loss; then a presence flag per parameter, a changed flag per bucket, the stop flag
+
+    // The ranks' stop agreement (Plan 27, R7): when it reads a carried flag, the header's last value is this rank's flag, so
+    // every step tells the next boundary whether a rank asked to stop, with no message of its own.
+    private readonly IStopAgreement? _stop;
 
     private readonly IGradientCompressor _compressor;
     private readonly Dictionary<Tensor, int> _index = new(ReferenceEqualityComparer.Instance);
@@ -132,6 +136,11 @@ internal sealed partial class GradientReduction : SyncCore
 
         _sized = options.BucketBytes is not null;
         _layout = NewLayout(ValuesOf(options.BucketBytes ?? BucketSizing.ProbeBytes));
+        if (collectives.WorldSize > 1 && StopAgreements.For(collectives, options) is { Carries: true } stop)
+        {
+            _stop = stop;
+        }
+
         if (collectives.Transport?.Capabilities.CrossProcess != true)
         {
             StartAdvice(DecideInProcess());                    // ranks of one process: one decision for the run, whichever rank comes first
@@ -152,7 +161,7 @@ internal sealed partial class GradientReduction : SyncCore
     /// <summary>The bucket layout in use (its size measured on the first step when unset).</summary>
     internal BucketLayout Layout => _layout;
 
-    private int HeaderLength => HeaderFloats + Parameters.Count + _layout.Count;
+    private int HeaderLength => HeaderFloats + Parameters.Count + _layout.Count + (_stop is null ? 0 : 1);
 
     public override IDisposable? Overlap(double tokens, bool normalized = false)
     {
@@ -778,10 +787,15 @@ internal sealed partial class GradientReduction : SyncCore
             head[HeaderFloats + i] = HadGradient(i) ? 1f : 0f;
         }
 
-        var flags = head[(HeaderFloats + Parameters.Count)..];
+        var flags = head.Slice(HeaderFloats + Parameters.Count, _layout.Count);
         for (int b = 0; b < flags.Length; b++)
         {
             flags[b] = changed is not null && b < changed.Length && changed[b] ? 1f : 0f;
+        }
+
+        if (_stop is not null)
+        {
+            head[^1] = _stop.Contribution;                     // last, so the values before it keep their places (and sums)
         }
     }
 
@@ -793,6 +807,7 @@ internal sealed partial class GradientReduction : SyncCore
             _present[i] = head[HeaderFloats + i] > 0f;
         }
 
+        _stop?.Carried(head[^1]);                              // how many ranks asked to stop, the same sum on every rank
         return (head[0], head[1]);
     }
 

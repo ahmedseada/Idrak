@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using Idrak.Abstraction.Cluster;
 using Idrak.Abstraction.Reinforcement;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
@@ -182,6 +183,9 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
 
     /// <summary>The ranks of the session's cluster; 1 in one process.</summary>
     public int WorldSize => Session.Sync?.WorldSize ?? 1;
+
+    /// <inheritdoc/>
+    public IStopAgreement? StopAgreement => Session.Sync is { WorldSize: > 1 } ? Session.Stop : null;
 
     /// <summary>
     /// Every rank's episodes, in rank order, this rank's <paramref name="mine"/> among them (the objects given; the others'

@@ -333,10 +333,14 @@ public sealed class ConversationTuning : IDisposable
         {
             FineTuner.Train(Model, TrainingSequences, EvaluationSequences, Tuning, folder, reports, cancellationToken, trace);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException e) when (cancellationToken.IsCancellationRequested || e is Idrak.Abstraction.Cluster.ClusterRunStoppedException { Agreed: true })
         {
+            // Stopped (on a cluster: at the step the ranks agreed on, Plan 27 R7, where rank 0 alone writes what was trained).
             stopped = true;
-            Save(folder);
+            if (Tuning.Cluster is not { Rank: > 0 })
+            {
+                Save(folder);
+            }
         }
 
         new TuningManifest { BaseModel = baseModel, System = Options.System, MaxLength = Tuning.MaxLength }.Save(folder);

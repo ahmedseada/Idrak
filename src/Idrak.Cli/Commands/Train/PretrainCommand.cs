@@ -268,7 +268,7 @@ internal sealed class PretrainCommand : Command
                 {
                     result = Pretrainer.Train(model, options, run, resume, reports, interrupt.Token, context.Verbose ? context.Detail : null);
                 }
-                catch (ClusterRunStoppedException stopped)
+                catch (ClusterRunStoppedException stopped) when (!stopped.Agreed)
                 {
                     // Stopped as asked (a dashboard's stop, plan 23 C9): every rank stops at this step boundary, rank 0 wrote the checkpoint.
                     line.Erase();
@@ -282,8 +282,10 @@ internal sealed class PretrainCommand : Command
                     context.WriteJson(new JsonObject { ["run"] = Path.GetFullPath(run), ["stopped"] = true, ["step"] = stopped.Step, ["checkpoint"] = last });
                     return ExitCodes.Ok;
                 }
-                catch (OperationCanceledException) when (interrupt.Requested)
+                catch (OperationCanceledException e) when (interrupt.Requested || e is ClusterRunStoppedException { Agreed: true })
                 {
+                    // Ctrl+C or --timeout; on a cluster the ranks agreed to stop at one step boundary (Plan 27, R7) and rank 0
+                    // wrote the checkpoint, so every rank ends as one process does.
                     line.Erase();
                     string? last = Pretrainer.LatestCheckpoint(run);
                     context.Write(interrupt.TimedOut ? "gave up after --timeout" : "stopped");
