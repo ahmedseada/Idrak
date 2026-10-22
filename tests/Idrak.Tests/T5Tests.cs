@@ -1021,7 +1021,8 @@ internal static partial class Tests
                 var mine = generator.GenerateIds(ids, T5Greedy(tokens));
                 int[] expected = [.. greedy.TakeWhile(t => t != model.Model.EndToken)];
                 Check(mine.SequenceEqual(expected), $"{repo}: text {i}: greedy [{string.Join(", ", mine)}], transformers [{string.Join(", ", expected)}]");
-                Check(generator.Generate(text, T5Greedy(tokens)).Text == (string)c["greedy_text"]!, $"{repo}: text {i}: the greedy text");
+                string spoken = generator.Generate(text, T5Greedy(tokens)).Text, theirs = (string)c["greedy_text"]!;
+                Check(spoken == theirs, $"{repo}: text {i}: the greedy text '{spoken}', transformers '{theirs}'");
             }
 
             Console.WriteLine($"    {repo}: largest difference of the encoder states from transformers {worst:E1}");
