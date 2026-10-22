@@ -24,7 +24,9 @@ internal static partial class Tests
     {
         foreach (string name in new[] { "wordpiece-uncased", "wordpiece-cased" })
         {
-            var tokenizer = PretrainedTokenizers.Load(WordPieceFixture(name));
+            // tokenizers' own decode, which never takes spaces out (the folder's tokenizer_config.json asks transformers to:
+            // tokenizers: the decoded text's spaces).
+            var tokenizer = PretrainedTokenizers.Load(WordPieceFixture(name), new TokenizerOptions { CleanUpSpaces = false });
             Check(tokenizer.Model == TokenizerModels.WordPiece && tokenizer is WordPieceTokenizer, $"{name}: the WordPiece model");
             var post = ((WordPieceTokenizer)tokenizer).PostProcessor ?? throw new Exception($"{name}: no post-processor");
             var reference = JsonNode.Parse(File.ReadAllText(Path.Combine(WordPieceFixture(name), "expected-hf.json")))!;

@@ -47,7 +47,7 @@ public static class PretrainedTokenizers
     {
         options ??= new TokenizerOptions();
         var (file, reader) = Find(path, options) ?? throw new FileNotFoundException(Missing(path, options), path);
-        return reader.Read(file, options);
+        return WithConfig(reader.Read(file, options), file);
     }
 
     /// <summary>The tokenizer at <paramref name="path"/> (a model folder, or a tokenizer file), built by its model type.</summary>
@@ -64,7 +64,33 @@ public static class PretrainedTokenizers
     public static IPretrainedTokenizer? TryLoad(string path, TokenizerOptions? options = null)
     {
         options ??= new TokenizerOptions();
-        return Find(path, options) is var (file, reader) ? TokenizerModels.Create(reader.Read(file, options), options) : null;
+        return Find(path, options) is var (file, reader) ? TokenizerModels.Create(WithConfig(reader.Read(file, options), file), options) : null;
+    }
+
+    // What the model's tokenizer_config.json beside the file says of the decoded text's spaces (clean_up_tokenization_spaces),
+    // unless the reader set it.
+    private static TokenizerDefinition WithConfig(TokenizerDefinition definition, string file)
+    {
+        string config = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file)) ?? ".", "tokenizer_config.json");
+        if (definition.CleanUpTokenizationSpaces is null && File.Exists(config))
+        {
+            System.Text.Json.Nodes.JsonNode? json;
+            try
+            {
+                json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(config));
+            }
+            catch (System.Text.Json.JsonException e)
+            {
+                throw new InvalidDataException($"{config} is not JSON: {e.Message}", e);
+            }
+
+            if (json?["clean_up_tokenization_spaces"] is System.Text.Json.Nodes.JsonValue value && value.TryGetValue(out bool clean))
+            {
+                definition.CleanUpTokenizationSpaces = clean;
+            }
+        }
+
+        return definition;
     }
 
     // What a folder lacks: the files the registered readers look for.

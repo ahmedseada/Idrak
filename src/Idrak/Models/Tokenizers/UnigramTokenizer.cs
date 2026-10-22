@@ -263,7 +263,11 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
     internal static UnigramTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) =>
         new(definition.Source, definition.Json,
             definition.Pieces ?? throw new InvalidDataException($"{definition.Source}: the Unigram model has no vocabulary of [piece, score] pairs (model.vocab)."),
-            options);
+            options)
+        { CleanUpSpaces = options.ResolvedCleanUpSpaces(definition.CleanUpTokenizationSpaces) };
+
+    // Whether a decode takes out the space before punctuation and contractions (TokenizerOptions.CleanUpSpaces).
+    internal bool CleanUpSpaces { get; init; }
 
     /// <inheritdoc />
     public string Model => Type;
@@ -978,7 +982,8 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
             }
         }
 
-        return _decoder is null ? string.Join(' ', tokens) : string.Concat(_decoder(tokens));
+        string text = _decoder is null ? string.Join(' ', tokens) : string.Concat(_decoder(tokens));
+        return CleanUpSpaces ? DecodedSpaces.CleanUp(text) : text;
     }
 
     /// <summary>The SentencePiece model (tokenizer.model) this tokenizer was read from, kept so it can be written beside tokenizer.json.</summary>

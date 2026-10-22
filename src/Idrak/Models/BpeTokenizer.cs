@@ -231,7 +231,11 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     internal static BpeTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) =>
         new(definition.Json,
             definition.Vocabulary ?? throw new InvalidDataException($"{definition.Source}: the BPE model has no vocabulary of token to id (model.vocab)."),
-            definition.Merges ?? [], options.ResolvedPieceCacheLimit(), options.ResolvedWorkers());
+            definition.Merges ?? [], options.ResolvedPieceCacheLimit(), options.ResolvedWorkers())
+        { CleanUpSpaces = options.ResolvedCleanUpSpaces(definition.CleanUpTokenizationSpaces) };
+
+    // Whether a decode takes out the space before punctuation and contractions (TokenizerOptions.CleanUpSpaces).
+    internal bool CleanUpSpaces { get; init; }
 
     // A tokenizer from its parts: rest is a tokenizer.json without the model's vocab and merges (the trainers build one).
     internal static BpeTokenizer FromParts(JsonObject rest, Dictionary<string, int> vocabulary, (string Left, string Right)[] merges)
@@ -612,7 +616,9 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     };
 
     /// <inheritdoc />
-    public string Decode(ReadOnlySpan<int> ids)
+    public string Decode(ReadOnlySpan<int> ids) => CleanUpSpaces ? DecodedSpaces.CleanUp(DecodeText(ids)) : DecodeText(ids);
+
+    private string DecodeText(ReadOnlySpan<int> ids)
     {
         if (_byteLevel)
         {

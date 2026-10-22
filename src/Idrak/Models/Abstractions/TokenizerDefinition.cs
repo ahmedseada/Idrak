@@ -38,6 +38,12 @@ public sealed class TokenizerDefinition
     /// <summary>The model's type (<c>model.type</c>: "BPE", "Unigram", "WordPiece", …), or "" when the file names none.</summary>
     public string ModelType => Json["model"]?["type"] is JsonValue type && type.TryGetValue(out string? name) ? name : "";
 
+    /// <summary>
+    /// Whether the model's tokenizer_config.json asks decodes to take out the space before punctuation and English
+    /// contractions (<c>clean_up_tokenization_spaces</c>); null when it says nothing (<see cref="TokenizerOptions.CleanUpSpaces"/>).
+    /// </summary>
+    public bool? CleanUpTokenizationSpaces { get; internal set; }
+
     // A copy whose tables a second model may take (the library's model, when an app's model of the same type failed or is
     // compared with it): the JSON and the vocabulary are copied, the read-only tables shared.
     internal TokenizerDefinition Copy() => new()
@@ -47,5 +53,6 @@ public sealed class TokenizerDefinition
         Vocabulary = Vocabulary is null ? null : new Dictionary<string, int>(Vocabulary, Vocabulary.Comparer),
         Pieces = Pieces,
         Merges = Merges,
+        CleanUpTokenizationSpaces = CleanUpTokenizationSpaces,
     };
 }

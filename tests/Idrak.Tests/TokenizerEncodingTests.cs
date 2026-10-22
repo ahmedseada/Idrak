@@ -87,7 +87,7 @@ internal static partial class Tests
         foreach (string name in new[] { "wordpiece-uncased", "wordpiece-cased", "bpe", "unigram", "unigram-bytes" })
         {
             string folder = TestData($"tokenizers/{name}");
-            var tokenizer = PretrainedTokenizers.Load(Path.Combine(folder, "tokenizer.json"));
+            var tokenizer = PretrainedTokenizers.Load(Path.Combine(folder, "tokenizer.json"), new TokenizerOptions { CleanUpSpaces = false });   // tokenizers' own decode
             var reference = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "expected-hf.json")))!;
             int line = 0;
             foreach (var entry in reference["lines"]!.AsArray())

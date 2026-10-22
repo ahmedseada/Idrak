@@ -1748,6 +1748,7 @@ public sealed class Idrak.Models.Abstractions.TokenizerDefinition
   public (string, string)[]? Merges { get; init; }
   public System.Collections.Generic.Dictionary<string, int>? Vocabulary { get; init; }
   public System.Collections.Generic.IReadOnlyList<(string, double)>? Pieces { get; init; }
+  public bool? CleanUpTokenizationSpaces { get; }
   public required System.Text.Json.Nodes.JsonObject Json { get; init; }
   public required string Source { get; init; }
   public string ModelType { get; }
@@ -1783,8 +1784,11 @@ public static class Idrak.Models.Abstractions.TokenizerModels
 
 public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquatable<Idrak.Models.Abstractions.TokenizerOptions>
   public TokenizerOptions()
+  public bool ResolvedCleanUpSpaces(bool? file)
+  public bool? CleanUpSpaces { get; init; }
   public const int DefaultPieceCacheLimit = 100000
   public const int DefaultSamplingBest = -1
+  public const string CleanUpVariable = "IDRAK_TOKENIZER_CLEANUP"
   public const string FormatVariable = "IDRAK_TOKENIZER_FORMAT"
   public const string MaxWordCharsVariable = "IDRAK_TOKENIZER_MAX_WORD_CHARS"
   public const string PieceCacheVariable = "IDRAK_TOKENIZER_CACHE"

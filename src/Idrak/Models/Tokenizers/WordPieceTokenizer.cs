@@ -133,7 +133,11 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
     }
 
     // The library's "WordPiece" model (TokenizerModels): the tokenizer of a definition, which it takes as its own.
-    internal static WordPieceTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) => new(definition, options);
+    internal static WordPieceTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) =>
+        new(definition, options) { CleanUpSpaces = options.ResolvedCleanUpSpaces(definition.CleanUpTokenizationSpaces) };
+
+    // Whether a decode takes out the space before punctuation and contractions (TokenizerOptions.CleanUpSpaces).
+    internal bool CleanUpSpaces { get; init; }
 
     /// <summary>The post-processor the tokenizer.json names (special tokens around a text or a pair), or null.</summary>
     internal ITokenizerPostProcessor? PostProcessor { get; }
@@ -439,7 +443,8 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
             tokens.Add(TokenOf(id));
         }
 
-        return _decoder is null ? string.Join(' ', tokens) : string.Concat(_decoder(tokens));
+        string text = _decoder is null ? string.Join(' ', tokens) : string.Concat(_decoder(tokens));
+        return CleanUpSpaces ? DecodedSpaces.CleanUp(text) : text;
     }
 
     public string Decode(ReadOnlySpan<int> ids) => Decode((IEnumerable<int>)ids.ToArray());
