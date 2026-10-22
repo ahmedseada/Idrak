@@ -2070,6 +2070,19 @@ waiting for the owner's runs; each merged phase adds its commands here, and the 
 # once, after the last merge you want to test
 dotnet build -c Release tests\Idrak.Tests
 
+# R10 (merged): CPU, CUDA, then on-policy distillation on one card split in two against one process (the first divergence
+# of "distilled in 6 steps, divergence A -> B" must match; the start line names "4 shards (blocks)"; runs\opd-cluster holds one
+# adapter and idrak-tuning.json; compare the two wall times), and a localhost run stopped with one Ctrl+C
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "distillation cluster:|distillation:|reinforcement cluster:|reinforcement text:|reinforcement:|reinforcement contracts|cli distill|cli reinforce|cluster stop:|cli cluster|fine-tuning:|plugins: coding|cluster: 2 ranks equal one process|public API|abstraction inventory|cli health: every environment variable|cli polish|naming:"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "distillation cluster:|reinforcement cluster:|reinforcement text: on-policy|cli reinforce: cluster sim"
+dotnet run -c Release --no-build --project tests\Idrak.Tests
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+& $idrak cluster sim --topology runs\two-cuda.json -- distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data runs\sums.jsonl --on-policy --mix 0.25 --steps 6 --batch-size 8 --max-new 64 --shards 4 --seed 1 -o runs\opd-cluster
+& $idrak distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data runs\sums.jsonl --on-policy --mix 0.25 --steps 6 --batch-size 8 --max-new 64 --shards 4 --seed 1 -d cuda:0 -o runs\opd-one
+& $idrak cluster sim --topology runs\two-cuda.json -- reinforce Qwen/Qwen3-0.6B --env prompts --data runs\sums.jsonl --algorithm distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --episodes 8 --iterations 4 --shards 4 --max-new 64 --seed 1 -o runs\opd-reinforce
+& $idrak cluster sim --topology runs\two-cuda.json --mode localhost -- distill --teacher Qwen/Qwen3-1.7B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data runs\sums.jsonl --on-policy --steps 50 --batch-size 8 --max-new 64 --shards 4 --seed 1 -o runs\opd-stop
+
 # R7 (merged; 230 passed on the merged tree): CPU, CUDA, then --mode localhost runs stopped with one Ctrl+C after a few
 # iterations or steps: the launcher prints "stopping: the ranks agree...", both ranks end with no 120 s timeout, rank 0 alone
 # prints the stop line, one iteration-N / checkpoint-N is written, and the resumed run starts at N + 1 (put the step the stop
