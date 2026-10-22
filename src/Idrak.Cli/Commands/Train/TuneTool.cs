@@ -113,6 +113,22 @@ internal sealed class TuneTool(ToolConsole console)
         "--no-shuffle", "--no-dedup", "--mix", "--train-projector", "--grayscale",
     ];
 
+    /// <summary>
+    /// The options of train that set up a fine-tuning session: the adapters (rank, alpha, targets, type, an adapter to go
+    /// on with), the optimizer and its schedule, the lengths and the model's loading. idrak distill and idrak reinforce
+    /// take them and pass them on as they are, so their parsing is this tool's (distill's own <c>--alpha</c> is its mixing
+    /// weight: it takes this one as <c>--lora-alpha</c>).
+    /// </summary>
+    public static readonly string[] SessionValueOptions =
+    [
+        "--rank", "--alpha", "--lr", "--max-length", "--batch-tokens", "--accumulate", "--targets", "--optimizer", "--weight-decay", "--momentum", "--schedule",
+        "--warmup", "--min-lr", "--decay", "--adapter-type", "--adapter", "--context", "--matmul", "--gpu-memory",
+    ];
+
+    /// <summary>The flags of train that set up a fine-tuning session (the activations' memory, the packing, FP8, the optimizer's place, offloading).</summary>
+    public static readonly string[] SessionFlags =
+        ["--no-packing", "--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--no-graphs", "--fp8", "--cpu-optimizer", "--offload"];
+
     private readonly TextWriter _out = console.Out;
     private readonly TextWriter _error = console.Error;
     private readonly List<string> positional = [];
@@ -166,6 +182,18 @@ internal sealed class TuneTool(ToolConsole console)
     /// or null when it has done the work itself and nothing is to be trained (the command then ends with exit code 0).
     /// </summary>
     public Func<PretrainedModel, IReadOnlyList<TrainingSequence>, IReadOnlyList<TrainingSequence>?, FineTuningOptions, FineTuningOptions?>? BeforeTraining { get; set; }
+
+    /// <summary>
+    /// Set by idrak reinforce and idrak distill --on-policy: train then loads the model (its adapter kept separate, to go on
+    /// training it) with this tool's device, weights and process settings, and hands it with the training options to this
+    /// work instead of reading data and calling the fine-tuner; the work trains through a session of its own, writes the
+    /// adapter to <see cref="Output"/> and returns the exit code. On 0 the adapter folder's manifest is written as train
+    /// writes it. The data given after the model is read with <see cref="ReadChats"/>; none is needed.
+    /// </summary>
+    public Func<PretrainedModel, FineTuningOptions, int>? Session { get; set; }
+
+    /// <summary>The base model as named (an adapter folder's base model when the model given was one), once a command runs.</summary>
+    public string BaseModel => baseModel;
 
     /// <summary>Whether to show the run plan in full (idrak's <c>-v</c>): images, blocks, image tokens, every batch, cache hits and memory.</summary>
     public bool Verbose { get; set; }
@@ -361,7 +389,7 @@ internal sealed class TuneTool(ToolConsole console)
         string command = positional.Count > 0 ? positional[0] : "";
         return !Commands.Contains(command) ? $"Give a command: {string.Join(", ", Commands)}."
             : positional.Count < 2 ? (command == "download" ? "download needs one or more model ids." : $"{command} needs a model.")
-            : command is "train" or "evaluate" && positional.Count < 3 ? $"{command} needs data after the model."
+            : (command is "evaluate" || command is "train" && Session is null) && positional.Count < 3 ? $"{command} needs data after the model."
             : command is "train" or "export" && output is null ? $"{command} needs --out DIR."
             : null;
     }
@@ -429,6 +457,8 @@ internal sealed class TuneTool(ToolConsole console)
         {
             switch (command)
             {
+                case "train" when Session is { } work:
+                    return RunSession(work);
                 case "train":
                     return Train();
                 case "evaluate":
@@ -487,15 +517,63 @@ internal sealed class TuneTool(ToolConsole console)
         }
     }
 
-    private int Train()
+    // --max-length within the model's context.
+    private void FitLength(PretrainedModel model)
     {
-        // Training keeps the adapter separate (to continue training it); a new adapter is added otherwise.
-        using var model = Load(merge: false);
         if (tuning.MaxLength >= model.MaxPositions)
         {
             _out.WriteLine($"--max-length {tuning.MaxLength} is beyond the model's context of {model.MaxPositions} positions; using {model.MaxPositions - 1}");
             tuning = tuning with { MaxLength = model.MaxPositions - 1 };
         }
+    }
+
+    // train with a session's work of its own (Session): the model loaded as train loads it, the work, then the manifest.
+    private int RunSession(Func<PretrainedModel, FineTuningOptions, int> work)
+    {
+        using var model = Load(merge: false);
+        FitLength(model);
+        _out.WriteLine($"training on {device}…");
+        int code = work(model, tuning);
+        if (code == 0 && output is not null && Cluster.ClusterSession.Current is not { Rank: > 0 })
+        {
+            new TuningManifest { BaseModel = baseModel, System = systemPrompt, MaxLength = tuning.MaxLength }.Save(output);
+        }
+
+        return code;
+    }
+
+    /// <summary>
+    /// The conversations of the data given after the model (read and normalized as train reads them: files, folders, hf:
+    /// specs, column templates, --system, --max-rows), for a <see cref="Session"/>'s work; each row that is a conversation,
+    /// in order. Empty when no data was given.
+    /// </summary>
+    public List<ChatTranscript> ReadChats()
+    {
+        var specs = positional.Skip(2).ToList();
+        if (specs.Count == 0)
+        {
+            return [];
+        }
+
+        var (rows, _) = (Recipe(specs, forTraining: true) with { EvaluationFraction = 0 }).Build(downloads);
+        var chats = new List<ChatTranscript>();
+        foreach (var row in console.Track(rows, "data"))
+        {
+            if (row.ContainsKey("messages") || row.ContainsKey("conversations"))
+            {
+                chats.Add(ChatTranscript.FromJson(row));
+            }
+        }
+
+        _out.WriteLine($"data: {chats.Count:N0} conversations from {rows.Name}");
+        return chats;
+    }
+
+    private int Train()
+    {
+        // Training keeps the adapter separate (to continue training it); a new adapter is added otherwise.
+        using var model = Load(merge: false);
+        FitLength(model);
 
         if (ReadsTranscripts(model, positional.Skip(2).ToList()))
         {

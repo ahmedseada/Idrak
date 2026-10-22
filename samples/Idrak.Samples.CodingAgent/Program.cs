@@ -6,15 +6,18 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Reinforcement;
 using Idrak.Reinforcement.Plugins;
 using Idrak.Reinforcement.Plugins.Coding;
 using Idrak.Text;
 using Idrak.Text.Generation;
 using Idrak.Text.Plugins;
+using Idrak.Text.Reinforcement;
 
 // A coding agent: a language model (any family Idrak loads, in its own chat template) reads, searches, edits and writes
 // files and runs allowlisted commands (dotnet, npm …) in a workspace, run by Idrak's own engine (CPU or CUDA):
@@ -29,6 +32,13 @@ using Idrak.Text.Plugins;
 //                                   (--attempts N, --filter S, --work DIR, --rounds N, --temperature T)
 //   agent-check <suite>             checks every task without a model: verification fails on the starting files and
 //                                   passes with the task's solution/ folder (--filter S, --work DIR)
+//   agent-train <folder> <suite> --out <dir>
+//                                   trains the model's LoRA adapters on the suite by reinforcement learning: the library's
+//                                   trainer (Idrak.Reinforcement) in the coding plug-in's environment, the tasks' hidden tests
+//                                   the reward; checkpoints in <dir>/checkpoints, the adapter in <dir> (--algorithm grpo|ppo|
+//                                   reinforce, --iterations N, --group N, --episodes N, --lr R, --rank N, --max-new N,
+//                                   --rounds N, --filter S, --work DIR, --temperature T, --resume; every other setting from
+//                                   its IDRAK_RL_* variable). suite/ holds a small C# demo suite.
 //
 //   (<folder> may also be a Hugging Face model id, for example Qwen/Qwen3-0.6B, a .gguf file or store:name.)
 //   data/agent-demo-*.jsonl: tool-calling transcripts in this layout, to fine-tune a model for the agent with idrak tune.
@@ -44,6 +54,10 @@ int context = 4096;
 string? output = null, adapterFolder = null;
 string? workspace = null, workRoot = null, filter = null;
 int attempts = 1, maxRounds = 40;
+int? iterations = null, groupSize = null, episodes = null, rank = null, maxNew = null;
+float? learningRate = null;
+string? algorithm = null;
+bool resume = false;
 float? temperature = null;
 MatMulPrecision? matmul = null;
 Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
@@ -81,6 +95,14 @@ for (int i = 0; i < args.Length; i++)
         case "--attempts": attempts = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--rounds": maxRounds = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--temperature": temperature = float.Parse(args[++i], CultureInfo.InvariantCulture); break;
+        case "--algorithm": algorithm = args[++i]; break;
+        case "--iterations": iterations = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
+        case "--group": groupSize = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
+        case "--episodes": episodes = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
+        case "--lr": learningRate = float.Parse(args[++i], CultureInfo.InvariantCulture); break;
+        case "--rank": rank = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
+        case "--max-new": maxNew = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
+        case "--resume": resume = true; break;
         case ['-', '-', ..]:
             Console.Error.WriteLine($"Unknown option {args[i]}.");
             return 1;
@@ -88,10 +110,11 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
-if (positional.Count < 2 || positional[0] is not ("agent" or "agent-run" or "agent-check")
-    || positional[0] is "agent" && (positional.Count < 3 || workspace is null) || positional[0] is "agent-run" && (positional.Count < 3 || output is null))
+if (positional.Count < 2 || positional[0] is not ("agent" or "agent-run" or "agent-check" or "agent-train")
+    || positional[0] is "agent" && (positional.Count < 3 || workspace is null) || positional[0] is "agent-run" or "agent-train" && (positional.Count < 3 || output is null))
 {
     Console.WriteLine("usage: agent <folder> <task…> --workspace <dir> | agent-run <folder> <suite> --out <runs.jsonl> [--attempts N] | agent-check <suite>");
+    Console.WriteLine("       | agent-train <folder> <suite> --out <dir> [--algorithm grpo|ppo|reinforce] [--iterations N] [--group N] [--episodes N] [--resume]");
     Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--no-think] [--matmul fp32|bf16|fp8]");
     return 1;
 }
@@ -123,12 +146,12 @@ static async Task InstallDependencies(IEnumerable<CodingTask> tasks)
 // The sampling chat uses (Qwen3's recommended settings for thinking mode).
 GenerationOptions ChatSampling() => new() { Temperature = 0.6f, TopK = 20, TopP = 0.95f, RepeatPenalty = 1f, NumCtx = context };
 
-PretrainedModel Load(string folder)
+PretrainedModel Load(string folder, bool mergeAdapter = true)
 {
     folder = ResolveModel(folder);
     var watch = Stopwatch.StartNew();
-    // The adapter is merged as the weights are read (full speed).
-    bool merge = adapterFolder is not null;
+    // The adapter is merged as the weights are read (full speed), unless it is to be trained further (agent-train).
+    bool merge = mergeAdapter && adapterFolder is not null;
     var model = PretrainedModel.Load(folder, new PretrainedOptions
     {
         Device = device, Int8 = int8, BFloat16 = bf16, Int4 = int4, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
@@ -151,6 +174,87 @@ PretrainedModel Load(string folder)
 
 switch (positional[0])
 {
+    case "agent-train":
+    {
+        // Reinforcement learning on the suite, with no trainer of its own: the library's trainer (Idrak.Reinforcement),
+        // Idrak.Text's language-model policy over a fine-tuning session, the coding plug-in's environment. The run's
+        // settings come from the IDRAK_RL_* variables; the options given here win.
+        var options = ReinforcementOptions.FromEnvironment();
+        options = options with
+        {
+            Algorithm = algorithm ?? options.Algorithm,
+            Iterations = iterations ?? options.Iterations,
+            GroupSize = groupSize ?? options.GroupSize,
+            EpisodesPerIteration = episodes ?? options.EpisodesPerIteration,
+            Temperature = temperature ?? options.Temperature,
+            CheckpointFolder = options.CheckpointFolder ?? Path.Combine(output!, "checkpoints"),
+        };
+        options = options with { Resume = resume ? options.CheckpointFolder : options.Resume };
+        var environment = new Dictionary<string, string> { ["suite"] = Path.GetFullPath(positional[2]), ["rounds"] = maxRounds.ToString(CultureInfo.InvariantCulture) };
+        if (filter is not null)
+        {
+            environment["filter"] = filter;
+        }
+
+        if (workRoot is not null)
+        {
+            environment["work"] = workRoot;
+        }
+
+        if (noThink)
+        {
+            environment["think"] = "false";
+        }
+
+        options = options with { EnvironmentOptions = environment };
+        await InstallDependencies(CodingSuite.Load(positional[2], filter));
+
+        using var model = Load(positional[1], mergeAdapter: false);       // an --adapter goes on training
+        // The session's schedule spans the run's updates: an update per mini-batch of every epoch of every iteration (the
+        // trainer's defaults: ppo 4 epochs, else 1; the whole rollout a mini-batch).
+        int epochs = options.Epochs > 0 ? options.Epochs : options.Algorithm.Equals(ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase) ? 4 : 1;
+        int miniBatch = options.MiniBatch > 0 ? Math.Min(options.MiniBatch, options.EpisodesPerIteration) : options.EpisodesPerIteration;
+        int updates = Math.Max(1, options.Iterations * epochs * ((options.EpisodesPerIteration + miniBatch - 1) / miniBatch));
+        var defaults = new FineTuningOptions();
+        var tuning = defaults with
+        {
+            Rank = rank ?? defaults.Rank,
+            LearningRate = learningRate ?? defaults.LearningRate,
+            Scheduler = LearningRateSchedules.Factory(options.Schedule, options.ScheduleSettings),
+        };
+        var session = new FineTuningSession(model, tuning, updates);
+        using var policy = new LanguageModelPolicy(session, new LanguageModelPolicyOptions
+        {
+            MaxNewTokens = maxNew ?? 1024, ContextLength = context, Think = noThink ? false : null,
+        });
+
+        using var cancel = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = !cancel.IsCancellationRequested;              // the first Ctrl+C stops after the current iteration
+            cancel.Cancel();
+        };
+
+        Console.WriteLine($"{options.Algorithm} on {positional[2]}: {options.Iterations} iterations of {options.EpisodesPerIteration} episodes, checkpoints in {options.CheckpointFolder}");
+        using var progress = ProgressReporters.Start("agent-train", options.Iterations);
+        var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(EnvironmentKinds.Get("coding"), policy, options)
+        {
+            Progress = progress,
+            OnIteration = s =>
+            {
+                progress.Erase();
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"  iteration {s.Iteration}: pass rate {s.RewardMean:P0} (± {s.RewardSpread:0.##}), loss {s.Loss:0.####}, rollout {s.RolloutTime.TotalSeconds:F0} s, update {s.UpdateTime.TotalSeconds:F0} s"));
+            },
+        };
+        var result = trainer.Train(cancel.Token);
+        Directory.CreateDirectory(output!);
+        session.Save(output!);
+        Console.WriteLine($"{(result.Cancelled ? "stopped after" : "trained")} {result.Iterations} iterations; adapter written to {Path.GetFullPath(output!)}"
+                          + (result.Checkpoint is { } c ? $", checkpoint {c}" : "") + $"; try it: agent-run {positional[1]} {positional[2]} --adapter {output} --out runs.jsonl");
+        return 0;
+    }
+
     case "agent-check":
     {
         var suite = CodingSuite.Load(positional[1], filter);
