@@ -129,6 +129,14 @@ public sealed record ReinforcementOptions
     /// <summary>A file each iteration's summary is appended to as a JSON line; null for none. <c>IDRAK_RL_LOG</c>.</summary>
     public string? Log { get; init; }
 
+    /// <summary>
+    /// The return an episode passes at: an iteration's pass rate (its summary's "pass-rate", the log's pass_rate) is the share
+    /// of its episodes whose return reaches it. 1 by default, the full score of the rewards that run from 0 to 1 (exact,
+    /// tests-passed, a metric); set it for an environment whose returns are on another scale; null for no pass rate.
+    /// <c>IDRAK_RL_PASS_RETURN</c> (a number, or none).
+    /// </summary>
+    public float? PassReturn { get; init; } = 1f;
+
     /// <summary>The environment kind's options.</summary>
     public IReadOnlyDictionary<string, string>? EnvironmentOptions { get; init; }
 
@@ -143,7 +151,8 @@ public sealed record ReinforcementOptions
     /// <paramref name="start"/>'s (the defaults when null). The variables: IDRAK_RL_ALGORITHM, _ESTIMATOR, _GROUP, _EPISODES,
     /// _ENVIRONMENTS, _PARALLEL_STEPS, _SHARDS, _SPREAD, _ITERATIONS, _EPOCHS, _MINIBATCH, _GAMMA, _LAMBDA, _GROUP_SCALE,
     /// _NORMALIZE_ADVANTAGES, _CLIP, _KL, _KL_ESTIMATOR, _ENTROPY, _VALUE, _NORMALIZE, _MAX_GRAD_NORM, _SCHEDULE, _WARMUP,
-    /// _TEMPERATURE, _MAX_STEPS, _SEED, _EVALUATE_EVERY, _EVALUATION_EPISODES, _SAVE_EVERY, _CHECKPOINTS, _RESUME, _LOG.
+    /// _TEMPERATURE, _MAX_STEPS, _SEED, _EVALUATE_EVERY, _EVALUATION_EPISODES, _SAVE_EVERY, _CHECKPOINTS, _RESUME, _LOG,
+    /// _PASS_RETURN.
     /// </summary>
     /// <exception cref="ArgumentException">A variable's value is not one its option takes (the message names the variable).</exception>
     public static ReinforcementOptions FromEnvironment(ReinforcementOptions? start = null)
@@ -182,8 +191,18 @@ public sealed record ReinforcementOptions
         o = Variables.Text("IDRAK_RL_CHECKPOINTS") is { } checkpoints ? o with { CheckpointFolder = checkpoints } : o;
         o = Variables.Text("IDRAK_RL_RESUME") is { } resume ? o with { Resume = resume } : o;
         o = Variables.Text("IDRAK_RL_LOG") is { } log ? o with { Log = log } : o;
+        o = Variables.Text(PassReturnVariable) is { } pass ? o with { PassReturn = ParsePassReturn(pass) } : o;
         return o;
     }
+
+    /// <summary>The variable of <see cref="PassReturn"/>.</summary>
+    public const string PassReturnVariable = "IDRAK_RL_PASS_RETURN";
+
+    // The pass return named by its variable: a finite number, or none.
+    private static float? ParsePassReturn(string text) =>
+        text.Equals("none", StringComparison.OrdinalIgnoreCase) ? null
+        : float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value) && float.IsFinite(value) ? value
+        : throw new ArgumentException($"{PassReturnVariable}={text} is not a number (the return an episode passes at) or none.");
 
     // A split named by its variable, refused naming the variable.
     private static string ParseSpread(string text)
@@ -233,6 +252,11 @@ public sealed record ReinforcementOptions
         if (!(Temperature > 0) || !float.IsFinite(Temperature))
         {
             throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"ReinforcementOptions.Temperature is {Temperature}: it is positive and finite."));
+        }
+
+        if (PassReturn is { } pass && !float.IsFinite(pass))
+        {
+            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"ReinforcementOptions.PassReturn is {pass}: a finite number, or null for no pass rate."));
         }
 
         if (!(MaxGradientNorm >= 0) || !float.IsFinite(MaxGradientNorm))

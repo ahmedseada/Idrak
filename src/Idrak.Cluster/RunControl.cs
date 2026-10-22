@@ -250,9 +250,22 @@ public sealed class ClusterRunControl
     }
 
     // Rank `rank` begins `step` (on its own thread): waits while the run is paused at or before it, throws once a stop's last
-    // step is behind it, and tells an observer the rank's step and memory. Changes are told under the lock, in the order they
-    // happen; a listener only records them (it never waits on a rank).
+    // step is behind it, and tells an observer the rank's step and memory (Hold).
     internal void Gate(int rank, long step, Device device)
+    {
+        if (Hold(rank, step, device) is { } after)
+        {
+            throw new ClusterRunStoppedException(step, string.Create(CultureInfo.InvariantCulture,
+                $"the run was stopped after step {after} as asked; rank {rank} does not begin step {step}"));
+        }
+    }
+
+    // Rank `rank` reaches the boundary before `step` (on its own thread): waits while the run is paused at or before it; once
+    // a stop's last step is behind it, returns that last step (the rank does not begin `step`), else null, the step counted as
+    // begun and, while observed, the rank's step and memory told. Changes are told under the lock, in the order they happen;
+    // a listener only records them (it never waits on a rank). Gate for a step gate, and a trainer's own boundaries (Plan 27,
+    // R11: InProcessSteering).
+    internal long? Hold(int rank, long step, Device device)
     {
         TimeSpan wall = TimeSpan.Zero;
         bool observed;
@@ -265,8 +278,7 @@ public sealed class ClusterRunControl
                 {
                     if (_stopAfter is { } after && step > after)
                     {
-                        throw new ClusterRunStoppedException(step, string.Create(CultureInfo.InvariantCulture,
-                            $"the run was stopped after step {after} as asked; rank {rank} does not begin step {step}"));
+                        return after;
                     }
 
                     if (_pauseAt is not { } at || step < at)
@@ -316,6 +328,8 @@ public sealed class ClusterRunControl
         {
             stepped(new ClusterRankStep(rank, step, wall, device.Backend.GetMemoryUsage()));
         }
+
+        return null;
     }
 
     private ClusterRunState StateLocked() =>
@@ -323,6 +337,35 @@ public sealed class ClusterRunControl
         : _pauseAt is null ? ClusterRunState.Running
         : _pausedTold ? ClusterRunState.Paused
         : ClusterRunState.Pausing;
+}
+
+/// <summary>
+/// The "in-process" run steering (Plan 27, R11), registered in <see cref="RunSteerings"/>: a simulated run's rank steered
+/// through the run's <see cref="ClusterRunControl"/> (the dashboard's in-process control) at its trainer's boundaries.
+/// </summary>
+internal sealed class InProcessSteeringProvider : IRunSteeringProvider
+{
+    public string Name => "in-process";
+
+    public string Summary => "a simulated run's ranks held and stopped at their trainer's boundaries through the run's control (the dashboard's in-process run)";
+
+    public IRunSteering? Create(ICollectives? collectives, ClusterOptions options) =>
+        collectives is SimStepper { World.Control: { } control } stepper ? new InProcessSteering(control, stepper.RealRank, stepper.Device) : null;
+}
+
+/// <summary>
+/// One rank of a steered in-process run at its trainer's boundaries (Plan 27, R11): the run control's hold, as its step gate
+/// holds a step (every rank waits at the same boundary while paused, the boundaries counted as the control's steps), and a
+/// stop told on every rank at the boundary after the highest one begun when it was asked. The control's own step gate lets
+/// this rank's gradient steps through meanwhile (<see cref="RunSteerings.Steered"/>), so a stop never cuts an iteration.
+/// </summary>
+internal sealed class InProcessSteering(ClusterRunControl control, int rank, Device device) : IRunSteering
+{
+    public string Name => "in-process";
+
+    // A paused rank waits for the dashboard (a resume or a stop): its token is the trainer's to see once it goes on.
+    public ClusterControlCommand Boundary(long step, CancellationToken cancellationToken = default) =>
+        control.Hold(rank, step, device) is null ? ClusterControlCommand.Run : ClusterControlCommand.Stop;
 }
 
 /// <summary>

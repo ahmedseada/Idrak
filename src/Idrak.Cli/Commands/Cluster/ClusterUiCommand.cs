@@ -26,6 +26,8 @@ internal sealed class ClusterUiCommand : Command
         simulated cluster (in this process, or as processes of this machine), paused at a step boundary, resumed,
         stopped with a checkpoint, and faults injected at the next step (in-process; each written to the event log so
         --seed and --step replay the run as steered); its ranks, losses, links, memory and events shown as they come.
+        A reinforce run is paused and stopped at an iteration boundary instead (every rank at the same one; the stop
+        writes its checkpoint and the adapter so far) and shows its iterations, rewards and pass rate from its JSON log.
         A real cluster start run is followed from its run folder (rank 0's log.jsonl and the ranks' lines), its
         controls refused. It listens on 127.0.0.1; with --host another address, requests from other machines need an
         API key (idrak server keys add, or IDRAK_API_KEY; sent as Authorization: Bearer KEY or X-API-Key). The

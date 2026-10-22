@@ -244,6 +244,9 @@ const AR = {
   'Start paused (before step 0)': 'البدء متوقفا (قبل الخطوة 0)', 'Pause at next step': 'إيقاف مؤقت عند الخطوة التالية', 'Resume': 'استئناف',
   'Stop and checkpoint': 'إيقاف وحفظ نقطة', 'Inject fault': 'حقن عطل', 'Inject at next step': 'الحقن عند الخطوة التالية', 'Back to the topology': 'العودة إلى البنية',
   'step': 'الخطوة', 'loss': 'الخسارة', 'network time a step': 'زمن الشبكة لكل خطوة', 'steps a second': 'خطوات في الثانية', 'Output': 'المخرجات',
+  'iteration': 'التكرار', 'reward': 'المكافأة', 'pass rate': 'نسبة النجاح', 'iterations a second': 'تكرارات في الثانية', 'no iteration yet': 'لا تكرار بعد',
+  'Pause at next iteration': 'إيقاف مؤقت عند التكرار التالي', 'Reward over the iterations': 'المكافأة عبر التكرارات',
+  'of the episodes reached the pass return': 'من الحلقات بلغت عائد النجاح', 'evaluation': 'التقييم',
   'ready': 'جاهز', 'running': 'يعمل', 'pausing': 'يتوقف مؤقتا', 'paused': 'متوقف مؤقتا', 'stopping': 'يتوقف', 'stopped': 'متوقف', 'finished': 'انتهى',
   'failed': 'فشل', 'following': 'متابعة', 'starting': 'يبدأ', 'training': 'يتدرب', 'waiting': 'ينتظر', 'this machine': 'هذا الجهاز',
   'New rank': 'رتبة جديدة', 'New machine': 'جهاز جديد', 'Cancel': 'إلغاء', 'Create rank': 'إنشاء الرتبة', 'Save rank': 'حفظ الرتبة', 'Delete rank': 'حذف الرتبة',
@@ -412,7 +415,8 @@ const S = {
 };
 let R = freshRun();
 function freshRun() {
-  return { id: null, state: null, detail: null, step: -1, total: null, losses: [], times: [], ranks: {}, links: {}, prevLinks: null, flows: {}, rates: {}, hot: {},
+  return { id: null, state: null, detail: null, step: -1, total: null, unit: 'step', rewards: [], pass: null, spread: null, evaluation: null,
+           losses: [], times: [], ranks: {}, links: {}, prevLinks: null, flows: {}, rates: {}, hot: {},
            history: [], output: [], world: 0, seed: null, collective: null, clock: null, liveSeen: new Set(), stepWall: 800 };
 }
 function note(kind, text) { S.activity.unshift({ kind, text, at: Date.now() }); S.activity.length = Math.min(S.activity.length, 40); }
@@ -724,9 +728,9 @@ function renderHeader() {
   const state = R.state || run?.state;
   $('live-pill').classList.toggle('hidden', !R.id);
   $('live-dot').className = 'live-dot' + (runLive() ? ' on' : '');
-  $('live-label').textContent = (state ? t(state) : '').toUpperCase() + (R.step >= 0 ? ` · ${t('step')} ${R.step}${R.total ? ' / ' + R.total : ''}` : '');
+  $('live-label').textContent = (state ? t(state) : '').toUpperCase() + (R.step >= 0 ? ` · ${t(R.unit)} ${R.step}${R.total ? ' / ' + R.total : ''}` : '');
   $('live-pill').className = 'pill ' + ({ running: 'red', following: 'blue', paused: 'amber', pausing: 'amber', finished: 'teal', stopped: 'red', failed: 'red' }[state] || '') + (R.id ? '' : ' hidden');
-  const notes = { build: `${S.model.machines.length} ${t('machine(s)')}, ${ranks} ${t('rank(s)')}`, run: R.id ? `${t(state || 'ready')}${R.step >= 0 ? ' · ' + t('step') + ' ' + R.step : ''}` : t('ready') };
+  const notes = { build: `${S.model.machines.length} ${t('machine(s)')}, ${ranks} ${t('rank(s)')}`, run: R.id ? `${t(state || 'ready')}${R.step >= 0 ? ' · ' + t(R.unit) + ' ' + R.step : ''}` : t('ready') };
   paint('stepper', [['build', 'Build', 1], ['run', 'Run', 2]].map(([id, label, n]) =>
     `<button type="button" class="step" data-act="mode" data-mode="${id}" aria-current="${S.mode === id ? 'step' : 'false'}"><span class="n">${n}</span><span class="t"><b>${t(label)}</b><span>${h(notes[id])}</span></span></button>`).join(''));
   $('b-save').textContent = S.file && !S.dirty ? t('Saved') : t('Save');
@@ -995,23 +999,27 @@ function runPanel() {
   const stepsPerSecond = (() => { if (R.times.length < 2) return null; const [t0, s0] = R.times[0], [t1, s1] = R.times[R.times.length - 1]; return t1 > t0 && s1 > s0 ? (s1 - s0) / ((t1 - t0) / 1000) : null; })();
   const left = stepsPerSecond && R.total ? (R.total - R.step) / stepsPerSecond : null;
   const loss = R.losses.length ? R.losses[R.losses.length - 1][1] : null;
+  const iterations = R.unit === 'iteration', reward = R.rewards.length ? R.rewards[R.rewards.length - 1][1] : null, curve = iterations ? R.rewards : R.losses;
   const nets = Object.values(R.ranks).map(k => k.network).filter(v => v != null), net = nets.length ? nets.reduce((a, b) => a + b, 0) / nets.length : null;
   const busy = Object.keys(R.flows).some(k => flowing(k)), computing = Object.keys(R.hot).some(k => hotRank(+k));
   const phase = !runLive() ? t(state || 'ready') : busy ? t('moving data') : computing ? t('computing') : t(state);
   const slowest = Object.entries(R.ranks).find(([, k]) => k.state === 'slow');
-  out += `<div class="sec" style="border: 0; padding: 0"><span class="mono" style="font-size: 22px; font-weight: 600">${t('step')} ${Math.max(0, R.step)}${R.total ? ' / ' + R.total : ''}</span>
+  out += `<div class="sec" style="border: 0; padding: 0"><span class="mono" style="font-size: 22px; font-weight: 600">${t(R.unit)} ${Math.max(0, R.step)}${R.total ? ' / ' + R.total : ''}</span>
     <div class="row"><span class="pill ${busy ? 'amber' : 'teal'}" style="font-size: 13px; padding: 4px 12px">${h(phase)}</span><span class="mono tiny muted">${h(run.kind)} · ${h(R.collective || '')}</span></div>
     ${R.detail ? `<span class="small dim">${h(R.detail)}</span>` : ''}
     <div class="kpis">
-      <div class="kpi"><span>${t('step')}</span><b>${Math.max(0, R.step)}${R.total ? ' / ' + R.total : ''}</b><span>${left != null && runLive() ? t('about') + ' ' + time(left) + ' ' + t('left') : h(t(state || ''))}</span></div>
-      <div class="kpi"><span>${t('loss')}</span><b>${loss != null ? loss.toFixed(4) : '—'}</b><span>${R.losses.length ? t('from') + ' ' + R.losses[0][1].toFixed(4) : t('no step yet')}</span></div>
+      <div class="kpi"><span>${t(R.unit)}</span><b>${Math.max(0, R.step)}${R.total ? ' / ' + R.total : ''}</b><span>${left != null && runLive() ? t('about') + ' ' + time(left) + ' ' + t('left') : h(t(state || ''))}</span></div>
+      ${iterations
+        ? `<div class="kpi"><span>${t('reward')}</span><b>${reward != null ? reward.toFixed(3) + (R.spread != null ? ' ± ' + R.spread.toFixed(2) : '') : '—'}</b><span>${R.rewards.length ? t('from') + ' ' + R.rewards[0][1].toFixed(3) + (R.evaluation != null ? ' · ' + t('evaluation') + ' ' + R.evaluation.toFixed(3) : '') : t('no iteration yet')}</span></div>
+      <div class="kpi"><span>${t('pass rate')}</span><b style="color: #9be8da">${R.pass != null ? (R.pass * 100).toFixed(1) + '%' : '—'}</b><span>${t('of the episodes reached the pass return')}</span></div>`
+        : `<div class="kpi"><span>${t('loss')}</span><b>${loss != null ? loss.toFixed(4) : '—'}</b><span>${R.losses.length ? t('from') + ' ' + R.losses[0][1].toFixed(4) : t('no step yet')}</span></div>`}
       <div class="kpi"><span>${t('network time a step')}</span><b style="color: #ffd27a">${net != null ? time(net / 1e3) : '—'}</b><span>${R.clock === 'wall' ? t('wall clock') : t('virtual clock')}${slowest ? ' · ' + t('waiting on rank') + ' ' + slowest[0] : ''}</span></div>
-      <div class="kpi"><span>${t('steps a second')}</span><b style="color: #9be8da">${stepsPerSecond != null ? stepsPerSecond.toFixed(stepsPerSecond >= 10 ? 1 : 2) : '—'}</b><span>${t('all ranks, wall clock')}</span></div>
+      <div class="kpi"><span>${t(iterations ? 'iterations a second' : 'steps a second')}</span><b style="color: #9be8da">${stepsPerSecond != null ? stepsPerSecond.toFixed(stepsPerSecond >= 10 ? 1 : 2) : '—'}</b><span>${t('all ranks, wall clock')}</span></div>
     </div>`;
-  if (R.losses.length > 1) {
-    const ys = R.losses.map(p => p[1]), lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1, xs = R.losses[R.losses.length - 1][0] || 1, every = Math.max(1, Math.ceil(R.losses.length / 300));
-    const line = R.losses.filter((_, i) => i % every === 0 || i === R.losses.length - 1).map(([s, v]) => `${(s / xs * 216 + 2).toFixed(1)},${(4 + (hi - v) / span * 32).toFixed(1)}`).join(' ');
-    out += `<svg viewBox="0 0 220 40" role="img" aria-label="${t('Loss over the steps')}" style="width: 100%; height: 40px; display: block"><polyline points="${line}" fill="none" stroke="#3fb8a4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline></svg>`;
+  if (curve.length > 1) {
+    const ys = curve.map(p => p[1]), lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1, xs = curve[curve.length - 1][0] || 1, every = Math.max(1, Math.ceil(curve.length / 300));
+    const line = curve.filter((_, i) => i % every === 0 || i === curve.length - 1).map(([s, v]) => `${(s / xs * 216 + 2).toFixed(1)},${(4 + (hi - v) / span * 32).toFixed(1)}`).join(' ');
+    out += `<svg viewBox="0 0 220 40" role="img" aria-label="${t(iterations ? 'Reward over the iterations' : 'Loss over the steps')}" style="width: 100%; height: 40px; display: block"><polyline points="${line}" fill="none" stroke="#3fb8a4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline></svg>`;
   }
   if (R.history.length) {
     const most = Math.max(1e-9, ...R.history.map(x => x.compute + x.net + x.blocked));
@@ -1022,7 +1030,7 @@ function runPanel() {
   const refusal = (a) => run.controls?.[a];
   const paused = ['paused', 'pausing'].includes(state);
   if (!['stopped', 'finished', 'failed'].includes(state)) {
-    out += `<div class="row">${paused ? `<button type="button" class="btn primary" data-act="resume" ${refusal('resume') ? 'disabled' : ''} title="${h(refusal('resume') || '')}" style="flex: 1 1 0">${t('Resume')}</button>` : `<button type="button" class="btn" data-act="pause" ${refusal('pause') ? 'disabled' : ''} title="${h(refusal('pause') || '')}" style="flex: 1 1 0">${t('Pause at next step')}</button>`}
+    out += `<div class="row">${paused ? `<button type="button" class="btn primary" data-act="resume" ${refusal('resume') ? 'disabled' : ''} title="${h(refusal('resume') || '')}" style="flex: 1 1 0">${t('Resume')}</button>` : `<button type="button" class="btn" data-act="pause" ${refusal('pause') ? 'disabled' : ''} title="${h(refusal('pause') || '')}" style="flex: 1 1 0">${t(R.unit === 'iteration' ? 'Pause at next iteration' : 'Pause at next step')}</button>`}
       <button type="button" class="btn danger" data-act="stop" ${refusal('stop') ? 'disabled' : ''} title="${h(refusal('stop') || '')}" style="flex: 1 1 0">${t('Stop and checkpoint')}</button>
       <button type="button" class="btn fault" data-act="fault-toggle" ${refusal('faults') ? 'disabled' : ''} title="${h(refusal('faults') || '')}" style="flex: 1 1 100%">${t('Inject fault')} ▾</button></div>`;
     const why = refusal('faults') || refusal('pause');
@@ -1223,11 +1231,11 @@ function pick(id) {
   S.runId = id || null;
   R = freshRun();
   const run = currentRun();
-  if (run) { R.id = run.id; R.world = run.world; R.seed = run.seed; R.state = run.state; R.total = stepsOf(run.command); }
+  if (run) { R.id = run.id; R.world = run.world; R.seed = run.seed; R.state = run.state; R.unit = run.unit || 'step'; R.total = run.figures?.iterations ?? stepsOf(run.command, R.unit); }
   render();
   if (run) listen(run.id);
 }
-function stepsOf(command) { const m = /--steps\s+(\d+)/.exec(command || ''); return m ? +m[1] : null; }
+function stepsOf(command, unit) { const m = (unit === 'iteration' ? /--iterations\s+(\d+)/ : /--steps\s+(\d+)/).exec(command || ''); return m ? +m[1] : null; }
 async function listen(id) {
   const ctrl = new AbortController();
   stream = ctrl;
@@ -1265,8 +1273,23 @@ function ingest(e) {
   const now = Date.now(), seen = (step, kind, ranks) => `${step}:${kind}:${(ranks || []).join(',')}`;
   switch (e.event) {
     case 'run': R.state = e.state; R.detail = e.detail; note(e.state === 'failed' ? 'err' : 'info', `${t(e.state)}${e.detail ? ': ' + e.detail : ''}`); break;
-    case 'training_started': R.total = (e.epochs || 1) * (e.batches_per_epoch || 0) || R.total; note('info', `${t('training started')}: ${e.model} · ${(e.parameters || 0).toLocaleString('en-US')} ${t('parameters')}`); break;
+    case 'training_started': if (R.unit !== 'iteration') R.total = (e.epochs || 1) * (e.batches_per_epoch || 0) || R.total; note('info', `${t('training started')}: ${e.model} · ${(e.parameters || 0).toLocaleString('en-US')} ${t('parameters')}`); break;
+    case 'iteration':
+      // A reinforce run's line of its JSON log (Plan 27, R11): its iterations, rewards and pass rate in place of steps and loss.
+      R.unit = 'iteration';
+      if (e.iteration > R.step || !R.rewards.length) {
+        R.step = Math.max(R.step, e.iteration);
+        R.total = e.iterations || R.total;
+        R.rewards.push([e.iteration, e.reward_mean]);
+        R.spread = e.reward_spread ?? null;
+        R.pass = e.pass_rate ?? R.pass;
+        if (e.evaluation_reward != null) R.evaluation = e.evaluation_reward;
+        R.times.push([now, e.iteration]);
+        if (R.times.length > 40) R.times.shift();
+      }
+      break;
     case 'batch':
+      if (R.unit === 'iteration') break;                // a reinforce run counts its iterations (above), not its updates
       if (e.step > R.step || !R.losses.length) {
         R.step = Math.max(R.step, e.step);
         if (e.loss != null) R.losses.push([e.step, e.loss]);

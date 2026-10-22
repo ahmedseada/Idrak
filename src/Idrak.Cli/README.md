@@ -338,6 +338,7 @@ idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen
 idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
 idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --group 8 --iterations 20 -o runs/rl-demo
 idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data math.jsonl --algorithm grpo --shards 4 -o runs/math2
+idrak cluster sim --topology two.json --dashboard -- reinforce Qwen/Qwen3-0.6B --data math.jsonl --algorithm grpo -o runs/math3   # paused, resumed, stopped at an iteration from the page
 idrak reinforce --env cartpole --algorithm ppo --iterations 50 -o runs/cartpole
 idrak reinforce --env cartpole --algorithm dqn --steps 50000 -o runs/cartpole-dqn
 ```
