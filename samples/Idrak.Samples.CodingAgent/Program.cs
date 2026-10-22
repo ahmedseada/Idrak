@@ -10,6 +10,8 @@ using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Reinforcement.Plugins;
+using Idrak.Reinforcement.Plugins.Coding;
 using Idrak.Text;
 using Idrak.Text.Generation;
 using Idrak.Text.Plugins;
@@ -21,8 +23,9 @@ using Idrak.Text.Plugins;
 //                                   works on the task in <dir>, streaming its reasoning and tool calls
 //                                   (--out F: append the transcript to F)
 //   agent-run <folder> <suite> --out <runs.jsonl>
-//                                   evaluates a model on a task suite (folders with task.json, workspace/, verify/): each
-//                                   task runs in a fresh copy and is verified by its own commands; one record per run
+//                                   evaluates a model on a task suite (folders with task.json, workspace/, verify/;
+//                                   Idrak.Reinforcement.Plugins' coding task layer): each task runs in a fresh copy and is
+//                                   verified by its own commands; one record per run
 //                                   (--attempts N, --filter S, --work DIR, --rounds N, --temperature T)
 //   agent-check <suite>             checks every task without a model: verification fails on the starting files and
 //                                   passes with the task's solution/ folder (--filter S, --work DIR)
@@ -33,6 +36,7 @@ using Idrak.Text.Plugins;
 // Options: --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 | --int4 | --bf16 (base weights), --kv8 | --kv16 (KV cache), --context N (default
 //          4096), --adapter <dir> (load a PEFT adapter), --no-think, --offload, --gpu-memory GiB, --matmul fp32|bf16|fp8.
 TextPlugins.RegisterAll();                          // the model families (Llama, Qwen, Mistral, Gemma, …) are Idrak.Text.Plugins'
+ReinforcementPlugins.RegisterAll();                 // the coding plug-in: the container sandbox (IDRAK_SANDBOX=container) among it
 
 var positional = new List<string>();
 bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false;
@@ -101,7 +105,7 @@ static string ResolveModel(string model) =>
     ModelSource.Resolve(model, downloader: new Idrak.Data.ConsoleStatus().CreateDownloader());
 
 // npm packages of the tasks' shared projects, installed once (each run links them instead of installing).
-static async Task InstallDependencies(IEnumerable<AgentTask> tasks)
+static async Task InstallDependencies(IEnumerable<CodingTask> tasks)
 {
     foreach (var folder in tasks.SelectMany(t => new[] { t.Base, t.Workspace }).OfType<string>().Distinct())
     {
@@ -149,9 +153,9 @@ switch (positional[0])
 {
     case "agent-check":
     {
-        var suite = AgentTask.LoadSuite(positional[1]).Where(t => filter is null || t.Id.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+        var suite = CodingSuite.Load(positional[1], filter);
         string work = Path.GetFullPath(workRoot ?? Path.Combine(Path.GetTempPath(), "idrak-agent-check", DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)));
-        var checker = new CodingAgent(FakeChatModel.Script());
+        var checker = new CodingVerifier();
         await InstallDependencies(suite);
         int good = 0;
         foreach (var task in suite)
@@ -224,42 +228,46 @@ switch (positional[0])
 
         if (live)
         {
-            var task = new AgentTask("interactive", string.Join(' ', positional.Skip(2)));
+            var task = new CodingTask("interactive", string.Join(' ', positional.Skip(2)));
             var agent = new CodingAgent(chatModel, agentOptions) { OnDelta = Show, OnToolResult = ShowTool };
-            var run = await agent.RunAsync(task, new CodingTools(workspace!, agentOptions.Tools), cancel.Token);
+            var run = await agent.RunAsync(task.Prompt, new CodingTools(workspace!, agentOptions.Tools), cancel.Token);
             Console.ResetColor();
             // A typed task has no verification commands: finishing is all "Passed" can mean, so say that.
-            string outcome = run.Outcome == AgentOutcome.Passed ? "Done (the task has no checks)" : $"{run.Outcome}: {run.VerifyOutput}";
+            var typed = new CodingRun(task, run, run.End switch
+            {
+                CodingAgentEnd.Answered => CodingOutcome.Passed,
+                CodingAgentEnd.OutOfBudget => CodingOutcome.OutOfBudget,
+                _ => CodingOutcome.Error,
+            }, run.Note);
+            string outcome = typed.Outcome == CodingOutcome.Passed ? "Done (the task has no checks)" : $"{typed.Outcome}: {typed.VerifyOutput}";
             Console.WriteLine($"\n[{outcome}; {run.Rounds} replies, {run.ToolCalls} tool calls ({run.ToolErrors} errors), "
                               + $"{run.GeneratedTokens} tokens; model {run.ModelTime.TotalSeconds:F1} s, tools {run.ToolTime.TotalSeconds:F1} s]");
             if (output is not null)
             {
-                File.AppendAllText(output, run.ToJson().ToJsonString() + "\n");
+                File.AppendAllText(output, typed.ToJson().ToJsonString() + "\n");
                 Console.WriteLine($"transcript appended to {output}");
             }
 
             return 0;
         }
 
-        var suite = AgentTask.LoadSuite(positional[2]).Where(t => filter is null || t.Id.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+        var suite = CodingSuite.Load(positional[2], filter);
         await InstallDependencies(suite);
         string work = Path.GetFullPath(workRoot ?? Path.Combine(Path.GetTempPath(), "idrak-agent", DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)));
         Console.WriteLine($"{suite.Count} tasks × {attempts} attempts; work folders under {work}");
-        var outcomes = new List<(AgentTask Task, AgentRun Run)>();
+        var outcomes = new List<(CodingTask Task, CodingRun Run)>();
+        var verifier = new CodingVerifier(new CodingVerifierOptions { Tools = agentOptions.Tools }) { OnStatus = s => Console.WriteLine($"    {s}") };
         var total = Stopwatch.StartNew();
         foreach (var task in suite)
         {
             for (int attempt = 1; attempt <= attempts && !cancel.IsCancellationRequested; attempt++)
             {
-                var agent = new CodingAgent(chatModel, agentOptions with { Sampling = sampling with { Seed = attempt } })
-                {
-                    OnStatus = s => Console.WriteLine($"    {s}"),
-                };
+                var agent = new CodingAgent(chatModel, agentOptions with { Sampling = sampling with { Seed = attempt } });
                 var watch = Stopwatch.StartNew();
-                AgentRun run;
+                CodingRun run;
                 try
                 {
-                    run = await agent.RunAsync(task, Path.Combine(work, task.Id.Replace('/', Path.DirectorySeparatorChar), $"attempt-{attempt}"), cancel.Token);
+                    run = await verifier.RunAsync(agent, task, Path.Combine(work, task.Id.Replace('/', Path.DirectorySeparatorChar), $"attempt-{attempt}"), cancel.Token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -267,9 +275,9 @@ switch (positional[0])
                 }
 
                 outcomes.Add((task, run));
-                Console.WriteLine($"  {task.Id} #{attempt}: {run.Outcome} — {run.Rounds} replies, {run.ToolCalls} tool calls ({run.ToolErrors} errors), {run.GeneratedTokens} tokens, "
-                                  + $"{watch.Elapsed.TotalSeconds:F0} s (model {run.ModelTime.TotalSeconds:F0} s, tools {run.ToolTime.TotalSeconds:F0} s)");
-                if (run.Outcome is AgentOutcome.SetupFailed or AgentOutcome.Error)
+                Console.WriteLine($"  {task.Id} #{attempt}: {run.Outcome} — {run.Agent.Rounds} replies, {run.Agent.ToolCalls} tool calls ({run.Agent.ToolErrors} errors), {run.Agent.GeneratedTokens} tokens, "
+                                  + $"{watch.Elapsed.TotalSeconds:F0} s (model {run.Agent.ModelTime.TotalSeconds:F0} s, tools {run.Agent.ToolTime.TotalSeconds:F0} s)");
+                if (run.Outcome is CodingOutcome.SetupFailed or CodingOutcome.Error)
                 {
                     Console.WriteLine("    " + run.VerifyOutput.Trim().Replace("\n", "\n    ", StringComparison.Ordinal));
                 }
@@ -278,18 +286,18 @@ switch (positional[0])
             }
         }
 
-        var scored = outcomes.Where(o => o.Run.Outcome is not (AgentOutcome.SetupFailed or AgentOutcome.Error)).ToList();
-        int passed = scored.Count(o => o.Run.Outcome == AgentOutcome.Passed);
+        var scored = outcomes.Where(o => o.Run.Outcome is not (CodingOutcome.SetupFailed or CodingOutcome.Error)).ToList();
+        int passed = scored.Count(o => o.Run.Outcome == CodingOutcome.Passed);
         Console.WriteLine($"\n{passed}/{scored.Count} runs passed ({(scored.Count == 0 ? 0 : 100.0 * passed / scored.Count):F1}%), "
                           + $"{outcomes.Count - scored.Count} not scored (setup failed or model error), {total.Elapsed:hh\\:mm\\:ss}");
         foreach (var group in scored.GroupBy(o => o.Task.Language ?? "other").OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            int p = group.Count(o => o.Run.Outcome == AgentOutcome.Passed);
+            int p = group.Count(o => o.Run.Outcome == CodingOutcome.Passed);
             Console.WriteLine($"  {group.Key}: {p}/{group.Count()} ({100.0 * p / group.Count():F1}%), "
-                              + $"median {group.Select(o => o.Run.Rounds).Order().ElementAt(group.Count() / 2)} replies, {group.Average(o => o.Run.ToolErrors):F1} tool errors per run");
+                              + $"median {group.Select(o => o.Run.Agent.Rounds).Order().ElementAt(group.Count() / 2)} replies, {group.Average(o => o.Run.Agent.ToolErrors):F1} tool errors per run");
         }
 
-        int tasksSolved = scored.GroupBy(o => o.Task.Id).Count(g => g.Any(o => o.Run.Outcome == AgentOutcome.Passed));
+        int tasksSolved = scored.GroupBy(o => o.Task.Id).Count(g => g.Any(o => o.Run.Outcome == CodingOutcome.Passed));
         Console.WriteLine($"  tasks solved at least once: {tasksSolved}/{scored.Select(o => o.Task.Id).Distinct().Count()}; runs written to {output}");
         return passed == scored.Count ? 0 : 2;
     }

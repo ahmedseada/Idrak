@@ -13,7 +13,8 @@ namespace Idrak.Text;
 /// chat template ("jinja" in <see cref="ChatTemplates"/>), which loading a pretrained model asks, and the image reader's
 /// advisor ("image reader" in <see cref="SettingAdvisors"/>), and the feature caches ("memory" and "disk" in
 /// <see cref="FeatureCaches"/>), the chat-prompt environment ("prompts" in <see cref="EnvironmentKinds"/>) and the text
-/// rewards ("metric", "regex", "json", "length", "judge", "sum" in <see cref="RewardFunctions"/>, Plan 27 R3). The engine's text and
+/// rewards ("metric", "regex", "json", "length", "judge", "sum" in <see cref="RewardFunctions"/>, Plan 27 R3) and the plain-process
+/// command sandbox ("process" in <see cref="CommandSandboxes"/>, R4), which the coding tools run commands in. The engine's text and
 /// chat model kinds need no registry: <c>GenerativeModels</c> adds them to an engine. <c>LibraryDefaults.Ensure</c> (in
 /// Idrak.Abstraction) calls <see cref="RegisterFor"/> once per registry, before that registry is first used.
 /// </summary>
@@ -44,6 +45,10 @@ internal static class LibraryRegistrations
             {
                 RewardFunctions.Register(reward);
             }
+        }
+        else if (registry == typeof(CommandSandboxes))
+        {
+            CommandSandboxes.Register(new ProcessCommandSandbox());
         }
     }
 }

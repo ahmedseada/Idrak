@@ -665,6 +665,42 @@ public enum Idrak.Abstraction.Cluster.WireType : int
   BFloat16 = 1
   Float32 = 0
 
+public sealed record Idrak.Abstraction.CommandLimits : System.IEquatable<Idrak.Abstraction.CommandLimits>
+  public CommandLimits()
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string>? Programs { get; init; }
+  public System.TimeSpan Time { get; init; }
+  public bool Network { get; init; }
+  public double MaxCpus { get; init; }
+  public int MaxOutputCharacters { get; init; }
+  public int MaxProcesses { get; init; }
+  public long MaxMemoryBytes { get; init; }
+  public string? Root { get; init; }
+
+public sealed record Idrak.Abstraction.CommandResult : System.IEquatable<Idrak.Abstraction.CommandResult>
+  public CommandResult(int? ExitCode, bool TimedOut, string Output, System.TimeSpan Duration, bool Refused)
+  public System.TimeSpan Duration { get; init; }
+  public bool OutOfMemory { get; init; }
+  public bool Refused { get; init; }
+  public bool Succeeded { get; }
+  public bool TimedOut { get; init; }
+  public int? ExitCode { get; init; }
+  public string Output { get; init; }
+
+public static class Idrak.Abstraction.CommandSandboxes
+  public const string Container = "container"
+  public const string EnvironmentVariable = "IDRAK_SANDBOX"
+  public const string Process = "process"
+  public static Idrak.Abstraction.ICommandSandbox Get(string name)
+  public static Idrak.Abstraction.ICommandSandbox? Default(string name)
+  public static Idrak.Abstraction.ICommandSandbox? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string DefaultName { get; }
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.ICommandSandbox sandbox)
+
 public static class Idrak.Abstraction.Comparisons
   public static bool Close(float expected, float actual, float tolerance)
   public static string? Difference(System.Collections.Generic.IReadOnlyList<int> expected, System.Collections.Generic.IReadOnlyList<int> actual)
@@ -3857,6 +3893,12 @@ public sealed class Idrak.Abstraction.Generation.WordTokenizer : Idrak.Abstracti
   public bool MoveNext()
   public void Dispose()
 
+public interface Idrak.Abstraction.ICommandSandbox
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.CommandResult> RunAsync(System.Collections.Generic.IReadOnlyList<string> command, string directory, Idrak.Abstraction.CommandLimits limits, System.Threading.CancellationToken cancellationToken = default)
+  public string Name { get; }
+  public string Summary { get; }
+  public string? Check(Idrak.Abstraction.CommandLimits limits)
+
 public sealed class Idrak.Abstraction.KeySpans
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) ToTensors(Idrak.Abstraction.Device? device = null)
   public KeySpans(System.Collections.Generic.IReadOnlyList<int> starts, System.Collections.Generic.IReadOnlyList<int> ends)
@@ -4747,6 +4789,7 @@ public interface Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAct
   public TObservation Reset(int seed)
 
 public interface Idrak.Abstraction.Reinforcement.IPolicyLoss
+  public (default) bool NeedsReference(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
   public Idrak.Abstraction.Tensor Loss(Idrak.Abstraction.Reinforcement.PolicyLossInput input, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
   public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
   public string Name { get; }

@@ -523,7 +523,8 @@ internal static partial class Tests
         var registrations = System.Reflection.Assembly.Load("Idrak.Reinforcement").GetType("Idrak.Reinforcement.LibraryRegistrations", throwOnError: true)!;
         Check(registrations.GetMethod("RegisterFor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static, [typeof(Type)]) is not null,
             "Idrak.Reinforcement.LibraryRegistrations.RegisterFor(Type), which LibraryDefaults calls");
-        Check(Idrak.Reinforcement.Plugins.ReinforcementPlugins.Package == "Idrak.Reinforcement.Plugins" && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Count == 0,
-            "the plug-in package has no family yet");
+        Check(Idrak.Reinforcement.Plugins.ReinforcementPlugins.Package == "Idrak.Reinforcement.Plugins"
+              && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding"]),
+            "the plug-in package's families: coding (R4)");
     }
 }

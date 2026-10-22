@@ -1,24 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace Idrak.Text.Generation;
-
-/// <summary>The outcome of <see cref="CodingTools.ExecuteAsync"/>.</summary>
-/// <param name="ExitCode">The exit code, or null when the command timed out or was refused.</param>
-/// <param name="TimedOut">Stopped at the time limit.</param>
-/// <param name="Output">Standard output and error, interleaved and trimmed (for a refused command: why).</param>
-/// <param name="Duration">How long it ran.</param>
-/// <param name="Refused">Not started (not allowed, not installed, outside the workspace).</param>
-public sealed record CommandResult(int? ExitCode, bool TimedOut, string Output, TimeSpan Duration, bool Refused)
-{
-    /// <summary>Ran and exited with 0.</summary>
-    public bool Succeeded => ExitCode == 0;
-}
 
 /// <summary>Limits and permissions of <see cref="CodingTools"/>.</summary>
 public sealed record CodingToolOptions
@@ -49,21 +36,57 @@ public sealed record CodingToolOptions
 
     /// <summary>Only the reading tools (no edits, writes or commands).</summary>
     public bool ReadOnly { get; init; }
+
+    /// <summary>
+    /// The <see cref="CommandSandboxes"/> sandbox every command runs in: <see cref="CommandSandboxes.Process"/> (a plain
+    /// process) unless <see cref="CommandSandboxes.EnvironmentVariable"/> (IDRAK_SANDBOX) names another, such as
+    /// <see cref="CommandSandboxes.Container"/> (Idrak.Reinforcement.Plugins).
+    /// </summary>
+    public string Sandbox { get; init; } = CommandSandboxes.DefaultName;
+
+    /// <summary>The most memory a command may use, in bytes; 0 (the default) for no limit.</summary>
+    public long MaxMemoryBytes { get; init; }
+
+    /// <summary>The most processes a command may start; 0 (the default) for no limit (a sandbox that cannot limit them refuses one).</summary>
+    public int MaxProcesses { get; init; }
+
+    /// <summary>The most CPUs a command may use; 0 (the default) for no limit (a sandbox that cannot limit them refuses one).</summary>
+    public double MaxCpus { get; init; }
+
+    /// <summary>Whether commands may reach the network (true by default; false needs a sandbox that can turn it off, such as container).</summary>
+    public bool Network { get; init; } = true;
+
+    /// <summary>Variables set for every command, over the tools' own non-interactive ones; null for none.</summary>
+    public IReadOnlyDictionary<string, string>? Environment { get; init; }
 }
 
 /// <summary>
 /// Tools for a coding agent working in one folder (the workspace): <c>list_files</c>, <c>read_file</c>, <c>search</c>,
 /// <c>edit_file</c> (exact search and replace), <c>write_file</c> and <c>run_command</c> (allowlisted programs such as
-/// dotnet, npm, ng, started without a shell). Paths are relative to the workspace and cannot leave it; results are
-/// plain text sized for a model's context; mistakes come back as messages the model can act on.
+/// dotnet, npm, ng, started without a shell, in the command sandbox the options name: <see cref="CodingToolOptions.Sandbox"/>).
+/// Paths are relative to the workspace and cannot leave it; results are plain text sized for a model's context; mistakes
+/// come back as messages the model can act on.
 /// </summary>
 public sealed class CodingTools
 {
+    // Non-interactive, uncoloured, no telemetry prompts.
+    private static readonly Dictionary<string, string> Quiet = new(StringComparer.Ordinal)
+    {
+        ["CI"] = "1", ["NO_COLOR"] = "1", ["FORCE_COLOR"] = "0", ["NG_CLI_ANALYTICS"] = "false", ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1", ["DOTNET_NOLOGO"] = "1",
+        ["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1", ["npm_config_yes"] = "true", ["npm_config_fund"] = "false", ["npm_config_audit"] = "false",
+    };
+
     private readonly string _root;
     private readonly CodingToolOptions _options;
+    private readonly CommandLimits _limits;
 
     /// <summary>Tools over <paramref name="workspace"/>.</summary>
-    public CodingTools(string workspace, CodingToolOptions? options = null)
+    /// <param name="workspace">The folder the tools work in.</param>
+    /// <param name="options">What they may do; null for the defaults.</param>
+    /// <param name="sandbox">The sandbox commands run in; null for the one <see cref="CodingToolOptions.Sandbox"/> names in <see cref="CommandSandboxes"/>.</param>
+    /// <exception cref="DirectoryNotFoundException">The workspace does not exist.</exception>
+    /// <exception cref="NotSupportedException">The sandbox is not registered, or cannot enforce the options' limits (the message names one that can).</exception>
+    public CodingTools(string workspace, CodingToolOptions? options = null, ICommandSandbox? sandbox = null)
     {
         _root = Path.GetFullPath(workspace).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (!Directory.Exists(_root))
@@ -72,6 +95,22 @@ public sealed class CodingTools
         }
 
         _options = options ?? new CodingToolOptions();
+        Sandbox = sandbox ?? CommandSandboxes.Get(_options.Sandbox);
+        var environment = new Dictionary<string, string>(Quiet, StringComparer.Ordinal);
+        foreach (var (name, value) in _options.Environment ?? new Dictionary<string, string>())
+        {
+            environment[name] = value;
+        }
+
+        _limits = new CommandLimits
+        {
+            Time = _options.CommandTimeout, MaxOutputCharacters = _options.MaxOutputCharacters, MaxMemoryBytes = _options.MaxMemoryBytes, MaxProcesses = _options.MaxProcesses,
+            MaxCpus = _options.MaxCpus, Network = _options.Network, Programs = _options.Commands, Environment = environment, Root = _root,
+        };
+        if (Sandbox.Check(_limits) is { } refusal)
+        {
+            throw new NotSupportedException(refusal);
+        }
         var tools = new List<Tool>
         {
             Tool.Create("list_files", "List the files of the workspace, or of a folder in it, as paths relative to the workspace. " +
@@ -118,6 +157,12 @@ public sealed class CodingTools
 
     /// <summary>The workspace folder (absolute).</summary>
     public string Workspace => _root;
+
+    /// <summary>The sandbox every command runs in.</summary>
+    public ICommandSandbox Sandbox { get; }
+
+    /// <summary>The limits every command runs under (the time limit capped per call by <see cref="ExecuteAsync"/>).</summary>
+    public CommandLimits Limits => _limits;
 
     /// <summary>The tools, in the order a model sees them.</summary>
     public IReadOnlyList<Tool> All { get; }
@@ -349,13 +394,15 @@ public sealed class CodingTools
 
         // The text the model reads: the same digits and decimal point on every machine, whatever its culture.
         var invariant = System.Globalization.CultureInfo.InvariantCulture;
-        string status = result.TimedOut ? string.Create(invariant, $"timed out after {result.Duration.TotalSeconds:0} s (stopped)") : string.Create(invariant, $"exit code {result.ExitCode}");
+        string status = result.TimedOut ? string.Create(invariant, $"timed out after {result.Duration.TotalSeconds:0} s (stopped)")
+            : result.OutOfMemory ? string.Create(invariant, $"stopped: it used more than the memory limit ({_limits.MaxMemoryBytes / (1024.0 * 1024.0):0.#} MB)")
+            : string.Create(invariant, $"exit code {result.ExitCode}");
         return string.Create(invariant, $"$ {command}\n{status}, {result.Duration.TotalSeconds:0.0} s\n{(result.Output.Length == 0 ? "(no output)" : result.Output)}");
     }
 
     /// <summary>
-    /// Runs <paramref name="command"/> under the same rules as <c>run_command</c> (allowlist, no shell, the workspace);
-    /// the timeout is capped at <see cref="CodingToolOptions.CommandTimeout"/>.
+    /// Runs <paramref name="command"/> under the same rules as <c>run_command</c> (allowlist, no shell, the workspace) in
+    /// <see cref="Sandbox"/>; the timeout is capped at <see cref="CodingToolOptions.CommandTimeout"/>.
     /// </summary>
     public async Task<CommandResult> ExecuteAsync(string command, string directory = ".", TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
@@ -392,87 +439,8 @@ public sealed class CodingTools
             return Refuse($"Error: only git {string.Join(", ", _options.GitSubcommands)} are allowed.");
         }
 
-        if (FindProgram(program) is not { } executable)
-        {
-            return Refuse($"Error: '{program}' is not installed (not found on the PATH).");
-        }
-
-        var start = new ProcessStartInfo(executable)
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var word in words.Skip(1))
-        {
-            start.ArgumentList.Add(word);
-        }
-
-        // Non-interactive, uncoloured, no telemetry prompts.
-        start.Environment["CI"] = "1";
-        start.Environment["NO_COLOR"] = "1";
-        start.Environment["FORCE_COLOR"] = "0";
-        start.Environment["NG_CLI_ANALYTICS"] = "false";
-        start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
-        start.Environment["DOTNET_NOLOGO"] = "1";
-        start.Environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1";
-        start.Environment["npm_config_yes"] = "true";
-        start.Environment["npm_config_fund"] = "false";
-        start.Environment["npm_config_audit"] = "false";
-
-        var output = new StringBuilder();
         var limitTime = timeout is { } t && t < _options.CommandTimeout ? t : _options.CommandTimeout;
-        var watch = Stopwatch.StartNew();
-        using var process = new Process { StartInfo = start };
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) { lock (output) { output.Append(e.Data).Append('\n'); } } };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) { lock (output) { output.Append(e.Data).Append('\n'); } } };
-        try
-        {
-            process.Start();
-        }
-        catch (System.ComponentModel.Win32Exception ex)
-        {
-            return Refuse($"Error: could not start '{program}': {ex.Message}");
-        }
-
-        process.StandardInput.Close();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(limitTime);
-        bool timedOut = false;
-        try
-        {
-            await process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            timedOut = !cancellationToken.IsCancellationRequested;
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-            }
-
-            if (!timedOut)
-            {
-                throw;
-            }
-        }
-
-        process.WaitForExit();                                      // flushes the output events
-        string text;
-        lock (output)
-        {
-            text = Trim(output.ToString().TrimEnd());
-        }
-
-        return new CommandResult(timedOut ? null : process.ExitCode, timedOut, text, watch.Elapsed, false);
+        return await Sandbox.RunAsync(words, folder, _limits with { Time = limitTime }, cancellationToken).ConfigureAwait(false);
     }
 
     // Null when `path` stays inside the workspace (then `full` is its absolute path), else the error for the model.
@@ -518,18 +486,6 @@ public sealed class CodingTools
                 }
             }
         }
-    }
-
-    private string Trim(string text)
-    {
-        int max = _options.MaxOutputCharacters;
-        if (text.Length <= max)
-        {
-            return text;
-        }
-
-        int head = max / 3, tail = max - head;
-        return $"{text[..head]}\n… {text.Length - max} characters cut …\n{text[^tail..]}";
     }
 
     private static JsonObject Schema(params (string Name, string Type, string Description, bool Required)[] properties)
@@ -653,26 +609,5 @@ public sealed class CodingTools
         }
 
         return words;
-    }
-
-    // The program on the PATH (with the Windows executable extensions: npm is npm.cmd there).
-    private static string? FindProgram(string name)
-    {
-        var extensions = OperatingSystem.IsWindows()
-            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").Split(';', StringSplitOptions.RemoveEmptyEntries)
-            : [""];
-        foreach (var folder in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            foreach (var extension in extensions)
-            {
-                string candidate = Path.Combine(folder.Trim('"'), name + extension.ToLowerInvariant());
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-            }
-        }
-
-        return null;
     }
 }
