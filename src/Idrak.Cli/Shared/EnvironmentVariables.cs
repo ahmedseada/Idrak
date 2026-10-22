@@ -76,6 +76,12 @@ internal static class EnvironmentVariables
         Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET",
         Cluster = "Cluster";
 
+    // Plan 27, phase R2: read by ReinforcementOptions.FromEnvironment and ModulePolicyOptions.FromEnvironment in
+    // Idrak.Reinforcement (the library and its tests); idrak reinforce (R5) joins them.
+    private const string Reinforcement = "Reinforcement learning";
+
+    private static readonly string[] ReinforcementRun = ["test"];
+
     // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
     // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
     private static readonly string[] ClusterRun =
@@ -216,6 +222,40 @@ internal static class EnvironmentVariables
         new("IDRAK_PROFILE_STATISTIC", Tests, "median", "median, mean, min or max: the warm runs' figure a profile reports", ["test"]),
         new("IDRAK_PROFILE_FORMAT", Tests, "table", "The writer a profile is written with (table, markdown, csv, json, or one registered)", ["test"]),
         new("IDRAK_PROFILE_OUT", Tests, "the console", "A file a profile is appended to", ["test"]),
+
+        new("IDRAK_RL_ALGORITHM", Reinforcement, "ppo", "The algorithm: a PolicyLosses name (reinforce, ppo, grpo, or a plug-in's)", ReinforcementRun),
+        new("IDRAK_RL_ESTIMATOR", Reinforcement, "the algorithm's (grpo: group; ppo: gae, returns without a critic; else returns)", "The advantage estimator: an AdvantageEstimators name (gae, group, leave-one-out, returns, or a plug-in's)", ReinforcementRun),
+        new("IDRAK_RL_GROUP", Reinforcement, "auto (8, 4 or 2 dividing the episodes for group and leave-one-out, else 1)", "The episodes of a group: reset with the same seed and compared with each other", ReinforcementRun),
+        new("IDRAK_RL_EPISODES", Reinforcement, "16", "The episodes of each iteration's rollout, played at once (a multiple of the group)", ReinforcementRun),
+        new("IDRAK_RL_ENVIRONMENTS", Reinforcement, "every CPU thread (IDRAK_CPU_THREADS)", "The most environments stepped at once; results do not depend on it", ReinforcementRun),
+        new("IDRAK_RL_PARALLEL_STEPS", Reinforcement, "auto (measured on the first rounds)", "on, off or auto: whether environments step in parallel", ReinforcementRun),
+        new("IDRAK_RL_ITERATIONS", Reinforcement, "100", "The iterations of a run (a rollout, its advantages, the updates)", ReinforcementRun),
+        new("IDRAK_RL_EPOCHS", Reinforcement, "the algorithm's (ppo 4, else 1)", "Passes over each rollout's episodes", ReinforcementRun),
+        new("IDRAK_RL_MINIBATCH", Reinforcement, "0 (the whole rollout)", "Episodes per update (optimizer step)", ReinforcementRun),
+        new("IDRAK_RL_GAMMA", Reinforcement, "0.99", "The discount γ of gae and returns", ReinforcementRun),
+        new("IDRAK_RL_LAMBDA", Reinforcement, "0.95", "GAE's λ", ReinforcementRun),
+        new("IDRAK_RL_GROUP_SCALE", Reinforcement, "the estimator's (true)", "true or false: the group estimator divides by the group's deviation", ReinforcementRun),
+        new("IDRAK_RL_NORMALIZE_ADVANTAGES", Reinforcement, "the estimator's (false)", "true or false: gae and returns normalize the batch's advantages", ReinforcementRun),
+        new("IDRAK_RL_CLIP", Reinforcement, "0.2", "The ratio's clip ε of ppo and grpo", ReinforcementRun),
+        new("IDRAK_RL_KL", Reinforcement, "0", "The weight β of the KL penalty to the reference (above 0 needs a reference policy)", ReinforcementRun),
+        new("IDRAK_RL_KL_ESTIMATOR", Reinforcement, "k3", "The KL estimator: k1, k2 or k3", ReinforcementRun),
+        new("IDRAK_RL_ENTROPY", Reinforcement, "0", "The weight of the entropy bonus", ReinforcementRun),
+        new("IDRAK_RL_VALUE", Reinforcement, "0.5", "The weight of the value head's squared error", ReinforcementRun),
+        new("IDRAK_RL_NORMALIZE", Reinforcement, "the loss's (ppo, reinforce: token; grpo: sequence)", "How a policy loss divides the step's sum: token, sequence or constant", ReinforcementRun),
+        new("IDRAK_RL_MAX_GRAD_NORM", Reinforcement, "1", "The largest gradient norm an update applies (0: no clip)", ReinforcementRun),
+        new("IDRAK_RL_SCHEDULE", Reinforcement, "constant", "The learning-rate schedule over the run's updates: a LearningRateSchedules name", ReinforcementRun),
+        new("IDRAK_RL_WARMUP", Reinforcement, "0", "The schedule's warm-up share of the updates", ReinforcementRun),
+        new("IDRAK_RL_TEMPERATURE", Reinforcement, "1", "The temperature rollouts sample at", ReinforcementRun),
+        new("IDRAK_RL_MAX_STEPS", Reinforcement, "0 (the environment's own limit)", "The most steps of an episode before the trainer cuts it", ReinforcementRun),
+        new("IDRAK_RL_SEED", Reinforcement, "0", "The run's seed: every episode, draw and shuffle derives from it", ReinforcementRun),
+        new("IDRAK_RL_EVALUATE_EVERY", Reinforcement, "0 (no evaluation)", "Greedy evaluation episodes after every this many iterations", ReinforcementRun),
+        new("IDRAK_RL_EVALUATION_EPISODES", Reinforcement, "8", "The episodes of an evaluation", ReinforcementRun),
+        new("IDRAK_RL_SAVE_EVERY", Reinforcement, "0 (at the end only)", "A checkpoint after every this many iterations", ReinforcementRun),
+        new("IDRAK_RL_CHECKPOINTS", Reinforcement, "none", "The folder checkpoints are written to (iteration-N folders)", ReinforcementRun),
+        new("IDRAK_RL_RESUME", Reinforcement, "none", "A checkpoint to resume from: an iteration-N folder, or a checkpoint folder (its latest)", ReinforcementRun),
+        new("IDRAK_RL_LOG", Reinforcement, "none", "A file each iteration is appended to as a JSON line", ReinforcementRun),
+        new("IDRAK_RL_OPTIMIZER", Reinforcement, "adam", "A module policy's optimizer: an OptimizerKinds name", ReinforcementRun),
+        new("IDRAK_RL_LEARNING_RATE", Reinforcement, "0.0003", "A module policy's learning rate (the schedule's base)", ReinforcementRun),
 
         new("IDRAK_CLUSTER_TOPOLOGY", Cluster, "none: one node with the devices given", "The topology file of a cluster run (idrak cluster init writes it)", ClusterRun),
         new("IDRAK_CLUSTER_NODE", Cluster, "the node named after this host", "Which node of the topology file this machine is", ClusterRun),
