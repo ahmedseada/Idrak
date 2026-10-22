@@ -6,58 +6,6 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Text.Generation;
 
-/// <summary>
-/// A coding task: a prompt, the project it starts from, and the commands that decide whether it was done. On disk a task
-/// is a folder with <c>task.json</c> (<c>{"prompt", "language", "base", "setup": [...], "verify": [...], "tags": [...]}</c>), a
-/// <c>workspace/</c> folder with the starting files (laid over <c>base</c>, a shared project folder relative to the task),
-/// optionally a <c>verify/</c> folder whose files (hidden tests) are copied in after the agent finishes, and a
-/// <c>solution/</c> folder with a reference solution laid over the workspace (<see cref="CodingAgent.CheckTaskAsync"/>
-/// checks that verification fails without it and passes with it).
-/// </summary>
-/// <param name="Id">Name (the folder's path within the suite).</param>
-/// <param name="Prompt">What the user asks for.</param>
-/// <param name="Language">"csharp", "typescript", "angular" … (for reports).</param>
-/// <param name="Base">A project folder copied first, or null.</param>
-/// <param name="Workspace">Starting files laid over <paramref name="Base"/>, or null.</param>
-/// <param name="VerifyFiles">Files copied in before verification, or null.</param>
-/// <param name="Setup">Commands run before the agent starts (for example dotnet restore), not shown to it.</param>
-/// <param name="Verify">Commands that must all exit with 0 for the task to count as done.</param>
-/// <param name="Tags">Free-form labels.</param>
-/// <param name="Solution">A reference solution laid over the workspace, or null.</param>
-public sealed record AgentTask(string Id, string Prompt, string? Language = null, string? Base = null, string? Workspace = null, string? VerifyFiles = null,
-    IReadOnlyList<string>? Setup = null, IReadOnlyList<string>? Verify = null, IReadOnlyList<string>? Tags = null, string? Solution = null)
-{
-    /// <summary>Every task under <paramref name="folder"/> (each folder holding a task.json), ordered by id.</summary>
-    public static IReadOnlyList<AgentTask> LoadSuite(string folder)
-    {
-        folder = Path.GetFullPath(folder);
-        return [.. Directory.EnumerateFiles(folder, "task.json", SearchOption.AllDirectories)
-            .Where(f => !f.Split(Path.DirectorySeparatorChar).Contains("node_modules"))
-            .Select(f => Load(Path.GetDirectoryName(f)!, Path.GetRelativePath(folder, Path.GetDirectoryName(f)!).Replace('\\', '/')))
-            .OrderBy(t => t.Id, StringComparer.Ordinal)];
-    }
-
-    /// <summary>The task in <paramref name="folder"/>.</summary>
-    public static AgentTask Load(string folder, string? id = null)
-    {
-        folder = Path.GetFullPath(folder);
-        var json = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "task.json"))) as JsonObject
-                   ?? throw new InvalidDataException($"{folder}/task.json is not a JSON object.");
-        static IReadOnlyList<string>? List(JsonNode? node) => node is JsonArray a ? [.. a.Select(n => (string?)n ?? "")] : null;
-        string? Folder(string? path) => path is not null && Directory.Exists(Path.Combine(folder, path)) ? Path.GetFullPath(Path.Combine(folder, path)) : null;
-        string? baseFolder = (string?)json["base"];
-        if (baseFolder is not null && Folder(baseFolder) is null)
-        {
-            throw new DirectoryNotFoundException($"{folder}/task.json: base folder '{baseFolder}' does not exist.");
-        }
-
-        return new AgentTask(id ?? (string?)json["id"] ?? Path.GetFileName(folder),
-            (string?)json["prompt"] ?? throw new InvalidDataException($"{folder}/task.json has no prompt."),
-            (string?)json["language"], Folder(baseFolder), Folder("workspace"), Folder("verify"),
-            List(json["setup"]), List(json["verify"]), List(json["tags"]), Folder("solution"));
-    }
-}
-
 /// <summary>How <see cref="CodingAgent"/> works.</summary>
 public sealed record AgentOptions
 {
@@ -78,37 +26,27 @@ public sealed record AgentOptions
 
     /// <summary>What the tools may do.</summary>
     public CodingToolOptions Tools { get; init; } = new();
-
-    /// <summary>Time limit of each setup and verification command.</summary>
-    public TimeSpan VerifyTimeout { get; init; } = TimeSpan.FromMinutes(10);
 }
 
-/// <summary>How a run ended.</summary>
-public enum AgentOutcome
+/// <summary>How the agent's loop ended (<see cref="CodingAgentRun.End"/>).</summary>
+public enum CodingAgentEnd
 {
-    /// <summary>The agent finished and every verification command succeeded (or the task has none).</summary>
-    Passed,
+    /// <summary>The model answered without a tool call: it says it is done.</summary>
+    Answered,
 
-    /// <summary>A verification command failed.</summary>
-    Failed,
-
-    /// <summary>The agent used all its rounds or time; verification still ran and failed.</summary>
+    /// <summary>The agent used all its rounds or time, or its last reply was cut at the length limit.</summary>
     OutOfBudget,
-
-    /// <summary>A setup command failed: the task, not the agent, is broken.</summary>
-    SetupFailed,
 
     /// <summary>The model failed (for example the server was unreachable).</summary>
     Error,
 }
 
-/// <summary>One agent run: the conversation and its outcome.</summary>
-/// <param name="Task">The task.</param>
+/// <summary>One run of the agent's loop on a prompt: the conversation and its figures (no task, no verification).</summary>
 /// <param name="Messages">System, user, assistant and tool messages.</param>
 /// <param name="Tools">The tools the model was offered.</param>
 /// <param name="Think">The reasoning mode used.</param>
-/// <param name="Outcome">How it ended.</param>
-/// <param name="VerifyOutput">The verification commands' output (or the setup's, or the error).</param>
+/// <param name="End">How the loop ended.</param>
+/// <param name="Note">Why it stopped, when it did not answer (the budget, the error); empty when it answered.</param>
 /// <param name="Rounds">Model replies.</param>
 /// <param name="ToolCalls">Tool calls made.</param>
 /// <param name="ToolErrors">Tool calls that returned an error.</param>
@@ -116,34 +54,41 @@ public enum AgentOutcome
 /// <param name="ModelTime">Time spent waiting for the model.</param>
 /// <param name="ToolTime">Time spent running tools.</param>
 /// <param name="Workspace">The folder the agent worked in.</param>
-public sealed record AgentRun(AgentTask Task, IReadOnlyList<ChatMessage> Messages, IReadOnlyList<ToolDefinition> Tools, bool? Think, AgentOutcome Outcome,
-    string VerifyOutput, int Rounds, int ToolCalls, int ToolErrors, int GeneratedTokens, TimeSpan ModelTime, TimeSpan ToolTime, string Workspace)
+public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOnlyList<ToolDefinition> Tools, bool? Think, CodingAgentEnd End, string Note,
+    int Rounds, int ToolCalls, int ToolErrors, int GeneratedTokens, TimeSpan ModelTime, TimeSpan ToolTime, string Workspace)
 {
-    /// <summary>The run as one JSON line: the conversation in the chat format with the outcome and figures as extra fields.</summary>
+    /// <summary>The run as one JSON line: the conversation in the chat format with the figures as extra fields.</summary>
     public JsonObject ToJson()
     {
         var json = ChatJson.Transcript(Messages, Tools, Think);
-        json["task"] = Task.Id;
-        if (Task.Language is { } language)
-        {
-            json["language"] = language;
-        }
+        AddFigures(json);
+        return json;
+    }
 
-        json["outcome"] = Outcome.ToString();
+    /// <summary>Adds the figures (rounds, tool calls and errors, tokens, seconds) to <paramref name="json"/>, after what it holds.</summary>
+    public void AddFigures(JsonObject json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
         json["rounds"] = Rounds;
         json["tool_calls"] = ToolCalls;
         json["tool_errors"] = ToolErrors;
         json["generated_tokens"] = GeneratedTokens;
         json["model_seconds"] = Math.Round(ModelTime.TotalSeconds, 2);
         json["tool_seconds"] = Math.Round(ToolTime.TotalSeconds, 2);
-        return json;
     }
 }
 
+/// <summary>The tool calls of one assistant reply, run as the agent runs them (<see cref="CodingAgent.RunToolCallsAsync"/>).</summary>
+/// <param name="Results">Each call's result, in call order.</param>
+/// <param name="Messages">The tool messages sent back to the model, in call order (an error as "Error: …").</param>
+/// <param name="Errors">The calls that failed or returned an error.</param>
+/// <param name="Key">The calls as one text, to compare with the next reply's (<c>previousCalls</c>).</param>
+public sealed record CodingToolTurn(IReadOnlyList<ToolResult> Results, IReadOnlyList<ChatMessage> Messages, int Errors, string Key);
+
 /// <summary>
-/// A coding agent: a chat model with <see cref="CodingTools"/> in a workspace, looping until it answers without a tool
-/// call. <see cref="RunAsync(AgentTask, string, CancellationToken)"/> prepares a copy of a task's project, runs the agent and
-/// verifies the result: an evaluation of the model on the task.
+/// A coding agent: a chat model with <see cref="CodingTools"/> in a workspace, looping on a prompt until it answers
+/// without a tool call (<see cref="RunAsync"/>). The coding tasks (a project, setup, hidden tests, verification) are the
+/// coding plug-in's (Idrak.Reinforcement.Plugins), which runs this loop to evaluate a model on a task suite.
 /// </summary>
 public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 {
@@ -167,122 +112,35 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 
     private readonly AgentOptions _options = options ?? new AgentOptions();
 
+    /// <summary>How the agent works.</summary>
+    public AgentOptions Options => _options;
+
     /// <summary>Called with each piece of the model's replies as they stream.</summary>
     public Action<ChatDelta>? OnDelta { get; init; }
 
     /// <summary>Called after each tool call.</summary>
     public Action<ToolResult>? OnToolResult { get; init; }
 
-    /// <summary>Called with progress lines (setup, verification).</summary>
-    public Action<string>? OnStatus { get; init; }
-
     /// <summary>
-    /// Runs <paramref name="task"/> in a fresh copy of its project under <paramref name="workFolder"/> (created; left in
-    /// place for inspection): setup, the agent, the hidden files, verification.
+    /// Runs the agent on <paramref name="prompt"/> with <paramref name="tools"/> as they are: the model replies, its tool
+    /// calls run (a call repeated right after itself is not run again), until it answers without a call, uses its rounds
+    /// (<see cref="AgentOptions.MaxRounds"/>) or its time (<see cref="AgentOptions.TimeLimit"/>), or fails.
     /// </summary>
-    public async Task<AgentRun> RunAsync(AgentTask task, string workFolder, CancellationToken cancellationToken = default)
+    public async Task<CodingAgentRun> RunAsync(string prompt, CodingTools tools, CancellationToken cancellationToken = default)
     {
-        PrepareWorkspace(task, workFolder);
-        var tools = new CodingTools(workFolder, _options.Tools);
-        var checks = new CodingTools(workFolder, _options.Tools with { CommandTimeout = _options.VerifyTimeout });
-        foreach (var command in task.Setup ?? [])
-        {
-            OnStatus?.Invoke($"setup: {command}");
-            var setup = await checks.ExecuteAsync(command, ".", null, cancellationToken).ConfigureAwait(false);
-            if (!setup.Succeeded)
-            {
-                return new AgentRun(task, [], ToolDefinitions(tools), _options.Think, AgentOutcome.SetupFailed, $"$ {command}\n{setup.Output}", 0, 0, 0, 0,
-                    TimeSpan.Zero, TimeSpan.Zero, workFolder);
-            }
-        }
-
-        CommitStart(workFolder);
-        var run = await RunAsync(task, tools, cancellationToken).ConfigureAwait(false);
-        if (run.Outcome == AgentOutcome.Error)
-        {
-            return run;
-        }
-
-        var (passed, output) = await VerifyAsync(task, checks, cancellationToken).ConfigureAwait(false);
-        var outcome = passed ? AgentOutcome.Passed : run.Outcome == AgentOutcome.OutOfBudget ? AgentOutcome.OutOfBudget : AgentOutcome.Failed;
-        return run with { Outcome = outcome, VerifyOutput = output };
-    }
-
-    /// <summary>
-    /// Checks a task without a model: its verification must fail on the starting files (else the task tests nothing) and
-    /// pass with its <see cref="AgentTask.Solution"/> (else it cannot be solved). Uses two folders under <paramref name="workFolder"/>.
-    /// </summary>
-    public async Task<(bool StartFails, bool SolutionPasses, string Output)> CheckTaskAsync(AgentTask task, string workFolder, CancellationToken cancellationToken = default)
-    {
-        var report = new System.Text.StringBuilder();
-        var results = new bool[2];
-        for (int pass = 0; pass < 2; pass++)
-        {
-            string folder = Path.Combine(workFolder, pass == 0 ? "start" : "solution");
-            PrepareWorkspace(task, folder);
-            if (pass == 1 && task.Solution is { } solution)
-            {
-                CopyTree(solution, folder, overwrite: true);
-            }
-
-            var checks = new CodingTools(folder, _options.Tools with { CommandTimeout = _options.VerifyTimeout });
-            bool setupOk = true;
-            foreach (var command in task.Setup ?? [])
-            {
-                OnStatus?.Invoke($"setup: {command}");
-                var setup = await checks.ExecuteAsync(command, ".", null, cancellationToken).ConfigureAwait(false);
-                if (!setup.Succeeded)
-                {
-                    report.Append($"[{(pass == 0 ? "start" : "solution")}] setup failed: $ {command}\n{setup.Output}\n");
-                    setupOk = false;
-                    break;
-                }
-            }
-
-            var (passed, output) = setupOk ? await VerifyAsync(task, checks, cancellationToken).ConfigureAwait(false) : (false, "");
-            results[pass] = pass == 0 ? setupOk && !passed : passed;
-            report.Append($"[{(pass == 0 ? "start" : "solution")}] {(passed ? "verification passed" : "verification failed")}\n{output}");
-        }
-
-        return (results[0], task.Solution is not null && results[1], report.ToString());
-    }
-
-    private async Task<(bool Passed, string Output)> VerifyAsync(AgentTask task, CodingTools checks, CancellationToken cancellationToken)
-    {
-        if (task.VerifyFiles is { } hidden)
-        {
-            CopyTree(hidden, checks.Workspace, overwrite: true);
-        }
-
-        var output = new System.Text.StringBuilder();
-        foreach (var command in task.Verify ?? [])
-        {
-            OnStatus?.Invoke($"verify: {command}");
-            var result = await checks.ExecuteAsync(command, ".", null, cancellationToken).ConfigureAwait(false);
-            output.Append($"$ {command}\n{(result.TimedOut ? "timed out" : $"exit code {result.ExitCode}")}\n{result.Output}\n");
-            if (!result.Succeeded)
-            {
-                return (false, output.ToString());
-            }
-        }
-
-        return (true, output.ToString());
-    }
-
-    /// <summary>Runs the agent on <paramref name="task"/>'s prompt with <paramref name="tools"/> as they are (no setup or verification).</summary>
-    public async Task<AgentRun> RunAsync(AgentTask task, CodingTools tools, CancellationToken cancellationToken = default)
-    {
+        ArgumentNullException.ThrowIfNull(prompt);
+        ArgumentNullException.ThrowIfNull(tools);
         var registry = tools.Registry();
         var definitions = ToolDefinitions(tools);
-        var messages = new List<ChatMessage> { new("system", _options.SystemPrompt ?? DefaultSystemPrompt), new("user", task.Prompt) };
+        var messages = new List<ChatMessage> { new("system", _options.SystemPrompt ?? DefaultSystemPrompt), new("user", prompt) };
         int rounds = 0, calls = 0, errors = 0, generated = 0;
         var modelTime = TimeSpan.Zero;
         var toolTime = TimeSpan.Zero;
         string? previousCalls = null;
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_options.TimeLimit);
-        AgentRun Result(AgentOutcome outcome, string note) =>
-            new(task, messages, definitions, _options.Think, outcome, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace);
+        CodingAgentRun Result(CodingAgentEnd end, string note) =>
+            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace);
 
         try
         {
@@ -290,7 +148,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
             {
                 if (rounds >= _options.MaxRounds)
                 {
-                    return Result(AgentOutcome.OutOfBudget, $"stopped after {rounds} rounds");
+                    return Result(CodingAgentEnd.OutOfBudget, $"stopped after {rounds} rounds");
                 }
 
                 var watch = Stopwatch.StartNew();
@@ -315,26 +173,17 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 messages.Add(reply);
                 if (reply.ToolCalls is not { Count: > 0 })
                 {
-                    return Result(final.DoneReason == "length" ? AgentOutcome.OutOfBudget : AgentOutcome.Passed, "");
+                    return Result(final.DoneReason == "length" ? CodingAgentEnd.OutOfBudget : CodingAgentEnd.Answered, "");
                 }
 
-                // The same calls as the round before, with nothing in between, cannot give anything new (small models
-                // repeat a call instead of answering from its result): they are not run again, and the model is told so.
-                string key = string.Join("\n", reply.ToolCalls.Select(c => c.Name + " " + c.Arguments.ToJsonString()));
-                bool repeated = key == previousCalls;
-                previousCalls = key;
                 watch.Restart();
-                IReadOnlyList<ToolResult> results = repeated
-                    ? [.. reply.ToolCalls.Select(c => new ToolResult(c, "", false,
-                        "Not run again: this is the same call as the one just before, and its result is above. Use that result to answer, or make a different call.",
-                        TimeSpan.Zero))]
-                    : await registry.InvokeAsync(reply.ToolCalls, limit.Token).ConfigureAwait(false);
-                foreach (var result in results)
+                var turn = await RunToolCallsAsync(registry, reply, previousCalls, limit.Token).ConfigureAwait(false);
+                previousCalls = turn.Key;
+                calls += turn.Results.Count;
+                errors += turn.Errors;
+                messages.AddRange(turn.Messages);
+                foreach (var result in turn.Results)
                 {
-                    calls++;
-                    bool failed = !result.Succeeded || result.Content.StartsWith("Error:", StringComparison.Ordinal);
-                    errors += failed ? 1 : 0;
-                    messages.Add(result.Succeeded ? result.ToMessage() : new ChatMessage("tool", $"Error: {result.Error}", ToolName: result.Call.Name));
                     OnToolResult?.Invoke(result);
                 }
 
@@ -343,103 +192,47 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Result(AgentOutcome.OutOfBudget, $"stopped at the time limit ({_options.TimeLimit})");
+            return Result(CodingAgentEnd.OutOfBudget, $"stopped at the time limit ({_options.TimeLimit})");
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or IOException)
         {
-            return Result(AgentOutcome.Error, ex.Message);
+            return Result(CodingAgentEnd.Error, ex.Message);
         }
     }
 
     /// <summary>
-    /// Fills <paramref name="workFolder"/> with the task's project: <see cref="AgentTask.Base"/>, then
-    /// <see cref="AgentTask.Workspace"/> over it. Build output is not copied; a node_modules folder is linked, not copied
-    /// (copied where links are not allowed).
+    /// Runs the tool calls of <paramref name="reply"/> through <paramref name="registry"/> as the agent's loop does: one
+    /// after another, the same calls as the reply before (<paramref name="previousCalls"/>, the last turn's
+    /// <see cref="CodingToolTurn.Key"/>) not run again but answered with a note to use that result (small models repeat a
+    /// call instead of answering from it), a failure sent back as "Error: …". Any environment that steps a coding agent
+    /// turn by turn uses this, so its conversations are the loop's.
     /// </summary>
-    public static void PrepareWorkspace(AgentTask task, string workFolder)
+    public static async Task<CodingToolTurn> RunToolCallsAsync(IToolRegistry registry, ChatMessage reply, string? previousCalls, CancellationToken cancellationToken = default)
     {
-        if (Directory.Exists(workFolder) && Directory.EnumerateFileSystemEntries(workFolder).Any())
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(reply);
+        var toolCalls = reply.ToolCalls ?? [];
+        // The same calls as the round before, with nothing in between, cannot give anything new (small models repeat a
+        // call instead of answering from its result): they are not run again, and the model is told so.
+        string key = string.Join("\n", toolCalls.Select(c => c.Name + " " + c.Arguments.ToJsonString()));
+        bool repeated = key == previousCalls;
+        IReadOnlyList<ToolResult> results = repeated
+            ? [.. toolCalls.Select(c => new ToolResult(c, "", false,
+                "Not run again: this is the same call as the one just before, and its result is above. Use that result to answer, or make a different call.",
+                TimeSpan.Zero))]
+            : await registry.InvokeAsync(toolCalls, cancellationToken).ConfigureAwait(false);
+        var messages = new ChatMessage[results.Count];
+        int errors = 0;
+        for (int i = 0; i < results.Count; i++)
         {
-            throw new IOException($"The work folder '{workFolder}' is not empty.");
+            var result = results[i];
+            bool failed = !result.Succeeded || result.Content.StartsWith("Error:", StringComparison.Ordinal);
+            errors += failed ? 1 : 0;
+            messages[i] = result.Succeeded ? result.ToMessage() : new ChatMessage("tool", $"Error: {result.Error}", ToolName: result.Call.Name);
         }
 
-        Directory.CreateDirectory(workFolder);
-        foreach (var source in new[] { task.Base, task.Workspace })
-        {
-            if (source is null)
-            {
-                continue;
-            }
-
-            CopyTree(source, workFolder, overwrite: true);
-            string modules = Path.Combine(source, "node_modules"), target = Path.Combine(workFolder, "node_modules");
-            if (Directory.Exists(modules) && !Directory.Exists(target))
-            {
-                try
-                {
-                    Directory.CreateSymbolicLink(target, modules);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    CopyTree(modules, target, overwrite: false, skipBuildOutput: false);
-                }
-            }
-        }
+        return new CodingToolTurn(results, messages, errors, key);
     }
 
     private static IReadOnlyList<ToolDefinition> ToolDefinitions(CodingTools tools) => [.. tools.All.Select(t => t.Definition)];
-
-    private static readonly HashSet<string> BuildOutput = new(["bin", "obj", "node_modules", ".angular", "dist", ".vs", ".git"], StringComparer.OrdinalIgnoreCase);
-
-    private static void CopyTree(string source, string target, bool overwrite, bool skipBuildOutput = true)
-    {
-        Directory.CreateDirectory(target);
-        foreach (var file in Directory.EnumerateFiles(source))
-        {
-            File.Copy(file, Path.Combine(target, Path.GetFileName(file)), overwrite);
-        }
-
-        foreach (var folder in Directory.EnumerateDirectories(source))
-        {
-            if (!skipBuildOutput || !BuildOutput.Contains(Path.GetFileName(folder)))
-            {
-                CopyTree(folder, Path.Combine(target, Path.GetFileName(folder)), overwrite, skipBuildOutput);
-            }
-        }
-    }
-
-    // A git repository with the starting state committed, so the agent can review its changes with git diff (best effort:
-    // skipped without git).
-    private static void CommitStart(string folder)
-    {
-        if (Directory.Exists(Path.Combine(folder, ".git")))
-        {
-            return;
-        }
-
-        try
-        {
-            Git(folder, "init", "-q");
-            File.AppendAllText(Path.Combine(folder, ".git", "info", "exclude"), "\nbin/\nobj/\nnode_modules\n.angular/\ndist/\n");
-            Git(folder, "add", "-A");
-            Git(folder, "-c", "user.name=agent", "-c", "user.email=agent@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "start");
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
-        {
-        }
-    }
-
-    private static void Git(string folder, params string[] arguments)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = folder, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var argument in arguments)
-        {
-            start.ArgumentList.Add(argument);
-        }
-
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
-        process.StandardOutput.ReadToEnd();
-        process.StandardError.ReadToEnd();
-        process.WaitForExit();
-    }
 }

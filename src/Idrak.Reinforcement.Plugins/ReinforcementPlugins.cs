@@ -18,8 +18,8 @@ public static class ReinforcementPlugins
     /// <summary>The package's name, as the library's "not registered" messages name it: "Idrak.Reinforcement.Plugins".</summary>
     public const string Package = "Idrak.Reinforcement.Plugins";
 
-    /// <summary>Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: none yet.</summary>
-    public static IReadOnlyList<IIdrakPlugin> All { get; } = [];
+    /// <summary>Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: agentic coding (<see cref="Coding.CodingPlugin"/>).</summary>
+    public static IReadOnlyList<IIdrakPlugin> All { get; } = [Coding.CodingPlugin.Plugin];
 
     /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
     public static void RegisterAll() => IdrakPlugins.RegisterAll(All);

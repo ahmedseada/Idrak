@@ -89,6 +89,9 @@ internal sealed class ReinforceLoss : IPolicyLoss
     public IReadOnlyCollection<string> Keys { get; } =
         [ReinforcementNames.EntropyKey, ReinforcementNames.ValueKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey];
 
+    // No KL term: the reference is never read.
+    public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => false;
+
     public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -142,6 +145,11 @@ internal sealed class ClippedRatioLoss(string name, string normalization, bool v
             ReinforcementNames.KlEstimatorKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey]
         : [ReinforcementNames.ClipKey, ReinforcementNames.ClipHighKey, ReinforcementNames.KlKey, ReinforcementNames.KlEstimatorKey, ReinforcementNames.EntropyKey,
             ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey];
+
+    // The reference is read by the KL term only, weighted by the option kl (0 by default); a value Loss refuses is left to it.
+    public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) =>
+        options is not null && options.TryGetValue(ReinforcementNames.KlKey, out var text)
+        && (!float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float kl) || kl != 0f);
 
     public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
     {

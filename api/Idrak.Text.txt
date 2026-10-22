@@ -472,7 +472,7 @@ public static class Idrak.Text.FineTuningLosses
   public static Idrak.Text.FineTuningLoss Dpo(float beta = 0.1f, float labelSmoothing = 0f)
   public static Idrak.Text.FineTuningLoss OnPolicyDistillation(string divergence = "reverse", float temperature = 1f, float beta = 0.5f)
   public static Idrak.Text.FineTuningLoss Orpo(float lambda = 0.1f)
-  public static Idrak.Text.FineTuningLoss Policy(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, bool reference = true)
+  public static Idrak.Text.FineTuningLoss Policy(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
   public static Idrak.Text.FineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
   public static Idrak.Text.FineTuningLoss TokenCrossEntropy { get; }
 
@@ -570,49 +570,9 @@ public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idra
   public Idrak.Abstraction.Generation.GenerationOptions? Sampling { get; init; }
   public Idrak.Text.Generation.CodingToolOptions Tools { get; init; }
   public System.TimeSpan TimeLimit { get; init; }
-  public System.TimeSpan VerifyTimeout { get; init; }
   public bool? Think { get; init; }
   public int MaxRounds { get; init; }
   public string? SystemPrompt { get; init; }
-
-public enum Idrak.Text.Generation.AgentOutcome : int
-  Error = 4
-  Failed = 1
-  OutOfBudget = 2
-  Passed = 0
-  SetupFailed = 3
-
-public sealed record Idrak.Text.Generation.AgentRun : System.IEquatable<Idrak.Text.Generation.AgentRun>
-  public AgentRun(Idrak.Text.Generation.AgentTask Task, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools, bool? Think, Idrak.Text.Generation.AgentOutcome Outcome, string VerifyOutput, int Rounds, int ToolCalls, int ToolErrors, int GeneratedTokens, System.TimeSpan ModelTime, System.TimeSpan ToolTime, string Workspace)
-  public Idrak.Text.Generation.AgentOutcome Outcome { get; init; }
-  public Idrak.Text.Generation.AgentTask Task { get; init; }
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages { get; init; }
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools { get; init; }
-  public System.Text.Json.Nodes.JsonObject ToJson()
-  public System.TimeSpan ModelTime { get; init; }
-  public System.TimeSpan ToolTime { get; init; }
-  public bool? Think { get; init; }
-  public int GeneratedTokens { get; init; }
-  public int Rounds { get; init; }
-  public int ToolCalls { get; init; }
-  public int ToolErrors { get; init; }
-  public string VerifyOutput { get; init; }
-  public string Workspace { get; init; }
-
-public sealed record Idrak.Text.Generation.AgentTask : System.IEquatable<Idrak.Text.Generation.AgentTask>
-  public AgentTask(string Id, string Prompt, string? Language = null, string? Base = null, string? Workspace = null, string? VerifyFiles = null, System.Collections.Generic.IReadOnlyList<string>? Setup = null, System.Collections.Generic.IReadOnlyList<string>? Verify = null, System.Collections.Generic.IReadOnlyList<string>? Tags = null, string? Solution = null)
-  public System.Collections.Generic.IReadOnlyList<string>? Setup { get; init; }
-  public System.Collections.Generic.IReadOnlyList<string>? Tags { get; init; }
-  public System.Collections.Generic.IReadOnlyList<string>? Verify { get; init; }
-  public static Idrak.Text.Generation.AgentTask Load(string folder, string? id = null)
-  public static System.Collections.Generic.IReadOnlyList<Idrak.Text.Generation.AgentTask> LoadSuite(string folder)
-  public string Id { get; init; }
-  public string Prompt { get; init; }
-  public string? Base { get; init; }
-  public string? Language { get; init; }
-  public string? Solution { get; init; }
-  public string? VerifyFiles { get; init; }
-  public string? Workspace { get; init; }
 
 public enum Idrak.Text.Generation.BatchFit : int
   Fail = 1
@@ -652,12 +612,10 @@ public static class Idrak.Text.Generation.ChatJson
 
 public sealed class Idrak.Text.Generation.CodingAgent
   public CodingAgent(Idrak.Abstraction.Generation.IChatModel model, Idrak.Text.Generation.AgentOptions? options = null)
+  public Idrak.Text.Generation.AgentOptions Options { get; }
   public System.Action<Idrak.Abstraction.Generation.ChatDelta>? OnDelta { get; init; }
   public System.Action<Idrak.Abstraction.Generation.ToolResult>? OnToolResult { get; init; }
-  public System.Action<string>? OnStatus { get; init; }
-  public System.Threading.Tasks.Task<(bool, bool, string)> CheckTaskAsync(Idrak.Text.Generation.AgentTask task, string workFolder, System.Threading.CancellationToken cancellationToken = default)
-  public System.Threading.Tasks.Task<Idrak.Text.Generation.AgentRun> RunAsync(Idrak.Text.Generation.AgentTask task, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
-  public System.Threading.Tasks.Task<Idrak.Text.Generation.AgentRun> RunAsync(Idrak.Text.Generation.AgentTask task, string workFolder, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<Idrak.Text.Generation.CodingAgentRun> RunAsync(string prompt, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
   public const string DefaultSystemPrompt = "You are a coding agent working in a software project on the user's machine. You have tools to list, read and
 search the project's files, edit and write files, and run commands such as builds and tests.
 
@@ -672,25 +630,62 @@ How to work:
 - Do not weaken or delete tests to make them pass, unless the user asks for it.
 - Do only what was asked; mention anything else worth doing instead of doing it.
 - When the task is done, answer without a tool call: say briefly what you changed and how you checked it."
-  public static void PrepareWorkspace(Idrak.Text.Generation.AgentTask task, string workFolder)
+  public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default)
+
+public enum Idrak.Text.Generation.CodingAgentEnd : int
+  Answered = 0
+  Error = 2
+  OutOfBudget = 1
+
+public sealed record Idrak.Text.Generation.CodingAgentRun : System.IEquatable<Idrak.Text.Generation.CodingAgentRun>
+  public CodingAgentRun(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools, bool? Think, Idrak.Text.Generation.CodingAgentEnd End, string Note, int Rounds, int ToolCalls, int ToolErrors, int GeneratedTokens, System.TimeSpan ModelTime, System.TimeSpan ToolTime, string Workspace)
+  public Idrak.Text.Generation.CodingAgentEnd End { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public System.TimeSpan ModelTime { get; init; }
+  public System.TimeSpan ToolTime { get; init; }
+  public bool? Think { get; init; }
+  public int GeneratedTokens { get; init; }
+  public int Rounds { get; init; }
+  public int ToolCalls { get; init; }
+  public int ToolErrors { get; init; }
+  public string Note { get; init; }
+  public string Workspace { get; init; }
+  public void AddFigures(System.Text.Json.Nodes.JsonObject json)
 
 public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable<Idrak.Text.Generation.CodingToolOptions>
   public CodingToolOptions()
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Commands { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> GitSubcommands { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> IgnoredDirectories { get; init; }
   public System.TimeSpan CommandTimeout { get; init; }
+  public bool Network { get; init; }
   public bool ReadOnly { get; init; }
+  public double MaxCpus { get; init; }
   public int MaxListedFiles { get; init; }
   public int MaxOutputCharacters { get; init; }
+  public int MaxProcesses { get; init; }
   public int MaxReadLines { get; init; }
   public int MaxSearchResults { get; init; }
+  public long MaxMemoryBytes { get; init; }
+  public string Sandbox { get; init; }
+
+public sealed record Idrak.Text.Generation.CodingToolTurn : System.IEquatable<Idrak.Text.Generation.CodingToolTurn>
+  public CodingToolTurn(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult> Results, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, int Errors, string Key)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult> Results { get; init; }
+  public int Errors { get; init; }
+  public string Key { get; init; }
 
 public sealed class Idrak.Text.Generation.CodingTools
-  public CodingTools(string workspace, Idrak.Text.Generation.CodingToolOptions? options = null)
+  public CodingTools(string workspace, Idrak.Text.Generation.CodingToolOptions? options = null, Idrak.Abstraction.ICommandSandbox? sandbox = null)
+  public Idrak.Abstraction.CommandLimits Limits { get; }
   public Idrak.Abstraction.Generation.ToolRegistry Registry()
+  public Idrak.Abstraction.ICommandSandbox Sandbox { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> All { get; }
-  public System.Threading.Tasks.Task<Idrak.Text.Generation.CommandResult> ExecuteAsync(string command, string directory = ".", System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<Idrak.Abstraction.CommandResult> ExecuteAsync(string command, string directory = ".", System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<string> RunCommandAsync(string command, string directory = ".", int? timeoutSeconds = null, System.Threading.CancellationToken cancellationToken = default)
   public string EditFile(string path, string oldText, string newText, bool replaceAll = false)
   public string ListFiles(string path = ".", string? pattern = null)
@@ -698,15 +693,6 @@ public sealed class Idrak.Text.Generation.CodingTools
   public string Search(string pattern, string path = ".", string? glob = null, bool ignoreCase = false)
   public string Workspace { get; }
   public string WriteFile(string path, string content)
-
-public sealed record Idrak.Text.Generation.CommandResult : System.IEquatable<Idrak.Text.Generation.CommandResult>
-  public CommandResult(int? ExitCode, bool TimedOut, string Output, System.TimeSpan Duration, bool Refused)
-  public System.TimeSpan Duration { get; init; }
-  public bool Refused { get; init; }
-  public bool Succeeded { get; }
-  public bool TimedOut { get; init; }
-  public int? ExitCode { get; init; }
-  public string Output { get; init; }
 
 public sealed class Idrak.Text.Generation.Conversation
   public Idrak.Abstraction.Generation.IToolRegistry? Tools { get; }
@@ -814,6 +800,15 @@ public sealed class Idrak.Text.Generation.ModelImages : System.IDisposable
   public Idrak.Text.Generation.ChatImages Images { get; }
   public static Idrak.Text.Generation.ModelImages? For(Idrak.Models.PretrainedModel model, Idrak.Abstraction.Data.ImageTransformPipeline? transforms = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null, System.Func<Idrak.Models.PretrainedModel, Idrak.Abstraction.Generation.VisionEncoderOptions, Idrak.Abstraction.Generation.IVisionEncoder>? encoderFactory = null)
   public void Dispose()
+
+public sealed class Idrak.Text.Generation.ProcessCommandSandbox : Idrak.Abstraction.ICommandSandbox
+  public ProcessCommandSandbox()
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.CommandResult> RunAsync(System.Collections.Generic.IReadOnlyList<string> command, string directory, Idrak.Abstraction.CommandLimits limits, System.Threading.CancellationToken cancellationToken = default)
+  public System.TimeSpan PollInterval { get; init; }
+  public static string? FindProgram(string name)
+  public string Name { get; }
+  public string Summary { get; }
+  public string? Check(Idrak.Abstraction.CommandLimits limits)
 
 public static class Idrak.Text.Generation.WebTools
   public static Idrak.Abstraction.Generation.Tool Fetch(System.Net.Http.HttpClient http, System.Func<System.Uri, bool> allow, int maxCharacters)
@@ -1056,7 +1051,6 @@ public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstrac
 public sealed record Idrak.Text.Reinforcement.LanguageModelPolicyOptions : System.IEquatable<Idrak.Text.Reinforcement.LanguageModelPolicyOptions>
   public Idrak.Abstraction.Generation.GenerationOptions? Generation { get; init; }
   public LanguageModelPolicyOptions()
-  public bool Reference { get; init; }
   public bool? Think { get; init; }
   public const string BehaviorVariable = "IDRAK_RL_BEHAVIOR"
   public const string DivergenceVariable = "IDRAK_RL_DIVERGENCE"

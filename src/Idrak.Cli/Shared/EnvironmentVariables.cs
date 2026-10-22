@@ -82,6 +82,12 @@ internal static class EnvironmentVariables
 
     private static readonly string[] ReinforcementRun = ["test"];
 
+    // Plan 27, phase R4: the command sandboxes (CommandSandboxes; the coding tools' commands, the coding environment's
+    // builds and tests): idrak agent and the tests; idrak reinforce (R5) joins them.
+    private const string Sandbox = "Command sandbox";
+
+    private static readonly string[] SandboxRun = ["agent", "test"];
+
     // Plan 23: read by ClusterOptions.FromEnvironment (the library and its tests) and by the commands that start ranks
     // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8).
     private static readonly string[] ClusterRun =
@@ -345,6 +351,12 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_BEHAVIOR", Reinforcement, "recompute", "Where a language-model policy's behaviour log-probabilities come from: recompute (the training forward, once per rollout batch) or sampler (as sampled)", ["tune", "distill"]),
         new("IDRAK_RL_TEACHER_WEIGHT", Reinforcement, "0", "The weight of the on-policy distillation term beside a policy loss (0: none)", ["tune", "distill"]),
         new("IDRAK_RL_DIVERGENCE", Reinforcement, "reverse", "The on-policy distillation divergence: forward, reverse or jsd (TeacherDivergences)", ["tune", "distill"]),
+        new("IDRAK_RL_WORKSPACES", Reinforcement, "the CPU threads, fewer when the free disk holds fewer than two copies of a task's workspace each", "The most coding episodes running tools, builds and tests at once (the coding environment's workspaces)", ReinforcementRun),
+        new("IDRAK_RL_KEEP_WORKSPACES", Reinforcement, "false", "true: the coding environment keeps every episode's workspace (and the prepared copies) for inspection instead of deleting them", ReinforcementRun),
+        new("IDRAK_SANDBOX", Sandbox, "process", "The sandbox the coding tools run commands in: process (a plain process: programs allowed, time, output and memory limits), container (Docker or Podman; Idrak.Reinforcement.Plugins), or a plug-in's", SandboxRun),
+        new("IDRAK_SANDBOX_PROGRAM", Sandbox, "docker, else podman, found on the PATH", "The container sandbox's program (a path, or a name on the PATH)", SandboxRun),
+        new("IDRAK_SANDBOX_IMAGE", Sandbox, "none: the container sandbox refuses", "The image the container sandbox runs every command in (it holds the programs the commands start)", SandboxRun),
+        new("IDRAK_SANDBOX_NETWORK", Sandbox, "off", "The container sandbox's network: off (none), on (the program's default network), or a network's name", SandboxRun),
         new("IDRAK_RL_DISTILL_MIX", Reinforcement, "0", "λ of on-policy distillation: the share of a step's prompts trained on the data's answers instead of the student's samples, in [0, 1]", ["distill"]),
         new("PATH", Tests, "as the system sets it", "Where the coding tools and the tests look for programs", ["agent", "tools test", "test"]),
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
