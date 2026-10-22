@@ -937,7 +937,7 @@ public sealed record FineTuningOptions
     /// <summary>
     /// The teacher for knowledge distillation (<see cref="DistillationTeachers.FromModel(PretrainedModel, int, int)"/> or
     /// <see cref="DistillationTeachers.FromFile"/>), whose distributions a loss reads through
-    /// <see cref="FineTuningLossInput.TeacherDivergence"/> (see <see cref="FineTuningLosses.Distillation"/>). It must share the
+    /// <see cref="FineTuningLossInput.TeacherDivergence(float)"/> (see <see cref="FineTuningLosses.Distillation"/>). It must share the
     /// student's vocabulary (<see cref="DistillationTeacher.Check"/>, which training runs first). Null: no teacher. Not
     /// disposed by training.
     /// </summary>
@@ -1168,7 +1168,7 @@ public static class FineTuner
 
     // The loss of one's own (or distillation, with a teacher and no loss), or null for the fused token cross-entropy. A
     // teacher is checked against the model first.
-    private static CustomLoss? Custom(PretrainedModel model, FineTuningOptions options, bool pairs)
+    internal static CustomLoss? Custom(PretrainedModel model, FineTuningOptions options, bool pairs)
     {
         options.Teacher?.Check(model.Tokenizer ?? throw new InvalidOperationException("The student has no tokenizer: its vocabulary cannot be compared with the teacher's."));
         var loss = options.Loss ?? (options.Teacher is not null ? FineTuningLosses.Distillation() : null);
@@ -1179,80 +1179,19 @@ public static class FineTuner
     private static List<TrainingSequence> Flatten(IReadOnlyList<PreferencePair> pairs) =>
         [.. pairs.SelectMany(p => new[] { p.Chosen ?? throw new ArgumentException("A pair has no chosen answer."), p.Rejected ?? throw new ArgumentException("A pair has no rejected answer.") })];
 
+    // A run over a session (FineTuningSession): the session holds what the run keeps across its steps (the adapters, the
+    // optimizer and its schedule, FP8 copies, the cluster's sync, the recorded step graphs); the run makes each epoch's
+    // batches, steps the session through them, evaluates, scores answers and saves.
     private static IReadOnlyList<float> TrainCore(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<TrainingSequence>? evaluation,
         bool pairs, CustomLoss? custom, FineTuningOptions options, string? outputFolder, IProgress<FineTuningProgress>? progress, CancellationToken cancellationToken,
         Action<string>? trace)
     {
-        // The image side first (its family registered, a vision part at all), before anything else runs.
-        var (vision, ownedVision) = VisionFor(model, evaluation is null ? train : train.Concat(evaluation), options.Vision);
-        using var disposeVision = ownedVision;
-        options = options with { Vision = vision };
-        bool images = train.Any(s => s.Images.Count > 0);
-        if (vision is not null)
-        {
-            trace?.Invoke($"images: {vision} ({train.Count(s => s.Images.Count > 0)} of {train.Count} training sequences hold images; "
-                          + (vision.Parameters.Count == 0 ? "steps with images may be recorded as graphs, their features copied in)"
-                              : "steps with images are not recorded as graphs while a vision part trains: their features need gradients)"));
-        }
-
+        using var session = new FineTuningSession(model, options, train, evaluation, pairs, custom, trace);
+        options = session.Options;
+        var vision = options.Vision;
         var network = model.Network;
-        if (!network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
-        {
-            model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
-        }
-
-        long resumeStep = 0;
-        if (options.ResumeFrom is { } from)
-        {
-            if (vision is { Parameters.Count: > 0 } || options.Parts.OfType<ITrainableSoftParts>().Any())
-            {
-                throw new NotSupportedException("A tune resumed from a stop's checkpoint trains the adapters only: a trained vision part or part source is not restored from it.");
-            }
-
-            resumeStep = ReadStopState(from);
-            model.LoadAdapter(from);                                       // into the adapters just made: the same tensors, the stop's values
-        }
-
-        var parameters = network.TrainableParameters().Concat(vision?.Parameters ?? []).Concat(TrainedParts(options.Parts)).ToList();
-        void Save(string folder)
-        {
-            foreach (var part in options.Parts.OfType<ITrainableSoftParts>().Where(p => p.Trained.Count > 0))
-            {
-                model.KeepTrainedParts(part.Export(part.Trained));             // saved with the adapters (modules_to_save)
-            }
-
-            if (vision is not null)
-            {
-                vision.Save(folder, images);                                  // the trained vision parts and tuning_images.json too
-            }
-            else
-            {
-                model.SaveAdapter(folder);
-            }
-        }
-
-        using var float8 = PrepareFloat8(model, train, options, trace);
-        using var optimizer = CreateOptimizer(parameters, options);
-        // Data parallel (plan 23): every rank makes the same batches from the same seed; a step covers the accumulation's
-        // batches on every rank, and each rank runs its share of them.
-        var clusterOptions = options.Cluster is null ? null : options.ClusterOptions ?? ClusterOptions.FromEnvironment();
-        if (clusterOptions is { Pipelined: true })
-        {
-            throw new NotSupportedException("Pipeline placement (IDRAK_CLUSTER_PLACEMENT=pipeline) trains through the Pretrainer (plan 23, C7); fine-tuning runs with single placement.");
-        }
-
-        using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, clusterOptions!) : null;
-        using var seeds = sync is null ? null : Dropout.SeedsForRank(sync.Rank);
-        if (options.ResumeFrom is { } resumed)
-        {
-            var saved = ReadOptimizerFile(resumed);
-            if (sync?.LoadOptimizerState(saved) != true)
-            {
-                optimizer.LoadState(saved);
-            }
-        }
-
-        sync?.Start();
+        var sync = session.Sync;
+        long resumeStep = session.ResumedSteps;
         bool lead = sync is null || sync.Rank == 0;
         var random = new Random(options.Seed);
         var epochBatches = Enumerable.Range(0, options.Epochs)
@@ -1260,14 +1199,11 @@ public static class FineTuner
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int perStep = accumulation * (sync?.WorldSize ?? 1);
         int totalSteps = epochBatches.Sum(b => (b.Count + perStep - 1) / perStep);
-        var scheduler = options.Scheduler
-            ?? LearningRateSchedules.Factory(LearningRateSchedules.Cosine, new LearningRateScheduleSettings(options.WarmupFraction, options.MinLearningRate));
-        var schedule = scheduler(optimizer, Math.Max(1, totalSteps))
-            ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
+        session.Begin(totalSteps, train, MostTrained(epochBatches.SelectMany(b => b), train), Largest(epochBatches.SelectMany(b => b)),
+            MostImageTokens(epochBatches.SelectMany(b => b), train));
+        var runner = session.Runner;
         var evaluations = new List<float>();
-        int step = 0, nonFinite = 0;
-        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), custom, trace,
-            Largest(epochBatches.SelectMany(b => b)), MostImageTokens(epochBatches.SelectMany(b => b), train), sync);
+        int step = 0;
         for (int epoch = 0; epoch < options.Epochs; epoch++)
         {
             var batches = epochBatches[epoch];
@@ -1277,8 +1213,8 @@ public static class FineTuner
                 var global = batches.Skip(first).Take(perStep).ToList();
                 if (step < resumeStep)
                 {
-                    schedule.Step();                                       // a step the stopped run finished (ResumeFrom)
-                    step++;
+                    session.Skip();                                        // a step the stopped run finished (ResumeFrom)
+                    step = session.Steps;
                     continue;
                 }
 
@@ -1292,17 +1228,7 @@ public static class FineTuner
                     // Stopped at this step boundary (a dashboard's stop, plan 23 C9; written since C8b): the last finished
                     // step's adapters, optimizer state (a sharded run's joined) and step, as a saving step writes them.
                     string stop = Path.Combine(outputFolder, $"checkpoint-{step}");
-                    using (sync!.Gather())
-                    {
-                        var state = sync.SaveOptimizerState() ?? optimizer.SaveState();
-                        if (sync.Rank == 0)
-                        {
-                            Save(stop);
-                            WriteStopState(stop, state, optimizer, step);
-                        }
-                    }
-
-                    sync.Barrier();
+                    session.Checkpoint(stop);
                     trace?.Invoke($"stopped: checkpoint {stop}");
                     throw;
                 }
@@ -1311,8 +1237,8 @@ public static class FineTuner
                 {
                     // This rank sits the step out (a simulated late joiner before it joins, every rank past a replay's last
                     // step): the ranks that take part share the step's batches; the schedule moves on alike.
-                    schedule.Step();
-                    step++;
+                    session.Skip();
+                    step = session.Steps;
                     continue;
                 }
 
@@ -1327,28 +1253,9 @@ public static class FineTuner
                     vision.Prefetch(coming.SelectMany(b => b.Sequences.SelectMany(i => train[i].Images)));
                 }
 
-                var (loss, tokens) = runner.Run(group, cancellationToken,
+                var (loss, tokens, rate) = session.Run(group, null, cancellationToken,
                     b => $"step {step + 1}/{totalSteps}, batch {first + b + 1}/{batches.Count} of epoch {epoch + 1}");
-                float rate = optimizer.LearningRate;                     // the rate RunStep's update used
-                if (float.IsFinite(loss))
-                {
-                    nonFinite = 0;
-                }
-                else if (++nonFinite > options.NonFiniteSteps)
-                {
-                    throw new InvalidOperationException($"The loss of step {step + 1} is {loss}, the {nonFinite} step{(nonFinite == 1 ? "" : "s")} in a row not finite "
-                        + $"({runner.Settings}); the run stops (FineTuningOptions.NonFiniteSteps = {options.NonFiniteSteps}). The parameters keep the values of "
-                        + $"the last finite step.");
-                }
-                else
-                {
-                    trace?.Invoke($"step {step + 1}: the loss is {loss}, not finite ({runner.Settings}); the step's update is skipped and the parameters keep "
-                                  + $"their values ({nonFinite} in a row, the run stops after {options.NonFiniteSteps})");
-                }
-
-                schedule.Step();
-                step++;
-                sync?.Stepped(step);
+                step = session.Steps;
                 float? evaluationLoss = null;
                 bool lastOfEpoch = first + perStep >= batches.Count;
                 bool evaluate = evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch);
@@ -1374,7 +1281,7 @@ public static class FineTuner
                 {
                     if (writes)
                     {
-                        Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
+                        session.Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
                     }
 
                     sync?.Barrier();                                       // rank 0 has written it
@@ -1390,7 +1297,7 @@ public static class FineTuner
         {
             if (lead)
             {
-                Save(outputFolder);
+                session.Save(outputFolder);
             }
 
             sync?.Barrier();
@@ -1399,10 +1306,10 @@ public static class FineTuner
         return evaluations;
     }
 
-    private const string StopStateFile = "tune-state.json", StopOptimizerFile = "optimizer.safetensors";
+    internal const string StopStateFile = "tune-state.json", StopOptimizerFile = "optimizer.safetensors";
 
     // A stop's optimizer state and step beside its adapters (plan 23, C8b).
-    private static void WriteStopState(string folder, IReadOnlyDictionary<string, OptimizerStateValue> state, Optimizer optimizer, int step)
+    internal static void WriteStopState(string folder, IReadOnlyDictionary<string, OptimizerStateValue> state, Optimizer optimizer, int step)
     {
         Directory.CreateDirectory(folder);
         SafeTensorsWriter.Write(Path.Combine(folder, StopOptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), SafeTensorType.F32,
@@ -1410,7 +1317,7 @@ public static class FineTuner
         File.WriteAllText(Path.Combine(folder, StopStateFile), new System.Text.Json.Nodes.JsonObject { ["format"] = "idrak-tune-state/1", ["step"] = step }.ToJsonString() + "\n");
     }
 
-    private static long ReadStopState(string folder)
+    internal static long ReadStopState(string folder)
     {
         string path = Path.Combine(folder, StopStateFile);
         return File.Exists(path)
@@ -1418,7 +1325,7 @@ public static class FineTuner
             : throw new FileNotFoundException($"{folder} holds no stopped tune's state ({StopStateFile}); give a checkpoint-STEP folder a stop wrote.", path);
     }
 
-    private static Dictionary<string, OptimizerStateValue> ReadOptimizerFile(string folder)
+    internal static Dictionary<string, OptimizerStateValue> ReadOptimizerFile(string folder)
     {
         using var reader = SafeTensorsReader.Open(Path.Combine(folder, StopOptimizerFile));
         ITensorStore store = reader;
@@ -1427,7 +1334,7 @@ public static class FineTuner
 
     // This rank's share of a step's batches (by the ranks' shares: draws k·W + r while they are equal), and the step's
     // totals over every rank for a loss of one's own; a change of the shares is traced.
-    private static List<Batch> Share(List<Batch> global, IReadOnlyList<TrainingSequence> train, IGradientSync sync, StepRunner runner, Action<string>? trace)
+    internal static List<Batch> Share(List<Batch> global, IReadOnlyList<TrainingSequence> train, IGradientSync sync, StepRunner runner, Action<string>? trace)
     {
         var sizes = global.Select(b => (long)b.Sequences.Sum(i => train[i].TrainedTokens)).ToArray();
         var owners = DrawShares.Owners(sizes, sync.Shares);
@@ -1450,11 +1357,11 @@ public static class FineTuner
     }
 
     // The trained parameters of the trainable part sources, for the optimizer.
-    private static IEnumerable<Tensor> TrainedParts(IReadOnlyList<ISoftPartSource> parts) => parts.OfType<ITrainableSoftParts>().SelectMany(p => p.Parameters);
+    internal static IEnumerable<Tensor> TrainedParts(IReadOnlyList<ISoftPartSource> parts) => parts.OfType<ITrainableSoftParts>().SelectMany(p => p.Parameters);
 
     // The image side of a run: the one given (checked against the model), else one made from the model when the sequences
     // hold images (returned as Owned too: the caller disposes it), else none.
-    private static (TuningVision? Vision, TuningVision? Owned) VisionFor(PretrainedModel model, IEnumerable<TrainingSequence> sequences, TuningVision? given)
+    internal static (TuningVision? Vision, TuningVision? Owned) VisionFor(PretrainedModel model, IEnumerable<TrainingSequence> sequences, TuningVision? given)
     {
         if (given is not null)
         {
@@ -1495,6 +1402,12 @@ public static class FineTuner
         private IReadOnlyList<double>? _tracedShares;
 
         /// <summary>
+        /// The loss of one's own the steps run with (null: the fused token cross-entropy, which may be recorded as a graph).
+        /// A run keeps the one it was made with; a session (<see cref="FineTuningSession.Step"/>) sets each step's.
+        /// </summary>
+        public CustomLoss? Custom { get; set; } = custom;
+
+        /// <summary>
         /// The step's trained tokens and sequences over every rank (data parallel): a loss of one's own divides by them, so
         /// each rank's loss is its share of the step's and the ranks' gradients add up; null in one process.
         /// </summary>
@@ -1528,7 +1441,7 @@ public static class FineTuner
 
             // A step with no backward pass here (no rows on this rank, a recorded step) still opens the overlap, so this rank
             // sends its buckets and the header in the order the ranks that overlapped do (plan 23, C4; found in C9).
-            bool normalized = custom is not null && StepTotals is not null;
+            bool normalized = Custom is not null && StepTotals is not null;
             sync.Overlap(trained, normalized)?.Dispose();
             if (lost is not null)
             {
@@ -1553,11 +1466,14 @@ public static class FineTuner
         // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update. The recorded
         // pass is the token cross-entropy's; a loss of one's own runs ordinary steps. Experts' routing is read back to the
         // host on every pass, which a recording cannot.
-        private readonly bool _graphsAllowed = options.CudaGraphs && options.GradientAccumulation <= 1
+        private readonly bool _graphsBase = options.CudaGraphs && options.GradientAccumulation <= 1
             && !ComputeResources.OffloadToHostMemory && !options.HostOptimizer
             && model.Device.Backend.SupportsGraphs
-            && custom is null && Recordable(optimizer) && sync is not { Updates: true }   // a sharded update gathers and sends, which a recording cannot
+            && Recordable(optimizer) && sync is not { Updates: true }   // a sharded update gathers and sends, which a recording cannot
             && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f } or MixtureOfExperts);   // a recorded pass would reuse dropout masks
+
+        // Graphs for the token cross-entropy only: a loss of one's own runs ordinary steps.
+        private bool _graphsAllowed => _graphsBase && Custom is null;
 
         // An optimizer of one's own (FineTuningOptions.Optimizer): the recorded backward pass writes into the gradient
         // buffers the parameters had when it was recorded, so they must stay the parameters' between steps. Checked before
@@ -1785,7 +1701,7 @@ public static class FineTuner
             var shape = (batch.Rows.Length, batch.Length, batch.HasImages(_train) ? Math.Max(imageTokens, batch.ImageTokens(_train)) : 0);
 
             // A batch with images replays only when its features are values (no vision part trains): they are copied in.
-            if (graphs && _graphs == true && group.Count == 1 && batch.Packed && (shape.Item3 == 0 || options.Vision is { Parameters.Count: 0 }) && !batch.HasParts(_train))
+            if (graphs && _graphs == true && Custom is null && group.Count == 1 && batch.Packed && (shape.Item3 == 0 || options.Vision is { Parameters.Count: 0 }) && !batch.HasParts(_train))
             {
                 var graph = _recorded.Where(g => g.Fits(batch, _train)).MinBy(g => g.ImageTokens);
                 if (graph is null && _seen.GetValueOrDefault(shape) >= 2 && RoomForAnother(shape))
@@ -1841,7 +1757,7 @@ public static class FineTuner
         private (float Loss, long Tokens) Ordinary(IReadOnlyList<Batch> group, (int, int, int) shape, CancellationToken cancellationToken, Func<int, string> label)
         {
             _seen[shape] = _seen.GetValueOrDefault(shape) + 1;
-            return RunStep(model, _train, group, optimizer, _options, custom, cancellationToken, trace, label, sync, StepTotals);
+            return RunStep(model, _train, group, optimizer, _options, Custom, cancellationToken, trace, label, sync, StepTotals);
         }
 
         // Whether another graph may be recorded: always the first; another while the device's free memory, measured now,
@@ -1877,7 +1793,7 @@ public static class FineTuner
 
     // FP8 copies of the frozen weights of the layers with adapters (options.Float8), kept only when a sample's loss with
     // them is within the tolerance of its bfloat16 loss. Disposing the result removes them again.
-    private static IDisposable? PrepareFloat8(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Action<string>? trace)
+    internal static IDisposable? PrepareFloat8(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Action<string>? trace)
     {
         if (!options.Float8)
         {
@@ -1926,7 +1842,7 @@ public static class FineTuner
 
     // AdamW (or FineTuningOptions.Optimizer) on the device, or on the CPU with its state in system memory
     // (FineTuningOptions.HostOptimizer).
-    private static Optimizer CreateOptimizer(List<Tensor> parameters, FineTuningOptions options)
+    internal static Optimizer CreateOptimizer(List<Tensor> parameters, FineTuningOptions options)
     {
         Func<IReadOnlyList<Tensor>, Optimizer> create = options.Optimizer is { } custom
             ? ps => custom(ps) ?? throw new InvalidOperationException("FineTuningOptions.Optimizer returned no optimizer.")
@@ -2233,8 +2149,9 @@ public static class FineTuner
 
             try
             {
-                Func<float, float[]>? divergence = teacher is null ? null
-                    : temperature => Tensor.TokenDivergences(hidden, h => head.Forward(h), data.Trained, Teacher(temperature), temperature, chunkRows);
+                Func<float, ITeacherDivergence?, float, float[]>? divergence = teacher is null ? null
+                    : (temperature, kind, beta) => Tensor.TokenDivergences(hidden, h => head.Forward(h), data.Trained, Teacher(temperature), temperature, chunkRows,
+                        TeacherDivergences.Rule(kind, beta));
                 var input = new FineTuningLossInput(probabilities, [.. sequences.Select(s => s.TrainedTokens)], sequences,
                     () => Reference(model, tokens, sequences, data, targets, chunkRows, images), pairs, stepTokens, stepSequences, divergence);
                 var value = loss(input) ?? throw new InvalidOperationException("FineTuningOptions.Loss returned no tensor.");
@@ -2261,7 +2178,7 @@ public static class FineTuner
 
                 // Each divergence weighted by its gradient: the value Σ g_t KL_t, the loss's gradient through it.
                 Tensor? total = null;
-                foreach (var (divergences, temperature) in input.Divergences)
+                foreach (var (divergences, temperature, kind, beta) in input.Divergences)
                 {
                     var g = divergences.Grad?.ToArray() ?? new float[values.Length];
                     var kl = divergences.ToArray();
@@ -2270,7 +2187,8 @@ public static class FineTuner
                         surrogate += (double)g[t] * kl[t];
                     }
 
-                    var term = Tensor.TokenDivergenceRows(hidden, h => head.Forward(h), data.Trained, g, Teacher(temperature), temperature, chunkRows);
+                    var term = Tensor.TokenDivergenceRows(hidden, h => head.Forward(h), data.Trained, g, Teacher(temperature), temperature, chunkRows,
+                        TeacherDivergences.Rule(kind, beta));
                     total = total is null ? term : total + term;
                 }
 
@@ -2287,6 +2205,22 @@ public static class FineTuner
             finally
             {
                 distributions?.Dispose();
+            }
+        }
+
+        // A session's step (FineTuningSession.Step): the references kept for sequences this step does not train are dropped,
+        // so a run that brings new sequences every step holds one step's references, not every step's.
+        internal void Keep(IReadOnlyList<TrainingSequence> sequences)
+        {
+            if (_reference.Count == 0)
+            {
+                return;
+            }
+
+            var kept = new HashSet<TrainingSequence>(sequences);
+            foreach (var sequence in _reference.Keys.Where(s => !kept.Contains(s)).ToList())
+            {
+                _reference.Remove(sequence);
             }
         }
 
@@ -2363,7 +2297,7 @@ public static class FineTuner
     // The training batches: packed when asked and supported, else padded. Sequences with images pack like the others (each
     // keeps its images at its own positions and attends within itself by the family's rule); when every sequence holds
     // images under a rule that is not causal, every position attends by key ranges, so the span kernels decide.
-    internal static List<Batch> MakeBatches(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Random random)
+    internal static List<Batch> MakeBatches(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Random? random)
     {
         bool spans = options.Vision is { Attention.Causal: false } && train.Count > 0 && train.All(s => s.Images.Count > 0)
                      && PackedSequences.SupportsImages(model.Network);
@@ -2563,6 +2497,18 @@ public static class FineTuner
             : NetworkLoss(model, tokens, (hidden, head) => custom.BatchLoss(model, tokens, hidden, head, [.. batch.Sequences.Select(i => sequences[i])], data,
                 (int)normalizer, stepSequences, chunkRows, images), checkpointing, images);
         return (loss, data.Tokens);
+    }
+
+    // log p of every trained token of a batch under the network as it is (a session's LogProbabilities: the caller holds
+    // the batch's packing, gradients off and the adapters as asked), in the batch's order (its rows, each row's sequences).
+    internal static float[] TrainedLogProbabilities(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, Batch batch, FineTuningOptions options)
+    {
+        var data = Prepare(sequences, batch);
+        var images = StepImages.Of(sequences, batch, options.Vision, checkpointing: false, options.Parts);
+        var tokens = Tensor.From(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
+        int[] targets = [.. data.Targets.Select(t => (int)t)];
+        return NetworkLoss(model, tokens, (hidden, head) => Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, options.LossChunkRows),
+            checkpointing: false, images);
     }
 
     // The images of a batch for the decoder's pass: each image's features (once per distinct image and preparation in the

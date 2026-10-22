@@ -2,7 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Text.Generation;
+using Idrak.Text.Reinforcement;
 
 namespace Idrak.Text;
 
@@ -10,7 +12,8 @@ namespace Idrak.Text;
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the reader of a model's own Jinja
 /// chat template ("jinja" in <see cref="ChatTemplates"/>), which loading a pretrained model asks, and the image reader's
 /// advisor ("image reader" in <see cref="SettingAdvisors"/>), and the feature caches ("memory" and "disk" in
-/// <see cref="FeatureCaches"/>). The engine's text and
+/// <see cref="FeatureCaches"/>), the chat-prompt environment ("prompts" in <see cref="EnvironmentKinds"/>) and the text
+/// rewards ("metric", "regex", "json", "length", "judge", "sum" in <see cref="RewardFunctions"/>, Plan 27 R3). The engine's text and
 /// chat model kinds need no registry: <c>GenerativeModels</c> adds them to an engine. <c>LibraryDefaults.Ensure</c> (in
 /// Idrak.Abstraction) calls <see cref="RegisterFor"/> once per registry, before that registry is first used.
 /// </summary>
@@ -30,6 +33,17 @@ internal static class LibraryRegistrations
         {
             FeatureCaches.Register(FeatureCaches.Memory, options => new MemoryFeatureCache(options));
             FeatureCaches.Register(FeatureCaches.Disk, options => new DiskFeatureCache(options));
+        }
+        else if (registry == typeof(EnvironmentKinds))
+        {
+            EnvironmentKinds.Register(new PromptsEnvironmentKind());
+        }
+        else if (registry == typeof(RewardFunctions))
+        {
+            foreach (var reward in TextRewards.Library())
+            {
+                RewardFunctions.Register(reward);
+            }
         }
     }
 }

@@ -16,12 +16,7 @@ Idrak.Abstraction.Cluster.IFailureModel | which faults a run injects (slow, drop
 Idrak.Abstraction.Cluster.FailureModels | the failure models by name, overridable once (IDRAK_CLUSTER_FAILURES) for every package that runs ranks
 Idrak.Abstraction.Generation.IAttentionPositionBias | how an attention layer adds a bias by the query's and the key's positions, for any package's attention (core's text encoders and decoders, vision and audio towers, a family plug-in's own layers); a kind is registered once (AttentionPositionBiases) for all of them
 Idrak.Abstraction.Diagnostics.IProgressReporter | the live progress of any long work (a download, a load, a training run, a rollout), shown the same way by every package that reports it; made through ProgressReporters
-Idrak.Abstraction.Reinforcement.IEnvironment | an environment's spaces and resources, for every package that makes or runs environments (the trainer in Idrak.Reinforcement, Idrak.Text's prompts, the plug-ins' coding and classic ones)
-Idrak.Abstraction.Reinforcement.IEnvironment`2 | an episode's reset and steps, the same for every package that makes environments or runs episodes (Idrak.Reinforcement's trainer, Idrak.Text's prompts, the plug-ins)
-Idrak.Abstraction.Reinforcement.IEnvironmentKind | how environments are made by name, for every package that registers one (Idrak.Text's prompts, the plug-ins) and every trainer that creates them
-Idrak.Abstraction.Reinforcement.EnvironmentKinds | the environment kinds by name, overridable once for every package that registers or creates environments
-Idrak.Abstraction.Reinforcement.IPolicy`2 | acting and learning, implemented by any package's policy (Idrak.Reinforcement's module policy, Idrak.Text's language-model policy) and driven by any trainer
-Idrak.Abstraction.Reinforcement.IAdvantageEstimator | how rewards become advantages in a fixed order, for any package's trainer or policy, whatever acts (a network, a language model)
 Idrak.Abstraction.Reinforcement.AdvantageEstimators | the estimators by name, overridable once for every package that trains a policy
-Idrak.Abstraction.Reinforcement.IPolicyLoss | the algorithms' losses, computed by any package's policy (a module policy, Idrak.Text's language-model policy through its fine-tuning losses)
 Idrak.Abstraction.Reinforcement.PolicyLosses | the policy losses by name, overridable once for every package whose policy trains with them
+Idrak.Abstraction.Reinforcement.IRewardFunction | Idrak.Text's text rewards (R3) and the plug-ins' rewards, for every environment that scores text
+Idrak.Abstraction.Reinforcement.RewardFunctions | the rewards by name for every package that scores text (Idrak.Text's, R3; the coding plug-in's, R4)

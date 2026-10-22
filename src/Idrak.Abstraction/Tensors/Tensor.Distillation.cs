@@ -5,6 +5,16 @@ using Idrak.Abstraction.Diagnostics;
 
 namespace Idrak.Abstraction;
 
+/// <summary>
+/// A divergence between a student's and a teacher's next-token distributions, row by row, for the chunked divergence
+/// passes (<see cref="Tensor.TokenDivergences(Tensor, Func{Tensor, Tensor}, int[], Func{int, int, Tensor}, float, int, TokenDivergenceRule?)"/>):
+/// from the student's log-probabilities log p = log_softmax(u) of the softened logits u = z / T [rows, vocabulary] and
+/// the teacher's probabilities q [rows, vocabulary] (same device), the divergence of each row [rows] and, when
+/// <paramref name="gradient"/> is set, its gradient with respect to u [rows, vocabulary] (the caller multiplies by each
+/// row's weight and 1 / T). Runs without gradients; returns new tensors.
+/// </summary>
+public delegate (Tensor Values, Tensor? Gradient) TokenDivergenceRule(Tensor studentLogProbabilities, Tensor teacherProbabilities, bool gradient);
+
 // Knowledge distillation over the trained rows of a language model: the student's softened distribution against a
 // teacher's, the output head run a chunk of rows at a time.
 public sealed partial class Tensor
@@ -16,10 +26,19 @@ public sealed partial class Tensor
     /// <paramref name="chunkRows"/> rows at a time; only one value per row leaves the device. Not recorded.
     /// </summary>
     public static float[] TokenDivergences(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, Func<int, int, Tensor> teacher, float temperature, int chunkRows) =>
-        Divergences(hidden, head, rows, null, teacher, temperature, chunkRows).Values;
+        Divergences(hidden, head, rows, null, teacher, temperature, chunkRows, null).Values;
 
     /// <summary>
-    /// Σ_r w_r · KL(q_r ‖ softmax(head(h_r) / T)) over the listed rows (see <see cref="TokenDivergences"/>), recorded: the
+    /// <see cref="TokenDivergences(Tensor, Func{Tensor, Tensor}, int[], Func{int, int, Tensor}, float, int)"/> with the
+    /// divergence <paramref name="rule"/> computes (a reverse KL, a Jensen-Shannon divergence) instead of KL(q ‖ p); null:
+    /// KL(q ‖ p).
+    /// </summary>
+    public static float[] TokenDivergences(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, Func<int, int, Tensor> teacher, float temperature, int chunkRows,
+        TokenDivergenceRule? rule) =>
+        Divergences(hidden, head, rows, null, teacher, temperature, chunkRows, rule).Values;
+
+    /// <summary>
+    /// Σ_r w_r · KL(q_r ‖ softmax(head(h_r) / T)) over the listed rows (see <see cref="TokenDivergences(Tensor, Func{Tensor, Tensor}, int[], Func{int, int, Tensor}, float, int)"/>), recorded: the
     /// gradient with respect to row r's logits is w_r · (softmax(z_r / T) − q_r) / T, back-propagated through the head
     /// chunk by chunk during this call (parameters inside the head receive theirs now, as with
     /// <see cref="TokenCrossEntropyRows(Tensor, Func{Tensor, Tensor}, int[], float[], float[], float, int)"/>), and the
@@ -28,7 +47,16 @@ public sealed partial class Tensor
     /// </summary>
     public static Tensor TokenDivergenceRows(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, float[] weights, Func<int, int, Tensor> teacher, float temperature,
         int chunkRows) =>
-        Divergences(hidden, head, rows, weights, teacher, temperature, chunkRows).Loss!;
+        Divergences(hidden, head, rows, weights, teacher, temperature, chunkRows, null).Loss!;
+
+    /// <summary>
+    /// <see cref="TokenDivergenceRows(Tensor, Func{Tensor, Tensor}, int[], float[], Func{int, int, Tensor}, float, int)"/>
+    /// for the divergence <paramref name="rule"/> computes: row r's logits receive w_r · (the rule's gradient) / T; null:
+    /// KL(q ‖ p).
+    /// </summary>
+    public static Tensor TokenDivergenceRows(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, float[] weights, Func<int, int, Tensor> teacher, float temperature,
+        int chunkRows, TokenDivergenceRule? rule) =>
+        Divergences(hidden, head, rows, weights, teacher, temperature, chunkRows, rule).Loss!;
 
     /// <summary>The listed rows of x [rows, dim] as [count, dim], on x's device. Not recorded.</summary>
     public static Tensor GatherRows(Tensor x, int[] rows)
@@ -56,7 +84,7 @@ public sealed partial class Tensor
     }
 
     private static (float[] Values, Tensor? Loss) Divergences(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, float[]? weights, Func<int, int, Tensor> teacher,
-        float temperature, int chunkRows)
+        float temperature, int chunkRows, TokenDivergenceRule? rule)
     {
         hidden.ThrowIfDisposed();
         if (hidden.Rank != 2 || weights is not null && weights.Length != rows.Length)
@@ -115,14 +143,32 @@ public sealed partial class Tensor
                     throw new ArgumentException($"The teacher's probabilities must be [{n}, {vocabulary}] on {device}, got {FormatShape(q._shape)} on {q.Device}.");
                 }
 
-                // Σ_v q (log q − log p); entries with q = 0 add nothing (q · log max(q, tiny) is 0 there).
-                var divergence = (q * (q.Maximum(1e-30f).Log() - logp)).Sum(1);
-                divergence.ToArray().CopyTo(values, r0);
-                if (gradient is not null)
+                if (rule is null)
                 {
-                    // Row r's weight w_r / T on each of its logits: an outer product with a row of ones (no broadcasting).
-                    var rowWeights = From([.. weights!.AsSpan(r0, n).ToArray().Select(w => w * inverse)], [n, 1], device).MatMul(Full([1, vocabulary], 1f, device));
-                    logitGradient = (logp.Exp() - q) * rowWeights;
+                    // Σ_v q (log q − log p); entries with q = 0 add nothing (q · log max(q, tiny) is 0 there).
+                    var divergence = (q * (q.Maximum(1e-30f).Log() - logp)).Sum(1);
+                    divergence.ToArray().CopyTo(values, r0);
+                    if (gradient is not null)
+                    {
+                        // Row r's weight w_r / T on each of its logits: an outer product with a row of ones (no broadcasting).
+                        var rowWeights = From([.. weights!.AsSpan(r0, n).ToArray().Select(w => w * inverse)], [n, 1], device).MatMul(Full([1, vocabulary], 1f, device));
+                        logitGradient = (logp.Exp() - q) * rowWeights;
+                    }
+                }
+                else
+                {
+                    var (divergence, ruleGradient) = rule(logp, q, gradient is not null);
+                    if (divergence.Size != n || gradient is not null && (ruleGradient is null || ruleGradient.Size != n * vocabulary))
+                    {
+                        throw new InvalidOperationException($"A divergence rule gave {divergence.Size} values (and a gradient of {ruleGradient?.Size ?? 0}) for {n} rows of {vocabulary}.");
+                    }
+
+                    divergence.ToArray().CopyTo(values, r0);
+                    if (gradient is not null)
+                    {
+                        var rowWeights = From([.. weights!.AsSpan(r0, n).ToArray().Select(w => w * inverse)], [n, 1], device).MatMul(Full([1, vocabulary], 1f, device));
+                        logitGradient = ruleGradient!.Reshape(n, vocabulary) * rowWeights;
+                    }
                 }
             }
 

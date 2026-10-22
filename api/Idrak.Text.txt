@@ -78,6 +78,12 @@ public interface Idrak.Text.Abstractions.ISyntheticRecordFormat
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Text.Abstractions.ITeacherDivergence
+  public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor?) Rows(Idrak.Abstraction.Tensor studentLogProbabilities, Idrak.Abstraction.Tensor teacherProbabilities, float beta, bool gradient)
+  public bool UsesBeta { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Text.Abstractions.ITextMatcher
   public Idrak.Text.Abstractions.TextMatch? Best(string draft, string text, int from, Idrak.Text.Abstractions.TextMatchOptions options)
   public string Name { get; }
@@ -208,6 +214,20 @@ public abstract class Idrak.Text.Abstractions.TeacherDistributions : System.IDis
   public abstract Idrak.Abstraction.Tensor Probabilities(int start, int count, float temperature, int vocabulary, Idrak.Abstraction.Device device)
   public virtual void Dispose()
 
+public static class Idrak.Text.Abstractions.TeacherDivergences
+  public const string Forward = "forward"
+  public const string JensenShannon = "jsd"
+  public const string Reverse = "reverse"
+  public static Idrak.Text.Abstractions.ITeacherDivergence Get(string name)
+  public static Idrak.Text.Abstractions.ITeacherDivergence? Default(string name)
+  public static Idrak.Text.Abstractions.ITeacherDivergence? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Text.Abstractions.ITeacherDivergence divergence)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
 public readonly record struct Idrak.Text.Abstractions.TextMatch : System.IEquatable<Idrak.Text.Abstractions.TextMatch>
   public TextMatch(int Start, int Length, int Distance)
   public int Distance { get; init; }
@@ -255,6 +275,10 @@ public sealed record Idrak.Text.Abstractions.TrainingSequence : System.IEquatabl
   public TrainingSequence(int[] Tokens, bool[] Trained)
   public bool Equals(Idrak.Text.Abstractions.TrainingSequence? other)
   public bool[] Trained { get; init; }
+  public float? Value { get; init; }
+  public float[]? BehaviorLogProbabilities { get; init; }
+  public float[]? ReferenceLogProbabilities { get; init; }
+  public float[]? TokenValues { get; init; }
   public int TrainedTokens { get; }
   public int[] Tokens { get; init; }
   public override int GetHashCode()
@@ -391,6 +415,7 @@ public static class Idrak.Text.DistillationTeachers
   public static Idrak.Text.Abstractions.DistillationTeacher FromFile(string path)
   public static Idrak.Text.Abstractions.DistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK = 0, int batchTokens = 4096)
   public static Idrak.Text.Abstractions.DistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK, int batchTokens, Idrak.Text.TuningImages images)
+  public static void CheckOnPolicy(Idrak.Text.Abstractions.DistillationTeacher teacher, Idrak.Abstraction.Generation.ITokenizer student)
 
 public sealed record Idrak.Text.EvaluatedAnswer : System.IEquatable<Idrak.Text.EvaluatedAnswer>
   public EvaluatedAnswer(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt, string Reference, string Answer, double Score, int Tokens)
@@ -422,24 +447,32 @@ public static class Idrak.Text.FineTuner
 public delegate Idrak.Abstraction.Tensor Idrak.Text.FineTuningLoss(Idrak.Text.FineTuningLossInput input)
 
 public sealed class Idrak.Text.FineTuningLossInput
-  public FineTuningLossInput(Idrak.Abstraction.Tensor logProbabilities, System.Collections.Generic.IReadOnlyList<int> tokenCounts, Idrak.Abstraction.Tensor? referenceLogProbabilities = null, bool pairs = false, int stepTokens = 0, int stepSequences = 0, System.Func<float, float[]>? teacherDivergence = null)
+  public FineTuningLossInput(Idrak.Abstraction.Tensor logProbabilities, System.Collections.Generic.IReadOnlyList<int> tokenCounts, Idrak.Abstraction.Tensor? referenceLogProbabilities = null, bool pairs = false, int stepTokens = 0, int stepSequences = 0, System.Func<float, float[]>? teacherDivergence = null, Idrak.Abstraction.Tensor? sequenceValues = null, Idrak.Abstraction.Tensor? tokenValues = null, Idrak.Abstraction.Tensor? behaviorLogProbabilities = null)
   public Idrak.Abstraction.Tensor Chosen(Idrak.Abstraction.Tensor perSequence)
   public Idrak.Abstraction.Tensor LogProbabilities { get; }
   public Idrak.Abstraction.Tensor ReferenceLogProbabilities { get; }
   public Idrak.Abstraction.Tensor Rejected(Idrak.Abstraction.Tensor perSequence)
   public Idrak.Abstraction.Tensor SequenceMeans(Idrak.Abstraction.Tensor perToken)
   public Idrak.Abstraction.Tensor SequenceSums(Idrak.Abstraction.Tensor perToken)
+  public Idrak.Abstraction.Tensor SequenceValues { get; }
   public Idrak.Abstraction.Tensor TeacherDivergence(float temperature = 1f)
+  public Idrak.Abstraction.Tensor TeacherDivergence(float temperature, string divergence, float beta = 0.5f)
+  public Idrak.Abstraction.Tensor TokenValues { get; }
+  public Idrak.Abstraction.Tensor? BehaviorLogProbabilities { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> Sequences { get; }
   public System.Collections.Generic.IReadOnlyList<int> TokenCounts { get; }
+  public bool HasBehavior { get; }
   public bool Pairs { get; }
   public int StepSequences { get; }
   public int StepTokens { get; }
 
 public static class Idrak.Text.FineTuningLosses
+  public static Idrak.Text.FineTuningLoss Add(Idrak.Text.FineTuningLoss first, Idrak.Text.FineTuningLoss second, float weight = 1f)
   public static Idrak.Text.FineTuningLoss Distillation(float temperature = 1f, float alpha = 0.5f)
   public static Idrak.Text.FineTuningLoss Dpo(float beta = 0.1f, float labelSmoothing = 0f)
+  public static Idrak.Text.FineTuningLoss OnPolicyDistillation(string divergence = "reverse", float temperature = 1f, float beta = 0.5f)
   public static Idrak.Text.FineTuningLoss Orpo(float lambda = 0.1f)
+  public static Idrak.Text.FineTuningLoss Policy(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, bool reference = true)
   public static Idrak.Text.FineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
   public static Idrak.Text.FineTuningLoss TokenCrossEntropy { get; }
 
@@ -504,6 +537,33 @@ public sealed record Idrak.Text.FineTuningProgress : System.IEquatable<Idrak.Tex
   public int Epoch { get; init; }
   public int Step { get; init; }
   public int TotalSteps { get; init; }
+
+public sealed class Idrak.Text.FineTuningSession : System.IDisposable
+  public FineTuningSession(Idrak.Models.PretrainedModel model, Idrak.Text.FineTuningOptions options, int totalSteps, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence>? sample = null, System.Action<string>? trace = null)
+  public Idrak.Models.PretrainedModel Model { get; }
+  public Idrak.Text.FineTuningOptions Options { get; }
+  public Idrak.Text.FineTuningStepStats Step(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, Idrak.Text.FineTuningLoss? loss = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Text.Generation.ChatGenerator Generator(int? contextLength = null, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0)
+  public float LearningRate { get; }
+  public float[][] LogProbabilities(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, bool adapters = true)
+  public int Steps { get; }
+  public int TotalSteps { get; }
+  public long ResumedSteps { get; }
+  public string Settings { get; }
+  public void Checkpoint(string folder)
+  public void Dispose()
+  public void Restore(string folder)
+  public void Save(string folder)
+
+public sealed record Idrak.Text.FineTuningStepStats : System.IEquatable<Idrak.Text.FineTuningStepStats>
+  public FineTuningStepStats(int Step, float Loss, float LearningRate, long Tokens, System.TimeSpan Duration, bool Skipped = false)
+  public System.TimeSpan Duration { get; init; }
+  public bool Skipped { get; init; }
+  public double TokensPerSecond { get; }
+  public float LearningRate { get; init; }
+  public float Loss { get; init; }
+  public int Step { get; init; }
+  public long Tokens { get; init; }
 
 public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idrak.Text.Generation.AgentOptions>
   public AgentOptions()
@@ -956,6 +1016,116 @@ public enum Idrak.Text.RandomTextUnit : int
   Lines = 1
   Pages = 0
   Words = 2
+
+public sealed record Idrak.Text.Reinforcement.EpisodeLayout : System.IEquatable<Idrak.Text.Reinforcement.EpisodeLayout>
+  public EpisodeLayout(string Mode, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> Sequences)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> Sequences { get; init; }
+  public string Mode { get; init; }
+
+public static class Idrak.Text.Reinforcement.EpisodeTurns
+  public const string Auto = "auto"
+  public const string EnvironmentVariable = "IDRAK_RL_TURNS"
+  public const string Episode = "episode"
+  public const string Turn = "turn"
+  public static Idrak.Text.Reinforcement.EpisodeLayout Lay(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> records, string mode = "auto")
+  public static System.Collections.Generic.IReadOnlyList<string> Modes { get; }
+  public static bool PrefixStable(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> records)
+  public static string Parse(string mode)
+
+public sealed class Idrak.Text.Reinforcement.JudgeReward : Idrak.Abstraction.Reinforcement.IRewardFunction
+  public JudgeReward()
+  public JudgeReward(Idrak.Text.AnswerScorer scorer, string name = "judge")
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public System.Threading.Tasks.ValueTask<float[]> ScoreAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.RewardInput> inputs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, System.Threading.CancellationToken cancellationToken = default)
+  public string Name { get; }
+  public string Summary { get; }
+  public void Release()
+
+public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstraction.Reinforcement.IPolicy<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, System.IDisposable
+  public Idrak.Abstraction.Reinforcement.UpdateStats Update(Idrak.Abstraction.Reinforcement.RolloutBatch<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage> batch, Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyList<int>? episodes = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null)
+  public Idrak.Text.FineTuningSession Session { get; }
+  public Idrak.Text.Generation.ChatGenerator Chat { get; }
+  public Idrak.Text.Reinforcement.LanguageModelPolicyOptions Options { get; }
+  public LanguageModelPolicy(Idrak.Text.FineTuningSession session, Idrak.Text.Reinforcement.LanguageModelPolicyOptions? options = null, bool ownsSession = true)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Text.Reinforcement.EpisodeLayout> Lay(Idrak.Abstraction.Reinforcement.RolloutBatch<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage> batch, System.Collections.Generic.IReadOnlyList<int>? episodes = null)
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.PolicyActions<Idrak.Abstraction.Generation.ChatMessage>> ActAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatObservation> observations, Idrak.Abstraction.Reinforcement.ActionSampling sampling, System.Threading.CancellationToken cancellationToken = default)
+  public void Dispose()
+  public void Load(string path)
+  public void Save(string path)
+
+public sealed record Idrak.Text.Reinforcement.LanguageModelPolicyOptions : System.IEquatable<Idrak.Text.Reinforcement.LanguageModelPolicyOptions>
+  public Idrak.Abstraction.Generation.GenerationOptions? Generation { get; init; }
+  public LanguageModelPolicyOptions()
+  public bool Reference { get; init; }
+  public bool? Think { get; init; }
+  public const string BehaviorVariable = "IDRAK_RL_BEHAVIOR"
+  public const string DivergenceVariable = "IDRAK_RL_DIVERGENCE"
+  public const string Recompute = "recompute"
+  public const string Sampler = "sampler"
+  public const string TeacherWeightVariable = "IDRAK_RL_TEACHER_WEIGHT"
+  public float Beta { get; init; }
+  public float TeacherTemperature { get; init; }
+  public float TeacherWeight { get; init; }
+  public int MaxNewTokens { get; init; }
+  public int? ContextLength { get; init; }
+  public string Behavior { get; init; }
+  public string Divergence { get; init; }
+  public string Turns { get; init; }
+
+public sealed record Idrak.Text.Reinforcement.OnPolicyDistillationOptions : System.IEquatable<Idrak.Text.Reinforcement.OnPolicyDistillationOptions>
+  public OnPolicyDistillationOptions()
+  public const string MixVariable = "IDRAK_RL_DISTILL_MIX"
+  public float Beta { get; init; }
+  public float Mix { get; init; }
+  public float SamplingTemperature { get; init; }
+  public float Temperature { get; init; }
+  public int MaxLength { get; init; }
+  public int MaxNewTokens { get; init; }
+  public int PromptsPerStep { get; init; }
+  public int Seed { get; init; }
+  public int Steps { get; init; }
+  public string Divergence { get; init; }
+
+public sealed record Idrak.Text.Reinforcement.OnPolicyDistillationProgress : System.IEquatable<Idrak.Text.Reinforcement.OnPolicyDistillationProgress>
+  public OnPolicyDistillationProgress(int Step, int Steps, float Loss, float LearningRate, int Sampled, int FromData)
+  public float LearningRate { get; init; }
+  public float Loss { get; init; }
+  public int FromData { get; init; }
+  public int Sampled { get; init; }
+  public int Step { get; init; }
+  public int Steps { get; init; }
+
+public static class Idrak.Text.Reinforcement.OnPolicyDistiller
+  public static System.Collections.Generic.IReadOnlyList<float> Train(Idrak.Text.FineTuningSession session, System.Collections.Generic.IReadOnlyList<Idrak.Text.ChatTranscript> data, Idrak.Text.Reinforcement.OnPolicyDistillationOptions? options = null, System.IProgress<Idrak.Text.Reinforcement.OnPolicyDistillationProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+
+public sealed record Idrak.Text.Reinforcement.PromptTask : System.IEquatable<Idrak.Text.Reinforcement.PromptTask>
+  public PromptTask(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt, string? Reference = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools = null, bool? Think = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools { get; init; }
+  public bool? Think { get; init; }
+  public static Idrak.Text.Reinforcement.PromptTask FromTranscript(Idrak.Text.ChatTranscript transcript)
+  public string? Reference { get; init; }
+
+public sealed class Idrak.Text.Reinforcement.PromptsEnvironmentKind : Idrak.Abstraction.Reinforcement.IEnvironmentKind
+  public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; init; }
+  public Idrak.Abstraction.Reinforcement.IEnvironment Create(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+  public PromptsEnvironmentKind()
+  public PromptsEnvironmentKind(System.Collections.Generic.IReadOnlyList<Idrak.Text.Reinforcement.PromptTask> tasks, Idrak.Abstraction.Generation.IToolRegistry? tools = null, string name = "prompts")
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public System.Type ActionType { get; }
+  public System.Type ObservationType { get; }
+  public const string KindName = "prompts"
+  public string Name { get; }
+  public string Summary { get; }
+
+public static class Idrak.Text.Reinforcement.TextRewards
+  public const string Json = "json"
+  public const string Judge = "judge"
+  public const string Length = "length"
+  public const string Metric = "metric"
+  public const string Pattern = "regex"
+  public const string Sum = "sum"
+  public static System.Threading.Tasks.ValueTask<float[]> ScoreAsync(string expression, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.RewardInput> inputs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, System.Threading.CancellationToken cancellationToken = default)
 
 public sealed record Idrak.Text.Retrieval.Abstractions.Chunk : System.IEquatable<Idrak.Text.Retrieval.Abstractions.Chunk>
   public Chunk(int Id, string DocumentId, int Position, string Text)
