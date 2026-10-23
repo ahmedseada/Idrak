@@ -9,6 +9,9 @@ models/
 output/
 *.weights
 __pycache__/
+
+# The real models' references, made on the owner's machine (tools/bert and tools/t5, --real: they download the models)
+tests/Idrak.Tests/data/plugins/*/real/
 artifacts/
 *.nupkg
 *.snupkg
