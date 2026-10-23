@@ -11,7 +11,9 @@ These are the owner's standing rules. They hold in every session, after every co
   unchanged, memory walked in order, bytes parsed not strings, work done once, cold and warm measured apart, device
   memory that does not grow, the library's telemetry, independent work spread) apply to every change and every agent;
   its PTX kernel rules 80-87 (independent loads, a full device, few launches, coalesced reads, the device's reported
-  limits, per-call work once, a fixed summation order, the declared block) apply to every GPU kernel.
+  limits, per-call work once, a fixed summation order, the declared block) apply to every GPU kernel; its rules 88-90
+  (no generic range search over value types, no type or null test on a value-type `T`, an allocation failure diagnosed
+  by its type, its step and `DOTNET_TieredCompilation=0`) apply to every hot path.
 - **Speed and memory first.** They are the library's main goal. A slow or memory-heavy path found in the library is
   fixed in the library, without asking whether to; an app or sample never works around it.
 - **The reference is not the ceiling.** A reference implementation or the model in hand (Hugging Face, sentencepiece,

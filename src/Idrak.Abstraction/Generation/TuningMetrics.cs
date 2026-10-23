@@ -312,7 +312,9 @@ public static class TuningMetrics
 
         public override bool Equals(object? obj) => obj is Symbol<T> other && Equals(other);
 
-        public override int GetHashCode() => _value?.GetHashCode() ?? 0;
+        // A value type is hashed as it is: a null test on T boxes it in a method's code before it is optimized
+        // (optimization rule 89), and this runs on every lookup.
+        public override int GetHashCode() => typeof(T).IsValueType ? _value.GetHashCode() : _value?.GetHashCode() ?? 0;
     }
 
     // The table a row at a time over the shorter sequence `b`.
